@@ -252,10 +252,20 @@ RUN groupadd -g 1000 appuser && \
 # site-packages. /app contains only the built static frontend.
 # PYTHONWARNINGS: suppress langchain_core Pydantic V1 warning (their internal compat
 # code imports pydantic.v1 which doesn't exist in Python 3.14 — harmless, no fix upstream yet)
+# CHAOSCYPHER_DATA_DIR: the canonical data root for the all-in-one image, and
+# the mount target documented everywhere (`-v chaoscypher-data:/data`). It MUST
+# be set in the image itself, not only in the compose file: without it, a bare
+# `docker run` (the README's recommended quickstart) leaves it unset, and the
+# storage layer splits — the search adapter writes under /data while the
+# relational DB + Alembic fall back to the platformdirs default
+# (~/.local/share/chaoscypher). The worker then can't find graph_templates and
+# document processing stalls forever. Setting it here keeps every component on
+# one data root regardless of how the container is launched.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     APP_NAME=web_ui \
     STATIC_DIR=/app/static \
+    CHAOSCYPHER_DATA_DIR=/data \
     PYTHONWARNINGS="ignore::UserWarning:langchain_core._api.deprecation"
 
 # Copy healthcheck script (all-in-one: checks Nginx + Cortex + Valkey + workers)

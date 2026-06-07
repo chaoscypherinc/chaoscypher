@@ -10,7 +10,7 @@ Command-line tools for ChaosCypher knowledge graph library.
 pipx install chaoscypher-cli
 ```
 
-> **Note:** If `pipx install chaoscypher-cli` fails with "No matching distribution found", the package has not been published to PyPI yet — install [from source](#from-source) below. The CLI also requires Python 3.14+, so pipx must run on a 3.14 interpreter.
+> **Note:** The CLI requires Python 3.14+, so pipx must run on a 3.14 interpreter (`pipx install --python python3.14 chaoscypher-cli` if 3.14 isn't your default).
 
 [pipx](https://pipx.pypa.io/) installs the CLI in an isolated environment and automatically adds it to your PATH. If you don't have pipx, install it first:
 
