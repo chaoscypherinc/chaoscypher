@@ -1,0 +1,54 @@
+# ChaosCypher Default Extraction Benchmark
+#
+# Runs every extractor in `extractors` against every dataset in `datasets`, scores
+# each (model, dataset) pair with the v7 quality scorer, and produces a
+# ranked Markdown leaderboard. Use --local-only to skip commercial
+# providers when iterating without API keys.
+name: "ChaosCypher Extraction Benchmark"
+description: "Canonical multi-genre extraction benchmark v1 (literary, technical, scientific)."
+
+# Run params - overridable via CLI flags
+seed: 42
+temperature: 0.0
+
+# Datasets to evaluate, by id. Resolved against built-in datasets first,
+# then user datasets in the data dir (user wins on id collision).
+datasets:
+  - war_and_peace_tiny
+  - tech_encyclopedia_tiny
+  - scientific_methods_tiny
+
+# Extractor models to evaluate.
+# Optional `kinds: [extraction]` scopes a model to specific dataset kinds.
+extractors:
+  - provider: ollama
+    model: llama3.1:8b
+    label: "Llama 3.1 8B (local)"
+
+  - provider: ollama
+    model: llama3.1:70b
+    label: "Llama 3.1 70B (local)"
+
+  - provider: ollama
+    model: qwen3.6:32b
+    label: "Qwen 3.6 32B (local)"
+
+  - provider: ollama
+    model: gpt-oss:120b
+    label: "GPT-OSS 120B (local)"
+
+  - provider: openai
+    model: gpt-4o
+    label: "GPT-4o"
+
+  - provider: openai
+    model: gpt-4o-mini
+    label: "GPT-4o Mini"
+
+  - provider: anthropic
+    model: claude-sonnet-4-6
+    label: "Claude Sonnet 4.6"
+
+  - provider: anthropic
+    model: claude-haiku-4-5-20251001
+    label: "Claude Haiku 4.5"

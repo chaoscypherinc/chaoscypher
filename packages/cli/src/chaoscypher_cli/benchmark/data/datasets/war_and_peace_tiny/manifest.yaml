@@ -1,0 +1,8 @@
+id: war_and_peace_tiny
+kind: extraction
+version: "1.0"
+domain: literary
+corpus_path: war_and_peace_tiny.txt
+source: "Tolstoy, War and Peace, public domain (Project Gutenberg eBook 2600)"
+description: "Literary fiction excerpt; entity-rich; complex coreference and dialogue."
+word_count_approx: 1500

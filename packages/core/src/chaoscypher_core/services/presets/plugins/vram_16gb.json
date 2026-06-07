@@ -1,0 +1,31 @@
+{
+  "name": "vram_16gb",
+  "display_name": "16GB VRAM",
+  "version": "1.0.0",
+  "description": "High-end consumer configuration for 8B parameter models with larger context. Great for complex documents and multi-turn conversations.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 16,
+  "gpu_examples": [
+    "RTX 4080 Super",
+    "RTX 5080",
+    "RTX 4080",
+    "RX 7900 XT"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "phi4:14b",
+    "ollama_extraction_model": "phi4:14b",
+    "ollama_vision_model": "qwen3-vl:8b",
+    "ollama_num_ctx": 16384,
+    "ollama_num_batch": 2048
+  },
+
+  "llm_settings": {
+    "ai_context_window": 16384,
+    "ai_max_tokens": 32768,
+    "extraction_max_tokens": 8192,
+    "thinking_for_chat": false
+  }
+}

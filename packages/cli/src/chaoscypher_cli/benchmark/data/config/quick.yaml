@@ -1,0 +1,26 @@
+# ChaosCypher Quick Smoke
+#
+# Three-model smoke test on a single dataset. Use this when iterating on
+# the harness itself or sanity-checking after a code change. Pair with
+# --local-only to skip API calls entirely while developing.
+name: "ChaosCypher Quick Smoke"
+description: "3-model smoke test on war_and_peace_tiny; ~3 minutes locally."
+
+seed: 42
+temperature: 0.0
+
+datasets:
+  - war_and_peace_tiny
+
+extractors:
+  - provider: ollama
+    model: llama3.1:8b
+    label: "Llama 3.1 8B (local)"
+
+  - provider: openai
+    model: gpt-4o-mini
+    label: "GPT-4o Mini"
+
+  - provider: anthropic
+    model: claude-haiku-4-5-20251001
+    label: "Claude Haiku 4.5"

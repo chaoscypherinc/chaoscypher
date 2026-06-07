@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC009 — sqlmodel imports in service layer are forbidden.
+#
+# Services should not depend on SQLModel directly — that belongs in the
+# repository layer.
+
+rules:
+  - id: cc-009-sqlmodel-import-in-service
+    message: |
+      'from sqlmodel' import in service layer. Services should not depend
+      on SQLModel directly.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/service.py"
+      exclude:
+        - "**/shared/**"
+        - "**/adapters/**"
+        - "**/tests/**"
+    pattern-either:
+      - pattern: import sqlmodel
+      - pattern: from sqlmodel import $X

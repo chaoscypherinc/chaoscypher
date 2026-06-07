@@ -1,0 +1,93 @@
+[build-system]
+requires = ["setuptools>=82.0.0,<90", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaoscypher-cli"
+version = "0.1.0"
+description = "Command-line tools for Chaos Cypher knowledge graph library"
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+maintainers = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+keywords = [
+    "knowledge-graph",
+    "cli",
+    "command-line",
+    "chaoscypher"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Environment :: Console",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.14"
+dependencies = [
+    "chaoscypher-core>=0.1.0",
+    "click>=8.3.0,<9",
+    "rich>=15.0.0,<16",
+    "platformdirs>=4.9.0,<5",
+    "pyyaml>=6.0.3,<7",
+    "structlog>=25.5.0,<26",
+    "mcp>=1.27.0,<2",
+    "httpx>=0.28.0,<1",
+]
+
+[project.optional-dependencies]
+server = [
+    "uvicorn>=0.44.0,<1",
+    "fastapi>=0.135.0,<1",
+]
+dev = [
+    "pytest>=9.0.0,<10",
+    "pytest-asyncio>=1.2.0,<2",
+    "pytest-cov>=7.1.0,<8",
+    "ruff>=0.15.0,<1",
+    "mypy>=1.20.0,<2",
+]
+
+[project.scripts]
+chaoscypher = "chaoscypher_cli.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/chaoscypherinc/chaoscypher"
+Documentation = "https://github.com/chaoscypherinc/chaoscypher#readme"
+Repository = "https://github.com/chaoscypherinc/chaoscypher"
+Issues = "https://github.com/chaoscypherinc/chaoscypher/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# Bundle benchmark datasets, corpora, and named configs as package data so
+# they ship in the wheel - that's how `pip install chaoscypher-cli` users
+# get the canonical leaderboard datasets without cloning the repo.
+[tool.setuptools.package-data]
+"chaoscypher_cli.benchmark" = [
+    "data/datasets/*/manifest.yaml",
+    "data/datasets/*/queries.yaml",
+    "data/datasets/*/*.txt",
+    "data/config/*.yaml",
+]
+
+# Linting configuration - inherits from root ruff.toml
+
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["src"]

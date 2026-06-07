@@ -1,0 +1,106 @@
+METHODS DEMONSTRATION: SOIL MICROBIOME PROFILING ACROSS A LAND-USE GRADIENT
+
+The following is a synthetic methodology passage written as a benchmark
+fixture. The procedures, instruments, and software named below are real;
+the study, sites, and results are illustrative only.
+
+Study Design
+
+A nested cross-sectional design was used to compare soil microbial
+community composition across four adjacent land-use categories: deciduous
+forest, mixed grassland, conventional cropland, and organic cropland. Each
+category was represented by three independent replicate sites within a
+ten-kilometer radius of the field station, for a total of twelve sampling
+locations. Each site was sampled in spring, summer, and autumn over two
+consecutive years, yielding seventy-two composite soil samples per
+analytical run. Sampling was conducted by Helena Marquez and Tomáš Dvořák
+of the Department of Soil Ecology, with field assistance from a rotating
+team of graduate students.
+
+Sample Collection
+
+Composite samples were assembled from ten randomly placed soil cores
+collected at each site using a stainless-steel auger to a depth of fifteen
+centimeters. Cores were homogenized in the field, sieved through a two
+millimeter mesh to remove root fragments, and divided into three
+sub-samples. The first sub-sample was stored in a sterile polypropylene
+tube at minus eighty degrees Celsius for DNA extraction. The second was
+stored at minus twenty degrees Celsius for enzyme activity assays. The
+third was air-dried at room temperature for chemical analysis. Sampling
+followed the protocols described in the LTER Network Soil Sampling Manual,
+fourth edition.
+
+DNA Extraction and Amplicon Sequencing
+
+Total community DNA was extracted from approximately 0.25 grams of
+homogenized soil using the DNeasy PowerSoil Pro Kit from Qiagen,
+following the manufacturer's protocol with a single modification: the
+initial bead-beating step was extended to ten minutes at maximum speed on
+a TissueLyser II homogenizer. Extracted DNA was quantified using a
+Qubit 4 Fluorometer with the dsDNA High Sensitivity assay. The 16S
+ribosomal RNA gene was amplified across the V3 to V4 region using the
+primer pair 341F and 805R described by Klindworth and colleagues in 2013.
+Polymerase chain reaction was performed on a Bio-Rad T100 thermal cycler
+in twenty-five microlitre reactions containing template DNA, KAPA HiFi
+HotStart polymerase, and the dual-indexed primer pair. Cycling conditions
+were three minutes at ninety-five degrees, followed by twenty-five cycles
+of thirty seconds at ninety-five, thirty seconds at fifty-five, and
+thirty seconds at seventy-two, with a final extension of five minutes at
+seventy-two degrees.
+
+Amplicons were purified using AMPure XP beads at a 0.8 to 1 ratio and
+quantified on a TapeStation 4200 system. Equimolar pools were sequenced
+on an Illumina NovaSeq 6000 instrument at the Genomic Sciences Core
+facility, generating paired-end reads of 250 base pairs in length.
+
+Bioinformatics
+
+Raw sequence reads were demultiplexed and processed using the QIIME 2
+platform, version 2024.5. Primers were trimmed with Cutadapt. Amplicon
+sequence variants were inferred using DADA2 with default quality-filter
+parameters. Taxonomy was assigned using a naive Bayesian classifier
+trained on the SILVA 138.1 reference database restricted to the V3 to V4
+region. Chimera removal was performed within the DADA2 step. ASVs
+classified as mitochondrial, chloroplast, or unassigned at the domain
+level were removed from downstream analysis. Alpha diversity (observed
+ASVs, Shannon index, Faith's phylogenetic diversity) and beta diversity
+(weighted UniFrac, Bray-Curtis dissimilarity) were computed using the
+core diversity workflow in QIIME 2 after rarefying to 25,000 reads per
+sample.
+
+Statistical Analysis
+
+Differences in alpha diversity across land-use categories were tested
+using linear mixed-effects models implemented in the lme4 package in R
+4.4.0, with land-use as a fixed effect and site as a random intercept.
+Beta diversity differences were tested using PERMANOVA with 999
+permutations via the adonis2 function in vegan version 2.6-4. Indicator
+ASVs for each land-use category were identified with the indicspecies
+package using the IndVal index at a threshold of p less than 0.05.
+Differential abundance was assessed with ANCOM-BC v2 to handle the
+compositional nature of the data.
+
+Quality Control
+
+Negative controls — both extraction blanks and PCR no-template controls
+— were carried through the full sequencing workflow. Reads classified as
+contaminants in the controls were removed from biological samples using
+the prevalence-based method in the decontam R package. Three samples
+were excluded from analysis after visual inspection of rarefaction curves
+indicated insufficient sequencing depth.
+
+Illustrative Findings
+
+In the synthetic data set used for this benchmark fixture, deciduous
+forest sites supported the highest alpha diversity, with a mean Shannon
+index of 6.4, while conventional cropland sites had the lowest, with a
+mean of 5.1. Beta diversity analysis indicated significant separation
+among land-use categories along the first PCoA axis, which explained
+22.7 percent of variance. Members of the phylum Verrucomicrobiota and
+the family Acidobacteriaceae were enriched in forest sites, while members
+of the phylum Actinobacteriota and the genus Streptomyces were enriched
+in conventional cropland. Organic cropland sites resembled grassland
+more closely than they resembled conventional cropland on several
+diversity metrics, suggesting that management intensity rather than land
+classification per se drove community structure at these sites. These
+illustrative findings should not be cited as empirical results.

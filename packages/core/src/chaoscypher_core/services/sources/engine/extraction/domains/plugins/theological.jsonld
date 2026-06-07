@@ -1,0 +1,1364 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:theological",
+  "name": "theological",
+  "version": "1.10.0",
+  "description": "Religious texts, theology, sacred writings, and spiritual traditions",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.15,
+  "strict_entity_types": true,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "religious_core": {
+        "terms": [
+          "god",
+          "divine",
+          "sacred",
+          "holy",
+          "spiritual",
+          "religion",
+          "faith",
+          "worship",
+          "prayer",
+          "salvation",
+          "soul",
+          "spirit",
+          "blessing"
+        ],
+        "weight": 1.1
+      },
+      "traditions": {
+        "terms": [
+          "christianity",
+          "islam",
+          "judaism",
+          "hinduism",
+          "buddhism",
+          "sikhism",
+          "taoism",
+          "shinto",
+          "zoroastrianism",
+          "jainism",
+          "confucianism"
+        ],
+        "weight": 1.0
+      },
+      "texts": {
+        "terms": [
+          "scripture",
+          "bible",
+          "quran",
+          "torah",
+          "vedas",
+          "sutra",
+          "gospel",
+          "revelation",
+          "prophecy",
+          "psalm",
+          "hadith",
+          "upanishad",
+          "tanakh"
+        ],
+        "weight": 1.2
+      },
+      "concepts": {
+        "terms": [
+          "sin",
+          "redemption",
+          "karma",
+          "afterlife",
+          "heaven",
+          "hell",
+          "paradise",
+          "covenant",
+          "dharma",
+          "nirvana",
+          "moksha",
+          "grace",
+          "resurrection"
+        ],
+        "weight": 0.9
+      },
+      "figures": {
+        "terms": [
+          "prophet",
+          "messiah",
+          "saint",
+          "angel",
+          "deity",
+          "avatar",
+          "guru",
+          "priest",
+          "rabbi",
+          "imam",
+          "apostle",
+          "patriarch",
+          "monk"
+        ],
+        "weight": 0.9
+      },
+      "practices": {
+        "terms": [
+          "ritual",
+          "ceremony",
+          "sacrament",
+          "pilgrimage",
+          "fasting",
+          "meditation",
+          "prayer",
+          "baptism",
+          "communion",
+          "sacrifice"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "religious_text",
+      "theological_document",
+      "scripture"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(chapter|verse|surah|psalm|book)\\s+\\d+[:\\.]?\\d*\\b",
+        "weight": 1.4,
+        "description": "Scripture references"
+      },
+      {
+        "regex": "(?i)\\b(the lord|god said|thus saith|it is written|and the lord|saith the lord)\\b",
+        "weight": 1.2,
+        "description": "Divine speech patterns"
+      },
+      {
+        "regex": "(?i)\\b(blessed|holy|sacred|divine|righteous)\\s+(be|is|are|art)\\b",
+        "weight": 1.1,
+        "description": "Religious language"
+      },
+      {
+        "regex": "(?i)\\b\\d+:\\d+(-\\d+)?\\b",
+        "weight": 0.8,
+        "description": "Chapter:verse notation"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Chapter:verse references",
+      "examples": [
+        "John 3:16",
+        "Quran 2:255",
+        "Psalm 23:1"
+      ]
+    },
+    {
+      "description": "Generic devotional language",
+      "examples": [
+        "the Lord",
+        "God said"
+      ]
+    },
+    {
+      "description": "Liturgical responses",
+      "examples": [
+        "Amen",
+        "Hallelujah",
+        "Peace be upon him"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract deities, prophets, sacred texts, doctrines, traditions, and practices\n- Include religious traditions and denominations\n- Use canonical names with common variants as aliases\n\nDO NOT EXTRACT:\n- Chapter:verse references: John 3:16, Quran 2:255, Psalm 23:1\n- Generic devotional language: 'the Lord', 'God said' (without specific context)\n- Liturgical responses: 'Amen', 'Hallelujah', 'Peace be upon him'\n- Modern editorial additions: verse numbers, section headers, translator notes",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- FIGURES: Link prophets/figures to traditions with founded, belongs_to\n- TEXTS: Connect texts to doctrines with teaches\n- PRACTICES: Link traditions to practices with practices\n- REVELATION: Use revealed for divine communications\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_deity",
+        "name": "Deity",
+        "description": "A god, goddess, or divine being",
+        "icon": "AutoAwesome",
+        "color": "#d6d341",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "divine",
+        "normalization_keywords": [
+          "god",
+          "goddess",
+          "divine being",
+          "the Lord",
+          "deity",
+          "divine",
+          "almighty"
+        ],
+        "properties": [
+          {
+            "name": "domain",
+            "display_name": "Domain",
+            "property_type": "text",
+            "absorbs_types": [
+              "Divine Domain"
+            ]
+          },
+          {
+            "name": "tradition",
+            "display_name": "Tradition",
+            "property_type": "text",
+            "absorbs_types": [
+              "Tradition"
+            ]
+          },
+          {
+            "name": "attributes",
+            "display_name": "Attributes",
+            "property_type": "text",
+            "absorbs_types": [
+              "Divine Attributes"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_prophet",
+        "name": "Prophet",
+        "description": "A prophetic figure or religious founder",
+        "icon": "Person",
+        "color": "#a2d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "divine",
+        "normalization_keywords": [
+          "prophet",
+          "messenger",
+          "founder of",
+          "revealed to",
+          "apostle of"
+        ],
+        "properties": [
+          {
+            "name": "birth_place",
+            "display_name": "Birth Place",
+            "property_type": "text",
+            "absorbs_types": [
+              "Birth Place"
+            ]
+          },
+          {
+            "name": "tradition",
+            "display_name": "Tradition",
+            "property_type": "text"
+          },
+          {
+            "name": "era",
+            "display_name": "Era",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_text",
+        "name": "Sacred Text",
+        "description": "A scripture, holy book, or sacred writing",
+        "icon": "MenuBook",
+        "color": "#6ad641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "scripture",
+          "holy book",
+          "sacred text",
+          "gospel",
+          "sutra",
+          "revealed text"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_doctrine",
+        "name": "Doctrine",
+        "description": "A religious teaching, belief, or dogma",
+        "icon": "Description",
+        "color": "#41d651",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "doctrine",
+          "teaching",
+          "belief",
+          "dogma",
+          "tenet",
+          "creed"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_practice",
+        "name": "Practice",
+        "description": "A religious ritual, ceremony, or observance",
+        "icon": "FitnessCenter",
+        "color": "#41d688",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "traditions",
+        "normalization_keywords": [
+          "ritual",
+          "ceremony",
+          "sacrament",
+          "observance",
+          "practice of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_tradition",
+        "name": "Religious Tradition",
+        "description": "A major religion, denomination, or sect",
+        "icon": "Church",
+        "color": "#41d6c0",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "traditions",
+        "normalization_keywords": [
+          "religion",
+          "faith",
+          "denomination",
+          "sect",
+          "tradition",
+          "church"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_figure",
+        "name": "Religious Figure",
+        "description": "A saint, mystic, or religious leader",
+        "icon": "Face",
+        "color": "#41b4d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "divine",
+        "normalization_keywords": [
+          "saint",
+          "mystic",
+          "holy person",
+          "religious leader",
+          "monk",
+          "nun"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_place",
+        "name": "Sacred Place",
+        "description": "A holy site, temple, or pilgrimage location",
+        "icon": "TempleHindu",
+        "color": "#417cd6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world",
+        "normalization_keywords": [
+          "holy site",
+          "temple",
+          "shrine",
+          "church",
+          "mosque",
+          "pilgrimage",
+          "sacred place"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_event",
+        "name": "Religious Event",
+        "description": "A miracle, revelation, or sacred event",
+        "icon": "Celebration",
+        "color": "#4144d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world",
+        "normalization_keywords": [
+          "religious event",
+          "revelation",
+          "miracle",
+          "divine event",
+          "sacred event",
+          "vision"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_concept",
+        "name": "Theological Concept",
+        "description": "A theological idea (grace, karma, salvation)",
+        "icon": "Lightbulb",
+        "color": "#7641d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "concept of",
+          "the idea of",
+          "theological notion",
+          "spiritual principle"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_commandment",
+        "name": "Commandment",
+        "description": "A specific divine commandment or precept (e.g. the Ten Commandments, individual mitzvot)",
+        "icon": "MenuBook",
+        "color": "#ae41d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "commandment",
+          "precept",
+          "prohibition",
+          "mitzvah"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_religious_law",
+        "name": "Religious Law",
+        "description": "A body of religious law or jurisprudence (Halakha, Sharia, Canon Law) — broader system than a single commandment",
+        "icon": "Gavel",
+        "color": "#9041d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "religious law",
+          "halakha",
+          "sharia",
+          "canon law",
+          "jurisprudence"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_miracle",
+        "name": "Miracle",
+        "description": "A miraculous event, wonder, or divine intervention",
+        "icon": "AutoAwesome",
+        "color": "#d641c7",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world",
+        "normalization_keywords": [
+          "miracle",
+          "wonder",
+          "sign",
+          "divine intervention",
+          "supernatural"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_covenant",
+        "name": "Covenant",
+        "description": "A covenant, pact, or sacred agreement between divine and human",
+        "icon": "Handshake",
+        "color": "#d6418f",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "texts",
+        "normalization_keywords": [
+          "covenant",
+          "pact",
+          "promise",
+          "testament",
+          "agreement"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_angel",
+        "name": "Angelic Being",
+        "description": "An angel, archangel, spirit, or celestial being",
+        "icon": "Star",
+        "color": "#d64157",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "divine",
+        "normalization_keywords": [
+          "angel",
+          "archangel",
+          "cherub",
+          "seraph",
+          "celestial being",
+          "spirit"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_denomination",
+        "name": "Denomination",
+        "description": "A recognised branch of a major religious tradition (e.g. Catholicism, Sunni Islam, Theravada Buddhism)",
+        "icon": "AccountTree",
+        "color": "#d66341",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "traditions",
+        "normalization_keywords": [
+          "denomination",
+          "branch",
+          "communion"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_sect",
+        "name": "Sect",
+        "description": "A sect or order — typically a smaller, distinctive group within or breaking from a denomination",
+        "icon": "Diversity3",
+        "color": "#d68341",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "traditions",
+        "normalization_keywords": [
+          "sect",
+          "order",
+          "school",
+          "movement"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "theo_template_debate",
+        "name": "Theological Debate",
+        "description": "A theological controversy, council, or doctrinal dispute",
+        "icon": "Forum",
+        "color": "#d69b41",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world",
+        "normalization_keywords": [
+          "debate",
+          "controversy",
+          "council",
+          "dispute",
+          "heresy",
+          "schism"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_teaches",
+        "name": "teaches",
+        "description": "Deity, figure, text, tradition, or doctrine teaches a doctrine, concept, practice, commandment, or law",
+        "icon": "School",
+        "color": "#9b32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Deity",
+          "Prophet",
+          "Religious Figure",
+          "Angelic Being",
+          "Sacred Text",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Doctrine",
+          "Theological Concept"
+        ],
+        "target_types": [
+          "Doctrine",
+          "Theological Concept",
+          "Practice",
+          "Commandment",
+          "Religious Law",
+          "Religious Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_founded",
+        "name": "founded",
+        "description": "Deity, prophet, or figure founded a tradition, denomination, sect, or sacred place",
+        "icon": "Star",
+        "color": "#c232cc",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Sacred Place"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_prophesied",
+        "name": "prophesied",
+        "description": "Prophet, figure, deity, or sacred text prophesied an event, miracle, figure, or concept",
+        "icon": "Campaign",
+        "color": "#cc32af",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity",
+          "Sacred Text",
+          "Angelic Being"
+        ],
+        "target_types": [
+          "Religious Event",
+          "Miracle",
+          "Theological Concept",
+          "Prophet",
+          "Religious Figure",
+          "Doctrine"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_interprets",
+        "name": "interprets",
+        "description": "Figure, tradition, denomination, sect, or text interprets a sacred text, doctrine, commandment, law, or concept",
+        "icon": "Visibility",
+        "color": "#cc3289",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Figure",
+          "Prophet",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Sacred Text",
+          "Theological Concept"
+        ],
+        "target_types": [
+          "Sacred Text",
+          "Doctrine",
+          "Theological Concept",
+          "Commandment",
+          "Religious Law",
+          "Covenant",
+          "Religious Figure",
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_practices",
+        "name": "practices",
+        "description": "Tradition, denomination, sect, or figure practices a ritual or observance",
+        "icon": "FitnessCenter",
+        "color": "#cc3263",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Religious Figure",
+          "Prophet"
+        ],
+        "target_types": [
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_venerates",
+        "name": "venerates",
+        "description": "Tradition, denomination, sect, or figure venerates a deity, prophet, figure, place, text, or relic",
+        "icon": "Favorite",
+        "color": "#cc323c",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Religious Figure",
+          "Prophet",
+          "Theological Concept",
+          "Sacred Text"
+        ],
+        "target_types": [
+          "Deity",
+          "Prophet",
+          "Religious Figure",
+          "Sacred Place",
+          "Sacred Text",
+          "Angelic Being",
+          "Miracle"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_revealed_to",
+        "name": "revealed_to",
+        "description": "Deity, angelic being, sacred text, doctrine, or event was revealed to a prophet, figure, or people",
+        "icon": "AutoAwesome",
+        "color": "#cc4f32",
+        "quality_score": 25,
+        "source_types": [
+          "Deity",
+          "Angelic Being",
+          "Sacred Text",
+          "Doctrine",
+          "Theological Concept",
+          "Commandment",
+          "Religious Law",
+          "Covenant",
+          "Religious Event",
+          "Miracle",
+          "Religious Figure"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Covenant",
+          "Commandment",
+          "Deity"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_affirms",
+        "name": "affirms",
+        "description": "Text, doctrine, tradition, or figure affirms a doctrine, concept, commandment, or law",
+        "icon": "CheckCircle",
+        "color": "#cc7532",
+        "quality_score": 25,
+        "source_types": [
+          "Sacred Text",
+          "Doctrine",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Religious Figure",
+          "Prophet",
+          "Theological Debate"
+        ],
+        "target_types": [
+          "Theological Concept",
+          "Doctrine",
+          "Commandment",
+          "Religious Law",
+          "Covenant"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_contradicts",
+        "name": "contradicts",
+        "description": "Doctrine, tradition, text, or figure contradicts another doctrine, concept, or teaching",
+        "icon": "Block",
+        "color": "#cc9b32",
+        "quality_score": 25,
+        "source_types": [
+          "Doctrine",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Sacred Text",
+          "Religious Figure",
+          "Prophet",
+          "Theological Debate",
+          "Covenant"
+        ],
+        "target_types": [
+          "Doctrine",
+          "Theological Concept",
+          "Sacred Text",
+          "Commandment",
+          "Religious Law",
+          "Covenant"
+        ],
+        "symmetric": true
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_descends_from",
+        "name": "descends_from",
+        "description": "Figure, tradition, denomination, sect, or doctrine descends from another lineage, tradition, or figure",
+        "icon": "AccountTree",
+        "color": "#ccc232",
+        "inverse": "ancestor_of",
+        "quality_score": 15,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Doctrine"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Doctrine"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_sacred_to",
+        "name": "sacred_to",
+        "description": "Place, text, figure, event, miracle, or practice is sacred to a tradition, denomination, or sect",
+        "icon": "Place",
+        "color": "#afcc32",
+        "quality_score": 15,
+        "source_types": [
+          "Sacred Place",
+          "Sacred Text",
+          "Religious Figure",
+          "Prophet",
+          "Religious Event",
+          "Miracle",
+          "Practice",
+          "Angelic Being",
+          "Covenant"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Concept"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_wrote",
+        "name": "wrote",
+        "description": "Prophet, figure, deity, or angelic being wrote, transmitted, or dictated a sacred text",
+        "icon": "Create",
+        "color": "#89cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity",
+          "Angelic Being"
+        ],
+        "target_types": [
+          "Sacred Text"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_succeeded_by",
+        "name": "succeeded_by",
+        "description": "Religious figure, tradition, denomination, or sect was succeeded by another in leadership or lineage",
+        "icon": "SwapHoriz",
+        "color": "#63cc32",
+        "inverse": "successor_of",
+        "quality_score": 15,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_influenced_by",
+        "name": "influenced_by",
+        "description": "Tradition, figure, text, doctrine, denomination, or sect was influenced by another tradition, figure, text, doctrine, or concept",
+        "icon": "TrendingUp",
+        "color": "#3ccc32",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Tradition",
+          "Religious Figure",
+          "Prophet",
+          "Denomination",
+          "Sect",
+          "Sacred Text",
+          "Doctrine",
+          "Theological Concept",
+          "Practice",
+          "Religious Law"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Religious Figure",
+          "Prophet",
+          "Denomination",
+          "Sect",
+          "Sacred Text",
+          "Doctrine",
+          "Theological Concept",
+          "Practice",
+          "Religious Law",
+          "Religious Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_covenanted_with",
+        "name": "covenanted_with",
+        "description": "Deity or covenant established a covenant with a prophet, figure, tradition, or people",
+        "icon": "Handshake",
+        "color": "#32cc4f",
+        "quality_score": 25,
+        "source_types": [
+          "Deity",
+          "Covenant"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_fulfilled",
+        "name": "fulfilled",
+        "description": "Figure, event, miracle, or tradition fulfilled a prophecy, covenant, commandment, law, or doctrine",
+        "icon": "CheckCircle",
+        "color": "#32cc75",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity",
+          "Religious Event",
+          "Miracle",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ],
+        "target_types": [
+          "Covenant",
+          "Doctrine",
+          "Theological Concept",
+          "Commandment",
+          "Religious Law",
+          "Sacred Text"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_succeeded_prophet",
+        "name": "succeeded_prophet",
+        "description": "Prophet or religious figure succeeded another in a prophetic line",
+        "icon": "SwapHoriz",
+        "color": "#32cc9b",
+        "inverse": "preceded_by_prophet",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_reformed",
+        "name": "reformed",
+        "description": "Figure, prophet, or movement reformed a tradition, denomination, sect, practice, doctrine, or law",
+        "icon": "Autorenew",
+        "color": "#32ccc2",
+        "quality_score": 25,
+        "source_types": [
+          "Religious Figure",
+          "Prophet",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Debate"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Practice",
+          "Denomination",
+          "Sect",
+          "Doctrine",
+          "Religious Law",
+          "Commandment"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_schismed_from",
+        "name": "schismed_from",
+        "description": "Denomination, sect, tradition, or figure-led movement split from another tradition, denomination, or sect",
+        "icon": "CallSplit",
+        "color": "#32afcc",
+        "quality_score": 25,
+        "source_types": [
+          "Denomination",
+          "Sect",
+          "Religious Tradition",
+          "Religious Figure",
+          "Prophet"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_translated",
+        "name": "translated",
+        "description": "Figure, prophet, tradition, denomination, or sect translated a sacred text",
+        "icon": "Translate",
+        "color": "#3289cc",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Figure",
+          "Prophet",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ],
+        "target_types": [
+          "Sacred Text"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_canonized",
+        "name": "canonized",
+        "description": "Tradition, denomination, sect, or debate canonized a text, figure, doctrine, or practice",
+        "icon": "Verified",
+        "color": "#3263cc",
+        "quality_score": 25,
+        "source_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Debate"
+        ],
+        "target_types": [
+          "Sacred Text",
+          "Religious Figure",
+          "Prophet",
+          "Doctrine",
+          "Practice",
+          "Commandment",
+          "Religious Law"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_excommunicated",
+        "name": "excommunicated",
+        "description": "Tradition, denomination, sect, or debate excommunicated a figure, sect, or denomination",
+        "icon": "PersonOff",
+        "color": "#323ccc",
+        "quality_score": 25,
+        "source_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Debate",
+          "Religious Figure"
+        ],
+        "target_types": [
+          "Religious Figure",
+          "Prophet",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_converted_to",
+        "name": "converted_to",
+        "description": "Figure, prophet, group, or tradition converted to a religious tradition, denomination, or sect",
+        "icon": "SyncAlt",
+        "color": "#4f32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Religious Figure",
+          "Prophet",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_syncretized_with",
+        "name": "syncretized_with",
+        "description": "Tradition, denomination, sect, doctrine, practice, or concept syncretized with another tradition, doctrine, practice, or concept",
+        "icon": "MergeType",
+        "color": "#7532cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Concept",
+          "Doctrine",
+          "Practice"
+        ],
+        "target_types": [
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Theological Concept",
+          "Doctrine",
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_ancestor_of",
+        "name": "ancestor_of",
+        "description": "Deity, prophet, figure, tradition, denomination, sect, or doctrine is the ancestor of another figure, tradition, denomination, sect, or doctrine",
+        "icon": "AccountTree",
+        "color": "#ccc232",
+        "inverse": "descends_from",
+        "quality_score": 15,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Deity",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Doctrine"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect",
+          "Doctrine"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_successor_of",
+        "name": "successor_of",
+        "description": "Figure, prophet, tradition, denomination, or sect is the successor of another in leadership or lineage",
+        "icon": "SwapHoriz",
+        "color": "#63cc32",
+        "inverse": "succeeded_by",
+        "quality_score": 15,
+        "source_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure",
+          "Religious Tradition",
+          "Denomination",
+          "Sect"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_preceded_by_prophet",
+        "name": "preceded_by_prophet",
+        "description": "Prophet or religious figure was preceded by another in a prophetic line",
+        "icon": "SwapHoriz",
+        "color": "#32cc9b",
+        "inverse": "succeeded_prophet",
+        "quality_score": 25,
+        "source_types": [
+          "Prophet",
+          "Religious Figure"
+        ],
+        "target_types": [
+          "Prophet",
+          "Religious Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_associated_with",
+        "name": "associated_with",
+        "description": "Theological concept, sacred place, or figure is associated with another religious element",
+        "icon": "LinkOutlined",
+        "color": "#8a4b1a",
+        "quality_score": 10,
+        "source_types": [
+          "Theological Concept",
+          "Sacred Place",
+          "Sacred Text",
+          "Religious Figure",
+          "Practice",
+          "Doctrine"
+        ],
+        "target_types": [
+          "Theological Concept",
+          "Sacred Place",
+          "Sacred Text",
+          "Religious Figure",
+          "Practice",
+          "Doctrine",
+          "Commandment"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "theo_edge_compared_to",
+        "name": "compared_to",
+        "description": "Sacred text, doctrine, or theological concept is compared to another (typological, parallel, contrast)",
+        "icon": "CompareArrows",
+        "color": "#9a5b2a",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Sacred Text",
+          "Theological Concept",
+          "Doctrine",
+          "Religious Tradition",
+          "Deity",
+          "Religious Figure"
+        ],
+        "target_types": [
+          "Sacred Text",
+          "Theological Concept",
+          "Doctrine",
+          "Commandment",
+          "Religious Tradition",
+          "Deity"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 25,
+    "max_same_source_type": 10,
+    "max_relationship_ratio": 7.0,
+    "loop_max_entity_count": 35
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Jesus Christ",
+        "aliases": [
+          "Jesus of Nazareth",
+          "Yeshua",
+          "Christ",
+          "The Messiah"
+        ],
+        "note": "Historical names, titles, and cross-language names become aliases"
+      },
+      {
+        "canonical": "Muhammad",
+        "aliases": [
+          "Prophet Muhammad",
+          "Mohammed",
+          "The Prophet"
+        ],
+        "note": "Transliterations and honorific titles become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "God",
+        "target": "Abraham",
+        "type": "covenanted_with",
+        "note": "Use covenanted_with for divine-human pacts"
+      },
+      {
+        "source": "Protestantism",
+        "target": "Catholicism",
+        "type": "schismed_from",
+        "note": "Use schismed_from for denominational splits"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "father",
+    "brother",
+    "sister",
+    "mother",
+    "bishop",
+    "cardinal",
+    "archbishop",
+    "reverend",
+    "pastor",
+    "rabbi",
+    "imam",
+    "priest"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "bibliography",
+      "web_artifacts"
+    ]
+  },
+  "extraction_filtering_mode": "balanced",
+  "icon": "Church"
+}

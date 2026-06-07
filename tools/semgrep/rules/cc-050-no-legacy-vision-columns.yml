@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC050 — Legacy vision columns dropped by migration 0034.
+# Use a query against vision_page_descriptions filtered by status
+# instead — e.g. adapter.list_vision_page_descriptions(source_id,
+# statuses=[VisionPageStatus.FAILED]).
+#
+# See the vision pipeline migration notes
+
+rules:
+  - id: cc-050-no-legacy-vision-columns
+    message: |
+      Legacy vision columns were dropped in migration 0034.
+      Use a query against vision_page_descriptions filtered by status
+      instead — e.g. adapter.list_vision_page_descriptions(source_id,
+      statuses=[VisionPageStatus.FAILED]).
+
+      Dropped columns:
+        - vision_pages_failed
+        - vision_failed_pages
+        - loader_pdf_failed_pages
+
+      See the vision pipeline migration notes
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "**/database/migrations/versions/0019_sources_vision_pages_failed.py"
+        - "**/database/migrations/versions/0021_upload_settings_and_quality_counters.py"
+        - "**/database/migrations/versions/0031_failed_page_lists.py"
+        - "**/database/migrations/versions/0032_create_vision_page_tables.py"
+        - "**/database/migrations/versions/0034_drop_legacy_vision_columns.py"
+    pattern-either:
+      # Bare-name identifier references (assignments, reads, function args)
+      - pattern: vision_pages_failed
+      - pattern: vision_failed_pages
+      - pattern: loader_pdf_failed_pages
+      # Attribute access (entity-style):  source.vision_pages_failed
+      - pattern: $X.vision_pages_failed
+      - pattern: $X.vision_failed_pages
+      - pattern: $X.loader_pdf_failed_pages
+      # Dict-key string subscript (TypedDict storage-row access):
+      # row["vision_pages_failed"], updates={"vision_pages_failed": ...}
+      - pattern: $X["vision_pages_failed"]
+      - pattern: $X["vision_failed_pages"]
+      - pattern: $X["loader_pdf_failed_pages"]
+      # Bare string literals (catches dict-key writes the subscript pattern misses)
+      - pattern: '"vision_pages_failed"'
+      - pattern: '"vision_failed_pages"'
+      - pattern: '"loader_pdf_failed_pages"'

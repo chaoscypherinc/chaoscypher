@@ -1,0 +1,47 @@
+# Docker Compose for Chaos Cypher Test Environment
+# Isolated testing without affecting local system
+#
+# Usage:
+#   docker compose -f docker-compose.yml run --rm test make lint
+#   docker compose -f docker-compose.yml run --rm test make lint-claude
+#   docker compose -f docker-compose.yml down
+
+name: chaoscypher-test
+
+services:
+  # Test runner container (lightweight - mounts everything)
+  test:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/test/Dockerfile
+    container_name: chaoscypher-test-runner
+    volumes:
+      # Mount source code
+      - ../../core/src/chaoscypher_core:/app/packages/core/src/chaoscypher_core:ro
+      - ../../cortex/src/chaoscypher_cortex:/app/packages/cortex/src/chaoscypher_cortex:ro
+      - ../../neuron/src/chaoscypher_neuron:/app/packages/neuron/src/chaoscypher_neuron:ro
+      - ../../cli/src/chaoscypher_cli:/app/packages/cli/src/chaoscypher_cli:ro
+      - ../../interface/src:/app/packages/interface/src:ro
+      # Mount test directories
+      - ../../../tests:/app/tests:ro
+      - ../../core/tests:/app/packages/core/tests:ro
+      - ../../cortex/tests:/app/packages/cortex/tests:ro
+      - ../../cli/tests:/app/packages/cli/tests:ro
+      - ../../neuron/tests:/app/packages/neuron/tests:ro
+      # Mount configs and scripts
+      - ../../../pyproject.toml:/app/pyproject.toml:ro
+      - ../../../uv.lock:/app/uv.lock:ro
+      - ../../../Makefile:/app/Makefile:ro
+      - ../../../scripts:/app/scripts:ro
+      # Semgrep rules — the rule self-tests assert /app/tools/semgrep/rules
+      # is populated; without this mount they fail only inside Docker CI.
+      - ../../../tools:/app/tools:ro
+      # Output directory for coverage reports (writable)
+      - ../test-output:/app/coverage_html
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - LOG_LEVEL=WARNING
+      - USE_JSON_LOGGING=false
+    working_dir: /app
+    command: ["make", "lint"]

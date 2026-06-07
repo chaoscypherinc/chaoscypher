@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC045 — Bare `raise <stdlib>(...)` forbidden in Core service/operation logic.
+#
+# Bare raise ValueError(...) / RuntimeError(...) / KeyError(...) /
+# TypeError(...) / NotImplementedError(...) / FileNotFoundError(...)
+# inside packages/core/src/chaoscypher_core/services/ or
+# .../operations/ falls through the Cortex error mapper as a generic
+# 500 with no `code` field. Domain failures must use
+# ChaosCypherException subclasses so they surface as the correct
+# HTTP 4xx with structured envelopes.
+#
+# Skip rules:
+# - models.py / models/ / *_models.py (Pydantic DTO files: validators
+#   legitimately raise ValueError per the Pydantic contract).
+# - Functions decorated @field_validator or @model_validator (also
+#   Pydantic contract).
+# - Lines tagged `# noqa: CC045` (genuine programmer-error sites).
+
+rules:
+  - id: cc-045-bare-stdlib-raise-in-core
+    message: |
+      Bare stdlib raise in core service / operation logic — use a
+      ChaosCypherException subclass (NotFoundError, ValidationError,
+      ConflictError, OperationError, ExternalServiceError, ...) so the
+      Cortex error mapper produces a structured 4xx envelope.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/core/src/chaoscypher_core/services/**"
+        - "/packages/core/src/chaoscypher_core/operations/**"
+      exclude:
+        - "**/tests/**"
+        # Pydantic DTO files: validators legitimately raise ValueError.
+        - "**/models.py"
+        - "**/models/**"
+        - "**/*_models.py"
+    patterns:
+      - pattern-either:
+          - pattern: raise ValueError(...)
+          - pattern: raise RuntimeError(...)
+          - pattern: raise TypeError(...)
+          - pattern: raise KeyError(...)
+          - pattern: raise NotImplementedError(...)
+          - pattern: raise FileNotFoundError(...)
+      # Skip raises inside Pydantic validator-decorated functions.
+      # Each pattern-not-inside enumerates a decorator stack we want
+      # to exempt; semgrep can't put `...` between a decorator and a
+      # function, so we list the @classmethod variant separately.
+      - pattern-not-inside: |
+          @field_validator(...)
+          def $FN(...):
+              ...
+      - pattern-not-inside: |
+          @field_validator(...)
+          @classmethod
+          def $FN(...):
+              ...
+      - pattern-not-inside: |
+          @model_validator(...)
+          def $FN(...):
+              ...
+      - pattern-not-inside: |
+          @model_validator(...)
+          @classmethod
+          def $FN(...):
+              ...

@@ -1,0 +1,82 @@
+# Docker build context exclusions
+# Keep this file in sync with .gitignore
+
+# Node modules (huge)
+**/node_modules/
+
+# Python caches
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.eggs/
+**/build/
+**/dist/
+**/*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+coverage_html/
+.tox/
+.nox/
+
+# Cache directories
+.mypy_cache/
+.ruff_cache/
+
+# Docker data volumes (mounted, not copied)
+packages/docker/data/
+packages/docker/test-output/
+
+# Documentation build
+docs/_build/
+
+# Test trees — no Dockerfile copies these at build time (test runner mounts
+# them at runtime). Defense in depth against accidental inclusion.
+**/tests/
+
+# Build-supporting files (lint configs, plans, ADRs, scripts) — never shipped.
+internal/
+
+# Docusaurus site — built and served separately, not part of any image.
+packages/docs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local env files
+.env
+.env.local
+*.local
+
+# Test databases
+*.db
+*.sqlite
+
+# Large binary files
+*.pdf
+*.zip
+*.tar.gz
+*.rar

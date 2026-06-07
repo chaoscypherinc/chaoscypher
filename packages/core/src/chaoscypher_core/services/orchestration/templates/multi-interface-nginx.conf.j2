@@ -1,0 +1,154 @@
+{%- set bs = settings.batching -%}
+{%- set upload_bytes = bs.max_upload_bytes -%}
+{%- if upload_bytes >= 1073741824 -%}
+{%- set upload_size_str = (upload_bytes // 1073741824) | string ~ "g" -%}
+{%- elif upload_bytes >= 1048576 -%}
+{%- set upload_size_str = (upload_bytes // 1048576) | string ~ "m" -%}
+{%- else -%}
+{%- set upload_size_str = (upload_bytes // 1024) | string ~ "k" -%}
+{%- endif -%}
+{% if settings.rate_limit.enabled %}
+# Rate limiting zones
+limit_req_zone $binary_remote_addr zone=auth:10m rate={{ settings.rate_limit.login_max_requests }}r/s;
+limit_req_zone $binary_remote_addr zone=api_general:10m rate={{ settings.rate_limit.api_general_max_requests }}r/s;
+limit_req_zone $binary_remote_addr zone=uploads:10m rate={{ settings.rate_limit.uploads_max_requests }}r/s;
+
+# Mutations zone — applies only to POST/PUT/PATCH/DELETE via the per-method
+# key map below. GET/HEAD/OPTIONS resolve to an empty key and bypass the limit
+# (nginx skips limit_req evaluation when the key is empty). Closes the
+# network-retry double-submit risk on upload, chat send, queue POST, etc.
+# without requiring an Idempotency-Key API contract.
+map $request_method $chaoscypher_mutation_key {
+    default      "";
+    POST         $binary_remote_addr;
+    PUT          $binary_remote_addr;
+    PATCH        $binary_remote_addr;
+    DELETE       $binary_remote_addr;
+}
+limit_req_zone $chaoscypher_mutation_key zone=mutations:10m rate={{ settings.rate_limit.mutations_max_requests }}r/s;
+{% endif %}
+
+server {
+    listen 8080;
+    server_name localhost;
+    server_tokens off;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Injected by Docker's nginx template envsubst. Cortex will only trust
+    # X-Auth-User when this token accompanies it.
+    set $chaoscypher_edge_auth_token "${CHAOSCYPHER_EDGE_AUTH_TOKEN}";
+
+    # Request limits — 1m default; upload size only on source-upload routes below.
+    client_max_body_size 1m;
+
+    # Gzip compression
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+    # Security headers
+    include /etc/nginx/security-headers.conf;
+
+    # Internal auth check — nginx subrequest only. Passes the session cookie
+    # and bearer token through; forwards X-Auth-User from the response.
+    location = /auth/verify {
+        internal;
+        # auth_request subrequests inherit server-level client_max_body_size and
+        # apply this location's limit too — the smaller wins. Without this line
+        # an upload larger than the server default (1m) trips 413 in the auth
+        # subrequest before the upload location's override kicks in.
+        client_max_body_size {{ upload_size_str }};
+        proxy_pass http://cortex:8080/api/v1/auth/verify;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header Cookie $http_cookie;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header X-Auth-User "";
+        proxy_set_header X-Auth-Edge-Token "";
+    }
+
+    # Public auth endpoints (bootstrap + recovery). Not behind auth_request.
+    location = /api/v1/auth/status {
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+    location = /api/v1/auth/setup {
+{% if settings.rate_limit.enabled %}
+        limit_req zone=auth burst=3 nodelay;
+{% endif %}
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+    location = /api/v1/auth/login {
+{% if settings.rate_limit.enabled %}
+        limit_req zone=auth burst=3 nodelay;
+{% endif %}
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+    location = /api/v1/auth/logout {
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+
+    # Public settings endpoint — auth-exempt so the SPA can read operator-tunable
+    # config (page sizes, polling intervals, validation limits) before login to
+    # render the login screen with the correct defaults. Never includes secrets.
+    location = /api/v1/settings/public {
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+
+    # Access hint — auth-exempt. The setup wizard's Account step calls this
+    # before authentication is set up, to decide whether to pre-check the
+    # "Allow access from other devices" toggle for users arriving over LAN.
+    location = /api/v1/settings/host {
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+
+    # Container healthcheck endpoint — reachable without a session.
+    location = /api/v1/health {
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/proxy-public.conf;
+    }
+
+    # Upload endpoints — auth + stricter rate limit.
+    location ~ ^/api/v1/sources(/batch|/url)?$ {
+        client_max_body_size {{ upload_size_str }};
+{% if settings.rate_limit.enabled %}
+        limit_req zone=uploads burst=5 nodelay;
+{% endif %}
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/edge-auth-proxy.conf;
+    }
+
+    # All remaining /api/ traffic: auth-gated general rate limit + per-method
+    # mutations cap. nginx evaluates multiple `limit_req` directives in a
+    # location; the first one to trip throttles the request. The mutations
+    # zone keys on method (POST/PUT/PATCH/DELETE) so reads are unaffected.
+    location /api/ {
+{% if settings.rate_limit.enabled %}
+        limit_req zone=api_general burst=50 nodelay;
+        limit_req zone=mutations burst={{ settings.rate_limit.mutations_burst }} nodelay;
+{% endif %}
+        proxy_pass http://cortex:8080;
+        include /etc/nginx/edge-auth-proxy.conf;
+    }
+
+    include /etc/nginx/edge-unauthorized.conf;
+
+    # Serve static files
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache static assets (repeat security headers — nginx drops inherited add_header in location blocks)
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        include /etc/nginx/security-headers.conf;
+    }
+}

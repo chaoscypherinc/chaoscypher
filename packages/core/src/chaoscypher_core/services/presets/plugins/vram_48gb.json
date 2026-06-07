@@ -1,0 +1,31 @@
+{
+  "name": "vram_48gb",
+  "display_name": "48GB VRAM",
+  "version": "1.0.0",
+  "description": "Workstation tier configuration for 30B models with maximum context windows. Run with extensive context for professional knowledge workflows.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 48,
+  "gpu_examples": [
+    "RTX 6000 Ada",
+    "RTX A6000",
+    "2x RTX 4090"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "qwen3:30b",
+    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 49152,
+    "ollama_num_batch": 4096,
+    "ollama_num_parallel": 2
+  },
+
+  "llm_settings": {
+    "ai_context_window": 49152,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false
+  }
+}

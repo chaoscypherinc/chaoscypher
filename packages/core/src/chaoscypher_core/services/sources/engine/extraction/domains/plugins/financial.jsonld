@@ -1,0 +1,1297 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:financial",
+  "name": "financial",
+  "version": "1.11.0",
+  "description": "Financial documents, market analysis, investment, and economic reports",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.2,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "Stock": "Financial Instrument",
+    "Equity": "Financial Instrument",
+    "Share": "Financial Instrument",
+    "SEC": "Regulator",
+    "FINRA": "Regulator",
+    "CFTC": "Regulator"
+  },
+  "entity_exclusions": [
+    {
+      "description": "Raw numbers alone",
+      "examples": [
+        "$5M",
+        "15%",
+        "Q3 2024"
+      ]
+    },
+    {
+      "description": "Boilerplate disclaimers",
+      "examples": [
+        "past performance",
+        "not financial advice",
+        "forward-looking statements"
+      ]
+    }
+  ],
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "financial_core": {
+        "terms": [
+          "stock",
+          "bond",
+          "equity",
+          "dividend",
+          "investment",
+          "portfolio",
+          "asset",
+          "liability",
+          "revenue",
+          "profit",
+          "loss"
+        ],
+        "weight": 1.2
+      },
+      "markets": {
+        "terms": [
+          "market",
+          "exchange",
+          "NYSE",
+          "NASDAQ",
+          "trading",
+          "IPO",
+          "bull market",
+          "bear market",
+          "volatility",
+          "index"
+        ],
+        "weight": 1.0
+      },
+      "metrics": {
+        "terms": [
+          "P/E ratio",
+          "market cap",
+          "ROI",
+          "EBITDA",
+          "EPS",
+          "yield",
+          "spread",
+          "margin",
+          "leverage",
+          "liquidity"
+        ],
+        "weight": 1.1
+      },
+      "instruments": {
+        "terms": [
+          "derivative",
+          "option",
+          "futures",
+          "swap",
+          "hedge fund",
+          "mutual fund",
+          "ETF",
+          "security",
+          "treasury",
+          "commodity"
+        ],
+        "weight": 0.9
+      },
+      "corporate": {
+        "terms": [
+          "merger",
+          "acquisition",
+          "IPO",
+          "quarterly",
+          "annual report",
+          "earnings",
+          "shareholder",
+          "CEO",
+          "CFO",
+          "board"
+        ],
+        "weight": 0.9
+      },
+      "regulation": {
+        "terms": [
+          "SEC",
+          "GAAP",
+          "IFRS",
+          "compliance",
+          "audit",
+          "disclosure",
+          "fiduciary",
+          "regulatory"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [
+      ".pdf"
+    ],
+    "doc_types": [
+      "financial_report",
+      "market_analysis",
+      "investment_document"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\$[\\d,]+\\.?\\d*\\s*(million|billion|trillion|m|b|k)?\\b",
+        "weight": 1.4,
+        "description": "Dollar amounts"
+      },
+      {
+        "regex": "\\b\\d+(\\.\\d+)?\\s*%\\b",
+        "weight": 1.2,
+        "description": "Percentage values"
+      },
+      {
+        "regex": "(?i)\\b(q[1-4]|fy|h[12])\\s*['�]?\\d{2,4}\\b",
+        "weight": 1.3,
+        "description": "Quarter/Fiscal year/Half"
+      },
+      {
+        "regex": "(?i)\\b[A-Z]{1,5}\\b(?=\\s+(stock|shares|equity|common|preferred))",
+        "weight": 1.1,
+        "description": "Ticker symbols"
+      },
+      {
+        "regex": "(?i)\\b(revenue|earnings|ebitda|profit|loss|margin|growth)\\b",
+        "weight": 1.0,
+        "description": "Financial metrics"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.1,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract companies, financial instruments, markets, regulators, and investors\n- Include financial metrics as properties, not standalone entities\n- Use full company names with ticker symbols as aliases\n\nDO NOT EXTRACT:\n- Raw numbers alone: '$5M', '15%', 'Q3 2024' (attach to relevant entity as property)\n- Ticker symbols without context: just 'AAPL' (extract the company instead)\n- Boilerplate disclaimers: 'past performance', 'not financial advice'\n- Footnote markers, table headers, or formatting elements",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- TRANSACTIONS: Capture M&A with acquired, investments with invests_in\n- MARKETS: Link instruments to exchanges with trades_on\n- REGULATION: Connect regulators to companies/markets with regulates\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_instrument",
+        "name": "Financial Instrument",
+        "description": "A stock, bond, derivative, or other financial instrument",
+        "icon": "Receipt",
+        "color": "#d6417d",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "stock",
+          "bond",
+          "security",
+          "derivative",
+          "share",
+          "equity"
+        ],
+        "properties": [
+          {
+            "name": "instrument_type",
+            "display_name": "Instrument Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Instrument Type"
+            ]
+          },
+          {
+            "name": "maturity",
+            "display_name": "Maturity",
+            "property_type": "text",
+            "absorbs_types": [
+              "Maturity"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_company",
+        "name": "Company",
+        "description": "A business entity or corporation",
+        "icon": "Business",
+        "color": "#d64145",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "company",
+          "corporation",
+          "firm",
+          "business",
+          "Inc.",
+          "Ltd.",
+          "Corp."
+        ],
+        "properties": [
+          {
+            "name": "ticker",
+            "display_name": "Ticker Symbol",
+            "property_type": "text",
+            "absorbs_types": [
+              "Ticker"
+            ]
+          },
+          {
+            "name": "sector",
+            "display_name": "Sector",
+            "property_type": "text"
+          },
+          {
+            "name": "market_cap",
+            "display_name": "Market Capitalization",
+            "property_type": "text",
+            "absorbs_types": [
+              "Market Cap"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_market",
+        "name": "Market",
+        "description": "A financial market or exchange",
+        "icon": "TrendingUp",
+        "color": "#d67541",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "market",
+          "exchange",
+          "NYSE",
+          "NASDAQ",
+          "stock exchange",
+          "trading"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_transaction",
+        "name": "Transaction",
+        "description": "A financial transaction, merger, or acquisition",
+        "icon": "Payments",
+        "color": "#d6ad41",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "transaction",
+          "trade",
+          "merger",
+          "acquisition",
+          "deal"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_regulation",
+        "name": "Regulation",
+        "description": "A financial regulation or rule",
+        "icon": "Gavel",
+        "color": "#c8d641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "concepts",
+        "normalization_keywords": [
+          "regulation",
+          "rule",
+          "compliance",
+          "act",
+          "requirement"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_regulator",
+        "name": "Regulator",
+        "description": "A regulatory body (SEC, FCA, etc.)",
+        "icon": "AccountBalance",
+        "color": "#90d641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "regulator",
+          "regulatory body",
+          "SEC",
+          "FCA",
+          "FINRA",
+          "oversight body"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_metric",
+        "name": "Financial Metric",
+        "description": "A financial indicator, ratio, or KPI",
+        "icon": "Insights",
+        "color": "#58d641",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "concepts",
+        "normalization_keywords": [
+          "ratio",
+          "metric",
+          "indicator",
+          "P/E",
+          "ROI",
+          "EBITDA"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_risk",
+        "name": "Risk",
+        "description": "A financial risk category or factor",
+        "icon": "ReportProblem",
+        "color": "#41d662",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "concepts",
+        "normalization_keywords": [
+          "risk",
+          "exposure",
+          "volatility",
+          "downside",
+          "credit risk"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_portfolio",
+        "name": "Portfolio",
+        "description": "A collection of investments",
+        "icon": "Inventory2",
+        "color": "#41d69a",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "portfolio",
+          "investment portfolio",
+          "holdings",
+          "allocation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_fund",
+        "name": "Fund",
+        "description": "An investment fund or vehicle",
+        "icon": "AttachMoney",
+        "color": "#41d6d2",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "fund",
+          "ETF",
+          "mutual fund",
+          "hedge fund",
+          "investment fund"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_event",
+        "name": "Economic Event",
+        "description": "A market-moving or economic event",
+        "icon": "Event",
+        "color": "#41a2d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "economic event",
+          "market event",
+          "crash",
+          "rally",
+          "recession",
+          "boom",
+          "crisis"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_sector",
+        "name": "Sector",
+        "description": "A broad economic sector (e.g. Technology, Healthcare, Financials)",
+        "icon": "Category",
+        "color": "#416ad6",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "sector",
+          "segment"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_industry",
+        "name": "Industry",
+        "description": "A specific industry within a sector (e.g. Semiconductors, Pharmaceuticals)",
+        "icon": "Factory",
+        "color": "#4178d6",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "industry",
+          "vertical"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_analyst",
+        "name": "Analyst",
+        "description": "A financial analyst who researches and issues buy/sell recommendations on instruments",
+        "icon": "Assessment",
+        "color": "#5041d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "analyst",
+          "research analyst",
+          "equity analyst",
+          "credit analyst"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_investor",
+        "name": "Investor",
+        "description": "An investor or fund manager allocating capital — institutional, retail, or fund-based",
+        "icon": "Person",
+        "color": "#7541d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "investor",
+          "fund manager",
+          "portfolio manager",
+          "trader",
+          "shareholder",
+          "stakeholder"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_earnings",
+        "name": "Earnings Report",
+        "description": "A quarterly or annual earnings report",
+        "icon": "Article",
+        "color": "#8841d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "markets",
+        "normalization_keywords": [
+          "earnings",
+          "quarterly results",
+          "annual report",
+          "10-K",
+          "10-Q"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_index",
+        "name": "Index",
+        "description": "A market index tracking a basket of securities (e.g. S&P 500, Dow Jones, NASDAQ Composite)",
+        "icon": "TrendingUp",
+        "color": "#c041d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "index",
+          "S&P 500",
+          "Dow Jones",
+          "NASDAQ composite"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_benchmark",
+        "name": "Benchmark",
+        "description": "A reference value used to evaluate performance (an index, rate, or peer group)",
+        "icon": "Speed",
+        "color": "#d641b6",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "benchmark",
+          "reference rate",
+          "LIBOR",
+          "SOFR"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "fin_template_currency",
+        "name": "Currency",
+        "description": "A national or digital currency",
+        "icon": "AttachMoney",
+        "color": "#d641b5",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "instruments",
+        "normalization_keywords": [
+          "currency",
+          "dollar",
+          "euro",
+          "yen",
+          "cryptocurrency",
+          "bitcoin"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_trades_on",
+        "name": "trades_on",
+        "description": "Instrument, fund, currency, or company trades on a market or index",
+        "icon": "TrendingUp",
+        "color": "#329dcc",
+        "inverse": "trades",
+        "quality_score": 15,
+        "source_types": [
+          "Financial Instrument",
+          "Company",
+          "Fund",
+          "Currency",
+          "Index"
+        ],
+        "target_types": [
+          "Market",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_issues",
+        "name": "issues",
+        "description": "Company, fund, or regulator issues an instrument, currency, regulation, or earnings report",
+        "icon": "Receipt",
+        "color": "#326ccc",
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Regulator"
+        ],
+        "target_types": [
+          "Financial Instrument",
+          "Currency",
+          "Regulation",
+          "Earnings Report"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_regulates",
+        "name": "regulates",
+        "description": "Regulator or regulation governs a market participant, instrument, transaction, or sector",
+        "icon": "Gavel",
+        "color": "#323ccc",
+        "quality_score": 25,
+        "source_types": [
+          "Regulator",
+          "Regulation"
+        ],
+        "target_types": [
+          "Company",
+          "Market",
+          "Financial Instrument",
+          "Fund",
+          "Investor",
+          "Analyst",
+          "Transaction",
+          "Sector",
+          "Industry",
+          "Currency",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_acquired",
+        "name": "acquired",
+        "description": "Company, fund, or investor acquired a company, asset, or instrument",
+        "icon": "Handshake",
+        "color": "#5932cc",
+        "inverse": "acquirer_of",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor"
+        ],
+        "target_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_invested_in",
+        "name": "invested_in",
+        "description": "Fund, portfolio, investor, or company invested in a company, instrument, fund, sector, or currency",
+        "icon": "AttachMoney",
+        "color": "#8a32cc",
+        "inverse": "investor_of",
+        "quality_score": 25,
+        "source_types": [
+          "Fund",
+          "Portfolio",
+          "Company",
+          "Investor"
+        ],
+        "target_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Sector",
+          "Industry",
+          "Currency",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_measures",
+        "name": "measures",
+        "description": "Metric or benchmark measures performance of a company, market, fund, instrument, sector, or portfolio",
+        "icon": "Insights",
+        "color": "#ba32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Financial Metric",
+          "Benchmark",
+          "Index"
+        ],
+        "target_types": [
+          "Company",
+          "Market",
+          "Fund",
+          "Financial Instrument",
+          "Portfolio",
+          "Sector",
+          "Industry",
+          "Currency",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_exposed_to",
+        "name": "exposed_to",
+        "description": "Company, fund, portfolio, investor, or instrument is exposed to a risk, sector, market, or currency",
+        "icon": "ReportProblem",
+        "color": "#cc32ad",
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Portfolio",
+          "Investor",
+          "Financial Instrument"
+        ],
+        "target_types": [
+          "Risk",
+          "Sector",
+          "Industry",
+          "Market",
+          "Currency",
+          "Economic Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_triggered_by",
+        "name": "triggered_by",
+        "description": "Event, transaction, or market move triggered by another event, action, or actor",
+        "icon": "Event",
+        "color": "#cc327c",
+        "quality_score": 25,
+        "source_types": [
+          "Economic Event",
+          "Transaction",
+          "Earnings Report",
+          "Market"
+        ],
+        "target_types": [
+          "Economic Event",
+          "Transaction",
+          "Regulation",
+          "Earnings Report",
+          "Company",
+          "Regulator",
+          "Analyst"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_complies_with",
+        "name": "complies_with",
+        "description": "Company, fund, investor, analyst, or market participant complies with a regulation or regulator",
+        "icon": "Policy",
+        "color": "#cc324c",
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Analyst",
+          "Market",
+          "Financial Instrument"
+        ],
+        "target_types": [
+          "Regulation",
+          "Regulator"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_benchmarks",
+        "name": "benchmarks",
+        "description": "Fund, portfolio, instrument, or company is benchmarked against an index, benchmark, market, or peer",
+        "icon": "TrendingUp",
+        "color": "#cc4932",
+        "quality_score": 15,
+        "source_types": [
+          "Fund",
+          "Portfolio",
+          "Financial Instrument",
+          "Company"
+        ],
+        "target_types": [
+          "Financial Instrument",
+          "Market",
+          "Index",
+          "Benchmark",
+          "Sector",
+          "Industry",
+          "Company"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_correlates_with",
+        "name": "correlates_with",
+        "description": "Instrument, market, sector, currency, metric, or index correlates with another",
+        "icon": "Link",
+        "color": "#cc7a32",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Financial Instrument",
+          "Market",
+          "Index",
+          "Currency",
+          "Sector",
+          "Industry",
+          "Financial Metric",
+          "Economic Event",
+          "Company",
+          "Fund"
+        ],
+        "target_types": [
+          "Financial Instrument",
+          "Market",
+          "Index",
+          "Currency",
+          "Sector",
+          "Industry",
+          "Financial Metric",
+          "Economic Event",
+          "Company",
+          "Fund"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_competes_with",
+        "name": "competes_with",
+        "description": "Company, fund, investor, or instrument competes with another agent-like entity in a market or sector",
+        "icon": "Groups",
+        "color": "#ccaa32",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Financial Instrument"
+        ],
+        "target_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Financial Instrument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_subsidiary_of",
+        "name": "subsidiary_of",
+        "description": "Company or fund is a subsidiary of a parent company or fund",
+        "icon": "AccountTree",
+        "color": "#bdcc32",
+        "inverse": "parent_of",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Fund"
+        ],
+        "target_types": [
+          "Company",
+          "Fund"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_partners_with",
+        "name": "partners_with",
+        "description": "Company, fund, investor, analyst, or regulator partners with another agent-like entity",
+        "icon": "Handshake",
+        "color": "#8dcc32",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Analyst",
+          "Regulator"
+        ],
+        "target_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Analyst",
+          "Regulator"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_downgraded_by",
+        "name": "downgraded_by",
+        "description": "Company, instrument, fund, sector, or currency was downgraded by an analyst, regulator, or rating agency",
+        "icon": "TrendingDown",
+        "color": "#5ccc32",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Sector",
+          "Industry",
+          "Currency"
+        ],
+        "target_types": [
+          "Analyst",
+          "Regulator",
+          "Company"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_upgraded_by",
+        "name": "upgraded_by",
+        "description": "Company, instrument, fund, sector, or currency was upgraded by an analyst, regulator, or rating agency",
+        "icon": "TrendingUp",
+        "color": "#32cc39",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Sector",
+          "Industry",
+          "Currency"
+        ],
+        "target_types": [
+          "Analyst",
+          "Regulator",
+          "Company"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_listed_on",
+        "name": "listed_on",
+        "description": "Company, instrument, fund, or currency is listed on an exchange or index",
+        "icon": "Business",
+        "color": "#32cc69",
+        "inverse": "lists",
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Currency"
+        ],
+        "target_types": [
+          "Market",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_hedges",
+        "name": "hedges",
+        "description": "Instrument, fund, portfolio, company, or investor hedges against a risk, instrument, currency, or market exposure",
+        "icon": "Shield",
+        "color": "#32cc9a",
+        "quality_score": 15,
+        "source_types": [
+          "Financial Instrument",
+          "Fund",
+          "Portfolio",
+          "Company",
+          "Investor"
+        ],
+        "target_types": [
+          "Risk",
+          "Financial Instrument",
+          "Currency",
+          "Market",
+          "Sector",
+          "Industry",
+          "Economic Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_divested",
+        "name": "divested",
+        "description": "Company, fund, investor, or portfolio divested a subsidiary, instrument, fund, or asset",
+        "icon": "Payments",
+        "color": "#32ccca",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Portfolio"
+        ],
+        "target_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Currency"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_trades",
+        "name": "trades",
+        "description": "Market or index trades a financial instrument, company stock, fund, or currency",
+        "icon": "TrendingUp",
+        "color": "#329dcc",
+        "inverse": "trades_on",
+        "quality_score": 15,
+        "source_types": [
+          "Market",
+          "Index"
+        ],
+        "target_types": [
+          "Financial Instrument",
+          "Company",
+          "Fund",
+          "Currency",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_acquirer_of",
+        "name": "acquirer_of",
+        "description": "Company, fund, or instrument was acquired by another company, fund, or investor (inverse of acquired)",
+        "icon": "Handshake",
+        "color": "#5932cc",
+        "inverse": "acquired",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund"
+        ],
+        "target_types": [
+          "Company",
+          "Fund",
+          "Investor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_investor_of",
+        "name": "investor_of",
+        "description": "Company, instrument, fund, sector, or currency has an investor (inverse of invested_in)",
+        "icon": "AttachMoney",
+        "color": "#8a32cc",
+        "inverse": "invested_in",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Sector",
+          "Industry",
+          "Currency",
+          "Index"
+        ],
+        "target_types": [
+          "Fund",
+          "Portfolio",
+          "Company",
+          "Investor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_parent_of",
+        "name": "parent_of",
+        "description": "Company or fund is the parent of a subsidiary company or fund",
+        "icon": "AccountTree",
+        "color": "#bdcc32",
+        "inverse": "subsidiary_of",
+        "quality_score": 25,
+        "source_types": [
+          "Company",
+          "Fund"
+        ],
+        "target_types": [
+          "Company",
+          "Fund"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_lists",
+        "name": "lists",
+        "description": "Market or index lists a company, instrument, fund, or currency",
+        "icon": "Business",
+        "color": "#32cc69",
+        "inverse": "listed_on",
+        "quality_score": 15,
+        "source_types": [
+          "Market",
+          "Index"
+        ],
+        "target_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Currency"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_owns",
+        "name": "owns",
+        "description": "Ownership of a financial instrument, company, fund, or asset (broader than acquired/invested_in — captures holding without transaction context)",
+        "icon": "AccountBalance",
+        "color": "#7c5e1a",
+        "quality_score": 20,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Investor",
+          "Portfolio"
+        ],
+        "target_types": [
+          "Company",
+          "Fund",
+          "Financial Instrument",
+          "Currency",
+          "Index"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_manages",
+        "name": "manages",
+        "description": "Active management of a fund, portfolio, company, or asset (CEO/manager-level, distinct from passive ownership)",
+        "icon": "ManageAccounts",
+        "color": "#8a6b22",
+        "quality_score": 20,
+        "source_types": [
+          "Investor",
+          "Company",
+          "Fund",
+          "Analyst"
+        ],
+        "target_types": [
+          "Company",
+          "Fund",
+          "Portfolio",
+          "Financial Instrument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_founded",
+        "name": "founded",
+        "description": "An investor, executive, or person founded a company, fund, or institution",
+        "icon": "Foundation",
+        "color": "#9a772a",
+        "quality_score": 25,
+        "source_types": [
+          "Investor",
+          "Company"
+        ],
+        "target_types": [
+          "Company",
+          "Fund"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_event_in",
+        "name": "event_in",
+        "description": "A company or instrument was an event in a broader economic context (acquired by, divested from, restructured during)",
+        "icon": "TimelineOutlined",
+        "color": "#aa8332",
+        "quality_score": 15,
+        "source_types": [
+          "Company",
+          "Fund",
+          "Financial Instrument",
+          "Investor"
+        ],
+        "target_types": [
+          "Economic Event",
+          "Transaction",
+          "Regulation"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "fin_edge_regulated_by",
+        "name": "regulated_by",
+        "description": "Inverse of regulates: a company, industry, market, or instrument is regulated by a regulator or regulation",
+        "icon": "Gavel",
+        "color": "#bb944b",
+        "quality_score": 20,
+        "source_types": [
+          "Company",
+          "Financial Instrument",
+          "Fund",
+          "Investor",
+          "Market",
+          "Industry",
+          "Sector",
+          "Transaction",
+          "Currency"
+        ],
+        "target_types": [
+          "Regulation",
+          "Regulator"
+        ]
+      }
+    ]
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Apple Inc.",
+        "aliases": [
+          "Apple",
+          "AAPL",
+          "Apple Computer"
+        ],
+        "note": "Ticker symbols and historical names become aliases"
+      },
+      {
+        "canonical": "JPMorgan Chase & Co.",
+        "aliases": [
+          "JPMorgan",
+          "Chase",
+          "JPM"
+        ],
+        "note": "Short names and ticker symbols become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Microsoft",
+        "target": "Activision Blizzard",
+        "type": "acquired",
+        "note": "Use acquired for M&A transactions"
+      },
+      {
+        "source": "Tesla",
+        "target": "S&P 500",
+        "type": "listed_on",
+        "note": "Use listed_on for exchange/index membership"
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 20,
+    "max_same_source_type": 8,
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 35
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "chairman",
+    "director",
+    "president"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "acknowledgments",
+      "metadata",
+      "web_artifacts",
+      "code_blocks"
+    ]
+  },
+  "extraction_filtering_mode": "balanced",
+  "icon": "AccountBalance"
+}

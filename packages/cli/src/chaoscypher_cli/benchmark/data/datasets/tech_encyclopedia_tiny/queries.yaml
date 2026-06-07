@@ -1,0 +1,428 @@
+version: "1.0"
+queries:
+
+# ── FACTUAL SINGLE HOP ──────────────────────────────────────────────────────
+
+  - id: q001
+    band: factual_single_hop
+    question: "Which agency funded the development of ARPANET?"
+    gold_entities: ["ARPA", "ARPANET"]
+    gold_answer: |
+      The Advanced Research Projects Agency (ARPA), an arm of the United States
+      Department of Defense, funded the development of ARPANET.
+
+  - id: q002
+    band: factual_single_hop
+    question: "What company was awarded the contract to build the ARPANET switching equipment in December 1968?"
+    gold_entities: ["Bolt, Beranek and Newman", "ARPANET"]
+    gold_answer: |
+      The contract to build the network's switching equipment was awarded to
+      Bolt, Beranek and Newman in December 1968.
+
+  - id: q003
+    band: factual_single_hop
+    question: "What was the IMP and what hardware was it based on?"
+    gold_entities: ["IMP", "Honeywell DDP-516"]
+    gold_answer: |
+      The IMP (Interface Message Processor) was a Honeywell DDP-516 minicomputer
+      modified to run BBN's networking software; it sat between a host computer
+      and the network's leased telephone lines and handled packet routing on the
+      host's behalf.
+
+  - id: q004
+    band: factual_single_hop
+    question: "On what date was the first IMP delivered, and to which institution?"
+    gold_entities: ["IMP", "UCLA"]
+    gold_answer: |
+      The first IMP was delivered to UCLA on August 30, 1969.
+
+  - id: q005
+    band: factual_single_hop
+    question: "What was the first message ever transmitted over ARPANET?"
+    gold_entities: ["ARPANET", "Charley Kline"]
+    gold_answer: |
+      The first transmitted message was "lo" — the first two letters of "login"
+      — after the system crashed when graduate student Charley Kline at UCLA
+      had typed the letters "L" and "O" while attempting to log in to the SRI host
+      on October 29, 1969.
+
+  - id: q006
+    band: factual_single_hop
+    question: "What protocol replaced NCP on ARPANET, and in what year did the transition occur?"
+    gold_entities: ["NCP", "TCP/IP", "ARPANET"]
+    gold_answer: |
+      TCP/IP replaced NCP on ARPANET in 1983 in a transition known as flag day,
+      displacing NCP entirely.
+
+  - id: q007
+    band: factual_single_hop
+    question: "Who coined the term 'packet' and in what year?"
+    gold_entities: ["Donald Davies"]
+    gold_answer: |
+      Donald Davies coined the term "packet" in 1965 and built a small network
+      at NPL to demonstrate the technique.
+
+  - id: q008
+    band: factual_single_hop
+    question: "What was the Network Working Group, and who convened it?"
+    gold_entities: ["Network Working Group", "Steve Crocker", "UCLA"]
+    gold_answer: |
+      The Network Working Group was an informal body convened by Steve Crocker
+      at UCLA in 1968 that produced what became known as the Network Control
+      Program, or NCP, in 1970.
+
+  - id: q009
+    band: factual_single_hop
+    question: "Which four universities formed the original four nodes of ARPANET by the end of 1969?"
+    gold_entities: ["UCLA", "Stanford Research Institute", "University of California at Santa Barbara", "University of Utah"]
+    gold_answer: |
+      By the end of 1969, four nodes were connected: UCLA, SRI, the University
+      of California at Santa Barbara, and the University of Utah.
+
+  - id: q010
+    band: factual_single_hop
+    question: "What Turing Award did Robert Kahn and Vinton Cerf share, and for what contribution?"
+    gold_entities: ["Robert Kahn", "Vinton Cerf"]
+    gold_answer: |
+      Robert Kahn and Vinton Cerf shared the 2004 Turing Award for the design
+      of TCP/IP.
+
+  - id: q011
+    band: factual_single_hop
+    question: "Who invented electronic mail on ARPANET and what symbol did he choose as a separator?"
+    gold_entities: ["Ray Tomlinson", "BBN"]
+    gold_answer: |
+      Ray Tomlinson, working at BBN in 1971, modified the existing SNDMSG and
+      CPYNET programs to send messages between hosts and chose the at-sign
+      character as a separator between user and host names.
+
+  - id: q012
+    band: factual_single_hop
+    question: "Where is the original IMP preserved today?"
+    gold_entities: ["IMP", "Computer History Museum"]
+    gold_answer: |
+      The IMP, decorated with hand-drawn lightning bolts by the BBN engineers,
+      is preserved at the Computer History Museum in Mountain View, California.
+
+  - id: q013
+    band: factual_single_hop
+    question: "What RFC number did Steve Crocker author, and what was its title?"
+    gold_entities: ["Steve Crocker", "RFC 1"]
+    gold_answer: |
+      Steve Crocker authored RFC 1, titled "Host Software," which began the
+      Request for Comments document series in April 1969.
+
+  - id: q014
+    band: factual_single_hop
+    question: "In what year did ARPANET service end?"
+    gold_entities: ["ARPANET"]
+    gold_answer: |
+      ARPANET service ended in 1990.
+
+  - id: q015
+    band: factual_single_hop
+    question: "What RFC number specified FTP, and who authored it?"
+    gold_entities: ["Abhay Bhushan", "FTP"]
+    gold_answer: |
+      FTP was originally specified by Abhay Bhushan in RFC 114.
+
+# ── PARAPHRASE ──────────────────────────────────────────────────────────────
+
+  - id: q016
+    band: paraphrase
+    question: "Which defense research body provided the money that built the first packet-switched wide-area network?"
+    gold_entities: ["ARPA", "ARPANET"]
+    gold_answer: |
+      The Advanced Research Projects Agency (ARPA), an arm of the United States
+      Department of Defense, funded the development of ARPANET.
+
+  - id: q017
+    band: paraphrase
+    question: "The Cambridge acoustics firm that had previously employed Licklider was later awarded the contract to manufacture the ARPANET routers. Name that firm."
+    gold_entities: ["Bolt, Beranek and Newman"]
+    gold_answer: |
+      Bolt, Beranek and Newman — Licklider's former employer — was awarded the
+      contract to build the network's switching equipment in December 1968.
+
+  - id: q018
+    band: paraphrase
+    question: "What piece of purpose-built hardware sat between each host and the telephone-line backbone and forwarded packets on the host's behalf?"
+    gold_entities: ["IMP"]
+    gold_answer: |
+      The Interface Message Processor (IMP) sat between a host computer and
+      the network's leased telephone lines and handled packet routing on the
+      host's behalf.
+
+  - id: q019
+    band: paraphrase
+    question: "Which British researcher at a national measurement laboratory independently invented the idea of splitting messages into discrete chunks for transmission, and what did he name those chunks?"
+    gold_entities: ["Donald Davies", "National Physical Laboratory"]
+    gold_answer: |
+      Donald Davies at the National Physical Laboratory in the United Kingdom
+      coined the term "packet" in 1965 and built a small network at NPL to
+      demonstrate the technique.
+
+  - id: q020
+    band: paraphrase
+    question: "The informal standards body that met at UCLA in 1968 produced the first host-to-host protocol. What did that protocol come to be called?"
+    gold_entities: ["Network Working Group", "NCP"]
+    gold_answer: |
+      The Network Working Group, convened by Steve Crocker at UCLA in 1968,
+      produced what became known as the Network Control Program, or NCP, in 1970.
+
+  - id: q021
+    band: paraphrase
+    question: "Which person moved from MIT Lincoln Laboratory to lead the ARPANET design effort after Robert Taylor proposed the network?"
+    gold_entities: ["Lawrence Roberts", "MIT Lincoln Laboratory"]
+    gold_answer: |
+      Robert Taylor brought in Lawrence Roberts, then at MIT Lincoln Laboratory,
+      to lead the project.
+
+  - id: q022
+    band: paraphrase
+    question: "A BBN engineer's 1971 modifications to two existing programs, SNDMSG and CPYNET, gave rise to which now-universal communication tool?"
+    gold_entities: ["Ray Tomlinson", "BBN"]
+    gold_answer: |
+      Ray Tomlinson, working at BBN in 1971, modified the existing SNDMSG and
+      CPYNET programs to send messages between hosts, giving rise to electronic
+      mail.
+
+  - id: q023
+    band: paraphrase
+    question: "Two researchers — one who had moved from UCLA to Stanford — jointly designed the successor to NCP. Name them and the layered protocol they created."
+    gold_entities: ["Robert Kahn", "Vinton Cerf", "TCP/IP"]
+    gold_answer: |
+      Robert Kahn, by then at ARPA, and Vinton Cerf, who had moved from UCLA
+      to Stanford, designed the Transmission Control Program, later split into
+      TCP and IP.
+
+  - id: q024
+    band: paraphrase
+    question: "The laboratory at the first ARPANET node was led by the researcher who had developed the mathematical theory of queuing that underpins packet networks. Who was he?"
+    gold_entities: ["Leonard Kleinrock", "UCLA"]
+    gold_answer: |
+      Leonard Kleinrock, who had developed the queueing theory underlying packet
+      networks in his 1962 MIT doctoral dissertation, led the laboratory at UCLA
+      where the first ARPANET node was installed.
+
+  - id: q025
+    band: paraphrase
+    question: "What widely used document series, still maintained by the body that oversees Internet standards, did the NWG introduce to share protocol proposals?"
+    gold_entities: ["RFC series", "Internet Engineering Task Force"]
+    gold_answer: |
+      The Network Working Group introduced the Request for Comments document
+      series, which began in April 1969 and is now maintained by the Internet
+      Engineering Task Force.
+
+  - id: q026
+    band: paraphrase
+    question: "The second ARPANET node was installed in the laboratory of the researcher who created an early networked application system at a Menlo Park institute. Identify the researcher and the system."
+    gold_entities: ["Douglas Engelbart", "NLS", "Stanford Research Institute"]
+    gold_answer: |
+      The second node was installed at Stanford Research Institute in Menlo Park,
+      in the laboratory of Douglas Engelbart, whose NLS system hosted some of
+      the earliest networked applications.
+
+  - id: q027
+    band: paraphrase
+    question: "A distributed, survivable message-block network described in 1964 reports influenced the ARPANET design. Who authored those reports and at which think-tank?"
+    gold_entities: ["Paul Baran", "RAND Corporation"]
+    gold_answer: |
+      Paul Baran at the RAND Corporation described a "distributed adaptive
+      message block network" intended to survive partial destruction in a nuclear
+      exchange in his 1964 reports.
+
+  - id: q028
+    band: paraphrase
+    question: "A 1974 joint paper by the two TCP/IP designers described a layered model for interconnecting diverse networks. What was the paper's title?"
+    gold_entities: ["Robert Kahn", "Vinton Cerf", "TCP/IP"]
+    gold_answer: |
+      Their May 1974 paper was titled "A Protocol for Packet Network
+      Intercommunication."
+
+
+# ── MULTI HOP ───────────────────────────────────────────────────────────────
+
+  - id: q029
+    band: multi_hop
+    question: "Which institution employed the engineer who led the team that built the IMP, and what hardware did that team modify to build it?"
+    gold_entities: ["Frank Heart", "Bolt, Beranek and Newman", "Honeywell DDP-516"]
+    gold_answer: |
+      Frank Heart led the BBN team that built the IMP. The team modified a
+      Honeywell DDP-516 minicomputer to run BBN's networking software, producing
+      the IMP.
+
+  - id: q030
+    band: multi_hop
+    question: "The person who became ARPA director in 1966 observed a problem with incompatible terminals and proposed a shared network. Who had held that ARPA director role immediately before him?"
+    gold_entities: ["Robert Taylor", "Ivan Sutherland", "ARPA"]
+    gold_answer: |
+      Robert Taylor took office in 1966. He had been preceded as director of
+      the Information Processing Techniques Office at ARPA by Ivan Sutherland,
+      who had in turn succeeded Licklider.
+
+  - id: q031
+    band: multi_hop
+    question: "Licklider wrote his 'Intergalactic Computer Network' memos while at a particular company, and that same company later built the ARPANET routers. Name the company and the router device."
+    gold_entities: ["Bolt, Beranek and Newman", "IMP"]
+    gold_answer: |
+      Licklider wrote the memos while at Bolt, Beranek and Newman in 1962.
+      That same firm was later awarded the contract to build the network's
+      switching equipment and designed and built the Interface Message Processor
+      (IMP).
+
+  - id: q032
+    band: multi_hop
+    question: "The researcher who developed packet-queueing theory as a doctoral dissertation later hosted the first ARPANET node in his laboratory. At which university was his lab, and at which university did he write his dissertation?"
+    gold_entities: ["Leonard Kleinrock", "UCLA", "MIT"]
+    gold_answer: |
+      Leonard Kleinrock developed the queueing theory in his 1962 MIT doctoral
+      dissertation. His laboratory was at UCLA, where the first ARPANET node
+      was installed.
+
+  - id: q033
+    band: multi_hop
+    question: "Robert Kahn co-invented TCP/IP and shared a Turing Award for it. Before joining ARPA, at which organization did Kahn work when he helped design the IMP?"
+    gold_entities: ["Robert Kahn", "Bolt, Beranek and Newman", "ARPA", "TCP/IP"]
+    gold_answer: |
+      Robert Kahn was a member of the BBN team that designed and built the IMP.
+      He later moved to ARPA, where he and Vinton Cerf designed TCP/IP and shared
+      the 2004 Turing Award for that work.
+
+  - id: q034
+    band: multi_hop
+    question: "The second ARPANET node was at SRI, and the graduate student who sent the first ARPANET message was at the first node. Name the student and the date of that transmission."
+    gold_entities: ["Charley Kline", "UCLA", "Stanford Research Institute"]
+    gold_answer: |
+      Charley Kline, a graduate student at UCLA (the first node), attempted to
+      log in to the SRI host on October 29, 1969, and his partial transmission
+      became the network's first message.
+
+  - id: q035
+    band: multi_hop
+    question: "Which two independent researchers developed the concept of packet switching that Roberts incorporated into the ARPANET design, and at which institutions did they work?"
+    gold_entities: ["Paul Baran", "Donald Davies", "RAND Corporation", "National Physical Laboratory"]
+    gold_answer: |
+      Paul Baran at the RAND Corporation and Donald Davies at the National
+      Physical Laboratory in the United Kingdom independently developed packet
+      switching; Roberts incorporated both lines of work into the ARPANET design.
+
+  - id: q036
+    band: multi_hop
+    question: "Licklider left ARPA in 1964 and was replaced by two successive directors before the network proposal was made. Name both successors and which one proposed funding the shared network."
+    gold_entities: ["Ivan Sutherland", "Robert Taylor", "ARPA"]
+    gold_answer: |
+      Licklider was succeeded by Ivan Sutherland and then by Robert Taylor.
+      Taylor, who took office in 1966, proposed funding a single shared network
+      to connect the incompatible ARPA-funded labs.
+
+  - id: q037
+    band: multi_hop
+    question: "Vinton Cerf co-designed TCP/IP while at Stanford. At which institution had Cerf previously worked before moving to Stanford, and which ARPA program was he collaborating on when he co-wrote the 1974 paper?"
+    gold_entities: ["Vinton Cerf", "UCLA", "Stanford", "TCP/IP"]
+    gold_answer: |
+      Vinton Cerf had moved from UCLA to Stanford before co-designing TCP/IP.
+      He and Robert Kahn co-authored the May 1974 paper "A Protocol for Packet
+      Network Intercommunication" while Kahn was at ARPA and Cerf was at Stanford.
+
+  - id: q038
+    band: multi_hop
+    question: "The NCP protocol was produced by the Network Working Group in 1970, but was eventually replaced. What specific limitation of NCP drove the replacement effort, and what was the replacement?"
+    gold_entities: ["NCP", "TCP/IP", "Network Working Group"]
+    gold_answer: |
+      NCP's shortcomings were its dependence on a reliable network and its
+      inability to interconnect with other networks. These drove the design of
+      what became TCP/IP, deployed on ARPANET in 1983.
+
+# ── FINE GRAINED DISCRIMINATION ─────────────────────────────────────────────
+
+  - id: q039
+    band: fine_grained_discrimination
+    question: "Both Paul Baran and Donald Davies independently developed packet switching. Which one coined the word 'packet' itself?"
+    gold_entities: ["Donald Davies"]
+    gold_answer: |
+      Donald Davies coined the term "packet" in 1965. Paul Baran independently
+      developed distributed switching earlier but used the term "message block,"
+      not "packet."
+
+  - id: q040
+    band: fine_grained_discrimination
+    question: "Licklider was succeeded as ARPA director by two people in sequence. Which of those two successors actually proposed building the shared ARPANET?"
+    gold_entities: ["Robert Taylor"]
+    gold_answer: |
+      Robert Taylor, the second successor, proposed funding a single shared
+      network after observing that ARPA-funded labs had incompatible terminals
+      and accounting systems. Ivan Sutherland preceded Taylor but is not credited
+      with the proposal.
+
+  - id: q041
+    band: fine_grained_discrimination
+    question: "Robert Kahn and Vinton Cerf both contributed to ARPANET. Which one was a member of the original BBN team that built the IMP before later moving to ARPA?"
+    gold_entities: ["Robert Kahn"]
+    gold_answer: |
+      Robert Kahn was a member of the BBN team that built the IMP. Vinton Cerf
+      was not part of the BBN team; he worked at UCLA and then Stanford.
+
+  - id: q042
+    band: fine_grained_discrimination
+    question: "The first and second ARPANET nodes were at UCLA and SRI respectively. The laboratory at one of these nodes belonged to the researcher who developed queueing theory for packet networks. Which node was that?"
+    gold_entities: ["UCLA", "Leonard Kleinrock"]
+    gold_answer: |
+      The first node (UCLA) was in Leonard Kleinrock's laboratory. Kleinrock had
+      developed the queueing theory underlying packet networks. The second node
+      at SRI was in Douglas Engelbart's laboratory.
+
+  - id: q043
+    band: fine_grained_discrimination
+    question: "FTP and Telnet were both early ARPANET applications, but only one was specified in a numbered RFC cited in the corpus. Which application was that, and what was the RFC number?"
+    gold_entities: ["FTP", "Abhay Bhushan"]
+    gold_answer: |
+      FTP was originally specified by Abhay Bhushan in RFC 114. Telnet is
+      mentioned as a remote-login application but no specific RFC number is cited
+      for it in the corpus.
+
+  - id: q044
+    band: fine_grained_discrimination
+    question: "Licklider described his 'Intergalactic Computer Network' idea at two different employers in succession. At which employer did he write those memoranda, and at which did he fund follow-on research?"
+    gold_entities: ["Bolt, Beranek and Newman", "ARPA"]
+    gold_answer: |
+      Licklider wrote the memoranda while at Bolt, Beranek and Newman in 1962.
+      Later that year he became director of the Information Processing Techniques
+      Office at ARPA, where he funded foundational work in time-sharing and
+      human-machine interaction.
+
+  - id: q045
+    band: fine_grained_discrimination
+    question: "Two Turing Awards mentioned in the corpus went to ARPANET contributors: one in 2004 and one in 2013. The 2013 award was NOT for TCP/IP. What was it for and who received it?"
+    gold_entities: ["Leslie Lamport"]
+    gold_answer: |
+      Leslie Lamport received the 2013 Turing Award for his foundational
+      contributions to distributed systems theory, not for TCP/IP. The 2004
+      award went to Robert Kahn and Vinton Cerf for TCP/IP.
+
+# ── OUT OF SCOPE ─────────────────────────────────────────────────────────────
+
+  - id: q046
+    band: out_of_scope
+    expect_refusal: true
+    question: "What was Vint Cerf's undergraduate major at Stanford?"
+
+  - id: q047
+    band: out_of_scope
+    expect_refusal: true
+    question: "How many packets per second can a modern Internet router forward?"
+
+  - id: q048
+    band: out_of_scope
+    expect_refusal: true
+    question: "Which successor protocol to IPv4 is widely deployed today for Internet addressing?"
+
+  - id: q049
+    band: out_of_scope
+    expect_refusal: true
+    question: "What was Paul Baran's salary at the RAND Corporation?"
+
+  - id: q050
+    band: out_of_scope
+    expect_refusal: true
+    question: "Which company acquired BBN Technologies after the ARPANET era?"

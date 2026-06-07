@@ -1,0 +1,888 @@
+# Shared tooling configuration for ChaosCypher workspace
+# Single source of truth for: Ruff (lint + format), MyPy, and Interrogate
+
+# ============================================================================
+# import-linter — Module Boundary Enforcement
+# ============================================================================
+# Replaces the AST-based CC013 / CC014 / CC042 / CC043 checks from
+# scripts/lint_claude_rules.py. Contracts run via `make lint-claude`
+# (which invokes `uv run lint-imports`) or directly:
+#
+#   uv run lint-imports
+#
+# Documentation: https://import-linter.readthedocs.io
+
+[tool.importlinter]
+root_packages = [
+    "chaoscypher_core",
+    "chaoscypher_cortex",
+    "chaoscypher_neuron",
+    "chaoscypher_cli",
+]
+# CC010's "Core stays framework-agnostic" contract forbids external
+# packages (fastapi/uvicorn/starlette), which requires this flag.
+include_external_packages = true
+# Match the AST checker's CC012 behaviour: TYPE_CHECKING imports are
+# type-only and don't execute at runtime, so they don't violate
+# port-compliance / boundary rules. The original allowlist was sized
+# against runtime imports only.
+exclude_type_checking_imports = true
+
+# ----------------------------------------------------------------------------
+# Workspace dependency direction (CC013 / CC014 / CC042 / CC043)
+# ----------------------------------------------------------------------------
+# Two-layer architecture:
+#   Upper:  chaoscypher_cortex, chaoscypher_neuron, chaoscypher_cli (peers)
+#   Lower:  chaoscypher_core
+#
+# Layers contract guarantees:
+#   - Lower layers cannot import upper layers (CC014: core never imports
+#     cortex / neuron / cli).
+#   - Peers within the same layer cannot import each other (CC042: cortex
+#     never imports neuron / cli; CC013: neuron / cli never import cortex;
+#     CC043: neuron never imports cli — and the cortex / neuron pair too).
+#   - Upper layers may freely depend on lower (cortex / neuron / cli all
+#     depend on core).
+[[tool.importlinter.contracts]]
+name = "Workspace dependency direction"
+type = "layers"
+layers = [
+    "chaoscypher_cortex | chaoscypher_neuron | chaoscypher_cli",
+    "chaoscypher_core",
+]
+exhaustive = false
+# CC013 deferred allowlist (chaoscypher_cortex.shared.config /
+# chaoscypher_cortex.features.chats.streaming) was carried in
+# scripts/lint_claude_rules.py for years but is now empty in practice:
+# the streaming module moved down into chaoscypher_core.streaming.chat,
+# the cortex shared.config dir is an empty namespace pkg, and neuron /
+# cli no longer have any import sites against either path. The CC013
+# allowlist is effectively drained.
+
+# ----------------------------------------------------------------------------
+# CC010 — Web framework isolation in Core
+# ----------------------------------------------------------------------------
+# chaoscypher_core must remain framework-agnostic. fastapi / uvicorn /
+# starlette never belong in core, anywhere.
+[[tool.importlinter.contracts]]
+name = "Core stays framework-agnostic"
+type = "forbidden"
+source_modules = ["chaoscypher_core"]
+forbidden_modules = [
+    "fastapi",
+    "uvicorn",
+    "starlette",
+]
+
+# ----------------------------------------------------------------------------
+# CC010 (second half) — SQLModel only in the storage layer
+# ----------------------------------------------------------------------------
+# The original AST rule said: SQLModel is only permitted inside
+# adapters/sqlite/, repos/, database/, operations/, queue/, llm_queue/,
+# streaming/, repo_factories/, and services/reset/ (the last as transitional
+# allowance from PR2b Task 22). Everywhere else in core — services,
+# ports, analytics, factories, plugins, mcp, app_config, top-level files —
+# it must not appear, because those layers must remain framework-agnostic.
+#
+# We express the prohibition by listing the "forbidden source subpackages"
+# explicitly. Top-level core files (bootstrap.py, settings.py, models.py
+# etc.) currently never import sqlmodel; if they ever do, the missing
+# coverage gap is narrow enough to catch in code review.
+[[tool.importlinter.contracts]]
+name = "Core: SQLModel only in storage / runtime layers"
+type = "forbidden"
+source_modules = [
+    "chaoscypher_core.analytics",
+    "chaoscypher_core.app_config",
+    "chaoscypher_core.factories",
+    "chaoscypher_core.mcp",
+    "chaoscypher_core.plugins",
+    "chaoscypher_core.ports",
+    "chaoscypher_core.services",
+]
+forbidden_modules = ["sqlmodel"]
+# Match the AST checker — the original rule fired only on direct
+# `import sqlmodel` / `from sqlmodel ...` statements in service files,
+# not on transitive paths through, say, queue.client.
+allow_indirect_imports = true
+
+# ----------------------------------------------------------------------------
+# CC012 — Core service / adapter port-compliance
+# ----------------------------------------------------------------------------
+# Services under chaoscypher_core.services receive adapter-layer
+# dependencies via Phase 1 ports (LLMProviderPort, EmbeddingProviderProtocol,
+# RetryPolicyPort, StructuredExtractorPort, the source-storage protocols).
+# Runtime imports of chaoscypher_core.adapters.* in services are
+# port-compliance violations.
+#
+# TYPE_CHECKING imports are exempt (they are type hints only and do not
+# execute at runtime); the top-level `exclude_type_checking_imports = true`
+# applies to every contract.
+#
+# The 10 ignore_imports entries below mirror the per-file allowlist from
+# scripts/lint_claude_rules.py:check_port_compliance_in_services.
+# Each entry preserves the phase-tag comment from the original allowlist
+# so the cleanup work stays trackable.
+[[tool.importlinter.contracts]]
+name = "Core services depend on ports, not adapters"
+type = "forbidden"
+source_modules = ["chaoscypher_core.services"]
+forbidden_modules = ["chaoscypher_core.adapters"]
+# CC012 only forbids DIRECT runtime imports of chaoscypher_core.adapters.*
+# from service files. Transitive paths (e.g. through queue.client or
+# the package __init__) match the AST checker's scope and are allowed.
+allow_indirect_imports = true
+ignore_imports = [
+    # Raw engine caller: backup service vacuums/copies the SQLite file
+    # directly. No port abstraction would help; this is storage
+    # infrastructure. Keep indefinitely.
+    "chaoscypher_core.services.backup -> chaoscypher_core.adapters.sqlite.engine",
+    # ``GraphService.from_adapter(adapter)`` composes a concrete graph repo
+    # from the adapter. Could be eliminated by having Engine construct the
+    # repo and inject it (composition-root refactor — Phase 4+).
+    "chaoscypher_core.services.graph.management.node -> chaoscypher_core.adapters.sqlite.repos",
+    # Same ``from_adapter`` pattern as graph/management/node.py.
+    # Phase 4+ composition-root refactor to eliminate.
+    "chaoscypher_core.services.search.engine.search -> chaoscypher_core.adapters.sqlite.repos",
+    # Lazy fallback: SourceCommitService accepts an embedding port via
+    # constructor; when none is passed, it builds one from settings.
+    # The fallback import stays until the Engine wires the port
+    # unconditionally — Phase 4+.
+    "chaoscypher_core.services.sources.engine.commit.service -> chaoscypher_core.adapters.embedding",
+    # Lazy fallback: AIEntityExtractor constructs its LLM provider if
+    # the port is not injected. Same pattern as commit/service.py.
+    "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities -> chaoscypher_core.adapters.llm",
+    # Phase 2 kept ``create_vision_provider`` as a factory with two
+    # non-Engine callers. Vision adapter wiring lands in Phase 4+.
+    "chaoscypher_core.services.vision.service -> chaoscypher_core.adapters.llm.provider",
+    # Plugin construction path: tool plugins can't receive ports via
+    # constructor because they're discovered at runtime. Eliminating
+    # this means building a plugin-level injection mechanism — Phase 5+.
+    "chaoscypher_core.services.workflows.tools.plugins.ai_generate_embedding_plugin -> chaoscypher_core.adapters.embedding",
+    # Same as ai_generate_embedding_plugin.py.
+    "chaoscypher_core.services.workflows.tools.plugins.ai_extract_json_plugin -> chaoscypher_core.adapters.llm",
+    # PR2b Task 22 transitional: the 5 reset services moved down from
+    # cortex still import adapter models directly. PR2b Task 23 replaces
+    # those with Protocol calls and removes most entries; database_reset
+    # still imports adapters.sqlite.engine for evict_engine — that is
+    # adapter infrastructure, kept as a permanent allowlist entry.
+    "chaoscypher_core.services.reset.database_reset -> chaoscypher_core.adapters.sqlite.engine",
+    # Same from_adapter pattern as graph/management/node.py; lazy repo
+    # construction for snapshot aggregation. The module-scope import is
+    # GraphBreakdownQueryProtocol (a port); only the from_adapter factory
+    # method lazily imports the concrete repo.
+    "chaoscypher_core.services.graph.snapshot.build_service -> chaoscypher_core.adapters.sqlite.repos.graph_breakdown",
+]
+
+# ============================================================================
+# uv Workspace Configuration
+# ============================================================================
+# Virtual workspace (no [project] section). All four packages are members.
+# `uv sync --all-packages --extra dev` from the repo root resolves the union
+# of every member's runtime + dev deps into uv.lock. Cross-package deps
+# (e.g. cortex → core) resolve to the workspace member, not PyPI.
+
+[tool.uv.workspace]
+members = [
+    "packages/core",
+    "packages/cortex",
+    "packages/neuron",
+    "packages/cli",
+]
+
+# PyTorch CPU index: required for the source override below. uv resolves the
+# CPU-only torch wheel from this index, avoiding the ~4GB CUDA dep tree on
+# Linux. Mirrors the pre-uv Dockerfile behavior (manual `pip install torch
+# --index-url https://download.pytorch.org/whl/cpu`).
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+chaoscypher-core = { workspace = true }
+chaoscypher-cortex = { workspace = true }
+chaoscypher-neuron = { workspace = true }
+chaoscypher-cli = { workspace = true }
+# Source overrides only apply to direct deps. torch is lifted to a direct
+# dep of chaoscypher-core (where sentence-transformers pulls it transitively)
+# so this override takes effect.
+torch = [{ index = "pytorch-cpu" }]
+
+# ============================================================================
+# Ruff Configuration - Fast Python linter and formatter
+# ============================================================================
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+# Directories to exclude from linting
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "*.egg-info",
+    "build",
+    "dist",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "migrations",
+]
+
+[tool.ruff.lint]
+# Comprehensive rule set - strict quality enforcement aligned with CLAUDE.md standards
+# CC-prefixed codes (CC001–CC043) are enforced by scripts/lint_claude_rules.py, not Ruff.
+# Register here so `# noqa: CC011`-style comments don't trip Ruff's RUF102 check.
+external = ["CC"]
+select = [
+    # Core rules
+    "E",    # pycodestyle errors
+    "F",    # Pyflakes
+    "I",    # isort (import sorting)
+    "N",    # pep8-naming
+    "W",    # pycodestyle warnings
+
+    # High-impact additions
+    "B",    # flake8-bugbear (likely bugs and design problems)
+    "C90",  # mccabe (complexity checking)
+    "UP",   # pyupgrade (modernize Python syntax)
+    "T20",  # flake8-print (ban print statements)
+    "ERA",  # eradicate (find commented-out code)
+    "SIM",  # flake8-simplify (simplify code)
+    "TRY",  # tryceratops (exception handling best practices)
+    "RUF",  # Ruff-specific rules
+
+    # Medium-impact additions
+    "A",    # flake8-builtins (shadowing built-ins)
+    "C4",   # flake8-comprehensions (better comprehensions)
+    "DTZ",  # flake8-datetimez (prevent naive datetime usage)
+    "T10",  # flake8-debugger (catch leftover breakpoints)
+    "EM",   # flake8-errmsg (improve exception messages)
+    "ISC",  # flake8-implicit-str-concat (catch concat bugs)
+    "ICN",  # flake8-import-conventions (enforce import aliases)
+    "G",    # flake8-logging-format (logging best practices)
+    "PIE",  # flake8-pie (misc improvements)
+    "PT",   # flake8-pytest-style (pytest best practices)
+    "Q",    # flake8-quotes (consistent quote style)
+    "RSE",  # flake8-raise (better exception raising)
+    "RET",  # flake8-return (return statement improvements)
+    "SLF",  # flake8-self (prevent private member access)
+    "ARG",  # flake8-unused-arguments (catch unused args)
+    "PTH",  # flake8-use-pathlib (prefer pathlib over os.path)
+    "PL",   # Pylint (comprehensive static analysis)
+    "PERF", # Perflint (performance anti-patterns)
+    "S",    # flake8-bandit (security issues)
+
+    # Documentation and code hygiene (aligned with CLAUDE.md)
+    "D",    # pydocstyle: enforce Google-style docstrings
+    "FIX",  # flake8-fixme: forbid TODO/FIXME/HACK/XXX comments
+    "TCH",  # flake8-type-checking: optimize type-only imports
+
+    # Additional quality rules
+    "ASYNC",  # flake8-async: async/await best practices
+    "FLY",    # flynt: f-string improvements
+    "LOG",    # flake8-logging: logging best practices
+]
+
+# Extended selection for noqa hygiene
+extend-select = [
+    "RUF100",  # Warn on unused noqa comments
+]
+
+# Ignore specific rules
+ignore = [
+    "ARG001",  # Unused function argument (interface compliance: user, session, settings in APIs)
+    "ARG002",  # Unused method argument (protocol compliance: database_name, metadata, task_id, context)
+    "ARG004",  # Unused static method argument (same as ARG002 for static methods)
+    "E402",    # Module level import not at top (intentional lazy imports throughout codebase)
+    "E501",    # Line too long (formatter handles this)
+    "EM101",   # Exception string literal (false positives - our exceptions use structured params)
+    "PLC0415", # Import outside top-level (FastAPI Depends() factories, optional deps, queue handlers)
+    "S101",    # Use of assert (common in tests)
+    "S608",    # SQL injection via string concat (false positives in ORMs)
+    "PLR0913", # Too many arguments (sometimes necessary for DI)
+    "PLR2004", # Magic value comparison (overly strict)
+    "TRY002",  # Create custom exception (valid but requires architectural work)
+    "TRY300",  # Consider else block (style preference - return in try is idiomatic)
+    "TRY301",  # Abstract raise to inner function (over-engineering)
+    # Pathlib migration - valid modernization, defer to incremental refactoring
+    "PTH100",  # os.path.abspath -> Path.resolve
+    "PTH103",  # os.makedirs -> Path.mkdir
+    "PTH107",  # os.remove -> Path.unlink
+    "PTH110",  # os.path.exists -> Path.exists
+    "PTH112",  # os.path.isdir -> Path.is_dir
+    "PTH118",  # os.path.join -> Path /
+    "PTH120",  # os.path.dirname -> Path.parent
+    "PTH123",  # open() -> Path.open()
+    "PTH202",  # os.path.getsize -> Path.stat().st_size
+    "PTH204",  # os.path.getmtime -> Path.stat().st_mtime
+    "PTH208",  # os.listdir -> Path.iterdir
+    # Design decisions - intentional patterns
+    "PLW0603", # Global statement (singleton pattern for settings, console, etc.)
+    "S110",    # try-except-pass (intentional error suppression in graceful degradation)
+    "S104",    # Binding to all interfaces (required for Docker containers)
+    "S105",    # Hardcoded password (false positives: token_type="bearer", etc.)
+    "S106",    # Hardcoded password in function arg (false positives in defaults)
+    "S108",    # Insecure temp file (controlled context, not user-facing)
+    "S113",    # Request without timeout (some long-running operations are intentional)
+    "B008",    # Function call in default arg (FastAPI File()/Query()/Form() pattern)
+    # Architecture choices
+    "TRY003",  # Long exception messages are acceptable for descriptive errors
+    "ASYNC109", # Timeout parameter in async functions is valid design
+    "S324",    # MD5 is used for non-security purposes (cache keys, file hashing)
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+# ============================================================================
+# Ruff Formatter Configuration (replaces Black)
+# ============================================================================
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# ============================================================================
+# Ruff Plugin Configurations
+# ============================================================================
+
+# Complexity thresholds
+[tool.ruff.lint.mccabe]
+max-complexity = 15  # Functions over 15 complexity need refactoring
+
+# Import sorting (isort replacement)
+[tool.ruff.lint.isort]
+known-first-party = [
+    "chaoscypher_core",
+    "chaoscypher_cortex",
+    "chaoscypher_neuron",
+    "chaoscypher_interface",
+    "chaoscypher_cli",
+]
+force-single-line = false
+lines-after-imports = 2
+
+# Import conventions
+[tool.ruff.lint.flake8-import-conventions.aliases]
+"typing" = "t"
+
+# Pydocstyle: Google-style docstrings (enforces CLAUDE.md standard)
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+# Type-checking imports: move type-only imports to TYPE_CHECKING blocks
+[tool.ruff.lint.flake8-type-checking]
+quote-annotations = true
+exempt-modules = ["typing", "collections.abc"]
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "sqlmodel.SQLModel",
+]
+
+# Pylint settings
+[tool.ruff.lint.pylint]
+max-args = 8          # Maximum function arguments
+max-branches = 15     # Maximum if/elif/else branches
+max-returns = 6       # Maximum return statements
+max-statements = 60   # Maximum statements in function
+
+# ============================================================================
+# Per-file Ignores
+# ============================================================================
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = [
+    "F401",   # Unused imports (barrel pattern exports)
+    "F403",   # Star imports (barrel pattern)
+    "D104",   # Missing docstring in public package (barrel files have module docstrings)
+    "ERA001", # Section header comments (e.g., "# Services", "# Models") are acceptable
+    "E402",   # Module level import not at top (conditional imports in __init__.py)
+]
+"**/tests/**/*.py" = [
+    "T201",   # print() allowed in tests
+    "S101",   # assert allowed in tests
+    "ARG",    # Unused arguments OK (test fixtures)
+    "PLR2004", # Magic values OK in tests
+    "D100", "D101", "D102", "D103", "D107",  # Docstrings optional in tests (incl. __init__)
+    "D205",   # Tests often have multi-line summary docstrings describing scenarios
+    "SLF001", # Private member access OK in tests (accessing internal APIs)
+    "C901", "PLR0912", "PLR0915",  # Complexity OK in test fixtures
+    "RUF059", # Unpacked variable named for clarity, not used (common in tuple-returning helpers)
+    "RUF012", # Mutable default OK on test stub classes
+    "TC002", "TC003",  # TYPE_CHECKING imports unnecessary in tests (runtime fixtures)
+    "FLY002", # str.join is fine in tests
+    "EM101", "EM102",  # Inline exception messages OK in test assertions
+    "PERF401",  # Test list-building isn't performance-critical
+    "S311",   # Pseudo-random is fine for test data (not crypto)
+    "N802",   # Tests sometimes mirror class names (e.g., test_MyClass_behavior)
+    "ERA001", # Commented scenarios in tests are documentation
+    "SIM102", "SIM105", "SIM117",  # Nested constructs often clearer in tests
+    "TRY203", # Tests explicitly re-raise to document behavior
+    "TRY004", # Test may intentionally raise non-TypeError to exercise behavior
+    "PT011", "PT018",  # Broader raises / compound assertions OK in tests
+    "PLW0108", # Explicit lambdas clarify intent in tests
+    "RUF043", # Regex metacharacters in pytest match= are often intentional
+]
+"**/cli/tests/**/*.py" = [
+    "T201", "S101", "ARG", "PLR2004",  # Standard test ignores
+    "D100", "D101", "D102", "D103", "D107",    # Docstrings optional
+    "SLF001",   # Private member access OK in tests
+    "C901", "PLR0912", "PLR0915",      # Complexity OK in test fixtures
+]
+# FastAPI api.py files: types inside Annotated[X, Depends(...)] are introspected
+# at runtime by FastAPI, so TC001/TC002/TC003 false-positive on every import used
+# purely for DI typing.
+"**/cortex/src/chaoscypher_cortex/features/**/api.py" = ["TC001", "TC002", "TC003"]
+"**/cortex/src/chaoscypher_cortex/features/**/grounding_api.py" = ["TC001", "TC002", "TC003"]
+"**/cortex/src/chaoscypher_cortex/features/**/tags_api.py" = ["TC001", "TC002", "TC003"]
+"**/cortex/src/chaoscypher_cortex/features/**/execution_api.py" = ["TC001", "TC002", "TC003"]
+# Docs build scripts: print() is the intended output channel; test helpers
+# in the same directory don't need per-method docstrings.
+"**/packages/docs/scripts/**/*.py" = ["T201", "D102"]
+# Public dev/CI scripts: print() is the intended output channel, subprocess
+# is the whole point, and per-function docstrings are noise. Same posture as
+# the docs scripts.
+"scripts/**/*.py" = [
+    "T201",   # print() — primary output channel
+    "S603",   # subprocess call — script intent
+    "S607",   # partial executable path — we shell out to "uv", "npx", "git"
+    "PLW1510", # subprocess.run without check= — we inspect returncode manually
+    "D102", "D103", # Per-function docstrings optional in helpers
+    "ERA001", # Commented examples in policy docs are intentional
+    "PIE810", # startswith(tuple) — micro-opt not worth the readability cost
+    "PLC0415", # Local imports inside functions — fine in single-use helpers
+]
+# Module entry points (`python -m <pkg>`): print() is the intended output channel.
+"**/__main__.py" = ["T201"]
+"**/e2e/**/*.py" = [
+    # E2E tests follow the same conventions as packages/*/tests/ — mirror that carve-out
+    "T201",   # print() allowed in tests
+    "S101",   # assert allowed in tests
+    "ARG",    # Unused arguments OK (test fixtures)
+    "PLR2004", # Magic values OK in tests
+    "D100", "D101", "D102", "D103", "D107",  # Docstrings optional in tests
+    "D205",   # Multi-line summary docstrings OK
+    "SLF001", # Private member access OK in tests
+    "C901", "PLR0912", "PLR0915",  # Complexity OK in test fixtures
+    "TC002", "TC003",  # TYPE_CHECKING imports unnecessary in tests (runtime fixtures, incl. httpx)
+    "EM101", "EM102",  # Inline exception messages OK in test assertions
+    "ERA001", # Commented scenarios in tests are documentation
+]
+"*.pyi" = ["ALL"]  # Stub files don't need linting
+"migrations/**/*.py" = ["ALL"]  # Don't lint database migrations
+
+# E402: Intentional lazy imports after sys.path modification or app setup
+# Cortex main and config
+"packages/cortex/src/chaoscypher_cortex/main.py" = ["E402"]
+"packages/cortex/src/chaoscypher_cortex/shared/config/__init__.py" = ["E402"]
+# Neuron worker (modifies sys.path before imports)
+# Core lazy imports for optional dependencies
+"**/adapters/sqlite/__init__.py" = ["E402"]
+"**/chaoscypher_core/models.py" = ["E402"]
+"**/services/export/management/service.py" = ["E402"]
+"**/services/sources/engine/commit/service.py" = ["E402", "C901", "PLR0912"]
+
+# Complexity exceptions - documented justifications for each
+# These are intentionally complex due to their nature (type dispatchers, linear builders, etc.)
+
+# readme.py: Linear string builder - assembles README content sequentially
+# Complexity is inherent to document generation, not control flow issues
+"**/services/export/engine/readme.py" = ["C901", "PLR0912", "PLR0915"]
+
+# knowledge.py: Statistical calculation with many metrics
+# Borderline complexity (16 vs 15), straightforward aggregation logic
+"**/services/export/engine/stats/knowledge.py" = ["C901"]
+
+# validator.py: Type dispatcher for property validation
+# Many return statements expected - each type has its own validation path
+"**/services/graph/engine/validator.py" = ["C901", "PLR0911"]
+
+# matcher.py & entity_matcher.py: Template matching with multiple fallback strategies
+# Returns early for each match strategy - readable and efficient
+"**/services/sources/engine/commit/matcher.py" = ["PLR0911"]
+"**/services/sources/engine/extraction/utils/entity_matcher.py" = ["PLR0911"]
+
+# output_parser.py: Comprehensive logging utility
+# Many branches for different output types - necessary for debugging
+"**/services/workflows/engine/output_parser.py" = ["C901", "PLR0912"]
+
+# exceptions.py: Domain exceptions with intentional naming
+# - N818: ChaosCypherException is base class (like Python's Exception vs Error)
+"**/chaoscypher_core/exceptions.py" = ["N818"]
+
+# indexing_handler.py: Main orchestration handler for document indexing
+# High complexity is inherent to the load → vision → normalize → chunk → persist
+# pipeline with many optional stages, quality-counter rollups, and error paths.
+# Pre-existing violation; Phase 6 did not raise the metric further.
+"**/operations/importing/indexing_handler.py" = ["C901", "PLR0912", "PLR0915"]
+
+# deduplication/service.py: EntityProcessor.merge_entities
+# merge_entities accumulates aliases, descriptors, properties, confidence, type,
+# source chunks, and Phase 6 provenance history in one method — all sequential
+# merge steps with no logical refactor boundary. PLR0915 added in Phase 6.
+"**/engine/deduplication/service.py" = ["PLR0915"]
+
+# ai_entities.py: D417 missing docstring args are pre-existing; C901/PLR inherited
+# from long-standing complex extraction functions. EM102 in filtering_config.py
+# and C901 in entity_cleaner.py are also pre-existing.
+# PLR0915 on extract_from_chunks (62 > 60): Phase 6 domain override resolution
+# added 5 statements. Factoring them out further would be artificial.
+"**/extraction/utils/ai_entities.py" = ["D417", "PLR0915"]
+"**/extraction/utils/entity_cleaner.py" = ["C901"]
+"**/extraction/utils/filtering_config.py" = ["EM102"]
+
+# SLF001: Private member access for internal APIs
+# These access _handlers from queue_client which is internal API within same package
+"**/shared/queue/worker_manager.py" = ["SLF001"]
+# _apply_depth_strategy is internal helper method
+"**/sources/engine/extraction/service.py" = ["SLF001"]
+
+# CLI package: Internal API access and complexity
+# CLI commands are inherently complex user-facing functions with many branches
+# SLF001: CLI uses internal adapter methods (_list, _get, _delete) for direct DB access
+"**/cli/src/chaoscypher_cli/commands/**/*.py" = [
+    "SLF001",   # Internal adapter API access
+    "C901",     # CLI commands are inherently complex
+    "PLR0912",  # Many branches for user interaction
+    "PLR0915",  # Many statements for rich output
+]
+"**/cli/src/chaoscypher_cli/sources/**/*.py" = ["SLF001", "PLR0915"]
+
+# Core services with legitimate complexity
+"**/adapters/sqlite/mixins/sources.py" = ["C901", "PLR0912"]  # Complex query builder
+"**/services/sources/engine/deduplication/service.py" = ["C901", "PLR0912"]  # Dedup logic
+"**/services/sources/engine/extraction/utils/ai_entities.py" = ["C901", "PLR0912"]  # AI parsing
+"**/services/sources/loaders/archive/detector.py" = ["C901"]  # Archive detection
+"**/services/sources/normalizer/cleaners/ocr_cleaner.py" = ["C901", "PLR0912", "SIM103"]  # OCR cleanup
+"**/services/compose/models.py" = ["SLF001"]  # Internal API access
+"**/repos/graph/cleanup.py" = ["SLF001"]  # Internal helper methods
+"**/utils/logging/config.py" = ["SLF001"]  # Logger internals
+"**/adapters/queue/worker_manager.py" = ["SLF001"]  # Queue internals
+
+# Core operations services (moved from cortex.shared.operations during the
+# operations-substrate fold on 2026-04-20). Each function below has a
+# single, well-defined responsibility that runs as one queue handler —
+# splitting would mean threading intermediate state through ctx dicts
+# with no readability win.
+"**/operations/extraction/chunk_extraction_service.py" = ["C901", "PLR0912", "PLR0915", "G201"]
+"**/operations/extraction/extraction_finalizer.py" = ["PLR0915"]
+"**/operations/importing/import_service.py" = ["C901", "PLR0912", "PLR0915"]
+# orchestrator.execute_workflow_task is the top-level workflow task; its
+# branches are one-per-pipeline-stage (resolve / validate / build graph /
+# execute / persist results). Extracting helpers would scatter the
+# per-execution state (lineage, depth, execution_id) across files.
+"**/operations/workflows/orchestrator.py" = ["C901", "PLR0912", "PLR0915"]
+
+# MCP server dispatches over tool names and packs protocol responses;
+# validate_extraction_lines covers every failure mode of LLM extraction
+# output. Both are inherently one-big-switch functions.
+"**/mcp/server.py" = ["PLR0911", "PLR0915"]
+"**/mcp/extraction.py" = ["C901", "PLR0912", "PLR0915"]
+
+# Commit pipeline: `_commit_impl` orchestrates the atomic write of nodes,
+# edges, templates, and search rows. The branching mirrors those four
+# data-kinds; splitting would obscure the transaction boundary.
+# (Ignore list merged with the E402 entry above.)
+
+# Neuron worker: run_worker initialises DB, recovery, upgrade gate, queue
+# client, and the poller tasks. The pre-existing `# noqa: PLR0915` at the
+# def-line covers statement count; C901/PLR0912 cover branches in the
+# same startup flow.
+"**/neuron/src/chaoscypher_neuron/worker.py" = ["C901", "PLR0912"]
+
+# CLI subprocess calls - intentional user-facing operations
+"**/cli/src/chaoscypher_cli/commands/config_cmd.py" = ["S603"]  # Editor invocation
+"**/cli/src/chaoscypher_cli/commands/init.py" = ["S607", "A002"]  # CLI tool calls, license param
+"**/cli/src/chaoscypher_cli/commands/serve.py" = ["S603"]  # Dev server startup
+"**/cli/src/chaoscypher_cli/commands/node/create.py" = ["A002"]  # property param
+"**/cli/src/chaoscypher_cli/commands/link/create.py" = ["A002"]  # property param
+"**/cli/src/chaoscypher_cli/context.py" = ["S310"]  # Intentional URL scheme handling
+# CLI delete commands - nested ifs for user confirmation flow
+"**/cli/src/chaoscypher_cli/commands/**/delete.py" = ["SIM102"]
+"**/cli/src/chaoscypher_cli/commands/lexicon/remove.py" = ["SIM102"]
+# CLI package commands
+"**/cli/src/chaoscypher_cli/commands/package/export.py" = ["DTZ005"]  # Timestamp for exports
+"**/cli/src/chaoscypher_cli/commands/package/init.py" = ["A002"]  # license param
+"**/cli/src/chaoscypher_cli/commands/runtime/serve.py" = ["S603"]  # Dev server
+"**/cli/src/chaoscypher_cli/commands/template/create.py" = ["A002"]  # property param
+# CLI services
+"**/cli/src/chaoscypher_cli/sources/service.py" = ["PLR0911"]  # Many returns
+"**/cli/src/chaoscypher_cli/lens/service.py" = ["G201", "SLF001"]  # Logging, internal API
+"**/cli/src/chaoscypher_cli/utils/files.py" = ["SIM117"]  # Nested context
+
+# Core services - specific ignores
+"**/services/export/engine/utils/export.py" = ["DTZ005"]  # Timestamp for filenames
+"**/services/sources/loaders/archive/handlers/openapi_handler.py" = ["B904", "G201"]  # Exception chaining
+"**/services/sources/loaders/archive_loader.py" = ["G201"]  # Intentional logging
+"**/repos/search/vector_repository.py" = ["ERA001"]  # Debug comments preserved
+"**/adapters/llm/schema/extractor.py" = ["PLR0911"]  # Type dispatcher
+"**/services/compose/service.py" = ["ASYNC220"]  # Subprocess in async
+"**/services/sources/engine/extraction/domains/configurable.py" = ["PERF401"]
+"**/services/package/importer/service.py" = ["PLW2901"]  # Loop var reassign
+
+# Cortex services
+"**/cortex/src/chaoscypher_cortex/main.py" = ["SIM102"]  # Reader mode check
+"**/services/sources/loaders/archive/archive_loader.py" = ["G201"]  # Intentional logging
+"**/features/nodes/service.py" = ["SLF001", "PLR0911", "ASYNC220"]  # Internal APIs, type dispatch, async subprocess
+"**/shared/utils/filelock.py" = ["B904", "SIM105", "TRY203"]  # Platform-specific file locking
+"**/shared/llm/service.py" = ["G201"]  # Intentional exc_info usage
+"**/shared/llm/load_balancer.py" = ["G201"]  # Intentional exc_info usage
+"**/shared/llm/providers/base.py" = ["SIM105"]  # Intentional exception handling
+"**/features/queue/queue_service.py" = ["G201"]  # Intentional exc_info usage
+
+# Neuron workers
+"**/neuron/src/chaoscypher_neuron/**/*.py" = ["G201"]  # Intentional exc_info usage
+
+# ============================================================================
+# MyPy Configuration - Strict type checking
+# ============================================================================
+
+[tool.mypy]
+python_version = "3.14"
+# The app deploys on Linux (Docker); type-check against that platform so
+# Unix-only stdlib (socket.AF_UNIX, fcntl.flock) and `sys.platform` branch
+# narrowing resolve correctly even when `make typecheck` runs on Windows/macOS.
+platform = "linux"
+
+# Strict mode - matches TypeScript strictness
+disallow_untyped_defs = true         # Require type hints on all functions
+disallow_any_unimported = false      # Allow Any from third-party without stubs
+no_implicit_optional = true          # Require explicit Optional[...]
+strict_equality = true               # Prevent comparisons of incompatible types
+warn_redundant_casts = true          # Catch unnecessary casts
+warn_unused_ignores = true           # Catch unused # type: ignore comments
+warn_unreachable = true              # Detect unreachable code
+warn_return_any = true               # Warn if returning Any
+warn_unused_configs = true           # Warn about unused config options
+check_untyped_defs = true            # Type-check bodies of untyped functions
+disallow_untyped_decorators = false  # Too strict for now (many decorators are untyped)
+
+# Gradually tightening: disable global ignore for better type safety
+ignore_missing_imports = false       # Changed from true - require explicit overrides
+
+# ============================================================================
+# MyPy Per-module Overrides
+# ============================================================================
+
+# Third-party libraries without type stubs or not available in environment
+[[tool.mypy.overrides]]
+module = [
+    # No type support available
+    "fastapi_pagination.*",  # Third-party FastAPI extension, no stubs
+
+
+    # LangChain ecosystem - has type hints but unstable/incomplete
+    # Keeping ignored to avoid noise from frequent API changes
+    "langchain.*",
+    "langchain_core.*",
+    "langchain_ollama.*",
+    "langchain_openai.*",
+    "langchain_anthropic.*",
+    "langchain_google_genai.*",
+    "langgraph.*",
+
+    # Google AI - has type hints but sometimes incomplete
+    "google.generativeai.*",
+
+    # Typed libraries not found in current environment
+    # (Have built-in types but not installed/visible to MyPy)
+    "click.*",               # Has py.typed but not in path
+    "rich.*",                # Has py.typed but not in path
+    "anthropic.*",           # Has py.typed but not in path
+    "openai.*",              # Has py.typed but not in path
+    "uvicorn.*",             # Has py.typed but not in path
+    "bcrypt.*",              # Has py.typed but not in path
+    "pydantic_ai.*",         # Has py.typed but not in path
+    "structlog.*",           # Partial types, not in path
+    "yaml.*",                # Has stubs (types-PyYAML) but not installed
+    "tqdm.*",                # Has py.typed but not in path
+    "python-dotenv.*",       # Has py.typed but not in path
+    "bs4.*",                 # Optional dep (sphinx_handler.py imports inside try/except ImportError fallback)
+]
+ignore_missing_imports = true
+
+# Internal package cross-dependencies (for packages that import each other)
+# All internal packages are properly typed. Cross-package imports resolve via
+# editable installs (pip install -e). This override is only needed in CI/Docker
+# where packages may not all be installed in the same environment.
+[[tool.mypy.overrides]]
+module = [
+    "chaoscypher_core.*",
+    "chaoscypher_cortex.*",
+    "chaoscypher_neuron.*",
+    "chaoscypher_cli.*",
+]
+ignore_missing_imports = true
+
+# Database migrations: Don't type-check
+[[tool.mypy.overrides]]
+module = "*.migrations.*"
+ignore_errors = true
+
+# Third-party libraries without type stubs (not in pyproject.toml ignore list)
+[[tool.mypy.overrides]]
+module = [
+    "dynaconf.*",
+    "pydantic_settings.*",
+    "jsonref.*",
+    "jsonschema.*",
+    "openpyxl.*",  # XLSX loader; types-openpyxl is unmaintained
+    "docutils.*",  # RST loader; types-docutils available but adds noise
+    "pptx.*",      # PPTX loader; no py.typed marker upstream
+    "chardet",     # Charset tiebreaker; no py.typed marker upstream
+    "chardet.*",   # Charset tiebreaker sub-modules
+    "docx",        # python-docx DOCX loader; no py.typed marker upstream
+    "docx.*",      # python-docx sub-modules
+]
+ignore_missing_imports = true
+
+# SQLModel/SQLAlchemy adapter files: disable arg-type and operator errors
+# SQLModel class attributes (e.g., SourceRow.id) are typed as Python types (str, int)
+# but are actually SQLAlchemy MappedColumn descriptors at class level. This causes
+# false positives for load_only(), where(), .desc(), .in_(), .ilike() etc.
+# No mypy plugin available for SQLModel to resolve this.
+[[tool.mypy.overrides]]
+module = [
+    "chaoscypher_core.adapters.sqlite.mixins.*",
+    "chaoscypher_core.adapters.sqlite.repos.graph.*",
+    "chaoscypher_cortex.features.nodes.sql_repository",
+    "chaoscypher_cortex.shared.reset.*",
+    "chaoscypher_cortex.shared.database.base",
+]
+disable_error_code = [
+    "arg-type",       # SQLModel class attrs vs Python types in load_only(), where()
+    "operator",       # Column operations (.desc(), .in_(), .ilike())
+    "union-attr",     # Column operations on Optional types after null checks
+    "no-any-return",  # _entity_to_dict returns Any from SQLModel model_dump
+    "return-value",   # _entity_to_dict returns None when entity not found (query pattern)
+    "attr-defined",   # .desc(), .asc(), .in_() on model field types (datetime, str)
+    "misc",           # list comprehension with _entity_to_dict producing Optional
+    "unreachable",    # isinstance narrowing artifacts on SQLModel field types
+    "unused-ignore",  # stale type: ignore comments from narrowing changes
+    "override",       # implementation signature drift from protocol (list_sources pagination)
+    "call-overload",  # .returning(Model.col, ...) — SQLModel attrs seen as Python types, not Mapped[]
+]
+
+# LangChain LLM providers: disable errors from poorly-typed LangChain SDK
+# BaseChatModel.bind() returns Runnable (not BaseChatModel), causing assignment errors.
+# Methods accessed on BaseChatModel | None after None checks still trigger union-attr.
+# ToolCall vs dict[Any, Any] in format_tool_calls_response is a typing mismatch in LangChain.
+[[tool.mypy.overrides]]
+module = [
+    "chaoscypher_core.adapters.llm.providers.*",
+]
+disable_error_code = ["union-attr", "assignment", "arg-type", "operator", "no-any-return", "call-arg"]
+
+# Folded from chaoscypher-runtime (2026-04-20). Runtime had laxer mypy than
+# core's strict mode; these subpackages are allowlisted while type debt is
+# paid down incrementally. Remove entries as subpackages are fully typed.
+# Tracked in Task 21 of the fold plan.
+[[tool.mypy.overrides]]
+module = [
+    "chaoscypher_core.app_config.*",
+    "chaoscypher_core.database.*",
+    "chaoscypher_core.factories.*",
+    "chaoscypher_core.llm_queue.*",
+    "chaoscypher_core.operations.*",
+    "chaoscypher_core.queue.*",
+    "chaoscypher_core.repo_factories.*",
+    "chaoscypher_core.streaming.*",
+]
+disallow_untyped_defs = false
+warn_return_any = false
+disable_error_code = ["union-attr", "assignment", "arg-type", "operator", "no-any-return", "call-arg", "attr-defined", "misc", "unused-ignore"]
+
+# ============================================================================
+# Interrogate Configuration - Docstring coverage tracking
+# ============================================================================
+
+[tool.interrogate]
+# Fail if docstring coverage is below this percentage
+fail-under = 100
+
+# Directories to exclude from coverage.
+# interrogate (1.7.0) feeds each entry into `fnmatch(file, exclude + "*")`, so
+# patterns are glob-style and a basename match like "migrations" does NOT cover
+# the nested `packages/.../database/migrations/` tree. Use "*migrations*" to
+# match it on both Windows and POSIX without depending on path separators.
+exclude = [
+    "tests",
+    "e2e",
+    "*migrations*",
+    ".tooling",
+    "build",
+    "dist",
+]
+
+# Coverage settings
+ignore-module = false              # Require module-level docstrings
+ignore-nested-functions = true     # Don't require docstrings for nested functions
+ignore-private = true              # Don't require docstrings for private methods
+ignore-magic = true                # Don't require docstrings for magic methods
+ignore-init-method = false         # Require __init__ docstrings
+ignore-semiprivate = false         # Require docstrings for _semiprivate methods
+
+# Output settings
+verbose = 1                        # Show detailed output
+quiet = false                      # Don't suppress output
+color = true                       # Use colored output
+
+# ============================================================================
+# Pytest Configuration - workspace-wide marker registration
+# ============================================================================
+# When pytest is invoked from the repo root spanning multiple packages, this
+# section is the configfile (per-package [tool.pytest.ini_options] are
+# package-local). Custom markers must be registered here to avoid
+# PytestUnknownMarkWarning across the workspace.
+
+[tool.pytest.ini_options]
+# Combined cross-package runs (e.g. make test-cov-internal) use THIS file as
+# the configfile, so asyncio_mode must be declared here — not just in the
+# per-package pyproject files. Without it, the combined run defaults to
+# "strict" and cli's unmarked `async def test_*` functions (which rely on
+# cli/pyproject.toml's asyncio_mode="auto") fail with "async def functions are
+# not natively supported". core/cortex/neuron mark their async tests
+# explicitly, so "auto" is a no-op for them and fully backward-compatible.
+asyncio_mode = "auto"
+markers = [
+    "unit: pure-unit tests (no I/O, no DB, no network) — opt-in via -m unit",
+    "integration: integration tests (multiple components / packages)",
+    "e2e: end-to-end tests (full stack, typically requires Docker)",
+    "slow: slow tests (>1s execution time)",
+    "docker: requires Docker services running",
+    "core: tests scoped to the core package",
+    "cortex: tests scoped to the cortex package",
+    "neuron: tests scoped to the neuron package",
+    "cli: CLI end-to-end tests (no Docker required)",
+    "api: API end-to-end tests (requires Docker)",
+    "browser: browser end-to-end tests (Playwright, requires Docker)",
+    "fresh: fresh-database phase tests",
+    "resume: resume / warm-start phase tests",
+]
+
+# ============================================================================
+# Vulture Configuration - Dead code detection
+# ============================================================================
+
+[tool.vulture]
+# Paths to scan for dead code
+paths = ["packages/core/src", "packages/cortex/src", "packages/neuron/src", "packages/cli/src"]
+
+# Whitelist file for false positives
+exclude = [
+    "**/tests/",
+    "**/migrations/",
+]
+
+# Minimum confidence level (60% catches functions/classes, 80% catches imports, 100% catches variables)
+min_confidence = 80
+
+# Ignore specific names that are false positives
+# Note: Most false positives are handled in .vulture_whitelist.py

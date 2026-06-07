@@ -1,0 +1,45 @@
+# ChaosCypher Full Pipeline Benchmark
+#
+# End-to-end pipeline benchmark: builds graphs with each extractor, indexes
+# with each embedder, evaluates each chat candidate end-to-end. Single dense
+# corpus for v1; cost dominated by judge calls (Opus 4.7).
+#
+# Use --local-only to drop commercial models and switch judge to a local
+# Ollama model (signal weaker but free).
+name: "ChaosCypher Full Pipeline Benchmark"
+description: "Three-stage benchmark: extraction + embedding retrieval + GraphRAG chat answer quality."
+
+seed: 42
+temperature: 0.0
+
+datasets:
+  - tech_encyclopedia_tiny
+
+extractors:
+  - provider: ollama
+    model: llama3.1:8b
+    label: "Llama 3.1 8B (local)"
+  - provider: ollama
+    model: qwen3.6:32b
+    label: "Qwen 3.6 32B (local)"
+
+embedders:
+  - provider: ollama
+    model: nomic-embed-text
+    label: "nomic-embed (local)"
+  - provider: ollama
+    model: mxbai-embed-large
+    label: "mxbai-embed (local)"
+
+chats:
+  - provider: ollama
+    model: llama3.1:8b
+    label: "Llama 3.1 8B (local)"
+  - provider: openai
+    model: gpt-4o-mini
+    label: "GPT-4o Mini"
+
+judge:
+  provider: anthropic
+  model: claude-opus-4-7
+  label: "Claude Opus 4.7 (judge)"

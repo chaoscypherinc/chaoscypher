@@ -1,0 +1,1120 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:generic",
+  "name": "generic",
+  "version": "1.9.0",
+  "description": "General-purpose domain for any content that does not match a specialized domain. Flexible entity and relationship types adapt to the source material.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.0,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {},
+    "file_extensions": [],
+    "doc_types": [],
+    "patterns": [],
+    "confidence": {
+      "base_score": 0.1,
+      "per_keyword_boost": 0.0,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.0,
+      "pattern_boost": 0.0,
+      "max_confidence": 0.1,
+      "min_threshold": 0.0
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Pronouns and vague references",
+      "examples": [
+        "he",
+        "she",
+        "they",
+        "it",
+        "someone"
+      ]
+    },
+    {
+      "description": "Single common words without specific meaning",
+      "examples": [
+        "the thing",
+        "the item"
+      ]
+    }
+  ],
+  "entity_guidance": "EXTRACTION RULES:\n- Extract ALL named entities: people, organizations, places, events, concepts, works\n- Use the most specific entity type available from the templates below\n- Include rich properties: titles, roles, dates, status, descriptions\n- ALIASES: Include alternative names, abbreviations, titles, nicknames\n- PROPERTIES: Extract ALL relevant attributes mentioned in text\n\nDO NOT EXTRACT:\n- Pronouns or vague references: he, she, they, it\n- Structural markers: page numbers, headers, footers\n- Boilerplate: copyright notices, watermarks\n- Common words without specific meaning",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- Prefer specific relationship types over generic 'related_to' or 'link'\n- Include justification for each relationship\n- HIERARCHY: Use part_of/contains for compositional relationships\n- PEOPLE: Use works_at, collaborates_with, reports_to for professional ties\n- TEMPORAL: Use preceded_by, followed_by for sequences\n- CAUSAL: Use causes, enables, prevents for cause-effect chains\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_person",
+        "name": "Person",
+        "description": "An individual human being",
+        "icon": "Person",
+        "color": "#7d41d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "person",
+          "individual",
+          "someone named",
+          "a man",
+          "a woman",
+          "he",
+          "she"
+        ],
+        "properties": [
+          {
+            "name": "title",
+            "display_name": "Title/Role",
+            "property_type": "text",
+            "absorbs_types": [
+              "Title",
+              "Role"
+            ]
+          },
+          {
+            "name": "occupation",
+            "display_name": "Occupation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Occupation",
+              "Profession"
+            ]
+          },
+          {
+            "name": "affiliation",
+            "display_name": "Affiliation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Affiliation"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_organization",
+        "name": "Organization",
+        "description": "A company, institution, group, government body, or collective entity",
+        "icon": "Business",
+        "color": "#bc41d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "company",
+          "organization",
+          "institution",
+          "agency",
+          "group",
+          "corporation",
+          "firm",
+          "association",
+          "foundation"
+        ],
+        "properties": [
+          {
+            "name": "org_type",
+            "display_name": "Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Organization Type"
+            ]
+          },
+          {
+            "name": "industry",
+            "display_name": "Industry/Sector",
+            "property_type": "text",
+            "absorbs_types": [
+              "Industry",
+              "Sector"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_location",
+        "name": "Location",
+        "description": "A place, city, country, region, or geographical area",
+        "icon": "Place",
+        "color": "#d641b0",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "places",
+        "normalization_keywords": [
+          "place",
+          "city",
+          "country",
+          "region",
+          "area",
+          "location",
+          "site",
+          "territory"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_event",
+        "name": "Event",
+        "description": "A significant occurrence, incident, or milestone",
+        "icon": "Event",
+        "color": "#d64170",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "event",
+          "occurred",
+          "happened",
+          "took place",
+          "incident",
+          "milestone"
+        ],
+        "properties": [
+          {
+            "name": "date",
+            "display_name": "Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Event Date",
+              "Date"
+            ]
+          },
+          {
+            "name": "event_type",
+            "display_name": "Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Event Type"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_concept",
+        "name": "Concept",
+        "description": "An idea, theory, principle, or abstract notion",
+        "icon": "Lightbulb",
+        "color": "#d65241",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "concept",
+          "idea",
+          "theory",
+          "principle",
+          "notion",
+          "paradigm",
+          "framework"
+        ],
+        "is_generic": true
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_work",
+        "name": "Work",
+        "description": "A document, book, article, paper, or report — a published or formal piece of writing",
+        "icon": "Article",
+        "color": "#d69241",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "book",
+          "article",
+          "work",
+          "publication",
+          "report",
+          "document",
+          "paper"
+        ],
+        "properties": [
+          {
+            "name": "work_type",
+            "display_name": "Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Work Type",
+              "Document Type"
+            ]
+          },
+          {
+            "name": "date_published",
+            "display_name": "Date Published",
+            "property_type": "date",
+            "absorbs_types": [
+              "Publication Date"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_creation",
+        "name": "Creation",
+        "description": "An artwork, product, or other creative output — broader than a written work",
+        "icon": "Brush",
+        "color": "#d6a541",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "creation",
+          "artwork",
+          "product",
+          "design",
+          "composition"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_topic",
+        "name": "Topic",
+        "description": "A subject area, theme, or domain of knowledge",
+        "icon": "Topic",
+        "color": "#d6d241",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "topic",
+          "subject",
+          "theme",
+          "field",
+          "area",
+          "domain"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_item",
+        "name": "Item",
+        "description": "A physical or digital object, artifact, or thing",
+        "icon": "Inventory2",
+        "color": "#9bd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "things",
+        "normalization_keywords": [
+          "item",
+          "object",
+          "artifact",
+          "thing",
+          "product",
+          "tool",
+          "device"
+        ],
+        "is_generic": true
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_process",
+        "name": "Process",
+        "description": "A procedure, method, workflow, or sequence of steps",
+        "icon": "AccountTree",
+        "color": "#5bd641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "actions",
+        "normalization_keywords": [
+          "process",
+          "procedure",
+          "method",
+          "workflow",
+          "step",
+          "technique",
+          "approach"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_metric",
+        "name": "Metric",
+        "description": "A defined quantitative metric, KPI, or indicator (the named thing being tracked, e.g. ``MAU``, ``churn rate``)",
+        "icon": "Insights",
+        "color": "#41d667",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "data",
+        "normalization_keywords": [
+          "metric",
+          "KPI",
+          "indicator",
+          "rate",
+          "score"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_measure",
+        "name": "Measure",
+        "description": "A specific measurement, statistic, or data point — an instance/value of measurement",
+        "icon": "Speed",
+        "color": "#41d699",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "data",
+        "normalization_keywords": [
+          "measure",
+          "measurement",
+          "statistic",
+          "data point",
+          "observation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_category",
+        "name": "Category",
+        "description": "A category — a grouping that organizes items by shared properties (e.g. ``mammals``, ``open-source licenses``)",
+        "icon": "Category",
+        "color": "#41d6a7",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "category",
+          "class",
+          "classification",
+          "group"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_type",
+        "name": "Type",
+        "description": "A type or kind — a classification by intrinsic nature rather than by grouping (e.g. ``data type``, ``soil type``)",
+        "icon": "Label",
+        "color": "#41d6c7",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "type",
+          "kind",
+          "variety",
+          "sort"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_time_period",
+        "name": "Time Period",
+        "description": "A date, date range, era, or temporal reference",
+        "icon": "CalendarMonth",
+        "color": "#41c6d6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "temporal",
+        "normalization_keywords": [
+          "period",
+          "era",
+          "date",
+          "year",
+          "decade",
+          "century",
+          "age"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_rule",
+        "name": "Rule",
+        "description": "A rule, policy, standard, guideline, or requirement — anything declaring expected behaviour",
+        "icon": "Rule",
+        "color": "#4186d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "rule",
+          "policy",
+          "standard",
+          "requirement",
+          "guideline"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_regulation",
+        "name": "Regulation",
+        "description": "An enforceable regulation or formal legal/administrative instrument",
+        "icon": "Gavel",
+        "color": "#41a6d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "ideas",
+        "normalization_keywords": [
+          "regulation",
+          "law",
+          "ordinance",
+          "directive"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "gen_template_note",
+        "name": "Note",
+        "description": "A general observation, annotation, or summary point",
+        "icon": "Description",
+        "color": "#4146d6",
+        "requires_named_referent": false,
+        "quality_score": 10,
+        "compatibility_group": "data"
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_works_at",
+        "name": "works_at",
+        "description": "Person or organization works at, is employed by, or is affiliated with an organization or location",
+        "icon": "Work",
+        "color": "#32cc43",
+        "inverse": "employer_of",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Organization",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_located_in",
+        "name": "located_in",
+        "description": "Entity is located, based, situated, or geographically anchored in a place",
+        "icon": "Place",
+        "color": "#32cc66",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Event",
+          "Item",
+          "Work",
+          "Creation",
+          "Process",
+          "Concept",
+          "Topic",
+          "Rule",
+          "Regulation",
+          "Note"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_part_of",
+        "name": "part_of",
+        "description": "Entity is a component or subdivision of another",
+        "icon": "AccountTree",
+        "color": "#32cc89",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_created_by",
+        "name": "created_by",
+        "description": "Work, item, concept, process, event, or other artifact created, authored, founded, or produced by a person or organization",
+        "icon": "Create",
+        "color": "#32ccad",
+        "quality_score": 25,
+        "source_types": [
+          "Work",
+          "Creation",
+          "Item",
+          "Concept",
+          "Process",
+          "Event",
+          "Organization",
+          "Rule",
+          "Regulation",
+          "Metric",
+          "Category",
+          "Type",
+          "Topic"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_influences",
+        "name": "influences",
+        "description": "Entity influences, affects, or impacts another",
+        "icon": "AutoAwesome",
+        "color": "#32c7cc",
+        "quality_score": 25
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_collaborates_with",
+        "name": "collaborates_with",
+        "description": "Person, organization, or other agent-like entity collaborates, partners, or works with another",
+        "icon": "Handshake",
+        "color": "#32a4cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_belongs_to",
+        "name": "belongs_to",
+        "description": "Entity belongs to, is a member of, or falls under a group, category, classification, organization, or topic",
+        "icon": "Category",
+        "color": "#3280cc",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Item",
+          "Concept",
+          "Event",
+          "Work",
+          "Creation",
+          "Process",
+          "Metric",
+          "Measure",
+          "Rule",
+          "Regulation",
+          "Location",
+          "Note"
+        ],
+        "target_types": [
+          "Organization",
+          "Category",
+          "Type",
+          "Topic",
+          "Concept"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_mentions",
+        "name": "mentions",
+        "description": "Document, work, note, or other content references, mentions, or refers to an entity",
+        "icon": "Article",
+        "color": "#325dcc",
+        "quality_score": 15,
+        "source_types": [
+          "Work",
+          "Creation",
+          "Note"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Event",
+          "Location",
+          "Concept",
+          "Item",
+          "Work",
+          "Creation",
+          "Topic",
+          "Process",
+          "Metric",
+          "Measure",
+          "Category",
+          "Type",
+          "Time Period",
+          "Rule",
+          "Regulation"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_contains",
+        "name": "contains",
+        "description": "Entity contains or includes another",
+        "icon": "Inventory2",
+        "color": "#323acc",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_causes",
+        "name": "causes",
+        "description": "Event, action, process, condition, or actor causes, triggers, or brings about another event, state, concept, or outcome",
+        "icon": "TrendingUp",
+        "color": "#4f32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Event",
+          "Process",
+          "Concept",
+          "Person",
+          "Organization",
+          "Item",
+          "Rule",
+          "Regulation",
+          "Topic",
+          "Metric",
+          "Measure"
+        ],
+        "target_types": [
+          "Event",
+          "Concept",
+          "Process",
+          "Item",
+          "Person",
+          "Organization",
+          "Metric",
+          "Measure",
+          "Topic"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_enables",
+        "name": "enables",
+        "description": "Entity enables or makes possible another",
+        "icon": "Lightbulb",
+        "color": "#7232cc",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_prevents",
+        "name": "prevents",
+        "description": "Entity prevents or blocks another",
+        "icon": "Shield",
+        "color": "#9532cc",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_precedes",
+        "name": "precedes",
+        "description": "Event, process, work, concept, or actor occurs, exists, or appears before another in temporal or causal sequence",
+        "icon": "Timeline",
+        "color": "#b832cc",
+        "quality_score": 15,
+        "source_types": [
+          "Event",
+          "Process",
+          "Time Period",
+          "Concept",
+          "Work",
+          "Creation",
+          "Person",
+          "Organization",
+          "Item",
+          "Rule",
+          "Regulation",
+          "Topic"
+        ],
+        "target_types": [
+          "Event",
+          "Process",
+          "Time Period",
+          "Concept",
+          "Work",
+          "Creation",
+          "Person",
+          "Organization",
+          "Item",
+          "Rule",
+          "Regulation",
+          "Topic"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_measures",
+        "name": "measures",
+        "description": "Metric or measure quantifies, tracks, or evaluates an entity, activity, or phenomenon",
+        "icon": "Insights",
+        "color": "#cc32bb",
+        "quality_score": 15,
+        "source_types": [
+          "Metric",
+          "Measure"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Event",
+          "Process",
+          "Concept",
+          "Item",
+          "Work",
+          "Creation",
+          "Location",
+          "Topic",
+          "Category",
+          "Type",
+          "Rule",
+          "Regulation",
+          "Time Period"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_governs",
+        "name": "governs",
+        "description": "Rule, regulation, or governing instrument controls, constrains, or applies to an entity, activity, or domain",
+        "icon": "Gavel",
+        "color": "#cc3298",
+        "quality_score": 15,
+        "source_types": [
+          "Rule",
+          "Regulation",
+          "Organization",
+          "Person"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Process",
+          "Item",
+          "Event",
+          "Work",
+          "Creation",
+          "Concept",
+          "Location",
+          "Topic",
+          "Category",
+          "Type",
+          "Metric",
+          "Measure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_uses",
+        "name": "uses",
+        "description": "Entity uses, applies, or employs another",
+        "icon": "Build",
+        "color": "#cc3275",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_produced_by",
+        "name": "produced_by",
+        "description": "Event, process, item, work, or other output produced, generated, hosted, or sponsored by an organization or person",
+        "icon": "Create",
+        "color": "#cc3251",
+        "quality_score": 15,
+        "source_types": [
+          "Event",
+          "Process",
+          "Item",
+          "Work",
+          "Creation",
+          "Concept",
+          "Metric",
+          "Measure",
+          "Rule",
+          "Regulation"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_occurred_at",
+        "name": "occurred_at",
+        "description": "Event, process, or activity occurred, took place, or unfolded at a location",
+        "icon": "Place",
+        "color": "#cc3732",
+        "quality_score": 15,
+        "source_types": [
+          "Event",
+          "Process"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_occurred_during",
+        "name": "occurred_during",
+        "description": "Event, process, work, life, or activity occurred, existed, or unfolded during a time period",
+        "icon": "CalendarMonth",
+        "color": "#cc5a32",
+        "quality_score": 15,
+        "source_types": [
+          "Event",
+          "Process",
+          "Work",
+          "Creation",
+          "Person",
+          "Organization",
+          "Concept",
+          "Item",
+          "Topic",
+          "Rule",
+          "Regulation",
+          "Metric",
+          "Measure"
+        ],
+        "target_types": [
+          "Time Period"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_related_to",
+        "name": "related_to",
+        "description": "Generic relationship when no specific type applies",
+        "icon": "Link",
+        "color": "#cc7e32",
+        "symmetric": true,
+        "quality_score": 5
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_similar_to",
+        "name": "similar_to",
+        "description": "Entities share similarities or are comparable",
+        "icon": "Link",
+        "color": "#cca132",
+        "symmetric": true,
+        "quality_score": 5
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_derived_from",
+        "name": "derived_from",
+        "description": "Concept, entity, or output derived, originated, descended, or adapted from another",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#ccc432",
+        "quality_score": 15,
+        "source_types": [
+          "Concept",
+          "Item",
+          "Work",
+          "Creation",
+          "Process",
+          "Organization",
+          "Rule",
+          "Regulation",
+          "Metric",
+          "Measure",
+          "Category",
+          "Type",
+          "Topic",
+          "Event"
+        ],
+        "target_types": [
+          "Concept",
+          "Item",
+          "Work",
+          "Creation",
+          "Process",
+          "Organization",
+          "Person",
+          "Rule",
+          "Regulation",
+          "Metric",
+          "Measure",
+          "Category",
+          "Type",
+          "Topic",
+          "Event",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_instance_of",
+        "name": "instance_of",
+        "description": "Entity is an instance, example, exemplar, or member of a category, type, concept, or topic",
+        "icon": "Category",
+        "color": "#afcc32",
+        "quality_score": 15,
+        "source_types": [
+          "Item",
+          "Event",
+          "Person",
+          "Organization",
+          "Work",
+          "Creation",
+          "Concept",
+          "Process",
+          "Location",
+          "Metric",
+          "Measure",
+          "Rule",
+          "Regulation",
+          "Time Period",
+          "Note"
+        ],
+        "target_types": [
+          "Concept",
+          "Topic",
+          "Category",
+          "Type"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_reports_to",
+        "name": "reports_to",
+        "description": "Person or organizational unit reports to, is subordinate to, or is accountable to another person or organization",
+        "icon": "People",
+        "color": "#8ccc32",
+        "inverse": "manages",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_depends_on",
+        "name": "depends_on",
+        "description": "Entity depends on or requires another",
+        "icon": "AccountTree",
+        "color": "#69cc32",
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_contrasts_with",
+        "name": "contrasts_with",
+        "description": "Entity contrasts or is opposed to another",
+        "icon": "Balance",
+        "color": "#46cc32",
+        "symmetric": true,
+        "quality_score": 15
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_employer_of",
+        "name": "employer_of",
+        "description": "Organization or location employs, hosts, or houses a person or organization",
+        "icon": "Work",
+        "color": "#32cc43",
+        "inverse": "works_at",
+        "quality_score": 25,
+        "source_types": [
+          "Organization",
+          "Location"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "gen_edge_manages",
+        "name": "manages",
+        "description": "Person or organization manages, supervises, oversees, or directs another person or organizational unit",
+        "icon": "People",
+        "color": "#8ccc32",
+        "inverse": "reports_to",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Person",
+          "Organization"
+        ]
+      }
+    ]
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "United Nations",
+        "aliases": [
+          "UN",
+          "the U.N."
+        ],
+        "note": "Abbreviations and common short forms become aliases"
+      },
+      {
+        "canonical": "Artificial Intelligence",
+        "aliases": [
+          "AI",
+          "machine intelligence"
+        ],
+        "note": "Acronyms and synonyms become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "John Smith",
+        "target": "Acme Corp",
+        "type": "works_at",
+        "note": "Use works_at for employment relationships"
+      },
+      {
+        "source": "Project Alpha",
+        "target": "Revenue Growth",
+        "type": "causes",
+        "note": "Use causes for causal relationships"
+      }
+    ]
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "legal",
+      "boilerplate",
+      "web_artifacts"
+    ]
+  },
+  "extraction_filtering_mode": "balanced"
+}

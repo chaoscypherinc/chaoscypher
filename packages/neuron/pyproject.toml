@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=82.0.0,<90", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaoscypher-neuron"
+version = "0.1.0"
+description = "Chaos Cypher Neuron - Background task processing workers (worker cells)"
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+keywords = ["knowledge-graph", "workers", "background-tasks", "queue", "ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
+requires-python = ">=3.14"
+dependencies = [
+    "chaoscypher-core>=0.1.0",
+    "structlog>=25.5.0,<26",
+    "pyyaml>=6.0.3,<7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0,<10",
+    "pytest-cov>=7.1.0,<8",
+    "pytest-asyncio>=1.3.0,<2",
+]
+
+[project.scripts]
+cc-neuron = "chaoscypher_neuron.worker:main"
+
+[project.urls]
+Homepage = "https://github.com/chaoscypherinc/chaoscypher"
+Documentation = "https://github.com/chaoscypherinc/chaoscypher#readme"
+Repository = "https://github.com/chaoscypherinc/chaoscypher"
+Issues = "https://github.com/chaoscypherinc/chaoscypher/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chaoscypher_neuron = ["py.typed"]

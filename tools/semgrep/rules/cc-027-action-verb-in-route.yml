@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC027 — Action verbs in route paths are forbidden.
+#
+# API_DESIGN.md § URL Conventions: resources are nouns
+# (/api/v1/workflows/{id}/triggers), not verbs
+# (/api/v1/workflows/{id}/run). Actions either map to a different verb
+# (POST creates, PATCH updates) or to a sub-resource (/runs).
+#
+# Action verbs flagged (exact path-segment match):
+# run, execute, process, submit, trigger, dispatch, invoke.
+# /triggers (plural noun) is fine; /trigger (verb) is not.
+
+rules:
+  - id: cc-027-action-verb-in-route
+    message: |
+      Action verb in route path. Use resource nouns (POST /runs,
+      PATCH /state) per API_DESIGN.md.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/**/api.py"
+      exclude:
+        - "**/tests/**"
+    pattern-either:
+      - patterns:
+          - pattern: '@$ROUTER.$METHOD("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: "^(get|post|put|patch|delete)$"
+          # Anchor the segment with leading slash to avoid matching
+          # nouns that contain the verb (e.g. /executions vs /execute).
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*/(run|execute|process|submit|trigger|dispatch|invoke)(/.*|$)"

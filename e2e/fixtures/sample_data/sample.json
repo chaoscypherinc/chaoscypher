@@ -1,0 +1,14 @@
+{
+  "people": [
+    {
+      "name": "Alice",
+      "role": "Engineering Manager"
+    },
+    {
+      "name": "Bob",
+      "role": "Senior Designer"
+    }
+  ],
+  "company": "Acme Corp",
+  "summary": "Alice and Bob are coworkers at Acme Corp. Alice manages the engineering team. Bob is a senior designer reporting to Alice."
+}

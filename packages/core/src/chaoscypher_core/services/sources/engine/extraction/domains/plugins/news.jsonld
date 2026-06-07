@@ -1,0 +1,1110 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:news",
+  "name": "news",
+  "version": "1.13.0",
+  "description": "News articles, journalism, press releases, and current events",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 0.95,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "Suspect": "Person",
+    "Victim": "Person",
+    "Stakeholder": "Person"
+  },
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "news_core": {
+        "terms": [
+          "breaking news",
+          "developing story",
+          "sources say",
+          "according to a source",
+          "wire service",
+          "press conference",
+          "according to officials",
+          "according to authorities",
+          "according to the report"
+        ],
+        "weight": 1.2
+      },
+      "journalism": {
+        "terms": [
+          "journalist",
+          "reporter",
+          "correspondent",
+          "newsroom",
+          "newspaper",
+          "wire service",
+          "Associated Press",
+          "Reuters",
+          "AFP",
+          "told reporters",
+          "spokesperson said",
+          "spokesman said",
+          "spokeswoman said"
+        ],
+        "weight": 1.0
+      },
+      "attribution": {
+        "terms": [
+          "officials said",
+          "authorities said",
+          "the agency said",
+          "in a statement",
+          "issued a statement",
+          "police said",
+          "the spokesperson",
+          "responding to questions",
+          "no comment",
+          "declined to comment"
+        ],
+        "weight": 0.9
+      },
+      "structure": {
+        "terms": [
+          "headline",
+          "dateline",
+          "byline",
+          "press release",
+          "lede"
+        ],
+        "weight": 1.0
+      },
+      "time_markers": {
+        "terms": [
+          "last week",
+          "this morning",
+          "earlier today",
+          "on Monday",
+          "on Tuesday",
+          "on Wednesday",
+          "on Thursday",
+          "on Friday"
+        ],
+        "weight": 0.7
+      },
+      "disaster_response": {
+        "terms": [
+          "evacuated",
+          "first responders",
+          "emergency services",
+          "death toll",
+          "displaced",
+          "casualties",
+          "search and rescue",
+          "state of emergency",
+          "in response to the"
+        ],
+        "weight": 1.0
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "news_article",
+      "press_release",
+      "journalism"
+    ],
+    "patterns": [
+      {
+        "regex": "\\b[A-Z]{2,}\\s*[-–—]\\s*",
+        "weight": 1.3,
+        "description": "Dateline pattern (CITY -)"
+      },
+      {
+        "regex": "(?i)\\baccording\\s+to\\s+[A-Z]",
+        "weight": 1.2,
+        "description": "Source attribution"
+      },
+      {
+        "regex": "(?i)\\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\b",
+        "weight": 0.8,
+        "description": "Day references"
+      },
+      {
+        "regex": "(?i)\\b\\d{1,2}:\\d{2}\\s*(am|pm|a\\.?m\\.?|p\\.?m\\.?)?\\b",
+        "weight": 0.9,
+        "description": "Time stamps"
+      },
+      {
+        "regex": "(?i)\\b(breaking|exclusive|update|developing|just\\s+in)\\b",
+        "weight": 1.1,
+        "description": "News urgency markers"
+      },
+      {
+        "regex": "(?i)\\b(reuters|associated\\s+press|ap|afp)\\b",
+        "weight": 1.4,
+        "description": "Wire service attribution"
+      },
+      {
+        "regex": "(?i)\\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\\s*,\\s*(january|february|march|april|may|june|july|august|september|october|november|december)\\s+\\d{1,2},?\\s+\\d{4}",
+        "weight": 1.8,
+        "description": "Wikinews-style dateline (Day, Month DD, YYYY)"
+      },
+      {
+        "regex": "(?i)\\b(killed|injured|wounded|displaced)\\s+(at\\s+least\\s+)?[\\d,]+",
+        "weight": 1.5,
+        "description": "Casualty count language"
+      },
+      {
+        "regex": "\\b(USA Today|New York Times|Washington Post|BBC|CNN|Globe and Mail|TVNZ|NHK|Al Jazeera|Bloomberg|The Guardian)\\b",
+        "weight": 1.3,
+        "description": "Named news outlets"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Wire service boilerplate",
+      "examples": [
+        "CITY (AP) -"
+      ]
+    },
+    {
+      "description": "Vague attributions",
+      "examples": [
+        "sources say",
+        "officials said"
+      ]
+    },
+    {
+      "description": "Editorial markers",
+      "examples": [
+        "breaking",
+        "developing",
+        "update",
+        "exclusive"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract news events, people, organizations, locations, and sources\n- Capture both named and anonymous sources as Source entities\n- Include dates and locations in properties\n\nDO NOT EXTRACT:\n- Wire service boilerplate: 'CITY (AP) -', bylines, datelines as entities\n- Vague attributions: 'sources say', 'officials said' (without specificity)\n- Editorial markers: 'breaking', 'developing', 'update'\n- Social media handles: @username (unless the person is the focus)",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- ATTRIBUTION: Link quotes to speakers with quoted_as_saying\n- EVENTS: Connect people/organizations to events with involves\n- TIMELINE: Use occurred_at to link events to dates/times\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_event",
+        "name": "News Event",
+        "description": "A newsworthy event or occurrence",
+        "icon": "Newspaper",
+        "color": "#41d6a5",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "event",
+          "incident",
+          "occurred",
+          "happened",
+          "took place",
+          "breaking",
+          "developing"
+        ],
+        "properties": [
+          {
+            "name": "date",
+            "display_name": "Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Event Date"
+            ]
+          },
+          {
+            "name": "severity",
+            "display_name": "Severity",
+            "property_type": "text",
+            "absorbs_types": [
+              "Severity"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_person",
+        "name": "Person",
+        "description": "A person mentioned in the news",
+        "icon": "Person",
+        "color": "#41d0d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "person",
+          "individual",
+          "official",
+          "spokesperson",
+          "witness"
+        ],
+        "properties": [
+          {
+            "name": "title",
+            "display_name": "Title",
+            "property_type": "text",
+            "absorbs_types": [
+              "Title"
+            ]
+          },
+          {
+            "name": "organization",
+            "display_name": "Organization",
+            "property_type": "text",
+            "absorbs_types": [
+              "Affiliation"
+            ]
+          },
+          {
+            "name": "role",
+            "display_name": "Role",
+            "property_type": "text",
+            "absorbs_types": [
+              "Role"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_org",
+        "name": "Organization",
+        "description": "A company, government, or group",
+        "icon": "Business",
+        "color": "#4198d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "company",
+          "organization",
+          "government",
+          "agency",
+          "group",
+          "corporation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_quote",
+        "name": "Quote",
+        "description": "A direct quotation from a source",
+        "icon": "FormatQuote",
+        "color": "#4160d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "media",
+        "normalization_keywords": [
+          "quote",
+          "said",
+          "stated",
+          "commented",
+          "remarked"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_source",
+        "name": "Source",
+        "description": "An information source (named or anonymous)",
+        "icon": "ContactPhone",
+        "color": "#5b41d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "source",
+          "according to",
+          "reported by",
+          "confirmed by",
+          "official said"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_location",
+        "name": "Location",
+        "description": "Where the event occurred",
+        "icon": "Place",
+        "color": "#9241d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "media",
+        "normalization_keywords": [
+          "location",
+          "city",
+          "country",
+          "place",
+          "at",
+          "in"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_date",
+        "name": "Date",
+        "description": "When the event occurred",
+        "icon": "CalendarMonth",
+        "color": "#ca41d6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "media"
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_statement",
+        "name": "Statement",
+        "description": "An official statement or announcement",
+        "icon": "Campaign",
+        "color": "#d641aa",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "media",
+        "normalization_keywords": [
+          "statement",
+          "announcement",
+          "press release",
+          "official statement"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_publication",
+        "name": "Publication",
+        "description": "A news outlet or publication",
+        "icon": "Article",
+        "color": "#d64841",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "media"
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_policy",
+        "name": "Policy",
+        "description": "A government policy or official stance directing action",
+        "icon": "Flag",
+        "color": "#d68041",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "policy",
+          "directive",
+          "guideline"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_regulation",
+        "name": "Regulation",
+        "description": "An enforceable regulation, rule, mandate, or executive order",
+        "icon": "Gavel",
+        "color": "#d6a041",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "regulation",
+          "rule",
+          "mandate",
+          "order",
+          "executive order"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_investigation",
+        "name": "Investigation",
+        "description": "A criminal, congressional, or journalistic investigation",
+        "icon": "Search",
+        "color": "#d6b841",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "investigation",
+          "probe",
+          "inquiry",
+          "audit"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_legal_action",
+        "name": "Legal Action",
+        "description": "A lawsuit, indictment, or legal proceeding",
+        "icon": "Balance",
+        "color": "#bdd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "lawsuit",
+          "indictment",
+          "trial",
+          "charges",
+          "legal action"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "news_template_agency",
+        "name": "Government Agency",
+        "description": "A government agency or department",
+        "icon": "AccountBalance",
+        "color": "#41d66d",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "agency",
+          "department",
+          "bureau",
+          "ministry",
+          "commission"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_reported",
+        "name": "reported",
+        "description": "Source reported on an event, statement, investigation, legal action, or policy development",
+        "icon": "Article",
+        "color": "#cc6c32",
+        "quality_score": 15,
+        "source_types": [
+          "Publication",
+          "Person",
+          "Source",
+          "Organization",
+          "Government Agency"
+        ],
+        "target_types": [
+          "News Event",
+          "Statement",
+          "Investigation",
+          "Legal Action",
+          "Policy",
+          "Regulation",
+          "Location",
+          "Person",
+          "Organization",
+          "Government Agency"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_quoted",
+        "name": "quoted_as_saying",
+        "description": "Person, source, organization, or agency quoted as saying something",
+        "icon": "FormatQuote",
+        "color": "#cc9a32",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Source",
+          "Government Agency",
+          "Publication"
+        ],
+        "target_types": [
+          "Quote",
+          "Statement"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_occurred_at",
+        "name": "occurred_at",
+        "description": "Event, statement, investigation, or legal action occurred at a location",
+        "icon": "Place",
+        "color": "#ccc832",
+        "quality_score": 15,
+        "source_types": [
+          "News Event",
+          "Statement",
+          "Investigation",
+          "Legal Action"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_occurred_on",
+        "name": "occurred_on",
+        "description": "Event, statement, investigation, legal action, or announcement occurred on a date",
+        "icon": "CalendarMonth",
+        "color": "#a1cc32",
+        "quality_score": 15,
+        "source_types": [
+          "News Event",
+          "Statement",
+          "Investigation",
+          "Legal Action",
+          "Policy",
+          "Regulation",
+          "Location",
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Date"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_involves",
+        "name": "involves",
+        "description": "Event, investigation, or legal action involves a person, organization, agency, or source",
+        "icon": "People",
+        "color": "#73cc32",
+        "quality_score": 25,
+        "source_types": [
+          "News Event",
+          "Investigation",
+          "Legal Action"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_attributed_to",
+        "name": "attributed_to",
+        "description": "Quote or statement attributed to a person, organization, agency, source, or publication",
+        "icon": "Person",
+        "color": "#45cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Quote",
+          "Statement"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_affects",
+        "name": "affects",
+        "description": "Event, policy, regulation, investigation, or legal action affects a stakeholder",
+        "icon": "TouchApp",
+        "color": "#32cc4e",
+        "quality_score": 25,
+        "source_types": [
+          "News Event",
+          "Policy",
+          "Regulation",
+          "Investigation",
+          "Legal Action",
+          "Statement"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Location",
+          "Government Agency",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_responds_to",
+        "name": "responds_to",
+        "description": "Person, organization, agency, or statement responds to an event, statement, policy, or legal action",
+        "icon": "Reply",
+        "color": "#32cc7c",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Statement",
+          "Location",
+          "Publication"
+        ],
+        "target_types": [
+          "News Event",
+          "Statement",
+          "Quote",
+          "Policy",
+          "Regulation",
+          "Investigation",
+          "Legal Action",
+          "Location",
+          "Organization",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_published_by",
+        "name": "published_by",
+        "description": "Story, statement, quote, investigation finding, or report published by a publication, organization, or agency",
+        "icon": "Publish",
+        "color": "#32ccaa",
+        "quality_score": 15,
+        "source_types": [
+          "News Event",
+          "Statement",
+          "Quote",
+          "Investigation",
+          "Policy",
+          "Regulation"
+        ],
+        "target_types": [
+          "Publication",
+          "Organization",
+          "Government Agency",
+          "Date"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_updates",
+        "name": "updates",
+        "description": "Event, statement, policy, or regulation updates a previous one",
+        "icon": "Update",
+        "color": "#32c0cc",
+        "quality_score": 15,
+        "source_types": [
+          "News Event",
+          "Statement",
+          "Policy",
+          "Regulation",
+          "Investigation",
+          "Legal Action"
+        ],
+        "target_types": [
+          "News Event",
+          "Statement",
+          "Policy",
+          "Regulation",
+          "Investigation",
+          "Legal Action"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_denied",
+        "name": "denied",
+        "description": "Person, organization, agency, source, or publication denied a claim, allegation, or finding",
+        "icon": "Block",
+        "color": "#3292cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ],
+        "target_types": [
+          "Quote",
+          "Statement",
+          "News Event",
+          "Investigation",
+          "Legal Action",
+          "Policy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_confirmed",
+        "name": "confirmed",
+        "description": "Person, organization, agency, source, or publication confirmed information",
+        "icon": "CheckCircle",
+        "color": "#3264cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ],
+        "target_types": [
+          "News Event",
+          "Statement",
+          "Quote",
+          "Investigation",
+          "Legal Action",
+          "Policy",
+          "Regulation"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_investigated",
+        "name": "investigated",
+        "description": "Agency, organization, publication, or investigation investigated a person, organization, event, or related matter",
+        "icon": "Search",
+        "color": "#3236cc",
+        "quality_score": 25,
+        "source_types": [
+          "Government Agency",
+          "Organization",
+          "Publication",
+          "Investigation",
+          "Person"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "News Event",
+          "Government Agency",
+          "Statement",
+          "Legal Action"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_charged_with",
+        "name": "charged_with",
+        "description": "Person, organization, or agency charged with a crime, offense, or legal action",
+        "icon": "Gavel",
+        "color": "#5d32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency"
+        ],
+        "target_types": [
+          "Legal Action"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_sentenced",
+        "name": "sentenced",
+        "description": "Person or organization sentenced for a crime or in a legal action",
+        "icon": "Balance",
+        "color": "#8b32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Organization"
+        ],
+        "target_types": [
+          "Legal Action"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_resigned_from",
+        "name": "resigned_from",
+        "description": "Person resigned from an organization, agency, or publication",
+        "icon": "ExitToApp",
+        "color": "#b932cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Organization",
+          "Government Agency",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_announced",
+        "name": "announced",
+        "description": "Person, organization, agency, source, or publication announced something",
+        "icon": "Campaign",
+        "color": "#cc32b0",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ],
+        "target_types": [
+          "Policy",
+          "Regulation",
+          "News Event",
+          "Statement",
+          "Investigation",
+          "Legal Action",
+          "Quote"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_criticized",
+        "name": "criticized",
+        "description": "Person, organization, agency, source, or publication criticized another party, policy, statement, event, or action",
+        "icon": "ThumbDown",
+        "color": "#cc3282",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Policy",
+          "Regulation",
+          "Statement",
+          "News Event",
+          "Investigation",
+          "Legal Action",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_endorsed",
+        "name": "endorsed",
+        "description": "Person, organization, agency, source, or publication endorsed a party, policy, statement, or action",
+        "icon": "ThumbUp",
+        "color": "#cc3254",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Source",
+          "Publication"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Policy",
+          "Regulation",
+          "Statement",
+          "News Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_triggered",
+        "name": "triggered",
+        "description": "Event, statement, policy, or legal action triggered another event, response, investigation, or rule",
+        "icon": "Bolt",
+        "color": "#cc3e32",
+        "quality_score": 25,
+        "source_types": [
+          "News Event",
+          "Statement",
+          "Policy",
+          "Regulation",
+          "Investigation",
+          "Legal Action",
+          "Quote"
+        ],
+        "target_types": [
+          "News Event",
+          "Investigation",
+          "Legal Action",
+          "Policy",
+          "Regulation",
+          "Statement"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_located_in",
+        "name": "located_in",
+        "description": "Where an event, organization, or location is geographically — includes Location→Location for region-within-region (Honolulu located_in Hawaii)",
+        "icon": "Place",
+        "color": "#7a3c5c",
+        "quality_score": 15,
+        "source_types": [
+          "News Event",
+          "Organization",
+          "Person",
+          "Government Agency",
+          "Investigation",
+          "Legal Action",
+          "Statement",
+          "Location"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_staff_member",
+        "name": "staff_member",
+        "description": "A person is a staff member of an organization, government agency, or publication",
+        "icon": "BadgeOutlined",
+        "color": "#8a4c6c",
+        "quality_score": 20,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Organization",
+          "Government Agency",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_founded",
+        "name": "founded",
+        "description": "A person founded an organization, agency, or publication",
+        "icon": "Foundation",
+        "color": "#9a5c7c",
+        "quality_score": 20,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Organization",
+          "Government Agency",
+          "Publication"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "news_edge_connected_to",
+        "name": "connected_to",
+        "description": "A loose connection between two entities mentioned in the story (use specific edges when possible)",
+        "icon": "Link",
+        "color": "#aa6c8c",
+        "quality_score": 10,
+        "source_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Location",
+          "News Event",
+          "Investigation",
+          "Legal Action"
+        ],
+        "target_types": [
+          "Person",
+          "Organization",
+          "Government Agency",
+          "Location",
+          "News Event",
+          "Investigation",
+          "Legal Action"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 15,
+    "max_same_source_type": 6,
+    "max_relationship_ratio": 5.0,
+    "loop_max_entity_count": 25
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Federal Bureau of Investigation",
+        "aliases": [
+          "FBI",
+          "the Bureau"
+        ],
+        "note": "Abbreviations and common references become aliases"
+      },
+      {
+        "canonical": "President Biden",
+        "aliases": [
+          "Joe Biden",
+          "Biden",
+          "POTUS"
+        ],
+        "note": "Full names and acronyms become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "DOJ",
+        "target": "Tech Company",
+        "type": "investigated",
+        "note": "Use investigated for probes and inquiries"
+      },
+      {
+        "source": "Senator Smith",
+        "target": "Policy X",
+        "type": "criticized",
+        "note": "Use criticized for public opposition"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "president",
+    "senator",
+    "governor",
+    "minister",
+    "colonel",
+    "captain",
+    "general"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "legal",
+      "boilerplate",
+      "advertising",
+      "web_artifacts",
+      "metadata"
+    ]
+  },
+  "extraction_filtering_mode": "minimal",
+  "icon": "Newspaper"
+}

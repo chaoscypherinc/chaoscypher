@@ -1,0 +1,91 @@
+[supervisord]
+nodaemon=true
+user=appuser
+# Supervisord (and every [program:*]) writes to a 0666 FIFO that the
+# entrypoint creates and a root-owned ``cat`` reads. The FIFO bridges
+# the Docker stdio handoff: after the entrypoint's gosu drop,
+# supervisord (now appuser) cannot open ``/dev/stdout`` directly — the
+# underlying pipe is root-owned and ``chmod`` on /dev/stdout has no
+# effect across UIDs. The FIFO is appuser-writable and the cat reader
+# inherits root's connection to Docker's stdout, so writes flow to
+# ``docker logs``. See packages/docker/config/entrypoint.sh for setup.
+logfile=/run/chaoscypher/stdout.fifo
+logfile_maxbytes=0
+loglevel=%(ENV_SUPERVISOR_LOGLEVEL)s
+pidfile=/run/chaoscypher/supervisord.pid
+
+[unix_http_server]
+file=/run/chaoscypher/supervisor.sock
+chmod=0770
+chown=appuser:appuser
+username=supervisor
+password=%(ENV_SUPERVISOR_PASSWORD)s
+
+[supervisorctl]
+serverurl=unix:///run/chaoscypher/supervisor.sock
+username=supervisor
+password=%(ENV_SUPERVISOR_PASSWORD)s
+
+[rpcinterface:supervisor]
+supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+[program:nginx]
+command=bash -c 'exec nginx -g "daemon off;" 2>&1 | log-prefix nginx'
+user=appuser
+autostart=true
+autorestart=true
+priority=10
+stdout_logfile=/run/chaoscypher/stdout.fifo
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:nginx-ready]
+command=bash -c 'until (: < /dev/tcp/127.0.0.1/8080) 2>/dev/null; do sleep 0.5; done; CONF={{ settings.tls.nginx_http_conf }}; [ -f {{ settings.tls.cert_dir }}/{{ settings.tls.cert_filename }} ] && [ -f {{ settings.tls.cert_dir }}/{{ settings.tls.key_filename }} ] && CONF={{ settings.tls.nginx_https_conf }}; ln -sf "$CONF" /run/chaoscypher/nginx-active.conf; nginx -s reload; echo "nginx switched to full proxy config"'
+user=appuser
+autostart=true
+autorestart=false
+priority=50
+startsecs=0
+stdout_logfile=/run/chaoscypher/stdout.fifo
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:valkey]
+command=bash -c 'exec /usr/local/bin/valkey-startup 2>&1 | log-prefix valkey'
+user=appuser
+autostart=true
+autorestart=true
+priority=20
+stopwaitsecs={{ settings.shutdown.cortex_shutdown_grace_seconds }}
+environment=QUEUE_PASSWORD="%(ENV_QUEUE_PASSWORD)s",VALKEY_LOGLEVEL="%(ENV_VALKEY_LOGLEVEL)s"
+stdout_logfile=/run/chaoscypher/stdout.fifo
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:cortex]
+command=bash -c 'exec cc-cortex start --host 0.0.0.0 --port 8080 2>&1 | log-prefix cortex'
+user=appuser
+autostart=true
+autorestart=true
+priority=30
+startsecs={{ settings.shutdown.supervisor_startsecs_cortex }}
+stopsignal=TERM
+stopwaitsecs={{ settings.shutdown.cortex_shutdown_grace_seconds }}
+environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app",APP_NAME="web_ui",QUEUE_HOST="127.0.0.1",QUEUE_PORT="6379",QUEUE_DB="0",QUEUE_PASSWORD="%(ENV_QUEUE_PASSWORD)s",LOG_LEVEL="%(ENV_LOG_LEVEL)s",USE_JSON_LOGGING="%(ENV_USE_JSON_LOGGING)s",HF_HOME="/data/models",HF_HUB_DISABLE_XET="1",HF_HUB_DISABLE_PROGRESS_BARS="1",TQDM_DISABLE="1",TOKENIZERS_PARALLELISM="false"
+stdout_logfile=/run/chaoscypher/stdout.fifo
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+
+[program:neuron]
+command=bash -c 'exec cc-neuron 2>&1 | log-prefix neuron'
+user=appuser
+autostart=true
+autorestart=true
+priority=40
+startsecs={{ settings.shutdown.supervisor_startsecs_neuron }}
+stopsignal=TERM
+stopwaitsecs={{ settings.shutdown.worker_shutdown_grace_seconds }}
+environment=PYTHONUNBUFFERED="1",PYTHONPATH="/app",QUEUE_HOST="127.0.0.1",QUEUE_PORT="6379",QUEUE_DB="0",QUEUE_PASSWORD="%(ENV_QUEUE_PASSWORD)s",LOG_LEVEL="%(ENV_LOG_LEVEL)s",USE_JSON_LOGGING="%(ENV_USE_JSON_LOGGING)s",HF_HOME="/data/models",HF_HUB_DISABLE_XET="1",HF_HUB_DISABLE_PROGRESS_BARS="1",TQDM_DISABLE="1",TOKENIZERS_PARALLELISM="false"
+stdout_logfile=/run/chaoscypher/stdout.fifo
+stdout_logfile_maxbytes=0
+redirect_stderr=true

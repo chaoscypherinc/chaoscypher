@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC047 — Hardcoded `timeout=N` keyword argument in HTTP / asyncio calls.
+#
+# Policy: timeouts live in chaoscypher_core.app_config TimeoutSettings (or
+# WebSettings, CliSettings depending on context). See
+# public configuration guidance.
+
+rules:
+  - id: cc-047-hardcoded-timeout-kwarg
+    message: |
+      Hardcoded `timeout=N` literal. Resolve via
+      get_settings().<group>.<field> instead. See
+      public configuration guidance.
+
+      Suppress with rationale: # nosemgrep: cc-047-hardcoded-timeout-kwarg - <reason>
+    severity: WARNING
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/test_*.py"
+        - "**/*_test.py"
+        - "/packages/core/src/chaoscypher_core/app_config/__init__.py"
+        - "/packages/core/src/chaoscypher_core/settings.py"
+        - "/packages/core/src/chaoscypher_core/policy.py"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: httpx.AsyncClient(..., timeout=$N, ...)
+              - pattern: httpx.Client(..., timeout=$N, ...)
+              - pattern: httpx.get(..., timeout=$N, ...)
+              - pattern: httpx.post(..., timeout=$N, ...)
+              - pattern: httpx.put(..., timeout=$N, ...)
+              - pattern: httpx.delete(..., timeout=$N, ...)
+              - pattern: httpx.request(..., timeout=$N, ...)
+              - pattern: requests.get(..., timeout=$N, ...)
+              - pattern: requests.post(..., timeout=$N, ...)
+              - pattern: requests.put(..., timeout=$N, ...)
+              - pattern: requests.delete(..., timeout=$N, ...)
+              - pattern: requests.request(..., timeout=$N, ...)
+              - pattern: asyncio.wait_for(..., timeout=$N)
+          - metavariable-comparison:
+              metavariable: $N
+              comparison: $N != 0
+              strip: true

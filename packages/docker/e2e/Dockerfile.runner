@@ -1,0 +1,58 @@
+# E2E test runner with pytest + httpx + playwright
+FROM python:3.14.3-slim
+
+WORKDIR /app
+
+# System dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    curl \
+    make \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV PIP_NO_CACHE_DIR=1
+# Shared system-wide Playwright browser cache so the root-time install
+# below is still discoverable after ``USER appuser`` switches the
+# default ``$HOME/.cache/ms-playwright`` lookup path.
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+
+# Install test dependencies
+RUN pip install \
+    "pytest>=8.0.0,<9" \
+    "pytest-asyncio>=0.23.0,<1" \
+    "pytest-html>=4.1.0,<5" \
+    "pytest-json-report>=1.5.0,<2" \
+    "httpx>=0.27.0,<1" \
+    "playwright>=1.49.0,<2"
+
+# Install Playwright browsers. Both ``chromium`` (full) and
+# ``chromium-headless-shell`` (slimmer headless-only build) are needed
+# because recent Playwright defaults headless launches to the
+# ``chromium_headless_shell`` channel — installing only ``chromium``
+# leaves a missing-binary error at first launch.
+RUN playwright install chromium chromium-headless-shell --with-deps
+
+# Copy package configs for editable install
+COPY packages/core/pyproject.toml /app/packages/core/pyproject.toml
+COPY packages/core/src /app/packages/core/src
+COPY packages/cortex/pyproject.toml /app/packages/cortex/pyproject.toml
+COPY packages/cortex/src /app/packages/cortex/src
+COPY packages/cli/pyproject.toml /app/packages/cli/pyproject.toml
+COPY packages/cli/src /app/packages/cli/src
+
+# Install packages in editable mode (core first — cortex and cli depend on it)
+RUN pip install -e /app/packages/core -e /app/packages/cortex -e /app/packages/cli
+
+# Create directories for mounts and set permissions
+RUN mkdir -p /app/e2e
+
+# Run as non-root user
+RUN groupadd -g 1000 appuser && \
+    useradd -u 1000 -g appuser -m -s /bin/bash appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+CMD ["pytest", "e2e/", "-v", "--tb=short"]

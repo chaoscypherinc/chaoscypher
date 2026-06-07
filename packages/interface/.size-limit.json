@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Main entry chunk (index.js)",
+    "path": "dist/assets/index-*.js",
+    "limit": "146 KB",
+    "brotli": true,
+    "running": false
+  },
+  {
+    "name": "Vendor chunk (MUI icons)",
+    "path": "dist/assets/mui-icons-*.js",
+    "limit": "50 KB",
+    "brotli": true,
+    "running": false
+  },
+  {
+    "name": "Total bundle (all JS chunks)",
+    "path": "dist/assets/*.js",
+    "limit": "775 KB",
+    "brotli": true,
+    "running": false
+  }
+]

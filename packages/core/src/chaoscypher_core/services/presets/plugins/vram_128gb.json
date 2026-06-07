@@ -1,0 +1,30 @@
+{
+  "name": "vram_128gb",
+  "display_name": "128GB VRAM",
+  "version": "1.0.0",
+  "description": "Desktop AI supercomputer configuration for 70B+ models with massive context. Supports frontier-class models for enterprise knowledge extraction.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 128,
+  "gpu_examples": [
+    "NVIDIA DGX Spark",
+    "AMD Ryzen AI Max+ 395"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "gpt-oss:120b",
+    "ollama_extraction_model": "gpt-oss:120b",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 65536,
+    "ollama_num_batch": 4096,
+    "ollama_num_parallel": 4
+  },
+
+  "llm_settings": {
+    "ai_context_window": 65536,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 32768,
+    "thinking_for_chat": false
+  }
+}

@@ -1,0 +1,1162 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:technical",
+  "name": "technical",
+  "version": "1.9.0",
+  "description": "Technical documentation, code, APIs, and software libraries",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.2,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "Func": "Function",
+    "API": "Endpoint",
+    "Lib": "Package",
+    "Library": "Package",
+    "Var": "Constant",
+    "Variable": "Constant"
+  },
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "code": {
+        "terms": [
+          "def ",
+          "class ",
+          "function",
+          "import ",
+          "return",
+          "async ",
+          "await ",
+          "const ",
+          "var ",
+          "let "
+        ],
+        "weight": 1.0
+      },
+      "api": {
+        "terms": [
+          "endpoint",
+          "request",
+          "response",
+          "rest",
+          "api",
+          "get",
+          "post",
+          "patch",
+          "delete",
+          "http",
+          "json"
+        ],
+        "weight": 0.8
+      },
+      "tech": {
+        "terms": [
+          "module",
+          "package",
+          "library",
+          "framework",
+          "parameter",
+          "exception",
+          "method",
+          "attribute",
+          "instance",
+          "constructor"
+        ],
+        "weight": 0.6
+      }
+    },
+    "file_extensions": [
+      ".py",
+      ".js",
+      ".ts",
+      ".rst",
+      ".html",
+      ".md",
+      ".jsx",
+      ".tsx"
+    ],
+    "doc_types": [
+      "sphinx_html",
+      "markdown",
+      "openapi"
+    ],
+    "patterns": [
+      {
+        "regex": "```[\\w]*\\n",
+        "weight": 1.5,
+        "description": "Code blocks in markdown"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.3,
+      "per_keyword_boost": 0.05,
+      "extension_boost": 0.1,
+      "doc_type_boost": 0.2,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Generic variable names",
+      "examples": [
+        "x",
+        "temp",
+        "result",
+        "data",
+        "i",
+        "j"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract modules, classes, functions, methods, exceptions, and parameters\n- Use canonical names: 'asyncio', 'collections.abc', 'StopIteration' (preserve original casing)\n- Technical entity names are typically lowercase (e.g., 'asyncio', 'dataclass', 'contextmanager') — this is correct\n- Include type hints and return types in descriptions\n- Extract PEPs and RFCs as Specification entities (e.g., 'PEP 484', 'RFC 7231')\n\nDO NOT EXTRACT:\n- Code syntax: brackets, parentheses, operators\n- Generic variable names: 'x', 'temp', 'result', 'data'\n- Built-in primitive types as standalone entities: str, int, list, dict, bool\n- Line numbers or file paths as entities\n- Glossary section headings or navigation labels",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- HIERARCHY: Use contains for module->class->method relationships\n- INHERITANCE: Always capture inherits_from for base classes\n- SIGNATURES: Extract parameters with has_parameter, return types with returns\n- ERRORS: Link exceptions with raises relationship\n- SPECIFICATIONS: Link PEPs/RFCs to what they define using 'specifies' relationship\n- Avoid creating many relationships between the same two entities — one relationship per concept\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_module",
+        "name": "Module",
+        "description": "Python module or code package",
+        "icon": "Inventory2",
+        "color": "#d64178",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "a module",
+          "module for",
+          "module containing",
+          "this module",
+          "python module",
+          "provides functions"
+        ],
+        "properties": [
+          {
+            "name": "author",
+            "display_name": "Author",
+            "property_type": "text",
+            "absorbs_types": [
+              "Person",
+              "Author",
+              "Creator"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_class",
+        "name": "Class",
+        "description": "Object-oriented class definition",
+        "icon": "DataObject",
+        "color": "#d64a41",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "a class",
+          "class definition",
+          "class that",
+          "this class",
+          "abstract class",
+          "base class",
+          "subclass of",
+          "inherits from"
+        ],
+        "properties": [
+          {
+            "name": "base_class",
+            "display_name": "Base Class",
+            "property_type": "text",
+            "absorbs_types": [
+              "Abstract Class",
+              "Base Class"
+            ]
+          },
+          {
+            "name": "abstract",
+            "display_name": "Abstract",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_function",
+        "name": "Function",
+        "description": "Standalone function",
+        "icon": "Functions",
+        "color": "#d68a41",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "a function",
+          "function that",
+          "this function",
+          "callable",
+          "takes parameters"
+        ],
+        "properties": [
+          {
+            "name": "return_type",
+            "display_name": "Return Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Return Type"
+            ]
+          },
+          {
+            "name": "async",
+            "display_name": "Async",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_method",
+        "name": "Method",
+        "description": "Method within a class",
+        "icon": "Code",
+        "color": "#d6ca41",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "a method",
+          "method of",
+          "instance method",
+          "class method",
+          "static method",
+          "method that"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_parameter",
+        "name": "Parameter",
+        "description": "Function/method parameter",
+        "icon": "Tune",
+        "color": "#a2d641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "config_elements",
+        "normalization_keywords": [
+          "parameter",
+          "argument",
+          "accepts",
+          "optional argument",
+          "required parameter"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_exception",
+        "name": "Exception",
+        "description": "Error/exception type",
+        "icon": "BugReport",
+        "color": "#62d641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "error_elements",
+        "normalization_keywords": [
+          "exception",
+          "error type",
+          "raised when",
+          "error class",
+          "is raised",
+          "subclass of exception"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_constant",
+        "name": "Constant",
+        "description": "Constant value or configuration",
+        "icon": "Tag",
+        "color": "#41d660",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "config_elements",
+        "normalization_keywords": [
+          "constant",
+          "configuration",
+          "default value",
+          "flag",
+          "enum value"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_package",
+        "name": "Package",
+        "description": "Software package or library",
+        "icon": "Inventory2",
+        "color": "#41d6a0",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "code_elements"
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_interface",
+        "name": "Interface",
+        "description": "An interface defining a method contract that implementations must satisfy (Java/C# interface, Go interface, ABC)",
+        "icon": "Api",
+        "color": "#41cdd6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "interface",
+          "abstract base",
+          "contract",
+          "ABC"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_protocol",
+        "name": "Protocol",
+        "description": "A structural protocol or duck-typed contract (Python typing.Protocol, Swift protocol, Rust trait)",
+        "icon": "Hub",
+        "color": "#41a8d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "protocol",
+          "trait",
+          "typeclass",
+          "structural type"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_type",
+        "name": "Type",
+        "description": "A concrete type definition — a struct, enum, generic type, or named type (e.g. ``struct User``, ``Result<T, E>``)",
+        "icon": "Label",
+        "color": "#418dd6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "config_elements",
+        "normalization_keywords": [
+          "type",
+          "type definition",
+          "generic type",
+          "struct",
+          "enum"
+        ],
+        "properties": [
+          {
+            "name": "concept",
+            "display_name": "Concept",
+            "property_type": "text",
+            "absorbs_types": [
+              "Concept",
+              "Glossary Entry",
+              "Term",
+              "Keyword"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_typealias",
+        "name": "TypeAlias",
+        "description": "A type alias — a name referring to another type (e.g. ``type UserId = int``, TypeScript ``type``, Rust ``type``)",
+        "icon": "Link",
+        "color": "#4170d6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "config_elements",
+        "normalization_keywords": [
+          "type alias",
+          "typedef",
+          "alias",
+          "type synonym"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_decorator",
+        "name": "Decorator",
+        "description": "A decorator or annotation applied to code elements",
+        "icon": "AutoFixHigh",
+        "color": "#414dd6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "decorator",
+          "annotation",
+          "@",
+          "wrapper"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_endpoint",
+        "name": "Endpoint",
+        "description": "An API endpoint — a callable HTTP/RPC operation identified by method + path (e.g. ``GET /users/{id}``)",
+        "icon": "Http",
+        "color": "#7541d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "endpoint",
+          "API path",
+          "operation",
+          "GET",
+          "POST"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_route",
+        "name": "Route",
+        "description": "A URL route or path declaration — the routing rule that maps a request to a handler",
+        "icon": "AltRoute",
+        "color": "#9241d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "route",
+          "URL pattern",
+          "path declaration"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_config",
+        "name": "Configuration",
+        "description": "A configuration setting, environment variable, or config file",
+        "icon": "Settings",
+        "color": "#b541d6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "config_elements",
+        "normalization_keywords": [
+          "configuration",
+          "setting",
+          "env var",
+          "config"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_specification",
+        "name": "Specification",
+        "description": "A PEP, RFC, standard, or formal specification document",
+        "icon": "Description",
+        "color": "#d641d6",
+        "requires_named_referent": true,
+        "quality_score": 20,
+        "compatibility_group": "doc_elements",
+        "normalization_keywords": [
+          "PEP",
+          "RFC",
+          "specification",
+          "standard",
+          "enhancement proposal",
+          "request for comments"
+        ],
+        "properties": [
+          {
+            "name": "document_id",
+            "display_name": "Document ID",
+            "property_type": "text",
+            "absorbs_types": [
+              "Document",
+              "Standard"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "system_template_pattern",
+        "name": "Design Pattern",
+        "description": "A software design pattern or architectural pattern",
+        "icon": "Architecture",
+        "color": "#d641b8",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "code_elements",
+        "normalization_keywords": [
+          "pattern",
+          "design pattern",
+          "factory",
+          "singleton",
+          "observer",
+          "strategy"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_imports",
+        "name": "imports",
+        "description": "Module, package, class, or function imports another code element",
+        "icon": "Download",
+        "color": "#3297cc",
+        "quality_score": 15,
+        "source_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method"
+        ],
+        "target_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method",
+          "Constant",
+          "Exception",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Decorator"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_defines",
+        "name": "defines",
+        "description": "Module/package/class defines a code element such as class, function, method, type, or constant",
+        "icon": "Add",
+        "color": "#3267cc",
+        "quality_score": 15,
+        "source_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Interface",
+          "Protocol"
+        ],
+        "target_types": [
+          "Class",
+          "Function",
+          "Method",
+          "Constant",
+          "Exception",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Decorator",
+          "Endpoint",
+          "Route",
+          "Design Pattern"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_inherits_from",
+        "name": "inherits_from",
+        "description": "Class inherits from base class",
+        "icon": "AccountTree",
+        "color": "#3237cc",
+        "inverse": "inherited_by",
+        "quality_score": 25,
+        "source_types": [
+          "Class"
+        ],
+        "target_types": [
+          "Class"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_raises",
+        "name": "raises",
+        "description": "Function, method, class, or endpoint raises an exception or error",
+        "icon": "Warning",
+        "color": "#5f32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Module",
+          "Endpoint",
+          "Route"
+        ],
+        "target_types": [
+          "Exception",
+          "Class"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_returns",
+        "name": "returns",
+        "description": "Function, method, or endpoint returns a type, class, or value",
+        "icon": "Output",
+        "color": "#8f32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Function",
+          "Method",
+          "Endpoint",
+          "Route"
+        ],
+        "target_types": [
+          "Class",
+          "Type",
+          "TypeAlias",
+          "Interface",
+          "Protocol",
+          "Constant",
+          "Exception"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_has_method",
+        "name": "has_method",
+        "description": "Class, interface, protocol, or module defines or has a method",
+        "icon": "Code",
+        "color": "#bf32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Class",
+          "Interface",
+          "Protocol",
+          "Module",
+          "Type"
+        ],
+        "target_types": [
+          "Method",
+          "Function"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_has_parameter",
+        "name": "has_parameter",
+        "description": "Callable element (function, method, decorator, endpoint, route) accepts a parameter",
+        "icon": "Tune",
+        "color": "#cc32a7",
+        "quality_score": 15,
+        "source_types": [
+          "Function",
+          "Method",
+          "Decorator",
+          "Endpoint",
+          "Route"
+        ],
+        "target_types": [
+          "Parameter",
+          "Type",
+          "TypeAlias",
+          "Class"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_has_attribute",
+        "name": "has_attribute",
+        "description": "Class, module, interface, protocol, or type has an attribute, property, or field",
+        "icon": "Label",
+        "color": "#cc3277",
+        "quality_score": 15,
+        "source_types": [
+          "Class",
+          "Module",
+          "Package",
+          "Interface",
+          "Protocol",
+          "Type"
+        ],
+        "target_types": [
+          "Constant",
+          "Type",
+          "TypeAlias",
+          "Class"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_implements",
+        "name": "implements",
+        "description": "Code element implements a protocol, interface, specification, or design pattern",
+        "icon": "CheckCircle",
+        "color": "#cc3247",
+        "quality_score": 25,
+        "source_types": [
+          "Class",
+          "Type",
+          "Module",
+          "Package",
+          "Function",
+          "Method",
+          "Endpoint"
+        ],
+        "target_types": [
+          "Class",
+          "Interface",
+          "Protocol",
+          "Specification",
+          "Design Pattern",
+          "Type"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_calls",
+        "name": "calls",
+        "description": "Code element invokes a callable (function, method, endpoint, or constructor)",
+        "icon": "CallMade",
+        "color": "#cc4f32",
+        "quality_score": 5,
+        "source_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Module",
+          "Endpoint",
+          "Route",
+          "Decorator"
+        ],
+        "target_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Endpoint",
+          "Route"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_contains",
+        "name": "contains",
+        "description": "Package, module, or class hierarchically contains another code element",
+        "icon": "Inbox",
+        "color": "#cc7f32",
+        "quality_score": 15,
+        "source_types": [
+          "Package",
+          "Module",
+          "Class",
+          "Interface",
+          "Protocol"
+        ],
+        "target_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method",
+          "Constant",
+          "Exception",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Decorator",
+          "Endpoint",
+          "Route",
+          "Configuration"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_depends_on",
+        "name": "depends_on",
+        "description": "Code element depends on another module, package, class, or external resource",
+        "icon": "Link",
+        "color": "#ccaf32",
+        "quality_score": 15,
+        "source_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method",
+          "Interface",
+          "Protocol",
+          "Endpoint",
+          "Route",
+          "Configuration",
+          "Design Pattern"
+        ],
+        "target_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Configuration",
+          "Constant",
+          "Specification"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_decorates",
+        "name": "decorates",
+        "description": "Decorator/annotation is applied to a function, method, class, parameter, or other code element",
+        "icon": "AutoFixHigh",
+        "color": "#b7cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Decorator"
+        ],
+        "target_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Parameter",
+          "Module",
+          "Endpoint",
+          "Route",
+          "Type",
+          "Constant"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_tests",
+        "name": "tests",
+        "description": "Test code (function, method, class, module, or package) tests a target code element",
+        "icon": "Science",
+        "color": "#87cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Module",
+          "Package"
+        ],
+        "target_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Module",
+          "Package",
+          "Interface",
+          "Protocol",
+          "Endpoint",
+          "Route",
+          "Exception",
+          "Type",
+          "Decorator"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_configured_by",
+        "name": "configured_by",
+        "description": "Code element is configured by a configuration, environment variable, or constant",
+        "icon": "Settings",
+        "color": "#57cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Module",
+          "Class",
+          "Package",
+          "Function",
+          "Method",
+          "Endpoint",
+          "Route",
+          "Decorator",
+          "Interface",
+          "Protocol"
+        ],
+        "target_types": [
+          "Configuration",
+          "Constant",
+          "Parameter",
+          "Type",
+          "TypeAlias"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_documents",
+        "name": "documents",
+        "description": "Documentation, specification, or module describes a code element",
+        "icon": "Description",
+        "color": "#32cc3f",
+        "quality_score": 15,
+        "source_types": [
+          "Module",
+          "Package",
+          "Specification",
+          "Function",
+          "Class"
+        ],
+        "target_types": [
+          "Class",
+          "Function",
+          "Method",
+          "Package",
+          "Module",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Endpoint",
+          "Route",
+          "Decorator",
+          "Exception",
+          "Constant",
+          "Configuration",
+          "Design Pattern",
+          "Parameter"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_wraps",
+        "name": "wraps",
+        "description": "Code element wraps, adapts, or proxies another code element",
+        "icon": "Layers",
+        "color": "#32cc6f",
+        "quality_score": 15,
+        "source_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Decorator",
+          "Module",
+          "Package",
+          "Interface",
+          "Protocol"
+        ],
+        "target_types": [
+          "Function",
+          "Method",
+          "Class",
+          "Module",
+          "Package",
+          "Endpoint",
+          "Route",
+          "Type",
+          "Interface",
+          "Protocol"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_overrides",
+        "name": "overrides",
+        "description": "Method, function, or class overrides a parent class/interface/protocol member",
+        "icon": "SwapVert",
+        "color": "#32cc9f",
+        "quality_score": 25,
+        "source_types": [
+          "Method",
+          "Function",
+          "Class"
+        ],
+        "target_types": [
+          "Method",
+          "Function",
+          "Class"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_specifies",
+        "name": "specifies",
+        "description": "Specification (PEP, RFC, standard) defines or standardizes a feature, behavior, or code element",
+        "icon": "Description",
+        "color": "#cc32cc",
+        "quality_score": 20,
+        "source_types": [
+          "Specification"
+        ],
+        "target_types": [
+          "Module",
+          "Package",
+          "Class",
+          "Function",
+          "Method",
+          "Interface",
+          "Protocol",
+          "Type",
+          "TypeAlias",
+          "Design Pattern",
+          "Decorator",
+          "Endpoint",
+          "Route",
+          "Exception",
+          "Constant",
+          "Configuration",
+          "Parameter"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_serializes",
+        "name": "serializes",
+        "description": "Code element serializes, deserializes, or transforms data of a given type",
+        "icon": "Transform",
+        "color": "#32c7cc",
+        "quality_score": 15,
+        "source_types": [
+          "Class",
+          "Function",
+          "Method",
+          "Module",
+          "Endpoint",
+          "Route",
+          "Decorator",
+          "Interface",
+          "Protocol"
+        ],
+        "target_types": [
+          "Class",
+          "Type",
+          "TypeAlias",
+          "Interface",
+          "Protocol",
+          "Constant"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "system_edge_inherited_by",
+        "name": "inherited_by",
+        "description": "Class is inherited by a subclass",
+        "icon": "AccountTree",
+        "color": "#3237cc",
+        "inverse": "inherits_from",
+        "quality_score": 25,
+        "source_types": [
+          "Class"
+        ],
+        "target_types": [
+          "Class"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 20,
+    "max_same_source_type": 8,
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 30
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "requests.Session",
+        "aliases": [
+          "Session",
+          "requests session"
+        ],
+        "note": "Fully-qualified names and short names become aliases"
+      },
+      {
+        "canonical": "asyncio",
+        "aliases": [
+          "asyncio module"
+        ],
+        "note": "Module names are lowercase — preserve original casing"
+      }
+    ],
+    "entity_examples": [
+      {
+        "name": "asyncio",
+        "type": "Module",
+        "note": "Python module names are lowercase — this is correct"
+      },
+      {
+        "name": "PEP 484",
+        "type": "Specification",
+        "note": "PEPs and RFCs are Specification entities"
+      },
+      {
+        "name": "StopIteration",
+        "type": "Exception",
+        "note": "Exception class with PascalCase name"
+      },
+      {
+        "name": "contextmanager",
+        "type": "Decorator",
+        "note": "Decorator names are lowercase"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "UserService",
+        "target": "BaseService",
+        "type": "inherits_from",
+        "note": "Use inherits_from for class inheritance"
+      },
+      {
+        "source": "PEP 484",
+        "target": "typing",
+        "type": "specifies",
+        "note": "PEP specifies the module it defines"
+      },
+      {
+        "source": "test_login",
+        "target": "LoginHandler",
+        "type": "tests",
+        "note": "Use tests for test-to-code relationships"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "changelog",
+      "legal",
+      "boilerplate",
+      "metadata",
+      "web_artifacts",
+      "advertising"
+    ]
+  },
+  "extraction_filtering_mode": "balanced",
+  "icon": "Build"
+}

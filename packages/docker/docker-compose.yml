@@ -1,0 +1,83 @@
+# Chaos Cypher All-in-One — Single container deployment
+# Usage: docker compose up -d
+
+name: chaoscypher
+
+services:
+  chaoscypher:
+    build:
+      context: ../..
+      dockerfile: packages/docker/Dockerfile
+      args:
+        INCLUDE_MEDIA: ${INCLUDE_MEDIA:-0}
+    container_name: chaoscypher
+    ports:
+      # Default 0.0.0.0 — accessible from your LAN, matches the self-hosted
+      # convention (Vaultwarden / Jellyfin / Home Assistant / Gitea).
+      # First-arrival admin race is documented in
+      # docs/security/self-hosted-threat-model.md. For loopback-only
+      # deployment set CHAOSCYPHER_BIND=127.0.0.1 in your .env.
+      - "${CHAOSCYPHER_BIND:-0.0.0.0}:${HOST_PORT_HTTP:-80}:80"
+      - "${CHAOSCYPHER_BIND:-0.0.0.0}:${HOST_PORT_HTTPS:-443}:443"
+    volumes:
+      - app-data:/data
+    environment:
+      # Data directory (must match volume mount path)
+      - CHAOSCYPHER_DATA_DIR=/data
+      # Application log level (cortex + neuron) — hot-reloadable via Settings > Logs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - USE_JSON_LOGGING=${USE_JSON_LOGGING:-false}
+      # Infrastructure log levels — independent, production-quiet defaults
+      # Override only when debugging specific services
+      - NGINX_LOGLEVEL=${NGINX_LOGLEVEL:-warn}
+      - NGINX_ACCESS_LOG=${NGINX_ACCESS_LOG:-off}
+      # Rate limiting is now controlled by RateLimitSettings.enabled in settings.yaml
+      - VALKEY_LOGLEVEL=${VALKEY_LOGLEVEL:-warning}
+      # Host header allow-list — required when CHAOSCYPHER_BIND=0.0.0.0 so
+      # LAN clients reaching the app via hostname/IP aren't rejected with 421.
+      - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-}
+      # Auto-generated on first boot if empty (see /data/secrets/)
+      - QUEUE_PASSWORD=${QUEUE_PASSWORD:-}
+      - SUPERVISOR_PASSWORD=${SUPERVISOR_PASSWORD:-}
+    mem_limit: ${MEM_LIMIT:-4g}  # default sized for 8 GB Docker Desktop; raise to 8-16g for heavy ingest workloads
+    cpus: ${CPU_LIMIT:-4}
+    stop_grace_period: ${CHAOSCYPHER_STOP_GRACE_PERIOD:-60s}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+      # FOWNER: entrypoint chowns the auto-generated secret files under
+      # /data/secrets/ to root:appuser and chmods them to 0640 (0600 for
+      # supervisor_password). Once ownership flips, chmod requires
+      # CAP_FOWNER. Without it the entrypoint exits with
+      # "chmod: Operation not permitted" and the container restart-loops.
+      - FOWNER
+      # DAC_OVERRIDE: required on WSL2 / Docker Desktop where uid=0 still
+      # needs the cap to write the volume-mounted /data dir. On native
+      # Linux root would bypass DAC unconditionally, but keeping the cap
+      # avoids platform-specific compose files.
+      - DAC_OVERRIDE
+      - NET_BIND_SERVICE
+      # KILL: supervisord runs as root but its managed children (cortex,
+      # neuron, valkey, nginx) all run as appuser. Sending a signal across
+      # UIDs requires CAP_KILL when the container has dropped capabilities
+      # and `no-new-privileges` is set — without it, supervisord's SIGTERM
+      # delivery on shutdown fails with EPERM for every child and the
+      # container only exits once Docker's grace period elapses and SIGKILL
+      # is sent from outside. The processes lose their chance to flush /
+      # checkpoint state cleanly.
+      - KILL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  app-data:
+    driver: local

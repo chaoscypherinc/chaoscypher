@@ -1,0 +1,1620 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:literary",
+  "name": "literary",
+  "version": "1.9.0",
+  "description": "Literary texts, fiction, poetry, drama, and literary criticism",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.0,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "Historical Figure": "Character",
+    "Historical Event": "Event"
+  },
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "literary_core": {
+        "terms": [
+          "novel",
+          "poem",
+          "poetry",
+          "fiction",
+          "narrative",
+          "prose",
+          "verse",
+          "literature",
+          "literary"
+        ],
+        "weight": 1.2
+      },
+      "narrative_elements": {
+        "terms": [
+          "protagonist",
+          "antagonist",
+          "character",
+          "plot",
+          "narrator",
+          "point of view",
+          "conflict",
+          "resolution",
+          "climax"
+        ],
+        "weight": 1.0
+      },
+      "literary_devices": {
+        "terms": [
+          "metaphor",
+          "simile",
+          "allegory",
+          "symbolism",
+          "irony",
+          "foreshadowing",
+          "imagery",
+          "allusion",
+          "personification",
+          "hyperbole"
+        ],
+        "weight": 1.0
+      },
+      "genres": {
+        "terms": [
+          "tragedy",
+          "comedy",
+          "romance",
+          "satire",
+          "epic",
+          "drama",
+          "sonnet",
+          "elegy",
+          "ode",
+          "ballad",
+          "haiku",
+          "novella",
+          "fairy tale"
+        ],
+        "weight": 0.9
+      },
+      "book_structure": {
+        "terms": [
+          "contents",
+          "table of contents",
+          "prologue",
+          "epilogue",
+          "preface",
+          "foreword",
+          "afterword",
+          "appendix",
+          "dedication"
+        ],
+        "weight": 1.1
+      },
+      "narrative_voice": {
+        "terms": [
+          "he said",
+          "she said",
+          "they said",
+          "i said",
+          "he replied",
+          "she replied",
+          "he thought",
+          "she thought",
+          "he wondered",
+          "she wondered"
+        ],
+        "weight": 1.0
+      },
+      "public_domain_sources": {
+        "terms": [
+          "project gutenberg",
+          "gutenberg",
+          "public domain",
+          "ebook",
+          "e-book",
+          "transcribed by",
+          "produced by"
+        ],
+        "weight": 1.2
+      },
+      "publication_terms": {
+        "terms": [
+          "first published",
+          "originally published",
+          "printed by",
+          "translated by",
+          "illustrated by"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "literary_text",
+      "fiction",
+      "poetry",
+      "literary_criticism"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)^\\s*(chapter|act|scene|canto)\\s+[IVXivx\\d]+\\b",
+        "weight": 1.6,
+        "description": "Chapter/Act header at line start"
+      },
+      {
+        "regex": "(?i)\\b(book|part|volume)\\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[IVXivx\\d]+)\\b",
+        "weight": 1.5,
+        "description": "Book/Part/Volume divisions"
+      },
+      {
+        "regex": "(?i)\\b(end\\s+of\\s+(?:the\\s+)?(?:chapter|book|volume|part))\\b",
+        "weight": 1.2,
+        "description": "Explicit section endings"
+      },
+      {
+        "regex": "[\"\\u201c][^\"\\u201d]{10,}[\"\\u201d]\\s*,?\\s*(said|asked|replied|exclaimed|whispered|murmured)\\s+(?:the\\s+)?[A-Z]",
+        "weight": 1.5,
+        "description": "Dialogue followed by character attribution"
+      },
+      {
+        "regex": "(?i)\\b(said|replied|exclaimed|whispered|murmured|muttered|shouted|cried|asked|answered|responded|inquired|declared|announced|continued)\\b",
+        "weight": 0.5,
+        "description": "Dialogue tags (high frequency in fiction)"
+      },
+      {
+        "regex": "(?i)\\b(prologue|epilogue|preface|foreword|afterword)\\b",
+        "weight": 1.2,
+        "description": "Book section markers"
+      },
+      {
+        "regex": "(?i)project\\s+gutenberg",
+        "weight": 2.0,
+        "description": "Strong signal for public domain classics"
+      },
+      {
+        "regex": "(?i)\\b(once\\s+upon\\s+a\\s+time|in\\s+a\\s+land\\s+far|happily\\s+ever\\s+after)\\b",
+        "weight": 1.5,
+        "description": "Fairy tale markers"
+      },
+      {
+        "regex": "\\*\\s*\\*\\s*\\*",
+        "weight": 0.9,
+        "description": "Scene break marker (asterisks)"
+      },
+      {
+        "regex": "(?i)\\bthe\\s+end\\s*\\.?\\s*$",
+        "weight": 1.0,
+        "description": "Story ending marker"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.2,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.12,
+      "max_confidence": 0.95,
+      "min_threshold": 0.35
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Bare titles without names",
+      "examples": [
+        "Prince",
+        "Princess",
+        "The Count",
+        "The Empress"
+      ]
+    },
+    {
+      "description": "Unnamed people",
+      "examples": [
+        "the old man",
+        "the mother",
+        "a servant",
+        "the footman"
+      ]
+    },
+    {
+      "description": "Furniture/atmosphere",
+      "examples": [
+        "the door",
+        "the room",
+        "the night",
+        "the darkness"
+      ]
+    },
+    {
+      "description": "Occupational descriptions",
+      "examples": [
+        "scarlet-liveried footman",
+        "the coachman"
+      ]
+    }
+  ],
+  "entity_guidance": "LITERARY EXTRACTION RULES:\n- NAMES: Use canonical names. Put ALL variants (titles, nicknames, transliterations) in aliases.\n- PROPERTIES: Extract ALL relevant attributes - titles, roles, status, relationships, descriptions, dates.\n- FAMILY: Note family positions (eldest son, wife, etc.) as properties.\n\nDO NOT EXTRACT:\n- Structural markers, TOC entries without narrative content\n- Pronouns or vague references\n- Generic objects unless symbolically significant",
+  "relationship_guidance": "RELATIONSHIP RULES:\n- EVERY entity MUST have at least 2 relationships — prioritize connecting orphan entities\n- Extract relationships between entities in the same scene, even if implicit\n- Prefer specific relationship types over generic 'related_to'\n- PREFER semantic relationships (spouse_of, parent_of, friendship) over structural ones (appears_in)\n- Use specific family types: spouse_of, parent_of, sibling_of (not has_sister/has_brother), child_of\n- Use friendship for close friends, ally_of for political/military allies\n- Use serves for attendants, governesses, servants, companions\n- Only use ally_of/enemy_of when EXPLICITLY stated in text\n- Limit structural relationships - quality over quantity\n- Use participates_in to connect characters to battles, events, ceremonies (NOT to locations — use located_in for places)\n- Use located_in to connect characters/events to locations. ALWAYS thing→place direction: write 'Character located_in Location', NEVER 'Location located_in Character'.\n- set_in is for Literary Works, Plot Elements, or Events. For 'Character X is in Location Y' use located_in instead of set_in.\n- Use member_of to connect characters to families, military units, social groups\n- Only emit relationship types from the lists above. Do NOT invent new predicates (e.g. avoid 'ruled_by', 'connected_to', 'wants_post_in', 'invincible_against', 'received_by') — pick the closest listed one instead.\n\nINTERACTION SPECIFICITY — use the most specific type that fits:\n- Characters sharing secrets/feelings → confides_in\n- Intellectual argument or disagreement → debates\n- Direct challenge, accusation, or confrontation → confronts\n- Convincing, urging, or appealing → persuades\n- Teaching, instructing, or guiding → mentors\n- Romantic pursuit → courts\n- Emotional support or consolation → comforts\n- Deception or breaking trust → betrays\n- Respect, fascination, or reverence → admires\n- Ridicule or contempt → mocks\n- Military or authority orders → commands\n- Shielding or defending → protects\n- Romantic, social, or political competition → rivals\n- ONLY use interacts_with when NONE of the above specific types apply",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_work",
+        "name": "Literary Work",
+        "description": "A novel, poem, play, or other literary work",
+        "icon": "MenuBook",
+        "color": "#d641b0",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "narrative_elements",
+        "normalization_keywords": [
+          "novel",
+          "poem",
+          "play",
+          "book",
+          "work by",
+          "written by",
+          "the story of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_author",
+        "name": "Author",
+        "description": "A writer, poet, or playwright",
+        "icon": "Create",
+        "color": "#d64186",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "narrative_elements",
+        "normalization_keywords": [
+          "author",
+          "writer",
+          "poet",
+          "playwright",
+          "novelist",
+          "written by",
+          "by the author"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_unit",
+        "name": "Structural Unit",
+        "description": "A division of the text (Chapter, Part, Book, Act, Scene)",
+        "icon": "FormatListNumbered",
+        "color": "#d6415b",
+        "requires_named_referent": false,
+        "quality_score": 10,
+        "compatibility_group": "structural_elements",
+        "normalization_keywords": [
+          "chapter",
+          "part",
+          "book",
+          "act",
+          "scene",
+          "volume",
+          "section",
+          "canto"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_character",
+        "name": "Character",
+        "description": "A fictional character - include all name variants and titles in description",
+        "icon": "Person",
+        "color": "#d65241",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "narrative_elements",
+        "normalization_keywords": [
+          "character",
+          "protagonist",
+          "antagonist",
+          "hero",
+          "heroine",
+          "villain",
+          "prince",
+          "princess",
+          "count",
+          "countess",
+          "duke",
+          "duchess",
+          "lord",
+          "lady",
+          "mr.",
+          "mrs.",
+          "miss",
+          "dr."
+        ],
+        "properties": [
+          {
+            "name": "title",
+            "display_name": "Title/Rank",
+            "property_type": "text",
+            "absorbs_types": [
+              "Title"
+            ]
+          },
+          {
+            "name": "age",
+            "display_name": "Age",
+            "property_type": "text",
+            "absorbs_types": [
+              "Age"
+            ]
+          },
+          {
+            "name": "occupation",
+            "display_name": "Occupation/Role",
+            "property_type": "text",
+            "absorbs_types": [
+              "Occupation"
+            ]
+          },
+          {
+            "name": "physical_description",
+            "display_name": "Physical Description",
+            "property_type": "text",
+            "absorbs_types": [
+              "Physical Description"
+            ]
+          },
+          {
+            "name": "personality_traits",
+            "display_name": "Personality Traits",
+            "property_type": "text",
+            "absorbs_types": [
+              "Personality Trait",
+              "Personality Traits"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_theme",
+        "name": "Theme",
+        "description": "A central theme or idea explored in the work",
+        "icon": "Lightbulb",
+        "color": "#d67d41",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "theme",
+          "central idea",
+          "motif",
+          "explores the idea of",
+          "meditation on",
+          "examination of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_symbol",
+        "name": "Symbol",
+        "description": "A symbolic object, place, or concept",
+        "icon": "AutoAwesome",
+        "color": "#d6a741",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "symbol",
+          "symbolizes",
+          "represents",
+          "symbolic of",
+          "stands for",
+          "embodies"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_device",
+        "name": "Literary Device",
+        "description": "A literary technique (metaphor, irony, foreshadowing)",
+        "icon": "Brush",
+        "color": "#d6d241",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "structural_elements",
+        "normalization_keywords": [
+          "metaphor",
+          "simile",
+          "irony",
+          "imagery",
+          "foreshadowing",
+          "uses the device of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_genre",
+        "name": "Genre",
+        "description": "A literary genre or form",
+        "icon": "Category",
+        "color": "#b0d641",
+        "requires_named_referent": false,
+        "quality_score": 10,
+        "compatibility_group": "structural_elements",
+        "normalization_keywords": [
+          "genre",
+          "form",
+          "type of literature",
+          "literary tradition",
+          "in the style of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_plot",
+        "name": "Plot Element",
+        "description": "A plot point, conflict, event, or narrative element",
+        "icon": "Timeline",
+        "color": "#86d641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "plot",
+          "conflict",
+          "climax",
+          "resolution",
+          "turning point",
+          "event",
+          "scene where",
+          "moment when"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_setting",
+        "name": "Setting",
+        "description": "The time and place of events",
+        "icon": "Place",
+        "color": "#5bd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world_elements",
+        "normalization_keywords": [
+          "setting",
+          "takes place in",
+          "set in",
+          "backdrop",
+          "during the",
+          "in the year",
+          "in the city of"
+        ],
+        "properties": [
+          {
+            "name": "time_period",
+            "display_name": "Time Period",
+            "property_type": "text",
+            "absorbs_types": [
+              "Time Period"
+            ]
+          },
+          {
+            "name": "location",
+            "display_name": "Location",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_narrator",
+        "name": "Narrator",
+        "description": "The narrative voice or perspective",
+        "icon": "RecordVoiceOver",
+        "color": "#41d652",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "narrative_elements",
+        "normalization_keywords": [
+          "narrator",
+          "narrative voice",
+          "storyteller",
+          "point of view",
+          "first person",
+          "third person"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_event",
+        "name": "Event",
+        "description": "A battle, ceremony, incident, or significant occurrence in the narrative",
+        "icon": "Event",
+        "color": "#41d67d",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "battle",
+          "ceremony",
+          "incident",
+          "duel",
+          "ball",
+          "party",
+          "feast",
+          "siege",
+          "retreat",
+          "campaign"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_object",
+        "name": "Object",
+        "description": "A significant item, letter, artifact, or possession",
+        "icon": "Inventory2",
+        "color": "#41d6d2",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world_elements",
+        "normalization_keywords": [
+          "letter",
+          "portrait",
+          "sword",
+          "ring",
+          "artifact",
+          "icon",
+          "document",
+          "inheritance"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_location",
+        "name": "Location",
+        "description": "A city, country, estate, building, or geographic place",
+        "icon": "LocationCity",
+        "color": "#41b0d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "world_elements",
+        "normalization_keywords": [
+          "city",
+          "country",
+          "estate",
+          "village",
+          "palace",
+          "church",
+          "river",
+          "mountain",
+          "province",
+          "capital"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_cultural_ref",
+        "name": "Cultural Reference",
+        "description": "A reference to art, music, religion, philosophy, or cultural tradition",
+        "icon": "Palette",
+        "color": "#4186d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "group_elements",
+        "normalization_keywords": [
+          "religion",
+          "philosophy",
+          "freemasonry",
+          "orthodox",
+          "catholic",
+          "prayer",
+          "hymn",
+          "painting"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_social_group",
+        "name": "Social Group",
+        "description": "A family, military unit, social class, organization, or faction",
+        "icon": "Groups",
+        "color": "#415bd6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "group_elements",
+        "normalization_keywords": [
+          "family",
+          "regiment",
+          "army",
+          "society",
+          "aristocracy",
+          "peasantry",
+          "household",
+          "faction"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_philosophy",
+        "name": "Philosophy",
+        "description": "A philosophical school or worldview discussed in the text (e.g. Stoicism, Rationalism, Romanticism)",
+        "icon": "Psychology",
+        "color": "#7d41d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "philosophy",
+          "stoicism",
+          "rationalism",
+          "romanticism",
+          "enlightenment",
+          "existentialism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_ideology",
+        "name": "Ideology",
+        "description": "A political or social ideology referenced in the text (e.g. Liberalism, Conservatism, Nihilism)",
+        "icon": "AccountBalance",
+        "color": "#9d41d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content_elements",
+        "normalization_keywords": [
+          "ideology",
+          "liberalism",
+          "conservatism",
+          "nihilism",
+          "socialism",
+          "anarchism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "lit_template_military_unit",
+        "name": "Military Unit",
+        "description": "A regiment, army, naval force, or military formation",
+        "icon": "MilitaryTech",
+        "color": "#a741d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "group_elements",
+        "normalization_keywords": [
+          "regiment",
+          "battalion",
+          "brigade",
+          "division",
+          "corps",
+          "squadron",
+          "garrison",
+          "guard",
+          "hussars",
+          "infantry"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_wrote",
+        "name": "wrote",
+        "description": "Author wrote a literary work",
+        "icon": "Create",
+        "color": "#32ccc6",
+        "quality_score": 25,
+        "source_types": [
+          "Author"
+        ],
+        "target_types": [
+          "Literary Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_contains",
+        "name": "contains",
+        "description": "Structural unit contains a plot element or character appearance",
+        "icon": "Inbox",
+        "color": "#32bdcc",
+        "quality_score": 15,
+        "source_types": [
+          "Structural Unit",
+          "Literary Work"
+        ],
+        "target_types": [
+          "Plot Element",
+          "Character",
+          "Event",
+          "Theme"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_appears_in",
+        "name": "appears_in",
+        "description": "Character appears in a work or structural unit",
+        "icon": "Visibility",
+        "color": "#32a9cc",
+        "quality_score": 15,
+        "source_types": [
+          "Character",
+          "Narrator"
+        ],
+        "target_types": [
+          "Literary Work",
+          "Structural Unit",
+          "Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_spouse_of",
+        "name": "spouse_of",
+        "description": "Character is married to another character",
+        "icon": "Favorite",
+        "color": "#3295cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_parent_of",
+        "name": "parent_of",
+        "description": "Character is the parent of another character",
+        "icon": "FamilyRestroom",
+        "color": "#3281cc",
+        "inverse": "child_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_child_of",
+        "name": "child_of",
+        "description": "Character is the child of another character",
+        "icon": "ChildCare",
+        "color": "#326dcc",
+        "inverse": "parent_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_sibling_of",
+        "name": "sibling_of",
+        "description": "Character is the sibling of another character",
+        "icon": "People",
+        "color": "#3259cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_grandparent_of",
+        "name": "grandparent_of",
+        "description": "Character is grandparent of another",
+        "icon": "Elderly",
+        "color": "#3245cc",
+        "inverse": "grandchild_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_grandchild_of",
+        "name": "grandchild_of",
+        "description": "Character is grandchild of another",
+        "icon": "Face",
+        "color": "#3432cc",
+        "inverse": "grandparent_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_uncle_aunt_of",
+        "name": "uncle_aunt_of",
+        "description": "Character is uncle or aunt of another",
+        "icon": "Person",
+        "color": "#4832cc",
+        "inverse": "nephew_niece_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_nephew_niece_of",
+        "name": "nephew_niece_of",
+        "description": "Character is nephew or niece of another",
+        "icon": "Person",
+        "color": "#5c32cc",
+        "inverse": "uncle_aunt_of",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_cousin_of",
+        "name": "cousin_of",
+        "description": "Character is cousin of another",
+        "icon": "People",
+        "color": "#7032cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_related_to",
+        "name": "related_to",
+        "description": "Character has family relation to another (use when specific type unclear)",
+        "icon": "Link",
+        "color": "#8432cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_ally_of",
+        "name": "ally_of",
+        "description": "Friend, supporter, or ally — between Characters, or with faction-like Locations and Social Groups (e.g. 'Bagration sided with the Russian army')",
+        "icon": "Handshake",
+        "color": "#9732cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ],
+        "target_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_enemy_of",
+        "name": "enemy_of",
+        "description": "Adversary, rival, or enemy — between Characters, or with faction-like Locations and Social Groups (e.g. 'opposed the French')",
+        "icon": "GppBad",
+        "color": "#ab32cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ],
+        "target_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_interacts_with",
+        "name": "interacts_with",
+        "description": "Significant interaction — between Characters/Narrators, or with Social Groups and Military Units (use specific edges when possible)",
+        "icon": "SyncAlt",
+        "color": "#bf32cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Character",
+          "Narrator",
+          "Social Group",
+          "Military Unit"
+        ],
+        "target_types": [
+          "Character",
+          "Narrator",
+          "Social Group",
+          "Military Unit"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_explores",
+        "name": "explores",
+        "description": "Work explores a theme",
+        "icon": "Explore",
+        "color": "#cc32c4",
+        "quality_score": 25,
+        "source_types": [
+          "Literary Work",
+          "Author"
+        ],
+        "target_types": [
+          "Theme",
+          "Philosophy",
+          "Ideology"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_uses",
+        "name": "uses",
+        "description": "Work uses a literary device",
+        "icon": "Build",
+        "color": "#cc32b0",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work",
+          "Author"
+        ],
+        "target_types": [
+          "Literary Device"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_represents",
+        "name": "represents",
+        "description": "Symbol represents a theme or idea",
+        "icon": "AutoAwesome",
+        "color": "#cc329c",
+        "quality_score": 25,
+        "source_types": [
+          "Symbol",
+          "Object"
+        ],
+        "target_types": [
+          "Theme",
+          "Philosophy",
+          "Ideology",
+          "Cultural Reference"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_belongs_to",
+        "name": "belongs_to",
+        "description": "Work belongs to a genre",
+        "icon": "AccountTree",
+        "color": "#cc3288",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work"
+        ],
+        "target_types": [
+          "Genre"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_set_in",
+        "name": "set_in",
+        "description": "Work or plot element is set in a setting",
+        "icon": "Place",
+        "color": "#cc3274",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work",
+          "Plot Element",
+          "Event"
+        ],
+        "target_types": [
+          "Setting",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_occurs_in",
+        "name": "occurs_in",
+        "description": "Plot element occurs in a setting or structural unit",
+        "icon": "PinDrop",
+        "color": "#cc3260",
+        "quality_score": 15,
+        "source_types": [
+          "Plot Element",
+          "Event"
+        ],
+        "target_types": [
+          "Setting",
+          "Location",
+          "Structural Unit"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_influenced_by",
+        "name": "influenced_by",
+        "description": "Author or work influenced by another",
+        "icon": "TrendingUp",
+        "color": "#cc324c",
+        "quality_score": 15,
+        "source_types": [
+          "Author",
+          "Literary Work"
+        ],
+        "target_types": [
+          "Author",
+          "Literary Work",
+          "Philosophy",
+          "Ideology"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_alludes_to",
+        "name": "alludes_to",
+        "description": "Work alludes to another work",
+        "icon": "FormatQuote",
+        "color": "#cc3238",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work"
+        ],
+        "target_types": [
+          "Literary Work",
+          "Cultural Reference"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_adapts",
+        "name": "adapts",
+        "description": "Work adapts another work",
+        "icon": "Transform",
+        "color": "#cc4132",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work"
+        ],
+        "target_types": [
+          "Literary Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_narrated_by",
+        "name": "narrated_by",
+        "description": "Work or unit is narrated by a narrator or character",
+        "icon": "RecordVoiceOver",
+        "color": "#cc5532",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work",
+          "Structural Unit"
+        ],
+        "target_types": [
+          "Narrator",
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_friendship",
+        "name": "friendship",
+        "description": "Characters share a close friendship or companionship",
+        "icon": "Diversity3",
+        "color": "#cc6932",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_serves",
+        "name": "serves",
+        "description": "Serves, attends, or works for — a Character, household, place, or Social Group (e.g. a steward of an estate, an officer of the army)",
+        "icon": "Work",
+        "color": "#cc7d32",
+        "quality_score": 25,
+        "source_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ],
+        "target_types": [
+          "Character",
+          "Social Group",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_participates_in",
+        "name": "participates_in",
+        "description": "Character participates in an event, battle, or ceremony",
+        "icon": "EmojiEvents",
+        "color": "#cc9132",
+        "quality_score": 25,
+        "source_types": [
+          "Character",
+          "Military Unit",
+          "Social Group"
+        ],
+        "target_types": [
+          "Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_located_in",
+        "name": "located_in",
+        "description": "Character, event, or setting is located in a place",
+        "icon": "Map",
+        "color": "#cca532",
+        "quality_score": 15,
+        "source_types": [
+          "Character",
+          "Event",
+          "Setting",
+          "Social Group",
+          "Military Unit",
+          "Location"
+        ],
+        "target_types": [
+          "Setting",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_possesses",
+        "name": "possesses",
+        "description": "Character possesses or owns a significant object",
+        "icon": "Inventory2",
+        "color": "#ccb932",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Object"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_references",
+        "name": "references",
+        "description": "Mentions, alludes to, or invokes — a cultural element, person, place, work, or event (covers both deep cultural reference and in-narrative mention)",
+        "icon": "Link",
+        "color": "#cacc32",
+        "quality_score": 15,
+        "source_types": [
+          "Literary Work",
+          "Character",
+          "Author",
+          "Cultural Reference"
+        ],
+        "target_types": [
+          "Cultural Reference",
+          "Philosophy",
+          "Ideology",
+          "Character",
+          "Location",
+          "Event",
+          "Object",
+          "Author",
+          "Literary Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_member_of",
+        "name": "member_of",
+        "description": "Character is a member of a family, military unit, or social group",
+        "icon": "Groups",
+        "color": "#b6cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Social Group",
+          "Military Unit"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_confides_in",
+        "name": "confides_in",
+        "description": "Character shares secrets or personal feelings with another",
+        "icon": "Forum",
+        "color": "#a2cc32",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_debates",
+        "name": "debates",
+        "description": "Characters engage in intellectual argument or disagreement",
+        "icon": "Forum",
+        "color": "#8ecc32",
+        "symmetric": true,
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_confronts",
+        "name": "confronts",
+        "description": "Character directly challenges, accuses, or opposes another",
+        "icon": "GppBad",
+        "color": "#7acc32",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_persuades",
+        "name": "persuades",
+        "description": "Character convinces, urges, or appeals to another",
+        "icon": "Campaign",
+        "color": "#67cc32",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_mentors",
+        "name": "mentors",
+        "description": "Character teaches, instructs, or guides another",
+        "icon": "School",
+        "color": "#53cc32",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_courts",
+        "name": "courts",
+        "description": "Character pursues another romantically",
+        "icon": "Favorite",
+        "color": "#3fcc32",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_comforts",
+        "name": "comforts",
+        "description": "Character provides emotional support or consolation to another",
+        "icon": "Healing",
+        "color": "#32cc3a",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_betrays",
+        "name": "betrays",
+        "description": "Character deceives or breaks trust with another",
+        "icon": "HeartBroken",
+        "color": "#32cc4e",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_admires",
+        "name": "admires",
+        "description": "Character shows respect, fascination, or reverence for another",
+        "icon": "Star",
+        "color": "#32cc62",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_mocks",
+        "name": "mocks",
+        "description": "Character ridicules or shows contempt for another",
+        "icon": "SentimentDissatisfied",
+        "color": "#32cc76",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_commands",
+        "name": "commands",
+        "description": "Character gives military or authority orders to another",
+        "icon": "MilitaryTech",
+        "color": "#32cc8a",
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_protects",
+        "name": "protects",
+        "description": "Shields or defends — a Character, a Location (e.g. defends a city), or a Social Group",
+        "icon": "Shield",
+        "color": "#32cc9e",
+        "quality_score": 20,
+        "source_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ],
+        "target_types": [
+          "Character",
+          "Location",
+          "Social Group"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "lit_edge_rivals",
+        "name": "rivals",
+        "description": "Characters compete in romantic, social, or political rivalry",
+        "icon": "CompareArrows",
+        "color": "#32ccb2",
+        "symmetric": true,
+        "quality_score": 20,
+        "source_types": [
+          "Character"
+        ],
+        "target_types": [
+          "Character"
+        ]
+      }
+    ]
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Pierre Bezukhov",
+        "aliases": [
+          "Count Bezukhov",
+          "Pierre Kirilovich",
+          "The Count"
+        ],
+        "note": "Noble titles become aliases"
+      },
+      {
+        "canonical": "Princess Lise",
+        "aliases": [
+          "The Little Princess",
+          "Lise Bolkonskaya"
+        ],
+        "note": "Nicknames and epithets become aliases"
+      },
+      {
+        "canonical": "Anna Pavlovna Scherer",
+        "aliases": [
+          "Annette Scherer",
+          "Annette",
+          "Anna Pavlovna"
+        ],
+        "note": "Signature names and diminutives are aliases - Annette is the informal form of Anna"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Prince Andrei",
+        "target": "Princess Lise",
+        "type": "spouse_of",
+        "note": "Use spouse_of for marriages"
+      },
+      {
+        "source": "Prince Andrei",
+        "target": "Nikolenka",
+        "type": "parent_of",
+        "note": "Use parent_of for parent-child"
+      },
+      {
+        "source": "Pierre",
+        "target": "Prince Andrei",
+        "type": "confides_in",
+        "note": "Use confides_in when a character shares personal feelings"
+      },
+      {
+        "source": "Pierre",
+        "target": "Helene",
+        "type": "confronts",
+        "note": "Use confronts for direct challenges or accusations"
+      },
+      {
+        "source": "Kutuzov",
+        "target": "Bagration",
+        "type": "commands",
+        "note": "Use commands for military or authority orders"
+      },
+      {
+        "source": "Natasha",
+        "target": "Anatole",
+        "type": "courts",
+        "note": "Use courts for romantic pursuit (Anatole courts Natasha)"
+      },
+      {
+        "source": "Pierre",
+        "target": "Napoleon",
+        "type": "admires",
+        "note": "Use admires for respect or fascination"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "prince",
+    "princess",
+    "count",
+    "countess",
+    "duke",
+    "duchess",
+    "lord",
+    "lady",
+    "baron",
+    "baroness",
+    "king",
+    "queen",
+    "colonel",
+    "captain",
+    "general",
+    "major",
+    "lieutenant",
+    "father",
+    "mother",
+    "brother",
+    "sister",
+    "uncle",
+    "aunt",
+    "grandfather",
+    "grandmother"
+  ],
+  "extraction_limits": {
+    "max_entity_degree": 40,
+    "max_same_source_type": 12,
+    "max_relationship_ratio": 8.0,
+    "loop_max_entity_count": 50
+  },
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "code_blocks",
+      "data_tables",
+      "advertising",
+      "web_artifacts"
+    ]
+  },
+  "extraction_filtering_mode": "lenient",
+  "icon": "MenuBook"
+}

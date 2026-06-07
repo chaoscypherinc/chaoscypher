@@ -1,0 +1,32 @@
+name: Bug Report
+description: Report something broken or incorrect.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report this.
+  - type: input
+    id: page
+    attributes:
+      label: Page or feature
+      description: Link the docs page or name the feature affected.
+      placeholder: https://chaoscypher.com/docs/...
+  - type: textarea
+    id: current
+    attributes:
+      label: What happened?
+      description: Describe the issue clearly.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Tell us what should happen instead.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Extra context
+      description: Screenshots, logs, commands, environment details, or reproduction steps.

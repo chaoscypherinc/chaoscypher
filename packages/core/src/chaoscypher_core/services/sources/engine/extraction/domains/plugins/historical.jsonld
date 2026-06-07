@@ -1,0 +1,1321 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:historical",
+  "name": "historical",
+  "version": "1.11.0",
+  "description": "Historical documents, narratives, primary sources, and historiography",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.1,
+  "strict_entity_types": true,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "temporal": {
+        "terms": [
+          "century",
+          "era",
+          "period",
+          "epoch",
+          "decade",
+          "millennium",
+          "antiquity"
+        ],
+        "weight": 1.0
+      },
+      "events": {
+        "terms": [
+          "war",
+          "treaty",
+          "revolution",
+          "battle",
+          "reign",
+          "conquest",
+          "rebellion",
+          "uprising",
+          "independence",
+          "colonization"
+        ],
+        "weight": 1.1
+      },
+      "structures": {
+        "terms": [
+          "dynasty",
+          "empire",
+          "kingdom",
+          "republic",
+          "monarchy",
+          "civilization",
+          "colony",
+          "federation"
+        ],
+        "weight": 0.9
+      },
+      "historical_terms": {
+        "terms": [
+          "historical",
+          "history",
+          "medieval",
+          "pre-historic",
+          "classical",
+          "renaissance",
+          "enlightenment",
+          "historiography",
+          "historian"
+        ],
+        "weight": 1.0
+      },
+      "sources": {
+        "terms": [
+          "primary source",
+          "chronicle",
+          "manuscript",
+          "archive",
+          "artifact",
+          "archaeological",
+          "inscription",
+          "document",
+          "record"
+        ],
+        "weight": 0.9
+      },
+      "actors": {
+        "terms": [
+          "king",
+          "queen",
+          "emperor",
+          "pharaoh",
+          "sultan",
+          "tsar",
+          "general",
+          "statesman",
+          "reformer",
+          "leader"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "historical_document",
+      "primary_source",
+      "historiography"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b\\d{1,2}(st|nd|rd|th)\\s+century\\b",
+        "weight": 1.4,
+        "description": "Century references"
+      },
+      {
+        "regex": "(?i)\\b\\d{3,4}\\s*(ad|bc|bce|ce|a\\.d\\.|b\\.c\\.)\\b",
+        "weight": 1.3,
+        "description": "Year with era"
+      },
+      {
+        "regex": "(?i)\\b(circa|c\\.|ca\\.|approx\\.?)\\s*\\d{3,4}\\b",
+        "weight": 1.2,
+        "description": "Approximate dates"
+      },
+      {
+        "regex": "(?i)\\b(reign|ruled|dynasty|era|period|age)\\s+of\\b",
+        "weight": 1.1,
+        "description": "Reign/period patterns"
+      },
+      {
+        "regex": "(?i)\\b(ancient|medieval|renaissance|modern|pre-war|post-war|colonial)\\b",
+        "weight": 0.9,
+        "description": "Historical era terms"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Vague date references",
+      "examples": [
+        "at that time",
+        "in those days",
+        "later"
+      ]
+    },
+    {
+      "description": "Generic terms without specific identity",
+      "examples": [
+        "the king",
+        "the army",
+        "the people"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract historical events, figures, eras, locations, and primary sources\n- Use canonical names with all variants as aliases\n- Include dates and time periods in properties\n\nDO NOT EXTRACT:\n- Vague date references: 'at that time', 'in those days', 'later'\n- Generic terms: 'the king', 'the army', 'the people' (without specific identity)\n- Modern editorial content: footnote numbers, [sic], translator notes\n- Page or chapter references from the source document",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- CHRONOLOGY: Link events to eras with occurred_during. Use preceded for sequences\n- CAUSATION: Capture cause-effect chains with caused relationship\n- FIGURES: Use participated_in, led, signed for historical figures' roles\n- SOURCES: Link events to primary sources with documented_in\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_event",
+        "name": "Historical Event",
+        "description": "A significant historical occurrence or event",
+        "icon": "Event",
+        "color": "#d68341",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "event",
+          "occurred in",
+          "took place",
+          "battle of",
+          "treaty of",
+          "war of",
+          "revolution",
+          "siege of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_figure",
+        "name": "Historical Figure",
+        "description": "A person of historical significance",
+        "icon": "Person",
+        "color": "#d6b841",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "historical figure",
+          "king",
+          "emperor",
+          "ruler",
+          "leader",
+          "statesman",
+          "general",
+          "reformer"
+        ],
+        "properties": [
+          {
+            "name": "birth_year",
+            "display_name": "Birth Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Birth Year"
+            ]
+          },
+          {
+            "name": "death_year",
+            "display_name": "Death Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Death Year"
+            ]
+          },
+          {
+            "name": "title",
+            "display_name": "Title",
+            "property_type": "text",
+            "absorbs_types": [
+              "Title"
+            ]
+          },
+          {
+            "name": "nationality",
+            "display_name": "Nationality",
+            "property_type": "text",
+            "absorbs_types": [
+              "Nationality"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_era",
+        "name": "Era",
+        "description": "A historical period, age, or epoch",
+        "icon": "Timeline",
+        "color": "#c0d641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "temporal",
+        "normalization_keywords": [
+          "era",
+          "period",
+          "age",
+          "century",
+          "dynasty period",
+          "epoch",
+          "time of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_institution",
+        "name": "Institution",
+        "description": "A historical organization, body, or government",
+        "icon": "AccountBalance",
+        "color": "#8bd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "institution",
+          "government",
+          "organization",
+          "body",
+          "assembly",
+          "council"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_treaty",
+        "name": "Treaty",
+        "description": "A formal agreement between entities",
+        "icon": "Handshake",
+        "color": "#57d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "treaty",
+          "agreement",
+          "accord",
+          "pact",
+          "alliance"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_conflict",
+        "name": "Conflict",
+        "description": "A war, battle, or armed conflict",
+        "icon": "MilitaryTech",
+        "color": "#41d660",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "war",
+          "battle",
+          "conflict",
+          "uprising",
+          "rebellion",
+          "siege",
+          "invasion"
+        ],
+        "properties": [
+          {
+            "name": "start_year",
+            "display_name": "Start Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Start Year"
+            ]
+          },
+          {
+            "name": "end_year",
+            "display_name": "End Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "End Year"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_movement",
+        "name": "Movement",
+        "description": "A social, political, or cultural movement",
+        "icon": "Campaign",
+        "color": "#41d695",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "movement",
+          "revolution",
+          "reform",
+          "uprising"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_dynasty",
+        "name": "Dynasty",
+        "description": "A ruling family or succession of rulers",
+        "icon": "Groups",
+        "color": "#41d6ca",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "dynasty",
+          "house of",
+          "ruling family",
+          "succession of"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_source",
+        "name": "Primary Source",
+        "description": "An original historical document or source",
+        "icon": "Article",
+        "color": "#41aed6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "sources",
+        "normalization_keywords": [
+          "primary source",
+          "document",
+          "manuscript",
+          "chronicle",
+          "record"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_artifact",
+        "name": "Artifact",
+        "description": "A historical object or artifact",
+        "icon": "Inventory2",
+        "color": "#417ad6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "sources",
+        "normalization_keywords": [
+          "artifact",
+          "relic",
+          "object",
+          "archaeological find",
+          "remains"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_location",
+        "name": "Location",
+        "description": "A place of historical significance",
+        "icon": "Place",
+        "color": "#4145d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "spatial",
+        "normalization_keywords": [
+          "city",
+          "town",
+          "place",
+          "capital",
+          "port",
+          "fortress",
+          "site"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_territory",
+        "name": "Territory",
+        "description": "A jurisdictional territory, province, or colony under political control",
+        "icon": "Map",
+        "color": "#7241d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "spatial",
+        "normalization_keywords": [
+          "territory",
+          "province",
+          "colony",
+          "domain",
+          "realm",
+          "protectorate"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_region",
+        "name": "Region",
+        "description": "A geographic or cultural region not necessarily tied to a single political authority",
+        "icon": "Public",
+        "color": "#9241d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "spatial",
+        "normalization_keywords": [
+          "region",
+          "area",
+          "zone",
+          "borderlands"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_cultural",
+        "name": "Cultural Achievement",
+        "description": "A cultural work, monument, or intellectual achievement",
+        "icon": "AutoAwesome",
+        "color": "#a641d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "sources",
+        "normalization_keywords": [
+          "monument",
+          "achievement",
+          "masterwork",
+          "cathedral",
+          "cultural"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_law",
+        "name": "Law",
+        "description": "A historical law, code, or charter establishing general rules (e.g. Code of Hammurabi, Magna Carta)",
+        "icon": "Gavel",
+        "color": "#d641d2",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "law",
+          "code",
+          "charter",
+          "statute"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_decree",
+        "name": "Decree",
+        "description": "A historical decree, edict, or proclamation issued by an authority (e.g. Edict of Milan, Emancipation Proclamation)",
+        "icon": "Article",
+        "color": "#d641b2",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "decree",
+          "edict",
+          "proclamation",
+          "bull"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_religion",
+        "name": "Religion",
+        "description": "A religion, religious movement, or faith tradition",
+        "icon": "Public",
+        "color": "#d6419d",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "religion",
+          "faith",
+          "church",
+          "sect",
+          "denomination"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_trade_route",
+        "name": "Trade Route",
+        "description": "A historical trade route or commercial network",
+        "icon": "Explore",
+        "color": "#d64168",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "spatial",
+        "normalization_keywords": [
+          "trade route",
+          "silk road",
+          "trade network",
+          "commercial route"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_technology",
+        "name": "Technology",
+        "description": "A historical technology, tool, or technique (e.g. printing press, gunpowder, plow)",
+        "icon": "Build",
+        "color": "#d64f41",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "sources",
+        "normalization_keywords": [
+          "technology",
+          "tool",
+          "weapon",
+          "technique"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "hist_template_innovation",
+        "name": "Innovation",
+        "description": "A historical innovation or invention — a new technique, idea, or discovery",
+        "icon": "Lightbulb",
+        "color": "#d66f41",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "sources",
+        "normalization_keywords": [
+          "innovation",
+          "invention",
+          "discovery",
+          "breakthrough"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_participated_in",
+        "name": "participated_in",
+        "description": "Figure or collective entity participated in an event, conflict, or movement",
+        "icon": "Person",
+        "color": "#4a32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Figure",
+          "Institution",
+          "Dynasty",
+          "Religion",
+          "Movement"
+        ],
+        "target_types": [
+          "Historical Event",
+          "Conflict",
+          "Movement",
+          "Treaty",
+          "Era",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_caused",
+        "name": "caused",
+        "description": "Event, movement, decree, or other historical force caused another outcome",
+        "icon": "TrendingUp",
+        "color": "#7432cc",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Event",
+          "Conflict",
+          "Movement",
+          "Treaty",
+          "Law",
+          "Decree",
+          "Innovation",
+          "Technology",
+          "Religion",
+          "Historical Figure",
+          "Institution",
+          "Dynasty"
+        ],
+        "target_types": [
+          "Historical Event",
+          "Conflict",
+          "Treaty",
+          "Movement",
+          "Law",
+          "Decree",
+          "Innovation",
+          "Technology",
+          "Religion",
+          "Era"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_led",
+        "name": "led",
+        "description": "Figure or collective entity led an institution, movement, conflict, or other historical undertaking",
+        "icon": "Flag",
+        "color": "#9d32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution"
+        ],
+        "target_types": [
+          "Institution",
+          "Movement",
+          "Conflict",
+          "Dynasty",
+          "Religion",
+          "Historical Event",
+          "Historical Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_occurred_during",
+        "name": "occurred_during",
+        "description": "Event, movement, reign, or historical phenomenon occurred during an era",
+        "icon": "Timeline",
+        "color": "#c732cc",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Event",
+          "Conflict",
+          "Treaty",
+          "Movement",
+          "Dynasty",
+          "Law",
+          "Decree",
+          "Innovation",
+          "Technology",
+          "Cultural Achievement",
+          "Religion"
+        ],
+        "target_types": [
+          "Era",
+          "Movement",
+          "Dynasty"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_signed",
+        "name": "signed",
+        "description": "Figure or collective entity signed, issued, or ratified a treaty, law, or decree",
+        "icon": "Handshake",
+        "color": "#cc32a6",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Institution",
+          "Dynasty"
+        ],
+        "target_types": [
+          "Treaty",
+          "Law",
+          "Decree"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_ended",
+        "name": "ended",
+        "description": "Treaty, event, decree, or other historical force ended a conflict, era, dynasty, or movement",
+        "icon": "Event",
+        "color": "#cc327d",
+        "quality_score": 25,
+        "source_types": [
+          "Treaty",
+          "Historical Event",
+          "Conflict",
+          "Decree",
+          "Law",
+          "Movement",
+          "Historical Figure",
+          "Institution",
+          "Dynasty"
+        ],
+        "target_types": [
+          "Conflict",
+          "Era",
+          "Dynasty",
+          "Movement",
+          "Institution",
+          "Religion"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_succeeded",
+        "name": "succeeded",
+        "description": "Figure, dynasty, or institution succeeded another in office, rule, or authority",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#cc3253",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Historical Event"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_documented_in",
+        "name": "documented_in",
+        "description": "Any historical subject documented in a primary source or attested record",
+        "icon": "Article",
+        "color": "#cc3c32",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Event",
+          "Conflict",
+          "Historical Figure",
+          "Treaty",
+          "Movement",
+          "Dynasty",
+          "Institution",
+          "Era",
+          "Artifact",
+          "Cultural Achievement",
+          "Law",
+          "Decree",
+          "Religion",
+          "Trade Route",
+          "Technology",
+          "Innovation",
+          "Location",
+          "Territory",
+          "Region"
+        ],
+        "target_types": [
+          "Primary Source",
+          "Artifact",
+          "Cultural Achievement",
+          "Location",
+          "Region",
+          "Territory",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_founded",
+        "name": "founded",
+        "description": "Figure or collective entity founded an institution, settlement, dynasty, movement, or religion",
+        "icon": "AccountBalance",
+        "color": "#cc6632",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Religion",
+          "Movement"
+        ],
+        "target_types": [
+          "Institution",
+          "Dynasty",
+          "Movement",
+          "Religion",
+          "Location",
+          "Territory",
+          "Historical Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_contemporary_of",
+        "name": "contemporary_of",
+        "description": "Figure, dynasty, institution, or movement was contemporary of another",
+        "icon": "People",
+        "color": "#cc8f32",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Movement",
+          "Religion"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Movement",
+          "Religion"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_preceded",
+        "name": "preceded",
+        "description": "Event, era, dynasty, movement, or other historical phenomenon preceded another in time",
+        "icon": "Timeline",
+        "color": "#ccb932",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Event",
+          "Era",
+          "Conflict",
+          "Treaty",
+          "Dynasty",
+          "Movement",
+          "Institution",
+          "Law",
+          "Decree",
+          "Religion",
+          "Technology",
+          "Innovation",
+          "Historical Figure"
+        ],
+        "target_types": [
+          "Historical Event",
+          "Era",
+          "Conflict",
+          "Treaty",
+          "Dynasty",
+          "Movement",
+          "Institution",
+          "Law",
+          "Decree",
+          "Religion",
+          "Technology",
+          "Innovation",
+          "Historical Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_located_in",
+        "name": "located_in",
+        "description": "Event, institution, artifact, monument, or place located within a broader location, territory, or region",
+        "icon": "Place",
+        "color": "#b4cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Event",
+          "Institution",
+          "Conflict",
+          "Treaty",
+          "Movement",
+          "Dynasty",
+          "Artifact",
+          "Cultural Achievement",
+          "Religion",
+          "Trade Route",
+          "Location",
+          "Territory",
+          "Region",
+          "Historical Figure"
+        ],
+        "target_types": [
+          "Location",
+          "Territory",
+          "Region"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_conquered",
+        "name": "conquered",
+        "description": "Figure, dynasty, institution, or movement conquered a place, polity, or rival entity",
+        "icon": "MilitaryTech",
+        "color": "#8acc32",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Movement",
+          "Religion",
+          "Conflict"
+        ],
+        "target_types": [
+          "Location",
+          "Territory",
+          "Region",
+          "Institution",
+          "Dynasty"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_allied_with",
+        "name": "allied_with",
+        "description": "Figure, dynasty, institution, movement, or religion allied with another collective or individual",
+        "icon": "Handshake",
+        "color": "#61cc32",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Institution",
+          "Dynasty",
+          "Movement",
+          "Religion"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Institution",
+          "Dynasty",
+          "Movement",
+          "Religion"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_succeeded_dynasty",
+        "name": "succeeded_dynasty",
+        "description": "Dynasty succeeded another dynasty",
+        "icon": "Groups",
+        "color": "#37cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Dynasty"
+        ],
+        "target_types": [
+          "Dynasty"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_ruled_over",
+        "name": "ruled_over",
+        "description": "Figure, dynasty, or governing institution ruled over a territory, region, or polity",
+        "icon": "Flag",
+        "color": "#32cc58",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution"
+        ],
+        "target_types": [
+          "Location",
+          "Territory",
+          "Region",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_built",
+        "name": "built",
+        "description": "Figure, dynasty, institution, or religion built a structure, monument, settlement, or cultural achievement",
+        "icon": "AutoAwesome",
+        "color": "#32cc81",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Figure",
+          "Institution",
+          "Dynasty",
+          "Religion",
+          "Movement"
+        ],
+        "target_types": [
+          "Cultural Achievement",
+          "Location",
+          "Territory",
+          "Artifact"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_patron_of",
+        "name": "patron_of",
+        "description": "Figure, dynasty, institution, or religion served as patron of arts, culture, learning, or an institution",
+        "icon": "AutoAwesome",
+        "color": "#32ccab",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Religion"
+        ],
+        "target_types": [
+          "Cultural Achievement",
+          "Institution",
+          "Movement",
+          "Religion",
+          "Historical Figure",
+          "Innovation",
+          "Technology"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_traded_with",
+        "name": "traded_with",
+        "description": "Institution, dynasty, polity, place, or merchant figure engaged in trade with another",
+        "icon": "Explore",
+        "color": "#32c2cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Institution",
+          "Location",
+          "Territory",
+          "Region",
+          "Dynasty",
+          "Historical Figure"
+        ],
+        "target_types": [
+          "Institution",
+          "Location",
+          "Territory",
+          "Region",
+          "Dynasty",
+          "Historical Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_influenced_by",
+        "name": "influenced_by",
+        "description": "Figure, movement, institution, work, or other historical phenomenon influenced by another",
+        "icon": "Lightbulb",
+        "color": "#3298cc",
+        "quality_score": 15,
+        "source_types": [
+          "Historical Figure",
+          "Movement",
+          "Institution",
+          "Dynasty",
+          "Religion",
+          "Cultural Achievement",
+          "Innovation",
+          "Technology",
+          "Law",
+          "Decree",
+          "Historical Event",
+          "Treaty"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Movement",
+          "Religion",
+          "Institution",
+          "Dynasty",
+          "Cultural Achievement",
+          "Innovation",
+          "Technology",
+          "Law",
+          "Decree",
+          "Historical Event",
+          "Era",
+          "Primary Source"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_exiled_from",
+        "name": "exiled_from",
+        "description": "Figure, dynasty, religion, or movement exiled or expelled from a place or institution",
+        "icon": "Place",
+        "color": "#326fcc",
+        "quality_score": 25,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Religion",
+          "Movement"
+        ],
+        "target_types": [
+          "Location",
+          "Territory",
+          "Region",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_annexed",
+        "name": "annexed",
+        "description": "Figure, dynasty, or institution annexed a territory, region, or polity",
+        "icon": "Map",
+        "color": "#3245cc",
+        "quality_score": 25,
+        "source_types": [
+          "Institution",
+          "Dynasty",
+          "Historical Figure"
+        ],
+        "target_types": [
+          "Location",
+          "Territory",
+          "Region",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_influenced",
+        "name": "influenced",
+        "description": "Direct influence — a person, movement, religion, or event shaped another (broader than caused; captures intellectual / cultural / political influence)",
+        "icon": "TrendingUp",
+        "color": "#5d7c2a",
+        "quality_score": 20,
+        "source_types": [
+          "Historical Figure",
+          "Movement",
+          "Religion",
+          "Dynasty",
+          "Cultural Achievement",
+          "Innovation",
+          "Technology",
+          "Institution",
+          "Historical Event",
+          "Era",
+          "Location",
+          "Region",
+          "Territory"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Movement",
+          "Religion",
+          "Dynasty",
+          "Institution",
+          "Historical Event",
+          "Cultural Achievement",
+          "Innovation",
+          "Technology",
+          "Era",
+          "Location",
+          "Region",
+          "Territory"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "hist_edge_collaborated_with",
+        "name": "collaborated_with",
+        "description": "Two historical figures, dynasties, or institutions collaborated on a project, conflict, or movement (symmetric)",
+        "icon": "Handshake",
+        "color": "#6d8c3a",
+        "symmetric": true,
+        "quality_score": 20,
+        "source_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Movement"
+        ],
+        "target_types": [
+          "Historical Figure",
+          "Dynasty",
+          "Institution",
+          "Movement"
+        ]
+      }
+    ]
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Constantinople",
+        "aliases": [
+          "Byzantium",
+          "Istanbul",
+          "New Rome"
+        ],
+        "note": "Historical city names at different periods become aliases"
+      },
+      {
+        "canonical": "Napoleon Bonaparte",
+        "aliases": [
+          "Napoleon I",
+          "Emperor Napoleon",
+          "The Little Corporal"
+        ],
+        "note": "Titles and epithets become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Napoleon",
+        "target": "Battle of Waterloo",
+        "type": "participated_in",
+        "note": "Use participated_in for figure-event connections"
+      },
+      {
+        "source": "Treaty of Westphalia",
+        "target": "Thirty Years' War",
+        "type": "ended",
+        "note": "Use ended for treaty-conflict resolution"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "prince",
+    "princess",
+    "count",
+    "countess",
+    "duke",
+    "duchess",
+    "lord",
+    "lady",
+    "baron",
+    "baroness",
+    "king",
+    "queen",
+    "emperor",
+    "empress",
+    "colonel",
+    "captain",
+    "general",
+    "major",
+    "lieutenant",
+    "father",
+    "mother",
+    "brother",
+    "sister",
+    "uncle",
+    "aunt",
+    "grandfather",
+    "grandmother"
+  ],
+  "extraction_limits": {
+    "max_entity_degree": 25,
+    "max_same_source_type": 10,
+    "max_relationship_ratio": 8.0,
+    "loop_max_entity_count": 40
+  },
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "web_artifacts",
+      "code_blocks",
+      "data_tables"
+    ]
+  },
+  "extraction_filtering_mode": "lenient",
+  "icon": "HistoryEdu"
+}

@@ -1,0 +1,10 @@
+.banner {
+  border-left: 4px solid #ff6d00;
+  background: rgba(255, 109, 0, 0.08);
+  padding: 0.875rem 1rem;
+  margin: 1rem 0 1.5rem;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  color: var(--ifm-color-content);
+}
+.banner strong { color: #ff6d00; }

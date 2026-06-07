@@ -1,0 +1,14 @@
+{# Valkey CLI arguments rendered from QueueSettings. The shell wrapper
+   (valkey-startup.sh, wired in PR1 Phase D) appends env-var-driven args
+   that Jinja can't process: --requirepass "$QUEUE_PASSWORD" and
+   --loglevel "${VALKEY_LOGLEVEL:-notice}". This file is intentionally
+   partial — do not exec valkey-server with this output alone. #}
+--appendonly yes
+--appendfsync always
+--aof-load-truncated yes
+--maxmemory {{ settings.queue.max_memory }}
+--maxmemory-policy {{ settings.queue.maxmemory_policy }}
+--bind 127.0.0.1
+--port {{ settings.ports.valkey }}
+--dir /data/queue
+--tcp-keepalive {{ settings.queue.tcp_keepalive_seconds }}

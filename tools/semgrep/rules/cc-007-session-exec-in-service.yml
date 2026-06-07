@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC007 - session.exec() in service layer is forbidden.
+#
+# Services should delegate data access to repositories, never call
+# session.exec() directly.
+
+rules:
+  - id: cc-007-session-exec-in-service
+    message: |
+      session.exec() in service layer. Services should delegate data
+      access to repositories.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/service.py"
+      exclude:
+        - "**/shared/**"
+        - "**/adapters/**"
+        - "**/tests/**"
+    pattern: $X.session.exec(...)

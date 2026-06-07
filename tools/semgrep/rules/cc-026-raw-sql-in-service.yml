@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC026 - raw SQLAlchemy access in Cortex feature services is forbidden.
+#
+# Extends CC007 (which bans the SQLModel variant) to also ban plain
+# SQLAlchemy session.execute / scalar / scalars. Services delegate to
+# repositories; raw Session access belongs in the repository layer.
+
+rules:
+  - id: cc-026-raw-sql-in-service
+    message: |
+      Raw SQLAlchemy access in service layer. Delegate to a repository.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/service.py"
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/*_service.py"
+      exclude:
+        - "**/shared/**"
+        - "**/adapters/**"
+        - "**/tests/**"
+    pattern-either:
+      - pattern: session.execute(...)
+      - pattern: session.scalar(...)
+      - pattern: session.scalars(...)

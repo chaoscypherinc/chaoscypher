@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC023 — logger.bind(...) banned; use bind_contextvars(...) instead.
+#
+# CANONICAL_PATTERNS.md § Logging: logger.bind creates a bound logger
+# that only propagates within the current call stack. Cross-function and
+# cross-task context needs structlog.contextvars.bind_contextvars(...)
+# so request IDs follow async work across asyncio.gather and tasks.
+
+rules:
+  - id: cc-023-logger-bind
+    message: |
+      logger.bind(...) — use structlog.contextvars.bind_contextvars(...)
+      so context propagates across async tasks.
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/*_test.py"
+    patterns:
+      - pattern: $LOGGER.bind(...)
+      # Receiver-name heuristic — only flag receivers whose name contains
+      # "log" (case-insensitive). This avoids false positives on unrelated
+      # `.bind()` methods (e.g. socket.bind, sqlalchemy.text().bindparams).
+      - metavariable-regex:
+          metavariable: $LOGGER
+          regex: ".*[Ll][Oo][Gg].*"

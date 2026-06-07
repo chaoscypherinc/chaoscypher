@@ -1,0 +1,257 @@
+# Docker Compose for Chaos Cypher Neural Architecture - Production
+# Orchestrates all packages: Core, Cortex, Neuron, Interface
+#
+# Usage:
+#   docker-compose -f docker-compose.prod.yml up -d
+#
+# Architecture:
+#   - Core: Brain (business logic)
+#   - Cortex: Processing center (full backend API, supports reader mode)
+#   - Neuron: Unified worker (LLM + Operations queues)
+#   - Interface: Interaction layer (web UI)
+
+name: chaoscypher
+
+services:
+  # Generates the deployment-local edge-auth token shared by Interface nginx
+  # and Cortex. The token is persistent until the edge-auth-data volume is
+  # removed, matching the existing generated-credentials model.
+  edge-auth-init:
+    image: alpine:3.22
+    container_name: chaoscypher-edge-auth-init
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    volumes:
+      - edge-auth-data:/edge-auth
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        token=/edge-auth/.edge_auth_token
+        if [ ! -s "$$token" ]; then
+          tmp=/edge-auth/.edge_auth_token.tmp
+          od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$$tmp"
+          mv "$$tmp" "$$token"
+        fi
+        chmod 0444 "$$token"
+    restart: "no"
+
+  # Valkey service (Queue backend)
+  valkey:
+    image: valkey/valkey:8.1.6-alpine
+    container_name: chaoscypher-valkey
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Valkey is internal-only - access via: docker exec chaoscypher-valkey valkey-cli
+    volumes:
+      - valkey-data:/data
+    command:
+      - sh
+      - -c
+      - |
+        if [ -f /data/appendonlydir/appendonly.aof.manifest ]; then
+          echo "AOF manifest found, checking integrity..."
+          if ! yes | valkey-check-aof --fix /data/appendonlydir/appendonly.aof.manifest 2>&1; then
+            echo "AOF repair failed, removing corrupted AOF directory"
+            rm -rf /data/appendonlydir
+          fi
+        fi
+        # Generate an ACL file that combines auth (replacing
+        # --requirepass) with command restrictions on the default user.
+        # Embedding restrictions in the file applies them atomically at
+        # startup with no race window (post-start ACL SETUSER does not
+        # reliably persist through AOF base-file creation).
+        # Long-term: move ACL config into ValkeySettings rendering.
+        hash=$$(printf '%s' "${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}" | sha256sum | cut -d' ' -f1)
+        umask 077
+        cat > /tmp/users.acl <<EOF
+        user default on #$${hash} ~* &* +@all -flushall -flushdb -config -shutdown -slaveof -replicaof -debug
+        EOF
+        exec valkey-server \
+          --appendonly yes \
+          --appendfsync always \
+          --aof-load-truncated yes \
+          --maxmemory ${CHAOSCYPHER_VALKEY_MAXMEMORY:-2gb} \
+          --maxmemory-policy noeviction \
+          --aclfile /tmp/users.acl
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${QUEUE_PASSWORD}", "--no-auth-warning", "ping"]
+      interval: ${CHAOSCYPHER_VALKEY_HEALTH_INTERVAL:-10s}
+      timeout: ${CHAOSCYPHER_VALKEY_HEALTH_TIMEOUT:-3s}
+      retries: 3
+      start_period: ${CHAOSCYPHER_VALKEY_HEALTH_START:-10s}
+    networks:
+      - backend
+    mem_limit: ${QUEUE_MEM_LIMIT:-2g}
+    cpus: ${QUEUE_CPU_LIMIT:-1}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Cortex service (Full backend API)
+  cortex:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/multi-container/cortex/Dockerfile
+    container_name: chaoscypher-cortex
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - app-data:/data
+      - edge-auth-data:/run/chaoscypher-edge:ro
+    environment:
+      - CHAOSCYPHER_DATA_DIR=/data
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - QUEUE_HOST=valkey
+      - QUEUE_PORT=6379
+      - QUEUE_DB=0
+      - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
+      - CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE=/run/chaoscypher-edge/.edge_auth_token
+      - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}
+      - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      - LOG_LEVEL=INFO
+      - USE_JSON_LOGGING=true
+      - HF_HUB_DISABLE_XET=1
+      - HF_HUB_DISABLE_PROGRESS_BARS=1
+      - TQDM_DISABLE=1
+      - TOKENIZERS_PARALLELISM=false
+    depends_on:
+      edge-auth-init:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "/healthcheck.py"]
+      interval: ${CHAOSCYPHER_HEALTH_INTERVAL:-30s}
+      timeout: ${CHAOSCYPHER_HEALTH_TIMEOUT:-10s}
+      retries: ${CHAOSCYPHER_HEALTH_RETRIES:-3}
+      start_period: ${CHAOSCYPHER_HEALTH_START_PERIOD:-40s}
+    networks:
+      - frontend
+      - backend
+    mem_limit: ${CORTEX_MEM_LIMIT:-8g}
+    cpus: ${CORTEX_CPU_LIMIT:-2}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Interface service (Web UI)
+  interface:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/multi-container/interface/Dockerfile
+    container_name: chaoscypher-interface
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "127.0.0.1:${INTERFACE_HOST_PORT:-3000}:8080"  # Localhost only (match cortex binding)
+    # Note: No VITE_API_URL needed — Vite vars are baked at build time.
+    # API routing is handled by the nginx proxy config (nginx.conf → proxy_pass to cortex).
+    volumes:
+      - edge-auth-data:/run/chaoscypher-edge:ro
+    environment:
+      - CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE=/run/chaoscypher-edge/.edge_auth_token
+    depends_on:
+      edge-auth-init:
+        condition: service_completed_successfully
+      cortex:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/"]
+      interval: ${CHAOSCYPHER_HEALTH_INTERVAL:-30s}
+      timeout: ${CHAOSCYPHER_HEALTH_TIMEOUT:-10s}
+      retries: ${CHAOSCYPHER_HEALTH_RETRIES:-3}
+      start_period: ${CHAOSCYPHER_HEALTH_START_PERIOD:-10s}
+    networks:
+      - frontend
+    mem_limit: ${INTERFACE_MEM_LIMIT:-1g}
+    cpus: ${INTERFACE_CPU_LIMIT:-1}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    restart: unless-stopped
+
+  # Neuron Worker (unified: LLM semaphore=1 + Operations semaphore=8)
+  neuron:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/multi-container/neuron/Dockerfile
+    container_name: chaoscypher-neuron
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - app-data:/data
+    environment:
+      - CHAOSCYPHER_DATA_DIR=/data
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - QUEUE_HOST=valkey
+      - QUEUE_PORT=6379
+      - QUEUE_DB=0
+      - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
+      - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      - LOG_LEVEL=INFO
+      - USE_JSON_LOGGING=true
+      - HF_HUB_DISABLE_XET=1
+      - HF_HUB_DISABLE_PROGRESS_BARS=1
+      - TQDM_DISABLE=1
+      - TOKENIZERS_PARALLELISM=false
+    depends_on:
+      valkey:
+        condition: service_healthy
+      cortex:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: unless-stopped
+    stop_grace_period: ${CHAOSCYPHER_WORKER_STOP_GRACE_PERIOD:-30s}
+    mem_limit: ${NEURON_MEM_LIMIT:-8g}  # Memory limit for document processing
+    cpus: ${NEURON_CPU_LIMIT:-2}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    command: ["cc-neuron"]
+    healthcheck:
+      test: ["CMD", "python", "/healthcheck.py"]
+      interval: ${CHAOSCYPHER_HEALTH_INTERVAL:-30s}
+      timeout: ${CHAOSCYPHER_HEALTH_TIMEOUT:-5s}
+      retries: ${CHAOSCYPHER_HEALTH_RETRIES:-3}
+      start_period: ${CHAOSCYPHER_HEALTH_START_PERIOD:-30s}
+
+networks:
+  frontend:
+  backend:
+
+volumes:
+  valkey-data:
+    driver: local
+  app-data:
+    driver: local
+  edge-auth-data:
+    driver: local

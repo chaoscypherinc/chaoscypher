@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC029 — ?skip= / ?offset= pagination forbidden; use page/page_size.
+#
+# API_DESIGN.md § Pagination: the canonical envelope is page-based with
+# {data, pagination: {page, page_size, total_items, total_pages}}.
+# `chats` (skip) and `queue` (offset/limit) are documented tech debt in
+# CLAUDE.md and are allowlisted here so we don't forget why.
+
+rules:
+  - id: cc-029-skip-offset-pagination
+    message: |
+      Route handler takes 'skip' or 'offset' — pagination must use
+      '?page=N&page_size=M' per API_DESIGN.md.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        # Match api.py and *_api.py / *api.py suffixes (e.g.
+        # grounding_api.py).
+        - "/packages/cortex/**/*api.py"
+      exclude:
+        - "**/tests/**"
+        # Documented tech debt — sweep separately.
+        - "/packages/cortex/src/chaoscypher_cortex/features/chats/api.py"
+        - "/packages/cortex/src/chaoscypher_cortex/features/queue/api.py"
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  @$ROUTER.$METHOD(...)
+                  def $FN(..., skip, ...):
+                      ...
+              - pattern: |
+                  @$ROUTER.$METHOD(...)
+                  async def $FN(..., skip, ...):
+                      ...
+              - pattern: |
+                  @$ROUTER.$METHOD(...)
+                  def $FN(..., offset, ...):
+                      ...
+              - pattern: |
+                  @$ROUTER.$METHOD(...)
+                  async def $FN(..., offset, ...):
+                      ...
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: "^(get|post|put|patch|delete)$"

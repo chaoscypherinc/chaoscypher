@@ -1,0 +1,31 @@
+{
+  "name": "vram_24gb",
+  "display_name": "24GB VRAM",
+  "version": "1.0.0",
+  "description": "Enthusiast tier configuration for 30B parameter models with large context windows. Excellent for research and complex knowledge extraction.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 24,
+  "gpu_examples": [
+    "RTX 4090",
+    "RTX 3090",
+    "RTX A5000",
+    "RTX 3090 Ti"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "qwen3:30b",
+    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 16384,
+    "ollama_num_batch": 2048
+  },
+
+  "llm_settings": {
+    "ai_context_window": 16384,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false
+  }
+}

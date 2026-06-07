@@ -1,0 +1,28 @@
+{
+  "name": "vram_32gb",
+  "display_name": "32GB VRAM",
+  "version": "1.0.0",
+  "description": "Next-gen enthusiast configuration for 30B models with very large context windows. Ideal for complex reasoning and extensive knowledge extraction.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 32,
+  "gpu_examples": [
+    "RTX 5090"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "qwen3:30b",
+    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 32768,
+    "ollama_num_batch": 2048
+  },
+
+  "llm_settings": {
+    "ai_context_window": 32768,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false
+  }
+}

@@ -1,0 +1,9 @@
+id: tech_encyclopedia_tiny
+kind: extraction
+version: "1.1"
+domain: technical
+corpus_path: tech_encyclopedia_tiny.txt
+queries_path: queries.yaml
+source: "Original ChaosCypher benchmark text (AGPL-3.0-only); historically grounded encyclopedic article on the origins of the ARPANET."
+description: "Encyclopedic technical writing; named systems, people, dates, and institutions."
+word_count_approx: 1300

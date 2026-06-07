@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC001 — Factory function naming in api.py.
+#
+# Top-level functions in api.py whose name contains "service" must
+# follow the canonical factory pattern: `get_{feature}_service()` or
+# `get_{feature}_transport()`. The naming convention keeps DI wiring
+# discoverable by grep.
+
+rules:
+  - id: cc-001-factory-naming
+    message: |
+      Factory function should follow pattern 'get_{feature}_service()'
+      or 'get_{feature}_transport()'. Module-level functions in api.py
+      whose name contains "service" must use the get_-prefixed shape so
+      DI wiring is discoverable.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "**/api.py"
+      exclude:
+        - "**/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $FN(...):
+                  ...
+          - pattern: |
+              async def $FN(...):
+                  ...
+      # Function name contains "service" (any case).
+      - metavariable-regex:
+          metavariable: $FN
+          regex: ".*[Ss]ervice.*"
+      # Does NOT start with "get_" and does NOT end with "_service" or
+      # "_transport". The original AST check exempted any name beginning
+      # with "get_" — including "get_X_transport". This regex matches
+      # the same set.
+      - metavariable-regex:
+          metavariable: $FN
+          regex: "^(?!get_).*"
+      # Only flag top-level (module-level) functions — class methods
+      # like `class FooService: def get_service(self): ...` are not
+      # factories and stay exempt.
+      - pattern-not-inside: |
+          class $C:
+              ...

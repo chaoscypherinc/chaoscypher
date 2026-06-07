@@ -1,0 +1,83 @@
+# Dependabot configuration for ChaosCypher.
+#
+# NOTE: Dependabot activates automatically once this file is on the public
+# repository's default branch. This is intentional per the launch decision to
+# enable dependency-update PRs. If PR volume is noisy during alpha, widen the
+# interval or lower open-pull-requests-limit before announcing broadly.
+#
+# Major-version bumps (npm, docker, github-actions) are handled MANUALLY: a
+# semver-major change (e.g. react 18->19, typescript 5->6, node 22->26) is a
+# breaking change that needs deliberate migration work, so we suppress those
+# update-types here and bump them by hand. Minor/patch updates stay automated.
+version: 2
+updates:
+  # --- Python (uv workspace; the pip ecosystem reads pyproject.toml + uv.lock) ---
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- Frontend (React UI) ---
+  - package-ecosystem: "npm"
+    directory: "/packages/interface"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Majors handled manually (see top-of-file note).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      interface-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- Docs site (Docusaurus) ---
+  - package-ecosystem: "npm"
+    directory: "/packages/docs"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Majors handled manually (see top-of-file note).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      docs-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- GitHub Actions ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Majors handled manually (see top-of-file note).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      actions-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # --- Container images ---
+  - package-ecosystem: "docker"
+    directory: "/packages/docker"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # Majors handled manually (see top-of-file note).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

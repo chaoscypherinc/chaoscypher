@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC008 — defer() usage in repository.py is forbidden.
+#
+# CLAUDE.md says to use load_only() instead because defer() doesn't
+# prevent SQLite from fetching data — it just delays Python
+# deserialization.
+
+rules:
+  - id: cc-008-defer-in-repository
+    message: |
+      defer() usage detected. Use load_only() instead — defer() doesn't
+      prevent SQLite from fetching data.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "**/repository.py"
+      exclude:
+        - "**/tests/**"
+    pattern: defer(...)

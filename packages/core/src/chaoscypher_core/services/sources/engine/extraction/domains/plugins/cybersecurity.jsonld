@@ -1,0 +1,1940 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:cybersecurity",
+  "name": "cybersecurity",
+  "version": "1.9.0",
+  "description": "Cybersecurity, threat intelligence, vulnerability research, incident response, and information security",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.2,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "APT Group": "Threat Actor",
+    "Adversary": "Threat Actor",
+    "Backdoor": "Malware",
+    "RAT": "Malware"
+  },
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "threats": {
+        "terms": [
+          "malware",
+          "ransomware",
+          "phishing",
+          "trojan",
+          "worm",
+          "rootkit",
+          "backdoor",
+          "exploit",
+          "zero-day",
+          "payload",
+          "command and control",
+          "C2",
+          "botnet",
+          "RAT",
+          "supply chain attack",
+          "LOLBin",
+          "fileless",
+          "credential stuffing",
+          "watering hole",
+          "spear phishing",
+          "living off the land"
+        ],
+        "weight": 1.3
+      },
+      "vulnerabilities": {
+        "terms": [
+          "vulnerability",
+          "CVE",
+          "exploit",
+          "buffer overflow",
+          "injection",
+          "cross-site scripting",
+          "XSS",
+          "SQL injection",
+          "remote code execution",
+          "RCE",
+          "privilege escalation",
+          "zero-day"
+        ],
+        "weight": 1.2
+      },
+      "defense": {
+        "terms": [
+          "firewall",
+          "IDS",
+          "IPS",
+          "SIEM",
+          "EDR",
+          "XDR",
+          "SOAR",
+          "MDR",
+          "antivirus",
+          "encryption",
+          "authentication",
+          "MFA",
+          "patching",
+          "hardening",
+          "sandboxing",
+          "WAF",
+          "zero trust",
+          "microsegmentation",
+          "deception technology",
+          "honeypot"
+        ],
+        "weight": 1.0
+      },
+      "actors": {
+        "terms": [
+          "threat actor",
+          "APT",
+          "nation-state",
+          "hacktivist",
+          "cybercriminal",
+          "insider threat",
+          "adversary",
+          "attacker",
+          "red team",
+          "blue team",
+          "initial access broker",
+          "RaaS operator",
+          "ransomware affiliate",
+          "intrusion set"
+        ],
+        "weight": 1.1
+      },
+      "frameworks": {
+        "terms": [
+          "MITRE ATT&CK",
+          "kill chain",
+          "NIST",
+          "ISO 27001",
+          "OWASP",
+          "CIS",
+          "STRIDE",
+          "diamond model",
+          "TTP",
+          "IOC",
+          "indicator of compromise"
+        ],
+        "weight": 1.0
+      },
+      "incident": {
+        "terms": [
+          "breach",
+          "incident",
+          "compromise",
+          "data leak",
+          "exfiltration",
+          "lateral movement",
+          "persistence",
+          "reconnaissance",
+          "initial access",
+          "impact",
+          "containment",
+          "eradication",
+          "dwell time",
+          "triage",
+          "forensics"
+        ],
+        "weight": 1.1
+      },
+      "crypto": {
+        "terms": [
+          "encryption",
+          "AES",
+          "RSA",
+          "TLS",
+          "SSL",
+          "certificate",
+          "hash",
+          "SHA",
+          "PKI",
+          "cryptographic",
+          "cipher",
+          "key exchange"
+        ],
+        "weight": 0.9
+      },
+      "network": {
+        "terms": [
+          "IP address",
+          "DNS",
+          "port",
+          "protocol",
+          "TCP",
+          "UDP",
+          "HTTP",
+          "HTTPS",
+          "proxy",
+          "VPN",
+          "subnet",
+          "packet",
+          "traffic analysis"
+        ],
+        "weight": 0.8
+      },
+      "intelligence": {
+        "terms": [
+          "threat intelligence",
+          "OSINT",
+          "HUMINT",
+          "SIGINT",
+          "attribution",
+          "campaign",
+          "infrastructure",
+          "indicator",
+          "telemetry",
+          "dark web",
+          "TLP",
+          "MISP",
+          "diamond model",
+          "STIX",
+          "TAXII"
+        ],
+        "weight": 1.0
+      },
+      "supply_chain": {
+        "terms": [
+          "supply chain",
+          "dependency",
+          "software bill of materials",
+          "SBOM",
+          "third-party risk",
+          "vendor risk",
+          "package manager",
+          "typosquatting",
+          "dependency confusion",
+          "trusted supplier"
+        ],
+        "weight": 1.0
+      },
+      "cloud_security": {
+        "terms": [
+          "cloud security",
+          "IAM",
+          "S3 bucket",
+          "Azure AD",
+          "container escape",
+          "Kubernetes",
+          "serverless",
+          "cloud misconfiguration",
+          "CSPM",
+          "CWPP",
+          "CNAPP"
+        ],
+        "weight": 1.0
+      }
+    },
+    "file_extensions": [
+      ".pdf"
+    ],
+    "doc_types": [
+      "threat_report",
+      "vulnerability_advisory",
+      "incident_report",
+      "security_advisory"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\bCVE-\\d{4}-\\d{4,}\\b",
+        "weight": 1.8,
+        "description": "CVE identifier"
+      },
+      {
+        "regex": "(?i)\\bAPT[-\\s]?\\d+\\b",
+        "weight": 1.6,
+        "description": "APT group designation"
+      },
+      {
+        "regex": "(?i)\\bT\\d{4}(\\.\\d{3})?\\b",
+        "weight": 1.5,
+        "description": "MITRE ATT&CK technique ID"
+      },
+      {
+        "regex": "(?i)\\b(SHA-?256|SHA-?1|MD5)\\s*:\\s*[0-9a-fA-F]{32,64}\\b",
+        "weight": 1.7,
+        "description": "Hash values"
+      },
+      {
+        "regex": "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b",
+        "weight": 1.0,
+        "description": "IPv4 addresses"
+      },
+      {
+        "regex": "(?i)\\b(CVSS|severity|critical|high|medium|low)\\s+:?\\s*\\d+\\.\\d+\\b",
+        "weight": 1.3,
+        "description": "CVSS/severity scores"
+      },
+      {
+        "regex": "(?i)\\b(reconnaissance|resource\\s+development|initial\\s+access|execution|persistence|privilege\\s+escalation|defense\\s+evasion|credential\\s+access|discovery|lateral\\s+movement|collection|exfiltration|command\\s+and\\s+control|impact)\\b",
+        "weight": 1.4,
+        "description": "ATT&CK tactic names"
+      },
+      {
+        "regex": "(?i)\\b(IOC|indicator\\s+of\\s+compromise|artifact|signature|YARA|Snort|Sigma)\\b",
+        "weight": 1.2,
+        "description": "Detection indicators"
+      },
+      {
+        "regex": "(?i)\\bCWE-\\d{1,4}\\b",
+        "weight": 1.5,
+        "description": "CWE weakness identifier"
+      },
+      {
+        "regex": "(?i)\\bG\\d{4}\\b",
+        "weight": 1.4,
+        "description": "MITRE ATT&CK group ID"
+      },
+      {
+        "regex": "(?i)\\bS\\d{4}\\b",
+        "weight": 1.3,
+        "description": "MITRE ATT&CK software ID"
+      },
+      {
+        "regex": "(?i)\\bTLP:(WHITE|GREEN|AMBER|AMBER\\+STRICT|RED|CLEAR)\\b",
+        "weight": 1.2,
+        "description": "TLP traffic light marking"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.1,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Generic security boilerplate",
+      "examples": [
+        "stay safe online",
+        "update your software",
+        "best practices"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract threat actors, intrusion sets, malware families, dual-use tools, vulnerabilities, TTPs, and infrastructure\n- Use Intrusion Set for activity clusters with uncertain attribution (UNC groups, DEV- designations)\n- Use Tool (not Malware) for legitimate software abused by adversaries (PsExec, Mimikatz, Cobalt Strike)\n- Use canonical names with all known aliases (APT groups have many vendor-specific names)\n- Include CVE IDs, CWE IDs, MITRE ATT&CK IDs, and CVSS scores as properties\n- Group IOCs (hashes, IPs, domains) as properties on malware or infrastructure entities\n- Extract geographic locations for actor origins and target regions\n\nDO NOT EXTRACT:\n- Raw hash values, IPs, or domains as standalone entities (attach to parent entity)\n- Generic security advice: 'update your software', 'use strong passwords'\n- Log formatting elements: timestamps, severity levels, process IDs\n- Vendor marketing language: 'industry-leading', 'next-generation'",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- ATTRIBUTION: Link threat actors to campaigns with conducts, to malware with uses_tool, intrusion sets with linked_to\n- ATTACK CHAIN: Capture the kill chain with exploits, delivers, enables, downloads relationships\n- DEFENSE: Connect mitigations to techniques with mitigates\n- INFRASTRUCTURE: Link C2 servers to malware with communicates_with, actors to infra with controls, data theft with exfiltrates_to\n- TARGETING: Connect threat actors to targets with targets, to regions with targets_location\n- TOOLS: Distinguish uses_tool for legitimate dual-use tools vs uses_tool for malware\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_threat_actor",
+        "name": "Threat Actor",
+        "description": "An adversary, APT group, cybercriminal organization, or threat entity",
+        "icon": "Face",
+        "color": "#41d690",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "threat actor",
+          "APT",
+          "adversary",
+          "group",
+          "gang",
+          "nation-state",
+          "hacktivist",
+          "cybercriminal",
+          "attacker"
+        ],
+        "properties": [
+          {
+            "name": "motivation",
+            "display_name": "Motivation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Motivation",
+              "Actor Motivation"
+            ]
+          },
+          {
+            "name": "origin_country",
+            "display_name": "Origin Country",
+            "property_type": "text",
+            "absorbs_types": [
+              "Origin",
+              "Country of Origin"
+            ]
+          },
+          {
+            "name": "actor_type",
+            "display_name": "Actor Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Actor Type"
+            ]
+          },
+          {
+            "name": "first_seen",
+            "display_name": "First Seen",
+            "property_type": "text",
+            "absorbs_types": [
+              "First Seen"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_malware",
+        "name": "Malware",
+        "description": "A malware family, strain, tool, or malicious software",
+        "icon": "Coronavirus",
+        "color": "#41d6bf",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "malware",
+          "ransomware",
+          "trojan",
+          "worm",
+          "RAT",
+          "backdoor",
+          "rootkit",
+          "implant",
+          "payload",
+          "dropper",
+          "loader"
+        ],
+        "properties": [
+          {
+            "name": "malware_type",
+            "display_name": "Malware Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Malware Type",
+              "Malware Category"
+            ]
+          },
+          {
+            "name": "platform",
+            "display_name": "Platform",
+            "property_type": "text",
+            "absorbs_types": [
+              "Platform",
+              "Target Platform"
+            ]
+          },
+          {
+            "name": "first_seen",
+            "display_name": "First Seen",
+            "property_type": "text",
+            "absorbs_types": [
+              "First Seen"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_vulnerability",
+        "name": "Vulnerability",
+        "description": "A software vulnerability, weakness, or security flaw",
+        "icon": "BugReport",
+        "color": "#41bfd6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "weaknesses",
+        "normalization_keywords": [
+          "vulnerability",
+          "CVE",
+          "flaw",
+          "weakness",
+          "bug",
+          "security issue",
+          "zero-day",
+          "0-day"
+        ],
+        "properties": [
+          {
+            "name": "cve_id",
+            "display_name": "CVE ID",
+            "property_type": "text",
+            "absorbs_types": [
+              "CVE ID",
+              "CVE"
+            ]
+          },
+          {
+            "name": "cvss_score",
+            "display_name": "CVSS Score",
+            "property_type": "text",
+            "absorbs_types": [
+              "CVSS Score",
+              "Severity Score"
+            ]
+          },
+          {
+            "name": "severity",
+            "display_name": "Severity",
+            "property_type": "text",
+            "absorbs_types": [
+              "Severity"
+            ]
+          },
+          {
+            "name": "vuln_type",
+            "display_name": "Vulnerability Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Vulnerability Type"
+            ]
+          },
+          {
+            "name": "cwe_id",
+            "display_name": "CWE ID",
+            "property_type": "text",
+            "absorbs_types": [
+              "CWE ID",
+              "CWE"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_technique",
+        "name": "Attack Technique",
+        "description": "A tactic, technique, or procedure (TTP) used by adversaries",
+        "icon": "Terminal",
+        "color": "#4190d6",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "techniques",
+        "normalization_keywords": [
+          "technique",
+          "TTP",
+          "tactic",
+          "procedure",
+          "method",
+          "attack vector",
+          "ATT&CK"
+        ],
+        "properties": [
+          {
+            "name": "mitre_id",
+            "display_name": "MITRE ATT&CK ID",
+            "property_type": "text",
+            "absorbs_types": [
+              "MITRE ID",
+              "ATT&CK ID",
+              "Technique ID"
+            ]
+          },
+          {
+            "name": "tactic",
+            "display_name": "Tactic Category",
+            "property_type": "text",
+            "absorbs_types": [
+              "Tactic",
+              "Kill Chain Phase"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_campaign",
+        "name": "Campaign",
+        "description": "A coordinated cyber operation or attack campaign",
+        "icon": "Campaign",
+        "color": "#4161d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "operations",
+        "normalization_keywords": [
+          "campaign",
+          "operation",
+          "attack campaign",
+          "intrusion set",
+          "activity cluster"
+        ],
+        "properties": [
+          {
+            "name": "timeframe",
+            "display_name": "Timeframe",
+            "property_type": "text",
+            "absorbs_types": [
+              "Timeframe",
+              "Active Period"
+            ]
+          },
+          {
+            "name": "objective",
+            "display_name": "Objective",
+            "property_type": "text",
+            "absorbs_types": [
+              "Campaign Objective"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_infrastructure",
+        "name": "Infrastructure",
+        "description": "C2 servers, domains, IP addresses, or hosting infrastructure used in attacks",
+        "icon": "Dns",
+        "color": "#5141d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "infrastructure",
+          "C2",
+          "command and control",
+          "server",
+          "domain",
+          "IP address",
+          "hosting"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_indicator",
+        "name": "Indicator of Compromise",
+        "description": "An IOC: file hash, IP, domain, URL, registry key, or other forensic artifact",
+        "icon": "DataObject",
+        "color": "#8041d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "evidence",
+        "normalization_keywords": [
+          "IOC",
+          "indicator",
+          "artifact",
+          "hash",
+          "signature",
+          "forensic evidence"
+        ],
+        "properties": [
+          {
+            "name": "ioc_type",
+            "display_name": "IOC Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "IOC Type",
+              "Indicator Type"
+            ]
+          },
+          {
+            "name": "ioc_value",
+            "display_name": "Value",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_target",
+        "name": "Target",
+        "description": "A targeted organization, sector, or entity",
+        "icon": "Business",
+        "color": "#af41d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "target",
+          "victim",
+          "targeted organization",
+          "affected entity",
+          "compromised"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_software",
+        "name": "Software",
+        "description": "A software product, operating system, application, library, or firmware",
+        "icon": "Code",
+        "color": "#d641cf",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "software",
+          "application",
+          "operating system",
+          "library",
+          "firmware",
+          "OS"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_product",
+        "name": "Product",
+        "description": "A commercial product or platform (hardware, appliance, or vendor-branded offering)",
+        "icon": "Inventory",
+        "color": "#d641a9",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "product",
+          "platform",
+          "appliance",
+          "device"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_exploit",
+        "name": "Exploit",
+        "description": "An exploit, proof-of-concept, or weaponized code targeting a vulnerability",
+        "icon": "Memory",
+        "color": "#d6419f",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "exploit",
+          "PoC",
+          "proof of concept",
+          "weaponized",
+          "exploit code",
+          "exploit kit"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_mitigation",
+        "name": "Mitigation",
+        "description": "A defensive measure, patch, detection rule, or countermeasure",
+        "icon": "Shield",
+        "color": "#d64170",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "defenses",
+        "normalization_keywords": [
+          "mitigation",
+          "patch",
+          "fix",
+          "workaround",
+          "countermeasure",
+          "remediation",
+          "detection rule"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_detection",
+        "name": "Detection Rule",
+        "description": "A YARA rule, Snort signature, Sigma rule, or detection logic",
+        "icon": "Security",
+        "color": "#d64141",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "defenses",
+        "normalization_keywords": [
+          "YARA",
+          "Snort",
+          "Sigma",
+          "detection rule",
+          "signature",
+          "rule",
+          "heuristic"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_incident",
+        "name": "Security Incident",
+        "description": "A security breach, data leak, or cyber incident",
+        "icon": "ReportProblem",
+        "color": "#d67041",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "operations",
+        "normalization_keywords": [
+          "incident",
+          "breach",
+          "data leak",
+          "compromise",
+          "intrusion",
+          "security event"
+        ],
+        "properties": [
+          {
+            "name": "incident_date",
+            "display_name": "Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Incident Date"
+            ]
+          },
+          {
+            "name": "impact",
+            "display_name": "Impact",
+            "property_type": "text",
+            "absorbs_types": [
+              "Impact"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_framework",
+        "name": "Security Framework",
+        "description": "A security framework, standard, or compliance requirement (NIST, ISO 27001, MITRE ATT&CK)",
+        "icon": "Policy",
+        "color": "#d69f41",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "defenses",
+        "normalization_keywords": [
+          "framework",
+          "standard",
+          "NIST",
+          "ISO 27001",
+          "OWASP",
+          "CIS",
+          "compliance",
+          "ATT&CK"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_protocol",
+        "name": "Protocol",
+        "description": "A network or communication protocol — a standard for data exchange (HTTP, SSH, SMB)",
+        "icon": "Hub",
+        "color": "#d6ce41",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "protocol",
+          "HTTP",
+          "DNS",
+          "SMB",
+          "RDP",
+          "SSH"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_service",
+        "name": "Service",
+        "description": "A network service or running daemon exposing functionality (web server, SSH daemon, database listener)",
+        "icon": "Cloud",
+        "color": "#d6a141",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "service",
+          "daemon",
+          "listener",
+          "port"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_researcher",
+        "name": "Security Researcher",
+        "description": "A security researcher, analyst, or threat intelligence team",
+        "icon": "Person",
+        "color": "#afd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "researcher",
+          "analyst",
+          "security team",
+          "threat intelligence",
+          "discovered by",
+          "reported by"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_intrusion_set",
+        "name": "Intrusion Set",
+        "description": "A cluster of adversary activity with uncertain attribution, often tracked before formal APT designation",
+        "icon": "Groups",
+        "color": "#80d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "intrusion set",
+          "activity cluster",
+          "activity group",
+          "threat cluster",
+          "UNC",
+          "DEV-",
+          "tracked as"
+        ],
+        "properties": [
+          {
+            "name": "first_seen",
+            "display_name": "First Seen",
+            "property_type": "text",
+            "absorbs_types": [
+              "First Seen"
+            ]
+          },
+          {
+            "name": "tracking_id",
+            "display_name": "Tracking ID",
+            "property_type": "text",
+            "absorbs_types": [
+              "Tracking ID"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_tool",
+        "name": "Tool",
+        "description": "Legitimate software or dual-use tool abused by adversaries (e.g. PsExec, Mimikatz, Cobalt Strike)",
+        "icon": "Build",
+        "color": "#51d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "tools",
+        "normalization_keywords": [
+          "tool",
+          "utility",
+          "dual-use",
+          "legitimate tool",
+          "LOLBin",
+          "living off the land",
+          "red team tool",
+          "penetration testing"
+        ],
+        "properties": [
+          {
+            "name": "tool_type",
+            "display_name": "Tool Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Tool Type",
+              "Tool Category"
+            ]
+          },
+          {
+            "name": "legitimate_use",
+            "display_name": "Legitimate Use",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "cyber_template_location",
+        "name": "Location",
+        "description": "A geographic location relevant to threat actor origin, target region, or infrastructure hosting",
+        "icon": "Public",
+        "color": "#41d661",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "context",
+        "normalization_keywords": [
+          "country",
+          "region",
+          "location",
+          "geography",
+          "based in",
+          "operating from"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_uses_tool",
+        "name": "uses_tool",
+        "description": "Agent (threat actor, intrusion set, campaign, researcher, or incident) uses a malware family, tool, exploit, infrastructure, software, or protocol",
+        "icon": "Build",
+        "color": "#cc5632",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Security Researcher",
+          "Security Incident"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Infrastructure",
+          "Software",
+          "Product",
+          "Protocol",
+          "Service",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_exploits",
+        "name": "exploits",
+        "description": "Adversary, malware, exploit, technique, or campaign exploits a vulnerability, software, product, service, protocol, or target",
+        "icon": "Memory",
+        "color": "#cc7332",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Exploit",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Attack Technique",
+          "Tool"
+        ],
+        "target_types": [
+          "Vulnerability",
+          "Software",
+          "Product",
+          "Service",
+          "Protocol",
+          "Target",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_targets",
+        "name": "targets",
+        "description": "Adversary, malware, exploit, tool, or technique targets an organization, sector, software/product, infrastructure, or region",
+        "icon": "Business",
+        "color": "#cc9032",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Exploit",
+          "Tool",
+          "Attack Technique",
+          "Detection Rule",
+          "Mitigation"
+        ],
+        "target_types": [
+          "Target",
+          "Software",
+          "Product",
+          "Infrastructure",
+          "Service",
+          "Protocol",
+          "Location",
+          "Vulnerability"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_conducts",
+        "name": "conducts",
+        "description": "Agent (threat actor, intrusion set, researcher, or campaign) conducts a campaign, operation, incident, or attack technique",
+        "icon": "Campaign",
+        "color": "#ccac32",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Security Researcher"
+        ],
+        "target_types": [
+          "Campaign",
+          "Security Incident",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_delivers",
+        "name": "delivers",
+        "description": "Exploit, technique, malware, infrastructure, tool, or actor delivers a malware/tool/exploit payload",
+        "icon": "Coronavirus",
+        "color": "#ccc932",
+        "quality_score": 25,
+        "source_types": [
+          "Exploit",
+          "Attack Technique",
+          "Malware",
+          "Tool",
+          "Infrastructure",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Indicator of Compromise"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_communicates_with",
+        "name": "communicates_with",
+        "description": "Malware, tool, infrastructure, or compromised target communicates with C2/peer infrastructure, services, or other malware",
+        "icon": "Dns",
+        "color": "#b1cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Infrastructure",
+          "Target",
+          "Threat Actor",
+          "Intrusion Set"
+        ],
+        "target_types": [
+          "Infrastructure",
+          "Malware",
+          "Service",
+          "Protocol",
+          "Threat Actor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_mitigates",
+        "name": "mitigates",
+        "description": "Mitigation, detection rule, security framework, tool, or product addresses a vulnerability, technique, malware, exploit, or threat",
+        "icon": "Shield",
+        "color": "#95cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Mitigation",
+          "Detection Rule",
+          "Security Framework",
+          "Tool",
+          "Software",
+          "Product",
+          "Security Researcher"
+        ],
+        "target_types": [
+          "Vulnerability",
+          "Attack Technique",
+          "Malware",
+          "Exploit",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Indicator of Compromise",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_affects",
+        "name": "affects",
+        "description": "Vulnerability, malware, exploit, or incident affects software, products, services, protocols, infrastructure, or targets",
+        "icon": "BugReport",
+        "color": "#78cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Vulnerability",
+          "Malware",
+          "Exploit",
+          "Attack Technique",
+          "Security Incident",
+          "Campaign"
+        ],
+        "target_types": [
+          "Software",
+          "Product",
+          "Service",
+          "Protocol",
+          "Infrastructure",
+          "Target",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_employs_technique",
+        "name": "employs_technique",
+        "description": "Adversary, malware, tool, exploit, or incident employs an attack technique",
+        "icon": "Terminal",
+        "color": "#5bcc32",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Malware",
+          "Campaign",
+          "Intrusion Set",
+          "Exploit",
+          "Tool",
+          "Security Incident",
+          "Security Researcher"
+        ],
+        "target_types": [
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_indicates",
+        "name": "indicates",
+        "description": "IOC, detection rule, technique, or artifact indicates the presence of malware, actor, campaign, incident, or compromise",
+        "icon": "DataObject",
+        "color": "#3ecc32",
+        "quality_score": 15,
+        "source_types": [
+          "Indicator of Compromise",
+          "Detection Rule",
+          "Attack Technique"
+        ],
+        "target_types": [
+          "Malware",
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Security Incident",
+          "Tool",
+          "Exploit",
+          "Vulnerability",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_detects",
+        "name": "detects",
+        "description": "Detection rule, mitigation, tool, product, or researcher detects malware, technique, exploit, actor, infrastructure, or IOCs",
+        "icon": "Security",
+        "color": "#32cc43",
+        "quality_score": 15,
+        "source_types": [
+          "Detection Rule",
+          "Mitigation",
+          "Tool",
+          "Software",
+          "Product",
+          "Security Researcher"
+        ],
+        "target_types": [
+          "Malware",
+          "Attack Technique",
+          "Indicator of Compromise",
+          "Exploit",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Infrastructure",
+          "Vulnerability",
+          "Security Incident"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_enables",
+        "name": "enables",
+        "description": "Technique, vulnerability, malware, exploit, or tool enables another technique, exploit, malware, or compromise",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#32cc60",
+        "quality_score": 15,
+        "source_types": [
+          "Attack Technique",
+          "Vulnerability",
+          "Malware",
+          "Exploit",
+          "Tool",
+          "Infrastructure",
+          "Indicator of Compromise"
+        ],
+        "target_types": [
+          "Attack Technique",
+          "Exploit",
+          "Malware",
+          "Security Incident",
+          "Campaign"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_variant_of",
+        "name": "variant_of",
+        "description": "Malware, tool, or exploit is a variant, fork, or derivative of another",
+        "icon": "AccountTree",
+        "color": "#32cc7d",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_attributed_to",
+        "name": "attributed_to",
+        "description": "Campaign, malware, incident, infrastructure, exploit, tool, or IOC attributed to a threat actor, intrusion set, or origin location",
+        "icon": "Face",
+        "color": "#32cc99",
+        "quality_score": 25,
+        "source_types": [
+          "Campaign",
+          "Malware",
+          "Security Incident",
+          "Intrusion Set",
+          "Infrastructure",
+          "Exploit",
+          "Tool",
+          "Attack Technique",
+          "Indicator of Compromise"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_overlaps_with",
+        "name": "overlaps_with",
+        "description": "Actor, campaign, malware, tool, or infrastructure shares tradecraft, infrastructure, or tooling with another",
+        "icon": "Link",
+        "color": "#32ccb6",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Infrastructure",
+          "Attack Technique"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Infrastructure",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_patches",
+        "name": "patches",
+        "description": "Mitigation, product update, framework, or researcher patches a vulnerability, software, or product flaw",
+        "icon": "Healing",
+        "color": "#32c4cc",
+        "quality_score": 25,
+        "source_types": [
+          "Mitigation",
+          "Software",
+          "Product",
+          "Security Framework",
+          "Security Researcher"
+        ],
+        "target_types": [
+          "Vulnerability",
+          "Software",
+          "Product",
+          "Service"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_discovered_by",
+        "name": "discovered_by",
+        "description": "Vulnerability, malware, exploit, tool, IOC, technique, infrastructure, actor, or incident discovered or reported by a researcher or threat actor",
+        "icon": "Person",
+        "color": "#32a8cc",
+        "quality_score": 15,
+        "source_types": [
+          "Vulnerability",
+          "Malware",
+          "Campaign",
+          "Exploit",
+          "Tool",
+          "Indicator of Compromise",
+          "Attack Technique",
+          "Infrastructure",
+          "Threat Actor",
+          "Intrusion Set",
+          "Security Incident"
+        ],
+        "target_types": [
+          "Security Researcher",
+          "Threat Actor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_precedes",
+        "name": "precedes",
+        "description": "Technique, phase, campaign, incident, or malware precedes another step in the attack chain or timeline",
+        "icon": "Timeline",
+        "color": "#328bcc",
+        "quality_score": 15,
+        "source_types": [
+          "Attack Technique",
+          "Campaign",
+          "Security Incident",
+          "Malware",
+          "Exploit",
+          "Vulnerability",
+          "Threat Actor",
+          "Intrusion Set"
+        ],
+        "target_types": [
+          "Attack Technique",
+          "Campaign",
+          "Security Incident",
+          "Malware",
+          "Exploit"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_caused",
+        "name": "caused",
+        "description": "Vulnerability, malware, exploit, technique, tool, actor, or campaign caused a security incident or downstream incident",
+        "icon": "ReportProblem",
+        "color": "#326ecc",
+        "quality_score": 25,
+        "source_types": [
+          "Vulnerability",
+          "Campaign",
+          "Malware",
+          "Exploit",
+          "Attack Technique",
+          "Tool",
+          "Threat Actor",
+          "Intrusion Set",
+          "Infrastructure",
+          "Security Incident"
+        ],
+        "target_types": [
+          "Security Incident",
+          "Vulnerability"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_complies_with",
+        "name": "complies_with",
+        "description": "Mitigation, control, product, software, target organization, or detection rule satisfies a framework requirement",
+        "icon": "Policy",
+        "color": "#3252cc",
+        "quality_score": 15,
+        "source_types": [
+          "Mitigation",
+          "Detection Rule",
+          "Product",
+          "Software",
+          "Target",
+          "Tool",
+          "Service"
+        ],
+        "target_types": [
+          "Security Framework"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_uses_protocol",
+        "name": "uses_protocol",
+        "description": "Malware, infrastructure, tool, service, software, or attack technique uses a network or communication protocol/service",
+        "icon": "Hub",
+        "color": "#3235cc",
+        "quality_score": 15,
+        "source_types": [
+          "Malware",
+          "Infrastructure",
+          "Tool",
+          "Software",
+          "Product",
+          "Service",
+          "Attack Technique",
+          "Exploit",
+          "Threat Actor",
+          "Campaign"
+        ],
+        "target_types": [
+          "Protocol",
+          "Service"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_evolved_from",
+        "name": "evolved_from",
+        "description": "Threat actor, intrusion set, campaign, malware, tool, or exploit evolved from a previous variant or predecessor",
+        "icon": "TrendingUp",
+        "color": "#4d32cc",
+        "inverse": "evolved_into",
+        "quality_score": 15,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_dropped_by",
+        "name": "dropped_by",
+        "description": "Malware, tool, or payload dropped or installed by another malware, exploit, tool, or technique",
+        "icon": "Coronavirus",
+        "color": "#6932cc",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Exploit"
+        ],
+        "target_types": [
+          "Malware",
+          "Exploit",
+          "Tool",
+          "Attack Technique",
+          "Threat Actor",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_hosts",
+        "name": "hosts",
+        "description": "Infrastructure, service, or compromised target hosts malware, tools, exploits, IOCs, services, or content",
+        "icon": "Storage",
+        "color": "#8632cc",
+        "quality_score": 25,
+        "source_types": [
+          "Infrastructure",
+          "Service",
+          "Target",
+          "Software",
+          "Product",
+          "Threat Actor",
+          "Location"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Indicator of Compromise",
+          "Service",
+          "Software",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_compromises",
+        "name": "compromises",
+        "description": "Adversary, malware, exploit, technique, or tool compromises infrastructure, targets, software, products, services, or accounts",
+        "icon": "Explore",
+        "color": "#a332cc",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Exploit",
+          "Attack Technique",
+          "Tool",
+          "Vulnerability"
+        ],
+        "target_types": [
+          "Infrastructure",
+          "Target",
+          "Software",
+          "Product",
+          "Service",
+          "Protocol",
+          "Threat Actor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_controls",
+        "name": "controls",
+        "description": "Adversary, campaign, malware, or organization controls attack infrastructure, malware, tools, services, or compromised targets",
+        "icon": "Api",
+        "color": "#c032cc",
+        "quality_score": 25,
+        "source_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Malware",
+          "Tool",
+          "Target"
+        ],
+        "target_types": [
+          "Infrastructure",
+          "Malware",
+          "Tool",
+          "Service",
+          "Target",
+          "Software"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_downloads",
+        "name": "downloads",
+        "description": "Malware, tool, exploit, technique, or compromised target downloads additional malware, tools, exploits, or payloads from infrastructure",
+        "icon": "Code",
+        "color": "#cc32bb",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique",
+          "Target",
+          "Threat Actor",
+          "Infrastructure"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Software",
+          "Indicator of Compromise",
+          "Infrastructure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_originates_from",
+        "name": "originates_from",
+        "description": "Threat actor, intrusion set, campaign, malware, tool, exploit, or infrastructure originates from a geographic location",
+        "icon": "Public",
+        "color": "#cc329e",
+        "inverse": "origin_of",
+        "quality_score": 15,
+        "source_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Malware",
+          "Campaign",
+          "Tool",
+          "Exploit",
+          "Infrastructure",
+          "Attack Technique",
+          "Security Incident"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_exfiltrates_to",
+        "name": "exfiltrates_to",
+        "description": "Malware, tool, technique, actor, or compromised target exfiltrates data to infrastructure, services, or actors",
+        "icon": "Dns",
+        "color": "#cc3281",
+        "inverse": "receives_exfil_from",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Attack Technique",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Target"
+        ],
+        "target_types": [
+          "Infrastructure",
+          "Service",
+          "Threat Actor",
+          "Intrusion Set",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_authored_by",
+        "name": "authored_by",
+        "description": "Malware, tool, exploit, detection rule, framework, technique, or report authored or written by an actor, researcher, or vendor",
+        "icon": "Create",
+        "color": "#cc3265",
+        "quality_score": 25,
+        "source_types": [
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Detection Rule",
+          "Security Framework",
+          "Attack Technique",
+          "Software",
+          "Mitigation"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Security Researcher",
+          "Intrusion Set",
+          "Target"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_linked_to",
+        "name": "linked_to",
+        "description": "Generic linkage: intrusion set, actor, campaign, malware, tool, or infrastructure linked to or associated with another entity",
+        "icon": "Link",
+        "color": "#cc3248",
+        "quality_score": 25,
+        "source_types": [
+          "Intrusion Set",
+          "Threat Actor",
+          "Campaign",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Infrastructure",
+          "Attack Technique",
+          "Indicator of Compromise",
+          "Security Incident",
+          "Vulnerability"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Infrastructure",
+          "Attack Technique",
+          "Indicator of Compromise",
+          "Security Incident",
+          "Vulnerability",
+          "Target",
+          "Location"
+        ],
+        "symmetric": true
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_targets_location",
+        "name": "targets_location",
+        "description": "Adversary, malware, exploit, technique, tool, or incident targets a geographic region",
+        "icon": "Place",
+        "color": "#cc3a32",
+        "quality_score": 15,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Exploit",
+          "Tool",
+          "Attack Technique",
+          "Security Incident"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_evolved_into",
+        "name": "evolved_into",
+        "description": "Threat actor, intrusion set, campaign, malware, tool, or exploit evolved into a successor variant",
+        "icon": "TrendingUp",
+        "color": "#4d32cc",
+        "inverse": "evolved_from",
+        "quality_score": 15,
+        "source_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Campaign",
+          "Intrusion Set",
+          "Malware",
+          "Tool",
+          "Exploit",
+          "Attack Technique"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_origin_of",
+        "name": "origin_of",
+        "description": "Location is the origin of a threat actor, intrusion set, campaign, malware, tool, exploit, infrastructure, technique, or incident",
+        "icon": "Public",
+        "color": "#cc329e",
+        "inverse": "originates_from",
+        "quality_score": 15,
+        "source_types": [
+          "Location"
+        ],
+        "target_types": [
+          "Threat Actor",
+          "Intrusion Set",
+          "Malware",
+          "Campaign",
+          "Tool",
+          "Exploit",
+          "Infrastructure",
+          "Attack Technique",
+          "Security Incident"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "cyber_edge_receives_exfil_from",
+        "name": "receives_exfil_from",
+        "description": "Infrastructure, service, or actor receives exfiltrated data from malware, tools, techniques, or compromised targets",
+        "icon": "Dns",
+        "color": "#cc3281",
+        "inverse": "exfiltrates_to",
+        "quality_score": 25,
+        "source_types": [
+          "Infrastructure",
+          "Service",
+          "Threat Actor",
+          "Intrusion Set",
+          "Location"
+        ],
+        "target_types": [
+          "Malware",
+          "Tool",
+          "Attack Technique",
+          "Threat Actor",
+          "Intrusion Set",
+          "Campaign",
+          "Target"
+        ]
+      }
+    ]
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "APT29",
+        "aliases": [
+          "Cozy Bear",
+          "The Dukes",
+          "NOBELIUM",
+          "Midnight Blizzard",
+          "YTTRIUM"
+        ],
+        "note": "APT groups have many vendor-specific names that become aliases"
+      },
+      {
+        "canonical": "EternalBlue",
+        "aliases": [
+          "MS17-010",
+          "CVE-2017-0144"
+        ],
+        "note": "Exploit names and CVE IDs become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "APT28",
+        "target": "Sofacy",
+        "type": "uses_tool",
+        "note": "Use uses_tool for actor-malware relationships"
+      },
+      {
+        "source": "Log4Shell",
+        "target": "Apache Log4j",
+        "type": "affects",
+        "note": "Use affects for vulnerability-software relationships"
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 20,
+    "max_same_source_type": 8,
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 35
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "changelog",
+      "legal",
+      "boilerplate",
+      "metadata",
+      "web_artifacts",
+      "advertising"
+    ]
+  },
+  "extraction_filtering_mode": "strict",
+  "icon": "Security"
+}

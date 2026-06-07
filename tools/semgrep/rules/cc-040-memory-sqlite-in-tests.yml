@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC040 — :memory: SQLite URL in tests is forbidden.
+#
+# TESTING.md § Database Fixtures: ':memory:' hides schema migration bugs
+# because it skips the file-level open path, and prod never runs against
+# an in-memory DB. Use tmp_path / "test.db".
+
+rules:
+  - id: cc-040-memory-sqlite-in-tests
+    message: |
+      ':memory:' SQLite URL in tests — use
+      f'sqlite:///{tmp_path}/test.db' so migrations and file-level paths
+      exercise real code.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "**/tests/**"
+        - "**/conftest.py"
+    # Match a SQLite URL literal (sqlite:///:memory: or sqlite://:memory:).
+    # Avoids false positives on docstrings that merely mention ':memory:'.
+    pattern-regex: 'sqlite:/+:memory:'

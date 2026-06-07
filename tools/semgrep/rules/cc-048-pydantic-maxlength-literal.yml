@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC048 — Pydantic Field(max_length=N) literal. Use chaoscypher_core.policy
+# for security-shape limits or max_length_from_settings for tunable limits.
+#
+# See public configuration guidance decision tree.
+
+rules:
+  - id: cc-048-pydantic-maxlength-literal
+    message: |
+      Pydantic `max_length=N` literal. Choose:
+
+      - For security/protocol invariants (usernames, queue names, DB names):
+          from chaoscypher_core import policy
+          name: str = Field(max_length=policy.USERNAME_MAX_LENGTH)
+
+      - For operator-tunable user-content fields (chat content, pause reason):
+          from typing import Annotated
+          from chaoscypher_core.utils.settings_validators import max_length_from_settings
+          content: Annotated[str, max_length_from_settings("chat_context.chat_message_max_length")]
+
+      See public configuration guidance.
+
+      Suppress with: # nosemgrep: cc-048-pydantic-maxlength-literal - <reason>
+    severity: WARNING
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/test_*.py"
+        - "**/*_test.py"
+        - "/packages/core/src/chaoscypher_core/app_config/__init__.py"
+        - "/packages/core/src/chaoscypher_core/settings.py"
+        - "/packages/core/src/chaoscypher_core/policy.py"
+    patterns:
+      - pattern-either:
+          - pattern: Field(..., max_length=$N, ...)
+          - pattern: Field(max_length=$N)
+      - pattern-not: Field(..., max_length=policy.$X, ...)
+      - pattern-not: Field(max_length=policy.$X)
+      - pattern-not: Field(..., max_length=$M.$X, ...)
+      - pattern-not: Field(max_length=$M.$X)

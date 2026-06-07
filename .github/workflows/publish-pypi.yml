@@ -1,0 +1,127 @@
+# Publishes the four Python packages (core, cortex, neuron, cli) to PyPI.
+#
+# Trigger is workflow_dispatch ONLY (repo rule: no auto-enabled workflows) —
+# publishing is an explicit operator action. The default target is TestPyPI so
+# the rehearsal run is the path of least resistance; re-run with target=pypi
+# for the real publish.
+#
+# Auth is PyPI Trusted Publishing (OIDC) — no long-lived API tokens. One-time
+# setup per index (pypi.org and test.pypi.org), BEFORE the first run:
+#   For each of chaoscypher-core / chaoscypher-cortex / chaoscypher-neuron /
+#   chaoscypher-cli, add a "pending publisher" under Account > Publishing:
+#     owner: chaoscypherinc   repository: chaoscypher
+#     workflow: publish-pypi.yml
+#     environment: <target>-<short name>, e.g. pypi-core / testpypi-core
+#   One environment PER PACKAGE is required: PyPI pending publishers are
+#   unique on (owner, repo, workflow, environment) — the project name is NOT
+#   part of the key, so four packages sharing one environment collide and the
+#   second registration fails (surfaced as a generic 500; see
+#   pypi/warehouse#16920). The publish matrix below gives each package its
+#   own environment so each tuple is distinct.
+#   The first successful publish creates the project and converts the pending
+#   publisher into its trusted publisher.
+#
+# Local equivalent (manual fallback, needs an API token):
+#   uv build --package <name> -o dist && uv publish --token <token> dist/*
+name: Publish to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Index to publish to. Use testpypi for a rehearsal run."
+        type: choice
+        options:
+          - testpypi
+          - pypi
+        default: testpypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-pypi
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build sdists and wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Build packages
+        run: |
+          for pkg in chaoscypher-core chaoscypher-cortex chaoscypher-neuron chaoscypher-cli; do
+            uv build --package "$pkg" -o dist
+          done
+          ls -l dist
+
+      - name: Validate metadata (twine check)
+        run: uvx twine check --strict dist/*
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish ${{ matrix.package }} to ${{ inputs.target }}
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      # Independent projects — one package failing auth must not stop the rest.
+      fail-fast: false
+      matrix:
+        include:
+          - package: chaoscypher-core
+            short: core
+          - package: chaoscypher-cortex
+            short: cortex
+          - package: chaoscypher-neuron
+            short: neuron
+          - package: chaoscypher-cli
+            short: cli
+    # One environment per package — must match each PyPI pending publisher's
+    # registered environment exactly (see header note on uniqueness).
+    environment: ${{ inputs.target }}-${{ matrix.short }}
+    permissions:
+      # Required for PyPI Trusted Publishing (OIDC token exchange).
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+
+      - name: Publish ${{ matrix.package }}
+        run: |
+          # sdist/wheel filenames use the underscored project name.
+          files="dist/$(echo '${{ matrix.package }}' | tr '-' '_')-"*
+          if [ "${{ inputs.target }}" = "testpypi" ]; then
+            uv publish --trusted-publishing always \
+              --publish-url https://test.pypi.org/legacy/ \
+              --check-url https://test.pypi.org/simple/ \
+              $files
+          else
+            uv publish --trusted-publishing always \
+              --check-url https://pypi.org/simple/ \
+              $files
+          fi
+
+      - name: Publish status
+        run: |
+          echo "Published ${{ matrix.package }} to ${{ inputs.target }}:" >> "$GITHUB_STEP_SUMMARY"
+          ls dist/$(echo '${{ matrix.package }}' | tr '-' '_')-* >> "$GITHUB_STEP_SUMMARY"

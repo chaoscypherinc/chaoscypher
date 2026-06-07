@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC033 — Cortex feature route handlers must be async def.
+#
+# CLAUDE.md § Async vs Sync: Cortex endpoints are async-first so I/O
+# (DB, queue, LLM, streaming) doesn't block the event loop. Sync
+# handlers also block FastAPI's thread pool and cap throughput.
+
+rules:
+  - id: cc-033-sync-route-handler
+    message: |
+      Sync route handler — Cortex endpoints must be 'async def' so
+      I/O doesn't block the event loop.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/api.py"
+      exclude:
+        - "**/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              @$ROUTER.get(...)
+              def $FN(...):
+                  ...
+          - pattern: |
+              @$ROUTER.post(...)
+              def $FN(...):
+                  ...
+          - pattern: |
+              @$ROUTER.put(...)
+              def $FN(...):
+                  ...
+          - pattern: |
+              @$ROUTER.patch(...)
+              def $FN(...):
+                  ...
+          - pattern: |
+              @$ROUTER.delete(...)
+              def $FN(...):
+                  ...
+      # In semgrep, `def $FN` matches both `def` and `async def`. The
+      # only reliable filter is a regex over the match text: if the
+      # captured block contains `async def`, drop it. Earlier versions
+      # of this rule used `pattern-not: async def ...` AST clauses,
+      # which semgrep removed EVERY candidate for the same reason
+      # (the AST shape is identical) and the rule silently no-op'd.
+      - pattern-not-regex: '\basync\s+def\b'

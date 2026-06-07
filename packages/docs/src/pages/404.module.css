@@ -1,0 +1,16 @@
+.container {
+  max-width: 720px;
+  margin: 4rem auto;
+  padding: 0 1rem;
+}
+.container h1 {
+  color: var(--cc-accent-primary, #7b2ff7);
+}
+.container ul {
+  line-height: 1.8;
+}
+.container code {
+  background: var(--ifm-code-background);
+  padding: 2px 6px;
+  border-radius: 3px;
+}

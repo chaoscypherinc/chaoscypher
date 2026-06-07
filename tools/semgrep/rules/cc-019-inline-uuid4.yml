@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC019 — Inline uuid.uuid4() must use generate_id() instead.
+#
+# CANONICAL_PATTERNS.md § ID Generation: every Chaos Cypher ID comes from
+# chaoscypher_core.utils.id.generate_id so new code automatically picks
+# up the optional prefix convention and any future changes to ID
+# formatting.
+
+rules:
+  - id: cc-019-inline-uuid4
+    message: |
+      Inline 'uuid.uuid4()' — use 'generate_id()' from
+      chaoscypher_core.utils.id so IDs pick up the canonical prefix
+      convention.
+    severity: WARNING
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        # generate_id() is implemented here and legitimately calls uuid.uuid4().
+        - "/packages/core/src/chaoscypher_core/utils/id.py"
+    pattern-either:
+      # import uuid; uuid.uuid4()
+      - pattern: uuid.uuid4(...)
+      # from uuid import uuid4; uuid4()
+      - pattern: uuid4(...)

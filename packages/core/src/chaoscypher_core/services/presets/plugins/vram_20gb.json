@@ -1,0 +1,29 @@
+{
+  "name": "vram_20gb",
+  "display_name": "20GB VRAM",
+  "version": "1.0.0",
+  "description": "Professional workstation configuration for 14B parameter models. Good balance of model size and context window for knowledge work.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 20,
+  "gpu_examples": [
+    "RTX A4000",
+    "RTX A4500"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "phi4:14b",
+    "ollama_extraction_model": "phi4:14b",
+    "ollama_vision_model": "qwen3-vl:8b",
+    "ollama_num_ctx": 24576,
+    "ollama_num_batch": 1536
+  },
+
+  "llm_settings": {
+    "ai_context_window": 24576,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 8192,
+    "thinking_for_chat": false
+  }
+}

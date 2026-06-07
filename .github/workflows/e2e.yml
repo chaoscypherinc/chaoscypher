@@ -1,0 +1,150 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 2 AM UTC
+
+jobs:
+  cli-e2e:
+    name: CLI E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen, with dev extras)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Install E2E-only test dependencies
+        run: uv pip install pytest-html pytest-json-report
+
+      - name: Run CLI E2E tests
+        run: |
+          mkdir -p test-reports
+          uv run python -m pytest e2e/cli/ --import-mode=importlib -v -m "cli" \
+            --html=test-reports/cli-report.html --self-contained-html \
+            --junit-xml=test-reports/cli-report.xml \
+            --json-report --json-report-file=test-reports/cli-report.json
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cli-e2e-reports
+          path: test-reports/
+          retention-days: 14
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@3eeb9fc888e82e8be2fb356bbeec2750231672bc # v1
+        with:
+          name: CLI E2E Test Results
+          path: test-reports/cli-report.xml
+          reporter: java-junit
+          fail-on-error: false
+
+  docker-e2e:
+    name: Docker E2E Tests (Fresh + Resume)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: cli-e2e
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Free runner disk space
+        # The all-in-one image build leaves the stock runner with less free
+        # disk than the app's upload guard requires (max_upload_bytes 5 GB +
+        # upload_disk_headroom_bytes 1 GB ≈ 6 GB free inside /data), so every
+        # test upload is refused with 507 Insufficient Storage. Drop the large
+        # preinstalled toolchains this job never uses (~25 GB reclaimed).
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build E2E app image
+        working-directory: packages/docker/e2e
+        run: docker compose build app
+
+      - name: Start E2E app
+        working-directory: packages/docker/e2e
+        run: |
+          docker compose up -d app
+          bash scripts/wait-for-healthy.sh http://localhost:8888 180
+
+      - name: Set up Python for tests
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen, with dev extras)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Install E2E-only test dependencies
+        run: uv pip install pytest-html pytest-json-report
+
+      - name: Run API E2E tests (fresh phase)
+        env:
+          E2E_BASE_URL: http://localhost:8888
+          E2E_PHASE: fresh
+        run: |
+          mkdir -p test-reports
+          uv run python -m pytest e2e/api/ --import-mode=importlib -v --tb=short \
+            -m "api and not resume" \
+            --html=test-reports/api-fresh-report.html --self-contained-html \
+            --junit-xml=test-reports/api-fresh-report.xml \
+            --json-report --json-report-file=test-reports/api-fresh-report.json
+
+      - name: Restart app for resume phase
+        working-directory: packages/docker/e2e
+        run: |
+          docker compose restart app
+          bash scripts/wait-for-healthy.sh http://localhost:8888 120
+
+      - name: Run API E2E tests (resume phase)
+        env:
+          E2E_BASE_URL: http://localhost:8888
+          E2E_PHASE: resume
+        run: |
+          uv run python -m pytest e2e/api/test_resume.py --import-mode=importlib -v --tb=short \
+            -m "resume" \
+            --html=test-reports/api-resume-report.html --self-contained-html \
+            --junit-xml=test-reports/api-resume-report.xml \
+            --json-report --json-report-file=test-reports/api-resume-report.json
+
+      - name: Generate report summary
+        if: always()
+        run: uv run python scripts/e2e_report_summary.py test-reports/
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: docker-e2e-reports
+          path: test-reports/
+          retention-days: 14
+
+      - name: Stop E2E containers
+        if: always()
+        working-directory: packages/docker/e2e
+        run: docker compose down -v

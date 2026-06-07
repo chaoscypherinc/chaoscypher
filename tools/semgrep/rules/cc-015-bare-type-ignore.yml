@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC015 — Bare `# type: ignore` without a rule code.
+#
+# CLAUDE.md § Type Discipline: `# type: ignore[rule-code]` (optionally with
+# a `# reason` trailing comment) — never a bare ignore. Bare ignores hide
+# every mypy diagnostic on the line forever, including real regressions
+# introduced later.
+
+rules:
+  - id: cc-015-bare-type-ignore
+    message: |
+      Bare '# type: ignore' — must specify a rule code, e.g.
+      '# type: ignore[arg-type]  # reason'. Bare ignores hide future regressions.
+    severity: ERROR
+    languages: [python]
+    pattern-regex: '#\s*type:\s*ignore(?![\[\w])'

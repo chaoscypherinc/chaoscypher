@@ -1,0 +1,34 @@
+# CI for the standalone docs MIRROR repository.
+#
+# packages/docs/ is periodically synced to a separate public-facing docs repo,
+# where this directory becomes the repo root and this file its live workflow.
+# In the monorepo it is inert by design: GitHub only executes workflows under
+# the repo-root .github/workflows/, never nested ones.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  docs:
+    name: Docs Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build docs
+        run: npm run build

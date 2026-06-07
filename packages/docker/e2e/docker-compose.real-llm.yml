@@ -1,0 +1,26 @@
+# E2E compose override for the real-LLM smoke profile.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.real-llm.yml up -d app
+#
+#   E2E_REAL_LLM=1 E2E_BASE_URL=http://localhost:8888 \
+#     uv run pytest e2e/api/test_real_llm_smoke.py -v
+#
+# What this changes vs the base compose:
+#   * Swaps the mounted settings.yaml for settings.real-llm.yaml
+#     (which points cortex at the host's Ollama rather than the
+#     in-network fake-ollama service).
+#   * Adds extra_hosts so ``host.docker.internal`` resolves to the
+#     host gateway on Linux. macOS/Windows resolve it natively.
+#
+# The fake-ollama service still runs (the base compose declares it)
+# but cortex won't call it — saves having to disable a service from
+# an override.
+
+services:
+  app:
+    volumes:
+      - e2e-data:/data
+      - ./settings.real-llm.yaml:/etc/chaoscypher/e2e-settings.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

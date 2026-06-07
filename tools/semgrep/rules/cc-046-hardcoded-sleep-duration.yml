@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC046 — Hardcoded asyncio.sleep / time.sleep duration in production code.
+#
+# Policy: tunable timing values live in chaoscypher_core.app_config and are
+# resolved at runtime via get_settings().<group>.<field>. See
+# public configuration guidance for the decision tree.
+#
+# Allowed: asyncio.sleep(0) — yield-to-event-loop pattern (not a duration).
+
+rules:
+  - id: cc-046-hardcoded-sleep-duration
+    message: |
+      Hardcoded sleep duration. Use a value from chaoscypher_core.app_config
+      (e.g. settings.intervals.X, settings.timeouts.Y). See
+      public configuration guidance for the decision tree.
+
+      If this value is genuinely a protocol invariant, suppress with:
+        # nosemgrep: cc-046-hardcoded-sleep-duration - <reason>
+    severity: WARNING
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        - "**/test_*.py"
+        - "**/*_test.py"
+        - "/packages/core/src/chaoscypher_core/app_config/__init__.py"
+        - "/packages/core/src/chaoscypher_core/settings.py"
+        - "/packages/core/src/chaoscypher_core/policy.py"
+        - "/packages/core/src/chaoscypher_core/services/orchestration/"
+    pattern-either:
+      - patterns:
+          - pattern: asyncio.sleep($N)
+          - metavariable-comparison:
+              metavariable: $N
+              comparison: $N != 0
+              strip: true
+      - patterns:
+          - pattern: time.sleep($N)
+          - metavariable-comparison:
+              metavariable: $N
+              comparison: $N != 0
+              strip: true

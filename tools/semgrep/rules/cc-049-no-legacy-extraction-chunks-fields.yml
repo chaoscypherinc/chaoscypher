@@ -1,0 +1,64 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC049 — Legacy extraction_chunks_* fields removed by migration 0030.
+# Use source.stage_progress["mcp_extraction"] (and .extras.* for
+# preview counts) instead.
+#
+# See the LLM stage progress migration notes
+
+rules:
+  - id: cc-049-no-legacy-extraction-chunks-fields
+    message: |
+      Legacy extraction_chunks_* fields were removed in migration 0030
+      (universal LLM stage progress facility). Reference these via
+      source.stage_progress["mcp_extraction"] instead.
+
+      Removed fields:
+        - extraction_chunks_submitted
+        - extraction_chunks_total
+        - extraction_chunk_indices
+        - extraction_last_activity
+        - extraction_entities_preview
+        - extraction_relationships_preview
+
+      See the LLM stage progress migration notes
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        # 0001 originally created the six columns; 0030 dropped them.
+        # Both migrations must reference the names by definition.
+        - "**/database/migrations/versions/0001_baseline.py"
+        - "**/database/migrations/versions/0030_llm_stage_progress.py"
+        - "**/tests/**/test_0030_llm_stage_progress.py"
+    pattern-either:
+      # Bare-name identifier references (assignments, reads, function args).
+      - pattern: extraction_chunks_submitted
+      - pattern: extraction_chunks_total
+      - pattern: extraction_chunk_indices
+      - pattern: extraction_last_activity
+      - pattern: extraction_entities_preview
+      - pattern: extraction_relationships_preview
+      # Attribute access (entity-style): source.extraction_chunks_submitted.
+      - pattern: $X.extraction_chunks_submitted
+      - pattern: $X.extraction_chunks_total
+      - pattern: $X.extraction_chunk_indices
+      - pattern: $X.extraction_last_activity
+      - pattern: $X.extraction_entities_preview
+      - pattern: $X.extraction_relationships_preview
+      # Dict-key string subscript (TypedDict storage-row access):
+      # row["extraction_chunks_submitted"], updates={"extraction_chunks_submitted": ...}.
+      - pattern: $X["extraction_chunks_submitted"]
+      - pattern: $X["extraction_chunks_total"]
+      - pattern: $X["extraction_chunk_indices"]
+      - pattern: $X["extraction_last_activity"]
+      - pattern: $X["extraction_entities_preview"]
+      - pattern: $X["extraction_relationships_preview"]
+      # Bare string literals (catches dict-key writes the subscript pattern misses).
+      - pattern: '"extraction_chunks_submitted"'
+      - pattern: '"extraction_chunks_total"'
+      - pattern: '"extraction_chunk_indices"'
+      - pattern: '"extraction_last_activity"'
+      - pattern: '"extraction_entities_preview"'
+      - pattern: '"extraction_relationships_preview"'

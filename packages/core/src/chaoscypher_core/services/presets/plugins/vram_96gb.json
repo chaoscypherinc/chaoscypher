@@ -1,0 +1,29 @@
+{
+  "name": "vram_96gb",
+  "display_name": "96GB VRAM",
+  "version": "1.0.0",
+  "description": "Professional workstation configuration for 70B+ models with large context windows. Excellent for complex reasoning and enterprise knowledge work.",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+
+  "vram_gb": 96,
+  "gpu_examples": [
+    "RTX 6000 Pro"
+  ],
+
+  "ollama_settings": {
+    "ollama_chat_model": "gpt-oss:120b",
+    "ollama_extraction_model": "gpt-oss:120b",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 49152,
+    "ollama_num_batch": 4096,
+    "ollama_num_parallel": 2
+  },
+
+  "llm_settings": {
+    "ai_context_window": 49152,
+    "ai_max_tokens": 65536,
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false
+  }
+}

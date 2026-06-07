@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC041 — asyncio.run() forbidden in tests.
+#
+# TESTING.md § Async: pytest-asyncio runs async tests on a managed event
+# loop. Manually calling asyncio.run inside a test creates a second event
+# loop and breaks fixtures that bind tasks to the outer loop.
+
+rules:
+  - id: cc-041-asyncio-run-in-tests
+    message: |
+      asyncio.run() inside a test — use '@pytest.mark.asyncio'
+      with 'async def test_...'.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "**/tests/**"
+    pattern: asyncio.run(...)

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/chaoscypherinc/chaoscypher/security/policy
+    about: Please report vulnerabilities privately through the security policy.
+  - name: Questions and ideas
+    url: https://github.com/chaoscypherinc/chaoscypher/discussions
+    about: Use discussions for support questions, design ideas, and open-ended topics.
+  - name: Documentation site
+    url: https://chaoscypher.com
+    about: Read the public documentation and getting-started guides.

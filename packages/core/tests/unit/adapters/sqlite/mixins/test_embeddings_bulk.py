@@ -1,0 +1,79 @@
+# Copyright (C) 2024-2026 Chaos Cypher, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+"""PR2a Task 5 — count/clear methods on EntityEmbeddingStorageProtocol."""
+
+from __future__ import annotations
+
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+from sqlmodel import SQLModel
+
+from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+from chaoscypher_core.adapters.sqlite.engine import get_engine
+from chaoscypher_core.adapters.sqlite.models import SourceEntityEmbedding
+
+
+@pytest.fixture
+def adapter(tmp_path: Path) -> Generator[SqliteAdapter]:
+    db_dir = tmp_path / "cc-test"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    db_path = db_dir / "app.db"
+    engine = get_engine(str(db_path))
+    SQLModel.metadata.create_all(engine, checkfirst=True)
+    a = SqliteAdapter(str(db_path), database_name="test")
+    a.connect()
+    yield a
+    a.disconnect()
+
+
+def _seed_source(adapter: SqliteAdapter, source_id: str) -> None:
+    adapter.create_source(
+        {
+            "id": source_id,
+            "database_name": "test",
+            "filename": f"{source_id}.pdf",
+            "filepath": f"/tmp/{source_id}.pdf",
+            "file_type": "pdf",
+            "file_size": 100,
+            "content_hash": f"hash-{source_id}",
+            "status": "indexed",
+        }
+    )
+
+
+def _seed_embeddings(adapter: SqliteAdapter, count: int) -> None:
+    _seed_source(adapter, "src-1")
+    with adapter.transaction():
+        for i in range(count):
+            adapter.session.add(
+                SourceEntityEmbedding(
+                    id=f"emb-{i}",
+                    source_id="src-1",
+                    entity_id=f"ent-{i}",
+                    entity_index=i,
+                    embedding=b"\x00" * 8,
+                )
+            )
+
+
+def test_count_embeddings_returns_total(adapter: SqliteAdapter) -> None:
+    _seed_embeddings(adapter, 4)
+    assert adapter.count_embeddings() == 4
+
+
+def test_count_embeddings_empty(adapter: SqliteAdapter) -> None:
+    assert adapter.count_embeddings() == 0
+
+
+def test_clear_all_embeddings_returns_count(adapter: SqliteAdapter) -> None:
+    _seed_embeddings(adapter, 4)
+    deleted = adapter.clear_all_embeddings()
+    assert deleted == 4
+    assert adapter.count_embeddings() == 0
+
+
+def test_clear_all_embeddings_empty_noop(adapter: SqliteAdapter) -> None:
+    assert adapter.clear_all_embeddings() == 0

@@ -1,0 +1,22 @@
+# Chaos Cypher Interface - Development with Vite hot-reload
+FROM node:22.22.1-alpine@sha256:8094c002d08262dba12645a3b4a15cd6cd627d30bc782f53229a2ec13ee22a00
+
+WORKDIR /app
+
+# Copy package files
+COPY packages/interface/package*.json packages/interface/.npmrc ./
+
+# Install dependencies (ci for reproducible builds)
+RUN npm ci
+
+# Copy source code (will be overridden by volume mount in dev)
+COPY packages/interface ./
+
+# Expose Vite dev server port
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:3000 || exit 1
+
+# Start Vite dev server with hot-reload
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]

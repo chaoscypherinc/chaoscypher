@@ -1,0 +1,79 @@
+name: Bug report
+description: Report something that is broken or behaving unexpectedly.
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Chaos Cypher. For security vulnerabilities, please do not open a public issue; use the process in SECURITY.md.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include commands, UI steps, sample file type, or API calls.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Installation method
+      options:
+        - Docker all-in-one
+        - Docker dev stack
+        - CLI
+        - Python package
+        - Source checkout
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Paste the release tag, image tag, or git SHA.
+      placeholder: "main @ abc1234"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: LLM / embedding provider
+      options:
+        - Ollama
+        - OpenAI
+        - Anthropic
+        - Gemini
+        - Local embeddings
+        - Not applicable
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or screenshots
+      description: Redact API keys, tokens, local file paths, or private document content.
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, browser, Docker version, Python/Node versions if relevant.
+      placeholder: |
+        OS:
+        Browser:
+        Docker:
+        Python:
+        Node:

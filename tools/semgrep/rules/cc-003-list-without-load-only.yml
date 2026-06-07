@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC003 — list_* methods in repository.py must use load_only().
+#
+# CLAUDE.md SQLAlchemy Query Performance: loading 40 columns can take
+# 1+ seconds; 14 columns takes ~26 ms. List methods are the hot path
+# and must declare explicit column projection via load_only().
+
+rules:
+  - id: cc-003-list-without-load-only
+    message: |
+      List method '$FN' uses select() without load_only(). Add
+      load_only() for large models per CLAUDE.md SQLAlchemy Query
+      Performance rules.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "**/repository.py"
+      exclude:
+        - "**/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: |
+              def $FN(...):
+                  ...
+                  select(...)
+                  ...
+          - pattern: |
+              async def $FN(...):
+                  ...
+                  select(...)
+                  ...
+      - metavariable-regex:
+          metavariable: $FN
+          regex: "^list_.*"
+      - pattern-not-inside: |
+          def $FN(...):
+              ...
+              load_only(...)
+              ...
+      - pattern-not-inside: |
+          async def $FN(...):
+              ...
+              load_only(...)
+              ...

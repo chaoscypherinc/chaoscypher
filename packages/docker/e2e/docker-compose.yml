@@ -1,0 +1,123 @@
+# E2E testing: app container + test runner sidecar
+#
+# Usage:
+#   docker compose up -d app          # Start app
+#   docker compose run --rm runner     # Run tests
+#   docker compose down -v             # Cleanup
+
+name: chaoscypher-e2e
+
+services:
+  fake-ollama:
+    build:
+      context: ./fake-ollama
+    container_name: chaoscypher-e2e-fake-ollama
+    networks:
+      default:
+        aliases:
+          - fake-ollama
+    # Expose on a non-default port so the host-side e2e harness can
+    # POST to ``/_fake/control`` without colliding with a real Ollama
+    # bound on 11434. The cortex container reaches fake-ollama via
+    # the docker network on the default 11434 regardless.
+    ports:
+      - "127.0.0.1:11500:11434"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:11434/api/tags', timeout=2).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  app:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/Dockerfile
+    container_name: chaoscypher-e2e-app
+    # FQDN-style alias — Chromium's HTTPS-First Mode auto-upgrades
+    # bare single-label hostnames (``app``) on http:// URLs, so the
+    # Playwright runner sees ERR_SSL_PROTOCOL_ERROR. Multi-label
+    # ``app.test`` keeps Chromium on plain HTTP.
+    hostname: app.test
+    networks:
+      default:
+        aliases:
+          - app
+          - app.test
+    ports:
+      - "127.0.0.1:8888:80"
+    volumes:
+      - e2e-data:/data
+      # Override defaults for the test stack (cookie_secure off so
+      # Chromium accepts cookies on http://, permissive auth rate
+      # limits so back-to-back pytest runs don't 429). Mounted as
+      # read-only at a sidecar path; the entrypoint override below
+      # copies it into the writable data volume at boot so the app
+      # can still mutate settings.yaml at runtime (database create /
+      # switch, etc.).
+      - ./settings.yaml:/etc/chaoscypher/e2e-settings.yaml:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        cp /etc/chaoscypher/e2e-settings.yaml /data/settings.yaml
+        chown appuser:appuser /data/settings.yaml 2>/dev/null || true
+        exec /entrypoint.sh supervisord -c /etc/supervisor/conf.d/supervisord.conf
+    environment:
+      - CHAOSCYPHER_DATA_DIR=/data
+      - LOG_LEVEL=WARNING
+      - USE_JSON_LOGGING=false
+      - VALKEY_LOGLEVEL=warning
+      - NGINX_LOGLEVEL=warn
+      - NGINX_ACCESS_LOG=off
+      # Allow the runner-side hostname (Docker service name) past the
+      # Host-header allow-list — runner reaches the app as
+      # ``http://app:80`` over the compose network, not localhost.
+      - CHAOSCYPHER_ALLOWED_HOSTS=app,app.test,localhost,127.0.0.1,::1
+    mem_limit: 8g
+    cpus: 2
+    healthcheck:
+      test: ["CMD", "python", "/healthcheck.py"]
+      interval: 10s
+      timeout: 10s
+      start_period: 90s
+      retries: 5
+    depends_on:
+      fake-ollama:
+        condition: service_healthy
+
+  runner:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/e2e/Dockerfile.runner
+    container_name: chaoscypher-e2e-runner
+    volumes:
+      # Mount e2e harness (read-only)
+      - ../../../e2e:/app/e2e:ro
+      # Mount source code for CLI tests (overrides editable install)
+      - ../../core/src/chaoscypher_core:/app/packages/core/src/chaoscypher_core:ro
+      - ../../cortex/src/chaoscypher_cortex:/app/packages/cortex/src/chaoscypher_cortex:ro
+      - ../../cli/src/chaoscypher_cli:/app/packages/cli/src/chaoscypher_cli:ro
+      # Reports output (writable)
+      - ../../../test-reports:/app/test-reports
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+      - E2E_BASE_URL=http://app.test:80
+      - E2E_PHASE=fresh
+      - LOG_LEVEL=WARNING
+    working_dir: /app
+    command: >
+      pytest e2e/
+      -v --tb=short
+      -m "e2e and not resume and not cli"
+      --html=test-reports/api-report.html --self-contained-html
+      --junit-xml=test-reports/api-junit.xml
+      --json-report --json-report-file=test-reports/api-report.json
+
+volumes:
+  e2e-data:
+    driver: local

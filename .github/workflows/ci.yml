@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  python-quality:
+    name: Python Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Ruff lint
+        run: uv run ruff check packages/
+
+      - name: Ruff format check
+        run: uv run ruff format --check packages/
+
+      - name: Type check
+        run: uv run mypy packages/core/src packages/cortex/src packages/neuron/src packages/cli/src --config-file=pyproject.toml
+
+      - name: Architecture rules
+        run: uv run python scripts/lint_claude_rules.py packages/
+
+  python-tests:
+    name: Python Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Run unit tests with coverage (xdist parallel + Cobertura xml for diff-cover)
+        run: |
+          uv run pytest packages/core/tests packages/cortex/tests packages/cli/tests packages/neuron/tests -m "not e2e" --tb=short --import-mode=importlib \
+            -n auto \
+            --cov=packages/core/src/chaoscypher_core \
+            --cov=packages/cortex/src/chaoscypher_cortex \
+            --cov=packages/cli/src/chaoscypher_cli \
+            --cov=packages/neuron/src/chaoscypher_neuron \
+            --cov-report=term \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=80
+
+      - name: Diff coverage (advisory — >=90% on lines changed vs origin/main)
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          # Need full history of the base branch so diff-cover can compute the diff.
+          git fetch origin ${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }} --depth=200 || true
+          uv run diff-cover coverage.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=90 \
+            --markdown-report diff-cover.md
+          if [ -f diff-cover.md ]; then
+            echo "## Diff coverage report" >> $GITHUB_STEP_SUMMARY
+            cat diff-cover.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/interface
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/interface/package-lock.json
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sync backend (core + cortex needed for OpenAPI schema)
+        working-directory: ${{ github.workspace }}
+        run: uv sync --all-packages --frozen
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test -- --run
+
+      - name: Generate OpenAPI types
+        run: ../../scripts/generate-types.sh
+
+      - name: Build
+        run: npm run build
+
+  security:
+    name: Dependency Audits
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: packages/interface/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen, with dev extras for pip-audit)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Install frontend deps
+        working-directory: packages/interface
+        run: npm ci
+
+      - name: Python dependency audit
+        # PYSEC-2022-42969: ReDoS in `py.path.svnwc`. `py` is a transitive dev
+        # dep via `interrogate` (docstring coverage). Neither interrogate nor
+        # this project use svnwc, so the affected code path is unreachable and
+        # the package has no upstream fix. Re-evaluate when interrogate drops
+        # its `py` dependency. Mirror of the Makefile `security` target.
+        run: uv run pip-audit --ignore-vuln PYSEC-2022-42969
+
+      - name: Frontend dependency audit
+        run: npm audit --audit-level=high
+        working-directory: packages/interface

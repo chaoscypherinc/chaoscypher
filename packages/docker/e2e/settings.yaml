@@ -1,0 +1,71 @@
+# E2E test stack settings overrides.
+#
+# Mounted at /data/settings.yaml inside the app container so Cortex
+# picks it up at boot. These overrides only apply to the e2e tier;
+# production deployments use the package defaults.
+#
+# Why each override exists:
+#
+#   local_auth.cookie_secure: false
+#     The test stack serves plain HTTP. With cookie_secure=true the
+#     server emits Set-Cookie: cc_session=...; Secure — and Chromium
+#     drops Secure cookies on http:// origins, so every Playwright
+#     test would fail at the first /auth/me probe.
+#
+#   rate_limit.*_max_requests: 10000
+#     A full pytest invocation can burst far past the production
+#     defaults (5 logins / 3 setups per IP per 60 s) — repeated test
+#     sessions against the same hot stack would otherwise 429 inside
+#     the session_cookie fixture and cascade-fail every test. The
+#     production rate limits are still tested via dedicated unit
+#     tests in packages/cortex/tests/.
+#
+#   rate_limit nginx zones (api_general / uploads / mutations):
+#     pytest fires mutating requests far faster than the production
+#     single-operator shape (10 mutations/s, burst 20) — e.g. the
+#     pagination test creates 25 nodes back-to-back, and nginx 503s
+#     the overflow. enabled stays true so the renderer + limit_req
+#     config path is still exercised; only the ceilings are raised.
+#     Zone shapes/defaults are covered by unit tests.
+
+# Skip the LLM-setup wizard. Without this, every authenticated_page
+# routes to /setup instead of the intended destination — the e2e
+# Docker stack ships without an LLM, so users would be forced
+# through the wizard, but browser tests want to land on /sources,
+# /nodes, etc. directly. Tests that exercise the wizard itself
+# explicitly visit /setup.
+setup_completed: true
+
+local_auth:
+  cookie_secure: false
+
+# Point cortex at the fake-ollama HTTP shim (see ./fake-ollama/).
+# The fake advertises four canned models via /api/tags so /llm/health
+# flips to verified=True + missing_models=[], unlocking the
+# requires_llm-marked tests in the api + browser tiers.
+llm:
+  chat_provider: ollama
+  ollama_chat_model: fake-chat:latest
+  ollama_extraction_model: fake-extract:latest
+  ollama_vision_model: fake-vision:latest
+  ollama_instances:
+    - id: e2e
+      name: E2E Fake Ollama
+      base_url: http://fake-ollama:11434
+      enabled: true
+
+embedding:
+  provider: ollama
+  model: fake-embed:latest
+  api_base: http://fake-ollama:11434
+  is_configured: true
+
+rate_limit:
+  login_max_requests: 10000
+  setup_max_requests: 10000
+  api_key_max_requests: 10000
+  refresh_max_requests: 10000
+  api_general_max_requests: 10000
+  uploads_max_requests: 1000
+  mutations_max_requests: 1000
+  mutations_burst: 1000

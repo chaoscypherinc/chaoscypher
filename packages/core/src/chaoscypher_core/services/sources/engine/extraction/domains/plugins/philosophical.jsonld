@@ -1,0 +1,1687 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:philosophical",
+  "name": "philosophical",
+  "version": "1.10.0",
+  "description": "Philosophical texts from global traditions (Western, Eastern, African, Islamic, Indigenous)",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.15,
+  "strict_entity_types": true,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "philosophical_core": {
+        "terms": [
+          "philosophy",
+          "philosopher",
+          "metaphysics",
+          "epistemology",
+          "ontology",
+          "ethics",
+          "aesthetics",
+          "logic",
+          "wisdom",
+          "reasoning",
+          "dialectic",
+          "worldview",
+          "philosophical",
+          "principle",
+          "axiom",
+          "universal law",
+          "fundamental truth"
+        ],
+        "weight": 1.2
+      },
+      "esoteric_philosophy": {
+        "terms": [
+          "hermetic",
+          "hermeticism",
+          "hermetical",
+          "esoteric",
+          "occult",
+          "mystical",
+          "gnostic",
+          "gnosticism",
+          "neoplatonic",
+          "neoplatonism",
+          "alchemy",
+          "alchemical",
+          "transmutation",
+          "initiate",
+          "adept",
+          "theosophy",
+          "rosicrucian",
+          "kabbalah",
+          "qabbalah",
+          "arcane",
+          "occultism"
+        ],
+        "weight": 1.1
+      },
+      "western_philosophy": {
+        "terms": [
+          "phenomenology",
+          "existentialism",
+          "rationalism",
+          "empiricism",
+          "idealism",
+          "materialism",
+          "stoicism",
+          "skepticism",
+          "pragmatism",
+          "analytic philosophy",
+          "continental philosophy",
+          "hermeneutics",
+          "deconstruction",
+          "postmodernism"
+        ],
+        "weight": 0.9
+      },
+      "eastern_philosophy": {
+        "terms": [
+          "dharma",
+          "karma",
+          "samsara",
+          "nirvana",
+          "moksha",
+          "tao",
+          "yin yang",
+          "confucian",
+          "buddhist",
+          "vedanta",
+          "zen",
+          "sunyata",
+          "ahimsa",
+          "wu wei",
+          "li",
+          "ren",
+          "atman",
+          "brahman"
+        ],
+        "weight": 0.9
+      },
+      "african_philosophy": {
+        "terms": [
+          "ubuntu",
+          "maat",
+          "sankofa",
+          "ujamaa",
+          "negritude",
+          "ethnophilosophy",
+          "sage philosophy",
+          "african communalism",
+          "ancestral wisdom"
+        ],
+        "weight": 0.9
+      },
+      "islamic_philosophy": {
+        "terms": [
+          "falsafa",
+          "kalam",
+          "tawhid",
+          "fitra",
+          "ijtihad",
+          "maqasid",
+          "sufism",
+          "tasawwuf",
+          "hikma"
+        ],
+        "weight": 0.9
+      },
+      "argument_structure": {
+        "terms": [
+          "therefore",
+          "hence",
+          "thus",
+          "premise",
+          "conclusion",
+          "argument",
+          "thesis",
+          "antithesis",
+          "synthesis",
+          "refutation",
+          "objection",
+          "syllogism",
+          "inference",
+          "deduction",
+          "induction"
+        ],
+        "weight": 1.0
+      },
+      "latin_greek_terms": {
+        "terms": [
+          "a priori",
+          "a posteriori",
+          "prima facie",
+          "sui generis",
+          "ad hominem",
+          "reductio ad absurdum",
+          "qua",
+          "per se",
+          "in se",
+          "cogito",
+          "tabula rasa",
+          "eudaimonia",
+          "logos",
+          "telos",
+          "phronesis",
+          "arete"
+        ],
+        "weight": 1.3
+      },
+      "major_concepts": {
+        "terms": [
+          "consciousness",
+          "free will",
+          "determinism",
+          "substance",
+          "essence",
+          "existence",
+          "being",
+          "nothingness",
+          "truth",
+          "knowledge",
+          "belief",
+          "justification",
+          "causation",
+          "modality",
+          "necessity",
+          "contingency",
+          "virtue",
+          "justice",
+          "beauty",
+          "the good"
+        ],
+        "weight": 0.8
+      },
+      "major_thinkers": {
+        "terms": [
+          "Plato",
+          "Aristotle",
+          "Socrates",
+          "Kant",
+          "Hegel",
+          "Nietzsche",
+          "Heidegger",
+          "Wittgenstein",
+          "Descartes",
+          "Locke",
+          "Hume",
+          "Spinoza",
+          "Confucius",
+          "Mencius",
+          "Laozi",
+          "Zhuangzi",
+          "Buddha",
+          "Nagarjuna",
+          "Shankara",
+          "Ibn Rushd",
+          "Al-Ghazali",
+          "Ibn Sina",
+          "Sartre",
+          "Foucault",
+          "Derrida",
+          "Hermes Trismegistus",
+          "Plotinus",
+          "Pythagoras",
+          "Parmenides",
+          "Heraclitus"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "academic_paper",
+      "philosophy_text",
+      "treatise",
+      "dialogue"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(argues?|contends?|maintains?|holds?|asserts?|claims?)\\s+that\\b",
+        "weight": 1.2,
+        "description": "Argument introduction patterns"
+      },
+      {
+        "regex": "(?i)\\b(a\\s+priori|a\\s+posteriori|prima\\s+facie|sui\\s+generis|per\\s+se|qua|ipso\\s+facto)\\b",
+        "weight": 1.4,
+        "description": "Latin philosophical terms"
+      },
+      {
+        "regex": "(?i)\\b[A-Z][a-z]+(?:'s|ian)\\s+(philosophy|theory|view|argument|thesis|critique|ethics|metaphysics|epistemology)\\b",
+        "weight": 1.1,
+        "description": "Philosopher's theory references"
+      },
+      {
+        "regex": "(?i)\\bthe\\s+principle\\s+of\\s+[A-Z]",
+        "weight": 1.5,
+        "description": "The Principle of X pattern"
+      },
+      {
+        "regex": "(?i)\\b(universal|cosmic|natural|mental|divine|eternal)\\s+law\\b",
+        "weight": 1.3,
+        "description": "Universal/cosmic law references"
+      },
+      {
+        "regex": "(?i)\\bhermetic\\s+(philosophy|teaching|principle|wisdom|tradition)\\b",
+        "weight": 1.6,
+        "description": "Hermetic philosophy references"
+      },
+      {
+        "regex": "(?i)\\b(therefore|hence|thus|consequently|it\\s+follows\\s+that)\\b",
+        "weight": 0.8,
+        "description": "Logical connectives"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.3,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Section markers",
+      "examples": [
+        "Chapter 1",
+        "Part II",
+        "Section 3"
+      ]
+    },
+    {
+      "description": "Footnote references",
+      "examples": [
+        "[1]",
+        "(ibid.)",
+        "op. cit."
+      ]
+    },
+    {
+      "description": "Generic academic terms",
+      "examples": [
+        "this paper",
+        "the author",
+        "as mentioned above"
+      ]
+    },
+    {
+      "description": "Vague references",
+      "examples": [
+        "some philosophers",
+        "it is argued that"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract philosophers, concepts, arguments, principles, and schools of thought\n- CROSS-CULTURAL: Look for influences across traditions (Eastern/Western/African/Islamic)\n- PRINCIPLES: Extract universal laws and first principles as separate entities\n\nDO NOT EXTRACT:\n- Section markers: Chapter 1, Part II, Section numbers\n- Footnote references: [1], (ibid.), op. cit.\n- Generic academic terms: 'this paper', 'the author', 'as mentioned above'\n- Vague references: 'some philosophers', 'it is argued that' (without specific attribution)",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- ARGUMENTS: Capture the logical structure - link premises to conclusions with supports/presupposes\n- DEBATES: Use argues_for/argues_against to show philosophical disagreements\n- INFLUENCE: Use influenced_by to show intellectual lineage\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_philosopher",
+        "name": "Philosopher",
+        "description": "An individual philosopher, sage, master, or thinker from any tradition",
+        "icon": "Person",
+        "color": "#41d675",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "a philosopher",
+          "the philosopher",
+          "thinker",
+          "sage",
+          "master",
+          "teacher of wisdom",
+          "philosophical figure",
+          "wrote philosophy",
+          "known for arguing"
+        ],
+        "properties": [
+          {
+            "name": "birth_year",
+            "display_name": "Birth Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Birth Year"
+            ]
+          },
+          {
+            "name": "death_year",
+            "display_name": "Death Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Death Year"
+            ]
+          },
+          {
+            "name": "tradition",
+            "display_name": "Tradition",
+            "property_type": "text"
+          },
+          {
+            "name": "nationality",
+            "display_name": "Nationality",
+            "property_type": "text",
+            "absorbs_types": [
+              "Nationality"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_tradition",
+        "name": "Philosophical Tradition",
+        "description": "A broad philosophical tradition (Western, Eastern, African, Islamic, Indigenous)",
+        "icon": "Public",
+        "color": "#41d6a9",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "movements",
+        "normalization_keywords": [
+          "tradition",
+          "philosophical tradition",
+          "Western philosophy",
+          "Eastern philosophy",
+          "African philosophy",
+          "Islamic philosophy"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_school",
+        "name": "School of Thought",
+        "description": "A philosophical movement or school (Stoicism, Confucianism, Vedanta, Ubuntu philosophy)",
+        "icon": "School",
+        "color": "#41cfd6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "movements",
+        "normalization_keywords": [
+          "a school",
+          "philosophical movement",
+          "tradition of",
+          "philosophical school",
+          "followers of",
+          "adherents of",
+          "ism that",
+          "philosophy of"
+        ],
+        "properties": [
+          {
+            "name": "founding_year",
+            "display_name": "Founding Year",
+            "property_type": "text",
+            "absorbs_types": [
+              "Founding Year"
+            ]
+          },
+          {
+            "name": "region",
+            "display_name": "Region",
+            "property_type": "text",
+            "absorbs_types": [
+              "Region"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_concept",
+        "name": "Philosophical Concept",
+        "description": "A key philosophical idea or category (Being, Dharma, Tao, Justice, Ubuntu)",
+        "icon": "Lightbulb",
+        "color": "#419ad6",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "a concept",
+          "philosophical notion",
+          "the idea of",
+          "category of",
+          "fundamental concept",
+          "key term in philosophy",
+          "abstract idea"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_argument",
+        "name": "Argument",
+        "description": "A structured philosophical argument or line of reasoning",
+        "icon": "Forum",
+        "color": "#4165d6",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "an argument",
+          "the argument",
+          "argues that",
+          "reasoning that",
+          "proof that",
+          "demonstration that",
+          "line of reasoning",
+          "syllogism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_thesis",
+        "name": "Thesis",
+        "description": "A philosophical claim, position, or proposition being defended",
+        "icon": "Description",
+        "color": "#5241d6",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "a thesis",
+          "the thesis",
+          "the claim that",
+          "position that",
+          "maintains that",
+          "holds that",
+          "proposition that",
+          "view that"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_thought_experiment",
+        "name": "Thought Experiment",
+        "description": "A hypothetical scenario, parable, or koan used to explore philosophical questions",
+        "icon": "Psychology",
+        "color": "#8641d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "thought experiment",
+          "hypothetical scenario",
+          "imagine that",
+          "suppose that",
+          "considered as a case",
+          "parable",
+          "koan"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_work",
+        "name": "Philosophical Work",
+        "description": "A philosophical text, book, dialogue, sutra, or treatise",
+        "icon": "MenuBook",
+        "color": "#bb41d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "philosophical work",
+          "treatise",
+          "dialogue",
+          "book by",
+          "written by",
+          "published in",
+          "essay on",
+          "sutra",
+          "text"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_principle",
+        "name": "Principle",
+        "description": "A fundamental axiom, first principle, or foundational teaching",
+        "icon": "AutoAwesome",
+        "color": "#d641bd",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "a principle",
+          "first principle",
+          "axiom",
+          "foundational claim",
+          "fundamental assumption",
+          "basic premise",
+          "teaching",
+          "the principle of",
+          "universal law",
+          "hermetic principle",
+          "cosmic law"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_problem",
+        "name": "Philosophical Problem",
+        "description": "A philosophical question, puzzle, paradox, aporia, or koan",
+        "icon": "Help",
+        "color": "#d64188",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "a problem",
+          "philosophical question",
+          "puzzle",
+          "aporia",
+          "paradox",
+          "the problem of",
+          "koan"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_era",
+        "name": "Philosophical Era",
+        "description": "A historical period in philosophy (Ancient, Medieval, Modern, Contemporary)",
+        "icon": "CalendarMonth",
+        "color": "#d64154",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "movements",
+        "normalization_keywords": [
+          "era",
+          "period",
+          "ancient philosophy",
+          "medieval philosophy",
+          "modern philosophy",
+          "contemporary philosophy"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_practice",
+        "name": "Practice",
+        "description": "A philosophical practice or discipline (meditation, dialectic, contemplation, debate)",
+        "icon": "FitnessCenter",
+        "color": "#d66341",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "practices",
+        "normalization_keywords": [
+          "practice of",
+          "discipline of",
+          "method of",
+          "way of",
+          "meditation",
+          "contemplation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_epistemological",
+        "name": "Epistemological Position",
+        "description": "A position on the nature of knowledge (rationalism, empiricism, skepticism)",
+        "icon": "Visibility",
+        "color": "#d69841",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "epistemological",
+          "knowledge theory",
+          "justification",
+          "belief",
+          "certainty"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_ethical",
+        "name": "Ethical Theory",
+        "description": "A theory of morality or ethics (utilitarianism, deontology, virtue ethics)",
+        "icon": "Balance",
+        "color": "#d6cd41",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "ethical theory",
+          "moral theory",
+          "ethics of",
+          "morality",
+          "normative"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_metaphysical",
+        "name": "Metaphysical Claim",
+        "description": "A claim about the nature of reality, existence, or being",
+        "icon": "AllInclusive",
+        "color": "#abd641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "metaphysical",
+          "ontological",
+          "existence",
+          "reality",
+          "being",
+          "substance"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_fallacy",
+        "name": "Logical Fallacy",
+        "description": "A logical fallacy or error in reasoning",
+        "icon": "Warning",
+        "color": "#77d641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "content",
+        "normalization_keywords": [
+          "fallacy",
+          "error in reasoning",
+          "logical error",
+          "invalid argument",
+          "sophism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_dialogue",
+        "name": "Dialogue",
+        "description": "A philosophical dialogue or discourse — a structured exchange (e.g. Plato's Symposium)",
+        "icon": "Chat",
+        "color": "#42d641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "dialogue",
+          "exchange",
+          "discourse"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "phil_template_debate",
+        "name": "Debate",
+        "description": "A philosophical debate or disputation — argumentative confrontation between positions",
+        "icon": "Forum",
+        "color": "#6cd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "debate",
+          "disputation",
+          "argument"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_argues_for",
+        "name": "argues_for",
+        "description": "Philosopher, work, school, or argument argues for a thesis, concept, principle, or position",
+        "icon": "ThumbUp",
+        "color": "#cc3b32",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Argument",
+          "Philosophical Work",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Thesis",
+          "Dialogue",
+          "Debate"
+        ],
+        "target_types": [
+          "Thesis",
+          "Philosophical Concept",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Argument",
+          "School of Thought"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_argues_against",
+        "name": "argues_against",
+        "description": "Philosopher, work, school, or argument argues against a thesis, concept, principle, or position",
+        "icon": "ThumbDown",
+        "color": "#cc5c32",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Argument",
+          "Philosophical Work",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Thesis",
+          "Dialogue",
+          "Debate"
+        ],
+        "target_types": [
+          "Thesis",
+          "Philosophical Concept",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Argument",
+          "School of Thought"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_refutes",
+        "name": "refutes",
+        "description": "Philosopher, argument, work, or school refutes another argument, thesis, or position (strong opposition)",
+        "icon": "Block",
+        "color": "#cc7c32",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Argument",
+          "Philosophical Work",
+          "School of Thought",
+          "Thesis"
+        ],
+        "target_types": [
+          "Argument",
+          "Thesis",
+          "Philosophical Concept",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_critiques",
+        "name": "critiques",
+        "description": "Philosopher, work, school, or argument critiques a view, theory, or position (moderate disagreement)",
+        "icon": "RateReview",
+        "color": "#cc9d32",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Argument",
+          "Thesis"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Philosophical Work",
+          "Philosopher",
+          "Argument",
+          "Thesis",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Philosophical Tradition"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_supports",
+        "name": "supports",
+        "description": "Argument, evidence, thought experiment, premise, or work supports a thesis, concept, principle, or position",
+        "icon": "CheckCircle",
+        "color": "#ccbe32",
+        "quality_score": 25,
+        "source_types": [
+          "Argument",
+          "Thought Experiment",
+          "Philosopher",
+          "Philosophical Work",
+          "Thesis",
+          "Principle",
+          "Philosophical Concept",
+          "School of Thought"
+        ],
+        "target_types": [
+          "Thesis",
+          "Philosophical Concept",
+          "Principle",
+          "Argument",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought",
+          "Philosophical Work",
+          "Philosopher"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_presupposes",
+        "name": "presupposes",
+        "description": "Thesis, argument, work, theory, or position presupposes or assumes another claim, concept, or principle",
+        "icon": "Foundation",
+        "color": "#b8cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Argument",
+          "Thesis",
+          "Philosophical Work",
+          "Philosophical Concept",
+          "School of Thought",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Principle",
+          "Thesis",
+          "Argument",
+          "Metaphysical Claim",
+          "Epistemological Position",
+          "Ethical Theory",
+          "Philosophical Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_develops",
+        "name": "develops",
+        "description": "Philosopher, work, or school develops or extends a concept, argument, theory, or position",
+        "icon": "Build",
+        "color": "#97cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Philosophical Tradition"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Argument",
+          "Thesis",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought",
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_influenced_by",
+        "name": "influenced_by",
+        "description": "Philosopher, school, work, concept, or theory influenced by another (across traditions and eras)",
+        "icon": "TrendingUp",
+        "color": "#77cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Work",
+          "Philosophical Concept",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Argument",
+          "Thesis",
+          "Practice"
+        ],
+        "target_types": [
+          "Philosopher",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Work",
+          "Philosophical Concept",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Philosophical Era",
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_responds_to",
+        "name": "responds_to",
+        "description": "Philosopher, work, school, or argument responds to a problem, work, argument, or position",
+        "icon": "Reply",
+        "color": "#56cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Argument",
+          "Thesis",
+          "Dialogue",
+          "Debate"
+        ],
+        "target_types": [
+          "Philosophical Work",
+          "Argument",
+          "Philosophical Problem",
+          "Thesis",
+          "Philosopher",
+          "School of Thought",
+          "Philosophical Concept",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_founded",
+        "name": "founded",
+        "description": "Philosopher or work founded a school, tradition, theory, or practice",
+        "icon": "Star",
+        "color": "#35cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work"
+        ],
+        "target_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Practice"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_belongs_to",
+        "name": "belongs_to",
+        "description": "Philosopher, concept, work, theory, or practice belongs to a school, tradition, or era",
+        "icon": "AccountTree",
+        "color": "#32cc51",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Concept",
+          "Philosophical Work",
+          "Argument",
+          "Thesis",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Practice",
+          "Thought Experiment",
+          "Dialogue",
+          "Debate",
+          "School of Thought"
+        ],
+        "target_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Era"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_authored",
+        "name": "authored",
+        "description": "Philosopher authored a philosophical work, dialogue, or treatise",
+        "icon": "Create",
+        "color": "#32cc71",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work"
+        ],
+        "target_types": [
+          "Philosophical Work",
+          "Dialogue"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_teaches",
+        "name": "teaches",
+        "description": "Work, philosopher, school, or tradition teaches a concept, practice, principle, theory, or thesis",
+        "icon": "School",
+        "color": "#32cc92",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Tradition",
+          "School of Thought",
+          "Philosophical Work",
+          "Dialogue"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Practice",
+          "Principle",
+          "Thesis",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Argument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_synthesizes",
+        "name": "synthesizes",
+        "description": "Combines or reconciles opposing views, concepts, schools, or theories (dialectical synthesis)",
+        "icon": "MergeType",
+        "color": "#32ccb3",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Thesis",
+          "Argument"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Thesis",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Argument",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle"
+        ],
+        "symmetric": true
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_contrasts_with",
+        "name": "contrasts_with",
+        "description": "Concept, thesis, theory, position, philosopher, or school stands in contrast or tension with another",
+        "icon": "CompareArrows",
+        "color": "#32c3cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Thesis",
+          "Philosopher",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Argument",
+          "Philosophical Work"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Thesis",
+          "Philosopher",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Argument",
+          "Philosophical Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_contemporary_of",
+        "name": "contemporary_of",
+        "description": "Philosopher lived in same era as another",
+        "icon": "People",
+        "color": "#32a2cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher"
+        ],
+        "target_types": [
+          "Philosopher"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_student_of",
+        "name": "student_of",
+        "description": "Philosopher was a student or disciple of another",
+        "icon": "School",
+        "color": "#3282cc",
+        "inverse": "teacher_of",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher"
+        ],
+        "target_types": [
+          "Philosopher"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_contributed_to",
+        "name": "contributed_to",
+        "description": "Philosopher, work, or school contributed to a branch, theory, concept, or development in philosophy",
+        "icon": "Insights",
+        "color": "#3261cc",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Dialogue",
+          "Debate"
+        ],
+        "target_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Concept",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Practice",
+          "Philosophical Era"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_illustrates",
+        "name": "illustrates",
+        "description": "Thought experiment, dialogue, argument, or work illustrates a concept, problem, principle, or thesis",
+        "icon": "Visibility",
+        "color": "#3240cc",
+        "quality_score": 15,
+        "source_types": [
+          "Thought Experiment",
+          "Dialogue",
+          "Argument",
+          "Philosophical Work",
+          "Debate"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Philosophical Problem",
+          "Principle",
+          "Thesis",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Logical Fallacy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_commits_fallacy",
+        "name": "commits_fallacy",
+        "description": "Argument, thesis, philosopher, or work commits a logical fallacy",
+        "icon": "Warning",
+        "color": "#4632cc",
+        "quality_score": 15,
+        "source_types": [
+          "Argument",
+          "Thesis",
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought"
+        ],
+        "target_types": [
+          "Logical Fallacy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_derives_from",
+        "name": "derives_from",
+        "description": "Concept, school, theory, principle, thesis, or work derives from or originates in another",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#6732cc",
+        "inverse": "gives_rise_to",
+        "quality_score": 15,
+        "source_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Thesis",
+          "Argument",
+          "Philosophical Work",
+          "Practice"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosopher",
+          "Principle",
+          "Philosophical Work",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_employs",
+        "name": "employs",
+        "description": "Philosopher, school, work, tradition, or argument employs a method, practice, concept, or thought experiment",
+        "icon": "Build",
+        "color": "#8732cc",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Work",
+          "Argument",
+          "Dialogue",
+          "Debate"
+        ],
+        "target_types": [
+          "Practice",
+          "Philosophical Concept",
+          "Thought Experiment",
+          "Argument",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_exemplifies",
+        "name": "exemplifies",
+        "description": "Thought experiment, philosopher, work, dialogue, or argument exemplifies a concept, problem, principle, or theory",
+        "icon": "AutoAwesome",
+        "color": "#a832cc",
+        "quality_score": 15,
+        "source_types": [
+          "Thought Experiment",
+          "Philosopher",
+          "Philosophical Work",
+          "Dialogue",
+          "Argument",
+          "Practice",
+          "Debate"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Philosophical Problem",
+          "Principle",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought",
+          "Logical Fallacy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_paradox_of",
+        "name": "paradox_of",
+        "description": "Problem, thought experiment, or argument is a paradox of a concept, principle, theory, or thesis",
+        "icon": "Help",
+        "color": "#c932cc",
+        "quality_score": 25,
+        "source_types": [
+          "Philosophical Problem",
+          "Thought Experiment",
+          "Argument"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Principle",
+          "Thesis",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_reconciles",
+        "name": "reconciles",
+        "description": "Philosopher, work, school, argument, or thesis reconciles opposing views, theories, or positions",
+        "icon": "Handshake",
+        "color": "#cc32ad",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "Thesis",
+          "School of Thought",
+          "Argument",
+          "Philosophical Tradition"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Thesis",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Argument",
+          "Principle"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_parallels",
+        "name": "parallels",
+        "description": "Concept, school, theory, principle, practice, or thesis parallels another across traditions or eras",
+        "icon": "SyncAlt",
+        "color": "#cc328d",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Practice",
+          "Thesis",
+          "Philosopher",
+          "Argument"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Practice",
+          "Thesis",
+          "Philosopher",
+          "Argument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_reinterprets",
+        "name": "reinterprets",
+        "description": "Philosopher, work, or school reinterprets earlier work, concept, theory, principle, or tradition",
+        "icon": "Autorenew",
+        "color": "#cc326c",
+        "quality_score": 15,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "School of Thought",
+          "Philosophical Tradition"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "Philosophical Work",
+          "Principle",
+          "Thesis",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Argument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_applies_to_domain",
+        "name": "applies_to_domain",
+        "description": "Concept, theory, principle, or thesis applies to a specific domain, practice, or field",
+        "icon": "Share",
+        "color": "#cc324b",
+        "quality_score": 15,
+        "source_types": [
+          "Philosophical Concept",
+          "Ethical Theory",
+          "Principle",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Thesis",
+          "Argument",
+          "School of Thought"
+        ],
+        "target_types": [
+          "Practice",
+          "School of Thought",
+          "Philosophical Problem",
+          "Philosophical Concept",
+          "Philosophical Tradition"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_teacher_of",
+        "name": "teacher_of",
+        "description": "Philosopher was the teacher or mentor of another",
+        "icon": "School",
+        "color": "#3282cc",
+        "inverse": "student_of",
+        "quality_score": 25,
+        "source_types": [
+          "Philosopher"
+        ],
+        "target_types": [
+          "Philosopher"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_gives_rise_to",
+        "name": "gives_rise_to",
+        "description": "Concept, school, tradition, philosopher, work, or principle gives rise to a derivative idea, theory, or school",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#6732cc",
+        "inverse": "derives_from",
+        "quality_score": 15,
+        "source_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosopher",
+          "Philosophical Work",
+          "Principle",
+          "Argument",
+          "Thesis",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim"
+        ],
+        "target_types": [
+          "Philosophical Concept",
+          "School of Thought",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle",
+          "Practice",
+          "Thesis",
+          "Argument",
+          "Philosophical Tradition"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_contains",
+        "name": "contains",
+        "description": "School of thought or tradition contains sub-schools, movements, or constituent positions",
+        "icon": "AccountTree",
+        "color": "#3a6e2a",
+        "quality_score": 15,
+        "source_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Work",
+          "Dialogue"
+        ],
+        "target_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Argument",
+          "Thesis",
+          "Principle",
+          "Philosophical Concept"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_associated_with",
+        "name": "associated_with",
+        "description": "Philosopher, work, or concept is associated with a school, tradition, or position",
+        "icon": "LinkOutlined",
+        "color": "#4a7e3a",
+        "quality_score": 10,
+        "source_types": [
+          "Philosopher",
+          "Philosophical Work",
+          "Philosophical Concept",
+          "School of Thought",
+          "Argument",
+          "Thesis",
+          "Principle"
+        ],
+        "target_types": [
+          "Philosopher",
+          "School of Thought",
+          "Philosophical Tradition",
+          "Philosophical Concept",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim",
+          "Principle"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "phil_edge_central_figure",
+        "name": "central_figure",
+        "description": "Philosopher is a central, founding, or defining figure of a school of thought or tradition",
+        "icon": "Star",
+        "color": "#5a8e4a",
+        "quality_score": 20,
+        "source_types": [
+          "Philosopher"
+        ],
+        "target_types": [
+          "School of Thought",
+          "Philosophical Tradition",
+          "Ethical Theory",
+          "Epistemological Position",
+          "Metaphysical Claim"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 20,
+    "max_same_source_type": 8,
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 35
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Aristotle",
+        "aliases": [
+          "Aristoteles",
+          "The Stagirite",
+          "The Philosopher"
+        ],
+        "note": "Greek/Latin names and epithets become aliases"
+      },
+      {
+        "canonical": "Immanuel Kant",
+        "aliases": [
+          "Kant",
+          "the Sage of Königsberg"
+        ],
+        "note": "Last names and epithets become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Socrates",
+        "target": "Socratic Method",
+        "type": "employs",
+        "note": "Use employs for philosopher-method connections"
+      },
+      {
+        "source": "Existentialism",
+        "target": "Phenomenology",
+        "type": "derives_from",
+        "note": "Use derives_from for intellectual lineage"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "professor"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "bibliography",
+      "web_artifacts"
+    ]
+  },
+  "extraction_filtering_mode": "balanced",
+  "icon": "Psychology"
+}

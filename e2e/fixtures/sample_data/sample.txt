@@ -1,0 +1,17 @@
+Sample Text Document for Testing
+
+This is a sample text document used for testing the ChaosCypher source processing pipeline.
+
+Section 1: Introduction
+This document contains multiple sections to test chunking and extraction.
+
+Section 2: Entities
+John Doe works at Acme Corporation.
+The project started in 2024 in New York City.
+
+Section 3: Relationships
+John Doe leads the Engineering team.
+Acme Corporation develops software products.
+
+Section 4: Conclusion
+This concludes the sample document.

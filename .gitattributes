@@ -1,0 +1,23 @@
+# Force LF line endings for files executed or interpreted inside Linux
+# containers, regardless of the developer's host OS. Without this, a Windows
+# checkout can commit CRLF-tainted files that break when run under Linux.
+*.sh text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+Dockerfile* text eol=lf
+entrypoint* text eol=lf
+
+# Mark binary assets explicitly so Git never tries to normalize them.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary

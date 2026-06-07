@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC038 — CheckConstraint in models.py is legacy tech debt.
+#
+# CLAUDE.md § IDs, Datetimes, Enums: the canonical pattern for a fixed set
+# of string values is a StrEnum in domain code backed by a String SQLModel
+# column. CheckConstraint("x IN (...)") is legacy tech debt.
+#
+# 9 grandfathered violations exist in
+# packages/core/src/chaoscypher_core/adapters/sqlite/models.py — kept by
+# the original AST allowlist and tracked in the public issue tracker. We ignore
+# that file via paths.exclude until the sweep happens.
+
+rules:
+  - id: cc-038-checkconstraint-in-models
+    message: |
+      CheckConstraint used for enum-like column — new columns use
+      StrEnum + String per CLAUDE.md.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "**/models.py"
+      exclude:
+        - "**/tests/**"
+        # Grandfathered: 9 existing violations tracked in the public issue tracker.
+        # Sweep before promoting this rule to error.
+        - "/packages/core/src/chaoscypher_core/adapters/sqlite/models.py"
+    pattern: CheckConstraint(...)

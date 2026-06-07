@@ -1,0 +1,268 @@
+[build-system]
+requires = ["setuptools>=82.0.0,<90", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaoscypher-core"
+version = "0.1.0"
+description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+maintainers = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+keywords = [
+    "knowledge-graph",
+    "graph-database",
+    "rdf",
+    "semantic-web",
+    "nlp",
+    "vector-search",
+    "hexagonal-architecture"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+requires-python = ">=3.14"
+dependencies = [
+    # Core dependencies
+    "sqlmodel>=0.0.38,<0.1",
+    "alembic>=1.13.0,<2",           # Schema migrations (SQLite batch-alter-table + Postgres-ready)
+    "structlog>=25.5.0,<26",
+    "pydantic>=2.12.0,<3",
+    "platformdirs>=4.9.0,<5",
+    "mcp>=1.27.0,<2",
+
+    # Search & indexing
+    "sqlite-vec>=0.1.9,<0.2",
+    "sentence-transformers>=5.4.0,<6",
+    # torch is a transitive dep of sentence-transformers; lifted to a direct
+    # dep so the [tool.uv.sources] override in the root pyproject.toml routes
+    # it to the PyTorch CPU index (avoids ~4GB of CUDA libs on Linux).
+    "torch>=2.10.0,<3",
+
+    # LLM providers (for embeddings and chat)
+    "anthropic>=0.92.0,<2",
+    "openai>=2.31.0,<4",
+    # Note: google-generativeai version controlled by langchain-google-genai
+
+    # Document processing
+    "pypdf>=6.9.0,<7",
+    "pypdfium2>=5.7.0,<6",
+    "beautifulsoup4>=4.12,<5",      # MIT; HTML/EPUB loaders + archive Sphinx handler
+    "docutils>=0.20,<1",            # BSD; RST loader (parse validation)
+    "python-docx>=1.1,<2",          # MIT; DOCX loader
+    "openpyxl>=3.1,<4",             # MIT; XLSX loader
+    "python-pptx>=0.6,<1",          # MIT; PPTX loader
+
+    # Media processing (audio/video transcription)
+    "Pillow>=12.2.0,<13",
+    "faster-whisper>=1.2.0,<2",
+
+    # Content normalization & cleaning
+    "pyspellchecker>=0.9.0,<0.10",  # OCR cleaner spell validation
+    "ftfy>=6.3.0,<7",
+    "trafilatura>=2.0.0,<3.0.0",  # Apache 2.0 since v1.8.0; pin to prevent license drift
+    "charset-normalizer>=3.3,<4",  # Loader encoding detection (utils/encoding.py)
+    "chardet>=5.2.0",              # Phase 4: tiebreaker for low-confidence charset-normalizer results
+    "jsonref>=1.1.0",              # Phase 5c: OpenAPI $ref resolution (promoted from transitive via trafilatura)
+
+    # Authentication
+    "argon2-cffi>=25.1.0,<26",
+    "passlib>=1.7.4,<2",
+    # bcrypt pinned <4.1: passlib 1.7.4's backend detection uses a 255-byte
+    # test password that bcrypt 4.1+ rejects (72-byte limit enforced).
+    "bcrypt>=4.0.1,<4.1",
+    "PyJWT[crypto]>=2.13.0,<3",
+    "cryptography>=46.0.6,<47",
+
+    # High-performance compiled extensions
+    "rustworkx>=0.17.0,<0.18",     # Apache-2.0; Rust-compiled graph algorithms
+    "rapidfuzz>=3.12.0,<4",        # MIT; C++/Rust-compiled fuzzy string matching
+
+    # Utilities
+    "httpx>=0.28.0,<1",
+    "jinja2>=3.1,<4",              # Orchestration template renderer (services/orchestration/)
+    "jsonschema>=4.26.0,<5",
+    "regex>=2025.0.0,<2027",       # Sandboxed regex with timeout support for user patterns
+
+    # Runtime infrastructure (folded from chaoscypher-runtime 2026-04-20)
+    "pydantic-settings>=2.13.0,<3",
+    "valkey>=6.1.0,<7",
+    "dynaconf>=3.2.13,<4",
+    "python-dotenv>=1.2.0,<2",
+    "pyyaml>=6.0.3,<7",
+
+    # Workflow engine & LangChain (aligned with backend requirements)
+    # Note: langchain 1.x+ required for langchain-core 1.x compatibility
+    "langchain>=1.2.15,<2",
+    "langchain_core>=1.2.28,<2",
+    "langchain_text_splitters>=1.1.0,<2",
+    "langgraph>=1.1.6,<2",
+    "langchain_ollama>=1.1.0,<2",
+    "langchain_openai>=1.1.10,<2",
+    "langchain_anthropic>=1.4.0,<2",
+    "langchain_google_genai>=4.2.0,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Testing
+    "pytest>=9.0.0,<10",
+    "pytest-cov>=7.1.0,<8",
+    "pytest-asyncio>=1.3.0,<2",
+    "pytest-xdist>=3.6.0,<4",  # parallel test execution (-n auto)
+    "hypothesis>=6.115.0,<7",  # property-based tests for foundational helpers (tests/property/)
+    "diff-cover>=9.6.0,<10",   # PR-scoped coverage gate (changed lines only)
+    "import-linter>=2.0,<3",   # Python module boundary enforcement (replaces tach for workspace compatibility)
+    # semgrep intentionally NOT in [dev] extras — it pins click<8.2 which
+    # conflicts with chaoscypher-cli's click>=8.3.0. Run it via
+    # `uv run --with semgrep semgrep ...` (isolated env) or the `make
+    # lint-claude` target. Acceptable trade-off because semgrep is a CLI
+    # tool we shell out to, not a library we import.
+    # Linting & formatting
+    "ruff>=0.15.0,<1",
+    "mypy>=1.20.0,<2",
+    # Dead code detection
+    "vulture>=2.16,<3",
+    # Pre-commit hooks
+    "pre-commit>=4.5.0,<5",
+    # Security scanning
+    "pip-audit>=2.10.0,<3",
+    # License scanning (runtime closure only — see scripts/license_check_python.py)
+    "pip-licenses>=5.0.0,<6",
+    # Docstring coverage
+    "interrogate>=1.7.0,<2",
+    # Type stubs
+    "types-requests>=2.33.0,<3",
+    "mutmut>=3.5.0,<4",
+]
+
+[project.urls]
+Homepage = "https://github.com/chaoscypherinc/chaoscypher"
+Documentation = "https://github.com/chaoscypherinc/chaoscypher#readme"
+Repository = "https://github.com/chaoscypherinc/chaoscypher"
+Issues = "https://github.com/chaoscypherinc/chaoscypher/issues"
+
+# LLM provider plugin group. Third-party packages can register
+# additional providers by declaring an entry under this group, e.g.:
+#   [project.entry-points."chaoscypher.providers"]
+#   cohere = "chaoscypher_provider_cohere:CohereProvider"
+# The target must resolve to a BaseLLMProvider subclass (Phase 7).
+[project.entry-points."chaoscypher.providers"]
+ollama = "chaoscypher_core.adapters.llm.providers.ollama_provider:OllamaProvider"
+openai = "chaoscypher_core.adapters.llm.providers.openai_provider:OpenAIProvider"
+anthropic = "chaoscypher_core.adapters.llm.providers.anthropic_provider:AnthropicProvider"
+gemini = "chaoscypher_core.adapters.llm.providers.gemini_provider:GeminiProvider"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chaoscypher_core = ["py.typed", "**/*.jsonld", "**/*.json", "**/*.ini", "**/*.j2", "**/*.mako", "**/*.png", "**/*.ttf", "**/*.lua", "**/*.pem"]
+
+# Linting configuration - inherits from root pyproject.toml
+# No [tool.ruff] section here - use root config as single source of truth
+
+[tool.mypy]
+python_version = "3.14"
+
+# Strict mode enabled - see .tooling/pyproject.toml for full config
+disallow_untyped_defs = true
+no_implicit_optional = true
+strict_equality = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_unreachable = true
+ignore_missing_imports = true
+
+# ---------------------------------------------------------------------------
+# Mutation testing (mutmut 3.x)
+# ---------------------------------------------------------------------------
+# Scope is intentionally tight: spend caps + quality counters + foundational
+# utils. Mutating the whole Core would take hours; the targeted set finishes
+# in well under the 10 min weekly-run budget. Driven from the repo root via
+# `make mutate-python`, which `cd`s into this package so mutmut picks up
+# this config block.
+#
+# To add a new high-risk path: append a `src/...` entry to `paths_to_mutate`
+# and a matching test path to `tests_dir`. Then re-baseline by running
+# `make mutate-python` and updating the score floor in
+# `scripts/mutmut_score.py`.
+[tool.mutmut]
+# Tight scope: spend caps + quality counters + foundational utils.
+# Mutating the whole Core would take hours; this targeted set finishes
+# inside the 10 min weekly-run budget. Driven from the repo root via
+# `make mutate-python`, which `cd`s into this package so mutmut picks
+# up this config block. To add a new high-risk path: append a
+# `src/...` entry below and a matching test path to `tests_dir`, then
+# re-baseline with `make mutate-python` and update the score floor in
+# `scripts/mutmut_score.py`.
+paths_to_mutate = [
+    "src/chaoscypher_core/services/llm/spend.py",
+    "src/chaoscypher_core/utils/id.py",
+    "src/chaoscypher_core/utils/encoding.py",
+    "src/chaoscypher_core/utils/normalization_default.py",
+    "src/chaoscypher_core/utils/chunk.py",
+    # NOTE: services/quality/counters.py is intentionally OUT of scope.
+    # Its tests import chaoscypher_core.adapters.sqlite which transitively
+    # pulls numpy / torch / faster-whisper. mutmut runs pytest in-process
+    # twice and the second numpy import raises "cannot load module more
+    # than once per process". The counters logic is mostly thin wrappers
+    # around adapter calls anyway; mutation value is low. Re-add when
+    # mutmut grows process-isolation per-test, or after the adapter
+    # layer is refactored to lazy-load numpy.
+]
+tests_dir = [
+    "tests/unit/services/llm/test_spend_tracker.py",
+    "tests/unit/utils/test_encoding.py",
+    "tests/unit/utils/test_id_mutation.py",
+    "tests/unit/utils/test_normalization_default_mutation.py",
+    # NOTE: tests/unit/utils/test_chunk.py transitively imports the
+    # adapter layer (via storage protocol fixtures), so mutmut hits
+    # the same numpy/torch re-import issue counters.py does. The
+    # hypothesis property tests below cover the same surface without
+    # the storage-mock heaviness.
+    "tests/property/test_chunk_properties.py",
+]
+# A bridging conftest:
+#   * extends chaoscypher_core.__path__ to include the canonical source
+#     so `chaoscypher_core.testing`, `.exceptions`, `.app_config` etc.
+#     still resolve under the partial mutmut copy, and
+#   * pre-empts `chaoscypher_core.services` with a stub package so the
+#     real barrel __init__ (which loads numpy / torch / faster-whisper
+#     transitively) never runs -- mutmut runs pytest in-process twice
+#     and the second numpy load raises "cannot load module more than
+#     once per process".
+# Outside mutmut this conftest is a no-op (see ./conftest.py).
+also_copy = ["conftest.py"]
+# Only mutate lines exercised by the suite -- saves time on `# pragma:
+# no cover` defensive branches in encoding.py and keeps the runtime
+# inside the weekly budget. Works correctly across all five files in
+# ``paths_to_mutate`` thanks to the sys.modules eviction added to
+# ``conftest.py:_evict_mutated_subpackages``: pytest startup
+# pre-imports mutated subpackages from the editable install, the
+# eviction drops them so the next import re-resolves through the
+# mutmut path bridge to the mutant copy, and coverage then attributes
+# lines to ``mutants/src/...`` where mutmut expects them. Without that
+# eviction, only modules NOT pre-imported during startup (encoding,
+# normalization_default) got coverage credit and the rest silently
+# reported ``no tests`` -- see 2026-05-19 investigation log.
+mutate_only_covered_lines = true
+# Disable the cacheprovider to avoid leftover .pytest_cache state inside
+# the mutant copy; do NOT re-pass -x/-q here (mutmut already prepends them
+# in its run_tests / run_stats paths -- duplicating triggers a usage error).
+pytest_add_cli_args = ["-p", "no:cacheprovider"]

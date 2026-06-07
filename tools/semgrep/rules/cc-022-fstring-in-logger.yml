@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC022 — f-string passed to logger.*(...) — event name must be a literal.
+#
+# CANONICAL_PATTERNS.md § Logging: structlog is event-first. The first arg
+# is the event name (literal snake_case), and data goes in keyword fields.
+# An f-string collapses the event + data into an opaque string that breaks
+# log aggregation.
+
+rules:
+  - id: cc-022-fstring-in-logger
+    message: |
+      f-string passed to a logger method. Use a literal event name and
+      structured kwargs: logger.info('event_name', key=value).
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+    # Receiver-name heuristic: only flag calls where the receiver name
+    # contains "log" (any case). This matches the AST checker's check —
+    # avoids false positives on unrelated `.info`/`.error` methods on
+    # domain objects.
+    pattern-either:
+      - patterns:
+          - pattern: $LOGGER.debug(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"
+      - patterns:
+          - pattern: $LOGGER.info(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"
+      - patterns:
+          - pattern: $LOGGER.warning(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"
+      - patterns:
+          - pattern: $LOGGER.error(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"
+      - patterns:
+          - pattern: $LOGGER.exception(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"
+      - patterns:
+          - pattern: $LOGGER.critical(f"...", ...)
+          - metavariable-regex:
+              metavariable: $LOGGER
+              regex: ".*[Ll][Oo][Gg].*"

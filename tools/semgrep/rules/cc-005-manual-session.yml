@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC005 — Manual Session(...) creation outside session-factory files.
+#
+# Use get_session() (FastAPI) or get_db_session() (context manager)
+# instead of constructing Session(...) directly.
+#
+# The original AST check skipped files that contained the substring
+# "get_session" or "get_db_session" — a content-based proxy for "is
+# this a session factory file". Here we use an explicit filename
+# allowlist (cleaner, more discoverable) covering every session-factory
+# location in the codebase. Add new ones here when needed.
+
+rules:
+  - id: cc-005-manual-session
+    message: |
+      Manual Session(...) creation detected. Use get_session() (FastAPI)
+      or get_db_session() (context manager) instead.
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "**/tests/**"
+        # Storage adapter layer — legitimately creates sessions.
+        - "/packages/core/src/chaoscypher_core/adapters/**"
+        # Database / session-factory modules — defines the get_*session helpers.
+        - "/packages/core/src/chaoscypher_core/database/**"
+        - "**/session.py"
+        - "**/sessions.py"
+        - "**/get_session.py"
+        - "**/get_db_session.py"
+    # Word-boundary pattern so class/protocol declarations like
+    # `TransactionalSession(...)` aren't flagged — only a bare
+    # `Session(` call counts.
+    pattern-regex: '\bSession\s*\('

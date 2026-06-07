@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chaos Cypher — Error</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #0A0E17;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .container {
+    text-align: center;
+    max-width: 520px;
+    padding: 2rem;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 0.75rem;
+    border-radius: 12px;
+  }
+  .brand {
+    font-size: 1.35rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #ffffff;
+    margin-bottom: 1.5rem;
+  }
+  .error-code {
+    font-size: 3.5rem;
+    font-weight: 800;
+    color: #1f2937;
+    line-height: 1;
+    margin-bottom: 0.75rem;
+  }
+  h1 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #e5e7eb;
+    margin-bottom: 0.75rem;
+  }
+  .desc {
+    font-size: 0.82rem;
+    color: #6b7280;
+    line-height: 1.7;
+    margin-bottom: 1rem;
+  }
+  .detail-box {
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.5rem;
+    text-align: left;
+    font-size: 0.72rem;
+    color: #6b7280;
+    line-height: 1.65;
+  }
+  .detail-box .label {
+    color: #9ca3af;
+    font-weight: 600;
+    display: inline;
+  }
+  .detail-box .val {
+    color: #00E5FF;
+    font-family: 'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+  }
+  .detail-row { margin-bottom: 0.3rem; }
+  .detail-row:last-child { margin-bottom: 0; }
+  .actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    width: 100%;
+    margin-bottom: 1.25rem;
+  }
+  .btn {
+    display: block;
+    padding: 0.55rem 1rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-decoration: none;
+    text-align: center;
+    transition: opacity 0.15s;
+  }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: #00E5FF; color: #0A0E17; }
+  .btn-secondary { background: #1f2937; color: #9ca3af; border: 1px solid #374151; }
+  .btn-ghost { background: transparent; color: #6b7280; border: 1px solid #1f2937; }
+  .btn-ghost:hover { color: #9ca3af; border-color: #374151; opacity: 1; }
+  .btn-outline { background: transparent; color: #00E5FF; border: 1px solid #00E5FF30; }
+  .btn-outline:hover { background: #00E5FF10; opacity: 1; }
+  .report {
+    font-size: 0.75rem;
+    color: #4b5563;
+    line-height: 1.7;
+    margin-bottom: 1.25rem;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <img class="logo" src="/startup-logo.png" alt="" onerror="this.style.display='none'">
+  <div class="brand">Chaos Cypher</div>
+  <div class="error-code" id="code"></div>
+  <h1 id="title">Something went wrong</h1>
+  <p class="desc" id="desc"></p>
+
+  <div class="detail-box" id="details">
+    <div class="detail-row"><span class="label">URL: </span><span class="val" id="d-url"></span></div>
+    <div class="detail-row"><span class="label">Status: </span><span class="val" id="d-status"></span></div>
+    <div class="detail-row"><span class="label">Time: </span><span class="val" id="d-time"></span></div>
+  </div>
+
+  <div class="actions">
+    <a class="btn btn-primary" href="/">Go to Dashboard</a>
+    <a class="btn btn-ghost" href="javascript:location.reload()">Try Again</a>
+  </div>
+
+  <p class="report" id="report-text"></p>
+
+  <div class="actions">
+    <a class="btn btn-outline" href="https://chaoscypher.com" target="_blank" rel="noopener">Documentation</a>
+    <a class="btn btn-outline" id="report-btn" href="https://github.com/chaoscypher/chaoscypher/issues/new" target="_blank" rel="noopener">Report an Issue</a>
+  </div>
+</div>
+<script>
+(function() {
+  var msgs = {
+    400: [
+      'Bad Request',
+      'The server could not process this request. The URL or request data may be malformed.'
+    ],
+    403: [
+      'Access Denied',
+      'You do not have permission to access this resource. You may need to log in or your session may have expired.'
+    ],
+    404: [
+      'Page Not Found',
+      'The page you requested does not exist. It may have been moved or the URL may be incorrect.'
+    ],
+    408: [
+      'Request Timeout',
+      'The server timed out waiting for your request to complete. This can happen with slow connections.'
+    ],
+    413: [
+      'File Too Large',
+      'The file you uploaded exceeds the maximum allowed size (10 GB). Try a smaller file or split it into parts.'
+    ],
+    429: [
+      'Too Many Requests',
+      'You are sending requests too quickly. Please wait a moment before trying again.'
+    ],
+    500: [
+      'Internal Server Error',
+      'The server encountered an unexpected error while processing your request.'
+    ],
+    502: [
+      'Service Unavailable',
+      'The backend service is not responding. It may be starting up or restarting.'
+    ],
+    503: [
+      'Service Unavailable',
+      'The service is temporarily unavailable. It may be under maintenance or restarting.'
+    ],
+    504: [
+      'Gateway Timeout',
+      'The backend service took too long to respond. This can happen during heavy processing like large file imports or AI operations.'
+    ]
+  };
+
+  var status = 0;
+  try {
+    var nav = performance.getEntriesByType('navigation');
+    if (nav.length && nav[0].responseStatus) status = nav[0].responseStatus;
+  } catch(e) {}
+
+  var info = msgs[status] || [
+    'Unexpected Error',
+    'Something went wrong while processing your request.'
+  ];
+
+  var codeEl = document.getElementById('code');
+  var statusLabel = status ? (status + ' ' + info[0]) : 'Error';
+  if (status) codeEl.textContent = status;
+  document.getElementById('title').textContent = info[0];
+  document.getElementById('desc').textContent = info[1];
+  document.title = 'Chaos Cypher \u2014 ' + info[0];
+
+  /* Request details */
+  document.getElementById('d-url').textContent = location.href;
+  document.getElementById('d-status').textContent = statusLabel;
+  document.getElementById('d-time').textContent = new Date().toLocaleString();
+
+  /* Contextual report message */
+  var reportEl = document.getElementById('report-text');
+  if (status >= 500 || status === 0) {
+    reportEl.textContent = 'Think this is a bug? Report it and we\u2019ll investigate \u2014 the details above will be included automatically.';
+  } else {
+    reportEl.textContent = 'Not sure what went wrong? Check the docs or let us know.';
+  }
+
+  /* Build pre-filled GitHub issue URL */
+  var now = new Date().toISOString();
+  var issueTitle = statusLabel + ' on ' + location.pathname;
+  var issueBody = [
+    '## Bug Report (auto-generated from error page)',
+    '',
+    '### What happened',
+    'I encountered an error page while using Chaos Cypher.',
+    '',
+    '<!-- Please describe what you were doing when this happened -->',
+    '',
+    '### Error Details',
+    '| Field | Value |',
+    '|-------|-------|',
+    '| **Status** | `' + statusLabel + '` |',
+    '| **URL** | `' + location.href + '` |',
+    '| **Time (UTC)** | `' + now + '` |',
+    '| **Browser** | `' + navigator.userAgent + '` |',
+    '| **Platform** | `' + navigator.platform + '` |',
+    '| **Screen** | `' + screen.width + 'x' + screen.height + '` |',
+    '',
+    '### Steps to Reproduce',
+    '1. ',
+    '2. ',
+    '3. ',
+    '',
+    '### Expected Behavior',
+    '<!-- What did you expect to happen? -->',
+    '',
+    '### Additional Context',
+    '<!-- Docker logs, screenshots, or anything else that might help -->',
+  ].join('\n');
+
+  var issueUrl = 'https://github.com/chaoscypher/chaoscypher/issues/new'
+    + '?title=' + encodeURIComponent(issueTitle)
+    + '&body=' + encodeURIComponent(issueBody)
+    + '&labels=' + encodeURIComponent('bug');
+
+  document.getElementById('report-btn').href = issueUrl;
+})();
+</script>
+</body>
+</html>

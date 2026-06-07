@@ -1,0 +1,89 @@
+# E2E compose for the migration-roundtrip smoke test.
+#
+# Spins up a SEPARATE stack (different project name, different ports)
+# pre-seeded with a snapshot of the current-HEAD ``app.db`` +
+# ``credentials.json``. The cortex's normal boot sequence runs
+# Alembic, which on a stale snapshot would either upgrade in place
+# (the migration-roundtrip path we want to exercise) or refuse to
+# boot if a destructive change was missed.
+#
+# Usage:
+#   docker compose -f docker-compose.snapshot.yml \
+#     --project-name chaoscypher-e2e-snap up -d app
+#
+# The test ``e2e/api/test_migration_roundtrip.py`` orchestrates
+# bring-up + assertions + teardown.
+
+name: chaoscypher-e2e-snap
+
+services:
+  fake-ollama:
+    build:
+      context: ./fake-ollama
+    container_name: chaoscypher-e2e-snap-fake-ollama
+    networks:
+      default:
+        aliases:
+          - fake-ollama
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:11434/api/tags', timeout=2).status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  app:
+    build:
+      context: ../../..
+      dockerfile: packages/docker/Dockerfile
+    container_name: chaoscypher-e2e-snap-app
+    hostname: app.test
+    networks:
+      default:
+        aliases:
+          - app
+          - app.test
+    ports:
+      # 8889 so it doesn't collide with the default e2e stack on 8888.
+      - "127.0.0.1:8889:80"
+    volumes:
+      - e2e-snap-data:/data
+      - ./settings.yaml:/etc/chaoscypher/e2e-settings.yaml:ro
+      # Sidecar mount of the pre-built snapshot — the entrypoint
+      # below copies it into ``/data`` before supervisord starts.
+      - ../../../e2e/fixtures/snapshots:/etc/chaoscypher/e2e-snapshot:ro
+    environment:
+      - CHAOSCYPHER_DATA_DIR=/data
+      - LOG_LEVEL=WARNING
+      - USE_JSON_LOGGING=false
+      - VALKEY_LOGLEVEL=warning
+      - NGINX_LOGLEVEL=warn
+      - NGINX_ACCESS_LOG=off
+      - CHAOSCYPHER_ALLOWED_HOSTS=app,app.test,localhost,127.0.0.1,::1
+    mem_limit: 8g
+    cpus: 2
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /data/databases/default
+        cp /etc/chaoscypher/e2e-snapshot/post-setup-app.db /data/databases/default/app.db
+        cp /etc/chaoscypher/e2e-snapshot/credentials.json /data/credentials.json
+        chown -R appuser:appuser /data/databases /data/credentials.json 2>/dev/null || true
+        cp /etc/chaoscypher/e2e-settings.yaml /data/settings.yaml
+        chown appuser:appuser /data/settings.yaml 2>/dev/null || true
+        exec /entrypoint.sh supervisord -c /etc/supervisor/conf.d/supervisord.conf
+    healthcheck:
+      test: ["CMD", "python", "/healthcheck.py"]
+      interval: 10s
+      timeout: 10s
+      start_period: 90s
+      retries: 5
+    depends_on:
+      fake-ollama:
+        condition: service_healthy
+
+volumes:
+  e2e-snap-data:
+    driver: local

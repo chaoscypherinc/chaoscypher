@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC006 — Hyphens in API paths are forbidden.
+#
+# CLAUDE.md mandates clean paths without hyphens (e.g., /api/v1/workflows).
+
+rules:
+  - id: cc-006-hyphen-in-api-path
+    message: |
+      Hyphen in API path. Use clean paths without hyphens per CLAUDE.md.
+    severity: ERROR
+    languages: [python]
+    paths:
+      include:
+        - "/packages/cortex/**"
+      exclude:
+        - "**/tests/**"
+    pattern-either:
+      - patterns:
+          - pattern: '@$ROUTER.get("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*-.*"
+      - patterns:
+          - pattern: '@$ROUTER.post("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*-.*"
+      - patterns:
+          - pattern: '@$ROUTER.put("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*-.*"
+      - patterns:
+          - pattern: '@$ROUTER.patch("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*-.*"
+      - patterns:
+          - pattern: '@$ROUTER.delete("$PATH", ...)'
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: ".*-.*"

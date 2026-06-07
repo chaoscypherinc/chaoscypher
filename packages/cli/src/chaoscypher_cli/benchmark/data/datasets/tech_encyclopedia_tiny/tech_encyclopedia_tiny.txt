@@ -1,0 +1,98 @@
+THE ORIGINS OF THE ARPANET
+
+The ARPANET was a packet-switched computer network commissioned by the
+Advanced Research Projects Agency, an arm of the United States Department
+of Defense. It is widely regarded as the technical precursor of the modern
+Internet, and its development between 1966 and 1972 produced many of the
+ideas — packet switching, distributed routing, host-to-host protocols, and
+end-to-end design — that subsequent network designers built upon.
+
+The intellectual origins of the project are usually traced to the work of
+Joseph Carl Robnett Licklider. In 1962, while at Bolt, Beranek and Newman
+in Cambridge, Massachusetts, Licklider wrote a series of memoranda
+describing what he called an "Intergalactic Computer Network." Later that
+year he became the director of the Information Processing Techniques Office
+at ARPA, where he funded foundational work in time-sharing and human-machine
+interaction at MIT, Stanford Research Institute, the University of
+California at Los Angeles, and Carnegie Mellon. Licklider stepped down in
+1964 and was succeeded by Ivan Sutherland and then by Robert Taylor. Taylor,
+who took office in 1966, observed that ARPA-funded research labs across the
+country each had their own incompatible terminals and accounting systems,
+and proposed funding a single shared network to connect them.
+
+Taylor brought in Lawrence Roberts, then at MIT Lincoln Laboratory, to lead
+the project. Roberts' design called for a packet-switched network — an idea
+that had been independently developed by Paul Baran at the RAND Corporation
+in the early 1960s and by Donald Davies at the National Physical Laboratory
+in the United Kingdom. Baran's 1964 reports described a "distributed adaptive
+message block network" intended to survive partial destruction in a nuclear
+exchange; Davies coined the term "packet" in 1965 and built a small network
+at NPL to demonstrate the technique. Roberts incorporated both lines of
+work into the ARPANET design, with Davies as a regular correspondent.
+
+The contract to build the network's switching equipment was awarded to
+Bolt, Beranek and Newman — Licklider's former employer — in December 1968.
+The BBN team, led by Frank Heart and including Robert Kahn, Severo Ornstein,
+and David Walden, designed and built the Interface Message Processor,
+known as the IMP. The IMP was a Honeywell DDP-516 minicomputer modified to
+run BBN's networking software; it sat between a host computer and the
+network's leased telephone lines and handled packet routing on the host's
+behalf. The first IMP was delivered to UCLA on August 30, 1969.
+
+The first ARPANET node was installed at the University of California at
+Los Angeles, in the laboratory of Leonard Kleinrock. Kleinrock had developed
+the queueing theory underlying packet networks in his 1962 MIT doctoral
+dissertation. The second node was installed at Stanford Research Institute
+in Menlo Park, in the laboratory of Douglas Engelbart, whose NLS system
+hosted some of the earliest networked applications. On October 29, 1969, a
+graduate student named Charley Kline at UCLA attempted to log in to the
+SRI host. The system crashed after he had typed the letters "L" and "O";
+Kleinrock and others later considered "lo" — the first two letters of
+"login" — to be the network's first transmitted message. By the end of
+1969, four nodes were connected: UCLA, SRI, the University of California
+at Santa Barbara, and the University of Utah.
+
+Host-to-host communication required a protocol that was independent of any
+particular computer's operating system. The Network Working Group, an
+informal body convened by Steve Crocker at UCLA in 1968, produced what
+became known as the Network Control Program, or NCP, in 1970. The NWG also
+introduced the Request for Comments document series, which began in April
+1969 with Crocker's RFC 1, "Host Software." The RFC series persists to this
+day and is now maintained by the Internet Engineering Task Force; it is
+widely credited with establishing an open, consensus-driven culture for
+network standards.
+
+By 1971 the network had grown to fifteen nodes and supported applications
+including remote login (Telnet) and file transfer (FTP, originally specified
+by Abhay Bhushan in RFC 114). Electronic mail emerged unplanned: Ray
+Tomlinson, working at BBN in 1971, modified the existing SNDMSG and CPYNET
+programs to send messages between hosts and chose the at-sign character
+as a separator between user and host names. By the mid-1970s, electronic
+mail was responsible for the majority of the ARPANET's traffic.
+
+The shortcomings of NCP — its dependence on a reliable network and its
+inability to interconnect with other networks — drove the next major
+research effort. In 1973, Robert Kahn, by then at ARPA, and Vinton Cerf,
+who had moved from UCLA to Stanford, began designing what they initially
+called the Transmission Control Program. Their May 1974 paper, "A Protocol
+for Packet Network Intercommunication," described a layered model in which
+gateways interconnected diverse networks and the end hosts handled
+reliability. The protocol was later split into two layers, TCP for
+reliable transport and IP for routing, and was deployed on the ARPANET in
+1983 in a transition known as flag day, displacing NCP entirely.
+
+ARPANET service ended in 1990. By that time, the National Science
+Foundation's NSFNET had taken over the academic backbone role, and
+commercial Internet service providers were beginning to operate on the
+broader IP network. The technical artifacts of the project — the IMP, the
+NCP and TCP/IP protocols, the RFC document series, the host-to-host design
+philosophy — outlived the network itself and shaped every subsequent
+generation of Internet infrastructure.
+
+Several of the project's early participants went on to receive the Turing
+Award for their work on the network. Robert Kahn and Vinton Cerf shared the
+2004 award for the design of TCP/IP. Leslie Lamport, who later worked on
+distributed systems theory at SRI and elsewhere, received the 2013 award
+for his foundational contributions to that field. The IMP itself, decorated
+with hand-drawn lightning bolts by the BBN engineers, is preserved at the
+Computer History Museum in Mountain View, California.

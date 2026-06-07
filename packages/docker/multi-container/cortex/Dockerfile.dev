@@ -1,0 +1,66 @@
+# Chaos Cypher Cortex - Development with hot-reload
+FROM python:3.14.3-slim
+
+WORKDIR /app
+
+# Step 1: Copy ONLY dependency manifests (rarely change → cached layer)
+COPY packages/core/pyproject.toml /app/packages/core/pyproject.toml
+COPY packages/cortex/pyproject.toml /app/packages/cortex/pyproject.toml
+
+# Step 2: Create minimal package structure for editable install
+RUN mkdir -p /app/packages/core/src/chaoscypher_core && \
+    mkdir -p /app/packages/cortex/src/chaoscypher_cortex && \
+    touch /app/packages/core/src/chaoscypher_core/__init__.py && \
+    touch /app/packages/cortex/src/chaoscypher_cortex/__init__.py
+
+# Step 3: Install PyTorch CPU-only first (avoids ~4GB of unused NVIDIA CUDA libs)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cpu
+
+# Step 4: Install remaining dependencies + watchdog (cached until pyproject.toml changes)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install watchdog && \
+    pip install -e /app/packages/core && \
+    pip install -e /app/packages/cortex
+
+# Step 5: Copy actual source code (overridden by volume mounts in dev)
+COPY packages/core/src /app/packages/core/src
+COPY packages/cortex/src /app/packages/cortex/src
+
+# Copy shared entrypoint script and healthcheck (strip CRLF for Windows compatibility)
+COPY packages/docker/config/entrypoint.sh /entrypoint.sh
+COPY packages/docker/multi-container/cortex/healthcheck.py /healthcheck.py
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+
+# Create non-root user and data directory with correct ownership.
+# Docker named volumes initialize from the container filesystem on first use,
+# so /data will be owned by appuser when the volume is created.
+RUN groupadd -g 1000 appuser && \
+    useradd -u 1000 -g appuser -s /bin/bash appuser && \
+    mkdir -p /data && \
+    chown appuser:appuser /data
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app
+
+# Expose port
+EXPOSE 8080
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python", "/healthcheck.py"]
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Start Cortex with hot-reload
+CMD ["watchmedo", "auto-restart", \
+     "-d", "/app/packages/core/src", \
+     "-d", "/app/packages/cortex/src", \
+     "-p", "*.py", \
+     "--interval=2.0", \
+     "--debounce-interval=1.0", \
+     "--ignore-patterns=*/__pycache__/*;*.pyc", \
+     "--", \
+     "cc-cortex", "start", "--host", "0.0.0.0", "--port", "8080"]

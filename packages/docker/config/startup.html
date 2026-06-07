@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chaos Cypher — Starting</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+    background: #0A0E17;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Scanline overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.06) 2px,
+      rgba(0,0,0,0.06) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* CRT vignette */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0,0,0,0.5) 100%);
+    pointer-events: none;
+    z-index: 99;
+  }
+
+  canvas {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+  }
+
+  .terminal {
+    position: relative;
+    z-index: 10;
+    width: 100%;
+    max-width: 540px;
+    background: rgba(10,14,23,0.85);
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    backdrop-filter: blur(12px);
+    overflow: hidden;
+  }
+
+  /* Window chrome */
+  .title-bar {
+    display: flex;
+    align-items: center;
+    padding: 8px 14px;
+    background: rgba(17,24,39,0.9);
+    border-bottom: 1px solid #1f2937;
+    gap: 8px;
+  }
+  .traffic-lights {
+    display: flex;
+    gap: 6px;
+  }
+  .traffic-lights span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+  .tl-red { background: #FF003C; opacity: 0.7; }
+  .tl-yellow { background: #FFAB00; opacity: 0.7; }
+  .tl-green { background: #1DE9B6; opacity: 0.7; }
+  .title-text {
+    flex: 1;
+    text-align: center;
+    font-size: 0.62rem;
+    color: #4b5563;
+    letter-spacing: 0.06em;
+  }
+
+  /* Terminal body */
+  .term-body {
+    padding: 20px 22px;
+  }
+
+  /* ASCII header */
+  .ascii-header {
+    color: #00E5FF;
+    font-size: 0.58rem;
+    line-height: 1.2;
+    opacity: 0.5;
+    margin-bottom: 4px;
+    white-space: pre;
+    text-shadow: 0 0 12px rgba(0,229,255,0.2);
+    animation: flicker 5s infinite;
+  }
+  @keyframes flicker {
+    0%,92%,94%,96%,100% { opacity: 0.5; }
+    93% { opacity: 0.35; }
+    95% { opacity: 0.45; }
+  }
+
+  .version-line {
+    font-size: 0.6rem;
+    color: #4b5563;
+    margin-bottom: 16px;
+  }
+  .version-line .highlight { color: #00E5FF; opacity: 0.6; }
+
+  /* Prompt lines */
+  .line {
+    font-size: 0.68rem;
+    line-height: 1.8;
+    color: #6b7280;
+  }
+  .prompt { color: #00E5FF; opacity: 0.5; }
+  .cmd { color: #e2e8f0; }
+
+  .separator {
+    height: 1px;
+    background: linear-gradient(90deg, #1f293700, #1f2937, #1f293700);
+    margin: 12px 0;
+  }
+
+  /* Boot sequence label */
+  .boot-label {
+    font-size: 0.6rem;
+    color: #00E5FF;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    opacity: 0.6;
+  }
+
+  /* Service status lines */
+  .svc-line {
+    display: flex;
+    align-items: center;
+    font-size: 0.68rem;
+    line-height: 2;
+    gap: 0;
+  }
+  .svc-bracket { color: #374151; }
+  .svc-label {
+    width: 72px;
+    display: inline-block;
+  }
+  .svc-label-nginx  { color: #1DE9B6; }
+  .svc-label-valkey { color: #7C4DFF; }
+  .svc-label-cortex { color: #00E5FF; }
+  .svc-label-neuron { color: #FFAB00; }
+  .svc-dots {
+    flex: 1;
+    color: #1f2937;
+    overflow: hidden;
+    letter-spacing: 2px;
+    font-size: 0.55rem;
+  }
+  .status-badge {
+    font-size: 0.6rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    padding: 1px 8px;
+    border-radius: 3px;
+    transition: all 0.4s ease;
+  }
+  .badge-online  { color: #1DE9B6; background: rgba(29,233,182,0.1); }
+  .badge-wait    { color: #FFAB00; background: rgba(255,171,0,0.1); animation: pulse 1.2s ease-in-out infinite; }
+  .badge-error   { color: #FF003C; background: rgba(255,0,60,0.1); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+  /* Error block */
+  .error-block {
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-left: 2px solid #FF003C;
+    background: rgba(255,0,60,0.04);
+    border-radius: 0 4px 4px 0;
+    animation: fadeSlide 0.4s ease;
+    display: none;
+  }
+  .error-block.visible { display: block; }
+  .error-block .err-head {
+    font-size: 0.62rem;
+    color: #FF003C;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .error-block .err-body {
+    font-size: 0.58rem;
+    color: #6b7280;
+    line-height: 1.6;
+  }
+  .error-block code {
+    color: #FFAB00;
+    background: rgba(255,171,0,0.08);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.56rem;
+  }
+  @keyframes fadeSlide { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+
+  /* Footer */
+  .footer-prompt {
+    margin-top: 16px;
+    font-size: 0.6rem;
+    color: #374151;
+  }
+  .footer-prompt a {
+    color: #00E5FF;
+    text-decoration: none;
+    opacity: 0.4;
+    transition: opacity 0.2s;
+  }
+  .footer-prompt a:hover { opacity: 0.8; }
+
+  /* Cursor */
+  .cursor {
+    display: inline-block;
+    width: 7px;
+    height: 13px;
+    background: #00E5FF;
+    animation: blink 1s step-end infinite;
+    vertical-align: text-bottom;
+    opacity: 0.5;
+    margin-left: 2px;
+  }
+  @keyframes blink { 0%,100%{opacity:.5} 50%{opacity:0} }
+</style>
+</head>
+<body>
+
+<canvas id="constellation"></canvas>
+
+<div class="terminal">
+  <div class="title-bar">
+    <div class="traffic-lights">
+      <span class="tl-red"></span>
+      <span class="tl-yellow"></span>
+      <span class="tl-green"></span>
+    </div>
+    <div class="title-text">chaoscypher &mdash; boot</div>
+    <div style="width:46px;"></div>
+  </div>
+
+  <div class="term-body">
+    <div class="ascii-header">  ___ _  _   _   ___  ___    ___ _  _ ___ _  _ ___ ___
+ / __| || | /_\ / _ \/ __|  / __| \/ | _ \ || | __| _ \
+| (__| __ |/ _ \ (_) \__ \ | (__|  &gt;  &lt;  _/ __ | _||   /
+ \___|_||_/_/ \_\___/|___/  \___|_/\_\_| |_||_|___|_|_\</div>
+
+    <div class="version-line"><span class="highlight">knowledge engine</span></div>
+
+    <div class="line"><span class="prompt">$ </span><span class="cmd">systemctl start chaoscypher</span></div>
+    <div class="line"><span class="prompt">&gt; </span>initializing boot sequence...<span class="cursor"></span></div>
+
+    <div class="separator"></div>
+
+    <div class="boot-label">&gt; services</div>
+
+    <div class="svc-line">
+      <span class="svc-bracket">[</span><span class="svc-label svc-label-nginx">nginx</span><span class="svc-bracket">]</span>
+      <span class="svc-dots">&nbsp;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;</span>
+      <span class="status-badge badge-online" id="b-nginx">ONLINE</span>
+    </div>
+    <div class="svc-line">
+      <span class="svc-bracket">[</span><span class="svc-label svc-label-valkey">valkey</span><span class="svc-bracket">]</span>
+      <span class="svc-dots">&nbsp;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;</span>
+      <span class="status-badge badge-wait" id="b-valkey">WAIT</span>
+    </div>
+    <div class="svc-line">
+      <span class="svc-bracket">[</span><span class="svc-label svc-label-cortex">cortex</span><span class="svc-bracket">]</span>
+      <span class="svc-dots">&nbsp;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;</span>
+      <span class="status-badge badge-wait" id="b-cortex">WAIT</span>
+    </div>
+    <div class="svc-line">
+      <span class="svc-bracket">[</span><span class="svc-label svc-label-neuron">neuron</span><span class="svc-bracket">]</span>
+      <span class="svc-dots">&nbsp;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;&middot;</span>
+      <span class="status-badge badge-wait" id="b-neuron">WAIT</span>
+    </div>
+
+    <div class="error-block" id="error-panel">
+      <div class="err-head" id="err-title"></div>
+      <div class="err-body" id="err-body"></div>
+    </div>
+
+    <div class="separator"></div>
+
+    <div class="footer-prompt">
+      <span class="prompt">$ </span>
+      <div style="margin-top:8px;">
+        <a href="https://chaoscypher.com" target="_blank" rel="noopener">docs</a>
+        <span style="color:#1f2937;margin:0 6px;">&middot;</span>
+        <a href="https://github.com/chaoscypher/chaoscypher/issues" target="_blank" rel="noopener">report issue</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  /* -- Constellation canvas ----------------------------------------- */
+  var COLORS = ['#00E5FF','#FF0080','#7C4DFF','#1DE9B6','#BF00FF','#FFAB00'];
+  var cv = document.getElementById('constellation');
+  var ctx = cv.getContext('2d');
+  var particles = [];
+  for (var i = 0; i < 14; i++) {
+    particles.push({
+      x: 0.15 + Math.random() * 0.7,
+      y: 0.15 + Math.random() * 0.7,
+      vx: (Math.random() - 0.5) * 0.0003,
+      vy: (Math.random() - 0.5) * 0.0003,
+      r: 1.5 + Math.random() * 3,
+      color: COLORS[i % 6],
+      phase: Math.random() * 6.28
+    });
+  }
+  var edges = [];
+  for (var i = 0; i < particles.length; i++) {
+    for (var j = i + 1; j < particles.length; j++) {
+      var dx = particles[i].x - particles[j].x;
+      var dy = particles[i].y - particles[j].y;
+      if (Math.sqrt(dx * dx + dy * dy) < 0.2) edges.push({ a: i, b: j });
+    }
+  }
+  if (edges.length < 6) {
+    for (var i = 0; i < particles.length - 1 && edges.length < 8; i++) {
+      edges.push({ a: i, b: i + 1 });
+    }
+  }
+
+  function drawConstellation(t) {
+    var dpr = window.devicePixelRatio || 1;
+    var w = cv.clientWidth;
+    var h = cv.clientHeight;
+    if (cv.width !== w * dpr || cv.height !== h * dpr) {
+      cv.width = w * dpr;
+      cv.height = h * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    ctx.clearRect(0, 0, w, h);
+    var s = t * 0.001;
+
+    for (var p of particles) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0.08 || p.x > 0.92) p.vx *= -1;
+      if (p.y < 0.08 || p.y > 0.92) p.vy *= -1;
+    }
+
+    for (var e of edges) {
+      var a = particles[e.a], b = particles[e.b];
+      ctx.beginPath();
+      ctx.moveTo(a.x * w, a.y * h);
+      ctx.lineTo(b.x * w, b.y * h);
+      ctx.strokeStyle = a.color;
+      ctx.globalAlpha = 0.08 + 0.04 * Math.sin(s * 0.8 + a.phase);
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 1;
+    for (var p of particles) {
+      var px = p.x * w, py = p.y * h;
+      var pulse = 1 + 0.25 * Math.sin(s * 1.5 + p.phase);
+      var r = p.r * pulse;
+      var g = ctx.createRadialGradient(px, py, 0, px, py, r * 5);
+      g.addColorStop(0, p.color + '25');
+      g.addColorStop(1, 'transparent');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, r * 5, 0, 6.28);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, 6.28);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = 0.6 + 0.3 * Math.sin(s * 1.5 + p.phase);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    requestAnimationFrame(drawConstellation);
+  }
+  requestAnimationFrame(drawConstellation);
+
+  /* -- Service health polling --------------------------------------- */
+  var TIMEOUT_MS = 90000;
+  var bootTime = Date.now();
+  var confirmed = { valkey: false, cortex: false, neuron: false };
+  var errored = {};
+
+  function setBadge(id, state, label) {
+    var el = document.getElementById('b-' + id);
+    if (!el) return;
+    el.className = 'status-badge badge-' + state;
+    el.textContent = label;
+  }
+
+  function showError(title, detail, hint) {
+    var panel = document.getElementById('error-panel');
+    var titleEl = document.getElementById('err-title');
+    var bodyEl = document.getElementById('err-body');
+
+    titleEl.textContent = '! ' + title;
+
+    /* Build error body with safe DOM methods */
+    bodyEl.textContent = '';
+    bodyEl.appendChild(document.createTextNode(detail));
+    bodyEl.appendChild(document.createElement('br'));
+    var hintText = document.createTextNode('Run ');
+    var code = document.createElement('code');
+    code.textContent = hint;
+    bodyEl.appendChild(hintText);
+    bodyEl.appendChild(code);
+    bodyEl.appendChild(document.createTextNode(' to investigate.'));
+
+    panel.classList.add('visible');
+  }
+
+  function checkTimeouts() {
+    var elapsed = Date.now() - bootTime;
+    if (elapsed < TIMEOUT_MS) return;
+
+    var failed = [];
+    if (!confirmed.cortex && !errored.cortex) {
+      errored.cortex = true;
+      setBadge('cortex', 'error', 'ERROR');
+      failed.push('cortex');
+    }
+    if (!confirmed.valkey && !errored.valkey) {
+      errored.valkey = true;
+      setBadge('valkey', 'error', 'ERROR');
+      failed.push('valkey');
+    }
+    if (!confirmed.neuron && !errored.neuron) {
+      errored.neuron = true;
+      setBadge('neuron', 'error', 'ERROR');
+      failed.push('neuron');
+    }
+
+    if (failed.length > 0) {
+      showError(
+        failed.join(', ') + ' failed to start',
+        'Service did not respond within 90 seconds.',
+        'docker logs chaoscypher'
+      );
+    }
+  }
+
+  function pollHealth() {
+    fetch('/api/v1/health', { cache: 'no-store' })
+      .then(function(r) {
+        if (!r.ok) return null;
+        if (!confirmed.cortex) {
+          confirmed.cortex = true;
+          setBadge('cortex', 'online', 'ONLINE');
+        }
+        return r.json();
+      })
+      .then(function(data) {
+        if (!data) return;
+
+        // The /api/v1/health response strips per-subsystem `checks` for
+        // unauthenticated callers (which the boot screen always is — it
+        // shows BEFORE the user has logged in). The aggregate `healthy`
+        // flag is still computed across every subsystem, so when it flips
+        // true we know valkey + workers are all up. When `checks` is
+        // present (e.g. dev_mode), use the richer per-subsystem signal.
+        if (!data.checks) {
+          if (data.healthy) {
+            if (!confirmed.valkey) { confirmed.valkey = true; setBadge('valkey', 'online', 'ONLINE'); }
+            if (!confirmed.neuron) { confirmed.neuron = true; setBadge('neuron', 'online', 'ONLINE'); }
+          }
+        } else {
+          var checks = data.checks;
+
+          if (checks.queue && checks.queue.status !== 'error') {
+            if (!confirmed.valkey) {
+              confirmed.valkey = true;
+              setBadge('valkey', 'online', 'ONLINE');
+            }
+          } else if (checks.queue && checks.queue.status === 'error' && !errored.valkey) {
+            errored.valkey = true;
+            setBadge('valkey', 'error', 'ERROR');
+            showError('valkey failed', 'Queue connection error.', 'docker logs chaoscypher');
+          }
+
+          var llm = checks.llm_worker;
+          var ops = checks.ops_worker;
+          if (llm && ops && llm.status !== 'error' && ops.status !== 'error') {
+            if (!confirmed.neuron) {
+              confirmed.neuron = true;
+              setBadge('neuron', 'online', 'ONLINE');
+            }
+          } else if ((llm && llm.status === 'error') || (ops && ops.status === 'error')) {
+            if (!errored.neuron) {
+              errored.neuron = true;
+              setBadge('neuron', 'error', 'ERROR');
+              showError('neuron failed', 'Worker process error.', 'docker logs chaoscypher');
+            }
+          }
+        }
+
+        // Navigate as soon as the three INFRASTRUCTURE badges are up. Do
+        // NOT also require `data.healthy`: that flag flips false whenever
+        // any critical probe — including `ollama` and `chat_model` — is in
+        // error, but those are application-level concerns the SPA surfaces
+        // in its own mini system status. Gating the splash on them strands
+        // the user here whenever Ollama is unreachable, even though the
+        // platform itself is fully up and ready to render.
+        if (confirmed.valkey && confirmed.cortex && confirmed.neuron) {
+          setTimeout(function() {
+            location.replace('/?cc-boot=' + Date.now());
+          }, 1200);
+        }
+      })
+      .catch(function() {
+        checkTimeouts();
+      });
+  }
+
+  setInterval(pollHealth, 2500);
+  setInterval(checkTimeouts, 5000);
+  setTimeout(pollHealth, 1500);
+})();
+</script>
+</body>
+</html>

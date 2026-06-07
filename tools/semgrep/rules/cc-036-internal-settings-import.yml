@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC036 — Outside Core, get_settings must come from chaoscypher_core.app_config.
+#
+# CLAUDE.md § Config Precedence: chaoscypher_core.settings.get_settings is
+# the internal Core helper. Cortex / Neuron / CLI must use the canonical
+# re-export at chaoscypher_core.app_config.get_settings so the override
+# precedence (env > settings.yaml > default) is respected uniformly.
+
+rules:
+  - id: cc-036-internal-settings-import
+    message: |
+      get_settings imported from internal 'chaoscypher_core.settings' —
+      use 'from chaoscypher_core.app_config import get_settings'.
+    severity: ERROR
+    languages: [python]
+    paths:
+      exclude:
+        - "/packages/core/**"
+        - "**/tests/**"
+    pattern: from chaoscypher_core.settings import get_settings

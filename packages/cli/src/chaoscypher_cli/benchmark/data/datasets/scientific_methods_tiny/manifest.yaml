@@ -1,0 +1,8 @@
+id: scientific_methods_tiny
+kind: extraction
+version: "1.0"
+domain: scientific
+corpus_path: scientific_methods_tiny.txt
+source: "Original ChaosCypher benchmark text (AGPL-3.0-only); illustrative methods passage describing soil microbiome profiling. Real instruments and software, hypothetical study design and results."
+description: "Scientific methods writing; named instruments, software, taxa, sample sizes, and statistical procedures."
+word_count_approx: 1300

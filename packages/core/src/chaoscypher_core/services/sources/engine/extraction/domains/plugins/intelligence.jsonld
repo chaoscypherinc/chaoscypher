@@ -1,0 +1,1751 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:intelligence",
+  "name": "intelligence",
+  "version": "2.1.0",
+  "description": "Declassified intelligence documents, FOIA releases, intelligence briefings, agency cables, dossiers, UAP/UFO reports, and intelligence-community products",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.3,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "UAP": "Anomalous Object",
+    "UFO": "Anomalous Object",
+    "Craft": "Anomalous Object",
+    "Object": "Anomalous Object",
+    "Eyewitness": "Witness",
+    "Observer": "Witness",
+    "Asset": "Source",
+    "Informant": "Source",
+    "Defector": "Source"
+  },
+  "entity_exclusions": [
+    {
+      "description": "Generic intelligence boilerplate",
+      "examples": [
+        "this document",
+        "the report",
+        "classified information",
+        "intelligence community"
+      ]
+    },
+    {
+      "description": "Standalone redaction markers without context",
+      "examples": [
+        "[REDACTED]",
+        "(b)(1)",
+        "(b)(3)",
+        "DELETED"
+      ]
+    },
+    {
+      "description": "Generic role references without names",
+      "examples": [
+        "the analyst",
+        "an officer",
+        "the source",
+        "the witness"
+      ]
+    }
+  ],
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "classification": {
+        "terms": [
+          "declassified",
+          "classified",
+          "top secret",
+          "secret",
+          "confidential",
+          "NOFORN",
+          "FOUO",
+          "SCI",
+          "compartmented",
+          "sanitized",
+          "FOIA",
+          "MORI",
+          "freedom of information",
+          "originator controlled",
+          "ORCON"
+        ],
+        "weight": 1.4
+      },
+      "intelligence_core": {
+        "terms": [
+          "intelligence",
+          "briefing",
+          "dossier",
+          "memorandum",
+          "cable",
+          "debrief",
+          "tradecraft",
+          "collection",
+          "analyst",
+          "finished intelligence",
+          "raw intelligence",
+          "indications and warning",
+          "all-source",
+          "estimate",
+          "assessment"
+        ],
+        "weight": 1.3
+      },
+      "uap_core": {
+        "terms": [
+          "UFO",
+          "UAP",
+          "unidentified",
+          "anomalous",
+          "unexplained",
+          "sighting",
+          "encounter",
+          "foo fighter",
+          "flying disc",
+          "flying saucer",
+          "unidentified aerial phenomena",
+          "hovering",
+          "luminous object",
+          "occupants",
+          "non-human"
+        ],
+        "weight": 1.3
+      },
+      "observation": {
+        "terms": [
+          "witness",
+          "observer",
+          "observed",
+          "pilot report",
+          "radar return",
+          "radar contact",
+          "visual contact",
+          "FLIR",
+          "gun camera",
+          "telescope",
+          "tracked",
+          "intercepted visually",
+          "ground observer"
+        ],
+        "weight": 1.1
+      },
+      "sources": {
+        "terms": [
+          "HUMINT",
+          "SIGINT",
+          "IMINT",
+          "OSINT",
+          "ELINT",
+          "MASINT",
+          "GEOINT",
+          "TECHINT",
+          "informant",
+          "defector",
+          "intercept",
+          "source coded"
+        ],
+        "weight": 1.0
+      },
+      "agencies": {
+        "terms": [
+          "CIA",
+          "DIA",
+          "NSA",
+          "FBI",
+          "NRO",
+          "AFOSI",
+          "ONI",
+          "INR",
+          "DOE",
+          "Project Blue Book",
+          "AATIP",
+          "AAWSAP",
+          "GRU",
+          "KGB",
+          "MI6",
+          "MI5",
+          "Mossad",
+          "Sixth Directorate"
+        ],
+        "weight": 1.0
+      },
+      "redaction_markers": {
+        "terms": [
+          "redacted",
+          "blacked out",
+          "exemption",
+          "withheld",
+          "page denied",
+          "glomar",
+          "Vaughn index",
+          "in part",
+          "in full"
+        ],
+        "weight": 1.2
+      },
+      "operations": {
+        "terms": [
+          "operation",
+          "program",
+          "project",
+          "task force",
+          "code name",
+          "cryptonym",
+          "covert action",
+          "surveillance",
+          "reconnaissance",
+          "exfiltration",
+          "compartment"
+        ],
+        "weight": 1.0
+      }
+    },
+    "file_extensions": [
+      ".pdf",
+      ".txt",
+      ".tif",
+      ".tiff"
+    ],
+    "doc_types": [
+      "briefing",
+      "cable",
+      "memorandum",
+      "intelligence_report",
+      "dossier",
+      "declassified_document",
+      "foia_release",
+      "uap_report",
+      "national_intelligence_estimate",
+      "presidents_daily_brief"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(TOP\\s+SECRET|SECRET|CONFIDENTIAL)(?://[A-Z/\\s-]+)?\\b",
+        "weight": 1.6,
+        "description": "Classification banner markings"
+      },
+      {
+        "regex": "(?i)\\bFOIA\\s+(?:Case|Request)\\s*(?:No|#)?[.:)?\\s]*[A-Z0-9\\-/]+",
+        "weight": 1.5,
+        "description": "FOIA case/request numbers"
+      },
+      {
+        "regex": "\\[\\s*REDACTED\\s*\\]|\\(b\\)\\(\\d+\\)",
+        "weight": 1.4,
+        "description": "Redaction blocks and FOIA exemption codes"
+      },
+      {
+        "regex": "(?i)\\b(?:derived\\s+from|declassify\\s+on|classified\\s+by|reason)\\s*[:.]",
+        "weight": 1.3,
+        "description": "Classification authority markings"
+      },
+      {
+        "regex": "(?i)\\b(UAP|UFO|flying\\s+saucer|flying\\s+disc|unidentified\\s+aerial)\\b",
+        "weight": 1.5,
+        "description": "UAP/UFO term references"
+      },
+      {
+        "regex": "(?i)//\\s*(?:NOFORN|ORCON|REL\\s+TO|FOUO|FVEY|EYES\\s+ONLY)\\b",
+        "weight": 1.4,
+        "description": "Compartment / dissemination control markings"
+      },
+      {
+        "regex": "(?i)\\b(?:SITREP|FLASH|IMMEDIATE|ROUTINE|PRIORITY)\\b\\s*[/-]?\\s*(?:cable|message)?",
+        "weight": 1.0,
+        "description": "Cable precedence indicators"
+      },
+      {
+        "regex": "(?i)\\b(?:MEMORANDUM\\s+FOR|FROM)[:\\s]+(?:THE\\s+)?(?:DIRECTOR|DEPUTY|CHIEF|ASSISTANT)\\b",
+        "weight": 1.3,
+        "description": "Memo header lines"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.1,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- ALWAYS extract the document being analyzed as its own entity — Intelligence Report for briefings/dossiers/assessments/FOIA releases, Cable for diplomatic or agency messages. Use the document's title (or its first descriptive line when no title is present) as the name. This anchor is mandatory because the document-level predicates (mentions, classified_as, released_under, references) must originate from an Intelligence Report or Cable entity to land in the graph; without it the relationships are silently dropped at the type-constraint stage.\n- Extract intelligence agencies, programs, and operations with codenames when present\n- Extract sources by collection discipline (HUMINT, SIGINT, IMINT, OSINT) when stated; attach the discipline as a property\n- Extract sightings with date, location, duration, and sensor where available\n- Extract anomalous objects with shape, behavior, color, and observed signature as properties\n- Extract classification markings (TS, SECRET, SCI, NOFORN) as their own entities only when discussed as such, not for every paragraph banner\n- Extract intelligence reports/cables with originator, classification, and date\n- Extract witnesses with role (pilot, radar operator, civilian, ground observer) as a property\n- Treat agency abbreviations (CIA, DIA, AFOSI) as aliases of their full names\n\nDO NOT EXTRACT:\n- Page-level classification banners as entities (use as document property only)\n- Standalone redaction markers ([REDACTED], (b)(1), (b)(3))\n- Generic role references without names ('the analyst', 'an officer', 'the source')\n- Boilerplate distribution and handling instructions",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- OBSERVATION: Use sighted_by for witness-to-sighting, observed_via for sensor-to-sighting, occurred_at for sighting-to-location\n- CLASSIFICATION: Use classified_as for document-to-marking, released_under for document-to-FOIA-case, redacted_in for marking-to-document\n- ATTRIBUTION: Use sourced_from for report-to-source, authored for person-to-report, briefed for person-to-document\n- ORGANIZATION: Use operated_by for program-to-agency, conducted_by for operation-to-agency, assigned_to for person-to-program/operation\n- ANALYSIS: Use corroborated_by for sighting/report cross-references, references for document-to-document citations, mentions for report-to-entity\n- RECOVERY: Use recovered for agency/person-to-anomalous-object\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_person",
+        "name": "Person",
+        "description": "A person named in an intelligence document: officer, official, analyst, dignitary",
+        "icon": "Person",
+        "color": "#41d688",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "person",
+          "individual",
+          "officer",
+          "official",
+          "analyst",
+          "director",
+          "deputy",
+          "chief",
+          "secretary",
+          "ambassador",
+          "attaché"
+        ],
+        "properties": [
+          {
+            "name": "role",
+            "display_name": "Role",
+            "property_type": "text",
+            "absorbs_types": [
+              "Role",
+              "Title",
+              "Position"
+            ]
+          },
+          {
+            "name": "rank",
+            "display_name": "Rank",
+            "property_type": "text",
+            "absorbs_types": [
+              "Rank",
+              "Military Rank",
+              "Grade"
+            ]
+          },
+          {
+            "name": "affiliation",
+            "display_name": "Affiliation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Affiliation",
+              "Service"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_witness",
+        "name": "Witness",
+        "description": "A person who observed a sighting or event reported in intelligence material",
+        "icon": "Visibility",
+        "color": "#41d6b3",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "witness",
+          "observer",
+          "eyewitness",
+          "pilot",
+          "radar operator",
+          "ground observer",
+          "tower controller",
+          "civilian observer"
+        ],
+        "properties": [
+          {
+            "name": "witness_role",
+            "display_name": "Witness Role",
+            "property_type": "text",
+            "absorbs_types": [
+              "Witness Role",
+              "Observer Type"
+            ]
+          },
+          {
+            "name": "credibility",
+            "display_name": "Credibility Assessment",
+            "property_type": "text",
+            "absorbs_types": [
+              "Credibility",
+              "Reliability"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_source",
+        "name": "Source",
+        "description": "An intelligence source or collection asset (HUMINT/SIGINT/IMINT/OSINT)",
+        "icon": "Hub",
+        "color": "#41a5d6",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "source",
+          "asset",
+          "informant",
+          "defector",
+          "agent",
+          "human source",
+          "intercept",
+          "imagery source"
+        ],
+        "properties": [
+          {
+            "name": "discipline",
+            "display_name": "Collection Discipline",
+            "property_type": "text",
+            "absorbs_types": [
+              "Collection Discipline",
+              "INT Discipline",
+              "Source Type"
+            ]
+          },
+          {
+            "name": "reliability",
+            "display_name": "Reliability Rating",
+            "property_type": "text",
+            "absorbs_types": [
+              "Reliability",
+              "Source Rating"
+            ]
+          },
+          {
+            "name": "cryptonym",
+            "display_name": "Cryptonym",
+            "property_type": "text",
+            "absorbs_types": [
+              "Cryptonym",
+              "Codename",
+              "Source Code"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_agency",
+        "name": "Agency",
+        "description": "An intelligence, defense, or government agency",
+        "icon": "AccountBalance",
+        "color": "#4165d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "agency",
+          "bureau",
+          "directorate",
+          "service",
+          "ministry",
+          "department",
+          "command",
+          "office",
+          "task force"
+        ],
+        "properties": [
+          {
+            "name": "country",
+            "display_name": "Country",
+            "property_type": "text",
+            "absorbs_types": [
+              "Country",
+              "Nation"
+            ]
+          },
+          {
+            "name": "agency_type",
+            "display_name": "Agency Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Agency Type",
+              "Service Type"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_program",
+        "name": "Program",
+        "description": "A named intelligence program, project, or study (e.g., Project Blue Book, AATIP, AAWSAP)",
+        "icon": "Bookmark",
+        "color": "#5d41d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "program",
+          "project",
+          "study",
+          "initiative",
+          "blue book",
+          "AATIP",
+          "AAWSAP",
+          "Sign",
+          "Grudge",
+          "Stargate"
+        ],
+        "properties": [
+          {
+            "name": "codename",
+            "display_name": "Codename",
+            "property_type": "text",
+            "absorbs_types": [
+              "Codename",
+              "Code Name",
+              "Cryptonym"
+            ]
+          },
+          {
+            "name": "active_period",
+            "display_name": "Active Period",
+            "property_type": "text",
+            "absorbs_types": [
+              "Active Period",
+              "Duration",
+              "Years Active"
+            ]
+          },
+          {
+            "name": "purpose",
+            "display_name": "Purpose",
+            "property_type": "text",
+            "absorbs_types": [
+              "Purpose",
+              "Objective",
+              "Mission"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_operation",
+        "name": "Operation",
+        "description": "A specific covert action, surveillance, or intelligence operation",
+        "icon": "Flag",
+        "color": "#9d41d6",
+        "requires_named_referent": true,
+        "quality_score": 22,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "operation",
+          "mission",
+          "covert action",
+          "surveillance operation",
+          "reconnaissance mission",
+          "exfiltration",
+          "tasking"
+        ],
+        "properties": [
+          {
+            "name": "codename",
+            "display_name": "Codename",
+            "property_type": "text",
+            "absorbs_types": [
+              "Codename",
+              "Operation Name"
+            ]
+          },
+          {
+            "name": "operation_type",
+            "display_name": "Operation Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Operation Type",
+              "Mission Type"
+            ]
+          },
+          {
+            "name": "date",
+            "display_name": "Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Date",
+              "Operation Date"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_report",
+        "name": "Intelligence Report",
+        "description": "An intelligence product: briefing, dossier, NIE, PDB, finished assessment, raw report",
+        "icon": "Description",
+        "color": "#d641d0",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "documents",
+        "normalization_keywords": [
+          "intelligence report",
+          "briefing",
+          "dossier",
+          "assessment",
+          "estimate",
+          "national intelligence estimate",
+          "presidents daily brief",
+          "PDB",
+          "NIE",
+          "summary",
+          "memorandum"
+        ],
+        "properties": [
+          {
+            "name": "report_type",
+            "display_name": "Report Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Report Type",
+              "Product Type"
+            ]
+          },
+          {
+            "name": "originator",
+            "display_name": "Originator",
+            "property_type": "text",
+            "absorbs_types": [
+              "Originator",
+              "Issuing Authority"
+            ]
+          },
+          {
+            "name": "date_issued",
+            "display_name": "Date Issued",
+            "property_type": "date",
+            "absorbs_types": [
+              "Date Issued",
+              "Report Date"
+            ]
+          },
+          {
+            "name": "classification",
+            "display_name": "Classification",
+            "property_type": "text",
+            "absorbs_types": [
+              "Classification",
+              "Classification Level"
+            ]
+          },
+          {
+            "name": "serial_number",
+            "display_name": "Serial Number",
+            "property_type": "text",
+            "absorbs_types": [
+              "Serial Number",
+              "Report Number",
+              "IIR Number"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_cable",
+        "name": "Cable",
+        "description": "A diplomatic or agency cable, message, or signal",
+        "icon": "Email",
+        "color": "#d64190",
+        "requires_named_referent": false,
+        "quality_score": 22,
+        "compatibility_group": "documents",
+        "normalization_keywords": [
+          "cable",
+          "message",
+          "telegram",
+          "communique",
+          "dispatch",
+          "transmission",
+          "SITREP",
+          "FLASH",
+          "IMMEDIATE",
+          "ROUTINE"
+        ],
+        "properties": [
+          {
+            "name": "precedence",
+            "display_name": "Precedence",
+            "property_type": "text",
+            "absorbs_types": [
+              "Precedence",
+              "Priority"
+            ]
+          },
+          {
+            "name": "originator",
+            "display_name": "Originator",
+            "property_type": "text",
+            "absorbs_types": [
+              "Originator",
+              "From"
+            ]
+          },
+          {
+            "name": "addressee",
+            "display_name": "Addressee",
+            "property_type": "text",
+            "absorbs_types": [
+              "Addressee",
+              "To"
+            ]
+          },
+          {
+            "name": "date_sent",
+            "display_name": "Date Sent",
+            "property_type": "date",
+            "absorbs_types": [
+              "Date Sent",
+              "DTG"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_sighting",
+        "name": "Sighting",
+        "description": "A reported sighting or observation event (especially UAP/UFO reports)",
+        "icon": "RemoveRedEye",
+        "color": "#d64150",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "sighting",
+          "observation",
+          "encounter",
+          "incident",
+          "report of",
+          "visual",
+          "radar contact",
+          "pilot encounter"
+        ],
+        "properties": [
+          {
+            "name": "date",
+            "display_name": "Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Date",
+              "Sighting Date"
+            ]
+          },
+          {
+            "name": "time",
+            "display_name": "Time",
+            "property_type": "text",
+            "absorbs_types": [
+              "Time",
+              "Sighting Time"
+            ]
+          },
+          {
+            "name": "duration",
+            "display_name": "Duration",
+            "property_type": "text",
+            "absorbs_types": [
+              "Duration"
+            ]
+          },
+          {
+            "name": "altitude",
+            "display_name": "Altitude",
+            "property_type": "text",
+            "absorbs_types": [
+              "Altitude",
+              "Elevation"
+            ]
+          },
+          {
+            "name": "weather",
+            "display_name": "Weather Conditions",
+            "property_type": "text",
+            "absorbs_types": [
+              "Weather",
+              "Conditions"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_anomalous_object",
+        "name": "Anomalous Object",
+        "description": "An unidentified or anomalous object/craft observed in a sighting (UAP/UFO)",
+        "icon": "Public",
+        "color": "#d67241",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "objects",
+        "normalization_keywords": [
+          "object",
+          "UAP",
+          "UFO",
+          "unidentified",
+          "craft",
+          "vehicle",
+          "phenomenon",
+          "anomalous object",
+          "luminous",
+          "disc",
+          "saucer",
+          "cigar-shaped",
+          "triangle"
+        ],
+        "properties": [
+          {
+            "name": "shape",
+            "display_name": "Shape",
+            "property_type": "text",
+            "absorbs_types": [
+              "Shape",
+              "Form"
+            ]
+          },
+          {
+            "name": "color",
+            "display_name": "Color",
+            "property_type": "text",
+            "absorbs_types": [
+              "Color",
+              "Luminosity"
+            ]
+          },
+          {
+            "name": "behavior",
+            "display_name": "Behavior",
+            "property_type": "text",
+            "absorbs_types": [
+              "Behavior",
+              "Motion",
+              "Maneuver"
+            ]
+          },
+          {
+            "name": "size",
+            "display_name": "Size",
+            "property_type": "text",
+            "absorbs_types": [
+              "Size",
+              "Dimension"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_sensor",
+        "name": "Sensor",
+        "description": "A sensor or imaging system used to detect or capture a sighting (radar, FLIR, telescope, satellite)",
+        "icon": "SettingsInputAntenna",
+        "color": "#d6b241",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "objects",
+        "normalization_keywords": [
+          "radar",
+          "FLIR",
+          "infrared",
+          "telescope",
+          "satellite",
+          "sensor",
+          "imaging system",
+          "gun camera",
+          "ELINT collector",
+          "ground station"
+        ],
+        "properties": [
+          {
+            "name": "sensor_type",
+            "display_name": "Sensor Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Sensor Type",
+              "Modality"
+            ]
+          },
+          {
+            "name": "platform",
+            "display_name": "Platform",
+            "property_type": "text",
+            "absorbs_types": [
+              "Platform",
+              "Carrier"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_classification_marking",
+        "name": "Classification Marking",
+        "description": "A classification or handling marking (TOP SECRET, SECRET, CONFIDENTIAL, SCI, NOFORN, ORCON, FOUO)",
+        "icon": "Lock",
+        "color": "#bbd641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "documents",
+        "normalization_keywords": [
+          "classification",
+          "top secret",
+          "secret",
+          "confidential",
+          "FOUO",
+          "NOFORN",
+          "ORCON",
+          "SCI",
+          "compartmented",
+          "marking",
+          "handling caveat"
+        ],
+        "properties": [
+          {
+            "name": "level",
+            "display_name": "Classification Level",
+            "property_type": "text",
+            "absorbs_types": [
+              "Classification Level",
+              "Level"
+            ]
+          },
+          {
+            "name": "compartment",
+            "display_name": "Compartment",
+            "property_type": "text",
+            "absorbs_types": [
+              "Compartment",
+              "SCI Compartment"
+            ]
+          },
+          {
+            "name": "caveat",
+            "display_name": "Caveat",
+            "property_type": "text",
+            "absorbs_types": [
+              "Caveat",
+              "Handling Caveat",
+              "Dissemination Control"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_foia_case",
+        "name": "FOIA Case",
+        "description": "A Freedom of Information Act request, case, or release identifier",
+        "icon": "FolderOpen",
+        "color": "#7bd641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "documents",
+        "normalization_keywords": [
+          "FOIA",
+          "FOIA request",
+          "FOIA case",
+          "MORI",
+          "Mandatory Declassification Review",
+          "MDR",
+          "release",
+          "declassification review"
+        ],
+        "properties": [
+          {
+            "name": "case_number",
+            "display_name": "Case Number",
+            "property_type": "text",
+            "absorbs_types": [
+              "Case Number",
+              "FOIA Number",
+              "Request Number"
+            ]
+          },
+          {
+            "name": "release_date",
+            "display_name": "Release Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Release Date",
+              "Declassification Date"
+            ]
+          },
+          {
+            "name": "exemptions",
+            "display_name": "Exemptions Applied",
+            "property_type": "text",
+            "absorbs_types": [
+              "Exemptions",
+              "FOIA Exemptions"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_location",
+        "name": "Location",
+        "description": "A place relevant to intelligence material: site, base, region, country, coordinate",
+        "icon": "Place",
+        "color": "#41d648",
+        "requires_named_referent": true,
+        "quality_score": 22,
+        "compatibility_group": "locations",
+        "normalization_keywords": [
+          "location",
+          "site",
+          "base",
+          "facility",
+          "installation",
+          "country",
+          "region",
+          "city",
+          "coordinates",
+          "grid reference"
+        ],
+        "properties": [
+          {
+            "name": "country",
+            "display_name": "Country",
+            "property_type": "text",
+            "absorbs_types": [
+              "Country"
+            ]
+          },
+          {
+            "name": "coordinates",
+            "display_name": "Coordinates",
+            "property_type": "text",
+            "absorbs_types": [
+              "Coordinates",
+              "Grid",
+              "Lat/Lon"
+            ]
+          },
+          {
+            "name": "location_type",
+            "display_name": "Location Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Location Type",
+              "Site Type"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "intel_template_phenomenon",
+        "name": "Phenomenon",
+        "description": "A recurring pattern, flap, wave, or category of anomalous activity",
+        "icon": "Waves",
+        "color": "#41b8d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "concepts",
+        "normalization_keywords": [
+          "phenomenon",
+          "wave",
+          "flap",
+          "pattern",
+          "cluster",
+          "activity",
+          "incident series"
+        ],
+        "properties": [
+          {
+            "name": "period",
+            "display_name": "Period",
+            "property_type": "text",
+            "absorbs_types": [
+              "Period",
+              "Time Frame"
+            ]
+          }
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_sighted_by",
+        "name": "sighted_by",
+        "description": "Sighting or anomalous object was reported by a witness, person, or source",
+        "icon": "Visibility",
+        "color": "#cc4e32",
+        "quality_score": 25,
+        "source_types": [
+          "Sighting",
+          "Anomalous Object"
+        ],
+        "target_types": [
+          "Witness",
+          "Person",
+          "Source",
+          "Agency"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_observed_via",
+        "name": "observed_via",
+        "description": "Sighting, anomalous object, or operation was captured or observed via a sensor or imaging system",
+        "icon": "SettingsInputAntenna",
+        "color": "#cc7632",
+        "quality_score": 25,
+        "source_types": [
+          "Sighting",
+          "Anomalous Object",
+          "Operation"
+        ],
+        "target_types": [
+          "Sensor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_involves_object",
+        "name": "involves_object",
+        "description": "Sighting, operation, phenomenon, or report involves an anomalous object",
+        "icon": "Public",
+        "color": "#cc9e32",
+        "quality_score": 25,
+        "source_types": [
+          "Sighting",
+          "Operation",
+          "Phenomenon",
+          "Intelligence Report"
+        ],
+        "target_types": [
+          "Anomalous Object"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_occurred_at",
+        "name": "occurred_at",
+        "description": "Sighting, operation, program, or phenomenon occurred at a location",
+        "icon": "Place",
+        "color": "#ccc632",
+        "quality_score": 25,
+        "source_types": [
+          "Sighting",
+          "Operation",
+          "Program",
+          "Phenomenon"
+        ],
+        "target_types": [
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_classified_as",
+        "name": "classified_as",
+        "description": "Document, program, operation, or source bears a classification marking",
+        "icon": "Lock",
+        "color": "#a9cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Intelligence Report",
+          "Cable",
+          "Program",
+          "Operation",
+          "Source"
+        ],
+        "target_types": [
+          "Classification Marking"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_released_under",
+        "name": "released_under",
+        "description": "Document, program, or operation record was released under a FOIA case or declassification review",
+        "icon": "FolderOpen",
+        "color": "#81cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Intelligence Report",
+          "Cable",
+          "Program",
+          "Operation"
+        ],
+        "target_types": [
+          "FOIA Case"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_sourced_from",
+        "name": "sourced_from",
+        "description": "Report, cable, or sighting drew on an intelligence source, witness, or sensor",
+        "icon": "Hub",
+        "color": "#59cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Intelligence Report",
+          "Cable",
+          "Sighting"
+        ],
+        "target_types": [
+          "Source",
+          "Witness",
+          "Sensor"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_authored",
+        "name": "authored",
+        "description": "Person, agency, or source authored a report or cable",
+        "icon": "Create",
+        "color": "#32cc33",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Agency",
+          "Source"
+        ],
+        "target_types": [
+          "Intelligence Report",
+          "Cable"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_briefed",
+        "name": "briefed",
+        "description": "Person or agency delivered or was briefed on a report or cable",
+        "icon": "RecordVoiceOver",
+        "color": "#32cc5b",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Agency"
+        ],
+        "target_types": [
+          "Intelligence Report",
+          "Cable"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_mentions",
+        "name": "mentions",
+        "description": "Document or actor mentions a named entity from the domain (person, witness, source, agency, program, operation, object, sighting, sensor, FOIA case, classification, location, or phenomenon). Source widened (v1.8.0) to accept lateral mentions when no Intelligence Report entity has been extracted; target widened (v2.0.0) to cover the full breadth of nameable entities in intelligence content.",
+        "icon": "Description",
+        "color": "#32cc83",
+        "quality_score": 10,
+        "source_types": [
+          "Intelligence Report",
+          "Cable",
+          "Person",
+          "Agency",
+          "Phenomenon",
+          "Program",
+          "Operation",
+          "Sighting"
+        ],
+        "target_types": [
+          "Person",
+          "Witness",
+          "Source",
+          "Agency",
+          "Program",
+          "Operation",
+          "Anomalous Object",
+          "Sighting",
+          "Sensor",
+          "FOIA Case",
+          "Classification Marking",
+          "Location",
+          "Phenomenon"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_references",
+        "name": "references",
+        "description": "Document cites or references another document, program, operation, or FOIA case",
+        "icon": "Link",
+        "color": "#32ccab",
+        "quality_score": 15,
+        "source_types": [
+          "Intelligence Report",
+          "Cable",
+          "Person",
+          "Program",
+          "Agency"
+        ],
+        "target_types": [
+          "Intelligence Report",
+          "Cable",
+          "Program",
+          "Operation",
+          "FOIA Case"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_operated_by",
+        "name": "operated_by",
+        "description": "Program, sensor, or location (facility) is operated or sponsored by an agency or person",
+        "icon": "AccountBalance",
+        "color": "#32c4cc",
+        "quality_score": 25,
+        "source_types": [
+          "Program",
+          "Sensor",
+          "Location"
+        ],
+        "target_types": [
+          "Agency",
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_conducted_by",
+        "name": "conducted_by",
+        "description": "Operation or program was conducted by an agency or person",
+        "icon": "Flag",
+        "color": "#329ccc",
+        "quality_score": 25,
+        "source_types": [
+          "Operation",
+          "Program",
+          "Agency"
+        ],
+        "target_types": [
+          "Agency",
+          "Person",
+          "Intelligence Report"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_part_of_program",
+        "name": "part_of_program",
+        "description": "Operation, sighting, report, cable, source, sensor, or person is part of a larger program",
+        "icon": "Bookmark",
+        "color": "#3274cc",
+        "quality_score": 22,
+        "source_types": [
+          "Operation",
+          "Sighting",
+          "Intelligence Report",
+          "Cable",
+          "Source",
+          "Sensor",
+          "Person",
+          "Program"
+        ],
+        "target_types": [
+          "Program"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_assigned_to",
+        "name": "assigned_to",
+        "description": "Person, witness, source, or sensor is assigned to a program, operation, agency, or location",
+        "icon": "AssignmentInd",
+        "color": "#324ccc",
+        "quality_score": 18,
+        "source_types": [
+          "Person",
+          "Witness",
+          "Source",
+          "Sensor"
+        ],
+        "target_types": [
+          "Program",
+          "Operation",
+          "Agency",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_member_of",
+        "name": "member_of",
+        "description": "Person, witness, or source is a member or officer of an agency or program",
+        "icon": "Group",
+        "color": "#4132cc",
+        "quality_score": 18,
+        "source_types": [
+          "Person",
+          "Witness",
+          "Source"
+        ],
+        "target_types": [
+          "Agency",
+          "Program"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_recovered",
+        "name": "recovered",
+        "description": "Agency, person, program, or operation recovered an anomalous object",
+        "icon": "Inventory2",
+        "color": "#6932cc",
+        "quality_score": 25,
+        "source_types": [
+          "Agency",
+          "Person",
+          "Program",
+          "Operation"
+        ],
+        "target_types": [
+          "Anomalous Object"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_corroborated_by",
+        "name": "corroborated_by",
+        "description": "Sighting, report, cable, witness, or source is corroborated by another sighting, report, cable, witness, or source",
+        "icon": "Handshake",
+        "color": "#9132cc",
+        "symmetric": true,
+        "quality_score": 22,
+        "source_types": [
+          "Sighting",
+          "Intelligence Report",
+          "Cable",
+          "Witness",
+          "Source"
+        ],
+        "target_types": [
+          "Sighting",
+          "Intelligence Report",
+          "Cable",
+          "Witness",
+          "Source"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_contradicts",
+        "name": "contradicts",
+        "description": "Sighting, report, cable, witness, or source contradicts another",
+        "icon": "Balance",
+        "color": "#b932cc",
+        "symmetric": true,
+        "quality_score": 22,
+        "source_types": [
+          "Sighting",
+          "Intelligence Report",
+          "Cable",
+          "Witness",
+          "Source"
+        ],
+        "target_types": [
+          "Sighting",
+          "Intelligence Report",
+          "Cable",
+          "Witness",
+          "Source"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_part_of_phenomenon",
+        "name": "part_of_phenomenon",
+        "description": "Sighting, anomalous object, or report belongs to a broader phenomenon, wave, or flap",
+        "icon": "Waves",
+        "color": "#cc32b7",
+        "quality_score": 18,
+        "source_types": [
+          "Sighting",
+          "Anomalous Object",
+          "Intelligence Report"
+        ],
+        "target_types": [
+          "Phenomenon"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_targets",
+        "name": "targets",
+        "description": "Operation, program, sensor, agency, or source targets a location, person, agency, or anomalous object",
+        "icon": "GpsFixed",
+        "color": "#cc328f",
+        "quality_score": 18,
+        "source_types": [
+          "Operation",
+          "Program",
+          "Sensor",
+          "Agency",
+          "Source",
+          "Person"
+        ],
+        "target_types": [
+          "Location",
+          "Person",
+          "Agency",
+          "Anomalous Object"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_handled_by",
+        "name": "handled_by",
+        "description": "Source or witness is handled by an officer, agency, or program",
+        "icon": "ManageAccounts",
+        "color": "#cc3267",
+        "quality_score": 18,
+        "source_types": [
+          "Source",
+          "Witness"
+        ],
+        "target_types": [
+          "Person",
+          "Agency",
+          "Program"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_subordinate_to",
+        "name": "subordinate_to",
+        "description": "Agency, person, program, or operation is subordinate to another agency or program",
+        "icon": "AccountTree",
+        "color": "#cc323f",
+        "quality_score": 18,
+        "source_types": [
+          "Agency",
+          "Person",
+          "Program",
+          "Operation"
+        ],
+        "target_types": [
+          "Agency",
+          "Program"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_investigated",
+        "name": "investigated",
+        "description": "Agency, program, or person investigated a sighting, anomalous object, or operation",
+        "icon": "Search",
+        "color": "#3a5b8c",
+        "quality_score": 20,
+        "source_types": [
+          "Agency",
+          "Program",
+          "Operation",
+          "Person"
+        ],
+        "target_types": [
+          "Sighting",
+          "Anomalous Object",
+          "Phenomenon",
+          "Operation",
+          "Program",
+          "Source",
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_directed",
+        "name": "directed",
+        "description": "Person directed or led a program, operation, or agency activity",
+        "icon": "ManageAccounts",
+        "color": "#4a6b9c",
+        "quality_score": 20,
+        "source_types": [
+          "Person",
+          "Agency"
+        ],
+        "target_types": [
+          "Program",
+          "Operation",
+          "Agency",
+          "Sighting"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_consultant_for",
+        "name": "consultant_for",
+        "description": "Person served as a consultant for a program, operation, or agency",
+        "icon": "PersonOutline",
+        "color": "#5a7bac",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Witness"
+        ],
+        "target_types": [
+          "Program",
+          "Operation",
+          "Agency"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_commissioned",
+        "name": "commissioned",
+        "description": "Person, agency, or program commissioned a study, report, or operation",
+        "icon": "AssignmentOutlined",
+        "color": "#6a8bbc",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Agency",
+          "Program"
+        ],
+        "target_types": [
+          "Program",
+          "Operation",
+          "Intelligence Report",
+          "Cable",
+          "Sighting"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "intel_edge_avoided",
+        "name": "avoided",
+        "description": "Person or witness avoided or refused contact with a program/operation/agency",
+        "icon": "Block",
+        "color": "#7a9bcc",
+        "quality_score": 10,
+        "source_types": [
+          "Person",
+          "Witness",
+          "Source"
+        ],
+        "target_types": [
+          "Program",
+          "Operation",
+          "Agency"
+        ]
+      }
+    ]
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Central Intelligence Agency",
+        "aliases": [
+          "CIA",
+          "the Agency",
+          "Langley"
+        ],
+        "note": "Agency full names with abbreviations and common references become aliases"
+      },
+      {
+        "canonical": "Project Blue Book",
+        "aliases": [
+          "Blue Book",
+          "BB"
+        ],
+        "note": "Named programs with common shorthand"
+      },
+      {
+        "canonical": "Unidentified Aerial Phenomenon",
+        "aliases": [
+          "UAP",
+          "UFO",
+          "unidentified object"
+        ],
+        "note": "UAP and UFO refer to the same phenomenon category"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Tic Tac Encounter Report",
+        "target": "Commander David Fravor",
+        "type": "sighted_by",
+        "note": "Use sighted_by for sighting-to-witness connections"
+      },
+      {
+        "source": "Tic Tac Encounter Report",
+        "target": "AN/APG-73 radar",
+        "type": "observed_via",
+        "note": "Use observed_via for sighting-to-sensor connections"
+      },
+      {
+        "source": "AATIP",
+        "target": "Defense Intelligence Agency",
+        "type": "operated_by",
+        "note": "Use operated_by for program-to-agency connections"
+      },
+      {
+        "source": "Project Blue Book Special Report 14",
+        "target": "FOIA Case F-2017-00876",
+        "type": "released_under",
+        "note": "Use released_under to link a document to the FOIA case under which it was released"
+      }
+    ]
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "director",
+    "deputy",
+    "chief",
+    "officer",
+    "agent",
+    "special agent",
+    "case officer",
+    "ambassador",
+    "attaché",
+    "colonel",
+    "general",
+    "lieutenant",
+    "captain",
+    "commander",
+    "major",
+    "sergeant",
+    "admiral",
+    "secretary",
+    "assistant secretary",
+    "undersecretary"
+  ],
+  "extraction_limits": {
+    "max_entity_degree": 25,
+    "max_same_source_type": 10,
+    "max_relationship_ratio": 8.0,
+    "loop_max_entity_count": 40
+  },
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "web_artifacts",
+      "advertising"
+    ]
+  },
+  "extraction_filtering_mode": "strict",
+  "icon": "Visibility"
+}

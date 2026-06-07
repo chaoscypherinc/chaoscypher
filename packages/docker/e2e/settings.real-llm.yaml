@@ -1,0 +1,43 @@
+# E2E settings override for the real-LLM smoke profile.
+#
+# Same shape as ./settings.yaml but points cortex at the host's real
+# Ollama instance (via ``host.docker.internal``) instead of the
+# in-network fake-ollama service. Activated by running:
+#
+#   E2E_SETTINGS=settings.real-llm.yaml docker compose -f docker-compose.yml up
+#
+# (the docker-compose ``real-llm`` profile maps this onto the
+# read-only sidecar mount). Tests then run with E2E_REAL_LLM=1 so
+# test_real_llm_smoke.py picks them up.
+#
+# Model names below are sensible defaults for a 16 GB consumer GPU.
+# Operators with different hardware can edit this file or pull
+# different models before launching the stack.
+
+setup_completed: true
+
+local_auth:
+  cookie_secure: false
+
+llm:
+  chat_provider: ollama
+  ollama_chat_model: llama3.2:1b
+  ollama_extraction_model: llama3.2:1b
+  ollama_vision_model: null
+  ollama_instances:
+    - id: host-ollama
+      name: Host Ollama
+      base_url: http://host.docker.internal:11434
+      enabled: true
+
+embedding:
+  provider: ollama
+  model: nomic-embed-text:latest
+  api_base: http://host.docker.internal:11434
+  is_configured: true
+
+rate_limit:
+  login_max_requests: 10000
+  setup_max_requests: 10000
+  api_key_max_requests: 10000
+  refresh_max_requests: 10000

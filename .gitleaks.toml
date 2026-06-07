@@ -1,0 +1,27 @@
+# Gitleaks configuration for Chaos Cypher
+#
+# All entries here are verified false positives. No real credentials appear
+# in this codebase. Keep the allowlist as narrow as possible: shipped trees
+# (packages/, e2e/, scripts/, tools/) are scanned in full so a real secret
+# committed there is always caught — allowlist specific files or regexes,
+# never whole shipped directories.
+#
+# Run `make lint-secrets` to scan the current working tree.
+
+title = "Chaos Cypher Gitleaks Config"
+
+[allowlist]
+description = "Verified false positives: private tree + fake test-fixture tokens"
+
+# Private tree — never shipped (dropped wholesale by the public export).
+paths = [
+    '''internal/''',
+]
+
+# Test fixtures — these tests verify that the scrubber/redactor correctly
+# handles strings that contain fake API key patterns. The keys are hardcoded
+# nonsense values (e.g. "sk-abc123xyz", "key_abc123") with no real access.
+regexes = [
+    # test_collector.py: tests _scrub_log_line() against fake log lines
+    '''api_key=sk-abc123xyz''',
+]

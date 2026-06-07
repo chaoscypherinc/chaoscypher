@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=82.0.0,<90", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chaoscypher-cortex"
+version = "0.1.0"
+description = "Chaos Cypher Cortex - Full-featured knowledge graph platform (processing center)"
+readme = "README.md"
+license = "AGPL-3.0-only"
+authors = [
+    {name = "Denis MacPherson", email = "denis@chaoscypher.com"}
+]
+keywords = ["knowledge-graph", "api", "fastapi", "ai", "workflows"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+]
+requires-python = ">=3.14"
+dependencies = [
+    "chaoscypher-core>=0.1.0",
+    "fastapi>=0.135.0,<1",
+    "uvicorn>=0.44.0,<1",
+    "sqlmodel>=0.0.38,<0.1",
+    "pydantic>=2.12.0,<3",
+    "pydantic-settings>=2.13.0,<3",
+    "email-validator>=2.3.0,<3",
+    "python-dotenv>=1.2.0,<2",
+    "dynaconf>=3.2.13,<4",
+    "valkey>=6.1.0,<7",
+    "python-multipart>=0.0.24,<0.1",
+    "sse-starlette>=3.3.0,<4",
+    "structlog>=25.5.0,<26",
+    "mcp>=1.27.0,<2",
+    "zxcvbn>=4.5.0,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0,<10",
+    "pytest-cov>=7.1.0,<8",
+    "pytest-asyncio>=1.3.0,<2",
+    "httpx>=0.28.0,<1",
+]
+
+[project.scripts]
+cc-cortex = "chaoscypher_cortex.main:cli"
+
+[project.urls]
+Homepage = "https://github.com/chaoscypherinc/chaoscypher"
+Documentation = "https://github.com/chaoscypherinc/chaoscypher#readme"
+Repository = "https://github.com/chaoscypherinc/chaoscypher"
+Issues = "https://github.com/chaoscypherinc/chaoscypher/issues"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "../core/src"]
+markers = [
+    "unit: pure-unit tests (no I/O, no DB, no network) — opt-in via -m unit",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chaoscypher_cortex = ["py.typed"]

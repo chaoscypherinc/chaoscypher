@@ -1,0 +1,14 @@
+# Code owners for chaoscypherinc/chaoscypher
+#
+# NOTE: The @chaoscypherinc/maintainers team handle is a PLACEHOLDER. Replace it
+# with the actual GitHub team or user before enabling branch protection that
+# requires code-owner review on the public repo, or owner-required reviews will
+# block every PR.
+
+# Default owner for everything in the repo.
+*                       @chaoscypherinc/maintainers
+
+# Area placeholders (same owner for now — specialize as the team grows).
+/packages/interface/    @chaoscypherinc/maintainers
+/packages/docs/         @chaoscypherinc/maintainers
+/packages/core/         @chaoscypherinc/maintainers

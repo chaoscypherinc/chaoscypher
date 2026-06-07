@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-FileCopyrightText: 2024-2026 Chaos Cypher, Inc.
+#
+# CC031 — raise HTTPException(...) forbidden in Core and service layers.
+#
+# CLAUDE.md § Error Handling: services and Core raise Core exceptions;
+# HTTPException is a transport concern mapped at the Cortex boundary
+# (chaoscypher_exception_handler). Raising HTTPException from a service
+# couples domain logic to FastAPI and breaks testability outside the
+# web process.
+
+rules:
+  - id: cc-031-httpexception-in-service-or-core
+    message: |
+      HTTPException raised in core/service layer — raise a Core
+      exception from chaoscypher_core.exceptions; transport mapping
+      happens at the Cortex boundary.
+    severity: WARNING
+    languages: [python]
+    paths:
+      include:
+        - "/packages/core/src/chaoscypher_core/**"
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/service.py"
+        - "/packages/cortex/src/chaoscypher_cortex/features/**/*_service.py"
+      exclude:
+        - "**/tests/**"
+    pattern: raise HTTPException(...)

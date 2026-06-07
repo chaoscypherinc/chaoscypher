@@ -1,0 +1,673 @@
+# Copyright (C) 2024-2026 Chaos Cypher, Inc.
+# SPDX-License-Identifier: AGPL-3.0-only
+
+"""Unit/integration tests for ``streaming.chat.tools`` helpers.
+
+Covers the pure deduplication / signature / guidance helpers and the async
+stream-processing + tool-execution + approval-gate helpers. The pure helpers
+need no I/O; the async helpers are driven with small async-iterable stubs and
+``MagicMock`` collaborators (no real LLM provider, settings, or DB).
+
+The top-level ``_handle_tool_calls`` / ``stream_chat_response`` orchestration is
+intentionally out of scope here (it needs full provider + Settings wiring).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from chaoscypher_core.services.chat.engine.constants import MAX_TOTAL_TOOL_CALLS
+from chaoscypher_core.streaming.chat import tools as tools_mod
+from chaoscypher_core.streaming.chat.tools import (
+    _check_tool_call_limit,
+    _execute_single_tool,
+    _execute_tool_batch,
+    _extract_found_nodes,
+    _extract_tool_defaults,
+    _filter_duplicate_tool_calls,
+    _force_final_answer_if_intent,
+    _generate_duplicate_guidance,
+    _generate_unfulfilled_guidance,
+    _normalize_tool_args,
+    _process_iteration_stream,
+    _tool_call_signature,
+    _track_tool_signature,
+)
+
+
+# --------------------------------------------------------------------------- #
+# Local helpers (copied — no cross-test imports allowed).
+# --------------------------------------------------------------------------- #
+def _parse_sse(blob: bytes) -> dict[str, Any]:
+    r"""Parse a single ``data: {...}\n\n`` SSE frame into the JSON payload."""
+    text = blob.decode()
+    assert text.startswith("data: ")
+    assert text.endswith("\n\n")
+    return json.loads(text[len("data: ") : -2])
+
+
+class _AsyncChunks:
+    """Minimal async-iterable yielding the given chunk dicts."""
+
+    def __init__(self, chunks: list[dict[str, Any]]) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    def __aiter__(self) -> AsyncIterator[dict[str, Any]]:
+        return self._iter()
+
+    async def _iter(self) -> AsyncIterator[dict[str, Any]]:
+        for c in self._chunks:
+            yield c
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _NoAiter:
+    """Object that does NOT implement __aiter__ (early-return path)."""
+
+
+async def _collect(agen: AsyncIterator[bytes]) -> list[bytes]:
+    return [chunk async for chunk in agen]
+
+
+def _tool_call(
+    name: str,
+    arguments: Any,
+    *,
+    call_id: str = "call_1",
+) -> dict[str, Any]:
+    return {"id": call_id, "function": {"name": name, "arguments": arguments}}
+
+
+# --------------------------------------------------------------------------- #
+# _check_tool_call_limit
+# --------------------------------------------------------------------------- #
+def test_check_tool_call_limit_under_returns_none() -> None:
+    assert _check_tool_call_limit(MAX_TOTAL_TOOL_CALLS, "chat-1", 1) is None
+
+
+def test_check_tool_call_limit_over_returns_warning_event() -> None:
+    event = _check_tool_call_limit(MAX_TOTAL_TOOL_CALLS + 1, "chat-1", 3)
+    assert event is not None
+    payload = _parse_sse(event)
+    assert payload["type"] == "warning"
+    assert "Tool call limit reached" in payload["message"]
+    assert payload["iteration"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# _extract_tool_defaults
+# --------------------------------------------------------------------------- #
+def test_extract_tool_defaults_collects_only_params_with_defaults() -> None:
+    tools = [
+        {
+            "function": {
+                "name": "search_nodes",
+                "parameters": {
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "default": 10},
+                        "fuzzy": {"type": "boolean", "default": False},
+                    }
+                },
+            }
+        },
+        # Tool with no name is skipped.
+        {"function": {"name": "", "parameters": {"properties": {}}}},
+        # Tool whose params have no defaults contributes nothing.
+        {
+            "function": {
+                "name": "no_defaults",
+                "parameters": {"properties": {"x": {"type": "string"}}},
+            }
+        },
+    ]
+
+    defaults = _extract_tool_defaults(tools)
+
+    assert defaults == {"search_nodes": {"limit": 10, "fuzzy": False}}
+
+
+# --------------------------------------------------------------------------- #
+# _normalize_tool_args
+# --------------------------------------------------------------------------- #
+def test_normalize_tool_args_prunes_null_empty_and_defaults_and_trims() -> None:
+    args = {
+        "query": "  hello  ",
+        "none_val": None,
+        "empty_str": "",
+        "empty_list": [],
+        "limit": 10,  # matches default -> stripped
+        "keep": 5,
+    }
+    defaults = {"limit": 10}
+
+    result = _normalize_tool_args(args, defaults)
+
+    assert result == {"query": "hello", "keep": 5}
+
+
+def test_normalize_tool_args_without_defaults_keeps_meaningful_values() -> None:
+    result = _normalize_tool_args({"a": 1, "b": "x"})
+    assert result == {"a": 1, "b": "x"}
+
+
+# --------------------------------------------------------------------------- #
+# _tool_call_signature  (string vs dict args produce identical signatures)
+# --------------------------------------------------------------------------- #
+def test_tool_call_signature_string_and_dict_args_match() -> None:
+    tc_dict = _tool_call("search_nodes", {"query": "Pierre", "limit": 10})
+    tc_str = _tool_call("search_nodes", json.dumps({"limit": 10, "query": "Pierre"}))
+    defaults = {"search_nodes": {"limit": 10}}
+
+    name_d, sig_d = _tool_call_signature(tc_dict, defaults)
+    name_s, sig_s = _tool_call_signature(tc_str, defaults)
+
+    assert name_d == name_s == "search_nodes"
+    # 'limit' matches default and is stripped from both forms.
+    assert sig_d == sig_s == 'search_nodes:{"query": "Pierre"}'
+
+
+def test_tool_call_signature_malformed_json_string_falls_back_to_str() -> None:
+    tc = _tool_call("search_nodes", "not-json{")
+    name, sig = _tool_call_signature(tc)
+    assert name == "search_nodes"
+    assert sig == "search_nodes:not-json{"
+
+
+# --------------------------------------------------------------------------- #
+# _filter_duplicate_tool_calls  (across-batch + within-batch)
+# --------------------------------------------------------------------------- #
+def test_filter_duplicate_across_batch_via_executed_signatures() -> None:
+    executed: dict[str, int] = {}
+    tc = _tool_call("search_nodes", {"query": "Pierre"})
+    _track_tool_signature(tc, executed)  # mark as already executed
+
+    filtered, dupes = _filter_duplicate_tool_calls([tc], executed, "chat-1", 2)
+
+    assert filtered == []
+    assert dupes == [tc]
+
+
+def test_filter_duplicate_within_same_batch() -> None:
+    executed: dict[str, int] = {}
+    tc1 = _tool_call("search_nodes", {"query": "Pierre"}, call_id="a")
+    tc2 = _tool_call("search_nodes", {"query": "Pierre"}, call_id="b")
+
+    filtered, dupes = _filter_duplicate_tool_calls([tc1, tc2], executed, "chat-1", 1)
+
+    # First instance kept, second flagged as a within-batch duplicate.
+    assert filtered == [tc1]
+    assert dupes == [tc2]
+
+
+# --------------------------------------------------------------------------- #
+# _track_tool_signature
+# --------------------------------------------------------------------------- #
+def test_track_tool_signature_increments_count() -> None:
+    executed: dict[str, int] = {}
+    tc = _tool_call("get_node_edges", {"node_id": "n1"})
+
+    _track_tool_signature(tc, executed)
+    _track_tool_signature(tc, executed)
+
+    _, sig = _tool_call_signature(tc)
+    assert executed[sig] == 2
+
+
+# --------------------------------------------------------------------------- #
+# _extract_found_nodes
+# --------------------------------------------------------------------------- #
+def test_extract_found_nodes_from_search_and_resolve_and_malformed() -> None:
+    messages = [
+        {
+            "role": "tool",
+            "name": "search_nodes",
+            "content": json.dumps(
+                {
+                    "results": [
+                        {"id": "n1", "name": "Pierre"},
+                        {"id": "n2", "label": "Andrei"},  # uses label fallback
+                        {"name": "no id - skipped"},
+                    ]
+                }
+            ),
+        },
+        {
+            "role": "tool",
+            "name": "resolve_node",
+            "content": json.dumps({"id": "n3", "name": "Marie"}),
+        },
+        # Malformed JSON in a relevant tool message -> swallowed.
+        {"role": "tool", "name": "search_nodes", "content": "not-json{"},
+        # Unrelated role / tool name -> ignored.
+        {"role": "assistant", "content": "irrelevant"},
+        {"role": "tool", "name": "other_tool", "content": json.dumps({"id": "x"})},
+    ]
+
+    found = _extract_found_nodes(messages)
+
+    assert found == [
+        {"id": "n1", "name": "Pierre"},
+        {"id": "n2", "name": "Andrei"},
+        {"id": "n3", "name": "Marie"},
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# _generate_unfulfilled_guidance
+# --------------------------------------------------------------------------- #
+def _search_msg() -> dict[str, Any]:
+    return {
+        "role": "tool",
+        "name": "search_nodes",
+        "content": json.dumps(
+            {"results": [{"id": "n1", "name": "Pierre"}, {"id": "n2", "name": "Andrei"}]}
+        ),
+    }
+
+
+def test_unfulfilled_guidance_with_nodes_and_edges_intent() -> None:
+    guidance = _generate_unfulfilled_guidance(
+        [_search_msg()], "I'll check the relationships between them"
+    )
+    assert "Call get_node_edges NOW" in guidance
+    assert 'get_node_edges(node_id="n1")' in guidance
+    # Two nodes -> traverse_path hint included.
+    assert 'traverse_path(source_node_id="n1"' in guidance
+
+
+def test_unfulfilled_guidance_with_nodes_generic() -> None:
+    guidance = _generate_unfulfilled_guidance([_search_msg()], "Let me think about this")
+    assert "You have already found these nodes" in guidance
+    assert "Pierre (id: n1)" in guidance
+
+
+def test_unfulfilled_guidance_no_nodes() -> None:
+    guidance = _generate_unfulfilled_guidance([], "I'll search for something")
+    assert "didn't call any tools" in guidance
+    assert "search_nodes" in guidance
+
+
+# --------------------------------------------------------------------------- #
+# _generate_duplicate_guidance
+# --------------------------------------------------------------------------- #
+def test_duplicate_guidance_with_nodes_and_search_dup() -> None:
+    guidance = _generate_duplicate_guidance([_search_msg()], ["search_nodes"])
+    assert "STOP repeating search_nodes" in guidance
+    assert 'get_node_edges(node_id="n1")' in guidance
+    assert 'traverse_path(source_node_id="n1"' in guidance
+
+
+def test_duplicate_guidance_generic_fallback() -> None:
+    # No found nodes -> generic fallback regardless of dup name.
+    guidance = _generate_duplicate_guidance([], ["get_node_edges"])
+    assert "You already called get_node_edges" in guidance
+    assert "search_chunks" in guidance
+
+
+# --------------------------------------------------------------------------- #
+# _process_iteration_stream
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_process_iteration_stream_no_aiter_early_returns_done() -> None:
+    out = [c async for c in _process_iteration_stream(_NoAiter(), "chat-1", 1)]
+    assert out == [{"_internal_type": "done", "content": "", "thinking": None, "tool_calls": None}]
+
+
+@pytest.mark.asyncio
+async def test_process_iteration_stream_content_thinking_done() -> None:
+    stream = _AsyncChunks(
+        [
+            {"type": "content", "delta": "Hel", "accumulated": "Hel"},
+            {"type": "thinking_delta", "accumulated": "pondering"},
+            {
+                "type": "done",
+                "content": "Hello",
+                "thinking": "done-think",
+                "tool_calls": [{"id": "c1"}],
+                "provider_timings": {"x": 1},
+                "usage": {"completion_tokens": 5},
+            },
+        ]
+    )
+
+    out = [c async for c in _process_iteration_stream(stream, "chat-1", 1)]
+
+    types = [c["_internal_type"] for c in out]
+    assert types == ["content", "thinking", "done"]
+    done = out[-1]
+    assert done["content"] == "Hello"
+    assert done["thinking"] == "done-think"
+    assert done["tool_calls"] == [{"id": "c1"}]
+    assert done["provider_timings"] == {"x": 1}
+    assert done["usage"] == {"completion_tokens": 5}
+
+
+@pytest.mark.asyncio
+async def test_process_iteration_stream_error_chunk_stops() -> None:
+    stream = _AsyncChunks(
+        [
+            {"type": "content", "delta": "x", "accumulated": "x"},
+            {"type": "error", "error": "boom", "error_code": "LLM_ERROR"},
+            {"type": "done", "content": "never-reached"},
+        ]
+    )
+
+    out = [c async for c in _process_iteration_stream(stream, "chat-1", 1)]
+
+    types = [c["_internal_type"] for c in out]
+    assert types == ["content", "error"]
+    assert out[-1]["error"] == "boom"
+    assert out[-1]["error_code"] == "LLM_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_process_iteration_stream_ends_without_done_chunk() -> None:
+    stream = _AsyncChunks([{"type": "content", "delta": "abc", "accumulated": "abc"}])
+
+    out = [c async for c in _process_iteration_stream(stream, "chat-1", 1)]
+
+    # Trailing synthesized done with the accumulated content and no tool calls.
+    assert out[-1] == {
+        "_internal_type": "done",
+        "content": "abc",
+        "thinking": None,
+        "tool_calls": None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# _execute_single_tool
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_execute_single_tool_emits_events_and_records() -> None:
+    tool_executor = MagicMock()
+    tool_executor.execute_tool = AsyncMock(return_value={"ok": True})
+    chat_service = MagicMock()
+    messages: list[Any] = []
+    llm_debug = MagicMock()
+    llm_debug.timing = {}
+
+    tc = _tool_call("search_nodes", {"query": "Pierre"})
+
+    with patch.object(tools_mod, "_get_settings") as get_settings:
+        get_settings.return_value.chat_context.json_result_preview_length = 500
+        frames = await _collect(
+            _execute_single_tool(
+                tool_call=tc,
+                chat_id="chat-1",
+                chat_service=chat_service,
+                tool_executor=tool_executor,
+                messages_for_llm=messages,
+                iteration=2,
+                llm_debug=llm_debug,
+            )
+        )
+
+    parsed = [_parse_sse(f) for f in frames]
+    types = [p["type"] for p in parsed]
+    assert types == ["tool_start", "tool_result"]
+    assert parsed[1]["result"] == {"ok": True}
+    # Tool was executed with parsed args.
+    tool_executor.execute_tool.assert_awaited_once_with("search_nodes", {"query": "Pierre"})
+    # Result persisted to chat + appended to message history.
+    chat_service.add_message.assert_called_once()
+    assert messages[-1]["role"] == "tool"
+    assert json.loads(messages[-1]["content"]) == {"ok": True}
+    # Timing captured on llm_debug.
+    assert llm_debug.timing["tool_calls"][0]["name"] == "search_nodes"
+    assert "duration_ms" in llm_debug.timing["tool_calls"][0]
+
+
+# --------------------------------------------------------------------------- #
+# _execute_tool_batch  (approval gate)
+# --------------------------------------------------------------------------- #
+def _engine_settings_stub(approval: str, mutating: list[str]) -> MagicMock:
+    es = MagicMock()
+    es.chat.tool_approval = approval
+    es.chat.mutating_tools = mutating
+    return es
+
+
+async def _run_batch(
+    tool_calls: list[dict[str, Any]],
+    *,
+    approval: str,
+    mutating: list[str],
+    messages: list[Any],
+    executed: dict[str, int],
+) -> list[bytes]:
+    tool_executor = MagicMock()
+    tool_executor.execute_tool = AsyncMock(return_value={"done": True})
+    chat_service = MagicMock()
+
+    with (
+        patch.object(
+            tools_mod,
+            "build_engine_settings",
+            return_value=_engine_settings_stub(approval, mutating),
+        ),
+        patch.object(tools_mod, "_get_settings") as get_settings,
+    ):
+        get_settings.return_value.chat_context.json_result_preview_length = 500
+        return await _collect(
+            _execute_tool_batch(
+                tool_calls=tool_calls,
+                current_content="prefix",
+                current_thinking=None,
+                chat_id="chat-1",
+                chat_service=chat_service,
+                tool_executor=tool_executor,
+                messages_for_llm=messages,
+                executed_tool_signatures=executed,
+                iteration=1,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_never_ask_runs_without_approval() -> None:
+    messages: list[Any] = []
+    executed: dict[str, int] = {}
+    tc = _tool_call("delete_node", {"node_id": "n1"})
+
+    frames = await _run_batch(
+        [tc],
+        approval="never-ask",
+        mutating=["delete_node"],
+        messages=messages,
+        executed=executed,
+    )
+
+    types = [_parse_sse(f)["type"] for f in frames]
+    assert "tool_approval_required" not in types
+    assert "tool_calls" in types
+    assert "tool_start" in types
+    assert "tool_result" in types
+    # Signature tracked exactly once (executed path).
+    assert sum(executed.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_ask_on_write_skips_read_tool() -> None:
+    # Non-mutating tool under ask-on-write needs no approval.
+    messages: list[Any] = []
+    executed: dict[str, int] = {}
+    tc = _tool_call("search_nodes", {"query": "x"})
+
+    frames = await _run_batch(
+        [tc],
+        approval="ask-on-write",
+        mutating=["delete_node"],
+        messages=messages,
+        executed=executed,
+    )
+
+    types = [_parse_sse(f)["type"] for f in frames]
+    assert "tool_approval_required" not in types
+    assert "tool_result" in types
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_always_ask_approve_via_resolve() -> None:
+    messages: list[Any] = []
+    executed: dict[str, int] = {}
+    tc = _tool_call("search_nodes", {"query": "x"}, call_id="tc-approve")
+
+    async def _approver() -> None:
+        # Wait until the pending entry exists, then approve.
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if await tools_mod.pending_approvals.resolve("chat-1", "tc-approve", "approve"):
+                return
+
+    approver = asyncio.create_task(_approver())
+    frames = await _run_batch(
+        [tc],
+        approval="always-ask",
+        mutating=[],
+        messages=messages,
+        executed=executed,
+    )
+    await approver
+
+    types = [_parse_sse(f)["type"] for f in frames]
+    assert "tool_approval_required" in types
+    # Approved -> tool actually ran.
+    assert "tool_result" in types
+    assert sum(executed.values()) == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_batch_always_ask_reject_synthesizes_tool_message() -> None:
+    messages: list[Any] = []
+    executed: dict[str, int] = {}
+    tc = _tool_call("delete_node", {"node_id": "n1"}, call_id="tc-reject")
+
+    async def _rejecter() -> None:
+        for _ in range(200):
+            await asyncio.sleep(0)
+            if await tools_mod.pending_approvals.resolve("chat-1", "tc-reject", "reject"):
+                return
+
+    rejecter = asyncio.create_task(_rejecter())
+    frames = await _run_batch(
+        [tc],
+        approval="always-ask",
+        mutating=["delete_node"],
+        messages=messages,
+        executed=executed,
+    )
+    await rejecter
+
+    types = [_parse_sse(f)["type"] for f in frames]
+    assert "tool_approval_required" in types
+    assert "tool_rejected" in types
+    assert "tool_result" not in types  # execution skipped
+    # A synthesized tool denial message was appended.
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert tool_msgs
+    assert "rejected this tool call" in tool_msgs[-1]["content"]
+    # Signature still tracked so the LLM can't loop on the denied call.
+    assert sum(executed.values()) == 1
+
+
+# --------------------------------------------------------------------------- #
+# _force_final_answer_if_intent
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_force_final_answer_skips_when_no_intent_phrase() -> None:
+    state: dict[str, Any] = {"content": "orig"}
+    chat_provider = MagicMock()
+    chat_provider.chat = AsyncMock()
+
+    frames = await _collect(
+        _force_final_answer_if_intent(
+            retry_content="Here is a complete answer with no transition phrasing.",
+            messages_for_llm=[],
+            chat_provider=chat_provider,
+            chat_id="chat-1",
+            iteration=1,
+            state=state,
+            settings=MagicMock(),
+        )
+    )
+
+    assert frames == []
+    chat_provider.chat.assert_not_called()
+    assert state["content"] == "orig"
+
+
+@pytest.mark.asyncio
+async def test_force_final_answer_skips_when_content_substantial() -> None:
+    # Contains an intent phrase but is > 200 chars -> treated as a real answer.
+    long_content = "Let me " + ("x" * 250)
+    state: dict[str, Any] = {"content": "orig"}
+    chat_provider = MagicMock()
+    chat_provider.chat = AsyncMock()
+
+    frames = await _collect(
+        _force_final_answer_if_intent(
+            retry_content=long_content,
+            messages_for_llm=[],
+            chat_provider=chat_provider,
+            chat_id="chat-1",
+            iteration=1,
+            state=state,
+            settings=MagicMock(),
+        )
+    )
+
+    assert frames == []
+    chat_provider.chat.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_force_final_answer_forces_when_short_intent() -> None:
+    # Short content with an intent phrase -> a no-tools forced final call runs.
+    forced_stream = _AsyncChunks(
+        [
+            {"type": "content", "delta": "Final ", "accumulated": "Final "},
+            {"type": "done", "content": "Final answer.", "tool_calls": None},
+        ]
+    )
+    chat_provider = MagicMock()
+    chat_provider.chat = AsyncMock(return_value=forced_stream)
+    settings = MagicMock()
+    settings.llm.thinking_for_chat = False
+
+    state: dict[str, Any] = {"content": "orig"}
+    messages: list[Any] = [_search_msg()]  # gives found_nodes branch coverage
+
+    frames = await _collect(
+        _force_final_answer_if_intent(
+            retry_content="Let me check",
+            messages_for_llm=messages,
+            chat_provider=chat_provider,
+            chat_id="chat-1",
+            iteration=1,
+            state=state,
+            settings=settings,
+        )
+    )
+
+    chat_provider.chat.assert_awaited_once()
+    # tools=None forces a textual answer.
+    assert chat_provider.chat.await_args.kwargs["tools"] is None
+    types = [_parse_sse(f)["type"] for f in frames]
+    assert "content" in types
+    assert state["content"] == "Final "
+    # The forced summary prompt + prior assistant content were appended.
+    assert messages[-1]["role"] == "user"
+    assert "STOP" in messages[-1]["content"]
+    # Found nodes -> entity-aware summary prompt.
+    assert "Pierre" in messages[-1]["content"]

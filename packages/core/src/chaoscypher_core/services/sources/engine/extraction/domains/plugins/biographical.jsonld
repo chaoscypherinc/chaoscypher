@@ -1,0 +1,1037 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:biographical",
+  "name": "biographical",
+  "version": "1.9.0",
+  "description": "Biographies, memoirs, personal histories, and biographical documents",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.0,
+  "strict_entity_types": true,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "biographical_core": {
+        "terms": [
+          "biography",
+          "memoir",
+          "autobiography",
+          "life story",
+          "personal history",
+          "born",
+          "died",
+          "childhood",
+          "early life"
+        ],
+        "weight": 1.2
+      },
+      "life_events": {
+        "terms": [
+          "birth",
+          "death",
+          "marriage",
+          "divorce",
+          "graduation",
+          "career",
+          "retirement",
+          "achievement",
+          "award",
+          "milestone"
+        ],
+        "weight": 1.0
+      },
+      "relationships": {
+        "terms": [
+          "father",
+          "mother",
+          "spouse",
+          "child",
+          "sibling",
+          "family",
+          "mentor",
+          "colleague",
+          "friend",
+          "partner"
+        ],
+        "weight": 0.9
+      },
+      "education_career": {
+        "terms": [
+          "education",
+          "school",
+          "university",
+          "degree",
+          "profession",
+          "occupation",
+          "position",
+          "title",
+          "promoted",
+          "appointed"
+        ],
+        "weight": 0.8
+      },
+      "legacy": {
+        "terms": [
+          "legacy",
+          "contribution",
+          "influence",
+          "remembered for",
+          "known for",
+          "famous for",
+          "notable",
+          "pioneered"
+        ],
+        "weight": 0.8
+      },
+      "time_markers": {
+        "terms": [
+          "years old",
+          "at age",
+          "in his youth",
+          "during her career",
+          "later in life",
+          "final years"
+        ],
+        "weight": 0.7
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "biography",
+      "memoir",
+      "obituary",
+      "profile"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(born|died|b\\.|d\\.)\\s+(on\\s+)?[A-Z][a-z]+\\s+\\d{1,2},?\\s+\\d{4}\\b",
+        "weight": 1.5,
+        "description": "Birth/death dates"
+      },
+      {
+        "regex": "\\(\\d{4}\\s*[-��]\\s*\\d{4}\\)",
+        "weight": 1.4,
+        "description": "Life span in parentheses"
+      },
+      {
+        "regex": "(?i)\\b(at age|aged|at the age of)\\s+\\d+\\b",
+        "weight": 1.2,
+        "description": "Age references"
+      },
+      {
+        "regex": "(?i)\\b(early life|childhood|education|career|personal life|legacy|death)\\b",
+        "weight": 1.0,
+        "description": "Biography section headers"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Bare date ranges without context",
+      "examples": [
+        "1920-1985",
+        "1800s"
+      ]
+    },
+    {
+      "description": "Generic familial roles without names",
+      "examples": [
+        "the father",
+        "a sister",
+        "the wife"
+      ]
+    },
+    {
+      "description": "Source citations and footnote markers",
+      "examples": [
+        "[1]",
+        "(ibid.)"
+      ]
+    },
+    {
+      "description": "Vague time references",
+      "examples": [
+        "in his youth",
+        "later in life",
+        "during this period"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- NAMES: Use canonical name. Put ALL variants in aliases (maiden names, pen names, titles, nicknames)\n- TIMELINE: Capture life events with dates in properties when mentioned\n- Extract people, organizations, locations, and significant events\n\nDO NOT EXTRACT:\n- Vague time references: 'in his youth', 'later in life', 'during this period'\n- Generic roles: 'a friend', 'a colleague' (without specific identity)\n- Source citations: [1], (ibid.), page numbers\n- Editorial commentary: 'it is said that', 'historians believe'",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- FAMILY: Use spouse_of, parent_of, child_of for family relationships\n- CAREER: Link achievements to institutions with worked_at, educated_at\n- Use influenced_by for mentorship and influence relationships\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_person",
+        "name": "Person",
+        "description": "The biographical subject or related person",
+        "icon": "Person",
+        "color": "#89d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "person",
+          "individual",
+          "he",
+          "she",
+          "subject",
+          "figure"
+        ],
+        "properties": [
+          {
+            "name": "birth_date",
+            "display_name": "Birth Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Birth Date"
+            ]
+          },
+          {
+            "name": "death_date",
+            "display_name": "Death Date",
+            "property_type": "date",
+            "absorbs_types": [
+              "Death Date"
+            ]
+          },
+          {
+            "name": "birth_place",
+            "display_name": "Birth Place",
+            "property_type": "text",
+            "absorbs_types": [
+              "Birth Place"
+            ]
+          },
+          {
+            "name": "occupation",
+            "display_name": "Occupation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Occupation"
+            ]
+          },
+          {
+            "name": "title",
+            "display_name": "Title/Rank",
+            "property_type": "text",
+            "absorbs_types": [
+              "Title"
+            ]
+          },
+          {
+            "name": "nationality",
+            "display_name": "Nationality",
+            "property_type": "text",
+            "absorbs_types": [
+              "Nationality"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_event",
+        "name": "Life Event",
+        "description": "A significant life event (birth, marriage, career change)",
+        "icon": "Event",
+        "color": "#49d641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "event",
+          "occurred",
+          "happened",
+          "took place",
+          "born",
+          "died",
+          "married"
+        ],
+        "properties": [
+          {
+            "name": "event_date",
+            "display_name": "Date",
+            "property_type": "date"
+          },
+          {
+            "name": "event_location",
+            "display_name": "Location",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_achievement",
+        "name": "Achievement",
+        "description": "An award, accomplishment, or milestone",
+        "icon": "EmojiEvents",
+        "color": "#41d679",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "achievement",
+          "accomplishment",
+          "award",
+          "won",
+          "received",
+          "earned",
+          "achieved"
+        ],
+        "properties": [
+          {
+            "name": "achievement_date",
+            "display_name": "Date",
+            "property_type": "date"
+          },
+          {
+            "name": "achievement_type",
+            "display_name": "Type",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_relationship",
+        "name": "Personal Relationship",
+        "description": "A family, professional, or personal relationship",
+        "icon": "FamilyRestroom",
+        "color": "#41d6b9",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "people",
+        "normalization_keywords": [
+          "relationship",
+          "married to",
+          "father of",
+          "mother of",
+          "friend of",
+          "colleague"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_institution",
+        "name": "Institution",
+        "description": "A school, employer, or organization",
+        "icon": "AccountBalance",
+        "color": "#41b4d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "institutions",
+        "normalization_keywords": [
+          "school",
+          "university",
+          "company",
+          "organization",
+          "institution",
+          "employer"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_location",
+        "name": "Location",
+        "description": "A place of residence, work, or significance",
+        "icon": "Place",
+        "color": "#4174d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "places",
+        "normalization_keywords": [
+          "city",
+          "town",
+          "country",
+          "place",
+          "location",
+          "born in",
+          "lived in"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_era",
+        "name": "Era",
+        "description": "A historical or life period",
+        "icon": "Timeline",
+        "color": "#4f41d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "temporal",
+        "normalization_keywords": [
+          "era",
+          "period",
+          "age",
+          "time of",
+          "during the",
+          "century"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_work",
+        "name": "Work",
+        "description": "A creation, publication, or contribution",
+        "icon": "MenuBook",
+        "color": "#8e41d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "work",
+          "book",
+          "invention",
+          "creation",
+          "contribution",
+          "published"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_legacy",
+        "name": "Legacy",
+        "description": "Lasting impact or contribution",
+        "icon": "AutoAwesome",
+        "color": "#ce41d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "legacy",
+          "remembered for",
+          "known for",
+          "contribution to",
+          "impact on"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_career",
+        "name": "Career",
+        "description": "A professional role, position, or career stage",
+        "icon": "Work",
+        "color": "#d6419e",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "career",
+          "position",
+          "role",
+          "appointed",
+          "served as",
+          "worked as"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_education",
+        "name": "Education",
+        "description": "A degree, training, or educational attainment",
+        "icon": "School",
+        "color": "#d6415e",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "education",
+          "degree",
+          "studied",
+          "graduated",
+          "trained"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_residence",
+        "name": "Residence",
+        "description": "A place of habitation or long-term stay",
+        "icon": "Home",
+        "color": "#d66441",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "places",
+        "normalization_keywords": [
+          "residence",
+          "home",
+          "lived in",
+          "settled in",
+          "moved to"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_legacy_impact",
+        "name": "Legacy Impact",
+        "description": "A lasting influence on a field, institution, or culture",
+        "icon": "Insights",
+        "color": "#d6a441",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "works",
+        "normalization_keywords": [
+          "legacy",
+          "impact",
+          "lasting influence",
+          "changed the course of",
+          "pioneered"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "bio_template_award",
+        "name": "Award",
+        "description": "A formal recognition, prize, or honor",
+        "icon": "MilitaryTech",
+        "color": "#c9d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "award",
+          "prize",
+          "honor",
+          "medal",
+          "fellowship",
+          "recognition"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_experienced",
+        "name": "experienced",
+        "description": "Subject (Person or Institution) experienced a life event or significant occurrence",
+        "icon": "Timeline",
+        "color": "#cc32a9",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Life Event"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_achieved",
+        "name": "achieved",
+        "description": "Person or Institution achieved an accomplishment or award",
+        "icon": "EmojiEvents",
+        "color": "#cc327f",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Achievement",
+          "Award"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_related_to",
+        "name": "related_to",
+        "description": "Generic association between biographical entities (Person, Institution, Work, Location, Era, Award, Achievement, Life Event, Legacy, Legacy Impact, Career, Education)",
+        "icon": "People",
+        "color": "#cc3255",
+        "symmetric": true,
+        "quality_score": 5,
+        "source_types": [
+          "Person",
+          "Institution",
+          "Work",
+          "Location",
+          "Era",
+          "Award",
+          "Achievement",
+          "Life Event",
+          "Legacy",
+          "Legacy Impact",
+          "Career",
+          "Education"
+        ],
+        "target_types": [
+          "Person",
+          "Institution",
+          "Work",
+          "Location",
+          "Era",
+          "Award",
+          "Achievement",
+          "Life Event",
+          "Legacy",
+          "Legacy Impact",
+          "Career",
+          "Education"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_married_to",
+        "name": "married_to",
+        "description": "Person married to another person",
+        "icon": "FamilyRestroom",
+        "color": "#cc3932",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_child_of",
+        "name": "child_of",
+        "description": "Person is child of another",
+        "icon": "Face",
+        "color": "#cc6332",
+        "inverse": "parent_of",
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_educated_at",
+        "name": "educated_at",
+        "description": "Person educated at an institution or location (also accepts Location for place-based education references)",
+        "icon": "School",
+        "color": "#cc8d32",
+        "quality_score": 15,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Institution",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_worked_at",
+        "name": "worked_at",
+        "description": "Person worked at an institution or location (workplace may be expressed as a Location)",
+        "icon": "Work",
+        "color": "#ccb632",
+        "quality_score": 15,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Institution",
+          "Location"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_lived_in",
+        "name": "lived_in",
+        "description": "Person lived in a location or residence",
+        "icon": "Home",
+        "color": "#b7cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Location",
+          "Residence"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_mentored_by",
+        "name": "mentored_by",
+        "description": "Person mentored by another person or by an institution",
+        "icon": "Psychology",
+        "color": "#8dcc32",
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Person",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_created",
+        "name": "created",
+        "description": "Person or Institution created a work or institution (e.g., founded a school, produced a publication)",
+        "icon": "Create",
+        "color": "#63cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Work",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_influenced",
+        "name": "influenced",
+        "description": "Source (Person, Work, Institution, Era, Legacy, Legacy Impact) influenced target (Person, Work, Institution, Era, Legacy, Legacy Impact, Career)",
+        "icon": "AutoAwesome",
+        "color": "#3acc32",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Work",
+          "Institution",
+          "Era",
+          "Legacy",
+          "Legacy Impact"
+        ],
+        "target_types": [
+          "Person",
+          "Work",
+          "Institution",
+          "Era",
+          "Legacy",
+          "Legacy Impact",
+          "Career"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_born_in",
+        "name": "born_in",
+        "description": "Person born in a location, residence, or era",
+        "icon": "Place",
+        "color": "#32cc55",
+        "quality_score": 15,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Location",
+          "Residence",
+          "Era"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_parent_of",
+        "name": "parent_of",
+        "description": "Person is parent of another",
+        "icon": "FamilyRestroom",
+        "color": "#32cc7f",
+        "inverse": "child_of",
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_sibling_of",
+        "name": "sibling_of",
+        "description": "Person is sibling of another",
+        "icon": "People",
+        "color": "#32cca9",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Person"
+        ],
+        "target_types": [
+          "Person"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_friend_of",
+        "name": "friend_of",
+        "description": "Person is friend of another person or institution (e.g., 'friend of the Crown', 'friend of the academy')",
+        "icon": "Handshake",
+        "color": "#32c5cc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Person",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_colleague_of",
+        "name": "colleague_of",
+        "description": "Person is professional colleague of another person or institution",
+        "icon": "Groups",
+        "color": "#329bcc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Person",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_succeeded_by",
+        "name": "succeeded_by",
+        "description": "Person or Institution succeeded by another in a role or position",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#3271cc",
+        "inverse": "successor_of",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Person",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_contemporary_of",
+        "name": "contemporary_of",
+        "description": "Person or Institution lived/existed in the same era as another person, institution, work, or era",
+        "icon": "Timeline",
+        "color": "#3248cc",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution",
+          "Work"
+        ],
+        "target_types": [
+          "Person",
+          "Institution",
+          "Work",
+          "Era"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_awarded",
+        "name": "awarded",
+        "description": "Person, Institution, or Work received an award or achievement",
+        "icon": "MilitaryTech",
+        "color": "#4732cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution",
+          "Work"
+        ],
+        "target_types": [
+          "Award",
+          "Achievement"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_published",
+        "name": "published",
+        "description": "Person or Institution published a work",
+        "icon": "MenuBook",
+        "color": "#7132cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_founded",
+        "name": "founded",
+        "description": "Person or Institution founded an institution, organization, or notable work",
+        "icon": "AccountBalance",
+        "color": "#9b32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Institution",
+          "Work"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_resided_in",
+        "name": "resided_in",
+        "description": "Person or Institution resided/was based in a location or residence",
+        "icon": "Home",
+        "color": "#c432cc",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Location",
+          "Residence"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "bio_edge_successor_of",
+        "name": "successor_of",
+        "description": "Person or Institution succeeded another in a role (inverse of succeeded_by)",
+        "icon": "SubdirectoryArrowRight",
+        "color": "#3271cc",
+        "inverse": "succeeded_by",
+        "quality_score": 15,
+        "source_types": [
+          "Person",
+          "Institution"
+        ],
+        "target_types": [
+          "Person",
+          "Institution"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 30,
+    "max_same_source_type": 10,
+    "max_relationship_ratio": 8.0,
+    "loop_max_entity_count": 40
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Samuel Clemens",
+        "aliases": [
+          "Mark Twain",
+          "Sam Clemens"
+        ],
+        "note": "Pen names and nicknames become aliases"
+      },
+      {
+        "canonical": "Marie Curie",
+        "aliases": [
+          "Maria Sklodowska",
+          "Madame Curie"
+        ],
+        "note": "Maiden names and honorific titles become aliases"
+      },
+      {
+        "canonical": "Muhammad Ali",
+        "aliases": [
+          "Cassius Clay",
+          "The Greatest"
+        ],
+        "note": "Birth names and epithets become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Marie Curie",
+        "target": "Pierre Curie",
+        "type": "married_to",
+        "note": "Use married_to for marriages"
+      },
+      {
+        "source": "Albert Einstein",
+        "target": "Nobel Prize in Physics",
+        "type": "awarded",
+        "note": "Use awarded for honors and prizes"
+      },
+      {
+        "source": "Charles Darwin",
+        "target": "On the Origin of Species",
+        "type": "published",
+        "note": "Use published for authored works"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "father",
+    "mother",
+    "brother",
+    "sister",
+    "uncle",
+    "aunt",
+    "grandfather",
+    "grandmother"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "web_artifacts",
+      "code_blocks",
+      "data_tables"
+    ]
+  },
+  "extraction_filtering_mode": "lenient",
+  "icon": "Person"
+}

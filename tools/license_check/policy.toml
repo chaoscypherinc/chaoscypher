@@ -1,0 +1,135 @@
+# License-scan policy for ChaosCypher runtime dependencies.
+#
+# Why this exists:
+#   ChaosCypher ships under a dual-license model (AGPL-3.0-only OSS /
+#   proprietary enterprise). Any GPL-family transitive dep that lands in
+#   the runtime closure would force the proprietary edition to inherit
+#   AGPL/GPL terms — so we gate `uv lock`s and `npm install`s on a
+#   license deny-list.
+#
+# Scope:
+#   - Python: runtime closure only (excludes [dev] extras).
+#   - Frontend: production deps only (excludes devDependencies).
+#
+# Dev tooling (pytest, mypy, interrogate, vulture, etc.) is intentionally
+# unscanned — those packages don't ship in the product, so their licenses
+# can't taint the shipped artifact.
+#
+# How to extend:
+#   - New legitimate exception → add an entry to [[allow_packages]] with
+#     name, observed license substring, and a short reason.
+#   - New banned license keyword → add a substring to denied_licenses.
+#   - New universally-safe license → add to allowed_licenses.
+#
+# Source-of-truth doc: public docs/DEPENDENCIES.md.
+
+# ----------------------------------------------------------------------------
+# Deny-list (substring match, case-insensitive against the package's
+# declared License string). Any hit fails the scan unless the package
+# appears in [[allow_packages]].
+# ----------------------------------------------------------------------------
+denied_licenses = [
+    "AGPL",          # Affero GPL (any version) — viral network use.
+    "GPL",           # Generic GPL (matched with word-boundary so LGPL / AGPL are not double-counted).
+    "GPL-2.0",       # GPL v2 only / v2-or-later — viral.
+    "GPL-3.0",       # GPL v3 only / v3-or-later — viral.
+    "GPLv2",         # Verbose form sometimes used in package metadata.
+    "GPLv3",         # Verbose form sometimes used in package metadata.
+    # Verbose long-form license names — some packages declare the full
+    # name in metadata rather than the SPDX abbreviation, e.g. ebooklib
+    # declares "GNU Affero General Public License" (no "AGPL" substring).
+    "Affero General Public License",
+    "GNU General Public License",
+    "OSL",           # Open Software License — viral copyleft.
+    "Open Software License",  # Long-form OSL.
+    "SSPL",          # Server Side Public License (MongoDB) — service-protective copyleft.
+    "Server Side Public License",
+    "BUSL",          # Business Source License — eventually-open commercial.
+    "Business Source License",
+    "Elastic-2.0",   # Elastic License v2 — source-available, commercial-restrictive.
+    "Elastic License",
+    "Commons Clause", # Commercial-restrictive rider.
+    # EPL deliberately omitted — none of our runtime deps use it today and
+    # the dual-license interaction is nuanced. Revisit if it ever shows up.
+]
+
+# ----------------------------------------------------------------------------
+# Allow-list (universally OK — no reason needed). License field may be the
+# canonical SPDX id or a verbose synonym ("MIT License", "BSD License",
+# "Apache Software License", etc.).
+# ----------------------------------------------------------------------------
+allowed_licenses = [
+    "MIT",
+    "MIT License",
+    "MIT-0",            # MIT No Attribution.
+    "MIT-CMU",          # Pillow's PIL-derived MIT-like license.
+    "Apache-2.0",
+    "Apache 2.0",
+    "Apache 2.0 License",
+    "Apache License",      # Bare token from comma-split compound (e.g. sqlite-vec).
+    "Apache Software License",
+    "Apache License 2.0",
+    "Apache License, Version 2.0",
+    "BSD",              # Generic "BSD License" classifier.
+    "BSD License",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSD-3-Clause-Clear",
+    "3-Clause BSD License",
+    "Version 2.0",         # Trailing fragment of "Apache License, Version 2.0" when comma-split.
+    "dependency licenses", # Trailing token from pypdfium2's compound declaration.
+    "0BSD",
+    "ISC",
+    "ISC License (ISCL)",
+    "MPL-2.0",
+    "MPL 2.0",
+    "Mozilla Public License 2.0 (MPL 2.0)",
+    "LGPL-2.1",         # LGPL — library-linked, AGPL-compatible.
+    "LGPL-2.1-or-later",
+    "LGPL-3.0",
+    "LGPL-3.0-or-later",
+    "Python-2.0",       # CPython license.
+    "PSF",
+    "PSF-2.0",          # Python Software Foundation v2.
+    "Python Software Foundation License",
+    "CNRI-Python",      # Required by `regex` (compound with Apache-2.0).
+    "Unlicense",
+    "The Unlicense (Unlicense)",
+    "CC0",
+    "CC0-1.0",
+    "CC0 1.0 Universal",
+    "Public Domain",
+    "BlueOak-1.0.0",
+    "WTFPL",
+    "Zlib",
+    "OFL-1.1",          # SIL Open Font License — permissive for shipped font assets.
+    "AGPL-3.0-only",    # Our own packages (chaoscypher_core/cortex/neuron/cli, chaoscypher-frontend).
+]
+
+# ----------------------------------------------------------------------------
+# Per-package exceptions (package name + observed license + reason).
+# Keep this list small. Each entry is an explicit signed-off override.
+# license_substring matches case-insensitively against the declared License.
+# ----------------------------------------------------------------------------
+
+# Python exceptions ----------------------------------------------------------
+
+[[allow_packages]]
+ecosystem = "python"
+name = "docutils"
+license_substring = "GPL"
+reason = """Tri-licensed (BSD / GPL / Public Domain) per upstream COPYING.txt.
+We use the BSD option; the GPL string in classifiers is purely
+informational. Required by python-docx, sphinx ancestry, and the RST
+loader."""
+
+[[allow_packages]]
+ecosystem = "python"
+name = "tld"
+license_substring = "GPL"
+reason = """Tri-licensed MPL-1.1 / GPL-2.0-only / LGPL-2.1-or-later per
+upstream LICENSE_*.txt. We use the MPL or LGPL option; the GPL string is
+informational. Transitive dep of trafilatura."""
+
+# Frontend exceptions --------------------------------------------------------
+# (none today — extend as needed)

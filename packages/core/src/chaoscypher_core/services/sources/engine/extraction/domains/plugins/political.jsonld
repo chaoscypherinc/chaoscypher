@@ -1,0 +1,1155 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:political",
+  "name": "political",
+  "version": "1.10.0",
+  "description": "Political documents, governance, policy, and political theory",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.1,
+  "strict_entity_types": true,
+  "type_aliases": {
+    "Politician": "Political Figure",
+    "Statesman": "Political Figure",
+    "Leader": "Political Figure"
+  },
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "governance": {
+        "terms": [
+          "government",
+          "state",
+          "policy",
+          "legislation",
+          "law",
+          "constitution",
+          "democracy",
+          "republic",
+          "parliament",
+          "congress",
+          "senate"
+        ],
+        "weight": 1.1
+      },
+      "actors": {
+        "terms": [
+          "politician",
+          "president",
+          "prime minister",
+          "senator",
+          "representative",
+          "minister",
+          "governor",
+          "mayor",
+          "diplomat",
+          "ambassador"
+        ],
+        "weight": 1.0
+      },
+      "concepts": {
+        "terms": [
+          "sovereignty",
+          "rights",
+          "liberty",
+          "justice",
+          "power",
+          "authority",
+          "legitimacy",
+          "citizenship",
+          "nationalism",
+          "federalism"
+        ],
+        "weight": 0.9
+      },
+      "processes": {
+        "terms": [
+          "election",
+          "vote",
+          "referendum",
+          "campaign",
+          "legislation",
+          "veto",
+          "amendment",
+          "ratification",
+          "impeachment",
+          "inauguration"
+        ],
+        "weight": 1.0
+      },
+      "ideologies": {
+        "terms": [
+          "liberalism",
+          "conservatism",
+          "socialism",
+          "nationalism",
+          "populism",
+          "authoritarianism",
+          "communism",
+          "fascism",
+          "capitalism",
+          "anarchism"
+        ],
+        "weight": 0.9
+      },
+      "institutions": {
+        "terms": [
+          "party",
+          "coalition",
+          "cabinet",
+          "judiciary",
+          "executive",
+          "legislative",
+          "bureaucracy",
+          "ministry",
+          "agency"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [],
+    "doc_types": [
+      "political_document",
+      "policy_paper",
+      "legislation"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(president|prime minister|senator|representative|governor|secretary|minister|chancellor)\\s+[A-Z][a-z]+\\b",
+        "weight": 1.3,
+        "description": "Political titles"
+      },
+      {
+        "regex": "(?i)\\b(act|bill|resolution|executive order)\\s+(of\\s+)?\\d{4}\\b",
+        "weight": 1.4,
+        "description": "Legislative references"
+      },
+      {
+        "regex": "(?i)\\b(article|section|amendment|clause)\\s+[IVXivx\\d]+\\b",
+        "weight": 1.2,
+        "description": "Constitutional references"
+      },
+      {
+        "regex": "(?i)\\b(democratic|republican|conservative|liberal|parliament|congress|senate|legislature)\\b",
+        "weight": 0.9,
+        "description": "Political institutions"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.0,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Article and section numbers",
+      "examples": [
+        "Article II",
+        "Section 3",
+        "Amendment XIV"
+      ]
+    },
+    {
+      "description": "Generic references",
+      "examples": [
+        "the government",
+        "lawmakers",
+        "the opposition"
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract political entities, institutions, figures, parties, and policies\n- Include titles and positions in properties\n- Use formal names with common names as aliases\n\nDO NOT EXTRACT:\n- Article/section numbers: Article II, Section 3, Amendment XIV\n- Generic references: 'the government', 'the opposition', 'lawmakers'\n- Poll numbers or approval ratings as standalone entities\n- Datelines, wire service attributions, or news formatting",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- POWER: Use leads, member_of to show political relationships\n- LEGISLATION: Link laws to enacting bodies with enacts\n- POSITIONS: Use supports, opposes for policy stances\n- AGREEMENTS: Capture treaties with signed relationship\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_entity",
+        "name": "Political Entity",
+        "description": "A state, nation, or political body",
+        "icon": "Flag",
+        "color": "#d64164",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "state",
+          "nation",
+          "country",
+          "republic",
+          "kingdom",
+          "federation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_institution",
+        "name": "Institution",
+        "description": "A governmental body (parliament, court, agency)",
+        "icon": "AccountBalance",
+        "color": "#d65641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "government",
+          "parliament",
+          "congress",
+          "court",
+          "ministry",
+          "agency",
+          "cabinet"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_figure",
+        "name": "Political Figure",
+        "description": "A politician, leader, or political actor",
+        "icon": "Person",
+        "color": "#d68e41",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "politician",
+          "president",
+          "prime minister",
+          "senator",
+          "leader",
+          "statesman"
+        ],
+        "properties": [
+          {
+            "name": "position",
+            "display_name": "Position",
+            "property_type": "text",
+            "absorbs_types": [
+              "Position",
+              "Political Position"
+            ]
+          },
+          {
+            "name": "party",
+            "display_name": "Party Affiliation",
+            "property_type": "text"
+          },
+          {
+            "name": "term_dates",
+            "display_name": "Term Dates",
+            "property_type": "text"
+          },
+          {
+            "name": "constituency",
+            "display_name": "Constituency",
+            "property_type": "text",
+            "absorbs_types": [
+              "Constituency"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_party",
+        "name": "Political Party",
+        "description": "A political party or coalition",
+        "icon": "Groups",
+        "color": "#d6c641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "party",
+          "coalition",
+          "political party",
+          "faction"
+        ],
+        "properties": [
+          {
+            "name": "ideology",
+            "display_name": "Ideology",
+            "property_type": "text",
+            "absorbs_types": [
+              "Party Ideology"
+            ]
+          },
+          {
+            "name": "founding_year",
+            "display_name": "Founding Year",
+            "property_type": "text"
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_policy",
+        "name": "Policy",
+        "description": "A government policy or program",
+        "icon": "Description",
+        "color": "#afd641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "policy",
+          "program",
+          "initiative",
+          "reform",
+          "legislation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_law",
+        "name": "Law",
+        "description": "A statute, constitution, or legal framework",
+        "icon": "Gavel",
+        "color": "#77d641",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "law",
+          "statute",
+          "constitution",
+          "act",
+          "bill",
+          "regulation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_ideology",
+        "name": "Ideology",
+        "description": "A political ideology or doctrine",
+        "icon": "Lightbulb",
+        "color": "#41d644",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "concepts",
+        "normalization_keywords": [
+          "ideology",
+          "political philosophy",
+          "doctrine",
+          "ism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_event",
+        "name": "Political Event",
+        "description": "An election, coup, reform, or political event",
+        "icon": "HowToVote",
+        "color": "#41d67b",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "election",
+          "referendum",
+          "coup",
+          "revolution",
+          "reform",
+          "inauguration"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_treaty",
+        "name": "Treaty",
+        "description": "An international agreement or treaty",
+        "icon": "Handshake",
+        "color": "#41d6b3",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "treaty",
+          "agreement",
+          "accord",
+          "pact",
+          "convention",
+          "protocol"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_movement",
+        "name": "Political Movement",
+        "description": "A political or social movement",
+        "icon": "Campaign",
+        "color": "#41c1d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "actors",
+        "normalization_keywords": [
+          "movement",
+          "campaign",
+          "protest",
+          "uprising"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_district",
+        "name": "Electoral District",
+        "description": "A voting district, constituency, or ward",
+        "icon": "Map",
+        "color": "#4189d6",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "district",
+          "constituency",
+          "ward",
+          "precinct",
+          "riding"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_bill",
+        "name": "Bill",
+        "description": "A proposed legislative measure introduced to a legislature for consideration",
+        "icon": "Assignment",
+        "color": "#4151d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "bill",
+          "proposed law",
+          "measure",
+          "resolution"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_legislation",
+        "name": "Legislation",
+        "description": "Enacted legislation or a body of laws — a bill that has been signed into law",
+        "icon": "Gavel",
+        "color": "#4170d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "legislation",
+          "act",
+          "enacted law"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_intl_org",
+        "name": "International Organization",
+        "description": "An international body or organization (UN, EU, NATO)",
+        "icon": "Public",
+        "color": "#6941d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "structures",
+        "normalization_keywords": [
+          "UN",
+          "EU",
+          "NATO",
+          "international organization",
+          "intergovernmental"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_diplomatic",
+        "name": "Diplomatic Relation",
+        "description": "A diplomatic relationship or exchange between entities",
+        "icon": "ConnectWithoutContact",
+        "color": "#a141d6",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "diplomatic",
+          "diplomacy",
+          "embassy",
+          "ambassador",
+          "relations"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_campaign",
+        "name": "Campaign",
+        "description": "A political campaign or electoral effort",
+        "icon": "Campaign",
+        "color": "#d641d4",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "events",
+        "normalization_keywords": [
+          "campaign",
+          "election campaign",
+          "candidacy",
+          "run for office"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "pol_template_sanction",
+        "name": "Sanction",
+        "description": "An economic or political sanction or embargo",
+        "icon": "Block",
+        "color": "#d6419c",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "legal",
+        "normalization_keywords": [
+          "sanction",
+          "embargo",
+          "restriction",
+          "trade ban"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_governs",
+        "name": "governs",
+        "description": "Agent governs a territory, institution, or district",
+        "icon": "AccountBalance",
+        "color": "#3283cc",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "International Organization",
+          "Political Entity",
+          "Law",
+          "Legislation",
+          "Bill",
+          "Policy"
+        ],
+        "target_types": [
+          "Political Entity",
+          "Institution",
+          "Electoral District",
+          "International Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_enacts",
+        "name": "enacts",
+        "description": "Agent enacts a policy, law, legislation, or sanction",
+        "icon": "Gavel",
+        "color": "#3259cc",
+        "quality_score": 25,
+        "source_types": [
+          "Institution",
+          "Political Figure",
+          "Political Party",
+          "Political Entity",
+          "International Organization"
+        ],
+        "target_types": [
+          "Law",
+          "Policy",
+          "Bill",
+          "Legislation",
+          "Sanction"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_leads",
+        "name": "leads",
+        "description": "Agent leads a party, institution, movement, campaign, or political entity",
+        "icon": "Star",
+        "color": "#3632cc",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Institution"
+        ],
+        "target_types": [
+          "Political Party",
+          "Institution",
+          "Political Movement",
+          "Political Entity",
+          "International Organization",
+          "Campaign",
+          "Political Figure"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_member_of",
+        "name": "member_of",
+        "description": "Agent is member of a party, institution, movement, or international body",
+        "icon": "Groups",
+        "color": "#5f32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Entity",
+          "Institution",
+          "International Organization"
+        ],
+        "target_types": [
+          "Political Party",
+          "Institution",
+          "Political Movement",
+          "International Organization",
+          "Political Entity"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_opposes",
+        "name": "opposes",
+        "description": "Agent opposes a policy, law, ideology, party, movement, figure, or entity",
+        "icon": "ThumbDown",
+        "color": "#8932cc",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Entity",
+          "International Organization",
+          "Political Event"
+        ],
+        "target_types": [
+          "Policy",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Political Party",
+          "Political Movement",
+          "Political Figure",
+          "Ideology",
+          "Political Entity",
+          "Institution",
+          "International Organization",
+          "Treaty",
+          "Sanction"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_supports",
+        "name": "supports",
+        "description": "Agent supports a policy, law, ideology, party, movement, figure, treaty, or entity",
+        "icon": "ThumbUp",
+        "color": "#b332cc",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Entity",
+          "International Organization",
+          "Political Event"
+        ],
+        "target_types": [
+          "Policy",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Ideology",
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Treaty",
+          "Political Entity",
+          "Institution",
+          "International Organization",
+          "Campaign",
+          "Political Event",
+          "Electoral District"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_succeeded",
+        "name": "succeeded",
+        "description": "Agent succeeded another in office, leadership, or institutional role",
+        "icon": "SwapHoriz",
+        "color": "#cc32bb",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Institution"
+        ],
+        "target_types": [
+          "Political Figure",
+          "Political Party",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_signed",
+        "name": "signed",
+        "description": "Agent signed a treaty, law, bill, or legislation",
+        "icon": "Draw",
+        "color": "#cc3291",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Institution",
+          "Political Entity",
+          "Political Party",
+          "International Organization"
+        ],
+        "target_types": [
+          "Treaty",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Policy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_advocates",
+        "name": "advocates",
+        "description": "Agent advocates an ideology, policy, law, or reform",
+        "icon": "Campaign",
+        "color": "#cc3267",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "International Organization"
+        ],
+        "target_types": [
+          "Policy",
+          "Ideology",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Treaty",
+          "Campaign"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_reformed",
+        "name": "reformed",
+        "description": "Agent or event reformed an institution, policy, or law",
+        "icon": "Autorenew",
+        "color": "#cc323d",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Entity",
+          "Political Event"
+        ],
+        "target_types": [
+          "Institution",
+          "Policy",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Political Entity",
+          "Political Party"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_allied_with",
+        "name": "allied_with",
+        "description": "Agent allied with another (parties, movements, institutions, figures, or states)",
+        "icon": "Handshake",
+        "color": "#cc5132",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Figure",
+          "Political Entity",
+          "International Organization"
+        ],
+        "target_types": [
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Figure",
+          "Political Entity",
+          "International Organization",
+          "Treaty"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_conflicts_with",
+        "name": "conflicts_with",
+        "description": "Agent in conflict with another (parties, movements, institutions, figures, or states)",
+        "icon": "GppBad",
+        "color": "#cc7b32",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Figure",
+          "Political Entity",
+          "International Organization",
+          "Legislation",
+          "Law",
+          "Bill",
+          "Policy"
+        ],
+        "target_types": [
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Figure",
+          "Political Entity",
+          "International Organization",
+          "Legislation",
+          "Law",
+          "Bill",
+          "Policy"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_vetoed",
+        "name": "vetoed",
+        "description": "Agent vetoed a bill, law, legislation, or policy",
+        "icon": "Block",
+        "color": "#cca532",
+        "quality_score": 25,
+        "source_types": [
+          "Political Figure",
+          "Institution",
+          "Political Entity"
+        ],
+        "target_types": [
+          "Law",
+          "Bill",
+          "Legislation",
+          "Policy",
+          "Treaty"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_ratified",
+        "name": "ratified",
+        "description": "Agent ratified a treaty, law, amendment, or legislation",
+        "icon": "CheckCircle",
+        "color": "#c8cc32",
+        "quality_score": 25,
+        "source_types": [
+          "Institution",
+          "Political Entity",
+          "Political Figure",
+          "International Organization",
+          "Treaty"
+        ],
+        "target_types": [
+          "Treaty",
+          "Law",
+          "Bill",
+          "Legislation",
+          "Policy",
+          "International Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_nominated",
+        "name": "nominated",
+        "description": "Agent nominated another for a position or candidacy",
+        "icon": "PersonAdd",
+        "color": "#9fcc32",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution"
+        ],
+        "target_types": [
+          "Political Figure",
+          "Institution",
+          "Political Party"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_campaigned_for",
+        "name": "campaigned_for",
+        "description": "Agent campaigned for a position, policy, candidate, or cause",
+        "icon": "Campaign",
+        "color": "#75cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution"
+        ],
+        "target_types": [
+          "Campaign",
+          "Policy",
+          "Political Event",
+          "Political Figure",
+          "Bill",
+          "Legislation",
+          "Law",
+          "Ideology"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_sanctioned",
+        "name": "sanctioned",
+        "description": "Agent imposed sanctions on another entity, party, movement, or figure",
+        "icon": "Block",
+        "color": "#4bcc32",
+        "quality_score": 25,
+        "source_types": [
+          "Political Entity",
+          "Institution",
+          "International Organization",
+          "Political Figure"
+        ],
+        "target_types": [
+          "Political Entity",
+          "Political Figure",
+          "Institution",
+          "Political Party",
+          "Political Movement",
+          "International Organization"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_recognized",
+        "name": "recognized",
+        "description": "Agent diplomatically recognized another entity, movement, government, or figure",
+        "icon": "Verified",
+        "color": "#32cc43",
+        "quality_score": 15,
+        "source_types": [
+          "Political Entity",
+          "International Organization",
+          "Institution",
+          "Political Figure"
+        ],
+        "target_types": [
+          "Political Entity",
+          "Political Movement",
+          "Political Figure",
+          "Institution",
+          "Political Party"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_annexed",
+        "name": "annexed",
+        "description": "Agent annexed territory or jurisdiction of another",
+        "icon": "AddLocationAlt",
+        "color": "#32cc6d",
+        "quality_score": 25,
+        "source_types": [
+          "Political Entity",
+          "Institution",
+          "Political Figure"
+        ],
+        "target_types": [
+          "Political Entity",
+          "Electoral District"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_intervened_in",
+        "name": "intervened_in",
+        "description": "Agent intervened in another's affairs, conflict, or election",
+        "icon": "MilitaryTech",
+        "color": "#32cc97",
+        "quality_score": 25,
+        "source_types": [
+          "Political Entity",
+          "International Organization",
+          "Institution",
+          "Political Figure",
+          "Political Movement"
+        ],
+        "target_types": [
+          "Political Entity",
+          "Political Event",
+          "Political Movement",
+          "Institution",
+          "Campaign"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_cosponsored",
+        "name": "cosponsored",
+        "description": "Agent cosponsored a bill, legislation, policy, or resolution",
+        "icon": "People",
+        "color": "#32ccc1",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Institution"
+        ],
+        "target_types": [
+          "Bill",
+          "Legislation",
+          "Policy",
+          "Law"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "pol_edge_lobbied_for",
+        "name": "lobbied_for",
+        "description": "Agent lobbied for a policy, bill, law, treaty, or cause",
+        "icon": "RecordVoiceOver",
+        "color": "#32adcc",
+        "quality_score": 15,
+        "source_types": [
+          "Political Figure",
+          "Political Party",
+          "Political Movement",
+          "Institution",
+          "Political Entity",
+          "International Organization"
+        ],
+        "target_types": [
+          "Policy",
+          "Bill",
+          "Legislation",
+          "Law",
+          "Treaty",
+          "Ideology",
+          "Sanction"
+        ]
+      }
+    ]
+  },
+  "extraction_limits": {
+    "max_entity_degree": 25,
+    "max_same_source_type": 10,
+    "max_relationship_ratio": 7.0,
+    "loop_max_entity_count": 35
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "Franklin Delano Roosevelt",
+        "aliases": [
+          "FDR",
+          "President Roosevelt",
+          "Roosevelt"
+        ],
+        "note": "Initials and titles become aliases"
+      },
+      {
+        "canonical": "Democratic Party",
+        "aliases": [
+          "Democrats",
+          "Dems",
+          "DNC"
+        ],
+        "note": "Short names and abbreviations become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "President Biden",
+        "target": "Infrastructure Investment Act",
+        "type": "enacts",
+        "note": "Use enacts for signing legislation into law"
+      },
+      {
+        "source": "Senator Warren",
+        "target": "Banking Reform Bill",
+        "type": "cosponsored",
+        "note": "Use cosponsored for legislative co-authorship"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "president",
+    "senator",
+    "governor",
+    "minister",
+    "secretary",
+    "chancellor",
+    "ambassador",
+    "colonel",
+    "captain",
+    "general",
+    "major",
+    "lieutenant"
+  ],
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "web_artifacts",
+      "advertising"
+    ]
+  },
+  "extraction_filtering_mode": "balanced",
+  "icon": "HowToVote"
+}

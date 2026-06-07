@@ -1,0 +1,1341 @@
+{
+  "@context": {
+    "@vocab": "https://chaoscypher.io/schema/domain#",
+    "schema": "https://schema.org/",
+    "name": "schema:name",
+    "description": "schema:description",
+    "author": "schema:author",
+    "version": "schema:version"
+  },
+  "@type": "ExtractionDomain",
+  "@id": "domain:scientific",
+  "name": "scientific",
+  "version": "1.9.0",
+  "description": "Scientific research papers, studies, experiments, and academic publications",
+  "author": "ChaosCypher Team",
+  "builtin": true,
+  "extraction_density": 1.3,
+  "strict_entity_types": true,
+  "detection": {
+    "@type": "DetectionConfig",
+    "keywords": {
+      "research_core": {
+        "terms": [
+          "hypothesis",
+          "experiment",
+          "methodology",
+          "results",
+          "conclusion",
+          "abstract",
+          "study",
+          "research",
+          "investigation",
+          "analysis",
+          "findings"
+        ],
+        "weight": 1.2
+      },
+      "statistics": {
+        "terms": [
+          "p-value",
+          "significance",
+          "correlation",
+          "regression",
+          "sample size",
+          "confidence interval",
+          "standard deviation",
+          "variance",
+          "null hypothesis",
+          "statistical",
+          "mean",
+          "median"
+        ],
+        "weight": 1.0
+      },
+      "scientific_method": {
+        "terms": [
+          "control group",
+          "experimental group",
+          "variable",
+          "independent variable",
+          "dependent variable",
+          "randomized",
+          "double-blind",
+          "placebo",
+          "replication",
+          "peer-reviewed"
+        ],
+        "weight": 1.0
+      },
+      "publication": {
+        "terms": [
+          "journal",
+          "citation",
+          "DOI",
+          "peer-reviewed",
+          "published",
+          "authors",
+          "references",
+          "bibliography",
+          "supplementary",
+          "appendix"
+        ],
+        "weight": 0.8
+      },
+      "disciplines": {
+        "terms": [
+          "biology",
+          "chemistry",
+          "physics",
+          "neuroscience",
+          "psychology",
+          "ecology",
+          "genetics",
+          "biochemistry",
+          "molecular",
+          "cellular",
+          "computational"
+        ],
+        "weight": 0.6
+      },
+      "data_terms": {
+        "terms": [
+          "dataset",
+          "data collection",
+          "measurements",
+          "observations",
+          "quantitative",
+          "qualitative",
+          "empirical",
+          "protocol",
+          "procedure"
+        ],
+        "weight": 0.8
+      },
+      "physics_concepts": {
+        "terms": [
+          "electron",
+          "proton",
+          "neutron",
+          "photon",
+          "quantum",
+          "electromagnetic",
+          "wavelength",
+          "frequency",
+          "nucleus",
+          "orbital",
+          "subatomic",
+          "thermodynamic",
+          "kinetic energy",
+          "potential energy",
+          "gravitational",
+          "magnetic field",
+          "electric field",
+          "radioactive",
+          "superconductor",
+          "relativity",
+          "wave function",
+          "atomic number",
+          "atomic mass",
+          "elementary particle"
+        ],
+        "weight": 1.0
+      },
+      "chemistry_concepts": {
+        "terms": [
+          "chemical bond",
+          "compound",
+          "isotope",
+          "valence",
+          "periodic table",
+          "catalyst",
+          "oxidation",
+          "covalent",
+          "ionic bond",
+          "stoichiometry",
+          "molar mass",
+          "chemical reaction",
+          "molecular structure"
+        ],
+        "weight": 0.9
+      },
+      "biology_concepts": {
+        "terms": [
+          "DNA",
+          "RNA",
+          "genome",
+          "chromosome",
+          "enzyme",
+          "photosynthesis",
+          "mitosis",
+          "natural selection",
+          "ecosystem",
+          "metabolism",
+          "ribosome",
+          "organelle",
+          "cell membrane"
+        ],
+        "weight": 0.8
+      }
+    },
+    "file_extensions": [
+      ".pdf"
+    ],
+    "doc_types": [
+      "academic_paper",
+      "research_article",
+      "scientific_publication"
+    ],
+    "patterns": [
+      {
+        "regex": "(?i)\\b(p\\s*[<>=]\\s*0\\.\\d+)\\b",
+        "weight": 1.5,
+        "description": "P-value notation"
+      },
+      {
+        "regex": "(?i)\\b(n\\s*=\\s*\\d+)\\b",
+        "weight": 1.3,
+        "description": "Sample size notation"
+      },
+      {
+        "regex": "(?i)\\b(et\\s+al\\.?)\\b",
+        "weight": 1.2,
+        "description": "Citation pattern"
+      },
+      {
+        "regex": "(?i)\\b(doi:|DOI:)\\s*10\\.\\d+",
+        "weight": 1.4,
+        "description": "DOI pattern"
+      },
+      {
+        "regex": "(?i)\\b(figure|fig\\.|table)\\s+\\d+",
+        "weight": 1.0,
+        "description": "Figure/Table references"
+      },
+      {
+        "regex": "(?i)\\b(abstract|methods|results|discussion|conclusion|references|introduction)\\s*:",
+        "weight": 1.3,
+        "description": "Paper section headers"
+      },
+      {
+        "regex": "\\d+\\.?\\d*\\s*[×x]\\s*10",
+        "weight": 1.3,
+        "description": "Scientific notation"
+      },
+      {
+        "regex": "(?i)\\b\\d+\\.?\\d*\\s*(eV|keV|MeV|GeV|nm|pm|amu|Hz|GHz|MHz|m/s|km/s)\\b",
+        "weight": 1.2,
+        "description": "Physics units"
+      }
+    ],
+    "confidence": {
+      "base_score": 0.25,
+      "per_keyword_boost": 0.04,
+      "extension_boost": 0.1,
+      "doc_type_boost": 0.25,
+      "pattern_boost": 0.15,
+      "max_confidence": 0.95,
+      "min_threshold": 0.4
+    }
+  },
+  "entity_exclusions": [
+    {
+      "description": "Figure and table references",
+      "examples": [
+        "Figure 1",
+        "Table S2",
+        "Supplementary Figure S3"
+      ]
+    },
+    {
+      "description": "Statistical notation as entities",
+      "examples": [
+        "p < 0.05",
+        "n = 100",
+        "CI 95%"
+      ]
+    },
+    {
+      "description": "Generic labels",
+      "examples": [
+        "this study",
+        "the results",
+        "our findings",
+        "the data"
+      ]
+    },
+    {
+      "description": "Citation markers",
+      "examples": [
+        "[1]",
+        "(Smith et al., 2020)",
+        "et al."
+      ]
+    }
+  ],
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract hypotheses, experiments, findings, researchers, and publications\n- Include specific study names, methodology descriptions\n- Extract variables (independent, dependent, controlled)\n\nDO NOT EXTRACT:\n- Figure/table references: Figure 1, Table 2, Supplementary Figure S3\n- Statistical notation as entities: p < 0.05, n = 100, CI 95%\n- Generic labels: 'this study', 'our results', 'the data'\n- Page numbers, DOIs, or formatting markers",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- HYPOTHESIS-EVIDENCE: Link findings to hypotheses with supports/contradicts\n- METHODOLOGY: Capture methods and link experiments with uses_method\n- CITATIONS: Extract cites relationships between publications\n- VARIABLES: Identify independent/dependent variables with measures relationship\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "templates": {
+    "node_templates": [
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_hypothesis",
+        "name": "Hypothesis",
+        "description": "A testable prediction or theoretical claim",
+        "icon": "Lightbulb",
+        "color": "#d67441",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "a hypothesis",
+          "we hypothesize",
+          "predicts that",
+          "proposed that",
+          "hypothesized",
+          "prediction that"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_experiment",
+        "name": "Experiment",
+        "description": "A scientific study, trial, or investigation",
+        "icon": "Science",
+        "color": "#d6a941",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "an experiment",
+          "study design",
+          "we conducted",
+          "trial of",
+          "investigation of",
+          "experimental study"
+        ],
+        "properties": [
+          {
+            "name": "sample_size",
+            "display_name": "Sample Size",
+            "property_type": "text",
+            "absorbs_types": [
+              "Sample Size"
+            ]
+          },
+          {
+            "name": "duration",
+            "display_name": "Duration",
+            "property_type": "text",
+            "absorbs_types": [
+              "Duration"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_method",
+        "name": "Method",
+        "description": "A research methodology, technique, or protocol",
+        "icon": "Build",
+        "color": "#cfd641",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "methodology",
+          "procedure",
+          "protocol",
+          "technique used",
+          "method of",
+          "approach"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_finding",
+        "name": "Finding",
+        "description": "A research result, observation, or discovery",
+        "icon": "Insights",
+        "color": "#9bd641",
+        "requires_named_referent": false,
+        "quality_score": 25,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "finding",
+          "result shows",
+          "we found",
+          "data indicates",
+          "observation",
+          "discovered that",
+          "results demonstrate"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_dataset",
+        "name": "Dataset",
+        "description": "A collection of data used or produced in research",
+        "icon": "Storage",
+        "color": "#66d641",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "dataset",
+          "data collected",
+          "sample of",
+          "corpus of",
+          "collection of measurements"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_variable",
+        "name": "Variable",
+        "description": "An independent, dependent, or control variable",
+        "icon": "Tune",
+        "color": "#41d651",
+        "requires_named_referent": false,
+        "quality_score": 18,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "variable",
+          "factor",
+          "measured",
+          "controlled for",
+          "independent variable",
+          "dependent variable"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_theory",
+        "name": "Theory",
+        "description": "A well-substantiated scientific explanation",
+        "icon": "AutoAwesome",
+        "color": "#41d686",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "theory of",
+          "theoretical framework",
+          "model predicts",
+          "explains that"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_model",
+        "name": "Model",
+        "description": "A mathematical or conceptual representation",
+        "icon": "Hub",
+        "color": "#41d6ba",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "model",
+          "mathematical model",
+          "computational model",
+          "simulation",
+          "framework"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_researcher",
+        "name": "Researcher",
+        "description": "A scientist, author, or research team",
+        "icon": "Person",
+        "color": "#41bed6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "people_places",
+        "normalization_keywords": [
+          "researcher",
+          "author",
+          "scientist",
+          "investigator",
+          "study team"
+        ],
+        "properties": [
+          {
+            "name": "affiliation",
+            "display_name": "Affiliation",
+            "property_type": "text",
+            "absorbs_types": [
+              "Affiliation"
+            ]
+          },
+          {
+            "name": "specialization",
+            "display_name": "Specialization",
+            "property_type": "text",
+            "absorbs_types": [
+              "Specialization"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_publication",
+        "name": "Publication",
+        "description": "A scientific paper, article, or preprint",
+        "icon": "Article",
+        "color": "#4189d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "publications",
+        "normalization_keywords": [
+          "paper",
+          "article",
+          "study",
+          "publication",
+          "preprint"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_field",
+        "name": "Field",
+        "description": "A scientific discipline or subdiscipline",
+        "icon": "Category",
+        "color": "#4154d6",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "publications"
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_institution",
+        "name": "Institution",
+        "description": "A research institution, university, or lab",
+        "icon": "School",
+        "color": "#6341d6",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "people_places"
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_organism",
+        "name": "Organism",
+        "description": "An individual biological organism, strain, or specimen (e.g. ``E. coli K-12``, ``zebrafish AB strain``)",
+        "icon": "Biotech",
+        "color": "#9741d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "organism",
+          "strain",
+          "specimen",
+          "model organism"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_species",
+        "name": "Species",
+        "description": "A species or higher taxonomic group (e.g. ``Homo sapiens``, ``Drosophila melanogaster``)",
+        "icon": "AccountTree",
+        "color": "#b441d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "species",
+          "genus",
+          "taxon",
+          "taxonomic group"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_chemical",
+        "name": "Chemical",
+        "description": "A chemical element or simple substance (e.g. ``carbon``, ``hydrogen``, ``sodium chloride``)",
+        "icon": "Science",
+        "color": "#cc41d6",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "chemical",
+          "element",
+          "substance",
+          "reagent"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_compound",
+        "name": "Compound",
+        "description": "A chemical compound or molecule — a defined combination of elements (e.g. ``H2SO4``, ``glucose``, ``ATP``)",
+        "icon": "Hub",
+        "color": "#d641c5",
+        "requires_named_referent": true,
+        "quality_score": 18,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "compound",
+          "molecule",
+          "salt",
+          "polymer"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_equipment",
+        "name": "Equipment",
+        "description": "General scientific equipment or apparatus — a fixture or assembly used during research (centrifuge, fume hood, bench)",
+        "icon": "Construction",
+        "color": "#d641ac",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "equipment",
+          "apparatus",
+          "device",
+          "fixture"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_instrument",
+        "name": "Instrument",
+        "description": "A scientific instrument used for measurement or observation (microscope, spectrometer, telescope, detector)",
+        "icon": "Straighten",
+        "color": "#d6418c",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "instrument",
+          "microscope",
+          "spectrometer",
+          "telescope",
+          "detector"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_equation",
+        "name": "Equation",
+        "description": "A mathematical equation — an equality between expressions (e.g. ``F=ma``, ``E=mc²``, ``Maxwell's equations``)",
+        "icon": "Functions",
+        "color": "#d64177",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "equation",
+          "law",
+          "relation"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_formula",
+        "name": "Formula",
+        "description": "A formula or expression — a named computational rule or chemical/structural representation",
+        "icon": "Calculate",
+        "color": "#d6415f",
+        "requires_named_referent": true,
+        "quality_score": 15,
+        "compatibility_group": "research_elements",
+        "normalization_keywords": [
+          "formula",
+          "expression",
+          "rule",
+          "chemical formula"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_metric",
+        "name": "Metric",
+        "description": "A defined quantitative metric — the named thing being measured (e.g. ``signal-to-noise ratio``, ``Q-value``)",
+        "icon": "Speed",
+        "color": "#d64143",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "metric",
+          "indicator",
+          "unit",
+          "quantity"
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "sci_template_measurement",
+        "name": "Measurement",
+        "description": "A specific recorded measurement — the value or observation (e.g. ``3.2 cm``, ``42 ± 0.5 keV``)",
+        "icon": "Straighten",
+        "color": "#d65f43",
+        "requires_named_referent": false,
+        "quality_score": 15,
+        "compatibility_group": "methodology",
+        "normalization_keywords": [
+          "measurement",
+          "value",
+          "observation",
+          "reading"
+        ]
+      }
+    ],
+    "edge_templates": [
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_tests",
+        "name": "tests",
+        "description": "Experiment, method, researcher, or study tests a hypothesis, theory, model, equation, or prediction",
+        "icon": "Science",
+        "color": "#3a32cc",
+        "quality_score": 25,
+        "source_types": [
+          "Experiment",
+          "Method",
+          "Researcher",
+          "Publication",
+          "Dataset"
+        ],
+        "target_types": [
+          "Hypothesis",
+          "Theory",
+          "Model",
+          "Equation",
+          "Formula"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_supports",
+        "name": "supports",
+        "description": "Finding, experiment, dataset, measurement, or publication supports a hypothesis, theory, model, or claim",
+        "icon": "ThumbUp",
+        "color": "#6632cc",
+        "quality_score": 25,
+        "source_types": [
+          "Finding",
+          "Experiment",
+          "Dataset",
+          "Measurement",
+          "Publication",
+          "Theory",
+          "Model",
+          "Method"
+        ],
+        "target_types": [
+          "Hypothesis",
+          "Theory",
+          "Model",
+          "Finding",
+          "Equation",
+          "Formula"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_contradicts",
+        "name": "contradicts",
+        "description": "Finding, experiment, dataset, measurement, or publication contradicts or falsifies a hypothesis, theory, model, or prior result",
+        "icon": "ThumbDown",
+        "color": "#9232cc",
+        "quality_score": 25,
+        "source_types": [
+          "Finding",
+          "Experiment",
+          "Dataset",
+          "Measurement",
+          "Publication",
+          "Theory",
+          "Model"
+        ],
+        "target_types": [
+          "Hypothesis",
+          "Theory",
+          "Model",
+          "Finding",
+          "Equation",
+          "Formula"
+        ],
+        "symmetric": true
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_uses_method",
+        "name": "uses_method",
+        "description": "Experiment, researcher, publication, study, or model uses a method, instrument, equipment, equation, or formula",
+        "icon": "Build",
+        "color": "#bd32cc",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Researcher",
+          "Publication",
+          "Method",
+          "Model",
+          "Institution",
+          "Finding"
+        ],
+        "target_types": [
+          "Method",
+          "Instrument",
+          "Equipment",
+          "Equation",
+          "Formula",
+          "Model"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_produces",
+        "name": "produces",
+        "description": "Experiment, method, researcher, institution, or instrument produces a dataset, finding, measurement, publication, or compound",
+        "icon": "Output",
+        "color": "#cc32ae",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Method",
+          "Researcher",
+          "Institution",
+          "Instrument",
+          "Equipment",
+          "Publication"
+        ],
+        "target_types": [
+          "Finding",
+          "Dataset",
+          "Measurement",
+          "Publication",
+          "Compound",
+          "Chemical",
+          "Model",
+          "Theory"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_measures",
+        "name": "measures",
+        "description": "Experiment, method, instrument, researcher, or dataset measures a variable, metric, measurement, or property of an organism/compound/chemical",
+        "icon": "Straighten",
+        "color": "#cc3282",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Method",
+          "Instrument",
+          "Equipment",
+          "Researcher",
+          "Dataset",
+          "Publication"
+        ],
+        "target_types": [
+          "Variable",
+          "Metric",
+          "Measurement",
+          "Compound",
+          "Chemical",
+          "Organism",
+          "Species"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_cites",
+        "name": "cites",
+        "description": "Publication, researcher, experiment, or finding cites a publication, theory, method, dataset, result, hypothesis, model, or equation",
+        "icon": "FormatQuote",
+        "color": "#cc3257",
+        "quality_score": 5,
+        "source_types": [
+          "Publication",
+          "Researcher",
+          "Experiment",
+          "Finding",
+          "Theory",
+          "Model",
+          "Method"
+        ],
+        "target_types": [
+          "Publication",
+          "Theory",
+          "Method",
+          "Dataset",
+          "Finding",
+          "Hypothesis",
+          "Model",
+          "Equation",
+          "Formula",
+          "Researcher"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_proposes",
+        "name": "proposes",
+        "description": "Researcher, publication, experiment, or institution proposes a hypothesis, theory, model, method, equation, or formula",
+        "icon": "Lightbulb",
+        "color": "#cc3a32",
+        "quality_score": 25,
+        "source_types": [
+          "Researcher",
+          "Publication",
+          "Experiment",
+          "Institution",
+          "Finding"
+        ],
+        "target_types": [
+          "Hypothesis",
+          "Theory",
+          "Model",
+          "Method",
+          "Equation",
+          "Formula",
+          "Metric"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_extends",
+        "name": "extends",
+        "description": "Theory, model, method, hypothesis, equation, experiment, or publication extends or builds upon another",
+        "icon": "TrendingUp",
+        "color": "#cc6632",
+        "quality_score": 15,
+        "source_types": [
+          "Theory",
+          "Model",
+          "Method",
+          "Hypothesis",
+          "Equation",
+          "Formula",
+          "Experiment",
+          "Publication",
+          "Finding",
+          "Dataset"
+        ],
+        "target_types": [
+          "Theory",
+          "Model",
+          "Method",
+          "Hypothesis",
+          "Equation",
+          "Formula",
+          "Experiment",
+          "Publication",
+          "Finding",
+          "Dataset"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_replicates",
+        "name": "replicates",
+        "description": "Experiment, study, publication, or researcher replicates a prior experiment, finding, dataset, or publication",
+        "icon": "ContentCopy",
+        "color": "#cc9232",
+        "quality_score": 25,
+        "source_types": [
+          "Experiment",
+          "Publication",
+          "Researcher",
+          "Method"
+        ],
+        "target_types": [
+          "Experiment",
+          "Publication",
+          "Finding",
+          "Dataset",
+          "Method"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_validates",
+        "name": "validates",
+        "description": "Experiment, finding, dataset, measurement, or publication validates a model, theory, hypothesis, method, equation, or instrument",
+        "icon": "CheckCircle",
+        "color": "#ccbd32",
+        "quality_score": 25,
+        "source_types": [
+          "Experiment",
+          "Finding",
+          "Dataset",
+          "Measurement",
+          "Publication",
+          "Method"
+        ],
+        "target_types": [
+          "Model",
+          "Theory",
+          "Hypothesis",
+          "Method",
+          "Equation",
+          "Formula",
+          "Instrument",
+          "Equipment"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_affiliated_with",
+        "name": "affiliated_with",
+        "description": "Researcher, publication, experiment, or institution is affiliated with an institution or field",
+        "icon": "Business",
+        "color": "#aecc32",
+        "quality_score": 15,
+        "source_types": [
+          "Researcher",
+          "Publication",
+          "Experiment",
+          "Institution"
+        ],
+        "target_types": [
+          "Institution",
+          "Field"
+        ],
+        "symmetric": true
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_published_in",
+        "name": "published_in",
+        "description": "Finding, experiment, theory, model, method, or dataset is published in a publication or field",
+        "icon": "Article",
+        "color": "#82cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Finding",
+          "Experiment",
+          "Theory",
+          "Model",
+          "Method",
+          "Dataset",
+          "Hypothesis",
+          "Researcher"
+        ],
+        "target_types": [
+          "Publication",
+          "Field"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_authored",
+        "name": "authored",
+        "description": "Researcher or institution authored a publication, dataset, theory, model, method, or equation",
+        "icon": "Create",
+        "color": "#57cc32",
+        "quality_score": 15,
+        "source_types": [
+          "Researcher",
+          "Institution"
+        ],
+        "target_types": [
+          "Publication",
+          "Dataset",
+          "Theory",
+          "Model",
+          "Method",
+          "Equation",
+          "Formula",
+          "Hypothesis"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_conducted_by",
+        "name": "conducted_by",
+        "description": "Experiment, study, dataset collection, or method was conducted by a researcher or institution",
+        "icon": "Person",
+        "color": "#32cc3a",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Dataset",
+          "Method",
+          "Publication",
+          "Finding"
+        ],
+        "target_types": [
+          "Researcher",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_funded_by",
+        "name": "funded_by",
+        "description": "Experiment, publication, dataset, researcher, or institution is funded by an institution",
+        "icon": "AttachMoney",
+        "color": "#32cc66",
+        "inverse": "funds",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Publication",
+          "Dataset",
+          "Researcher",
+          "Institution",
+          "Method"
+        ],
+        "target_types": [
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_uses_dataset",
+        "name": "uses_dataset",
+        "description": "Experiment, method, model, publication, or researcher uses a specific dataset",
+        "icon": "Storage",
+        "color": "#32cc92",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Method",
+          "Model",
+          "Publication",
+          "Researcher",
+          "Finding"
+        ],
+        "target_types": [
+          "Dataset"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_compared_to",
+        "name": "compared_to",
+        "description": "Finding, method, model, theory, experiment, dataset, or measurement is compared to another comparable entity",
+        "icon": "CompareArrows",
+        "color": "#32ccbd",
+        "symmetric": true,
+        "quality_score": 15,
+        "source_types": [
+          "Finding",
+          "Method",
+          "Model",
+          "Theory",
+          "Hypothesis",
+          "Experiment",
+          "Dataset",
+          "Measurement",
+          "Variable",
+          "Metric",
+          "Compound",
+          "Chemical",
+          "Organism",
+          "Species",
+          "Equation",
+          "Formula",
+          "Instrument"
+        ],
+        "target_types": [
+          "Finding",
+          "Method",
+          "Model",
+          "Theory",
+          "Hypothesis",
+          "Experiment",
+          "Dataset",
+          "Measurement",
+          "Variable",
+          "Metric",
+          "Compound",
+          "Chemical",
+          "Organism",
+          "Species",
+          "Equation",
+          "Formula",
+          "Instrument"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_correlates_with",
+        "name": "correlates_with",
+        "description": "Variable, finding, metric, measurement, compound, chemical, or organism feature correlates with another",
+        "icon": "SyncAlt",
+        "color": "#32aecc",
+        "symmetric": true,
+        "quality_score": 25,
+        "source_types": [
+          "Variable",
+          "Finding",
+          "Metric",
+          "Measurement",
+          "Compound",
+          "Chemical",
+          "Organism",
+          "Species",
+          "Dataset"
+        ],
+        "target_types": [
+          "Variable",
+          "Finding",
+          "Metric",
+          "Measurement",
+          "Compound",
+          "Chemical",
+          "Organism",
+          "Species",
+          "Dataset"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_inspired_by",
+        "name": "inspired_by",
+        "description": "Experiment, theory, model, method, hypothesis, or publication is inspired by prior work or a researcher",
+        "icon": "AutoAwesome",
+        "color": "#3282cc",
+        "quality_score": 15,
+        "source_types": [
+          "Experiment",
+          "Theory",
+          "Model",
+          "Method",
+          "Hypothesis",
+          "Publication",
+          "Researcher",
+          "Finding"
+        ],
+        "target_types": [
+          "Experiment",
+          "Theory",
+          "Model",
+          "Method",
+          "Hypothesis",
+          "Publication",
+          "Researcher",
+          "Finding"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_supervises",
+        "name": "supervises",
+        "description": "Researcher or institution supervises another researcher, experiment, project, or institution",
+        "icon": "School",
+        "color": "#3257cc",
+        "quality_score": 15,
+        "source_types": [
+          "Researcher",
+          "Institution"
+        ],
+        "target_types": [
+          "Researcher",
+          "Experiment",
+          "Institution"
+        ]
+      },
+      {
+        "@type": "EdgeTemplate",
+        "id": "sci_edge_funds",
+        "name": "funds",
+        "description": "Institution funds an experiment, publication, dataset, researcher, method, or institution",
+        "icon": "AttachMoney",
+        "color": "#32cc66",
+        "inverse": "funded_by",
+        "quality_score": 15,
+        "source_types": [
+          "Institution"
+        ],
+        "target_types": [
+          "Experiment",
+          "Publication",
+          "Dataset",
+          "Researcher",
+          "Method",
+          "Institution"
+        ]
+      }
+    ]
+  },
+  "quality_scoring": {
+    "default_entity_score": 18,
+    "default_relationship_score": 15
+  },
+  "examples": {
+    "alias_examples": [
+      {
+        "canonical": "CRISPR-Cas9",
+        "aliases": [
+          "CRISPR",
+          "Cas9 system",
+          "gene editing tool"
+        ],
+        "note": "Abbreviations and common names become aliases"
+      },
+      {
+        "canonical": "Polymerase Chain Reaction",
+        "aliases": [
+          "PCR",
+          "RT-PCR"
+        ],
+        "note": "Acronyms and variants become aliases"
+      }
+    ],
+    "relationship_examples": [
+      {
+        "source": "Experiment A",
+        "target": "Hypothesis 1",
+        "type": "tests",
+        "note": "Use tests for experiment-hypothesis links"
+      },
+      {
+        "source": "Finding X",
+        "target": "Theory Y",
+        "type": "supports",
+        "note": "Use supports when evidence backs a theory"
+      }
+    ]
+  },
+  "title_words": [
+    "mr",
+    "mrs",
+    "ms",
+    "miss",
+    "dr",
+    "sir",
+    "dame",
+    "madam",
+    "the",
+    "of",
+    "de",
+    "von",
+    "van",
+    "professor"
+  ],
+  "extraction_limits": {
+    "max_entity_degree": 20,
+    "max_same_source_type": 8,
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 40
+  },
+  "content_exclusions": {
+    "categories": [
+      "toc",
+      "legal",
+      "boilerplate",
+      "acknowledgments",
+      "metadata",
+      "web_artifacts",
+      "procedural"
+    ]
+  },
+  "extraction_filtering_mode": "strict",
+  "icon": "Science"
+}

@@ -1,0 +1,119 @@
+/**
+ * WorkflowBuilderPage styles
+ * Canvas-specific styling for the workflow editor
+ */
+
+.workflow-builder-container {
+  width: 100%;
+  height: calc(100vh - 64px); /* Account for app bar */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workflow-builder-canvas {
+  flex: 1;
+  width: 100%;
+  position: relative;
+}
+
+/* Custom node styling overrides */
+.react-flow__node {
+  cursor: grab;
+}
+
+.react-flow__node:active {
+  cursor: grabbing;
+}
+
+/* Handle styling */
+.react-flow__handle {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background-color: var(--wf-primary, #1976d2);
+}
+
+.react-flow__handle-top {
+  top: -6px;
+}
+
+.react-flow__handle-bottom {
+  bottom: -6px;
+}
+
+.react-flow__handle-left {
+  left: -6px;
+}
+
+.react-flow__handle-right {
+  right: -6px;
+}
+
+/* Conditional handles (true/false branches) */
+.react-flow__handle.handle-true {
+  background-color: var(--wf-success, #4caf50);
+}
+
+.react-flow__handle.handle-false {
+  background-color: var(--wf-error, #f44336);
+}
+
+/* Edge styling */
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3;
+}
+
+/* MiniMap styling */
+.react-flow__minimap {
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Controls styling */
+.react-flow__controls {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background-color: var(--controls-button-bg, #fff);
+  border: none;
+  border-bottom: 1px solid var(--wf-border, #eee);
+}
+
+.react-flow__controls-button:hover {
+  background-color: var(--controls-button-hover, #f5f5f5);
+}
+
+/* Drop zone indicator */
+.workflow-builder-canvas.drag-over {
+  background-color: rgba(25, 118, 210, 0.05);
+}
+
+/* Selection box */
+.react-flow__selection {
+  background: rgba(25, 118, 210, 0.1);
+  border: 1px dashed var(--wf-primary, #1976d2);
+}
+
+/* Dark mode adjustments - handled via CSS custom properties set by JS */
+.dark-mode .react-flow__minimap {
+  background-color: rgba(30, 30, 30, 0.9);
+}
+
+.dark-mode .react-flow__controls-button {
+  background-color: var(--controls-button-bg, #333);
+  color: var(--wf-text, #fff);
+}
+
+.dark-mode .react-flow__controls-button:hover {
+  background-color: var(--controls-button-hover, #444);
+}
