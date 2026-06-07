@@ -1,0 +1,14 @@
+# Cloudflare Workers (static assets) config for the docs site at
+# https://chaoscypher.com. Cloudflare Workers Builds is connected to the
+# chaoscypherinc/chaoscypher monorepo with root directory `packages/docs`; it
+# runs `npm run build` (docusaurus build -> ./build) then `npx wrangler deploy`,
+# which reads this file. `name` MUST stay "chaoscypher-docs" so the deploy
+# targets the existing Worker that holds the chaoscypher.com custom domain — a
+# different name would create a second Worker with no domain bound.
+name = "chaoscypher-docs"
+compatibility_date = "2026-05-08"
+
+[assets]
+directory = "./build"
+# Docusaurus emits a real 404.html; serve it for unknown paths.
+not_found_handling = "404-page"
