@@ -1,14 +1,27 @@
 name: Publish GHCR Image
 
+# Publishes the all-in-one image to GHCR.
+#
+# Triggers:
+#   - push of a vX.Y.Z tag  -> ALWAYS publishes (the tag is the release act);
+#     the image is tagged with the semver (1.2.3 + 1.2), `latest`, and the sha.
+#   - manual workflow_dispatch -> dry-run by default; set publish=true to push
+#     `latest` + sha (kept as a fallback / for out-of-band rebuilds).
+#
+# Cutting an image release = bump the package versions in the release commit,
+# then `git tag vX.Y.Z && git push origin vX.Y.Z` on this repo.
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       publish:
-        description: "Push the built image to GHCR. Leave false for dry-run builds."
+        description: "Push the built image to GHCR. Leave false for dry-run builds. (vX.Y.Z tag pushes always publish.)"
         type: boolean
         default: false
       extra_tag:
-        description: "Optional extra tag to publish, such as alpha or v0.1.0."
+        description: "Optional extra tag to publish, such as alpha or edge."
         type: string
         required: false
         default: ""
@@ -23,6 +36,8 @@ concurrency:
 
 env:
   IMAGE_NAME: ghcr.io/chaoscypherinc/chaoscypher
+  # A vX.Y.Z tag push always publishes; a manual run honors the publish input.
+  PUBLISH: ${{ github.ref_type == 'tag' || inputs.publish }}
 
 jobs:
   build:
@@ -37,7 +52,7 @@ jobs:
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GHCR
-        if: inputs.publish
+        if: env.PUBLISH == 'true'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
@@ -49,8 +64,12 @@ jobs:
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
-            type=raw,value=latest
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ env.PUBLISH == 'true' }}
             type=sha,prefix=sha-
             type=raw,value=${{ inputs.extra_tag }},enable=${{ inputs.extra_tag != '' }}
 
@@ -60,7 +79,7 @@ jobs:
           context: .
           file: packages/docker/Dockerfile
           platforms: linux/amd64
-          push: ${{ inputs.publish }}
+          push: ${{ env.PUBLISH == 'true' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
@@ -68,9 +87,9 @@ jobs:
 
       - name: Publish status
         run: |
-          if [ "${{ inputs.publish }}" = "true" ]; then
+          if [ "${{ env.PUBLISH }}" = "true" ]; then
             echo "Published image tags:" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Dry-run build completed. Re-run with publish=true to push:" >> "$GITHUB_STEP_SUMMARY"
+            echo "Dry-run build completed. Push a vX.Y.Z tag (or re-run with publish=true) to publish:" >> "$GITHUB_STEP_SUMMARY"
           fi
           echo '${{ steps.meta.outputs.tags }}' >> "$GITHUB_STEP_SUMMARY"
