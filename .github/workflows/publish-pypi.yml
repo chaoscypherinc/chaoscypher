@@ -1,9 +1,12 @@
 # Publishes the four Python packages (core, cortex, neuron, cli) to PyPI.
 #
-# Trigger is workflow_dispatch ONLY (repo rule: no auto-enabled workflows) —
-# publishing is an explicit operator action. The default target is TestPyPI so
-# the rehearsal run is the path of least resistance; re-run with target=pypi
-# for the real publish.
+# Triggers:
+#   - a published GitHub Release -> publishes all four to REAL PyPI at the
+#     release version. A guard first verifies the tag matches the package
+#     versions. This is the same Release that publishes the GHCR image, so
+#     `pip install chaoscypher-core==X.Y.Z` matches `ghcr.io/...:X.Y.Z`.
+#   - manual workflow_dispatch -> defaults to TestPyPI for a rehearsal run;
+#     set target=pypi for an out-of-band real publish.
 #
 # Auth is PyPI Trusted Publishing (OIDC) — no long-lived API tokens. One-time
 # setup per index (pypi.org and test.pypi.org), BEFORE the first run:
@@ -26,10 +29,12 @@
 name: Publish to PyPI
 
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       target:
-        description: "Index to publish to. Use testpypi for a rehearsal run."
+        description: "Index to publish to. Use testpypi for a rehearsal run. (A published Release always targets pypi.)"
         type: choice
         options:
           - testpypi
@@ -52,6 +57,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Verify tag matches package versions
+        if: github.event_name == 'release'
+        run: python3 scripts/check_release_version.py "${{ github.ref_name }}"
+
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
 
@@ -73,7 +82,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish ${{ matrix.package }} to ${{ inputs.target }}
+    name: Publish ${{ matrix.package }} to ${{ inputs.target || 'pypi' }}
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -91,8 +100,9 @@ jobs:
           - package: chaoscypher-cli
             short: cli
     # One environment per package — must match each PyPI pending publisher's
-    # registered environment exactly (see header note on uniqueness).
-    environment: ${{ inputs.target }}-${{ matrix.short }}
+    # registered environment exactly (see header note on uniqueness). A
+    # published Release has no `target` input, so it resolves to `pypi`.
+    environment: ${{ inputs.target || 'pypi' }}-${{ matrix.short }}
     permissions:
       # Required for PyPI Trusted Publishing (OIDC token exchange).
       id-token: write
@@ -110,7 +120,7 @@ jobs:
         run: |
           # sdist/wheel filenames use the underscored project name.
           files="dist/$(echo '${{ matrix.package }}' | tr '-' '_')-"*
-          if [ "${{ inputs.target }}" = "testpypi" ]; then
+          if [ "${{ inputs.target || 'pypi' }}" = "testpypi" ]; then
             uv publish --trusted-publishing always \
               --publish-url https://test.pypi.org/legacy/ \
               --check-url https://test.pypi.org/simple/ \
@@ -123,5 +133,5 @@ jobs:
 
       - name: Publish status
         run: |
-          echo "Published ${{ matrix.package }} to ${{ inputs.target }}:" >> "$GITHUB_STEP_SUMMARY"
+          echo "Published ${{ matrix.package }} to ${{ inputs.target || 'pypi' }}:" >> "$GITHUB_STEP_SUMMARY"
           ls dist/$(echo '${{ matrix.package }}' | tr '-' '_')-* >> "$GITHUB_STEP_SUMMARY"

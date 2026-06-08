@@ -542,7 +542,7 @@ function GetStarted() {
             and explore the graph
           </p>
           <CodeBlock language="bash">
-            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
+            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -p 443:443 \\\n  -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
           </CodeBlock>
           <ul>
             <li>Web UI with graph canvas</li>

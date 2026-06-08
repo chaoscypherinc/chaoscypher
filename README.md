@@ -49,10 +49,11 @@ Container Registry:
 ```bash
 docker run -d --name chaoscypher \
   -p 80:80 \
+  -p 443:443 \
   -v chaoscypher-data:/data \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 
-# Then open http://localhost
+# Then open http://localhost  (443 is published so HTTPS works if you enable TLS)
 ```
 
 Prefer Compose? Save this as `docker-compose.yml` and run `docker compose up -d`:

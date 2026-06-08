@@ -33,9 +33,13 @@ Container Registry:
 ```bash
 docker run -d --name chaoscypher \
   -p 80:80 \
+  -p 443:443 \
   -v chaoscypher-data:/data \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
+
+Port `443` is published so HTTPS keeps working if you later enable TLS under
+**Settings → General → TLS / HTTPS**; until then only `80` is served.
 
 Prefer Compose? Save this as `docker-compose.yml` and run `docker compose up -d`:
 

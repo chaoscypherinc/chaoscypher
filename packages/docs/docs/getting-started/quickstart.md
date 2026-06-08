@@ -26,6 +26,7 @@ Start the all-in-one container from the published image:
 ```bash
 docker run -d --name chaoscypher \
   -p 80:80 \
+  -p 443:443 \
   -v chaoscypher-data:/data \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
