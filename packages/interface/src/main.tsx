@@ -7,6 +7,7 @@ import '@fontsource/exo-2/300.css'
 import '@fontsource/exo-2/400.css'
 import '@fontsource/exo-2/500.css'
 import '@fontsource/exo-2/600.css'
+import './scrollbars.css'
 import App from './App'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

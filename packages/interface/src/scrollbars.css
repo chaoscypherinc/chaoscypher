@@ -1,0 +1,55 @@
+/* Copyright (C) 2024-2026 Chaos Cypher, Inc.
+   SPDX-License-Identifier: AGPL-3.0-only */
+
+/*
+ * Brand scrollbars.
+ *
+ * Shipped as a plain, Vite-bundled stylesheet rather than a MUI
+ * `MuiCssBaseline` override or Emotion `<GlobalStyles>`. In a production
+ * build Emotion runs in "speedy" mode and injects rules via
+ * `CSSStyleSheet.insertRule()`, which rejects bare `::-webkit-scrollbar`
+ * pseudo-element selectors — so those global rules silently never land
+ * (they only appear to work under the dev server's lenient textContent
+ * parser). A real stylesheet is parsed leniently by the browser, so the
+ * scrollbar styling survives the production build. This mirrors the docs
+ * site's gradient scrollbar (packages/docs/src/css/custom.css).
+ */
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 77, 255, 0.5) transparent;
+}
+
+/* WebKit / Chromium */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(255, 0, 128, 0.4),
+    rgba(124, 77, 255, 0.4),
+    rgba(0, 229, 255, 0.4)
+  );
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    #ff0080,
+    #7c4dff,
+    #00e5ff
+  );
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}

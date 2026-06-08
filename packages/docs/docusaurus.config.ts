@@ -133,38 +133,40 @@ const config: Config = {
         },
         {
           type: "docSidebar",
-          sidebarId: "reference",
-          label: "Reference",
-          position: "left",
-        },
-        {
-          type: "docSidebar",
-          sidebarId: "architecture",
-          label: "Architecture",
-          position: "left",
-        },
-        {
-          type: "docSidebar",
-          sidebarId: "about",
-          label: "About",
-          position: "left",
-        },
-        {
-          type: "docSidebar",
           sidebarId: "lexiconHub",
           label: "Lexicon Hub",
           position: "left",
           title: "Lexicon Hub",
         },
         {
-          href: "https://github.com/chaoscypherinc/chaoscypher/discussions",
-          label: "Discussions",
-          position: "right",
-        },
-        {
-          href: "https://github.com/chaoscypherinc/chaoscypher/issues",
-          label: "Issues",
-          position: "right",
+          type: "dropdown",
+          label: "Resources",
+          position: "left",
+          items: [
+            {
+              type: "docSidebar",
+              sidebarId: "reference",
+              label: "Reference",
+            },
+            {
+              type: "docSidebar",
+              sidebarId: "architecture",
+              label: "Architecture",
+            },
+            {
+              type: "docSidebar",
+              sidebarId: "about",
+              label: "About",
+            },
+            {
+              href: "https://github.com/chaoscypherinc/chaoscypher/discussions",
+              label: "Discussions",
+            },
+            {
+              href: "https://github.com/chaoscypherinc/chaoscypher/issues",
+              label: "Issues",
+            },
+          ],
         },
         {
           href: "https://github.com/chaoscypherinc/chaoscypher",

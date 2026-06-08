@@ -1,3 +1,4 @@
+import { Fragment, useState, useEffect, useRef, useCallback } from "react";
 import Layout from "@theme/Layout";
 import Link from "@docusaurus/Link";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
@@ -13,93 +14,316 @@ function ArrowRight() {
 /*  Section: Feature grids                                             */
 /* ------------------------------------------------------------------ */
 
-interface FeatureCardProps {
+interface Feature {
   title: string;
   description: string;
   linkTo: string;
   hero?: boolean;
-  children?: React.ReactNode;
+  image?: string; // resized card backdrop; omit -> plain branded card
+  full?: string; // full-res screenshot shown in the lightbox
+  focus?: string; // CSS background-position (focal point)
+  zoom?: string; // CSS background-size (zoom level)
+  caption?: string; // short line under the enlarged image
+  alt?: string; // accessible description of the screenshot
 }
 
-function FeatureCard({
-  title,
-  description,
-  linkTo,
-  hero,
-  children,
-}: FeatureCardProps) {
+const SHOT = "/img/screenshots";
+
+const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
+  {
+    label: "Core Intelligence",
+    items: [
+      {
+        title: "GraphRAG Search",
+        description:
+          "Find answers that span multiple documents. Fuses knowledge graph traversal with vector search using Personalized PageRank and Reciprocal Rank Fusion — plus keyword, semantic, and hybrid search modes.",
+        linkTo: "/docs/user-guide/search",
+        hero: true,
+        image: `${SHOT}/search-results-card.jpg`,
+        full: `${SHOT}/search-results.png`,
+        focus: "50% 16%",
+        zoom: "160%",
+        caption: "Entity results ranked across your whole corpus",
+        alt: "Omnibar search results listing matching entities and their connection counts",
+      },
+      {
+        title: "Knowledge Graph",
+        description:
+          "Extract entities and relationships from your documents. Explore connections through an interactive graph canvas with search, filtering, and templates.",
+        linkTo: "/docs/user-guide/knowledge-graph",
+        image: `${SHOT}/graph-visualization-card.jpg`,
+        full: `${SHOT}/graph-visualization.png`,
+        focus: "50% 50%",
+        zoom: "125%",
+        caption: "An interactive, explorable knowledge graph",
+        alt: "Interactive knowledge graph with colored entity nodes and relationship edges",
+      },
+      {
+        title: "AI Chat with RAG",
+        description:
+          "Ask questions about your documents with retrieval-augmented generation. Get cited answers grounded in your actual content, scoped to specific sources or the full database.",
+        linkTo: "/docs/user-guide/chat",
+        image: `${SHOT}/chat-conversation-card.jpg`,
+        full: `${SHOT}/chat-conversation.png`,
+        focus: "30% 20%",
+        zoom: "165%",
+        caption: "Cited answers grounded in your actual content",
+        alt: "AI chat response citing quotes from the source documents",
+      },
+    ],
+  },
+  {
+    label: "Data Foundation",
+    items: [
+      {
+        title: "Quality Analysis",
+        description:
+          "Score the richness and completeness of your knowledge graph on a 0-100 scale. Detailed breakdowns by entity quality, relationship density, connectivity, and coverage — identify weak sources and guide improvement.",
+        linkTo: "/docs/user-guide/quality",
+        image: `${SHOT}/quality-detail-breakdown-card.jpg`,
+        full: `${SHOT}/quality-detail-breakdown.png`,
+        focus: "50% 22%",
+        zoom: "150%",
+        caption: "Quality scored 0-100 with per-dimension breakdowns",
+        alt: "Quality analysis panel with a 0-100 score and per-dimension breakdown bars",
+      },
+      {
+        title: "Document Processing",
+        description:
+          "Upload PDFs, Word documents, web pages, and more. Automatic chunking, embedding, and RAG-ready indexing in seconds.",
+        linkTo: "/docs/user-guide/sources",
+        image: `${SHOT}/source-extraction-entities-card.jpg`,
+        full: `${SHOT}/source-extraction-entities.png`,
+        focus: "50% 25%",
+        zoom: "150%",
+        caption: "Entities extracted from an imported document",
+        alt: "Source detail view showing entities extracted from a document",
+      },
+      {
+        title: "Multi-LLM Support",
+        description:
+          "Connect to Ollama, OpenAI, Anthropic, or Gemini. Run fully local with Ollama or use cloud providers — switch between them with a single config change. Embeddings run locally on the CPU with no API keys needed.",
+        linkTo: "/docs/getting-started/configuration",
+        image: `${SHOT}/settings-llm-provider-card.jpg`,
+        full: `${SHOT}/settings-llm-provider.png`,
+        focus: "50% 30%",
+        zoom: "150%",
+        caption: "Local or cloud providers, switched in one place",
+        alt: "LLM provider settings with provider and model selectors",
+      },
+    ],
+  },
+  {
+    label: "Automation & Integration",
+    items: [
+      {
+        title: "Automations",
+        description:
+          "Build multi-step workflows with triggers, conditional logic, and a visual workflow builder. Execute automated knowledge extraction pipelines.",
+        linkTo: "/docs/user-guide/automations",
+        image: `${SHOT}/workflow-editor-card.jpg`,
+        full: `${SHOT}/workflow-editor.png`,
+        focus: "50% 45%",
+        zoom: "140%",
+        caption: "A visual builder for multi-step workflows",
+        alt: "Visual workflow editor canvas with connected steps",
+      },
+      {
+        title: "MCP Server",
+        description:
+          "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 31 tools for search, traversal, and graph building.",
+        linkTo: "/docs/user-guide/mcp",
+        // No in-app screenshot — MCP is configured in external clients. Plain branded card.
+      },
+      {
+        title: "Plugin System",
+        description:
+          "Extend Chaos Cypher with custom document loaders, extraction domains, and workflow tools. Drop a Python file into the plugins directory — no registration needed.",
+        linkTo: "/docs/user-guide/domains",
+        image: `${SHOT}/templates-list-card.jpg`,
+        full: `${SHOT}/templates-list.png`,
+        focus: "50% 18%",
+        zoom: "150%",
+        caption: "Templates and domains define your graph's schema",
+        alt: "Templates list showing node and edge types that define the graph schema",
+      },
+    ],
+  },
+];
+
+const ALL_FEATURES = FEATURE_GROUPS.flatMap((g) => g.items);
+const SHOTS = ALL_FEATURES.filter((f) => f.image);
+
+function ShotCard({
+  feature,
+  onOpen,
+}: {
+  feature: Feature;
+  onOpen: (shotIndex: number, trigger: HTMLElement) => void;
+}) {
+  const shotIndex = SHOTS.indexOf(feature);
+  const hasShot = Boolean(feature.image) && shotIndex >= 0;
   return (
-    <div className={`feature-card${hero ? " feature-hero" : ""}`}>
-      <h3>{title}</h3>
-      <p>{description}</p>
-      {children}
-      <Link to={linkTo}>
-        <ArrowRight />
-      </Link>
+    <div
+      className={`shot-card${feature.hero ? " shot-card--hero" : ""}${
+        hasShot ? "" : " shot-card--plain"
+      }`}
+    >
+      {hasShot && (
+        <>
+          <div
+            className="shot-card-bg"
+            style={{
+              backgroundImage: `url('${feature.image}')`,
+              backgroundSize: feature.zoom,
+              backgroundPosition: feature.focus,
+            }}
+          />
+          <div className="shot-card-scrim" />
+          {/* Mouse convenience: clicking the card opens the gallery.
+              Hidden from keyboard/AT — the labeled expand button is the trigger. */}
+          <button
+            type="button"
+            className="shot-card-hit"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={(e) => onOpen(shotIndex, e.currentTarget)}
+          />
+          <button
+            type="button"
+            className="shot-card-expand"
+            aria-label={`Enlarge the ${feature.title} screenshot`}
+            onClick={(e) => onOpen(shotIndex, e.currentTarget)}
+          >
+            <span aria-hidden="true">&#11138;</span>
+          </button>
+        </>
+      )}
+      <div className="shot-card-body">
+        <h3>{feature.title}</h3>
+        <p>{feature.description}</p>
+        <Link className="shot-card-link" to={feature.linkTo}>
+          Learn more
+          <ArrowRight />
+        </Link>
+      </div>
     </div>
   );
 }
 
-function FeatureGrids() {
+function FeatureGallery({
+  index,
+  onClose,
+  onNavigate,
+}: {
+  index: number;
+  onClose: () => void;
+  onNavigate: (next: number) => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const feature = SHOTS[index];
+  const go = useCallback(
+    (delta: number) => onNavigate((index + delta + SHOTS.length) % SHOTS.length),
+    [index, onNavigate],
+  );
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight") go(1);
+      else if (e.key === "ArrowLeft") go(-1);
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [go, onClose]);
+
+  return (
+    <div
+      className="fg-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${feature.title} — enlarged screenshot`}
+      onClick={onClose}
+    >
+      <button
+        ref={closeRef}
+        type="button"
+        className="fg-close"
+        aria-label="Close"
+        onClick={onClose}
+      >
+        &#10005;
+      </button>
+      <button
+        type="button"
+        className="fg-arrow fg-prev"
+        aria-label="Previous feature"
+        onClick={(e) => {
+          e.stopPropagation();
+          go(-1);
+        }}
+      >
+        &#8249;
+      </button>
+      <button
+        type="button"
+        className="fg-arrow fg-next"
+        aria-label="Next feature"
+        onClick={(e) => {
+          e.stopPropagation();
+          go(1);
+        }}
+      >
+        &#8250;
+      </button>
+      <div className="fg-stage" onClick={(e) => e.stopPropagation()}>
+        <div className="fg-frame">
+          <img className="fg-img" src={feature.full} alt={feature.alt} />
+        </div>
+        <div className="fg-cap">
+          <h3>{feature.title}</h3>
+          <p>{feature.caption}</p>
+        </div>
+        <div className="fg-dots">
+          {SHOTS.map((s, i) => (
+            <button
+              key={s.title}
+              type="button"
+              className={`fg-dot${i === index ? " on" : ""}`}
+              aria-label={`Show ${s.title}`}
+              aria-current={i === index}
+              onClick={() => onNavigate(i)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FeatureGrids({
+  onOpen,
+}: {
+  onOpen: (shotIndex: number, trigger: HTMLElement) => void;
+}) {
   return (
     <section>
-      <p className="feature-row-label">Core Intelligence</p>
-      <div className="feature-grid">
-        <FeatureCard
-          title="GraphRAG Search"
-          description="Find answers that span multiple documents. Fuses knowledge graph traversal with vector search using Personalized PageRank and Reciprocal Rank Fusion — plus keyword, semantic, and hybrid search modes."
-          linkTo="/docs/user-guide/search"
-          hero
-        />
-        <FeatureCard
-          title="Knowledge Graph"
-          description="Extract entities and relationships from your documents. Explore connections through an interactive graph canvas with search, filtering, and templates."
-          linkTo="/docs/user-guide/knowledge-graph"
-        />
-        <FeatureCard
-          title="AI Chat with RAG"
-          description="Ask questions about your documents with retrieval-augmented generation. Get cited answers grounded in your actual content, scoped to specific sources or the full database."
-          linkTo="/docs/user-guide/chat"
-        />
-      </div>
-
-      <p className="feature-row-label">Data Foundation</p>
-      <div className="feature-grid">
-        <FeatureCard
-          title="Quality Analysis"
-          description="Score the richness and completeness of your knowledge graph on a 0-100 scale. Detailed breakdowns by entity quality, relationship density, connectivity, and coverage — identify weak sources and guide improvement."
-          linkTo="/docs/user-guide/quality"
-        />
-        <FeatureCard
-          title="Document Processing"
-          description="Upload PDFs, Word documents, web pages, and more. Automatic chunking, embedding, and RAG-ready indexing in seconds."
-          linkTo="/docs/user-guide/sources"
-        />
-        <FeatureCard
-          title="Multi-LLM Support"
-          description="Connect to Ollama, OpenAI, Anthropic, or Gemini. Run fully local with Ollama or use cloud providers — switch between them with a single config change. Embeddings run locally on the CPU with no API keys needed."
-          linkTo="/docs/getting-started/configuration"
-        />
-      </div>
-
-      <p className="feature-row-label">Automation &amp; Integration</p>
-      <div className="feature-grid">
-        <FeatureCard
-          title="Automations"
-          description="Build multi-step workflows with triggers, conditional logic, and a visual workflow builder. Execute automated knowledge extraction pipelines."
-          linkTo="/docs/user-guide/automations"
-        />
-        <FeatureCard
-          title="MCP Server"
-          description="Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 31 tools for search, traversal, and graph building."
-          linkTo="/docs/user-guide/mcp"
-        />
-        <FeatureCard
-          title="Plugin System"
-          description="Extend Chaos Cypher with custom document loaders, extraction domains, and workflow tools. Drop a Python file into the plugins directory — no registration needed."
-          linkTo="/docs/user-guide/domains"
-        />
-      </div>
+      {FEATURE_GROUPS.map((group) => (
+        <Fragment key={group.label}>
+          <p className="feature-row-label">{group.label}</p>
+          <div className="feature-grid">
+            {group.items.map((feature) => (
+              <ShotCard key={feature.title} feature={feature} onOpen={onOpen} />
+            ))}
+          </div>
+        </Fragment>
+      ))}
     </section>
   );
 }
@@ -314,11 +538,11 @@ function GetStarted() {
         <div className="pathway-card">
           <h3>Docker</h3>
           <p className="pathway-audience">
-            Full web UI — build locally for alpha, then upload, search, chat,
+            Full web UI — pull the published image, then upload, search, chat,
             and explore the graph
           </p>
           <CodeBlock language="bash">
-            {`git clone https://github.com/chaoscypherinc/chaoscypher.git\ncd chaoscypher\nmake docker-up`}
+            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
           </CodeBlock>
           <ul>
             <li>Web UI with graph canvas</li>
@@ -339,7 +563,7 @@ function GetStarted() {
             shell
           </p>
           <CodeBlock language="bash">
-            {`pip install chaoscypher-cli\nchaoscypher setup\nchaoscypher source add paper.pdf`}
+            {`pipx install chaoscypher-cli\nchaoscypher setup\nchaoscypher source add paper.pdf`}
           </CodeBlock>
           <ul>
             <li>Setup wizard for LLM config</li>
@@ -463,6 +687,17 @@ export default function Home(): JSX.Element {
   ).discussionsUrl;
   const lexiconUrl = (siteConfig.customFields?.lexicon as { url: string }).url;
 
+  const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
+  const triggerRef = useRef<HTMLElement | null>(null);
+  const openGallery = useCallback((shotIndex: number, trigger: HTMLElement) => {
+    triggerRef.current = trigger;
+    setGalleryIndex(shotIndex);
+  }, []);
+  const closeGallery = useCallback(() => {
+    setGalleryIndex(null);
+    triggerRef.current?.focus();
+  }, []);
+
   return (
     <Layout
       title="Home"
@@ -470,7 +705,7 @@ export default function Home(): JSX.Element {
     >
       <GraphHero discussionsUrl={discussionsUrl} />
       <main className="container margin-vert--lg">
-        <FeatureGrids />
+        <FeatureGrids onOpen={openGallery} />
         <hr />
         <LexiconHub lexiconUrl={lexiconUrl} />
         <hr />
@@ -482,6 +717,13 @@ export default function Home(): JSX.Element {
         <hr />
         <FinalCTA discussionsUrl={discussionsUrl} />
       </main>
+      {galleryIndex !== null && (
+        <FeatureGallery
+          index={galleryIndex}
+          onClose={closeGallery}
+          onNavigate={setGalleryIndex}
+        />
+      )}
     </Layout>
   );
 }

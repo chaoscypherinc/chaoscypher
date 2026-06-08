@@ -198,6 +198,15 @@ html[data-theme="dark"] .navbar__title {
   font-weight: 700;
 }
 
+/* Keep navbar labels on a single line. With this many top-level items the
+   default `white-space: normal` lets long labels (User Guide, Developer Guide,
+   Lexicon Hub) wrap to two lines and collide when the navbar gets squeezed. */
+.navbar__link,
+.navbar__item,
+.navbar__title {
+  white-space: nowrap;
+}
+
 /* ---- Footer with synthwave perspective grid ---- */
 
 html[data-theme="dark"] .footer {
@@ -890,6 +899,287 @@ html[data-theme="dark"] .feature-card.feature-hero:hover {
 
 .feature-card h3 {
   margin-top: 0.5rem;
+}
+
+/* ---- Feature screenshot cards (homepage) ---- */
+
+.shot-card {
+  position: relative;
+  min-height: 250px;
+  border-radius: var(--cc-radius-lg);
+  overflow: hidden;
+  background: #12121e;
+  border: 1px solid rgba(99, 32, 208, 0.25);
+  transition: transform var(--cc-transition-normal),
+    box-shadow var(--cc-transition-normal),
+    border-color var(--cc-transition-normal);
+}
+
+.shot-card:hover {
+  transform: translateY(-4px);
+  border-color: transparent;
+  box-shadow: 0 0 18px var(--cc-glow-magenta), 0 0 18px var(--cc-glow-cyan),
+    0 0 18px var(--cc-glow-purple);
+}
+
+.shot-card-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-repeat: no-repeat;
+  transition: transform 0.4s ease;
+}
+
+.shot-card:hover .shot-card-bg {
+  transform: scale(1.06);
+}
+
+.shot-card-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: linear-gradient(
+    to top,
+    rgba(6, 6, 12, 0.97) 30%,
+    rgba(6, 6, 12, 0.55) 66%,
+    rgba(6, 6, 12, 0.28)
+  );
+}
+
+/* Full-card click target (mouse only — keyboard uses the expand button) */
+.shot-card-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: zoom-in;
+}
+
+.shot-card-expand {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 4;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: rgba(10, 10, 20, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e0e0f0;
+  font-size: 14px;
+  cursor: zoom-in;
+  opacity: 0.72;
+  transition: opacity var(--cc-transition-normal),
+    background var(--cc-transition-normal);
+}
+
+.shot-card:hover .shot-card-expand {
+  opacity: 1;
+  background: rgba(10, 10, 20, 0.85);
+}
+
+.shot-card-body {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 1.1rem 1.2rem;
+  pointer-events: none;
+}
+
+.shot-card-body h3 {
+  color: #fff;
+  margin: 0 0 0.4rem;
+}
+
+.shot-card-body p {
+  color: #d0d0e8;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.shot-card-link {
+  pointer-events: auto;
+  align-self: flex-start;
+  margin-top: 0.7rem;
+  color: var(--cc-accent-cyan);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.shot-card-link:hover {
+  text-decoration: none;
+  color: #00b3ee;
+}
+
+/* Hero card — a touch more presence */
+.shot-card--hero {
+  border-color: rgba(196, 23, 122, 0.4);
+}
+
+/* Plain branded card — no screenshot (e.g. MCP Server) */
+.shot-card--plain {
+  background: radial-gradient(
+      ellipse at 70% -10%,
+      rgba(99, 32, 208, 0.22),
+      rgba(18, 18, 30, 0) 60%
+    ),
+    #12121e;
+}
+
+.shot-card--plain .shot-card-body {
+  justify-content: center;
+}
+
+/* ---- Feature gallery lightbox ---- */
+
+.fg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 6vw;
+  background: rgba(6, 6, 12, 0.88);
+  backdrop-filter: blur(6px);
+  animation: fg-fade 0.15s ease;
+}
+
+@keyframes fg-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.fg-stage {
+  width: 100%;
+  max-width: 1100px;
+}
+
+.fg-frame {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.7);
+}
+
+.fg-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.fg-cap {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+.fg-cap h3 {
+  color: #fff;
+  margin: 0 0 0.2rem;
+  font-size: 1.2rem;
+}
+
+.fg-cap p {
+  color: #9090b0;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.fg-close {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 1002;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: rgba(10, 10, 20, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e0e0f0;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.fg-arrow {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1002;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(10, 10, 20, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #e0e0f0;
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.fg-prev {
+  left: 18px;
+}
+
+.fg-next {
+  right: 18px;
+}
+
+.fg-close:hover,
+.fg-arrow:hover {
+  background: rgba(30, 30, 50, 0.9);
+}
+
+.fg-dots {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 1rem;
+}
+
+.fg-dot {
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: #33334a;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fg-dot.on {
+  width: 22px;
+  border-radius: 4px;
+  background: var(--cc-accent-cyan);
+}
+
+@media (max-width: 700px) {
+  .fg-arrow {
+    width: 38px;
+    height: 38px;
+    font-size: 20px;
+  }
+  .fg-prev {
+    left: 6px;
+  }
+  .fg-next {
+    right: 6px;
+  }
 }
 
 /* ---- Integration badges ---- */
