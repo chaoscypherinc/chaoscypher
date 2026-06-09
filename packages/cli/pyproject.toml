@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "Command-line tools for Chaos Cypher knowledge graph library"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -74,6 +74,7 @@ where = ["src"]
     "data/datasets/*/queries.yaml",
     "data/datasets/*/*.txt",
     "data/config/*.yaml",
+    "data/models_registry.yaml",
 ]
 
 # Linting configuration - inherits from root ruff.toml

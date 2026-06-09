@@ -202,6 +202,54 @@ def test_empty_extractors_list_rejected(tmp_path):
         load_config("empty_ext", builtin_root=tmp_path / "_none", user_root=cfg_dir)
 
 
+def test_config_parses_defaults_and_weights(tmp_path):
+    from chaoscypher_cli.benchmark.config import load_config
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "t.yaml").write_text(
+        "name: t\n"
+        "datasets: [d]\n"
+        "extractors: [{provider: ollama, model: e, label: E}]\n"
+        "embedders: [{provider: ollama, model: emb, label: Emb}]\n"
+        "chats: [{provider: ollama, model: c, label: C}]\n"
+        "judge: {provider: ollama, model: j, label: J}\n"
+        "defaults:\n"
+        "  embedder: ollama/emb\n"
+        "  chat: ollama/c\n"
+        "weights:\n"
+        "  extraction: 0.5\n"
+        "  retrieval: 0.2\n"
+        "  chat: 0.2\n"
+        "  speed: 0.05\n"
+        "  cost: 0.05\n",
+        encoding="utf-8",
+    )
+    cfg = load_config("t", builtin_root=tmp_path / "_none", user_root=cfg_dir)
+    assert cfg.default_embedder == "ollama/emb"
+    assert cfg.default_chat == "ollama/c"
+    assert cfg.weights is not None
+    assert cfg.weights.extraction == 0.5
+    assert cfg.weights.retrieval == 0.2
+    assert cfg.weights.speed == 0.05
+    assert cfg.weights.cost == 0.05
+
+
+def test_config_without_defaults_or_weights_has_none(tmp_path):
+    from chaoscypher_cli.benchmark.config import load_config
+
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir()
+    (cfg_dir / "plain.yaml").write_text(
+        "name: plain\ndatasets: [d]\nextractors: [{provider: ollama, model: e, label: E}]\n",
+        encoding="utf-8",
+    )
+    cfg = load_config("plain", builtin_root=tmp_path / "_none", user_root=cfg_dir)
+    assert cfg.default_embedder is None
+    assert cfg.default_chat is None
+    assert cfg.weights is None
+
+
 def test_full_config_loads(tmp_path):
     from chaoscypher_cli.benchmark.config import load_config
 

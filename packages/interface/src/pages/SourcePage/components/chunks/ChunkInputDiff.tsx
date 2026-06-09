@@ -14,7 +14,10 @@ export function ChunkInputDiff({ cleaned, raw }: ChunkInputDiffProps) {
   // of the character-level shredding diffChars produced. `WithSpace` keeps exact
   // whitespace/newlines, which matters in this monospace pre-wrap block.
   // Arg order diffWordsWithSpace(raw, cleaned): removed = in raw only (cleanup removals).
-  const parts = diffWordsWithSpace(raw, cleaned);
+  // CRLF sources keep \r\n in raw_content while the cleaner emits \n —
+  // normalize before diffing so invisible line-ending differences don't
+  // paint a red strike artifact at every line break.
+  const parts = diffWordsWithSpace(raw.replace(/\r\n?/g, '\n'), cleaned);
   return (
     <Box
       sx={{

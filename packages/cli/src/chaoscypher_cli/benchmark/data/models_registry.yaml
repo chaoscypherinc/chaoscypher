@@ -1,0 +1,235 @@
+# ChaosCypher benchmark model registry — single source of truth for model
+# metadata and pricing. Keyed by "<provider>/<model>". Prices are USD per 1M
+# tokens; update price_dated when a price changes so cost provenance is kept.
+# Local (open-weight) models cost $0 and may omit the price block.
+
+# ---------------------------------------------------------------------------
+# Anthropic
+# ---------------------------------------------------------------------------
+
+anthropic/claude-opus-4-8:
+  provider: anthropic
+  model: claude-opus-4-8
+  label: "Claude Opus 4.8"
+  tier: frontier
+  released: "2026-01"
+  context: 1000000
+  open_weight: false
+  license: proprietary
+  price: { input: 5.00, output: 25.00 }
+  price_dated: "2026-06-08"
+  why: "Frontier reasoning baseline; most capable Anthropic model."
+
+anthropic/claude-sonnet-4-6:
+  provider: anthropic
+  model: claude-sonnet-4-6
+  label: "Claude Sonnet 4.6"
+  tier: mid
+  released: "2025-11"
+  context: 1000000
+  open_weight: false
+  license: proprietary
+  price: { input: 3.00, output: 15.00 }
+  price_dated: "2026-06-08"
+  why: "Best speed/intelligence balance from Anthropic."
+
+anthropic/claude-haiku-4-5:
+  provider: anthropic
+  model: claude-haiku-4-5
+  label: "Claude Haiku 4.5"
+  tier: small
+  released: "2025-10"
+  context: 200000
+  open_weight: false
+  license: proprietary
+  price: { input: 1.00, output: 5.00 }
+  price_dated: "2026-06-08"
+  why: "Fastest, cheapest Anthropic tier."
+
+# ---------------------------------------------------------------------------
+# OpenAI
+# ---------------------------------------------------------------------------
+
+openai/gpt-4o:
+  provider: openai
+  model: gpt-4o
+  label: "GPT-4o"
+  tier: frontier
+  released: "2024-05"
+  context: 128000
+  open_weight: false
+  license: proprietary
+  price: { input: 2.50, output: 10.00 }
+  price_dated: "2026-06-08"
+  why: "OpenAI frontier baseline."
+
+openai/gpt-4o-mini:
+  provider: openai
+  model: gpt-4o-mini
+  label: "GPT-4o Mini"
+  tier: small
+  released: "2024-07"
+  context: 128000
+  open_weight: false
+  license: proprietary
+  price: { input: 0.15, output: 0.60 }
+  price_dated: "2026-06-08"
+  why: "Cheap OpenAI tier for high-volume extraction."
+
+# ---------------------------------------------------------------------------
+# Google Gemini
+# NOTE: Confirm model ids and pricing against current Google Gemini docs
+# before publishing results; these entries were last verified 2026-06-08.
+# ---------------------------------------------------------------------------
+
+gemini/gemini-2.5-pro:
+  provider: gemini
+  model: gemini-2.5-pro
+  label: "Gemini 2.5 Pro"
+  tier: frontier
+  released: "2025-03"
+  context: 1000000
+  open_weight: false
+  license: proprietary
+  price: { input: 1.25, output: 10.00 }
+  price_dated: "2026-06-08"
+  notes: "Confirm model id + pricing against current Google Gemini docs before publishing."
+  why: "Google frontier baseline; 1M context matches Anthropic/OpenAI frontier tier."
+
+gemini/gemini-2.5-flash:
+  provider: gemini
+  model: gemini-2.5-flash
+  label: "Gemini 2.5 Flash"
+  tier: mid
+  released: "2025-05"
+  context: 1000000
+  open_weight: false
+  license: proprietary
+  price: { input: 0.15, output: 0.60 }
+  price_dated: "2026-06-08"
+  notes: "Confirm model id + pricing against current Google Gemini docs before publishing."
+  why: "Cheap, fast Google tier to complement Haiku/GPT-4o-Mini in the small-model slot."
+
+# ---------------------------------------------------------------------------
+# Ollama — local text extractors (all fit ≤24 GB VRAM)
+# ---------------------------------------------------------------------------
+
+ollama/gemma4:12b:
+  provider: ollama
+  model: "gemma4:12b"
+  label: "Gemma 4 12B (local)"
+  tier: mid
+  open_weight: true
+  license: gemma
+  vram_gb: 7.6
+  why: "Google Gemma 4 12B; strong instruction-following at 7.6 GB."
+
+ollama/gemma4:26b:
+  provider: ollama
+  model: "gemma4:26b"
+  label: "Gemma 4 26B (local)"
+  tier: mid
+  open_weight: true
+  license: gemma
+  vram_gb: 17.0
+  why: "Google Gemma 4 26B; best quality in the Gemma family that fits ≤24 GB."
+
+ollama/qwen3:8b:
+  provider: ollama
+  model: "qwen3:8b"
+  label: "Qwen3 8B (local)"
+  tier: small
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 5.2
+  why: "Qwen3 8B; efficient general-purpose local extractor at 5.2 GB."
+
+ollama/qwen3:14b:
+  provider: ollama
+  model: "qwen3:14b"
+  label: "Qwen3 14B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 9.3
+  why: "Qwen3 14B; quality step-up from 8B while staying ≤10 GB."
+
+ollama/qwen3.6:35b-a3b:
+  provider: ollama
+  model: "qwen3.6:35b-a3b"
+  label: "Qwen3.6 35B-A3B MoE (local)"
+  tier: frontier
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 23.0
+  why: "Qwen3.6 35B MoE; near-frontier quality at 23 GB via sparse activation."
+
+ollama/gpt-oss:20b:
+  provider: ollama
+  model: "gpt-oss:20b"
+  label: "GPT-OSS 20B (local)"
+  tier: mid
+  open_weight: true
+  license: mit
+  vram_gb: 13.0
+  why: "OpenAI OSS 20B; mid-tier open-weight baseline at 13 GB."
+
+ollama/glm4:9b:
+  provider: ollama
+  model: "glm4:9b"
+  label: "GLM4 9B (local)"
+  tier: small
+  open_weight: true
+  license: mit
+  vram_gb: 5.5
+  why: "GLM4 9B; compact Chinese-lineage model, good entity coverage."
+
+# ---------------------------------------------------------------------------
+# Ollama — local embedding models
+# ---------------------------------------------------------------------------
+
+ollama/qwen3-embedding:8b:
+  provider: ollama
+  model: "qwen3-embedding:8b"
+  label: "Qwen3 Embedding 8B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 4.7
+  why: "Qwen3 embedding 8B; high-quality dense retrieval at 4.7 GB."
+
+ollama/qwen3-embedding:4b:
+  provider: ollama
+  model: "qwen3-embedding:4b"
+  label: "Qwen3 Embedding 4B (local)"
+  tier: small
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 2.5
+  why: "Qwen3 embedding 4B; lightweight embedder for memory-constrained setups."
+
+# ---------------------------------------------------------------------------
+# Ollama — large-iron models (workstation.yaml only; not pulled by default)
+# ---------------------------------------------------------------------------
+
+ollama/llama3.1:70b:
+  provider: ollama
+  model: "llama3.1:70b"
+  label: "Llama 3.1 70B (workstation)"
+  tier: frontier
+  open_weight: true
+  license: llama3
+  vram_gb: 40.0
+  notes: "Requires ~40 GB VRAM; not pulled by default. Use workstation.yaml config."
+  why: "Meta Llama 3.1 70B; large-iron open-weight frontier baseline."
+
+ollama/gpt-oss:120b:
+  provider: ollama
+  model: "gpt-oss:120b"
+  label: "GPT-OSS 120B (workstation)"
+  tier: frontier
+  open_weight: true
+  license: mit
+  vram_gb: 80.0
+  notes: "Requires ~80 GB VRAM; not pulled by default. Use workstation.yaml config."
+  why: "OpenAI OSS 120B; maximum-scale open-weight extractor for workstation benchmarking."

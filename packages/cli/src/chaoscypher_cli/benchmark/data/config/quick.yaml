@@ -14,13 +14,13 @@ datasets:
 
 extractors:
   - provider: ollama
-    model: llama3.1:8b
-    label: "Llama 3.1 8B (local)"
+    model: qwen3:8b
+    label: "Qwen3 8B (local)"
 
   - provider: openai
     model: gpt-4o-mini
     label: "GPT-4o Mini"
 
   - provider: anthropic
-    model: claude-haiku-4-5-20251001
+    model: claude-haiku-4-5
     label: "Claude Haiku 4.5"

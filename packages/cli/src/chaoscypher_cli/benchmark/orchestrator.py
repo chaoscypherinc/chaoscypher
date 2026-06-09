@@ -175,6 +175,7 @@ async def run_full_benchmark(
                     seed=config.seed,
                     temperature=config.temperature,
                 )
+                _stamp_provenance(emb_results, extractor_id=extractor.model_id)
                 results.extend(emb_results)
 
         # Stage 3: chat.
@@ -225,6 +226,11 @@ async def run_full_benchmark(
                         seed=config.seed,
                         temperature=config.temperature,
                     )
+                    _stamp_provenance(
+                        chat_results,
+                        extractor_id=extractor.model_id,
+                        embedder_id=embedder.model_id,
+                    )
                     results.extend(chat_results)
 
     return results
@@ -234,6 +240,17 @@ async def _noop_builder(target: Path) -> None:
     """Cache lookups that should be hits raise RuntimeError on miss."""
     msg = f"orchestrator cache miss with no rebuild path: {target}"
     raise RuntimeError(msg)
+
+
+def _stamp_provenance(rows: list[BenchmarkResult], **provenance: str) -> None:
+    """Stamp the originating extractor/embedder ids onto downstream result rows.
+
+    ``BenchmarkResult.metrics`` is a mutable dict on a non-frozen dataclass, so
+    the in-place update is safe. Lets the composite join retrieval/chat scores
+    back to the extractor (and embedder) that produced the graph being scored.
+    """
+    for r in rows:
+        r.metrics.update(provenance)
 
 
 def default_wiring(*, workspace: Path) -> OrchestratorWiring:  # noqa: PLR0915 - benchmark wiring with documented helper closures

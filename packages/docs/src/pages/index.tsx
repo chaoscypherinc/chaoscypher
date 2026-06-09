@@ -1,13 +1,70 @@
-import { Fragment, useState, useEffect, useRef, useCallback } from "react";
+import { Fragment } from "react";
 import Layout from "@theme/Layout";
 import Link from "@docusaurus/Link";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import CodeBlock from "@theme/CodeBlock";
 import GraphHero from "../components/GraphHero";
-import Mermaid from "@theme/Mermaid";
+import ScreenshotStrip from "../components/ScreenshotStrip";
+import type { Shot } from "../components/FeatureGallery";
 
 function ArrowRight() {
   return <span aria-hidden="true"> &#8594;</span>;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Showcase shots                                                      */
+/* ------------------------------------------------------------------ */
+
+const SHOT = "/img/screenshots";
+const SHOWCASE: Shot[] = [
+  { title: 'First-time setup', image: `${SHOT}/setup-llm-provider.png`, full: `${SHOT}/setup-llm-provider.png`, caption: 'Connect your AI — Ollama, OpenAI, Anthropic, or Gemini', alt: 'First-run setup connecting an LLM provider' },
+  { title: 'Dashboard', image: `${SHOT}/app-dashboard.png`, full: `${SHOT}/app-dashboard.png`, caption: 'Your knowledge base at a glance', alt: 'Dashboard showing 184 entities and 440 relationships over the graph' },
+  { title: 'Knowledge graph', image: `${SHOT}/app-graph-default.png`, full: `${SHOT}/app-graph-default.png`, caption: 'Explore the entire graph', alt: 'Force-directed knowledge graph of 184 entities', focus: 'center', zoom: '120%' },
+  { title: 'Radial view', image: `${SHOT}/app-graph-mode.png`, full: `${SHOT}/app-graph-mode.png`, caption: 'Multiple layouts — radial, force, and more', alt: 'Knowledge graph in a radial layout', focus: 'center', zoom: '115%' },
+  { title: 'Processing', image: `${SHOT}/app-source-overview.png`, full: `${SHOT}/app-source-overview.png`, caption: 'Chunked, extracted, and indexed automatically', alt: 'Source overview: 215 entities, 462 relationships, 419 chunks' },
+  { title: 'Chunks', image: `${SHOT}/app-source-chunks.png`, full: `${SHOT}/app-source-chunks.png`, caption: 'Every chunk, tracked and inspectable', alt: 'Chunks tab grid showing per-chunk entity counts' },
+  { title: 'Extracted entities', image: `${SHOT}/app-source-entities.png`, full: `${SHOT}/app-source-entities.png`, caption: 'Entities extracted automatically', alt: 'Extraction tab showing extracted entities with type badges' },
+  { title: 'Extracted relationships', image: `${SHOT}/app-source-relationships.png`, full: `${SHOT}/app-source-relationships.png`, caption: '…and the relationships between them', alt: 'Extraction tab table of relationships with confidence scores' },
+  { title: 'Templates', image: `${SHOT}/app-source-templates.png`, full: `${SHOT}/app-source-templates.png`, caption: 'Typed by templates — node & edge schemas', alt: 'Templates tab with node and edge type usage counts' },
+  { title: 'Entity detail', image: `${SHOT}/app-entity-detail.png`, full: `${SHOT}/app-entity-detail.png`, caption: 'Rich metadata on every entity', alt: 'Pierre Bezúkhov entity detail with 58 properties' },
+  { title: 'Connections', image: `${SHOT}/app-entity-connections.png`, full: `${SHOT}/app-entity-connections.png`, caption: 'See everything an entity connects to', alt: 'Pierre Bezúkhov connections table with 14 relationships' },
+  { title: 'Relationship detail', image: `${SHOT}/app-relationship-detail.png`, full: `${SHOT}/app-relationship-detail.png`, caption: 'Every relationship — justified and scored', alt: 'Relationship detail with a 90% confidence score and LLM justification' },
+  { title: 'GraphRAG chat', image: `${SHOT}/app-chat.png`, full: `${SHOT}/app-chat.png`, caption: 'Ask graph-native questions vector search can\'t answer', alt: 'GraphRAG chat ranking entities by PageRank centrality' },
+];
+
+/* ------------------------------------------------------------------ */
+/*  Section: See · Trust · Own value band                             */
+/* ------------------------------------------------------------------ */
+
+function ValueBand() {
+  return (
+    <section className="value-band">
+      <h2>Knowledge you can see, trust, and own</h2>
+      <div className="feature-grid">
+        <div className="feature-card">
+          <h3>See</h3>
+          <p>
+            An inspectable knowledge graph, not a black box. Explore every
+            entity, relationship, and source behind an answer.
+          </p>
+        </div>
+        <div className="feature-card">
+          <h3>Trust</h3>
+          <p>
+            Backed by your sources, not guesswork. Every answer shows the
+            documents, chunks, and connections it came from.
+          </p>
+        </div>
+        <div className="feature-card">
+          <h3>Own</h3>
+          <p>
+            Local-first and portable. Your data stays on your machine; export
+            and share your knowledge as shareable packages. No cloud lock-in.
+          </p>
+        </div>
+      </div>
+    </section>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -18,57 +75,29 @@ interface Feature {
   title: string;
   description: string;
   linkTo: string;
-  hero?: boolean;
-  image?: string; // resized card backdrop; omit -> plain branded card
-  full?: string; // full-res screenshot shown in the lightbox
-  focus?: string; // CSS background-position (focal point)
-  zoom?: string; // CSS background-size (zoom level)
-  caption?: string; // short line under the enlarged image
-  alt?: string; // accessible description of the screenshot
 }
-
-const SHOT = "/img/screenshots";
 
 const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
   {
     label: "Core Intelligence",
     items: [
       {
-        title: "GraphRAG Search",
-        description:
-          "Find answers that span multiple documents. Fuses knowledge graph traversal with vector search using Personalized PageRank and Reciprocal Rank Fusion — plus keyword, semantic, and hybrid search modes.",
-        linkTo: "/docs/user-guide/search",
-        hero: true,
-        image: `${SHOT}/search-results-card.jpg`,
-        full: `${SHOT}/search-results.png`,
-        focus: "50% 16%",
-        zoom: "160%",
-        caption: "Entity results ranked across your whole corpus",
-        alt: "Omnibar search results listing matching entities and their connection counts",
-      },
-      {
         title: "Knowledge Graph",
         description:
-          "Extract entities and relationships from your documents. Explore connections through an interactive graph canvas with search, filtering, and templates.",
+          "See your knowledge. Extract entities and relationships from your documents and explore them on an interactive, inspectable graph canvas — every answer traces back to its sources.",
         linkTo: "/docs/user-guide/knowledge-graph",
-        image: `${SHOT}/graph-visualization-card.jpg`,
-        full: `${SHOT}/graph-visualization.png`,
-        focus: "50% 50%",
-        zoom: "125%",
-        caption: "An interactive, explorable knowledge graph",
-        alt: "Interactive knowledge graph with colored entity nodes and relationship edges",
+      },
+      {
+        title: "GraphRAG Search",
+        description:
+          "Find answers from across your whole library. Fuses knowledge graph traversal with vector search using Personalized PageRank and Reciprocal Rank Fusion — plus keyword, semantic, and hybrid search modes.",
+        linkTo: "/docs/user-guide/search",
       },
       {
         title: "AI Chat with RAG",
         description:
-          "Ask questions about your documents with retrieval-augmented generation. Get cited answers grounded in your actual content, scoped to specific sources or the full database.",
+          "Ask questions and get cited answers grounded in your actual content — see exactly which sources and connections produced each answer, scoped to specific sources or the full database.",
         linkTo: "/docs/user-guide/chat",
-        image: `${SHOT}/chat-conversation-card.jpg`,
-        full: `${SHOT}/chat-conversation.png`,
-        focus: "30% 20%",
-        zoom: "165%",
-        caption: "Cited answers grounded in your actual content",
-        alt: "AI chat response citing quotes from the source documents",
       },
     ],
   },
@@ -80,36 +109,18 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
         description:
           "Score the richness and completeness of your knowledge graph on a 0-100 scale. Detailed breakdowns by entity quality, relationship density, connectivity, and coverage — identify weak sources and guide improvement.",
         linkTo: "/docs/user-guide/quality",
-        image: `${SHOT}/quality-detail-breakdown-card.jpg`,
-        full: `${SHOT}/quality-detail-breakdown.png`,
-        focus: "50% 22%",
-        zoom: "150%",
-        caption: "Quality scored 0-100 with per-dimension breakdowns",
-        alt: "Quality analysis panel with a 0-100 score and per-dimension breakdown bars",
       },
       {
         title: "Document Processing",
         description:
-          "Upload PDFs, Word documents, web pages, and more. Automatic chunking, embedding, and RAG-ready indexing in seconds.",
+          "Upload PDFs, Word documents, web pages, and more. Automatic chunking, embedding, and RAG-ready indexing.",
         linkTo: "/docs/user-guide/sources",
-        image: `${SHOT}/source-extraction-entities-card.jpg`,
-        full: `${SHOT}/source-extraction-entities.png`,
-        focus: "50% 25%",
-        zoom: "150%",
-        caption: "Entities extracted from an imported document",
-        alt: "Source detail view showing entities extracted from a document",
       },
       {
         title: "Multi-LLM Support",
         description:
-          "Connect to Ollama, OpenAI, Anthropic, or Gemini. Run fully local with Ollama or use cloud providers — switch between them with a single config change. Embeddings run locally on the CPU with no API keys needed.",
+          "Connect to Ollama, OpenAI, Anthropic, or Gemini. Run fully local with Ollama or use cloud providers — switch between them with a single config change. Embeddings run locally on CPU or GPU, or in the cloud.",
         linkTo: "/docs/getting-started/configuration",
-        image: `${SHOT}/settings-llm-provider-card.jpg`,
-        full: `${SHOT}/settings-llm-provider.png`,
-        focus: "50% 30%",
-        zoom: "150%",
-        caption: "Local or cloud providers, switched in one place",
-        alt: "LLM provider settings with provider and model selectors",
       },
     ],
   },
@@ -121,197 +132,36 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
         description:
           "Build multi-step workflows with triggers, conditional logic, and a visual workflow builder. Execute automated knowledge extraction pipelines.",
         linkTo: "/docs/user-guide/automations",
-        image: `${SHOT}/workflow-editor-card.jpg`,
-        full: `${SHOT}/workflow-editor.png`,
-        focus: "50% 45%",
-        zoom: "140%",
-        caption: "A visual builder for multi-step workflows",
-        alt: "Visual workflow editor canvas with connected steps",
       },
       {
         title: "MCP Server",
         description:
           "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 31 tools for search, traversal, and graph building.",
         linkTo: "/docs/user-guide/mcp",
-        // No in-app screenshot — MCP is configured in external clients. Plain branded card.
       },
       {
         title: "Plugin System",
         description:
           "Extend Chaos Cypher with custom document loaders, extraction domains, and workflow tools. Drop a Python file into the plugins directory — no registration needed.",
         linkTo: "/docs/user-guide/domains",
-        image: `${SHOT}/templates-list-card.jpg`,
-        full: `${SHOT}/templates-list.png`,
-        focus: "50% 18%",
-        zoom: "150%",
-        caption: "Templates and domains define your graph's schema",
-        alt: "Templates list showing node and edge types that define the graph schema",
       },
     ],
   },
 ];
 
-const ALL_FEATURES = FEATURE_GROUPS.flatMap((g) => g.items);
-const SHOTS = ALL_FEATURES.filter((f) => f.image);
-
-function ShotCard({
-  feature,
-  onOpen,
-}: {
-  feature: Feature;
-  onOpen: (shotIndex: number, trigger: HTMLElement) => void;
-}) {
-  const shotIndex = SHOTS.indexOf(feature);
-  const hasShot = Boolean(feature.image) && shotIndex >= 0;
+function FeatureCard({ feature }: { feature: Feature }) {
   return (
-    <div
-      className={`shot-card${feature.hero ? " shot-card--hero" : ""}${
-        hasShot ? "" : " shot-card--plain"
-      }`}
-    >
-      {hasShot && (
-        <>
-          <div
-            className="shot-card-bg"
-            style={{
-              backgroundImage: `url('${feature.image}')`,
-              backgroundSize: feature.zoom,
-              backgroundPosition: feature.focus,
-            }}
-          />
-          <div className="shot-card-scrim" />
-          {/* Mouse convenience: clicking the card opens the gallery.
-              Hidden from keyboard/AT — the labeled expand button is the trigger. */}
-          <button
-            type="button"
-            className="shot-card-hit"
-            aria-hidden="true"
-            tabIndex={-1}
-            onClick={(e) => onOpen(shotIndex, e.currentTarget)}
-          />
-          <button
-            type="button"
-            className="shot-card-expand"
-            aria-label={`Enlarge the ${feature.title} screenshot`}
-            onClick={(e) => onOpen(shotIndex, e.currentTarget)}
-          >
-            <span aria-hidden="true">&#11138;</span>
-          </button>
-        </>
-      )}
-      <div className="shot-card-body">
-        <h3>{feature.title}</h3>
-        <p>{feature.description}</p>
-        <Link className="shot-card-link" to={feature.linkTo}>
-          Learn more
-          <ArrowRight />
-        </Link>
-      </div>
+    <div className="feature-card">
+      <h3>{feature.title}</h3>
+      <p>{feature.description}</p>
+      <Link className="feature-card-link" to={feature.linkTo}>
+        Learn more<ArrowRight />
+      </Link>
     </div>
   );
 }
 
-function FeatureGallery({
-  index,
-  onClose,
-  onNavigate,
-}: {
-  index: number;
-  onClose: () => void;
-  onNavigate: (next: number) => void;
-}) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-  const feature = SHOTS[index];
-  const go = useCallback(
-    (delta: number) => onNavigate((index + delta + SHOTS.length) % SHOTS.length),
-    [index, onNavigate],
-  );
-
-  useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowRight") go(1);
-      else if (e.key === "ArrowLeft") go(-1);
-    };
-    document.addEventListener("keydown", onKey);
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prevOverflow;
-    };
-  }, [go, onClose]);
-
-  return (
-    <div
-      className="fg-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${feature.title} — enlarged screenshot`}
-      onClick={onClose}
-    >
-      <button
-        ref={closeRef}
-        type="button"
-        className="fg-close"
-        aria-label="Close"
-        onClick={onClose}
-      >
-        &#10005;
-      </button>
-      <button
-        type="button"
-        className="fg-arrow fg-prev"
-        aria-label="Previous feature"
-        onClick={(e) => {
-          e.stopPropagation();
-          go(-1);
-        }}
-      >
-        &#8249;
-      </button>
-      <button
-        type="button"
-        className="fg-arrow fg-next"
-        aria-label="Next feature"
-        onClick={(e) => {
-          e.stopPropagation();
-          go(1);
-        }}
-      >
-        &#8250;
-      </button>
-      <div className="fg-stage" onClick={(e) => e.stopPropagation()}>
-        <div className="fg-frame">
-          <img className="fg-img" src={feature.full} alt={feature.alt} />
-        </div>
-        <div className="fg-cap">
-          <h3>{feature.title}</h3>
-          <p>{feature.caption}</p>
-        </div>
-        <div className="fg-dots">
-          {SHOTS.map((s, i) => (
-            <button
-              key={s.title}
-              type="button"
-              className={`fg-dot${i === index ? " on" : ""}`}
-              aria-label={`Show ${s.title}`}
-              aria-current={i === index}
-              onClick={() => onNavigate(i)}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FeatureGrids({
-  onOpen,
-}: {
-  onOpen: (shotIndex: number, trigger: HTMLElement) => void;
-}) {
+function FeatureGrids() {
   return (
     <section>
       {FEATURE_GROUPS.map((group) => (
@@ -319,72 +169,11 @@ function FeatureGrids({
           <p className="feature-row-label">{group.label}</p>
           <div className="feature-grid">
             {group.items.map((feature) => (
-              <ShotCard key={feature.title} feature={feature} onOpen={onOpen} />
+              <FeatureCard key={feature.title} feature={feature} />
             ))}
           </div>
         </Fragment>
       ))}
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Section: Lexicon Hub                                               */
-/* ------------------------------------------------------------------ */
-
-function LexiconHub({ lexiconUrl }: { lexiconUrl: string }) {
-  return (
-    <section className="hub-section">
-      <h2>Lexicon Hub</h2>
-      <p className="hub-section-desc">
-        Share, discover, and reuse knowledge packages from the community
-      </p>
-
-      <div className="feature-grid">
-        <div className="feature-card">
-          <h3>Pull</h3>
-          <p>
-            Download templates, entities, and workflows published by others.
-            Jumpstart your project with community-built knowledge graphs.
-          </p>
-          <Link to="/docs/lexicon-hub/discovering">
-            <ArrowRight />
-          </Link>
-          <CodeBlock language="bash">
-            chaoscypher pull john/medical-ontology
-          </CodeBlock>
-        </div>
-
-        <div className="feature-card feature-hero">
-          <h3>Community Registry</h3>
-          <p>
-            Browse packages by keyword, author, or domain. Templates, knowledge
-            graphs, and workflows — shared by the community, ready to import.
-          </p>
-          <Link to="/docs/lexicon-hub">
-            <ArrowRight />
-          </Link>
-          <div className="hub-cta-wrapper">
-            <a className="hub-cta" href={lexiconUrl}>
-              Browse Packages
-            </a>
-          </div>
-        </div>
-
-        <div className="feature-card">
-          <h3>Publish</h3>
-          <p>
-            Export your extracted knowledge as a CCX package and share it with
-            the community. Public or private — your choice.
-          </p>
-          <Link to="/docs/lexicon-hub/publishing">
-            <ArrowRight />
-          </Link>
-          <CodeBlock language="bash">
-            chaoscypher push my-knowledge.ccx
-          </CodeBlock>
-        </div>
-      </div>
     </section>
   );
 }
@@ -395,7 +184,7 @@ function LexiconHub({ lexiconUrl }: { lexiconUrl: string }) {
 
 interface BadgeGroupProps {
   label: string;
-  badges: { text: string; extra?: string; title?: string }[];
+  badges: { text: string; to?: string; extra?: string; title?: string }[];
 }
 
 function BadgeGroup({ label, badges }: BadgeGroupProps) {
@@ -405,15 +194,18 @@ function BadgeGroup({ label, badges }: BadgeGroupProps) {
         <strong>{label}</strong>
       </div>
       <div className="integration-badges">
-        {badges.map((b) => (
-          <span
-            key={b.text}
-            className={`integration-badge${b.extra ? ` ${b.extra}` : ""}`}
-            title={b.title}
-          >
-            {b.text}
-          </span>
-        ))}
+        {badges.map((b) => {
+          const className = `integration-badge${b.extra ? ` ${b.extra}` : ""}`;
+          return b.to ? (
+            <Link key={b.text} className={className} to={b.to} title={b.title}>
+              {b.text}
+            </Link>
+          ) : (
+            <span key={b.text} className={className} title={b.title}>
+              {b.text}
+            </span>
+          );
+        })}
       </div>
     </div>
   );
@@ -422,100 +214,38 @@ function BadgeGroup({ label, badges }: BadgeGroupProps) {
 function IntegrationsStrip() {
   return (
     <section className="integrations-section">
-      <div className="integrations-tier-label">Ecosystem</div>
       <div className="integrations-strip">
         <BadgeGroup
           label="Integrations"
           badges={[
-            { text: "MCP" },
-            { text: "REST API" },
-            { text: "Python SDK" },
-            { text: "CLI" },
+            { text: "MCP", to: "/docs/user-guide/mcp" },
+            { text: "REST API", to: "/docs/reference/api" },
+            { text: "Python SDK", to: "/docs/developer-guide/quickstart" },
+            { text: "CLI", to: "/docs/reference/cli" },
           ]}
         />
         <BadgeGroup
           label="LLM Providers"
           badges={[
-            { text: "Ollama" },
-            { text: "Anthropic" },
-            { text: "Gemini" },
-            { text: "OpenAI" },
+            { text: "Ollama", to: "/docs/getting-started/configuration" },
+            { text: "Anthropic", to: "/docs/getting-started/configuration" },
+            { text: "Gemini", to: "/docs/getting-started/configuration" },
+            { text: "OpenAI", to: "/docs/getting-started/configuration" },
           ]}
         />
-      </div>
-
-      <div className="integrations-tier-label integrations-tier-label--spaced">
-        Supported Formats
-      </div>
-      <div className="integrations-strip">
         <BadgeGroup
-          label="Text"
+          label="Formats"
           badges={[
-            { text: "PDF" },
-            { text: "DOCX" },
-            { text: "CSV" },
-            { text: "JSON" },
-            { text: "HTML" },
-            { text: "MD" },
+            { text: "PDF", to: "/docs/user-guide/sources" },
+            { text: "DOCX", to: "/docs/user-guide/sources" },
+            { text: "MP3", to: "/docs/user-guide/sources" },
+            { text: "MP4", to: "/docs/user-guide/sources" },
+            { text: "PNG", to: "/docs/user-guide/sources" },
             {
-              text: "+8 more",
-              extra: "badge-more",
+              text: "30+ more",
+              to: "/docs/user-guide/sources",
               title:
-                "Also supports: TXT, DOC, ODT, RTF, EPUB, JSONL, LOG, HTM",
-            },
-          ]}
-        />
-        <BadgeGroup
-          label="Audio"
-          badges={[
-            { text: "MP3" },
-            { text: "WAV" },
-            { text: "FLAC" },
-            { text: "OGG" },
-            { text: "M4A" },
-            {
-              text: "+2 more",
-              extra: "badge-more",
-              title: "Also supports: WMA, AAC",
-            },
-          ]}
-        />
-        <BadgeGroup
-          label="Video"
-          badges={[
-            { text: "MP4" },
-            { text: "MKV" },
-            { text: "MOV" },
-            { text: "WebM" },
-            { text: "AVI" },
-            {
-              text: "+2 more",
-              extra: "badge-more",
-              title: "Also supports: WMV, FLV",
-            },
-          ]}
-        />
-        <BadgeGroup
-          label="Images"
-          badges={[
-            { text: "JPG" },
-            { text: "PNG" },
-            { text: "WebP" },
-            { text: "GIF" },
-            { text: "TIFF" },
-            { text: "BMP" },
-          ]}
-        />
-        <BadgeGroup
-          label="Archives"
-          badges={[
-            { text: "ZIP" },
-            { text: "TAR.GZ" },
-            {
-              text: "any content",
-              extra: "badge-more",
-              title:
-                "Extracts and processes all supported file types inside. Auto-detects Sphinx, MkDocs, and OpenAPI documentation. Supports nested archives.",
+                "30+ formats, auto-detected — including TXT, CSV, JSON, HTML, MD, EPUB, WAV, FLAC, MKV, MOV, WebP, and ZIP archives.",
             },
           ]}
         />
@@ -535,15 +265,32 @@ function GetStarted() {
       <p>Pick the path that fits how you work:</p>
 
       <div className="pathway-grid">
-        <div className="pathway-card">
+        <div className="pathway-card" id="install-docker">
           <h3>Docker</h3>
           <p className="pathway-audience">
-            Full web UI — pull the published image, then upload, search, chat,
-            and explore the graph
+            Full web UI — the complete command (named container, HTTPS-ready). The
+            homepage one-liner is the quickest HTTP-only try.
           </p>
           <CodeBlock language="bash">
             {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -p 443:443 \\\n  -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
           </CodeBlock>
+          <details className="pathway-compose">
+            <summary>Prefer Docker Compose?</summary>
+            <p>Save as <code>docker-compose.yml</code> and run <code>docker compose up -d</code>:</p>
+            <CodeBlock language="yaml">{`name: chaoscypher
+services:
+  chaoscypher:
+    image: ghcr.io/chaoscypherinc/chaoscypher:latest
+    container_name: chaoscypher
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - chaoscypher-data:/data
+    restart: unless-stopped
+volumes:
+  chaoscypher-data:`}</CodeBlock>
+          </details>
           <ul>
             <li>Web UI with graph canvas</li>
             <li>REST API + queue monitor</li>
@@ -556,7 +303,7 @@ function GetStarted() {
           </Link>
         </div>
 
-        <div className="pathway-card">
+        <div className="pathway-card" id="install-cli">
           <h3>CLI</h3>
           <p className="pathway-audience">
             Terminal-first — process documents and query your graph from the
@@ -577,7 +324,7 @@ function GetStarted() {
           </Link>
         </div>
 
-        <div className="pathway-card pathway-wide">
+        <div className="pathway-card pathway-wide" id="install-python">
           <h3>Python Package</h3>
           <p className="pathway-audience">
             Integrate into your own code — extract, search, build graphs
@@ -609,57 +356,17 @@ function GetStarted() {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Section: Architecture                                              */
+/*  Section: Final CTA — built for builders                           */
 /* ------------------------------------------------------------------ */
 
-function Architecture() {
-  return (
-    <section className="arch-section">
-      <h2>Architecture</h2>
-      <p>
-        Modular monorepo — each package owns a single concern and communicates
-        through typed interfaces. The Core library is framework-agnostic, so it
-        runs identically behind the API, inside workers, or embedded in your own
-        scripts.
-      </p>
-      <Mermaid
-        value={`graph TB
-    UI["Interface — React + TypeScript"]
-    API["Cortex — FastAPI + VSA"]
-    CORE["Core — Hexagonal Architecture"]
-    NEURON["Neuron — Background Workers"]
-    STORAGE["Storage — SQLite + Files"]
-
-    UI --> API
-    API --> CORE
-    CORE --> NEURON
-    CORE --> STORAGE
-
-    style UI fill:#12121e,stroke:#00fff0,color:#e0e0f0
-    style API fill:#12121e,stroke:#7b2ff7,color:#e0e0f0
-    style CORE fill:#12121e,stroke:#ff2d95,color:#e0e0f0
-    style NEURON fill:#12121e,stroke:#39ff14,color:#e0e0f0
-    style STORAGE fill:#12121e,stroke:#ff6d00,color:#e0e0f0`}
-      />
-      <Link to="/docs/architecture/overview">
-        Learn more about the architecture
-        <ArrowRight />
-      </Link>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Section: Final CTA                                                 */
-/* ------------------------------------------------------------------ */
-
-function FinalCTA({ discussionsUrl }: { discussionsUrl: string }) {
+function FinalCTA({ githubUrl }: { githubUrl: string }) {
   return (
     <section className="final-cta">
-      <h2>Start Building</h2>
+      <h2>Built for builders</h2>
       <p className="final-cta-sub">
-        Open source. Run locally or in the cloud. No API keys needed to get
-        started.
+        A modular monorepo with a framework-agnostic Core — run it behind the
+        API, inside workers, or embedded in your own scripts. Open source, local
+        or cloud, no API keys needed to start.
       </p>
       <div className="hero-buttons">
         <Link
@@ -668,10 +375,15 @@ function FinalCTA({ discussionsUrl }: { discussionsUrl: string }) {
         >
           Get Started
         </Link>
-        <a className="hero-btn-secondary" href={discussionsUrl}>
-          Join Discussions
+        <a className="hero-btn-secondary" href={githubUrl}>
+          Star on GitHub
         </a>
       </div>
+      <p className="final-cta-arch-link">
+        <Link to="/docs/architecture/overview">
+          Explore the architecture<ArrowRight />
+        </Link>
+      </p>
     </section>
   );
 }
@@ -682,48 +394,27 @@ function FinalCTA({ discussionsUrl }: { discussionsUrl: string }) {
 
 export default function Home(): JSX.Element {
   const { siteConfig } = useDocusaurusContext();
-  const discussionsUrl = (
-    siteConfig.customFields?.github as { discussionsUrl: string }
-  ).discussionsUrl;
-  const lexiconUrl = (siteConfig.customFields?.lexicon as { url: string }).url;
-
-  const [galleryIndex, setGalleryIndex] = useState<number | null>(null);
-  const triggerRef = useRef<HTMLElement | null>(null);
-  const openGallery = useCallback((shotIndex: number, trigger: HTMLElement) => {
-    triggerRef.current = trigger;
-    setGalleryIndex(shotIndex);
-  }, []);
-  const closeGallery = useCallback(() => {
-    setGalleryIndex(null);
-    triggerRef.current?.focus();
-  }, []);
+  const githubUrl = (siteConfig.customFields?.github as { url: string }).url;
 
   return (
     <Layout
       title="Home"
-      description="Decode knowledge from chaos — AI-powered knowledge graph engine"
+      description="Knowledge you can see, trust, and own — a local-first, inspectable knowledge graph for your documents."
     >
-      <GraphHero discussionsUrl={discussionsUrl} />
+      <GraphHero />
       <main className="container margin-vert--lg">
-        <FeatureGrids onOpen={openGallery} />
+        <ValueBand />
         <hr />
-        <LexiconHub lexiconUrl={lexiconUrl} />
+        <ScreenshotStrip shots={SHOWCASE} />
+        <hr />
+        <FeatureGrids />
         <hr />
         <IntegrationsStrip />
         <hr />
         <GetStarted />
         <hr />
-        <Architecture />
-        <hr />
-        <FinalCTA discussionsUrl={discussionsUrl} />
+        <FinalCTA githubUrl={githubUrl} />
       </main>
-      {galleryIndex !== null && (
-        <FeatureGallery
-          index={galleryIndex}
-          onClose={closeGallery}
-          onNavigate={setGalleryIndex}
-        />
-      )}
     </Layout>
   );
 }

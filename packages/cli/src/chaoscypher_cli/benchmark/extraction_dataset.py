@@ -132,7 +132,7 @@ class ExtractionDataset:
                     skip_extract=False,
                     skip_commit=True,  # benchmarking - no graph commit needed
                     skip_embeddings=True,  # benchmarking - embeddings not scored
-                    enable_normalization=False,
+                    enable_normalization=True,  # benchmark v2: score the post-normalized, pre-commit graph
                     enable_vision=False,
                     index_only=False,
                     extract_only=True,

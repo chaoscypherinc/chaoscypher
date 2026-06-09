@@ -260,19 +260,37 @@ text to:
 ```
 
 The chunker then **recomputes** character offsets by locating each chunk
-in `original.txt` using a two-step search:
+in `original.txt` using a cascading search (revised 2026-06-05 — the
+recovered span is allowed to be **longer** than the cleaned chunk, so the
+text the cleaner removed stays inside it; the earlier two-step cascade
+used a fuzzy window capped at the cleaned length, which slid past removed
+text and misaligned `raw_content` for every chunk of a CRLF file):
 
 1. **Exact substring match** — the chunk text is searched as a literal
    substring of `original.txt`. When found, `char_start` / `char_end`
    are set and `citation_offset_method` is tagged `exact`.
-2. **Fuzzy alignment** — when exact search fails (e.g., whitespace was
-   collapsed during normalization), the chunker uses
-   `rapidfuzz.fuzz.partial_ratio_alignment` with a threshold of 80 to
-   locate the best-matching window. On success `citation_offset_method`
-   is tagged `fuzzy`.
-3. **No match** — if neither method succeeds, `char_start` and
+2. **Whitespace-collapsed exact match** — both the chunk text and
+   `original.txt` are collapsed to single-space whitespace runs (with an
+   index map back to original coordinates) and searched again. This
+   resolves chunks whose only divergence is line endings, indentation, or
+   blank-line collapse, and maps back to the full raw span including the
+   rewritten whitespace. Tagged `fuzzy`.
+3. **Anchored span** — when the cleaner removed lines from *inside* the
+   chunk, the chunk's first and last 32 collapsed characters are located
+   independently; the span runs from the prefix anchor to the suffix
+   anchor and may exceed the cleaned length. Tagged `fuzzy`.
+4. **Window fuzzy alignment** — last resort for heavily transformed
+   chunks: `rapidfuzz.fuzz.partial_ratio_alignment` with a threshold of
+   80 locates the best-matching window (never longer than the cleaned
+   chunk). Tagged `fuzzy`.
+5. **No match** — if every method fails, `char_start` and
    `char_end` are set to `null` and `citation_offset_method` is tagged
    `none`. The `CITATIONS_SPLIT_SKIPPED` counter is incremented.
+
+Levels 2 and 3 search forward from the previous chunk's match first
+(chunks are sequential over the document), falling back to a
+whole-document search, so repeated boilerplate doesn't re-anchor a later
+chunk to an earlier occurrence.
 
 ### Configuration
 

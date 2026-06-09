@@ -4,7 +4,7 @@
 #
 # Run 'make' or 'make help' to see available commands
 
-.PHONY: help install lint lint-fix format typecheck test test-unit test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface security docstrings deadcode deadcode-all ci ci-local ci-extended ci-docker docker-test docker-ci docs docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs benchmark-list benchmark-quick check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface
+.PHONY: help install lint lint-fix format typecheck test test-unit test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface security docstrings deadcode deadcode-all ci ci-local ci-extended ci-docker docker-test docker-ci docs docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs benchmark-list benchmark-quick benchmark-cards check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface
 
 # Default target
 help:
@@ -674,3 +674,7 @@ benchmark-quick:
 benchmark-full-smoke: ## Three-stage smoke test (requires Ollama running locally + models pulled)
 	CHAOSCYPHER_BENCHMARK_INTEGRATION=1 uv run pytest \
 		packages/cli/tests/integration/benchmark/test_full_smoke.py -v
+
+.PHONY: benchmark-cards
+benchmark-cards: ## Regenerate the public model-cards docs page from the registry
+	uv run python scripts/generate_model_cards.py

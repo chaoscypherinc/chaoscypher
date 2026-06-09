@@ -270,3 +270,112 @@ def test_render_extraction_only_omits_other_sections():
     assert "## Extraction Leaderboard" in md
     assert "## Embedding Leaderboard" not in md
     assert "## Chat Leaderboard" not in md
+
+
+# ---------------------------------------------------------------------------
+# Unified Overall leaderboard section (composite)
+# ---------------------------------------------------------------------------
+
+
+def _overall_fixture_rows() -> list[BenchmarkResult]:
+    """Two extractors A/B with matching embedding+chat rows; A outscores B."""
+    return [
+        # Extraction rows (model_id == extractor).
+        _result_row(
+            model_id="ollama/a",
+            model_label="Model A",
+            dataset_kind="extraction",
+            headline_score=90.0,
+        ),
+        _result_row(
+            model_id="ollama/b",
+            model_label="Model B",
+            dataset_kind="extraction",
+            headline_score=50.0,
+        ),
+        # Embedding rows for default embedder ollama/emb, stamped by extractor.
+        _result_row(
+            model_id="ollama/emb",
+            model_label="Emb",
+            dataset_kind="embedding",
+            headline_score=85.0,
+            metrics={"extractor_id": "ollama/a"},
+        ),
+        _result_row(
+            model_id="ollama/emb",
+            model_label="Emb",
+            dataset_kind="embedding",
+            headline_score=45.0,
+            metrics={"extractor_id": "ollama/b"},
+        ),
+        # Chat rows for default chat ollama/c, stamped by extractor+embedder.
+        _result_row(
+            model_id="ollama/c",
+            model_label="Chat",
+            dataset_kind="chat",
+            headline_score=80.0,
+            metrics={"extractor_id": "ollama/a", "embedder_id": "ollama/emb"},
+        ),
+        _result_row(
+            model_id="ollama/c",
+            model_label="Chat",
+            dataset_kind="chat",
+            headline_score=40.0,
+            metrics={"extractor_id": "ollama/b", "embedder_id": "ollama/emb"},
+        ),
+    ]
+
+
+def test_render_overall_section_present_and_ranked():
+    from chaoscypher_cli.benchmark.composite import CompositeWeights
+
+    rows = _overall_fixture_rows()
+    md = render_leaderboard(
+        rows,
+        default_embedder="ollama/emb",
+        default_chat="ollama/c",
+        weights=CompositeWeights(),
+    )
+    assert "## Overall Leaderboard" in md
+    assert "| Rank | Model | Overall | Extraction | Retrieval | Chat | Speed | Cost |" in md
+    # Higher-overall model (A) appears before B.
+    assert md.index("Model A") < md.index("Model B")
+
+
+def test_render_overall_section_renders_config_less():
+    """`render_leaderboard(rows)` with no kwargs still emits the Overall section.
+
+    Used by `bench show`, which has no config. Retrieval/chat fall to '-'
+    because default_embedder/default_chat are None, but the section renders
+    whenever extraction rows are present.
+    """
+    rows = [_result_row(dataset_kind="extraction", model_label="Llama", headline_score=80.0)]
+    md = render_leaderboard(rows)
+    assert isinstance(md, str)
+    assert "## Overall Leaderboard" in md
+
+
+def test_header_pins_composite_version_and_weights_default():
+    rows = [_result_row(dataset_kind="extraction", model_label="Llama", headline_score=80.0)]
+    md = render_leaderboard(rows)
+    # Default weights baked in when no weights config is threaded through.
+    assert "composite v1" in md
+    assert "weights extraction=0.40" in md
+    assert "retrieval=0.20" in md
+    assert "chat=0.20" in md
+    assert "speed=0.10" in md
+    assert "cost=0.10" in md
+
+
+def test_header_pins_custom_weights():
+    from chaoscypher_cli.benchmark.composite import CompositeWeights
+
+    rows = [_result_row(dataset_kind="extraction", model_label="Llama", headline_score=80.0)]
+    md = render_leaderboard(
+        rows,
+        weights=CompositeWeights(extraction=0.5, retrieval=0.2, chat=0.2, speed=0.05, cost=0.05),
+    )
+    assert "composite v1" in md
+    assert "weights extraction=0.50" in md
+    assert "speed=0.05" in md
+    assert "cost=0.05" in md

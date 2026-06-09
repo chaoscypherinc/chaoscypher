@@ -7,22 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from chaoscypher_cli.benchmark.models_registry import load_registry
+
 
 # Local providers cost zero. Anything not listed here is "commercial" and
 # requires a price registry entry.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"ollama"})
-
-
-# Prices in USD per 1,000,000 tokens, dated 2026-04-28.
-# Update with provenance comments when prices change. Missing entries cause
-# compute_cost() to return None - surfaced as a leaderboard warning.
-_PRICE_REGISTRY: dict[tuple[str, str], dict[str, float]] = {
-    ("openai", "gpt-4o"): {"input": 2.50, "output": 10.00},
-    ("openai", "gpt-4o-mini"): {"input": 0.15, "output": 0.60},
-    ("anthropic", "claude-sonnet-4-6"): {"input": 3.00, "output": 15.00},
-    ("anthropic", "claude-opus-4-7"): {"input": 15.00, "output": 75.00},
-    ("anthropic", "claude-haiku-4-5-20251001"): {"input": 0.80, "output": 4.00},
-}
 
 
 @dataclass(frozen=True)
@@ -73,23 +63,41 @@ def filter_models(
 
 
 def compute_cost(model: ModelConfig, *, input_tokens: int, output_tokens: int) -> float | None:
-    """Return USD cost for a run, or None if the model has no price entry.
+    """Return USD cost for a run, or None if the model has no registry price.
 
     Local providers always cost zero. Commercial models look up
-    ``(provider, model)`` in the price registry; missing entries return None.
+    ``<provider>/<model>`` in the registry; a missing price returns None.
     """
     if model.provider in _LOCAL_PROVIDERS:
         return 0.0
-    prices = _PRICE_REGISTRY.get((model.provider, model.model))
-    if prices is None:
+    entry = load_registry().get(model.model_id)
+    if entry is None or entry.price is None:
         return None
-    input_usd = (input_tokens / 1_000_000.0) * prices["input"]
-    output_usd = (output_tokens / 1_000_000.0) * prices["output"]
+    input_usd = (input_tokens / 1_000_000.0) * entry.price["input"]
+    output_usd = (output_tokens / 1_000_000.0) * entry.price["output"]
     return input_usd + output_usd
+
+
+def assert_registry_coverage(models: list[ModelConfig]) -> list[str]:
+    """Return ``<provider>/<model>`` ids of commercial models missing a registry price entry.
+
+    Used by the CLI to fail fast before a run rather than silently producing
+    a $0.00 cost for an unpriced commercial model.
+    """
+    reg = load_registry()
+    missing: list[str] = []
+    for m in models:
+        if m.provider in _LOCAL_PROVIDERS:
+            continue
+        entry = reg.get(m.model_id)
+        if entry is None or entry.price is None:
+            missing.append(m.model_id)
+    return missing
 
 
 __all__ = [
     "ModelConfig",
+    "assert_registry_coverage",
     "compute_cost",
     "filter_models",
 ]

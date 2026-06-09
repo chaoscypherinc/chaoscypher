@@ -1,81 +1,69 @@
-/**
- * Full-viewport hero with flying knowledge graph canvas animation.
- *
- * Used only on the landing page. Reads theme from CSS custom properties.
- * Respects prefers-reduced-motion (canvas hidden via CSS, static fallback shown).
- */
+import { useEffect, useRef, useState } from 'react';
+import Link from '@docusaurus/Link';
+import CodeBlock from '@theme/CodeBlock';
+import BrowserOnly from '@docusaurus/BrowserOnly';
+import DataCrystalFallback from './hero/DataCrystalFallback';
+import '../css/hero.css';
 
-import { useEffect, useRef } from "react";
-import Link from "@docusaurus/Link";
-import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
-import { startAnimation, stopAnimation } from "./graphAnimation";
-import "../css/hero.css";
+const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher`;
 
-function GitHubIcon() {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      fill="currentColor"
-      style={{ verticalAlign: "text-bottom", marginRight: "0.3em" }}
-    >
-      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-    </svg>
-  );
-}
-
-interface GraphHeroProps {
-  discussionsUrl: string;
-}
-
-export default function GraphHero({ discussionsUrl }: GraphHeroProps) {
-  const { siteConfig } = useDocusaurusContext();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (mq.matches || !canvasRef.current) return;
-
-    startAnimation(canvasRef.current);
-    return () => stopAnimation();
-  }, []);
+export default function GraphHero(): JSX.Element {
+  const cursorRef = useRef<HTMLSpanElement>(null);
+  const [animating, setAnimating] = useState(false);
+  useEffect(() => { cursorRef.current?.classList.add('hero-cursor--on'); }, []);
 
   return (
     <div className="hero-wrapper">
       <section className="hero-container">
-        {/* Canvas layer */}
-        <canvas ref={canvasRef} className="hero-canvas" />
-
-        {/* CSS overlay layers */}
-        <div className="hero-grid-floor" />
+        {/* base: static frame (SSR + no-JS + reduced motion); hidden once canvas animates */}
+        <div className={'hero-crystal-fallback-wrap' + (animating ? ' is-hidden' : '')}>
+          <DataCrystalFallback />
+        </div>
+        {/* overlay: animated canvas (client + motion only) */}
+        <BrowserOnly>
+          {() => {
+            const DataCrystal = require('./hero/DataCrystal').default;
+            return <DataCrystal onActive={() => setAnimating(true)} />;
+          }}
+        </BrowserOnly>
         <div className="hero-vignette" />
-        <div className="hero-scanlines" />
-        <div className="hero-noise" />
 
-        {/* Content */}
         <div className="hero-content">
           <h1>Chaos Cypher</h1>
-          <p className="hero-tagline">
-            {siteConfig.tagline}
-            <span className="hero-cursor">|</span>
-          </p>
-          <div className="hero-buttons">
-            <Link
-              className="hero-btn-primary"
-              to="/docs/getting-started/quickstart"
-            >
-              Get Started
-            </Link>
-            <a className="hero-btn-secondary" href={discussionsUrl}>
-              <GitHubIcon />
-              Discussions
-            </a>
+          <div className="hero-lede">
+            <p className="hero-slogan">
+              Decode knowledge from chaos<span className="hero-cursor" ref={cursorRef}>|</span>
+            </p>
+            <p className="hero-subdesc">
+              The open-source knowledge graph engine — extract, search, and chat with
+              your documents, locally.
+            </p>
+          </div>
+
+          <Link className="hero-btn-primary" to="/docs/getting-started/quickstart">
+            Get Started &#8594;
+          </Link>
+
+          <div className="hero-oneliner">
+            <CodeBlock language="bash">{RUN_CMD}</CodeBlock>
+          </div>
+
+          <div className="hero-altrow">
+            <span className="hero-alt-label">Use it via</span>
+            {/* CLI + Python scroll to the on-page Get Started install cards */}
+            <a className="hero-method" href="#install-cli">CLI</a>
+            <span className="hero-sep">&middot;</span>
+            <a className="hero-method" href="#install-python">Python library</a>
+            <span className="hero-sep">&middot;</span>
+            {/* MCP + REST API are access methods -> their docs */}
+            <Link className="hero-method" to="/docs/user-guide/mcp">MCP</Link>
+            <span className="hero-sep">&middot;</span>
+            <Link className="hero-method" to="/docs/reference/api">REST API</Link>
+            <span className="hero-divider">&bull;</span>
+            <Link className="hero-devlink" to="/docs/developer-guide/quickstart">Developer Guide &#8594;</Link>
           </div>
         </div>
       </section>
-      {/* Fade sits OUTSIDE overflow:hidden container */}
       <div className="hero-fade" />
     </div>
   );

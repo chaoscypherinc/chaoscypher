@@ -1169,6 +1169,91 @@ class ChunkingService:
 # ---------------------------------------------------------------------------
 
 
+# Collapsed-space anchor width for the prefix/suffix span recovery level.
+# 32 visible-ish chars is distinctive enough to avoid false anchors while
+# staying well inside the unmodified head/tail of a ~900-char chunk.
+_ANCHOR_LEN = 32
+# Reject anchored spans wildly larger than the cleaned content — a runaway
+# suffix match on repeated boilerplate would otherwise swallow pages.
+_MAX_SPAN_FACTOR = 4
+_MAX_SPAN_SLACK = 8192
+
+
+def _collapse_whitespace_with_map(text: str) -> tuple[str, list[int], list[int]]:
+    """Collapse every whitespace run in *text* to a single space, with maps.
+
+    Returns ``(collapsed, starts, ends)`` where ``starts[i]`` / ``ends[i]``
+    are the original-text indices of the first / last character that
+    produced ``collapsed[i]``. A collapsed ``" "`` standing in for a run of
+    ``\\r\\n``s, indentation, or blank lines maps to the run's full extent,
+    so spans recovered in collapsed space translate back to original-text
+    offsets that include the whitespace the cleaner rewrote.
+    """
+    out: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i].isspace():
+            j = i
+            while j + 1 < n and text[j + 1].isspace():
+                j += 1
+            out.append(" ")
+            starts.append(i)
+            ends.append(j)
+            i = j + 1
+        else:
+            out.append(text[i])
+            starts.append(i)
+            ends.append(i)
+            i += 1
+    return "".join(out), starts, ends
+
+
+def _find_anchored_span(
+    collapsed_text: str,
+    needle: str,
+    search_from: int,
+) -> tuple[int, int] | None:
+    """Locate *needle*'s span in *collapsed_text* via prefix/suffix anchors.
+
+    Used when the cleaner removed lines from *inside* the chunk: the full
+    needle no longer matches anywhere, but its first and last
+    :data:`_ANCHOR_LEN` characters usually survive verbatim. The recovered
+    span — first char of the prefix anchor through last char of the suffix
+    anchor — is allowed to be LONGER than the needle, which is exactly what
+    a window-style fuzzy match cannot express.
+
+    Returns ``(first, last)`` collapsed-space indices (inclusive), or
+    ``None`` when either anchor is missing or the span size is implausible
+    (premature suffix repeat, runaway match).
+    """
+    prefix = needle[:_ANCHOR_LEN]
+    suffix = needle[-_ANCHOR_LEN:]
+
+    start = collapsed_text.find(prefix, search_from)
+    if start == -1:
+        start = collapsed_text.find(prefix)
+    if start == -1:
+        return None
+
+    suffix_pos = collapsed_text.find(suffix, start + _ANCHOR_LEN)
+    if suffix_pos == -1:
+        return None
+
+    last = suffix_pos + len(suffix) - 1
+    span_len = last - start + 1
+    # The raw span can only grow relative to the cleaned content (the
+    # cleaner removes text); allow a little shrink for character-level
+    # transforms, and cap growth to stop boilerplate-repeat runaways.
+    if span_len < int(len(needle) * 0.9):
+        return None
+    if span_len > len(needle) * _MAX_SPAN_FACTOR + _MAX_SPAN_SLACK:
+        return None
+    return start, last
+
+
 def _recompute_chunk_offsets(
     chunks: list[dict[str, Any]],
     original_text: str,
@@ -1181,18 +1266,34 @@ def _recompute_chunk_offsets(
     - ``chunk_metadata["sentence_offsets"]``: if present, each sentence's
       ``start`` / ``end`` are also shifted to match the original-text anchor.
 
-    Three-level cascade per chunk:
+    Four-level cascade per chunk:
 
     1. **Exact** — ``chunk.content`` is a verbatim substring of
        *original_text*.  ``str.find`` is O(n·m) but fast in practice because
        chunks are short (~900 chars) and the search string is unique enough to
        resolve quickly.
-    2. **Fuzzy** — ``rapidfuzz.fuzz.partial_ratio`` pre-filter at the
+    2. **Whitespace-collapsed exact** (method ``'fuzzy'``) — both sides are
+       collapsed to single-space whitespace runs and searched again. This
+       resolves every chunk whose only divergence from the raw upload is
+       line endings, indentation, or blank-line collapse (e.g. ALL chunks
+       of a CRLF file), and — unlike a fuzzy window — maps back to the FULL
+       raw span including the rewritten whitespace.
+    3. **Anchored span** (method ``'fuzzy'``) — when the cleaner removed
+       lines from inside the chunk, the prefix and suffix anchors are
+       located independently (:func:`_find_anchored_span`) so the span can
+       exceed the cleaned length and keep the removed text inside it.
+    4. **Window fuzzy** — ``rapidfuzz.fuzz.partial_ratio`` pre-filter at the
        :data:`_FUZZY_SCORE_THRESHOLD` boundary, then
-       ``rapidfuzz.fuzz.partial_ratio_alignment`` for the actual span.  Score
-       ≥ threshold → method ``'fuzzy'``.
-    3. **None** — both searches fail; ``char_start`` / ``char_end`` set to
+       ``rapidfuzz.fuzz.partial_ratio_alignment`` for the span. Last resort
+       for heavily transformed chunks; the matched window never exceeds
+       ``len(content)``, so it can clip text that level 2/3 would keep.
+    5. **None** — everything failed; ``char_start`` / ``char_end`` set to
        ``None``, method ``'none'``.
+
+    Levels 2 and 3 search forward from the previous chunk's match first
+    (chunks are sequential over the document) and fall back to a
+    whole-document search, which keeps repeated boilerplate from re-anchoring
+    a later chunk to an earlier occurrence.
 
     Sentence offsets are adjusted by the delta between the old and new
     ``char_start`` when a match is found, so they remain relative to
@@ -1209,6 +1310,21 @@ def _recompute_chunk_offsets(
     fuzzy_count = 0
     none_count = 0
 
+    collapsed_text, collapsed_starts, collapsed_ends = _collapse_whitespace_with_map(original_text)
+    # Collapsed-space floor for the sequential search. Overlapping chunks
+    # share their head with the previous chunk's tail, so the floor is the
+    # previous chunk's START, not its end.
+    cursor = 0
+
+    def _apply_collapsed_match(
+        chunk: dict[str, Any], old_start: int | None, first: int, last: int
+    ) -> None:
+        new_start = collapsed_starts[first]
+        chunk["char_start"] = new_start
+        chunk["char_end"] = collapsed_ends[last] + 1
+        chunk["citation_offset_method"] = "fuzzy"
+        _shift_sentence_offsets(chunk, old_start, new_start)
+
     for chunk in chunks:
         content: str = chunk.get("content", "")
         old_start: int | None = chunk.get("char_start")
@@ -1223,7 +1339,30 @@ def _recompute_chunk_offsets(
             exact_count += 1
             continue
 
-        # --- Level 2: rapidfuzz fuzzy match ---
+        # Whitespace-collapsed needle shared by levels 2 and 3.
+        needle = " ".join(content.split())
+        if needle:
+            # --- Level 2: whitespace-collapsed exact match ---
+            pos = collapsed_text.find(needle, cursor)
+            if pos == -1:
+                pos = collapsed_text.find(needle)
+            if pos != -1:
+                _apply_collapsed_match(chunk, old_start, pos, pos + len(needle) - 1)
+                fuzzy_count += 1
+                cursor = max(cursor, pos)
+                continue
+
+            # --- Level 3: prefix/suffix anchored span ---
+            if len(needle) >= 2 * _ANCHOR_LEN:
+                span = _find_anchored_span(collapsed_text, needle, cursor)
+                if span is not None:
+                    first, last = span
+                    _apply_collapsed_match(chunk, old_start, first, last)
+                    fuzzy_count += 1
+                    cursor = max(cursor, first)
+                    continue
+
+        # --- Level 4: rapidfuzz window fuzzy match ---
         # partial_ratio gives a cheap score on the whole content vs. original;
         # we only pay for alignment when it crosses the threshold.
         if len(content) > 0:
@@ -1240,7 +1379,7 @@ def _recompute_chunk_offsets(
                     fuzzy_count += 1
                     continue
 
-        # --- Level 3: no match ---
+        # --- Level 5: no match ---
         chunk["char_start"] = None
         chunk["char_end"] = None
         chunk["citation_offset_method"] = "none"

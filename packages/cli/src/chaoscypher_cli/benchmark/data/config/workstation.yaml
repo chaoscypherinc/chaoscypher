@@ -1,0 +1,37 @@
+# ChaosCypher Workstation Benchmark
+#
+# Extractors sized for large-iron GPUs. The smallest model here needs ~40 GB
+# VRAM (llama3.1:70b); 48 GB+ is recommended to run the full set without
+# offloading. Models are NOT pulled automatically — see pull list below.
+#
+# Use --local-only to restrict to local models only.
+name: "ChaosCypher Workstation Benchmark"
+description: "Extraction benchmark for large-iron local models (llama3.1:70b ~40 GB, gpt-oss:120b ~80 GB). 48 GB+ recommended to run the full set without offloading."
+
+seed: 42
+temperature: 0.0
+
+datasets:
+  - war_and_peace_tiny
+  - tech_encyclopedia_tiny
+  - scientific_methods_tiny
+
+# Large-iron extractors (not pulled by default — see header).
+extractors:
+  - provider: ollama
+    model: "llama3.1:70b"
+    label: "Llama 3.1 70B (workstation)"
+
+  - provider: ollama
+    model: "gpt-oss:120b"
+    label: "GPT-OSS 120B (workstation)"
+
+  # Include the ≤24 GB frontier local for a head-to-head comparison.
+  - provider: ollama
+    model: "qwen3.6:35b-a3b"
+    label: "Qwen3.6 35B-A3B MoE (local)"
+
+  # Commercial frontier as a quality ceiling reference.
+  - provider: anthropic
+    model: claude-opus-4-8
+    label: "Claude Opus 4.8"

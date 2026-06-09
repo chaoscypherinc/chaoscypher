@@ -11,6 +11,18 @@ import TabItem from '@theme/TabItem';
 
 Chaos Cypher provides three search modes that work across your indexed documents and knowledge graph.
 
+## Why GraphRAG
+
+Pairing a knowledge graph with vector search beats embeddings alone on multi-hop questions — where the answer comes from connecting several facts, not matching one passage. Independent, peer-reviewed research on the GraphRAG approach finds:
+
+- **~7% higher multi-hop retrieval** than a state-of-the-art embedding model — [HippoRAG 2, ICML 2025](https://arxiv.org/abs/2502.14802)
+- **~24% more accurate on complex multi-hop reasoning** vs. reranked vector RAG (53% vs 43%) in an independent benchmark — [GraphRAG-Bench, ICLR 2026](https://arxiv.org/abs/2506.05690)
+- **6–13× faster serving** than iterative retrieval, at equal-or-better recall — [HippoRAG, NeurIPS 2024](https://arxiv.org/abs/2405.14831)
+
+:::note
+These figures are from independent, peer-reviewed research on the GraphRAG _approach_ (linked) — not ChaosCypher benchmarks. GraphRAG's edge is strongest on multi-hop questions; plain vector search is fine for single-fact lookups.
+:::
+
 ## Search Modes
 
 <Tabs>

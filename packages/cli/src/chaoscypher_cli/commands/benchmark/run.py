@@ -147,6 +147,25 @@ def run(
 
     is_full_mode = bool(cfg.embedders or cfg.chats)
 
+    from chaoscypher_cli.benchmark.models import assert_registry_coverage
+
+    all_models = [
+        *(cfg.extractors or []),
+        *(cfg.embedders or []),
+        *(cfg.chats or []),
+        *([cfg.judge] if cfg.judge else []),
+    ]
+    # --local-only drops commercial models, so only require price entries for
+    # the models that will actually run (local providers never need a price).
+    models_to_check = filter_models(all_models, local_only=True) if local_only else all_models
+    missing = assert_registry_coverage(models_to_check)
+    if missing:
+        console.print(
+            "[red]Missing registry price entries (add to models_registry.yaml):[/red] "
+            + ", ".join(missing)
+        )
+        raise click.Abort
+
     if is_full_mode:
         from dataclasses import replace
 
@@ -222,7 +241,12 @@ def run(
     json_path = out_dir / f"{timestamp}.json"
     md_path = out_dir / f"{timestamp}.md"
     dump_results(rows, json_path)
-    md_text = render_leaderboard(rows)
+    md_text = render_leaderboard(
+        rows,
+        default_embedder=cfg.default_embedder,
+        default_chat=cfg.default_chat,
+        weights=cfg.weights,
+    )
     md_path.write_text(md_text, encoding="utf-8")
     (out_dir / "latest.md").write_text(md_text, encoding="utf-8")
 

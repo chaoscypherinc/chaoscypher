@@ -106,7 +106,7 @@ async def test_runner_pins_versions_and_seed_on_every_row():
     )
     assert rows[0].seed == 99
     assert rows[0].temperature == 0.0
-    assert rows[0].benchmark_version == "1.0"
+    assert rows[0].benchmark_version == "2.0"
     assert rows[0].dataset_version == "1.0"
     assert rows[0].dataset_source == "builtin"
     assert rows[0].config_name == "test_config"

@@ -36,4 +36,16 @@ describe('ChunkInputDiff', () => {
     expect(removed.map((el) => el.textContent).join('').trim()).toBe('CHAPTER I');
     expect(container.textContent).toContain('BOOK ONE: 1805');
   });
+
+  it('does not strike CRLF→LF line-ending differences as removed text', () => {
+    // CRLF sources keep \r\n in raw_content while the cleaned text uses \n.
+    // Line endings are invisible — flagging them paints red artifacts at
+    // every line break without conveying anything.
+    const { container } = render(
+      <ChunkInputDiff cleaned={'line one\nline two'} raw={'line one\r\nline two'} />,
+    );
+    expect(container.querySelectorAll('[data-removed="true"]')).toHaveLength(0);
+    expect(container.textContent).toContain('line one');
+    expect(container.textContent).toContain('line two');
+  });
 });

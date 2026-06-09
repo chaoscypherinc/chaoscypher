@@ -11,7 +11,8 @@
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
-    "serve": "docusaurus serve"
+    "serve": "docusaurus serve",
+    "test": "vitest run"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.1",
@@ -29,6 +30,7 @@
     "@docusaurus/module-type-aliases": "^3.7.0",
     "@docusaurus/types": "^3.7.0",
     "typescript": "~5.9.3",
+    "vitest": "^3.2.4",
     "wrangler": "^4.98.0"
   },
   "browserslist": {

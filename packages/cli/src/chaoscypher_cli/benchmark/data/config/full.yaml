@@ -1,8 +1,7 @@
 # ChaosCypher Full Pipeline Benchmark
 #
 # End-to-end pipeline benchmark: builds graphs with each extractor, indexes
-# with each embedder, evaluates each chat candidate end-to-end. Single dense
-# corpus for v1; cost dominated by judge calls (Opus 4.7).
+# with each embedder, evaluates each chat candidate end-to-end.
 #
 # Use --local-only to drop commercial models and switch judge to a local
 # Ollama model (signal weaker but free).
@@ -15,31 +14,64 @@ temperature: 0.0
 datasets:
   - tech_encyclopedia_tiny
 
+# Representative extractor subset: 1 Anthropic frontier + 1 Anthropic small + 3 local.
 extractors:
-  - provider: ollama
-    model: llama3.1:8b
-    label: "Llama 3.1 8B (local)"
-  - provider: ollama
-    model: qwen3.6:32b
-    label: "Qwen 3.6 32B (local)"
+  - provider: anthropic
+    model: claude-opus-4-8
+    label: "Claude Opus 4.8"
 
+  - provider: anthropic
+    model: claude-haiku-4-5
+    label: "Claude Haiku 4.5"
+
+  - provider: ollama
+    model: "qwen3:14b"
+    label: "Qwen3 14B (local)"
+
+  - provider: ollama
+    model: "gemma4:12b"
+    label: "Gemma 4 12B (local)"
+
+  - provider: ollama
+    model: "gpt-oss:20b"
+    label: "GPT-OSS 20B (local)"
+
+# Both local Qwen3 embedders are evaluated.
 embedders:
   - provider: ollama
-    model: nomic-embed-text
-    label: "nomic-embed (local)"
-  - provider: ollama
-    model: mxbai-embed-large
-    label: "mxbai-embed (local)"
+    model: "qwen3-embedding:8b"
+    label: "Qwen3 Embedding 8B (local)"
 
+  - provider: ollama
+    model: "qwen3-embedding:4b"
+    label: "Qwen3 Embedding 4B (local)"
+
+# Chat candidates: one local + one commercial (not the judge).
 chats:
   - provider: ollama
-    model: llama3.1:8b
-    label: "Llama 3.1 8B (local)"
+    model: "qwen3:14b"
+    label: "Qwen3 14B (local)"
+
   - provider: openai
     model: gpt-4o-mini
     label: "GPT-4o Mini"
 
+# Opus 4.8 is the judge (must not appear in chats).
 judge:
   provider: anthropic
-  model: claude-opus-4-7
-  label: "Claude Opus 4.7 (judge)"
+  model: claude-opus-4-8
+  label: "Claude Opus 4.8 (judge)"
+
+# defaults: pinned embedder + chat held fixed when attributing retrieval/chat
+# scores back to an extractor in the composite Overall column.
+defaults:
+  embedder: "ollama/qwen3-embedding:8b"
+  chat: "ollama/qwen3:14b"
+
+# Composite Overall weights (defaults: 0.40/0.20/0.20/0.10/0.10).
+weights:
+  extraction: 0.40
+  retrieval: 0.20
+  chat: 0.20
+  speed: 0.10
+  cost: 0.10

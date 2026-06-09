@@ -145,6 +145,7 @@ const sidebars: SidebarsConfig = {
       ],
     },
     "reference/extraction-benchmark",
+    "reference/model-cards",
     "reference/filtering-modes",
     {
       type: "category",

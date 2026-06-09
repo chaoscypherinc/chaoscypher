@@ -90,6 +90,10 @@ def test_run_loads_named_config_and_invokes_runner(tmp_path: Path):
                 "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
             ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
         ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(run, ["extraction", "--out", str(out_dir)])
@@ -147,6 +151,10 @@ def test_run_local_only_filters_commercial(tmp_path: Path):
             side_effect=lambda name: __import__(
                 "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
             ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
         ),
     ):
         runner = CliRunner()
@@ -238,6 +246,71 @@ def test_run_aborts_on_unknown_config_name(tmp_path: Path):
         result = runner.invoke(run, ["nonexistent", "--out", str(out_dir)])
     assert result.exit_code != 0
     assert "nonexistent" in result.output
+
+
+def test_run_aborts_when_registry_entry_missing(tmp_path: Path):
+    """CLI aborts with a 'Missing registry' message when a commercial model lacks a price entry."""
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    # with_commercial=True writes openai/gpt-x which is not in the real registry.
+    _write_config(builtin_cfg, "extraction", ["p1"], with_commercial=True)
+    out_dir = tmp_path / "out"
+
+    with (
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["extraction", "--out", str(out_dir)])
+
+    assert result.exit_code != 0
+    assert "Missing registry" in result.output
+
+
+def test_run_local_only_skips_coverage_for_filtered_commercial(tmp_path: Path):
+    """`--local-only` must not abort on an unpriced commercial model it will drop.
+
+    The config has an unpriced commercial extractor (openai/gpt-x) alongside a
+    local one. Without patching ``assert_registry_coverage``, a `--local-only`
+    run scopes the coverage check to the surviving (local) models, so it runs
+    rather than aborting on a model that won't execute.
+    """
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    _write_config(builtin_cfg, "extraction", ["p1"], with_commercial=True)
+    out_dir = tmp_path / "out"
+
+    with (
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.run_benchmark",
+            return_value=[],
+        ) as mock_run,
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["extraction", "--local-only", "--out", str(out_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert "Missing registry" not in result.output
+    kwargs = mock_run.call_args.kwargs
+    assert [m.provider for m in kwargs["models"]] == ["ollama"]
 
 
 def test_run_writes_json_and_markdown(tmp_path: Path):
@@ -399,6 +472,10 @@ def test_local_only_strips_commercial_models_in_full_mode(tmp_path: Path):
         patch(
             "chaoscypher_cli.commands.benchmark.run.user_benchmark_root",
             return_value=tmp_path / "bench",
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
         ),
     ):
         runner = CliRunner()

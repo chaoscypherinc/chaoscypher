@@ -4,7 +4,7 @@ import neonNoirTheme from "./src/prismTheme";
 
 const config: Config = {
   title: "Chaos Cypher",
-  tagline: "Decode knowledge from chaos — AI-powered knowledge graph engine",
+  tagline: "Decode knowledge from chaos — knowledge you can see, trust, and own",
   url: "https://chaoscypher.com",
   baseUrl: "/",
   trailingSlash: false,
@@ -112,7 +112,8 @@ const config: Config = {
     ],
     colorMode: {
       defaultMode: "dark",
-      respectPrefersColorScheme: true,
+      disableSwitch: true,
+      respectPrefersColorScheme: false,
     },
     navbar: {
       title: "Chaos Cypher",

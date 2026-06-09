@@ -451,7 +451,10 @@ export const sourceProcessingApi = {
       entities: ExtractedEntity[];
       pagination: PaginationMetadata;
     }>(`/sources/${sourceId}/entities`, {
-      params: { page, per_page: perPage, sort_by: sortBy, sort_order: sortOrder },
+      // The cortex PageParams dependency reads `page_size` (see the OpenAPI
+      // contract); `per_page` is silently ignored and falls back to the
+      // 50-row default, truncating large reads.
+      params: { page, page_size: perPage, sort_by: sortBy, sort_order: sortOrder },
     });
     return response.data;
   },
@@ -472,7 +475,7 @@ export const sourceProcessingApi = {
       relationships: InferredRelationship[];
       pagination: PaginationMetadata;
     }>(`/sources/${sourceId}/relationships`, {
-      params: { page, per_page: perPage },
+      params: { page, page_size: perPage },
     });
     return response.data;
   },
@@ -493,7 +496,7 @@ export const sourceProcessingApi = {
       templates: SourceTemplateSummary[];
       pagination: PaginationMetadata;
     }>(`/sources/${sourceId}/templates`, {
-      params: { page, per_page: perPage },
+      params: { page, page_size: perPage },
     });
     return response.data;
   },

@@ -173,6 +173,164 @@ class TestRecomputeChunkOffsets:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests for the raw-span recovery cascade (2026-06-05)
+#
+# Regression: the fuzzy level used rapidfuzz partial_ratio_alignment, whose
+# matched window never exceeds len(content). The true raw span is LONGER
+# than the cleaned chunk whenever the cleaner removed text inside it
+# (CRLF -> LF alone guarantees this for every chunk of a CRLF file), so
+# every fuzzy window drifted or clipped — chunk raw_content showed text
+# from the wrong part of the document and the "Show removed text" diff
+# struck garbage.
+# ---------------------------------------------------------------------------
+
+
+class TestRecomputeChunkOffsetsRawSpan:
+    """Spans must expand to cover cleaner-removed text, not slide past it."""
+
+    def test_crlf_only_difference_resolves_full_span(self) -> None:
+        """CRLF raw vs LF cleaned: the span covers the full raw region
+        including every carriage return, and starts at the chunk's first char.
+        """
+        original = "First line one.\r\nSecond line two.\r\nThird line three.\r\nTail."
+        content = "First line one.\nSecond line two.\nThird line three."
+        chunk = _make_chunk(content)
+        _recompute_chunk_offsets([chunk], original)
+
+        assert chunk["citation_offset_method"] in ("exact", "fuzzy")
+        start, end = chunk["char_start"], chunk["char_end"]
+        assert start == 0
+        raw_span = original[start:end]
+        assert raw_span.replace("\r\n", "\n") == content
+
+    def test_internal_removed_lines_are_inside_recovered_span(self) -> None:
+        """Lines the cleaner dropped from inside the chunk stay inside the
+        recovered raw span instead of pushing the window off target.
+        """
+        original = (
+            "Once upon a time there was a long and winding introduction.\r\n"
+            "    NAVIGATION BREADCRUMB TO REMOVE\r\n"
+            "    ANOTHER BOILERPLATE LINE TO REMOVE\r\n"
+            "And the story continued exactly where it had left off before.\r\n"
+        )
+        content = (
+            "Once upon a time there was a long and winding introduction.\n"
+            "And the story continued exactly where it had left off before."
+        )
+        chunk = _make_chunk(content)
+        _recompute_chunk_offsets([chunk], original)
+
+        assert chunk["citation_offset_method"] in ("exact", "fuzzy")
+        raw_span = original[chunk["char_start"] : chunk["char_end"]]
+        assert raw_span.startswith("Once upon a time")
+        assert raw_span.rstrip().endswith("left off before.")
+        # The removed boilerplate is INSIDE the span — that's the whole
+        # point: the diff view can only strike text the span contains.
+        assert "NAVIGATION BREADCRUMB TO REMOVE" in raw_span
+
+    def test_window_cap_regression_title_block_not_chopped(self) -> None:
+        """War-and-Peace shape: title block, a long contents listing the
+        cleaner dropped, then body. The old length-capped window slid
+        forward to cover the body and chopped the title block off the
+        span; the recovered span must start at the title.
+        """
+        numerals = [
+            "I",
+            "II",
+            "III",
+            "IV",
+            "V",
+            "VI",
+            "VII",
+            "VIII",
+            "IX",
+            "X",
+            "XI",
+            "XII",
+            "XIII",
+            "XIV",
+            "XV",
+            "XVI",
+            "XVII",
+            "XVIII",
+            "XIX",
+            "XX",
+            "XXI",
+            "XXII",
+            "XXIII",
+            "XXIV",
+            "XXV",
+            "XXVI",
+            "XXVII",
+            "XXVIII",
+        ]
+        listing = "".join(f"    CHAPTER {n}\r\n\r\n" for n in numerals)
+        body_raw = (
+            "“Well, Prince, so Genoa and Lucca are now just family estates of the\r\n"
+            "Buonapartes. But I warn you, if you do not tell me that this means war,\r\n"
+            "I will have nothing more to do with you.”\r\n"
+        )
+        original = (
+            "WAR AND PEACE\r\n\r\n\r\nBy Leo Tolstoy/Tolstoi\r\n\r\n\r\n    Contents\r\n\r\n"
+            + listing
+            + "\r\nBOOK ONE: 1805\r\n\r\n\r\nCHAPTER I\r\n\r\n"
+            + body_raw
+        )
+        content = (
+            "WAR AND PEACE\n\nBy Leo Tolstoy/Tolstoi\n\n Contents\n\n BOOK ONE: 1805\n\n"
+            "“Well, Prince, so Genoa and Lucca are now just family estates of the "
+            "Buonapartes. But I warn you, if you do not tell me that this means war, "
+            "I will have nothing more to do with you.”"
+        )
+        chunk = _make_chunk(content)
+        _recompute_chunk_offsets([chunk], original)
+
+        assert chunk["citation_offset_method"] in ("exact", "fuzzy")
+        raw_span = original[chunk["char_start"] : chunk["char_end"]]
+        assert raw_span.startswith("WAR AND PEACE"), (
+            f"span must start at the title block, got: {raw_span[:60]!r}"
+        )
+        assert raw_span.rstrip().endswith("nothing more to do with you.”")
+        # The dropped contents listing is recoverable from the span.
+        assert "CHAPTER XXVIII" in raw_span
+
+    def test_sequential_chunks_anchor_in_document_order(self) -> None:
+        """Consecutive chunks of a CRLF document resolve to strictly
+        increasing offsets with non-pathological spans.
+        """
+        paras = [
+            f"Paragraph number {i} has some distinctive prose about topic {i}." for i in range(1, 5)
+        ]
+        original = "\r\n\r\n".join(paras)
+        chunks = [_make_chunk(p) for p in paras]
+        _recompute_chunk_offsets(chunks, original)
+
+        last_start = -1
+        for chunk, para in zip(chunks, paras, strict=True):
+            assert chunk["citation_offset_method"] in ("exact", "fuzzy")
+            assert chunk["char_start"] > last_start
+            raw_span = original[chunk["char_start"] : chunk["char_end"]]
+            assert raw_span.replace("\r\n", "\n") == para
+            last_start = chunk["char_start"]
+
+    def test_blank_line_collapse_and_indent_squeeze(self) -> None:
+        """Whitespace-only cleaner edits (blank-line collapse, indent
+        squeeze) still resolve with an exact-boundary span.
+        """
+        original = (
+            "Heading Goes Here\r\n\r\n\r\n\r\n      Indented opening sentence of the body text."
+        )
+        content = "Heading Goes Here\n\n Indented opening sentence of the body text."
+        chunk = _make_chunk(content)
+        _recompute_chunk_offsets([chunk], original)
+
+        assert chunk["citation_offset_method"] in ("exact", "fuzzy")
+        raw_span = original[chunk["char_start"] : chunk["char_end"]]
+        assert raw_span.startswith("Heading Goes Here")
+        assert raw_span.endswith("body text.")
+
+
+# ---------------------------------------------------------------------------
 # Unit tests for _shift_sentence_offsets
 # ---------------------------------------------------------------------------
 

@@ -4,10 +4,10 @@
 """ChaosCypher Extraction Benchmark engine.
 
 Public API: dataset/scorer protocols, the ExtractionDataset and
-V7ExtractionScorer v1 implementations, model config + price registry,
-the sequential runner, named-config loader, dataset discovery (built-in
-+ user overlay), and leaderboard rendering. Result types and JSON I/O
-live in ``results``.
+V7ExtractionScorer v1 implementations, model config + registry-backed
+pricing, the sequential runner, named-config loader, dataset discovery
+(built-in + user overlay), and leaderboard rendering. Result types and
+JSON I/O live in ``results``.
 
 Vocabulary:
     dataset - the test unit (corpus + metadata + how to evaluate it).

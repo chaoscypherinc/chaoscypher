@@ -9,6 +9,12 @@ import statistics
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from chaoscypher_cli.benchmark.composite import (
+    COMPOSITE_VERSION,
+    CompositeWeights,
+    compute_extractor_composites,
+)
+
 
 if TYPE_CHECKING:
     from chaoscypher_cli.benchmark.results import BenchmarkResult
@@ -70,22 +76,39 @@ def aggregate_by_model(rows: list[BenchmarkResult]) -> list[ModelAggregate]:
     return out
 
 
-def render_leaderboard(rows: list[BenchmarkResult]) -> str:
+def render_leaderboard(
+    rows: list[BenchmarkResult],
+    *,
+    default_embedder: str | None = None,
+    default_chat: str | None = None,
+    weights: CompositeWeights | None = None,
+) -> str:
     """Render rows as a Markdown leaderboard.
 
     Groups result rows by ``dataset_kind`` and emits one section per kind
     that is present (extraction, embedding, chat).  A shared run-metadata
-    preamble appears at the top.
+    preamble appears at the top, and a unified **Overall** section (one row
+    per extractor LLM, with a sortable composite) leads the body whenever
+    extraction rows are present.
 
-    Layout: header with run metadata (and config name when present);
-    per-kind sections (extraction → embedding → chat);
+    Layout: header with run metadata (and config name when present); the
+    Overall leaderboard; per-kind sections (extraction → embedding → chat);
     each extraction section contains a ranked headline table, per-dataset
     drill-down, and "did not complete" subsection.
+
+    Args:
+        rows: Result rows across all stages.
+        default_embedder: ``<provider>/<model>`` held fixed when attributing
+            retrieval to an extractor; None drops the retrieval dimension.
+        default_chat: ``<provider>/<model>`` held fixed when attributing chat
+            to an extractor; None drops the chat dimension.
+        weights: Composite Overall weights; None uses :class:`CompositeWeights`
+            defaults.
     """
     if not rows:
         return "# ChaosCypher Extraction Benchmark\n\nNo results.\n"
 
-    preamble_lines = _build_header_section(rows)
+    preamble_lines = _build_header_section(rows, weights=weights)
     preamble = "\n".join(preamble_lines)
 
     by_kind: dict[str, list[BenchmarkResult]] = {}
@@ -94,6 +117,14 @@ def render_leaderboard(rows: list[BenchmarkResult]) -> str:
 
     sections: list[str] = []
     if "extraction" in by_kind:
+        sections.append(
+            _render_overall_section(
+                rows,
+                default_embedder=default_embedder,
+                default_chat=default_chat,
+                weights=weights,
+            )
+        )
         sections.append(_render_extraction_section(by_kind["extraction"]))
     if "embedding" in by_kind:
         sections.append(_render_embedding_section(by_kind["embedding"]))
@@ -104,8 +135,54 @@ def render_leaderboard(rows: list[BenchmarkResult]) -> str:
     return preamble + body
 
 
-def _build_header_section(rows: list[BenchmarkResult]) -> list[str]:
-    """Build the title, run-metadata blurb, and any heterogeneity warnings."""
+def _render_overall_section(
+    rows: list[BenchmarkResult],
+    *,
+    default_embedder: str | None,
+    default_chat: str | None,
+    weights: CompositeWeights | None,
+) -> str:
+    """Unified LLM leaderboard: per-dimension columns + sortable Overall."""
+    comps = compute_extractor_composites(
+        rows,
+        default_embedder=default_embedder,
+        default_chat=default_chat,
+        weights=weights,
+    )
+    lines = [
+        "## Overall Leaderboard",
+        "",
+        "| Rank | Model | Overall | Extraction | Retrieval | Chat | Speed | Cost |",
+        "|------|-------|--------:|-----------:|----------:|-----:|------:|-----:|",
+    ]
+
+    def _cell(v: float | None) -> str:
+        return f"{v:.1f}" if v is not None else "-"
+
+    for rank, c in enumerate(comps, start=1):
+        d = c.dims
+        lines.append(
+            f"| {rank} | {c.model_label} | {c.overall:.1f} | "
+            f"{_cell(d.extraction)} | {_cell(d.retrieval)} | {_cell(d.chat)} | "
+            f"{_cell(d.speed)} | {_cell(d.cost)} |"
+        )
+    bases = {tuple(c.basis) for c in comps}
+    all_dims = {"extraction", "retrieval", "chat", "speed", "cost"}
+    if bases and not all(set(b) == all_dims for b in bases):
+        lines.append("")
+        lines.append("> Overall basis varies by model (some dimensions not run).")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _build_header_section(
+    rows: list[BenchmarkResult], *, weights: CompositeWeights | None = None
+) -> list[str]:
+    """Build the title, run-metadata blurb, and any heterogeneity warnings.
+
+    The metadata blurb pins ``COMPOSITE_VERSION`` and the per-dimension Overall
+    weights so a rendered leaderboard is self-describing and reproducible.
+    """
     dataset_ids = sorted({r.dataset_id for r in rows})
     model_ids = sorted({r.model_id for r in rows})
     seeds = sorted({r.seed for r in rows})
@@ -128,7 +205,8 @@ def _build_header_section(rows: list[BenchmarkResult]) -> list[str]:
             f"Scorer v{','.join(str(v) for v in scorer_versions)} . "
             f"{len(dataset_ids)} datasets . {len(model_ids)} models . "
             f"single shot . temp={','.join(str(t) for t in temps)} . "
-            f"seed={','.join(str(s) for s in seeds)}"
+            f"seed={','.join(str(s) for s in seeds)} . "
+            f"{_composite_descriptor(weights)}"
         ),
         "",
     ]
@@ -153,6 +231,23 @@ def _build_header_section(rows: list[BenchmarkResult]) -> list[str]:
         )
         lines.append("")
     return lines
+
+
+def _composite_descriptor(weights: CompositeWeights | None) -> str:
+    """Render the pinned composite version + per-dimension weight tuple.
+
+    Falls back to the :class:`CompositeWeights` defaults when no weights were
+    threaded through, so the rendered header is always reproducible.
+    """
+    w = weights or CompositeWeights()
+    return (
+        f"composite v{COMPOSITE_VERSION} . weights "
+        f"extraction={w.extraction:.2f} "
+        f"retrieval={w.retrieval:.2f} "
+        f"chat={w.chat:.2f} "
+        f"speed={w.speed:.2f} "
+        f"cost={w.cost:.2f}"
+    )
 
 
 def _render_extraction_section(rows: list[BenchmarkResult]) -> str:

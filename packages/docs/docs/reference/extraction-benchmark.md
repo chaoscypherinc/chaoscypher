@@ -52,15 +52,14 @@ For each `(model, dataset)` pair, one run produces:
   well-described, well-justified, but factually wrong entities can score
   well. This is a known v1 limitation; adding gold sets per dataset is
   the v2 step.
-- **Raw model capability.** The v7 score is calculated on the *final
-  post-processed* entities and relationships — after deduplication, entity
-  normalization, type rescue, evidence validation, and entity cleaning.
-  This is what reflects what users actually get from the pipeline, but it
-  also means a model that produces 100 noisy entities (80 discarded by
-  the cleaner) can score similarly to a model that produces 22 clean ones.
-  The cleanup pipeline silently carries weak models. Token efficiency
-  (`output_tokens` per kept entity) is the closest proxy in the current
-  metrics; a true "raw vs cleaned" comparison is a v1.5 feature.
+- **Raw model capability.** The v7 score is calculated on the **post-normalized,
+  pre-commit** graph — after the import pipeline's deduplication, entity
+  normalization, type rescue, evidence validation, and entity cleaning
+  (`enable_normalization=True`), which is what a real import commits. This
+  reflects what users actually get, but it also means the cleanup pipeline can
+  carry a weak model: a model that emits 100 noisy entities (80 discarded by the
+  cleaner) can score similarly to one that emits 22 clean ones. A raw-vs-cleaned
+  amplification ratio is a v1.5 feature.
 - **Variance.** Single shot per `(model, dataset)` at `temperature=0` with
   a fixed seed. Two models within a few grade points of each other should
   be considered tied; if a tie matters operationally, re-run those two
@@ -73,7 +72,7 @@ For each `(model, dataset)` pair, one run produces:
 
 Every result row pins:
 
-- `benchmark_version` — the harness version (currently `1.0`).
+- `benchmark_version` — the harness version (currently `2.0`).
 - `dataset_version` — bumps when a dataset's corpus or domain template
   changes.
 - `scorer_version` — currently `7`.
@@ -216,10 +215,10 @@ need. The parser also accepts `embedders:`, `chats:`, and `judge:` for the
 shape. If you set `embedders:` or `chats:`, you must also set `extractors:`;
 if you set `chats:`, you must also set a `judge:`.
 
-Commercial models also need a price entry — add to the registry in
-`packages/cli/src/chaoscypher_cli/benchmark/models.py` (`_PRICE_REGISTRY`).
-Prices in the registry are dated; update the comment when you change them
-so historical price provenance is preserved.
+Commercial models also need a price entry — add it to the model registry at
+`packages/cli/src/chaoscypher_cli/benchmark/data/models_registry.yaml` (a
+`price:` block, with a dated `price_dated:` for provenance). Run
+`make benchmark-cards` to regenerate the public model-cards page after edits.
 
 ## Known limitations
 

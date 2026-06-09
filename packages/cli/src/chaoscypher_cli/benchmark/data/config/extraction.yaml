@@ -21,22 +21,20 @@ datasets:
 # Extractor models to evaluate.
 # Optional `kinds: [extraction]` scopes a model to specific dataset kinds.
 extractors:
-  - provider: ollama
-    model: llama3.1:8b
-    label: "Llama 3.1 8B (local)"
+  # --- Anthropic ---
+  - provider: anthropic
+    model: claude-opus-4-8
+    label: "Claude Opus 4.8"
 
-  - provider: ollama
-    model: llama3.1:70b
-    label: "Llama 3.1 70B (local)"
+  - provider: anthropic
+    model: claude-sonnet-4-6
+    label: "Claude Sonnet 4.6"
 
-  - provider: ollama
-    model: qwen3.6:32b
-    label: "Qwen 3.6 32B (local)"
+  - provider: anthropic
+    model: claude-haiku-4-5
+    label: "Claude Haiku 4.5"
 
-  - provider: ollama
-    model: gpt-oss:120b
-    label: "GPT-OSS 120B (local)"
-
+  # --- OpenAI ---
   - provider: openai
     model: gpt-4o
     label: "GPT-4o"
@@ -45,10 +43,40 @@ extractors:
     model: gpt-4o-mini
     label: "GPT-4o Mini"
 
-  - provider: anthropic
-    model: claude-sonnet-4-6
-    label: "Claude Sonnet 4.6"
+  # --- Google Gemini ---
+  - provider: gemini
+    model: gemini-2.5-pro
+    label: "Gemini 2.5 Pro"
 
-  - provider: anthropic
-    model: claude-haiku-4-5-20251001
-    label: "Claude Haiku 4.5"
+  - provider: gemini
+    model: gemini-2.5-flash
+    label: "Gemini 2.5 Flash"
+
+  # --- Local (Ollama, ≤24 GB) ---
+  - provider: ollama
+    model: "gemma4:12b"
+    label: "Gemma 4 12B (local)"
+
+  - provider: ollama
+    model: "gemma4:26b"
+    label: "Gemma 4 26B (local)"
+
+  - provider: ollama
+    model: "qwen3:8b"
+    label: "Qwen3 8B (local)"
+
+  - provider: ollama
+    model: "qwen3:14b"
+    label: "Qwen3 14B (local)"
+
+  - provider: ollama
+    model: "qwen3.6:35b-a3b"
+    label: "Qwen3.6 35B-A3B MoE (local)"
+
+  - provider: ollama
+    model: "gpt-oss:20b"
+    label: "GPT-OSS 20B (local)"
+
+  - provider: ollama
+    model: "glm4:9b"
+    label: "GLM4 9B (local)"

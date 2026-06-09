@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-BENCHMARK_VERSION = "1.0"
+BENCHMARK_VERSION = "2.0"
 
 
 async def run_benchmark(

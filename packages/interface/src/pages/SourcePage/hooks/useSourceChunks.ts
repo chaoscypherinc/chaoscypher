@@ -91,30 +91,63 @@ export interface ChunkOutputFeeds {
   tasks: ExtractionTask[];
 }
 
+// Rows requested per feed page. The backend clamps to its configured
+// max_page_size, so the effective page may be smaller — has_next paging
+// below absorbs the difference.
+const FEED_PAGE_SIZE = 1000;
+// Backstop against a server that keeps reporting more pages. 20 pages at
+// 1000 rows is far beyond what the OUTPUT view can usefully render.
+const MAX_FEED_PAGES = 20;
+
+/** Accumulate every page of a paginated feed until `hasNext` goes false. */
+async function fetchAllFeedPages<T>(
+  fetchPage: (page: number) => Promise<{ items: T[]; hasNext: boolean }>,
+): Promise<T[]> {
+  const all: T[] = [];
+  for (let page = 1; page <= MAX_FEED_PAGES; page++) {
+    const { items, hasNext } = await fetchPage(page);
+    all.push(...items);
+    if (!hasNext || items.length === 0) break;
+  }
+  return all;
+}
+
 /**
  * Tab-level OUTPUT feeds loaded once and filtered per-chunk by
  * `chunk_index` in the chunk row body. A single combined query keeps the
  * three calls firing together like the old `Promise.all` did and yields
  * empty arrays on failure so the rest of the tab keeps working.
+ *
+ * Each feed pages through `has_next` rather than trusting one oversized
+ * request: the backend clamps page size server-side, and a truncated feed
+ * silently breaks the OUTPUT view (groups whose entities fell outside the
+ * returned window rendered "ENTITIES KEPT (0)").
  */
 export function useChunkOutputFeeds(sourceId: string) {
   return useQuery<ChunkOutputFeeds>({
     queryKey: chunkOutputFeedsQueryKey(sourceId),
     queryFn: async () => {
-      const [entitiesResponse, relsResponse, tasksResponse] = await Promise.all([
-        sourcesApi.getEntities(sourceId, 1, 1000),
-        sourcesApi.getRelationships(sourceId, 1, 1000),
-        sourcesApi.getExtractionTasks(sourceId, {
-          page: 1,
-          page_size: 1000,
-          include_content: false,
+      const [entities, relationships, tasks] = await Promise.all([
+        fetchAllFeedPages(async (page) => {
+          const r = await sourcesApi.getEntities(sourceId, page, FEED_PAGE_SIZE);
+          return { items: r.entities, hasNext: r.pagination?.has_next ?? false };
+        }),
+        fetchAllFeedPages(async (page) => {
+          const r = await sourcesApi.getRelationships(sourceId, page, FEED_PAGE_SIZE);
+          return { items: r.relationships, hasNext: r.pagination?.has_next ?? false };
+        }),
+        fetchAllFeedPages(async (page) => {
+          const r = await sourcesApi.getExtractionTasks(sourceId, {
+            page,
+            page_size: FEED_PAGE_SIZE,
+            include_content: false,
+          });
+          // The tasks list response carries flat page/page_size/total
+          // instead of a pagination block — derive has_next from those.
+          return { items: r.tasks, hasNext: r.page * r.page_size < r.total };
         }),
       ]);
-      return {
-        entities: entitiesResponse.entities,
-        relationships: relsResponse.relationships,
-        tasks: tasksResponse.tasks,
-      };
+      return { entities, relationships, tasks };
     },
   });
 }

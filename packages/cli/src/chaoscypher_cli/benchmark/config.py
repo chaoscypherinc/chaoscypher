@@ -23,6 +23,7 @@ from typing import Literal
 
 import yaml
 
+from chaoscypher_cli.benchmark.composite import CompositeWeights
 from chaoscypher_cli.benchmark.discovery import user_benchmark_root
 from chaoscypher_cli.benchmark.models import ModelConfig
 
@@ -56,6 +57,13 @@ class BenchmarkConfig:
         judge: Judge LLM for chat scoring; required iff ``chats`` is set.
         config_name: The slug used to load this config.
         source: Where the config was discovered.
+        default_embedder: ``<provider>/<model>`` held fixed when attributing
+            retrieval scores to an extractor in the composite. None when no
+            ``defaults:`` block is present.
+        default_chat: ``<provider>/<model>`` held fixed when attributing chat
+            scores to an extractor in the composite. None when absent.
+        weights: Composite Overall weights; None falls back to the defaults
+            baked into :class:`CompositeWeights`.
     """
 
     name: str
@@ -69,6 +77,9 @@ class BenchmarkConfig:
     judge: ModelConfig | None
     config_name: str
     source: ConfigSource
+    default_embedder: str | None = None
+    default_chat: str | None = None
+    weights: CompositeWeights | None = None
 
 
 def builtin_config_root() -> Path:
@@ -258,6 +269,20 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
         judge=judge,
     )
 
+    defaults = raw.get("defaults") or {}
+    weights_raw = raw.get("weights") or {}
+    weights = (
+        CompositeWeights(
+            extraction=float(weights_raw.get("extraction", 0.40)),
+            retrieval=float(weights_raw.get("retrieval", 0.20)),
+            chat=float(weights_raw.get("chat", 0.20)),
+            speed=float(weights_raw.get("speed", 0.10)),
+            cost=float(weights_raw.get("cost", 0.10)),
+        )
+        if weights_raw
+        else None
+    )
+
     return BenchmarkConfig(
         name=str(raw["name"]),
         description=str(raw.get("description", "")),
@@ -270,6 +295,9 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
         judge=judge,
         config_name=path.stem,
         source=source,
+        default_embedder=defaults.get("embedder"),
+        default_chat=defaults.get("chat"),
+        weights=weights,
     )
 
 

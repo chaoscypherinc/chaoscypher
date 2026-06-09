@@ -512,7 +512,7 @@ describe('sourceProcessingApi.getEntities', () => {
     const result = await sourceProcessingApi.getEntities('src-1');
 
     expect(mockGet).toHaveBeenCalledWith('/sources/src-1/entities', {
-      params: { page: 1, per_page: 50, sort_by: 'default', sort_order: 'desc' },
+      params: { page: 1, page_size: 50, sort_by: 'default', sort_order: 'desc' },
     });
     expect(result).toEqual(payload);
   });
@@ -523,7 +523,7 @@ describe('sourceProcessingApi.getEntities', () => {
     await sourceProcessingApi.getEntities('src-1', 3, 10, 'name', 'asc');
 
     expect(mockGet).toHaveBeenCalledWith('/sources/src-1/entities', {
-      params: { page: 3, per_page: 10, sort_by: 'name', sort_order: 'asc' },
+      params: { page: 3, page_size: 10, sort_by: 'name', sort_order: 'asc' },
     });
   });
 });
@@ -542,7 +542,7 @@ describe('sourceProcessingApi.getRelationships', () => {
     const result = await sourceProcessingApi.getRelationships('src-1');
 
     expect(mockGet).toHaveBeenCalledWith('/sources/src-1/relationships', {
-      params: { page: 1, per_page: 50 },
+      params: { page: 1, page_size: 50 },
     });
     expect(result).toEqual(payload);
   });
@@ -553,7 +553,7 @@ describe('sourceProcessingApi.getRelationships', () => {
     await sourceProcessingApi.getRelationships('src-1', 2, 25);
 
     expect(mockGet).toHaveBeenCalledWith('/sources/src-1/relationships', {
-      params: { page: 2, per_page: 25 },
+      params: { page: 2, page_size: 25 },
     });
   });
 });
@@ -572,7 +572,7 @@ describe('sourceProcessingApi.getTemplates', () => {
     const result = await sourceProcessingApi.getTemplates('src-1');
 
     expect(mockGet).toHaveBeenCalledWith('/sources/src-1/templates', {
-      params: { page: 1, per_page: 50 },
+      params: { page: 1, page_size: 50 },
     });
     expect(result).toEqual(payload);
   });

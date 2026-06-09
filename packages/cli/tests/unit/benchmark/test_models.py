@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from chaoscypher_cli.benchmark.models import (
     ModelConfig,
+    assert_registry_coverage,
     compute_cost,
     filter_models,
 )
@@ -39,11 +40,6 @@ def test_filter_models_by_kind_keeps_unscoped_models():
     assert [m.model for m in extraction_models] == ["big", "small"]
 
 
-def test_compute_cost_zero_for_local():
-    m = ModelConfig(provider="ollama", model="llama3.1:8b", label="L")
-    assert compute_cost(m, input_tokens=1000, output_tokens=500) == 0.0
-
-
 def test_compute_cost_for_known_commercial_model():
     """Use a known model from the price registry (gpt-4o)."""
     m = ModelConfig(provider="openai", model="gpt-4o", label="GPT-4o")
@@ -53,11 +49,29 @@ def test_compute_cost_for_known_commercial_model():
     assert cost > 0
 
 
-def test_compute_cost_unknown_commercial_returns_none():
-    m = ModelConfig(provider="openai", model="future-model", label="?")
-    assert compute_cost(m, input_tokens=100, output_tokens=100) is None
-
-
 def test_model_id_combines_provider_and_model():
     m = ModelConfig(provider="ollama", model="llama3.1:8b", label="L")
     assert m.model_id == "ollama/llama3.1:8b"
+
+
+def test_compute_cost_uses_registry_opus_price():
+    m = ModelConfig(provider="anthropic", model="claude-opus-4-8", label="Opus")
+    cost = compute_cost(m, input_tokens=1_000_000, output_tokens=1_000_000)
+    assert cost == 5.00 + 25.00  # corrected registry price
+
+
+def test_compute_cost_local_is_zero():
+    m = ModelConfig(provider="ollama", model="llama3.1:8b", label="L")
+    assert compute_cost(m, input_tokens=1000, output_tokens=1000) == 0.0
+
+
+def test_compute_cost_unknown_commercial_is_none():
+    m = ModelConfig(provider="openai", model="not-in-registry", label="X")
+    assert compute_cost(m, input_tokens=1000, output_tokens=1000) is None
+
+
+def test_assert_registry_coverage_flags_unpriced_commercial():
+    good = ModelConfig(provider="anthropic", model="claude-opus-4-8", label="Opus")
+    bad = ModelConfig(provider="openai", model="ghost", label="Ghost")
+    local = ModelConfig(provider="ollama", model="m", label="M")
+    assert assert_registry_coverage([good, bad, local]) == ["openai/ghost"]
