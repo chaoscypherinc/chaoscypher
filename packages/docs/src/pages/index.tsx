@@ -4,33 +4,11 @@ import Link from "@docusaurus/Link";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import CodeBlock from "@theme/CodeBlock";
 import GraphHero from "../components/GraphHero";
-import ScreenshotStrip from "../components/ScreenshotStrip";
-import type { Shot } from "../components/FeatureGallery";
+import GuidedTour from "../components/GuidedTour";
 
 function ArrowRight() {
   return <span aria-hidden="true"> &#8594;</span>;
 }
-
-/* ------------------------------------------------------------------ */
-/*  Showcase shots                                                      */
-/* ------------------------------------------------------------------ */
-
-const SHOT = "/img/screenshots";
-const SHOWCASE: Shot[] = [
-  { title: 'First-time setup', image: `${SHOT}/setup-llm-provider.png`, full: `${SHOT}/setup-llm-provider.png`, caption: 'Connect your AI — Ollama, OpenAI, Anthropic, or Gemini', alt: 'First-run setup connecting an LLM provider' },
-  { title: 'Dashboard', image: `${SHOT}/app-dashboard.png`, full: `${SHOT}/app-dashboard.png`, caption: 'Your knowledge base at a glance', alt: 'Dashboard showing 184 entities and 440 relationships over the graph' },
-  { title: 'Knowledge graph', image: `${SHOT}/app-graph-default.png`, full: `${SHOT}/app-graph-default.png`, caption: 'Explore the entire graph', alt: 'Force-directed knowledge graph of 184 entities', focus: 'center', zoom: '120%' },
-  { title: 'Radial view', image: `${SHOT}/app-graph-mode.png`, full: `${SHOT}/app-graph-mode.png`, caption: 'Multiple layouts — radial, force, and more', alt: 'Knowledge graph in a radial layout', focus: 'center', zoom: '115%' },
-  { title: 'Processing', image: `${SHOT}/app-source-overview.png`, full: `${SHOT}/app-source-overview.png`, caption: 'Chunked, extracted, and indexed automatically', alt: 'Source overview: 215 entities, 462 relationships, 419 chunks' },
-  { title: 'Chunks', image: `${SHOT}/app-source-chunks.png`, full: `${SHOT}/app-source-chunks.png`, caption: 'Every chunk, tracked and inspectable', alt: 'Chunks tab grid showing per-chunk entity counts' },
-  { title: 'Extracted entities', image: `${SHOT}/app-source-entities.png`, full: `${SHOT}/app-source-entities.png`, caption: 'Entities extracted automatically', alt: 'Extraction tab showing extracted entities with type badges' },
-  { title: 'Extracted relationships', image: `${SHOT}/app-source-relationships.png`, full: `${SHOT}/app-source-relationships.png`, caption: '…and the relationships between them', alt: 'Extraction tab table of relationships with confidence scores' },
-  { title: 'Templates', image: `${SHOT}/app-source-templates.png`, full: `${SHOT}/app-source-templates.png`, caption: 'Typed by templates — node & edge schemas', alt: 'Templates tab with node and edge type usage counts' },
-  { title: 'Entity detail', image: `${SHOT}/app-entity-detail.png`, full: `${SHOT}/app-entity-detail.png`, caption: 'Rich metadata on every entity', alt: 'Pierre Bezúkhov entity detail with 58 properties' },
-  { title: 'Connections', image: `${SHOT}/app-entity-connections.png`, full: `${SHOT}/app-entity-connections.png`, caption: 'See everything an entity connects to', alt: 'Pierre Bezúkhov connections table with 14 relationships' },
-  { title: 'Relationship detail', image: `${SHOT}/app-relationship-detail.png`, full: `${SHOT}/app-relationship-detail.png`, caption: 'Every relationship — justified and scored', alt: 'Relationship detail with a 90% confidence score and LLM justification' },
-  { title: 'GraphRAG chat', image: `${SHOT}/app-chat.png`, full: `${SHOT}/app-chat.png`, caption: 'Ask graph-native questions vector search can\'t answer', alt: 'GraphRAG chat ranking entities by PageRank centrality' },
-];
 
 /* ------------------------------------------------------------------ */
 /*  Section: See · Trust · Own value band                             */
@@ -41,25 +19,47 @@ function ValueBand() {
     <section className="value-band">
       <h2>Knowledge you can see, trust, and own</h2>
       <div className="feature-grid">
-        <div className="feature-card">
+        <div className="feature-card value-card">
+          <span className="value-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" />
+              <circle cx="12" cy="12" r="2.6" />
+            </svg>
+          </span>
           <h3>See</h3>
           <p>
-            An inspectable knowledge graph, not a black box. Explore every
-            entity, relationship, and source behind an answer.
+            A real, navigable <span className="vb-em">knowledge graph</span> — not a
+            black-box vector blob. Inspect every entity, relationship, and source
+            behind an answer.
           </p>
         </div>
-        <div className="feature-card">
+        <div className="feature-card value-card">
+          <span className="value-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3l7 2.6v5.1c0 4.3-2.9 7.4-7 8.8-4.1-1.4-7-4.5-7-8.8V5.6L12 3z" />
+              <path d="M8.8 12l2.2 2.2 4.2-4.4" />
+            </svg>
+          </span>
           <h3>Trust</h3>
           <p>
-            Backed by your sources, not guesswork. Every answer shows the
-            documents, chunks, and connections it came from.
+            Source-backed provenance, not &ldquo;AI says so.&rdquo; Every answer
+            traces <span className="vb-em">the exact path</span> — entities,
+            relationships, evidence — back to your documents.
           </p>
         </div>
-        <div className="feature-card">
+        <div className="feature-card value-card">
+          <span className="value-card-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3.5" y="4.5" width="17" height="6" rx="1.5" />
+              <rect x="3.5" y="13" width="17" height="6" rx="1.5" />
+              <path d="M7 7.5h.01M7 16h.01" />
+            </svg>
+          </span>
           <h3>Own</h3>
           <p>
-            Local-first and portable. Your data stays on your machine; export
-            and share your knowledge as shareable packages. No cloud lock-in.
+            Self-hosted, with local embeddings — <span className="vb-em">nothing
+            leaves your machine</span> by default. Export and share knowledge as
+            portable packages. No cloud lock-in.
           </p>
         </div>
       </div>
@@ -405,7 +405,7 @@ export default function Home(): JSX.Element {
       <main className="container margin-vert--lg">
         <ValueBand />
         <hr />
-        <ScreenshotStrip shots={SHOWCASE} />
+        <GuidedTour />
         <hr />
         <FeatureGrids />
         <hr />

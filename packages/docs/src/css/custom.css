@@ -672,7 +672,15 @@ html[data-theme="dark"] .alert--danger [class*="admonitionIcon"] {
 /* ---- Search ---- */
 
 html[data-theme="dark"] .navbar__search-input {
-  background: var(--cc-bg-card);
+  /* magnifier icon (the card-bg fill had stripped Infima's default icon) */
+  background-color: var(--cc-bg-card);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ea0c2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: left 0.6rem center;
+  background-size: 0.9rem 0.9rem;
+  padding-left: 1.95rem;
+  padding-right: 1.85rem;   /* leave room for the clear (X) button so typed text doesn't run under it */
+  text-align: right;   /* park the label opposite the icon to balance the box */
   border: 1px solid var(--cc-border-subtle);
   border-bottom: 1px solid var(--cc-border-subtle);
   border-radius: var(--cc-radius-md);
@@ -686,7 +694,7 @@ html[data-theme="dark"] .navbar__search-input {
 html[data-theme="dark"] .navbar__search-input:focus {
   border-color: var(--cc-accent-purple);
   box-shadow: 0 0 10px var(--cc-glow-purple);
-  background: var(--cc-bg-surface);
+  background-color: var(--cc-bg-surface);   /* keep the magnifier icon on focus */
   outline: none;
 }
 
@@ -694,23 +702,17 @@ html[data-theme="dark"] .navbar__search-input::placeholder {
   color: var(--cc-text-muted);
 }
 
-/* Keyboard shortcut badges */
-html[data-theme="dark"] .searchHint_iIMx {
-  background: var(--cc-bg-card);
-  border: 1px solid var(--cc-border-card);
-  border-radius: var(--cc-radius-sm);
-  color: var(--cc-text-secondary);
-  font-family: var(--cc-font-mono);
-  font-size: 0.65rem;
-  padding: 0.15rem 0.4rem;
-  line-height: 1.2;
-  box-shadow: none;
-}
+/* Hide the Ctrl/Cmd-K keyboard hint everywhere: it means nothing on touch
+   devices and, on mobile, it was wider than the collapsed box and spilled out
+   the side. The magnifier icon + "Search" placeholder stand on their own. */
+[class*="searchHintContainer"] { display: none !important; }
 
-html[data-theme="dark"] .searchHintContainer_Pkmr {
-  display: flex;
-  align-items: center;
-  gap: 0.2rem;
+/* Mobile: Infima collapses the input to a 2rem icon unless focused
+   (.navbar__search-input:not(:focus) at <=576px). Override that (the
+   dark-scoped selector outranks it) so the "Search" label is always readable —
+   there's no keyboard hint competing for space now. */
+@media (max-width: 996px) {
+  html[data-theme="dark"] .navbar__search-input { width: 6rem; padding-right: 0.85rem; }
 }
 
 /* ---- Horizontal rules ---- */
@@ -924,6 +926,84 @@ html[data-theme="dark"] .feature-card.feature-hero:hover {
 .showcase-arrow--l { left: -6px; } .showcase-arrow--r { right: -6px; }
 @media (max-width: 600px) { .showcase-arrow { display: none; } }  /* swipe on touch */
 
+/* ---- "See it in action" guided tour (area-grouped flows) ---- */
+.tour { margin: 1.25rem 0 0; }
+.tour-group { margin-bottom: 1.75rem; }
+.tour-group:last-child { margin-bottom: 0; }
+.tour-group-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--cc-text-secondary);
+}
+.tour-group-num {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  background: rgba(0, 229, 255, 0.1);
+  border: 1px solid var(--cc-accent-cyan);
+  color: var(--cc-accent-cyan);
+  font-family: var(--cc-font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.tour-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.tour-step {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  background: var(--cc-bg-surface);
+  border: 1px solid rgba(0, 229, 255, 0.18);
+  border-radius: 11px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.tour-step:hover { transform: translateY(-3px); border-color: rgba(0, 229, 255, 0.5); }
+.tour-thumb {
+  position: relative;
+  display: block;
+  height: 118px;
+  background-size: cover;
+  background-position: top center;
+}
+.tour-step-label { padding: 0.5rem 0.7rem 0; font-size: 0.88rem; font-weight: 600; color: #bfeaff; }
+.tour-cap { padding: 0.15rem 0.7rem 0.7rem; font-size: 0.76rem; color: var(--cc-text-muted); }
+.tour-arrow {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  color: var(--cc-accent-cyan);
+  font-size: 1.4rem;
+}
+@media (max-width: 768px) {
+  /* swipe each flow horizontally instead of stacking every card vertically */
+  .tour-flow {
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 0.6rem;
+    padding-bottom: 0.4rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 229, 255, 0.3) transparent;
+  }
+  .tour-step { flex: 0 0 78%; scroll-snap-align: start; }
+  .tour-arrow { display: none; }
+}
+
 /* ---- Feature gallery lightbox ---- */
 
 .fg-overlay {
@@ -1131,6 +1211,11 @@ a.integration-badge:hover {
   border-radius: var(--cc-radius-lg);
   border: 1px solid var(--cc-border-card);
   transition: all var(--cc-transition-normal);
+  /* grid items default to min-width:auto, which lets a long unbreakable code
+     line (e.g. the ghcr.io image ref) blow the card past the viewport and force
+     the whole page to scroll sideways on mobile. min-width:0 lets the card
+     shrink so the code block scrolls internally instead. */
+  min-width: 0;
 }
 
 html[data-theme="dark"] .pathway-card {
@@ -1164,6 +1249,11 @@ html[data-theme="dark"] .pathway-card:hover {
   grid-template-columns: 1.2fr 1fr;
   gap: var(--cc-spacing-grid-gap);
   align-items: start;
+}
+
+/* same min-width:auto guard for the nested grid's code-block cell */
+.pathway-wide-inner > div {
+  min-width: 0;
 }
 
 @media (max-width: 600px) {
@@ -1240,6 +1330,24 @@ html[data-theme="dark"] .integrations-group-label {
   color: var(--cc-text-muted);
   margin-bottom: 0.75rem;
 }
+
+/* minimalist monochromatic icon, parked in the card's top-right corner so it
+   doesn't add a row of height */
+.value-card { position: relative; }
+.value-card-icon {
+  position: absolute;
+  top: var(--cc-spacing-card);
+  right: var(--cc-spacing-card);
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  color: var(--cc-accent-cyan);
+}
+.value-card-icon svg { width: 100%; height: 100%; }
+.value-card h3 { margin-top: 0; padding-right: 2.2rem; }
+
+/* subtle cyan highlight on the one key phrase per card */
+.vb-em { color: var(--cc-accent-cyan); font-weight: 600; }
 
 /* ---- Coming soon badge ---- */
 

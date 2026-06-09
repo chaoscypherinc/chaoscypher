@@ -1,31 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
 import Link from '@docusaurus/Link';
 import CodeBlock from '@theme/CodeBlock';
-import BrowserOnly from '@docusaurus/BrowserOnly';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import DataCrystalFallback from './hero/DataCrystalFallback';
 import '../css/hero.css';
 
-const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher`;
+const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\nghcr.io/chaoscypherinc/chaoscypher`;
 
 export default function GraphHero(): JSX.Element {
   const cursorRef = useRef<HTMLSpanElement>(null);
-  const [animating, setAnimating] = useState(false);
-  useEffect(() => { cursorRef.current?.classList.add('hero-cursor--on'); }, []);
+  // The static SVG still-frame renders during SSR / no-JS / reduced-motion; the
+  // pre-rendered ambient loop replaces the (battery-heavy) live canvas on the client.
+  const [showVideo, setShowVideo] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+  const heroVideo = useBaseUrl('/video/hero-crystal.mp4');
+  const heroPoster = useBaseUrl('/video/hero-crystal-poster.jpg');
+
+  useEffect(() => {
+    cursorRef.current?.classList.add('hero-cursor--on');
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (!reduce) setShowVideo(true);
+  }, []);
 
   return (
     <div className="hero-wrapper">
       <section className="hero-container">
-        {/* base: static frame (SSR + no-JS + reduced motion); hidden once canvas animates */}
-        <div className={'hero-crystal-fallback-wrap' + (animating ? ' is-hidden' : '')}>
+        {/* base: static frame (SSR + no-JS + reduced motion); hidden once the video paints */}
+        <div className={'hero-crystal-fallback-wrap' + (videoReady ? ' is-hidden' : '')}>
           <DataCrystalFallback />
         </div>
-        {/* overlay: animated canvas (client + motion only) */}
-        <BrowserOnly>
-          {() => {
-            const DataCrystal = require('./hero/DataCrystal').default;
-            return <DataCrystal onActive={() => setAnimating(true)} />;
-          }}
-        </BrowserOnly>
+        {/* overlay: pre-rendered ambient loop (client + motion only) */}
+        {showVideo && (
+          <video
+            className="hero-crystal-video"
+            poster={heroPoster}
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            aria-hidden="true"
+            onCanPlay={() => setVideoReady(true)}
+          >
+            <source src={heroVideo} type="video/mp4" />
+          </video>
+        )}
         <div className="hero-vignette" />
 
         <div className="hero-content">

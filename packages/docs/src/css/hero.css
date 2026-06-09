@@ -28,11 +28,12 @@
 }
 
 /* crystal layers */
-.hero-crystal, .hero-crystal-canvas, .hero-crystal-fallback {
+.hero-crystal-video, .hero-crystal-fallback {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; z-index: 5; display: block;
 }
-.hero-crystal-fallback { z-index: 4; }   /* base layer under the animated canvas */
+.hero-crystal-video { object-fit: cover; object-position: center; }
+.hero-crystal-fallback { z-index: 4; }   /* base layer under the video loop */
 .hero-crystal-fallback-wrap {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; z-index: 4;
@@ -57,15 +58,32 @@
   position: relative; z-index: 25; text-align: center;
   display: flex; flex-direction: column; align-items: center; gap: 1.5rem;
   padding-inline: 1rem;
+  min-width: 0; max-width: 100%;   /* let the install code block scroll internally, not stretch the column */
 }
 
 .hero-content h1 {
+  position: relative;
   font-size: 4rem; font-weight: 800; letter-spacing: -0.03em;
   line-height: 1.16; padding-bottom: 0.08em;   /* room for y/p descenders */
   margin: 0;
   background: linear-gradient(135deg, var(--cc-accent-magenta), var(--cc-accent-purple), var(--cc-accent-cyan));
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
-  filter: drop-shadow(0 3px 16px rgba(0, 0, 0, 0.55)) drop-shadow(0 0 40px rgba(123, 47, 247, 0.3));
+}
+/* Subtle dark drop-shadow so the title stands out over the video. Done with a
+   hidden dark duplicate of the title (whose text-shadow DOES render) rather than
+   filter:drop-shadow — Firefox renders that as a box over the gradient-clipped
+   text, and text-shadow won't render on the transparent-filled title itself.
+   NOTE: the content string must match the <h1> text. */
+.hero-content h1::before {
+  content: "Chaos Cypher";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: none;
+  color: rgba(0, 0, 0, 0.6);
+  -webkit-text-fill-color: rgba(0, 0, 0, 0.6);
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
 }
 
 .hero-lede { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; margin-top: -0.4rem; }
@@ -91,7 +109,9 @@
 }
 
 /* one-liner: constrain the CodeBlock so the full command shows but it never overflows */
-.hero-oneliner { width: 100%; max-width: 640px; text-align: left; }
+/* hug the command (no empty space on the right); shrinks to viewport on mobile
+   where the command wraps */
+.hero-oneliner { width: fit-content; max-width: 100%; min-width: 0; text-align: left; }
 .hero-oneliner :global(.theme-code-block) { margin: 0; }
 
 /* alt row */
@@ -109,18 +129,20 @@
   .hero-slogan { font-size: 1.05rem; }
   .hero-subdesc { font-size: 0.9rem; }
   .hero-content { gap: 1.2rem; }
+  /* wrap the install command across lines instead of horizontal-scrolling */
+  .hero-oneliner pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 
 /* reduced motion: never animate; the static fallback already covers it */
 @media (prefers-reduced-motion: reduce) {
   .hero-btn-primary { animation: none; }
-  .hero-crystal-canvas { display: none; }
+  .hero-crystal-video { display: none; }
 }
 
 /* light mode: static light hero, hide the dark crystal layers */
 html:not([data-theme="dark"]) .hero-container { min-height: 60vh; background: linear-gradient(180deg, #f0f0f8, #ffffff); }
 html:not([data-theme="dark"]) .hero-container::before,
-html:not([data-theme="dark"]) .hero-crystal,
+html:not([data-theme="dark"]) .hero-crystal-video,
 html:not([data-theme="dark"]) .hero-crystal-fallback,
 html:not([data-theme="dark"]) .hero-vignette,
 html:not([data-theme="dark"]) .hero-fade { display: none; }
