@@ -2,15 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import Link from '@docusaurus/Link';
 import CodeBlock from '@theme/CodeBlock';
 import useBaseUrl from '@docusaurus/useBaseUrl';
-import DataCrystalFallback from './hero/DataCrystalFallback';
 import '../css/hero.css';
 
 const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\nghcr.io/chaoscypherinc/chaoscypher`;
 
 export default function GraphHero(): JSX.Element {
   const cursorRef = useRef<HTMLSpanElement>(null);
-  // The static SVG still-frame renders during SSR / no-JS / reduced-motion; the
-  // pre-rendered ambient loop replaces the (battery-heavy) live canvas on the client.
+  // SSR / no-JS / reduced-motion paint the video's poster (its first frame); the
+  // ambient loop then plays on top — same image underneath, so there's no jump.
   const [showVideo, setShowVideo] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
   const heroVideo = useBaseUrl('/video/hero-crystal.mp4');
@@ -25,10 +24,13 @@ export default function GraphHero(): JSX.Element {
   return (
     <div className="hero-wrapper">
       <section className="hero-container">
-        {/* base: static frame (SSR + no-JS + reduced motion); hidden once the video paints */}
-        <div className={'hero-crystal-fallback-wrap' + (videoReady ? ' is-hidden' : '')}>
-          <DataCrystalFallback />
-        </div>
+        {/* base: the video's poster (its first frame) — same image the loop starts
+            on, so SSR/no-JS/reduced-motion → video is a seamless hand-off, no jump */}
+        <div
+          className={'hero-crystal-fallback-wrap' + (videoReady ? ' is-hidden' : '')}
+          style={{ backgroundImage: `url(${heroPoster})` }}
+          aria-hidden="true"
+        />
         {/* overlay: pre-rendered ambient loop (client + motion only) */}
         {showVideo && (
           <video
