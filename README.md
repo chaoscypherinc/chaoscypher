@@ -11,7 +11,7 @@ blob. Search it, chat with it, refine it, and export the result as a portable
 ### Why Chaos Cypher
 
 - **Local-first GraphRAG** — sources → extraction → graph → search & chat, with
-  embeddings generated on your own CPU. Bring your own LLM, or run fully offline
+  embeddings generated on your own system. Bring your own LLM, or run fully offline
   with [Ollama](https://ollama.com/).
 - **Inspectable knowledge graphs** — every entity and relationship is visible
   and traceable back to its source. You can correct extractions, not just trust
