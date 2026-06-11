@@ -150,7 +150,8 @@ result = await ChunkingService().process("Your document text here...")
 print(f"{len(result.entities)} entities, {len(result.relationships)} relationships")
 
 # With Engine -- chunk, inspect, then persist
-chunks = await engine.chunking_service.create_chunks("...")
+# (store=False prevents the auto-persist that otherwise happens when a repository is present)
+chunks = await engine.chunking_service.create_chunks("...", store=False)
 print(f"{chunks.total_small_chunks} chunks in {chunks.total_groups} groups")
 engine.chunking_service.store_chunks(chunks)
 ```
@@ -192,8 +193,8 @@ service = IndexingService.from_engine(engine)
 ```python
 IndexingService(
     repository: IndexingProtocol,  # Chunk storage with embedding support
-    embedding_service: EmbeddingProviderProtocol,  # Embedding provider
     settings: EngineSettings,
+    embedding_service: EmbeddingProviderProtocol | None = None,  # Optional embedding provider
 )
 ```
 

@@ -63,9 +63,8 @@ volumes:
 
 The image is built and pushed by the
 [`publish-ghcr.yml`](https://github.com/chaoscypherinc/chaoscypher/blob/main/.github/workflows/publish-ghcr.yml)
-workflow. It is the launch install path: if `ghcr.io/chaoscypherinc/chaoscypher`
-does not pull yet, the publish workflow has not been run — use **Build from
-source** below in the meantime.
+workflow on every tagged GitHub Release (`vX.Y.Z`). Each release publishes
+the semver tags plus `latest`.
 
 :::
 
@@ -113,8 +112,15 @@ For contributors working from an approved development checkout who need hot-relo
 ```bash
 cd chaoscypher
 make install
+export QUEUE_PASSWORD="$(openssl rand -base64 32)"
 make docker-dev
 ```
+
+:::note[QUEUE_PASSWORD is required]
+
+The dev stack hard-requires the `QUEUE_PASSWORD` environment variable — `docker compose` aborts with `QUEUE_PASSWORD must be set for dev environment` if it is missing. The all-in-one container auto-generates this password on first boot; the dev stack does not, so export one (as above) before `make docker-dev`.
+
+:::
 
 `make install` handles:
 
@@ -203,6 +209,18 @@ ollama pull qwen3:30b-instruct
 ```
 
 No additional configuration needed — Ollama is the default provider.
+
+:::note[Linux: reaching host Ollama from Docker]
+
+Docker deployments point the seeded Ollama instance at `http://host.docker.internal:11434`, which resolves on Docker Desktop (macOS/Windows) but **not** on native Linux Docker Engine. On Linux, either map the hostname to the host gateway:
+
+```bash
+docker run ... --add-host=host.docker.internal:host-gateway ...
+```
+
+(Compose equivalent: `extra_hosts: ["host.docker.internal:host-gateway"]` on the service.) Or edit the Ollama instance URL under **Settings → LLM** to your host's IP (e.g. `http://172.17.0.1:11434`) and make sure Ollama listens beyond loopback (`OLLAMA_HOST=0.0.0.0`).
+
+:::
 
 :::warning[This pull is the longest part of setup]
 

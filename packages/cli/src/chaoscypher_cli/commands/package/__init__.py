@@ -8,8 +8,8 @@ Commands for exporting and importing .ccx packages:
 - load: Import/load a .ccx package file
 
 Example:
-    chaoscypher package export --output my-knowledge.ccx
-    chaoscypher package load my-knowledge.ccx
+    chaoscypher graph package export --output my-knowledge.ccx
+    chaoscypher graph package load my-knowledge.ccx
 """
 
 import click

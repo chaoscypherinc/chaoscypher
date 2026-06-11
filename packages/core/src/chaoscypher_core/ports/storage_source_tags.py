@@ -3,7 +3,7 @@
 
 """SourceTagStorageProtocol for ChaosCypher storage.
 
-Split from the original SourceStorageProtocol god-protocol (Phase 1 Task 12).
+Split from the original SourceStorageProtocol god-protocol.
 Covers SourceTag and SourceTagAssignment table operations — completely
 independent of source CRUD and citation data.
 Binds to SourceTagsMixin in the SQLite adapter.

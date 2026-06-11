@@ -31,8 +31,8 @@ from chaoscypher_core.ports.types import FilteringMode
 @click.option(
     "--depth",
     type=click.Choice(["quick", "full"]),
-    default="full",
-    show_default=True,
+    default=None,
+    show_default="the source's stored depth",
     help="Extraction depth: quick (fast sample) or full (all chunks).",
 )
 @click.option(
@@ -67,7 +67,7 @@ from chaoscypher_core.ports.types import FilteringMode
 @click.option("--quiet", "-q", is_flag=True, help="Minimal output.")
 def extract_cmd(
     source_id: str,
-    depth: str,
+    depth: str | None,
     domain: str | None,
     filtering_mode: FilteringMode | None,
     force: bool,
@@ -170,10 +170,11 @@ def extract_cmd(
 
             # --- Run extraction ---
             filename = source.get("filename", source_id)
+            effective_depth = depth or source.get("extraction_depth") or "full"
             if not quiet:
                 console.print(
                     f"\n[bold]Extracting:[/bold] [cyan]{filename}[/cyan]  "
-                    f"[dim](depth: {depth})[/dim]\n"
+                    f"[dim](depth: {effective_depth})[/dim]\n"
                 )
 
             _run_extraction(
@@ -198,7 +199,7 @@ def extract_cmd(
 def _run_extraction(
     service: Any,
     source_id: str,
-    depth: str,
+    depth: str | None,
     domain: str | None,
     filtering_mode: FilteringMode | None,
     quiet: bool,
@@ -209,7 +210,8 @@ def _run_extraction(
     Args:
         service: CLISourceProcessingService instance.
         source_id: Source file ID.
-        depth: Extraction depth ('quick' or 'full').
+        depth: Extraction depth ('quick' or 'full'), or None to keep the
+            depth already persisted on the source row.
         domain: Forced domain override (None = auto-detect).
         filtering_mode: Filtering mode preset override.
         quiet: Suppress progress output.
@@ -219,10 +221,12 @@ def _run_extraction(
 
     from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeRemainingColumn
 
-    # Temporarily override extraction_depth on the file record so the service
-    # uses the depth specified on this command line invocation.
+    # Override extraction_depth on the file record only when the user passed
+    # --depth explicitly. None means "use whatever the row already has" — a
+    # source uploaded with --quick must not be silently widened to a full
+    # (expensive) extraction by a depth-less confirm/extract invocation.
     file_record = service.ctx.storage_adapter.get_file(source_id, service.ctx.database_name)
-    if file_record and depth != file_record.get("extraction_depth", "full"):
+    if file_record and depth is not None and depth != file_record.get("extraction_depth", "full"):
         service.ctx.storage_adapter.update_file(
             source_id, database_name=service.ctx.database_name, updates={"extraction_depth": depth}
         )

@@ -4,8 +4,8 @@
 """Runtime workflow execution layer.
 
 Hosts the standalone orchestrator functions (``execute_workflow_task``,
-``execute_step_task``) and the ``WorkflowExecutionRepository`` (Phase 5
-Task A's adapter-aware repository). Used by both the Cortex HTTP
+``execute_step_task``) and the adapter-aware
+``WorkflowExecutionRepository``. Used by both the Cortex HTTP
 endpoints (which trigger workflow execution from the API) and the
 Neuron worker (which dispatches execution from the queue).
 """

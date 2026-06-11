@@ -450,17 +450,21 @@ docstrings:
 # CLAUDE.md Rules (custom architectural linting)
 # ==========================================================================
 
+# Rule census lives with the rules themselves (don't enumerate IDs here —
+# hardcoded lists drift): import-linter contracts in pyproject.toml
+# [tool.importlinter], semgrep rules in tools/semgrep/rules/, AST rules in
+# scripts/lint_claude_rules.py.
 lint-claude: lint-claude-selftest
-	@echo "=== Module boundaries (import-linter: CC010, CC012, CC013, CC014, CC042, CC043) ==="
+	@echo "=== Module boundaries (import-linter contracts, pyproject.toml) ==="
 	uv run lint-imports
 	@echo ""
-	@echo "=== Pattern rules (semgrep: CC003, CC006-009, CC015, CC019, CC022, CC023, CC026-029, CC031, CC033, CC036, CC038, CC040, CC041, CC045) ==="
+	@echo "=== Pattern rules (semgrep, tools/semgrep/rules/) ==="
 	# semgrep is intentionally NOT in [dev] extras (it pins click<8.2 which
 	# conflicts with chaoscypher-cli's click>=8.3.0). `uv run --with semgrep
 	# --no-project` runs it in an isolated environment.
 	uv run --with semgrep --no-project semgrep --config tools/semgrep/rules/ packages/ --metrics off --error
 	@echo ""
-	@echo "=== CLAUDE.md Architecture Rules (AST checker: residual rules) ==="
+	@echo "=== CLAUDE.md Architecture Rules (AST checker, scripts/lint_claude_rules.py) ==="
 	uv run python scripts/lint_claude_rules.py packages/
 	@echo ""
 	@echo "CLAUDE.md rules passed"

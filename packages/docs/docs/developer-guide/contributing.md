@@ -6,24 +6,31 @@ description: How to contribute to Chaos Cypher — filing issues, starting discu
 
 # Contributing
 
-Chaos Cypher's public repositories use issues and discussions as the main contribution path.
+[`CONTRIBUTING.md`](https://github.com/chaoscypherinc/chaoscypher/blob/main/CONTRIBUTING.md) at the repository root is the single source of truth for the contribution workflow. This page summarizes it.
 
 ## Where to Contribute
 
 - **Bug reports:** [Open an issue](https://github.com/chaoscypherinc/chaoscypher/issues)
 - **Questions and ideas:** [Start a discussion](https://github.com/chaoscypherinc/chaoscypher/discussions)
-- **Security reports:** Use the security contact listed in the repository
+- **Security reports:** Follow [SECURITY.md](https://github.com/chaoscypherinc/chaoscypher/blob/main/SECURITY.md) — do not open a public issue
+- **Code and documentation changes:** Open a pull request (see below)
 
 ## Pull Requests
 
-The public repositories are published from the upstream development workspace. Direct pull requests may be closed if they cannot be applied upstream cleanly.
+Pull requests are welcome. The workflow, documented in full in [CONTRIBUTING.md](https://github.com/chaoscypherinc/chaoscypher/blob/main/CONTRIBUTING.md):
 
-If you want to propose a change, open an issue or discussion first with:
+1. Branch from `main`; keep branches short-lived and rebase (don't merge) to update against `main`.
+2. Give the PR a Conventional Commits title (`type(scope): subject`) and link any related issue.
+3. Work through the pre-merge checklist: lint, typecheck, `make docker-test`, ≥90% coverage on changed lines, an Alembic migration if SQLModel metadata changed, SPDX headers on new files, and doc updates if a rule or behavior shifted.
+4. Pass CI.
 
-1. The page or feature affected
-2. The problem you are trying to solve
-3. The change you recommend
-4. Any screenshots, logs, or reproduction steps that help explain it
+For larger changes, open an issue or discussion first describing the problem and the change you recommend — it avoids wasted work if the direction needs adjusting.
+
+Note: the public repository is published from an upstream development workspace, so maintainers may apply your accepted change there and merge it indirectly rather than via the GitHub merge button.
+
+## CLA
+
+Code contributions require a one-time Contributor License Agreement. When you open your first pull request, a maintainer will confirm whether your CLA is already on file and, if not, ask you to complete it before merge. See [CONTRIBUTING.md](https://github.com/chaoscypherinc/chaoscypher/blob/main/CONTRIBUTING.md) and [CLA.md](https://github.com/chaoscypherinc/chaoscypher/blob/main/CLA.md) in the repository root.
 
 ## Documentation Feedback
 

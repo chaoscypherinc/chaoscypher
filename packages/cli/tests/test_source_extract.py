@@ -571,3 +571,64 @@ class TestServiceResetMethod:
 
         with pytest.raises(ValueError, match="not found"):
             service.reset_for_re_extraction("if_notexist12345")
+
+
+# ---------------------------------------------------------------------------
+# Depth preservation (no --depth keeps the row's persisted depth)
+# ---------------------------------------------------------------------------
+
+
+class TestDepthPreservation:
+    """Omitting --depth must not silently widen a quick source to full."""
+
+    def _run(self, args: list[str], row_depth: str = "quick") -> tuple[Any, MagicMock]:
+        runner = CliRunner()
+
+        source = _make_source("indexed")
+        source["extraction_depth"] = row_depth
+
+        mock_service = MagicMock()
+        mock_service.__enter__ = lambda s: s
+        mock_service.__exit__ = MagicMock(return_value=False)
+        mock_service.get_file_status.return_value = source
+        mock_service.has_llm = True
+        mock_service.extract_entities.return_value = (
+            _make_extract_result(),
+            _make_llm_summary(),
+        )
+        mock_service.ctx.database_name = "test"
+        mock_service.ctx.storage_adapter.get_file.return_value = source
+
+        mock_ctx = MagicMock()
+        with patch("chaoscypher_cli.context.get_context", return_value=mock_ctx):
+            with patch(
+                "chaoscypher_cli.sources.CLISourceProcessingService",
+                return_value=mock_service,
+            ):
+                result = runner.invoke(extract_cmd, args)
+        return result, mock_service
+
+    def test_no_depth_flag_keeps_row_depth(self) -> None:
+        result, service = self._run(["if_testsrc12345"], row_depth="quick")
+
+        assert result.exit_code == 0, result.output
+        # The quick depth persisted on the row is displayed, not "full".
+        assert "quick" in result.output
+        # No update_file call rewrote extraction_depth.
+        depth_updates = [
+            c
+            for c in service.ctx.storage_adapter.update_file.call_args_list
+            if "extraction_depth" in (c.kwargs.get("updates") or {})
+        ]
+        assert depth_updates == []
+
+    def test_explicit_depth_flag_persists(self) -> None:
+        result, service = self._run(["if_testsrc12345", "--depth", "full"], row_depth="quick")
+
+        assert result.exit_code == 0, result.output
+        depth_updates = [
+            c
+            for c in service.ctx.storage_adapter.update_file.call_args_list
+            if (c.kwargs.get("updates") or {}).get("extraction_depth") == "full"
+        ]
+        assert len(depth_updates) == 1

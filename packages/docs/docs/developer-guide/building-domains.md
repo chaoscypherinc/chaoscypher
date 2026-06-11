@@ -193,9 +193,18 @@ The complete version adds multiple keyword groups with weights, regex patterns f
   "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- COMPOSITION: Use contains_ingredient for recipe-ingredient links\n- TECHNIQUE: Use uses_technique for recipe-technique links\n- ORIGIN: Use originates_from for cuisine-region links\n- VARIATION: Use variation_of for recipe variants",
 
   "entity_exclusions": [
-    "Bare measurement values: '2 cups', '350°F', '30 minutes'",
-    "Generic kitchen actions without a specific technique name",
-    "Tableware and serving items: plates, bowls, utensils"
+    {
+      "description": "Bare measurement values",
+      "examples": ["2 cups", "350°F", "30 minutes"]
+    },
+    {
+      "description": "Generic kitchen actions without a specific technique name",
+      "examples": ["mix", "stir", "serve"]
+    },
+    {
+      "description": "Tableware and serving items",
+      "examples": ["plates", "bowls", "utensils"]
+    }
   ],
 
   "templates": {
@@ -442,6 +451,12 @@ Your domain will appear in the logs:
 domain_registered  domain=culinary  version=1.0.0  builtin=False  path_type=user
 ```
 
+:::note
+
+`domain_registered` is emitted at DEBUG level -- set `LOG_LEVEL=DEBUG` to see it (unlike `loader_registered` and `tool_registered`, which are INFO).
+
+:::
+
 ## Domain Fields Reference
 
 ### Core Metadata
@@ -573,11 +588,13 @@ Templates define the entity types (nodes) and relationship types (edges) for the
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `entity_exclusions` | `list[str]` | Descriptions of things the LLM should NOT extract. Injected as "SKIP" rules in the extraction prompt. |
+| `entity_exclusions` | `list[object]` | Structured rules describing what the LLM should NOT extract. Each rule requires a `description` (injected as a "SKIP" rule in the extraction prompt) and a non-empty `examples` list (used by the post-extraction filter to drop matching entities). Unknown keys are rejected at config load. |
 | `title_words` | `list[str]` | Lowercase title/honorific words excluded during entity deduplication (e.g., `["chef", "the", "dr"]`). |
 | `examples` | `object` | Example extractions to include in LLM prompts. Contains `alias_examples` and `relationship_examples` lists. |
 | `quality_scoring` | `object` | Default quality scores: `default_entity_score` and `default_relationship_score`. |
-| `extraction_limits` | `object` | Per-domain overrides for relationship density limits: `max_relationship_ratio`, `max_entity_degree`, `max_same_source_type`. These override the values set by the filtering mode preset. Most domains do not need to set these -- the preset provides appropriate defaults. |
+| `type_aliases` | `object` | Maps alias entity type names to a canonical type (e.g., the literary domain maps `"Historical Figure"` to `"Character"`). Applied after extraction, before deduplication; the original type is preserved on the entity as an `entity_subtype` property. Matching is case-sensitive. Used by 11 built-in domains to keep near-duplicate templates from fragmenting the graph. |
+| `extraction_limits` | `object` | Per-domain overrides applied on top of the filtering mode preset. Despite the name, **any `FilteringConfig` field name** is a valid key -- the most common are the relationship density limits `max_relationship_ratio`, `max_entity_degree`, `max_same_source_type`. Most domains do not need to set these -- the preset provides appropriate defaults. |
+| `strict_validation` | `bool` | When `true`, an unknown key in the domain's filtering-config overrides (`extraction_limits`) raises a validation error at resolution time instead of being logged and dropped. Enable while developing a domain to catch typos early (e.g., `enable_typeconstraints`); omit or set `false` in production configs (default: `false`). |
 | `evidence_validation_mode` | `string` | Per-domain override for evidence validation: `"strict"`, `"standard"`, `"narrative"`, or `"relaxed"`. Overrides the value set by `extraction_filtering_mode`. Prefer setting `extraction_filtering_mode` instead -- it configures evidence validation along with all other filters as a coherent preset. |
 | `strict_edge_type_constraints` | `bool` | Per-domain override for edge type constraint behavior. When `true`, unmatched relationship types and entity type mismatches are dropped. When `false`, they fall through. Overrides the value set by `extraction_filtering_mode`. |
 
@@ -591,12 +608,14 @@ The `extraction_filtering_mode` field selects a preset that controls which quali
 |--------|-------------|
 | `maximum` | All filters on, strict evidence, tighter plausibility threshold |
 | `strict` | Strict evidence + type constraints, drop on mismatches |
-| `balanced` | All filters active with fall-throughs and orphan protection (default) |
+| `balanced` | All filters active with fall-throughs (default) |
 | `lenient` | Narrative evidence for pronoun-heavy prose, lower plausibility thresholds |
 | `minimal` | Most filters disabled, elevated limits |
 | `unfiltered` | Data integrity only (dedup + index validation) |
 
-Legacy names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are accepted as aliases for backwards compatibility.
+Orphan protection (keeping entities with no relationships and exempting endpoints with fewer than 2 edges from relationship caps) is enabled only by the `minimal` and `unfiltered` presets.
+
+Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are no longer accepted and raise `ValueError` -- migrate configs to one of the six canonical presets above. Some callers (e.g. MCP) silently fall back to the default preset when an invalid mode is found on a stored source row.
 
 For detailed filter-by-filter behavior of each preset, see [Architecture > Entity Extraction > Filtering Modes](../architecture/extraction-pipeline/entity-extraction.md#filtering-modes).
 
@@ -649,7 +668,7 @@ The preset sets all filter parameters to coherent values. Only override specific
 
 The filtering mode can also be overridden per-source when adding a document, without changing the domain configuration:
 
-- **API** -- Include `extraction_filtering_mode` in the source creation request body
+- **API** -- Include `filtering_mode` in the upload form or extraction request body (note: `extraction_filtering_mode` is the settings/domain-config key, not the API field -- an `extraction_filtering_mode` body field is silently ignored)
 - **CLI** -- Pass `--filtering-mode <preset>` when adding a document
 - **UI** -- Select a filtering mode from the dropdown in the upload dialog
 

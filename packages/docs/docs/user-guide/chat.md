@@ -11,6 +11,12 @@ import TabItem from '@theme/TabItem';
 
 Chat lets you ask questions about your documents using retrieval-augmented generation (RAG). The AI searches your indexed content, retrieves relevant passages, and generates answers grounded in your actual documents.
 
+:::note[API port]
+
+The `curl` examples on this page use `http://localhost:8080`, which is the API port for the multi-container development stack. The all-in-one container (the primary install) serves the API on port **80** instead — use `http://localhost/api/v1/...` there.
+
+:::
+
 ## Conversations
 
 Each chat is a conversation with its own message history. You can maintain multiple conversations simultaneously.
@@ -21,9 +27,9 @@ Each chat is a conversation with its own message history. You can maintain multi
 <TabItem value="web-ui" label="Web UI">
 
 
-Start a new chat from the sidebar. Give it a title or let the system auto-generate one from your first message.
+Start a new chat from the conversation dropdown in the chat header bar (the title opens a searchable list of your chats). Give it a title or let the system auto-generate one from your first message.
 
-![Chat sidebar with conversation list and search](/img/screenshots/chat-sidebar.png)
+![Chat header with conversation list and search](/img/screenshots/chat-sidebar.png)
 
 </TabItem>
 <TabItem value="cli" label="CLI">
@@ -114,19 +120,26 @@ from chaoscypher_core import Engine
 async with Engine("./data/databases/default") as engine:
     response = await engine.chat("How are the entities connected?")
     print(response.content)
-    for citation in response.citations:
-        print(f"  Source: {citation.filename}")
 ```
+
+:::note
+
+`Engine.chat()` sends the prompt directly to the configured LLM provider — it does not retrieve documents or produce citations. For RAG-grounded chat with citations, use the CLI (`chaoscypher chat`) or the Cortex chat API (`POST /chats/{id}/send` + `GET /chats/{id}/events`).
+
+:::
 
 </TabItem>
 <TabItem value="api" label="API">
 
 
 ```bash
-# Add a message and stream the AI response (SSE)
-curl -X POST http://localhost:8080/api/v1/chats/{chat_id}/stream \
+# Submit a message for background processing
+curl -X POST http://localhost:8080/api/v1/chats/{chat_id}/send \
   -H "Content-Type: application/json" \
   -d '{"content": "How are the entities connected?"}'
+
+# Watch the live response (SSE); the answer persists even if you disconnect
+curl -N http://localhost:8080/api/v1/chats/{chat_id}/events
 
 # Add a message to the history without generating a response
 curl -X POST http://localhost:8080/api/v1/chats/{chat_id}/messages \
@@ -190,7 +203,7 @@ chaoscypher chat -s "source-1" -s "source-2" "Compare these papers"
 
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id} \
+curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id}/scope \
   -H "Content-Type: application/json" \
   -d '{"source_ids": ["source-id-123"]}'
 ```
@@ -201,15 +214,10 @@ curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id} \
 
 ### Tag Scoping
 
-Scope by tags to include all sources with matching tags:
+Scope by tags to include all sources with matching tags (CLI and API; the
+web UI scope panel selects individual sources):
 
 <Tabs>
-<TabItem value="web-ui" label="Web UI">
-
-
-Select tag(s) when creating or updating chat scope.
-
-</TabItem>
 <TabItem value="cli" label="CLI">
 
 
@@ -226,7 +234,7 @@ chaoscypher chat -s "source-1" -t "notes" "Find connections"
 
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id} \
+curl -X PATCH http://localhost:8080/api/v1/chats/{chat_id}/scope \
   -H "Content-Type: application/json" \
   -d '{"tag_ids": ["tag-id-1", "tag-id-2"]}'
 ```
@@ -263,18 +271,72 @@ Citations help you verify the AI's answers against your original documents.
 
 ## Streaming
 
-Chat responses use Server-Sent Events for real-time streaming. The stream sends several event types:
+Chat responses use Server-Sent Events (`GET /chats/{id}/events`) for real-time streaming. The stream sends these event types:
 
 | Event | Description |
 |-------|-------------|
 | `content` | Text chunks as they're generated |
 | `thinking_delta` | AI reasoning steps (when thinking is enabled) |
+| `thinking` | Complete reasoning block emitted after a thinking phase (distinct from the incremental `thinking_delta`) |
+| `timing_update` | Thinking-phase timing payload |
+| `context_info` | Context-window usage for the turn (messages in context, tokens) |
+| `iteration_progress` | A new tool-calling round started |
 | `tool_calls` | Tool invocations during response generation |
-| `tool_result` | Results from tool calls |
-| `done` | Response complete |
+| `cached_tool_calls` | Duplicate tool calls that were skipped (already executed this turn) |
+| `tool_start` | A single tool began executing |
+| `tool_result` | Results from tool calls (with per-tool duration) |
+| `tool_approval_required` | A tool call is paused waiting for your approval decision |
+| `tool_rejected` | A gated tool call was denied (rejection or timeout) |
+| `warning` | Non-fatal notice (answer truncated, context overflow, spend cap, tool limit, stopped by user) |
+| `done` | Response complete (includes the final content, citations, and entity references; `status` is `cancelled` when you stopped the turn) |
 | `error` | Error during generation |
 
+The authoritative typed union of all stream events (`ChatSSEEvent`) is exposed in the OpenAPI schema via `GET /api/v1/chats/_schema/sse_event`.
+
 If you close the browser during streaming, the response continues in the background and is saved to the conversation.
+
+## Stopping a Response
+
+While the assistant is working, the Send button becomes a red **Stop** button (or press **Esc** in the message input). Stopping doesn't throw the work away: the assistant halts at the next step boundary — between tool calls or before its next reasoning round — and whatever it gathered so far is kept and saved as a partial answer with a "stopped at your request" notice. The conversation is immediately ready for your next message.
+
+One caveat: if the assistant is mid-way through writing a single long answer (no tools involved), that answer finishes first — stopping takes effect between steps, not mid-sentence.
+
+## Working with Answers
+
+Hover over any message to reveal its action row:
+
+- **Copy** — copies the message text (code blocks also have their own copy icon in the top-right corner).
+- **Regenerate** (latest answer only) — drops the answer and re-runs the turn from your question. Useful when the model went off track.
+- **Edit and resend** (your messages) — puts the message back in the input; sending replaces it and everything after it with the new question. Clearing the input cancels the edit. This forks the conversation from that point — nothing gets duplicated.
+
+If a turn fails with an error banner, the **Retry** button re-runs it server-side without re-posting your message.
+
+## Exporting a Conversation
+
+The header's download button offers two formats:
+
+- **JSON** — the full chat object (messages, citations, metadata) for archival or processing.
+- **Markdown** — a readable document with role headings and your citations rendered as numbered footnotes (source filename + quoted sentence).
+
+## Finding a Chat
+
+The chat switcher in the header includes a search box that queries the server by title — every conversation is findable no matter how many you have, not just the most recent page.
+
+## Tool Approval
+
+By default the assistant runs its tools automatically. **Settings → Tool call approval** offers two stricter modes:
+
+- **ask-on-write** — read-only tools (search, traversal) run freely; mutating tools (create/update/delete nodes and edges, document changes) pause and ask for your confirmation.
+- **always-ask** — every tool call asks first.
+
+When a gated tool call occurs, an approval dialog appears in the chat. Approving runs the tool and the answer continues; rejecting tells the model the call was denied so it can answer without it. An unanswered request is automatically denied after the configured timeout (`chat.tool_approval_timeout_seconds`, default 120 seconds) — tools never run without an explicit yes.
+
+## Answer Quality Checks
+
+Two automatic quality layers run on every answer:
+
+- **Truncation warnings** — if the model's answer was cut off by the token budget, or the conversation outgrew the model's context window, an amber warning appears under the answer explaining what happened and how to work around it (for Ollama: raise the context size under Settings → LLM).
+- **Citation validation** — when enabled (`chat_context.enable_response_validation`, on by default), each citation is checked against the retrieved source text and marked with a Verified/Invalid chip.
 
 ## LLM Configuration
 

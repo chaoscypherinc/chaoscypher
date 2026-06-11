@@ -3,10 +3,10 @@
 
 """reStructuredText (.rst / .rest) loader.
 
-Workstream 7 (2026-05-07): RST is the canonical Python ecosystem
-documentation format and routinely appears as ``README.rst`` or inside
-Sphinx source trees. Before this workstream, standalone ``.rst``
-uploads failed with "no loader available."
+RST is the canonical Python ecosystem documentation format and
+routinely appears as ``README.rst`` or inside Sphinx source trees.
+Before this loader existed, standalone ``.rst`` uploads failed with
+"no loader available."
 
 Implementation strategy: validate the document with docutils' ``null``
 writer (silences output but flags fatal parse errors), then return the

@@ -24,4 +24,4 @@ The Python API reference pages are committed as generated Markdown so the public
 
 ## License
 
-Chaos Cypher documentation is licensed under the GNU Affero General Public License v3. See `LICENSE`.
+Chaos Cypher documentation is licensed under the GNU Affero General Public License v3. See [LICENSE](../../LICENSE) at the repository root.

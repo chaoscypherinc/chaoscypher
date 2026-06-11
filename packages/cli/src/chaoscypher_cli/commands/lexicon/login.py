@@ -8,10 +8,10 @@ This allows users to authenticate via browser without entering credentials
 in the terminal.
 
 Example:
-    chaoscypher login              # Device flow (opens browser)
-    chaoscypher login --token xxx  # Direct token auth (for CI/automation)
-    chaoscypher logout
-    chaoscypher whoami
+    chaoscypher lexicon login              # Device flow (opens browser)
+    chaoscypher lexicon login --token xxx  # Direct token auth (for CI/automation)
+    chaoscypher lexicon logout
+    chaoscypher lexicon whoami
 """
 
 from __future__ import annotations
@@ -205,9 +205,9 @@ def login(url: str | None, token: str | None, no_browser: bool) -> None:
     For CI/automation, use --token to provide an API token directly.
 
     Example:
-        chaoscypher login                    # Browser auth (recommended)
-        chaoscypher login --no-browser       # Manual URL copy
-        chaoscypher login --token ghp_xxxxx  # Token auth (CI/automation)
+        chaoscypher lexicon login                    # Browser auth (recommended)
+        chaoscypher lexicon login --no-browser       # Manual URL copy
+        chaoscypher lexicon login --token ghp_xxxxx  # Token auth (CI/automation)
     """
     console = get_console()
     console.print("[bold cyan]Lexicon Login[/bold cyan]\n")
@@ -239,9 +239,9 @@ def login(url: str | None, token: str | None, no_browser: bool) -> None:
 
         # Show available commands
         console.print("\n[dim]You can now use:[/dim]")
-        console.print("  chaoscypher pull <package>   - Download packages")
-        console.print("  chaoscypher push             - Upload packages")
-        console.print("  chaoscypher search <query>   - Search packages")
+        console.print("  chaoscypher pull <package>           - Download packages")
+        console.print("  chaoscypher push                     - Upload packages")
+        console.print("  chaoscypher lexicon search <query>   - Search packages")
 
     except LexiconClientError as e:
         if e.status_code == 408:
@@ -276,7 +276,7 @@ def logout() -> None:
     Removes stored login state (auth.json) from the local system.
 
     Example:
-        chaoscypher logout
+        chaoscypher lexicon logout
     """
     console = get_console()
     storage = _get_storage()
@@ -297,7 +297,7 @@ def whoami() -> None:
     """Show current authentication status.
 
     Example:
-        chaoscypher whoami
+        chaoscypher lexicon whoami
     """
     console = get_console()
     storage = _get_storage()
@@ -308,5 +308,5 @@ def whoami() -> None:
         console.print(f"  [dim]Lexicon:[/dim] {storage.get_lexicon_url()}")
     else:
         console.print("[dim]Not logged in.[/dim]")
-        console.print("\nUse 'chaoscypher login' to authenticate.")
+        console.print("\nUse 'chaoscypher lexicon login' to authenticate.")
         _warn_if_stale_credentials()

@@ -149,24 +149,9 @@ class TestShippedPluginAliases:
         it's both then it has two, no?") so the templates were split. Guard
         against the pattern returning.
         """
-        for plugin_name in (
-            "biographical",
-            "cybersecurity",
-            "educational",
-            "financial",
-            "generic",
-            "historical",
-            "investigation",
-            "legal",
-            "literary",
-            "medical",
-            "news",
-            "philosophical",
-            "political",
-            "scientific",
-            "technical",
-            "theological",
-        ):
+        plugin_names = sorted(p.stem for p in _PLUGINS_DIR.glob("*.jsonld"))
+        assert len(plugin_names) >= 19, "builtin plugin glob came back short"
+        for plugin_name in plugin_names:
             domain = _load_plugin(plugin_name)
             templates = domain.get_templates()
             slash_templates = [

@@ -80,7 +80,7 @@ class CallLLMResult:
     """Result of one streaming LLM extraction call.
 
     Combines the original ``(content, input_tokens, output_tokens)``
-    triple with two observability signals introduced by Workstream 8:
+    triple with two observability signals:
 
     - ``finish_reason``: stable token from the provider's done chunk
       (``stop`` / ``length`` / ``content_filter`` / ``tool_calls`` /
@@ -358,12 +358,12 @@ async def _consume_extraction_stream(
     completed line against the ``detector`` for degenerate patterns.
     Aborts early if a loop is detected. Raises on stream-level errors.
 
-    Workstream 8 (2026-05-07) extends the return shape with two
-    observability signals: the normalized provider ``finish_reason`` and
-    a ``aborted`` flag derived from ``detector.aborted``. The trailing
-    partial line (no terminating newline) is flushed through the
-    detector so the last entity / relationship line is no longer
-    silently dropped when the model tops out mid-token.
+    The return shape carries two observability signals: the normalized
+    provider ``finish_reason`` and an ``aborted`` flag derived from
+    ``detector.aborted``. The trailing partial line (no terminating
+    newline) is flushed through the detector so the last entity /
+    relationship line is not silently dropped when the model tops out
+    mid-token.
 
     Args:
         response: Async-iterable stream of chunk dicts from the LLM provider.

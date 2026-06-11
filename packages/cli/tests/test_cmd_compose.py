@@ -562,6 +562,58 @@ class TestUpHappyPath:
         assert "not logged in" in result.output.lower() or "login" in result.output.lower()
 
 
+class TestComposeAuthHint:
+    """Not-logged-in hint must name the real command: chaoscypher lexicon login.
+
+    There is no top-level `chaoscypher login` command — the login command
+    is registered under the `lexicon` group only.
+    """
+
+    def test_up_not_logged_in_hint_names_lexicon_login(self, tmp_path: Path) -> None:
+        """Compose up without auth prints the lexicon login hint."""
+        config_file = tmp_path / "axiomatize.yaml"
+        config_file.write_text("name: test\n")
+
+        compose_cfg = _make_compose_config()
+        mock_result = _make_success_result()
+        mock_service_instance = MagicMock()
+        mock_service_instance.up = _make_async(mock_result)
+
+        runner = CliRunner()
+        with (
+            patch(_UP_CONFIG) as mock_cfg_cls,
+            patch(_UP_SERVICE, return_value=mock_service_instance),
+            patch(_UP_AUTH, return_value=None),
+            patch(_UP_LEXICON, return_value="https://lexicon.example.com"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            result = runner.invoke(up, ["--config", str(config_file)])
+
+        assert "Run 'chaoscypher lexicon login' to authenticate." in result.output
+
+    def test_build_not_logged_in_hint_names_lexicon_login(self, tmp_path: Path) -> None:
+        """Compose build without auth prints the lexicon login hint."""
+        config_file = tmp_path / "axiomatize.yaml"
+        config_file.write_text("name: test\n")
+
+        compose_cfg = _make_compose_config()
+        mock_result = _make_success_result()
+        mock_service_instance = MagicMock()
+        mock_service_instance.build = _make_async(mock_result)
+
+        runner = CliRunner()
+        with (
+            patch(_BUILD_CONFIG) as mock_cfg_cls,
+            patch(_BUILD_SERVICE, return_value=mock_service_instance),
+            patch(_BUILD_AUTH, return_value=None),
+            patch(_BUILD_LEXICON, return_value="https://lexicon.example.com"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            result = runner.invoke(build, ["--config", str(config_file)])
+
+        assert "Run 'chaoscypher lexicon login' to authenticate." in result.output
+
+
 class TestUpFailurePath:
     """compose up failure paths."""
 

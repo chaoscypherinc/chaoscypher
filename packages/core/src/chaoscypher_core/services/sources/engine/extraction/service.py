@@ -410,7 +410,7 @@ class ExtractionService:
 
         Used by the production finalizer to re-type generic entities
         (``Item`` -> ``Class``) the same way ``extract_entities_from_groups``
-        does. Workstream 3, Tasks 3.1+3.2.
+        does.
 
         Args:
             domain_name: Name of the domain (e.g., 'technical', 'literary').

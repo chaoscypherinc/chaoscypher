@@ -3,11 +3,10 @@
 
 """Microsoft Word (.docx) loader.
 
-Workstream 7 (2026-05-07): walks paragraphs and tables in document
-order. Captures heading-style paragraphs as document landmarks
-(returned in metadata for citation) and flattens table rows to
-``col1 | col2 | …`` lines so plain-text downstream consumers
-(extraction, embedding) keep the row association.
+Walks paragraphs and tables in document order. Captures heading-style
+paragraphs as document landmarks (returned in metadata for citation)
+and flattens table rows to ``col1 | col2 | …`` lines so plain-text
+downstream consumers (extraction, embedding) keep the row association.
 """
 
 from __future__ import annotations

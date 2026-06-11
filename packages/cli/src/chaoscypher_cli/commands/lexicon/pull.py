@@ -49,6 +49,7 @@ def pull(
 
     from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
     from chaoscypher_cli.utils.console import get_console, print_error, print_success
+    from chaoscypher_core.exceptions import ExternalServiceError
     from chaoscypher_core.services.lexicon import LexiconClient, LexiconClientError
     from chaoscypher_core.services.package import extract_archive, format_size
 
@@ -132,11 +133,22 @@ def pull(
 
             # Show next steps
             console.print("\n[dim]Next steps:[/dim]")
-            console.print(f"  chaoscypher package load {extract_dir}")
+            console.print(f"  chaoscypher graph package load {extract_dir}")
         else:
             console.print("\n[dim]Next steps:[/dim]")
-            console.print(f"  chaoscypher package load {archive_path}")
+            console.print(f"  chaoscypher graph package load {archive_path}")
 
     except LexiconClientError as e:
         print_error(f"Download failed: {e}")
+        sys.exit(1)
+    except ExternalServiceError as e:
+        # LexiconClient wraps httpx.ConnectError into ExternalServiceError when
+        # the hub isn't reachable — turn it into a one-line operator hint
+        # instead of a raw traceback.
+        print_error(f"Cannot reach Lexicon Hub at {lexicon_url}: {e}")
+        console.print(
+            "  [dim]Set LEXICON_URL or run a local hub. "
+            "Check connectivity with [cyan]curl -I "
+            f"{lexicon_url}[/cyan].[/dim]",
+        )
         sys.exit(1)

@@ -33,8 +33,10 @@ export const chatApi = {
     });
     return response.data;
   },
-  listChats: async (): Promise<ChatMetadata[]> => {
-    const response = await apiClient.get<PaginatedChatList>('/chats');
+  /** List chats; `q` filters by case-insensitive title substring (server-side). */
+  listChats: async (q?: string): Promise<ChatMetadata[]> => {
+    const url = q ? `/chats?q=${encodeURIComponent(q)}` : '/chats';
+    const response = await apiClient.get<PaginatedChatList>(url);
     return response.data.data;
   },
   getChat: async (chatId: string): Promise<Chat> => {
@@ -56,6 +58,18 @@ export const chatApi = {
     const response = await apiClient.get<{ data: Chat }>(`/chats/${chatId}/export`);
     return response.data.data;
   },
+  /** Export the conversation as a Markdown document (citation footnotes). */
+  exportChatMarkdown: async (chatId: string): Promise<string> => {
+    const response = await apiClient.get<string>(`/chats/${chatId}/export?format=markdown`);
+    return response.data;
+  },
+  /** Regenerate the last answer: the backend drops it and re-runs the turn. */
+  regenerate: async (chatId: string): Promise<{ task_id: string; status: string }> => {
+    const response = await apiClient.post<{ task_id: string; status: string }>(
+      `/chats/${chatId}/regenerate`,
+    );
+    return response.data;
+  },
   generateTitle: async (chatId: string): Promise<{ title: string }> => {
     const response = await apiClient.post<{ title: string }>(`/chats/${chatId}/generate_title`);
     return response.data;
@@ -75,17 +89,48 @@ export const chatApi = {
     const response = await apiClient.delete<Chat>(`/chats/${chatId}/scope`);
     return response.data;
   },
-  /** Submit a message for background processing. Returns task_id. */
-  send: async (chatId: string, content: string): Promise<{ task_id: string; status: string }> => {
+  /**
+   * Submit a message for background processing. Returns task_id.
+   * `replaceFromMessageId` (edit-and-resend) truncates the conversation
+   * from that user message — inclusive — before adding this content,
+   * atomically server-side.
+   */
+  send: async (
+    chatId: string,
+    content: string,
+    replaceFromMessageId?: string,
+  ): Promise<{ task_id: string; status: string }> => {
     const response = await apiClient.post<{ task_id: string; status: string }>(
       `/chats/${chatId}/send`,
-      { content },
+      replaceFromMessageId
+        ? { content, replace_from_message_id: replaceFromMessageId }
+        : { content },
     );
     return response.data;
   },
   /** Get the SSE events URL for live streaming from the background worker. */
   getEventsUrl: (chatId: string): string => {
     return `${API_BASE}/chats/${chatId}/events`;
+  },
+  /**
+   * Request cancellation of the in-flight background turn (202). The worker
+   * stops at the next step boundary and publishes `done {status: "cancelled"}`
+   * with the partial answer. 404/409 mean the turn already ended — callers
+   * treat those as a no-op.
+   */
+  cancel: async (chatId: string): Promise<void> => {
+    await apiClient.post(`/chats/${chatId}/cancel`);
+  },
+  /**
+   * Re-run the chat's last turn after a worker failure. The failed run
+   * persisted nothing, so the history already ends with the user's message —
+   * this re-enqueues WITHOUT adding a new message (no duplicates).
+   */
+  retry: async (chatId: string): Promise<{ task_id: string; status: string }> => {
+    const response = await apiClient.post<{ task_id: string; status: string }>(
+      `/chats/${chatId}/retry`,
+    );
+    return response.data;
   },
   /**
    * Approve or reject a pending tool call. The backend stream is blocked

@@ -186,6 +186,11 @@ Always use the actual node/edge ID from tool results, not made-up IDs.
 Use the entity's name or label as the display text.
 Do NOT include raw IDs in parentheses - only use the [[type:id|label]] syntax.
 
+Entity references vs chunk citations — pick by WHERE the claim comes from:
+- Claims about GRAPH STRUCTURE (relationships, connections, centrality, rankings, node properties from graph tools) → use [[node:...]] / [[edge:...]] so the user can click through to the node or relationship. Example: "Sibling of [[node:node_abc123|Princess Mary]]" — NOT a [[cite:...]] marker.
+- Claims drawn from DOCUMENT TEXT (quotes, events, descriptions found in chunks) → use [[cite:...]].
+- A sentence may use both: name the entities with [[node:...]] and cite the supporting passage with [[cite:...]].
+
 CRITICAL - Citing Source Text (Citation by Reference):
 When you place a [[cite:...]] marker, the UI REPLACES it with a visible blockquote showing the full original sentence. The user reads the source text INSIDE that blockquote. Therefore you MUST NOT also write out that text — otherwise it appears twice.
 
@@ -199,6 +204,9 @@ Citation syntax: [[cite:LABEL:Sn|filename]]
 - Sn = one or more sentence numbers shown in brackets (e.g., S1, S3) within THAT SAME chunk
 - filename = the filename from the [CHUNK ...] header (REQUIRED)
 - Multiple sentences: [[cite:LABEL:S1,S2,S3|filename]]
+- ONE chunk per marker. The list after the label may contain ONLY sentence numbers (Sn) of that chunk — NEVER another chunk label. To cite two chunks, write two separate markers side by side.
+  WRONG: [[cite:C1:S15,C17|war.txt]] (C17 is a chunk label, not a sentence — this marker cannot render)
+  RIGHT: [[cite:C1:S15|war.txt]] [[cite:C17:S2|war.txt]]
 
 CRITICAL — How to Write Around Citations (avoid doubled text):
 - DESCRIBE what the source says, then cite. Let the citation show the exact words.

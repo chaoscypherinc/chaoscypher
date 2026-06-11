@@ -3,18 +3,23 @@
 
 """Chat API Endpoints.
 
-GET    /api/v1/chats - List chats
+GET    /api/v1/chats - List chats (q = server-side title search)
 POST   /api/v1/chats - Create chat
 DELETE /api/v1/chats - Delete all chats
 GET    /api/v1/chats/{id} - Get chat with messages
 DELETE /api/v1/chats/{id} - Delete chat
+PATCH  /api/v1/chats/{id} - Update chat title
 PATCH  /api/v1/chats/{id}/status - Update chat status
 PATCH  /api/v1/chats/{id}/scope - Update chat source scope
 DELETE /api/v1/chats/{id}/scope - Clear chat source scope
 POST   /api/v1/chats/{id}/messages - Add message to chat
 GET    /api/v1/chats/{id}/messages - Get chat messages
-POST   /api/v1/chats/{id}/stream - Stream AI chat response (SSE)
-POST   /api/v1/chats/{id}/send - Submit message for background processing
+POST   /api/v1/chats/{id}/send - Submit message (replace_from_message_id = edit-and-resend)
+POST   /api/v1/chats/{id}/cancel - Stop the in-flight background turn
+POST   /api/v1/chats/{id}/retry - Re-run a failed turn (no message duplication)
+POST   /api/v1/chats/{id}/regenerate - Drop the last answer and re-run the turn
+GET    /api/v1/chats/{id}/export - Export conversation (json | markdown)
+POST   /api/v1/chats/{id}/tool_decision - Approve/reject a gated tool call
 GET    /api/v1/chats/{id}/events - Subscribe to live chat events (SSE)
 POST   /api/v1/chats/{id}/generate_title - Auto-generate chat title from first message
 GET    /api/v1/chats/stats/count - Get chat count
@@ -26,23 +31,20 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
-from chaoscypher_core.app_config import Settings, get_config_manager, get_settings
+from chaoscypher_core.app_config import Settings, get_settings
 from chaoscypher_core.constants import OP_CHAT_BACKGROUND, QUEUE_LLM
 from chaoscypher_core.database import get_sqlite_adapter
 from chaoscypher_core.queue import queue_client, subscribe_chat_events
-from chaoscypher_core.repo_factories import (
-    get_graph_repository,
-    get_search_repository,
-)
 from chaoscypher_core.services.chat import ChatService
 from chaoscypher_core.streaming.chat import (
     ChatSSEEnvelope,
     format_sse_event,
-    stream_chat_response,
 )
 from chaoscypher_cortex.features.chats.models import (
     ChatCountResponse,
@@ -76,7 +78,6 @@ from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
 
 
 if TYPE_CHECKING:
-    from chaoscypher_core.ports.storage_chats import ChatStorageProtocol
     from chaoscypher_core.ports.types import MessageDict
 
 logger = structlog.get_logger(__name__)
@@ -131,6 +132,11 @@ async def list_chats(
     pagination: PageParams,
     _: CurrentUsername,
     scoped: bool | None = Query(default=None, description="Filter by scope status"),
+    q: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Case-insensitive title substring filter",
+    ),
 ) -> PaginatedChatsResponse:
     """List all chats (without messages).
 
@@ -144,8 +150,9 @@ async def list_chats(
         offset=offset,
         limit=page_size,
         scoped=scoped,
+        search=q,
     )
-    total = chat_service.count_chats()
+    total = chat_service.count_chats(scoped=scoped, search=q)
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
     return PaginatedChatsResponse(
         data=cast("list[ChatListResponse]", chats),
@@ -259,10 +266,11 @@ async def update_chat(
 
     - Single-user mode: the local operator owns everything.
     """
-    chat_service.update_chat(
+    updated = chat_service.update_chat(
         chat_id=chat_id,
         updates={"title": title_update.title},
     )
+    raise_if_not_found(updated, f"Chat {chat_id} not found")
     return chat_service.get_chat(chat_id)
 
 
@@ -286,10 +294,11 @@ async def update_chat_status(
 
     - Single-user mode: the local operator owns everything.
     """
-    chat_service.update_chat_status(
+    updated = chat_service.update_chat_status(
         chat_id=chat_id,
         status=status_update.status,
     )
+    raise_if_not_found(updated, f"Chat {chat_id} not found")
     return chat_service.get_chat(chat_id)
 
 
@@ -317,6 +326,9 @@ async def add_message(
 
     - Single-user mode: the local operator owns everything.
     """
+    # Existence check: the FK on chat_messages would otherwise surface a
+    # missing chat as an IntegrityError 500 instead of a 404.
+    raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
     return chat_service.add_message(
         chat_id=chat_id,
         role=message_create.role,
@@ -417,17 +429,15 @@ async def decide_tool_call(
     body: ToolDecisionRequest,
     _: CurrentUsername,
 ) -> None:
-    """Resolve a pending tool-call approval for an active chat stream.
+    """Resolve a pending tool-call approval for an active chat turn.
 
     Returns ``204`` on success, ``404`` if no pending approval matches.
-    The streaming handler is waiting on ``PendingApproval.wait()``; this
-    endpoint wakes that waiter with the user's decision.
+    The shared chat tool loop (running in the neuron worker) polls a
+    Valkey key for the decision; this endpoint flips that key.
     """
-    # Import locally to avoid loading the streaming sub-package at module
-    # import time (the streaming package pulls in LLM providers).
-    from chaoscypher_core.streaming.chat.approval import pending_approvals
+    from chaoscypher_core.streaming.chat.approval_broker import resolve_tool_approval
 
-    resolved = await pending_approvals.resolve(chat_id, body.tool_call_id, body.decision)
+    resolved = await resolve_tool_approval(chat_id, body.tool_call_id, body.decision)
     if not resolved:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -436,139 +446,209 @@ async def decide_tool_call(
 
 
 # ============================================================================
-# Streaming Chat Endpoint
+# Stop/Cancel Endpoint
 # ============================================================================
 
 
-def get_chat_streaming_service(
-    database_name: str,
-    stream_adapter: ChatStorageProtocol,
-) -> ChatService:
-    """Construct a ChatService for streaming responses.
-
-    Streaming chat needs its own ChatService because the storage adapter
-    has a per-request lifecycle (created with the stream, cleaned up when
-    the stream closes). Regular chat endpoints share a singleton adapter
-    via ``get_chat_service``. This factory is the ONE documented exception
-    to the uniform DI pattern in Cortex — do not use elsewhere.
-
-    Args:
-        database_name: Database name for filtering chats/messages.
-        stream_adapter: Per-request storage adapter bound to this SSE
-            stream's lifetime. The caller owns its ``connect()`` /
-            ``disconnect()`` lifecycle.
-
-    Returns:
-        A ``ChatService`` wired to the per-request adapter.
-
-    """
-    return ChatService(storage=stream_adapter, database_name=database_name)
-
-
 @router.post(
-    "/{chat_id}/stream",
+    "/{chat_id}/cancel",
+    status_code=status.HTTP_202_ACCEPTED,
     responses={
         **COMMON_ERROR_RESPONSES,
         **AUTH_ERROR_RESPONSES,
         **NOT_FOUND_RESPONSE,
     },
-    openapi_extra={
-        "responses": {
-            "200": {
-                "description": (
-                    "Server-Sent Events stream. "
-                    "Each ``data:`` line carries a JSON-encoded ChatSSEEvent payload "
-                    "(one of 13 discriminated variants; see ChatSSEEnvelope schema)."
-                ),
-                "content": {
-                    "text/event-stream": {
-                        "schema": {"$ref": "#/components/schemas/ChatSSEEnvelope"}
-                    }
-                },
-            }
-        },
-    },
 )
-async def stream_chat(
+async def cancel_chat_turn(
     chat_id: str,
-    message: ChatMessageCreate,
-    settings: Annotated[Settings, Depends(get_settings)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
     _: CurrentUsername,
-) -> EventSourceResponse:
-    """Stream AI chat response with tool calling (SSE format).
+) -> dict[str, str]:
+    """Request cancellation of the chat's in-flight background turn.
 
-    Streams responses in real-time using Server-Sent Events. Tool calls
-    run synchronously during the stream.
+    Sets the Valkey cancel flag the shared chat tool loop polls at step
+    boundaries; the worker lands at the next boundary, persists the
+    partial answer with a "stopped" notice, and publishes
+    ``done {status: "cancelled"}``.
 
-    **Event Types:**
-    - `content`: LLM response content (delta and accumulated)
-    - `thinking_delta`: Reasoning process (if enabled)
-    - `thinking`: Complete thinking block
-    - `tool_calls`: List of tools to execute
-    - `tool_start`: Tool execution started
-    - `tool_result`: Tool execution result
-    - `done`: Stream completed successfully
-    - `error`: Error occurred
+    Returns ``202 {"status": "cancelling"}`` on success, ``404`` for an
+    unknown chat, ``409`` when no turn is in progress, and ``503`` when
+    the cancellation transport is unavailable.
 
     - Single-user mode: the local operator owns everything.
+    """
+    from chaoscypher_core.streaming.chat.cancellation import request_cancel
 
-    Returns 409 ``LLM_NOT_VERIFIED`` if the configured LLM provider has
-    not been verified — frontend deeplinks the user to Settings → LLM.
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    if chat.get("status") != ChatStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No turn in progress",
+        )
+    if not await request_cancel(chat_id):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cancellation transport unavailable",
+        )
+    logger.info("chat_cancel_accepted", chat_id=chat_id)
+    return {"status": "cancelling"}
 
-    **Disconnect Behavior:**
-    If the HTTP client disconnects mid-stream (tab closed, network drop),
-    the underlying ``EventSourceResponse`` cancels this generator and the
-    in-flight LLM work is lost — the assistant message is NOT persisted.
-    Clients needing durable chat must use ``POST /chats/{id}/send`` to
-    queue the work on the background worker and ``GET /chats/{id}/events``
-    to observe progress; those survive disconnect.
+
+@router.post(
+    "/{chat_id}/retry",
+    response_model=ChatSendResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def retry_chat_turn(
+    chat_id: str,
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: CurrentUsername,
+) -> ChatSendResponse:
+    """Re-enqueue the chat's last turn WITHOUT adding a new user message.
+
+    A failed worker run persisted nothing (buffered-flush idempotency), so
+    the persisted history already ends with the user's message — re-running
+    the worker rebuilds the turn from it. This is what the UI's Retry button
+    calls; re-POSTing through ``/send`` would duplicate the user message.
+
+    Returns ``202`` with the new task id, ``404`` for an unknown chat, and
+    ``409`` when a turn is already processing or the history has no user
+    message to answer.
+
+    - Single-user mode: the local operator owns everything.
     """
     from chaoscypher_core.services.llm import require_extraction_ready
 
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    if chat.get("status") == ChatStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A turn is already in progress",
+        )
+    if not any(m.get("role") == "user" for m in chat.get("messages") or []):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No user message to retry",
+        )
     await require_extraction_ready(settings)
-    # All adapters + sessions for streaming are created directly (bypassing
-    # get_sqlite_adapter / get_chat_service / get_current_session DI) so
-    # that none of them are closed before the SSE stream finishes.
-    # Streaming responses outlive the middleware dispatch cycle — the
-    # stream generator disconnects its own adapter (and therefore its
-    # session) in the finally block.
-    from chaoscypher_core.adapters.sqlite import SqliteAdapter
 
-    stream_adapter = SqliteAdapter(db_path=str(settings.app_db_path))
-    stream_adapter.connect()
-
-    chat_service = get_chat_streaming_service(
-        database_name=settings.current_database,
-        stream_adapter=stream_adapter,
+    chat_service.update_chat_status(chat_id, "processing")
+    task_id = await queue_client.enqueue_task(
+        queue=QUEUE_LLM,
+        operation=OP_CHAT_BACKGROUND,
+        data={"chat_id": chat_id, "database_name": settings.current_database},
+        priority=settings.priorities.interactive,
+        metadata={"chat_id": chat_id},
     )
-    search_repo = get_search_repository(database_name=settings.current_database)
-    # Build graph_repo off the stream-scoped adapter's session so it shares
-    # the stream's lifetime (not the request session, which closes when
-    # FastAPI dispatch returns).
-    if stream_adapter.session is None:
-        raise RuntimeError("stream_adapter session is not connected")
-    graph_repo = get_graph_repository(stream_adapter.session, settings.current_database)
-    config_manager = get_config_manager()
+    logger.info("chat_retry_enqueued", chat_id=chat_id, task_id=task_id)
+    return ChatSendResponse(task_id=task_id, status="processing")
 
-    async def _stream_with_cleanup() -> AsyncIterator[bytes]:
-        """Wrap stream_chat_response and disconnect the adapter when done."""
-        try:
-            async for chunk in stream_chat_response(
-                chat_id=chat_id,
-                user_message=message.content,
-                chat_service=chat_service,
-                graph_manager=graph_repo,
-                search_manager=search_repo,
-                config_manager=config_manager,
-                settings=settings,
-                indexing_manager=stream_adapter,
-                source_storage=stream_adapter,
-            ):
-                yield chunk
-        finally:
-            stream_adapter.disconnect()
 
-    return EventSourceResponse(_stream_with_cleanup())
+@router.post(
+    "/{chat_id}/regenerate",
+    response_model=ChatSendResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def regenerate_chat_turn(
+    chat_id: str,
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    _: CurrentUsername,
+) -> ChatSendResponse:
+    """Regenerate the last answer: drop it and re-run the turn.
+
+    Truncates everything after the last user message (the old answer and
+    its tool rows) and re-enqueues the background turn from the remaining
+    history. ``404`` unknown chat; ``409`` when a turn is already
+    processing or there is no user message to answer.
+
+    - Single-user mode: the local operator owns everything.
+    """
+    from chaoscypher_core.services.llm import require_extraction_ready
+
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    if chat.get("status") == ChatStatus.PROCESSING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A turn is already in progress",
+        )
+    last_user = next(
+        (m for m in reversed(chat.get("messages") or []) if m.get("role") == "user"),
+        None,
+    )
+    if not last_user:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No user message to regenerate from",
+        )
+    await require_extraction_ready(settings)
+
+    chat_service.truncate_from_message(chat_id, last_user["id"], inclusive=False)
+    chat_service.update_chat_status(chat_id, "processing")
+    task_id = await queue_client.enqueue_task(
+        queue=QUEUE_LLM,
+        operation=OP_CHAT_BACKGROUND,
+        data={"chat_id": chat_id, "database_name": settings.current_database},
+        priority=settings.priorities.interactive,
+        metadata={"chat_id": chat_id},
+    )
+    logger.info("chat_regenerate_enqueued", chat_id=chat_id, task_id=task_id)
+    return ChatSendResponse(task_id=task_id, status="processing")
+
+
+# ============================================================================
+# Export Endpoint
+# ============================================================================
+
+
+@router.get(
+    "/{chat_id}/export",
+    responses={
+        **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
+    },
+)
+async def export_chat(
+    chat_id: str,
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    _: CurrentUsername,
+    export_format: Annotated[
+        Literal["json", "markdown"],
+        Query(alias="format", description="Export format"),
+    ] = "json",
+) -> Response:
+    """Export a conversation as JSON (default) or Markdown.
+
+    JSON returns ``{"data": <full chat object>}`` (the shape the web UI's
+    download button consumes). Markdown returns a ``text/markdown``
+    attachment with role headings, entity markers reduced to bold labels,
+    and citations rendered as footnotes carrying the source filename and
+    sentence text where the persisted metadata has them.
+
+    - Single-user mode: the local operator owns everything.
+    """
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    if export_format == "markdown":
+        from chaoscypher_cortex.features.chats.export import render_chat_markdown
+
+        return Response(
+            content=render_chat_markdown(chat),
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="chat-{chat_id}.md"'},
+        )
+    return JSONResponse({"data": jsonable_encoder(chat)})
 
 
 # ============================================================================
@@ -610,7 +690,25 @@ async def send_message(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     await require_extraction_ready(settings)
-    raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+
+    # Edit-and-resend: replace an existing user message (and everything
+    # after it) with this content, atomically before the new row is added.
+    if message.replace_from_message_id:
+        anchor = next(
+            (
+                m
+                for m in chat.get("messages") or []
+                if m.get("id") == message.replace_from_message_id
+            ),
+            None,
+        )
+        if not anchor or anchor.get("role") != "user":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="replace_from_message_id must be a user message in this chat",
+            )
+        chat_service.truncate_from_message(chat_id, message.replace_from_message_id, inclusive=True)
 
     chat_service.add_message(chat_id, role="user", content=message.content)
     chat_service.update_chat_status(chat_id, "processing")
@@ -752,8 +850,12 @@ async def generate_title(
 
     - Single-user mode: the local operator owns everything.
     """
-    # Get chat messages to find the first user message
-    messages = chat_service.get_chat_messages(chat_id)
+    # Existence check first: a missing chat previously fell through to a
+    # None return and a ResponseValidationError 500.
+    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+
+    # Find the first user message (get_chat already loaded the messages)
+    messages = chat.get("messages", [])
     first_user_msg = next(
         (m["content"] for m in messages if m.get("role") == "user"),
         None,
@@ -761,7 +863,7 @@ async def generate_title(
 
     if not first_user_msg:
         # No user message found, return chat as-is
-        return chat_service.get_chat(chat_id)
+        return chat
 
     # Truncate very long messages to keep the LLM call cheap
     title_max_chars = settings.chat_context.title_generation_max_chars
@@ -864,7 +966,7 @@ async def get_chat_count(
     description=(
         "Schema-only endpoint — never call at runtime. "
         "Its sole purpose is to force FastAPI to register ``ChatSSEEvent`` "
-        "and all 13 event variant models as named ``#/components/schemas`` "
+        "and all 15 event variant models as named ``#/components/schemas`` "
         "entries so Phase 7 OpenAPI→TypeScript codegen can produce a typed "
         "discriminated union. Returns 501 if called."
     ),
@@ -874,11 +976,10 @@ async def sse_event_schema_anchor() -> ChatSSEEnvelope:
     """Return 501; exists only to anchor ChatSSEEvent in the OpenAPI schema.
 
     Visibility is intentional — ``response_model=ChatSSEEnvelope`` is the
-    only place the type is advertised, so the ``$ref`` in
-    ``stream_chat``'s ``openapi_extra`` would dangle if this operation
-    were hidden. Phase 7 TS codegen reads the resulting
-    ``#/components/schemas`` entries to emit the typed discriminated
-    union.
+    only place the type is advertised. The OpenAPI→TypeScript codegen
+    reads the resulting ``#/components/schemas`` entries to emit the
+    typed discriminated union consumed by the GET /chats/{id}/events
+    client.
 
     Raises:
         HTTPException: 501 Not Implemented on every call.

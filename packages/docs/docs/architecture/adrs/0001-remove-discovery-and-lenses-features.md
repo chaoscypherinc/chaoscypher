@@ -180,7 +180,7 @@ When ready to rebuild these features:
 
 - **Core extraction unaffected** - Upload, chunking, entity extraction, graph commit all remain
 - **Search unaffected** - RAG/vector search continues to work
-- **Git history preserved** - Old implementation remains in git if needed for reference
+- **Git history (note added 2026-06)** - The public repository began with a fresh history at the June 2026 launch, so the pre-removal implementation is not retrievable from this repo. The Architectural Concepts Worth Preserving section above is the surviving reference.
 
 ## Files to Remove
 
@@ -222,5 +222,5 @@ services/api/discovery.ts
 
 ## References
 
-- Original Discovery implementation: git history pre-2026-02-05
-- SuggestionServiceBase pattern: `packages/core/src/chaoscypher_core/utils/suggestion_service_base.py` (before removal)
+- Original Discovery implementation: removed 2026-02-05; not present in the public repository history (fresh-history launch, June 2026)
+- SuggestionServiceBase pattern: formerly `packages/core/src/chaoscypher_core/utils/suggestion_service_base.py`; not present in the public repository history — see the code sketch in the Architectural Concepts section above

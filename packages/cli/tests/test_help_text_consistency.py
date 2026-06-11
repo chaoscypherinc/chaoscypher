@@ -33,7 +33,9 @@ before each ``CliRunner().invoke`` so the real groups load and their
 
 from __future__ import annotations
 
+import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -52,6 +54,7 @@ TOP_LEVEL_COMMANDS: list[str] = [
     "config",
     "db",
     "diagnostics",
+    "doctor",
     "graph",
     "health",
     "lexicon",
@@ -216,4 +219,52 @@ def test_commands_documenting_json_actually_accept_it(
         f"choice that includes ``json``. Either wire up one of those "
         f"options or remove this command from COMMANDS_ADVERTISING_JSON. "
         f"Help output:\n{result.output}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Retired flat command paths — whole-source sweep (generalized Bug 6)
+# ---------------------------------------------------------------------------
+
+# The command-tree reorg moved these groups under parents:
+#
+#   chaoscypher node|link|template|workflow|package → chaoscypher graph <...>
+#   chaoscypher quality                             → chaoscypher source quality
+#   chaoscypher login|search                        → chaoscypher lexicon <...>
+#
+# Any string still using the flat form (docstrings rendered by --help,
+# Examples sections, runtime "next step" hints) copy-pastes to
+# "No such command". The legitimate replacements all put the parent group
+# name between "chaoscypher" and the subcommand (e.g. "chaoscypher graph
+# node", "chaoscypher source quality", "chaoscypher lexicon login"), so
+# they can never match this pattern; root aliases like "chaoscypher pull"
+# / "chaoscypher push" and group-only forms like "chaoscypher lexicon
+# list" aren't in the denylist at all.
+_RETIRED_FLAT_PATH = re.compile(
+    r"\bchaoscypher (node|link|template|workflow|quality|package|login|search)\b"
+)
+
+
+def test_no_retired_flat_command_paths_in_source() -> None:
+    """No source string may reference a retired flat command path.
+
+    Scans every Python file under ``src/chaoscypher_cli`` so the check
+    covers help docstrings AND runtime echo/print hints alike.
+    """
+    import chaoscypher_cli
+
+    src_root = Path(chaoscypher_cli.__file__).resolve().parent
+    offenders: list[str] = []
+    for py_file in sorted(src_root.rglob("*.py")):
+        for lineno, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), start=1):
+            if _RETIRED_FLAT_PATH.search(line):
+                rel = py_file.relative_to(src_root)
+                offenders.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert not offenders, (
+        "Retired flat command paths found — these render in --help or "
+        "runtime hints and copy-paste to 'No such command'. Replace with "
+        "the registered paths (chaoscypher graph node|link|template|"
+        "workflow|package ..., chaoscypher source quality ..., "
+        "chaoscypher lexicon login|search ...):\n" + "\n".join(offenders)
     )

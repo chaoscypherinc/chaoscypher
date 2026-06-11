@@ -164,6 +164,14 @@ class ChatSendRequest(BaseModel):
         Field(description="Message content"),
         max_length_from_settings("chat_context.chat_message_max_length"),
     ]
+    replace_from_message_id: str | None = Field(
+        default=None,
+        description=(
+            "Edit-and-resend: id of an existing USER message to replace. The "
+            "conversation is truncated from that message (inclusive) before "
+            "this content is added, atomically server-side."
+        ),
+    )
 
 
 class ChatSendResponse(BaseModel):

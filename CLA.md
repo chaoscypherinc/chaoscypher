@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to ChaosCypher ("Project").
 To clarify the intellectual property rights granted with contributions
-from any person or entity, the ChaosCypher Team ("Us") must have a
+from any person or entity, Chaos Cypher, Inc. ("Us") must have a
 Contributor License Agreement ("CLA") on file that has been signed by
 each contributor, indicating agreement to the license terms below.
 

@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -50,10 +51,10 @@ def list_nodes(
     Supports filtering by template and pagination.
 
     Example:
-        chaoscypher node list
-        chaoscypher node list --template Person
-        chaoscypher node list --format json
-        chaoscypher node list --page 2 --limit 100
+        chaoscypher graph node list
+        chaoscypher graph node list --template Person
+        chaoscypher graph node list --format json
+        chaoscypher graph node list --page 2 --limit 100
     """
     try:
         ctx = get_context(database_name=database)
@@ -69,7 +70,7 @@ def list_nodes(
         pagination = result.get("pagination", {})
 
         if output_format == "json":
-            console.print(json.dumps(result, indent=2, default=str))
+            print_json(json.dumps(result, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -78,14 +79,14 @@ def list_nodes(
                 console.print(yaml.dump(result, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(result, indent=2, default=str))
+                print_json(json.dumps(result, indent=2, default=str))
 
         else:  # table format
             if not nodes:
                 console.print("[dim]No nodes found.[/dim]")
                 if template:
                     console.print(f"[dim]Filter: template={template}[/dim]")
-                console.print("\nCreate one with: chaoscypher node create")
+                console.print("\nCreate one with: chaoscypher graph node create")
                 return
 
             table = Table(title="Nodes", show_header=True)
@@ -138,7 +139,7 @@ def list_nodes(
 
             if current_page < total_pages:
                 console.print(
-                    f"[dim]Next page: chaoscypher node list --page {current_page + 1}[/dim]"
+                    f"[dim]Next page: chaoscypher graph node list --page {current_page + 1}[/dim]"
                 )
 
     except Exception as e:

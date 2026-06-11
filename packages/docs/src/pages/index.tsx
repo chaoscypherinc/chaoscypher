@@ -29,8 +29,8 @@ function ValueBand() {
           <h3>See</h3>
           <p>
             A real, navigable <span className="vb-em">knowledge graph</span> — not a
-            black-box vector blob. Inspect every entity, relationship, and source
-            behind an answer.
+            black-box vector blob. Explore your whole corpus as a living map of
+            entities and relationships.
           </p>
         </div>
         <div className="feature-card value-card">
@@ -42,9 +42,9 @@ function ValueBand() {
           </span>
           <h3>Trust</h3>
           <p>
-            Source-backed provenance, not &ldquo;AI says so.&rdquo; Every answer
-            traces <span className="vb-em">the exact path</span> — entities,
-            relationships, evidence — back to your documents.
+            Source-backed provenance, not &ldquo;AI says so.&rdquo; Follow any
+            answer <span className="vb-em">back to its sources</span> — through
+            the entities, relationships, and evidence that produced it.
           </p>
         </div>
         <div className="feature-card value-card">
@@ -59,7 +59,7 @@ function ValueBand() {
           <p>
             Self-hosted, with local embeddings — <span className="vb-em">nothing
             leaves your machine</span> by default. Export and share knowledge as
-            portable packages. No cloud lock-in.
+            portable Lexicon packages. No cloud lock-in.
           </p>
         </div>
       </div>
@@ -84,7 +84,7 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
       {
         title: "Knowledge Graph",
         description:
-          "See your knowledge. Extract entities and relationships from your documents and explore them on an interactive, inspectable graph canvas — every answer traces back to its sources.",
+          "See your knowledge. Extract entities and relationships from your documents and explore them on an interactive, inspectable graph canvas — typed, filterable, and zoomable from corpus overview down to a single entity and its sources.",
         linkTo: "/docs/user-guide/knowledge-graph",
       },
       {
@@ -111,16 +111,16 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
         linkTo: "/docs/user-guide/quality",
       },
       {
-        title: "Document Processing",
+        title: "Local-First LLMs",
         description:
-          "Upload PDFs, Word documents, web pages, and more. Automatic chunking, embedding, and RAG-ready indexing.",
-        linkTo: "/docs/user-guide/sources",
+          "Run fully local with Ollama — chat, extraction, and embeddings on your own hardware, nothing sent to a cloud. Or connect OpenAI, Anthropic, or Gemini with a single config change, and mix providers per operation.",
+        linkTo: "/docs/getting-started/configuration",
       },
       {
-        title: "Multi-LLM Support",
+        title: "Portable Knowledge Packages",
         description:
-          "Connect to Ollama, OpenAI, Anthropic, or Gemini. Run fully local with Ollama or use cloud providers — switch between them with a single config change. Embeddings run locally on CPU or GPU, or in the cloud.",
-        linkTo: "/docs/getting-started/configuration",
+          "Your knowledge base is a file, not a silo. Export sources, graph, citations, and settings as a single CCX package — back it up, move it between instances, or hand it to a teammate.",
+        linkTo: "/docs/user-guide/import-export",
       },
     ],
   },
@@ -174,6 +174,45 @@ function FeatureGrids() {
           </div>
         </Fragment>
       ))}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Section: Lexicon Hub — portable knowledge packages                 */
+/* ------------------------------------------------------------------ */
+
+function LexiconHub() {
+  return (
+    <section className="lexicon-section">
+      <div className="lexicon-inner">
+        <div className="lexicon-copy">
+          <p className="feature-row-label">Lexicon Hub</p>
+          <h2>Build once. Share anywhere.</h2>
+          <p>
+            Your knowledge is portable. Export any knowledge graph as a Lexicon
+            package — sources, entities, relationships, and citations included —
+            then load it into another instance or hand it to a teammate. And
+            soon: share, fork, and discover packages with the community on
+            Lexicon Hub.
+          </p>
+          <div className="lexicon-links">
+            <span className="lexicon-soon-btn">Hub coming soon</span>
+            <Link className="feature-card-link" to="/docs/user-guide/import-export">
+              How packages work<ArrowRight />
+            </Link>
+          </div>
+        </div>
+        <div className="lexicon-shot-wrap">
+          <img
+            className="lexicon-shot"
+            src="/img/screenshots/lexicon-hub.png"
+            alt=""
+            loading="lazy"
+          />
+          <span className="lexicon-shot-badge">Coming soon</span>
+        </div>
+      </div>
     </section>
   );
 }
@@ -295,7 +334,7 @@ volumes:
             <li>Web UI with graph canvas</li>
             <li>REST API + queue monitor</li>
             <li>Background workers</li>
-            <li>Hot reload for development</li>
+            <li>HTTPS-ready out of the box</li>
           </ul>
           <Link to="/docs/getting-started/installation">
             Full installation guide
@@ -408,6 +447,8 @@ export default function Home(): JSX.Element {
         <GuidedTour />
         <hr />
         <FeatureGrids />
+        <hr />
+        <LexiconHub />
         <hr />
         <IntegrationsStrip />
         <hr />

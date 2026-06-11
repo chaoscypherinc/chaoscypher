@@ -15,9 +15,11 @@ methodology.
 
 ## Status
 
-**v1.0** — extraction only, intrinsic scoring (no ground-truth answer keys
-yet). Chat evaluation is planned for v2 and will produce a separate ranking
-against the same model list.
+**v2.0** — extraction leaderboard plus an optional full-pipeline path
+(embedding retrieval + GraphRAG chat with an LLM judge,
+`chaoscypher benchmark run full`) whose stages roll into a composite
+**Overall** column on the same leaderboard. Gold-set ground truth is still
+pending (v1.5).
 
 ## Vocabulary
 
@@ -42,6 +44,42 @@ For each `(model, dataset)` pair, one run produces:
   models look up `(provider, model)` in the dated price registry shipped
   with the harness.
 
+## Full-pipeline scoring (v2)
+
+`chaoscypher benchmark run full` runs three stages and scores each:
+
+- **Extraction** — the v7 quality grade described above.
+- **Embedding retrieval** (scorer v1) — each `(extractor, embedder)` graph is
+  queried with the dataset's labeled queries; the headline score is
+  MRR × 100, with Recall@1 and Recall@3 reported alongside.
+- **GraphRAG chat** (scorer v1) — an LLM judge scores each answer for
+  faithfulness (0–5), correctness (0–5), and refusal correctness (whether
+  out-of-scope questions were properly declined); the headline is the
+  weighted mean (faithfulness 0.4, correctness 0.4, refusal 0.2) scaled
+  to 0–100.
+
+### Composite "Overall" column
+
+Whenever extraction rows are present, the rendered leaderboard leads with a
+unified **Overall Leaderboard** — one row per extractor LLM, with a weighted
+composite across five dimensions. Default weights (overridable via the
+config's `weights:` key):
+
+| Dimension | Default weight | Source |
+|---|---|---|
+| Extraction | 0.40 | v7 quality grade (mean across datasets) |
+| Retrieval | 0.20 | embedding-retrieval headline for the pinned `defaults.embedder` |
+| Chat | 0.20 | chat headline for the pinned `defaults.embedder` + `defaults.chat` |
+| Speed | 0.10 | per-chunk latency normalized against fixed anchors (500 ms → 100, 30,000 ms → 0) |
+| Cost | 0.10 | total run cost normalized against a fixed $1.00 anchor (free → 100) |
+
+Speed and cost use **fixed** anchors (absolute, not relative) so a model's
+Overall does not move when the field of competitors changes. Dimensions that
+were not run drop out and the remaining weights are renormalized — an
+extraction-only run still gets an Overall from extraction + speed + cost.
+The config's `defaults:` key pins which embedder and chat candidate are held
+fixed when attributing retrieval/chat scores back to an extractor.
+
 ## What's *not* measured (yet)
 
 - **Factual correctness against a ground truth.** The v7 score is
@@ -50,8 +88,8 @@ For each `(model, dataset)` pair, one run produces:
   reciprocal duplicates, low-quality items). It does *not* compare extracted
   entities to a curated answer key. A model that confidently produces 100
   well-described, well-justified, but factually wrong entities can score
-  well. This is a known v1 limitation; adding gold sets per dataset is
-  the v2 step.
+  well. This is a known limitation; adding gold sets per dataset is
+  the v1.5 step.
 - **Raw model capability.** The v7 score is calculated on the **post-normalized,
   pre-commit** graph — after the import pipeline's deduplication, entity
   normalization, type rescue, evidence validation, and entity cleaning
@@ -101,14 +139,15 @@ so `pip install chaoscypher-cli` is enough to run the canonical leaderboard.
 
 | Config | What it runs |
 |---|---|
-| `extraction` | Canonical full leaderboard: 8 models × 3 datasets. Default when no name is provided. |
+| `extraction` | Canonical full leaderboard: 14 models × 3 datasets (see `chaoscypher benchmark list`). Default when no name is provided. |
 | `quick` | 3-model smoke on `war_and_peace_tiny` only; ~3 minutes locally. |
 | `full` | Three-stage pipeline benchmark (extraction + embedding retrieval + GraphRAG chat). The canonical example of the `embedders:`/`chats:`/`judge:` config shape used by the v2 chat-eval path. |
+| `workstation` | Large-iron local extraction benchmark (llama3.1:70b ~40 GB, gpt-oss:120b ~80 GB — not pulled by default; 48 GB+ VRAM recommended) plus Opus 4.8 as a quality-ceiling reference, 3 datasets. |
 
 ## Running the benchmark
 
 ```bash
-# Canonical leaderboard (8 models, 3 datasets):
+# Canonical leaderboard (14 models, 3 datasets):
 chaoscypher benchmark run
 
 # Smoke test (3 models, 1 dataset):
@@ -209,16 +248,52 @@ extractors:
     label: "GPT-4o"
 ```
 
-For a v1 extraction benchmark, `extractors:` is the only role list you
+For an extraction-only benchmark, `extractors:` is the only role list you
 need. The parser also accepts `embedders:`, `chats:`, and `judge:` for the
-(forthcoming) full-pipeline path — see the built-in `full` config for that
+full-pipeline path — see the built-in `full` config for that
 shape. If you set `embedders:` or `chats:`, you must also set `extractors:`;
-if you set `chats:`, you must also set a `judge:`.
+if you set `chats:`, you must also set a `judge:`. Each model entry
+optionally takes `kinds: [extraction]` to scope it to specific dataset kinds.
 
-Commercial models also need a price entry — add it to the model registry at
-`packages/cli/src/chaoscypher_cli/benchmark/data/models_registry.yaml` (a
-`price:` block, with a dated `price_dated:` for provenance). Run
-`make benchmark-cards` to regenerate the public model-cards page after edits.
+Full-pipeline configs can additionally set `defaults:` and `weights:`
+(see [Composite "Overall" column](#composite-overall-column)):
+
+```yaml
+# Pinned embedder/chat held fixed when attributing retrieval/chat scores
+# back to an extractor in the composite Overall column.
+defaults:
+  embedder: "ollama/qwen3-embedding:8b"
+  chat: "ollama/qwen3:14b"
+
+# Per-dimension Overall weights (defaults shown).
+weights:
+  extraction: 0.40
+  retrieval: 0.20
+  chat: 0.20
+  speed: 0.10
+  cost: 0.10
+```
+
+## Model registry
+
+The model registry at
+`packages/cli/src/chaoscypher_cli/benchmark/data/models_registry.yaml` is the
+single source of truth for benchmark model metadata, keyed by
+`<provider>/<model>`. Each entry carries:
+
+- `provider`, `model`, `label` — identity and display name.
+- `tier` — `frontier` / `mid` / `small`.
+- `released`, `context`, `open_weight`, `license` — provenance metadata.
+- `price: { input, output }` — USD per 1M tokens, with `price_dated:`
+  recording when the price was last verified. Local open-weight models cost
+  $0 and may omit the price block.
+- `vram_gb` — approximate VRAM footprint for local models.
+- `why` / `notes` — inclusion rationale and free-text caveats.
+
+Commercial models you add to a config also need a registry entry with a
+`price:` block (and a dated `price_dated:` for provenance) so their runs can
+report cost. Run `make benchmark-cards` to regenerate the public model-cards
+page after edits.
 
 ## Known limitations
 
@@ -242,9 +317,11 @@ Commercial models also need a price entry — add it to the model registry at
   surface a cleanup-amplification ratio per model — letting users see
   which models lean heavily on the post-processing pipeline vs. which
   produce clean output natively.
-- **v2** — Add chat evaluation as a second `kind`. Each dataset gets a
-  graph fixture + Q&A set; an LLM-as-judge produces faithfulness +
-  correctness scores. Same model list; separate ranking.
+- **v2 — shipped.** Chat evaluation is live via the full-pipeline path
+  (`chaoscypher benchmark run full`): datasets carry labeled query sets and
+  an LLM-as-judge produces faithfulness + correctness scores. Instead of the
+  originally planned separate ranking, the chat stage rolls into the
+  composite **Overall** column of the unified leaderboard.
 - **v2.5** — Live web leaderboard (static-site generator over
   `benchmark/results/`).
 

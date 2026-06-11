@@ -57,9 +57,9 @@ def delete(node_id: str, force: bool, cascade: bool, database: str) -> None:
     NODE_ID is the unique identifier of the node to delete.
 
     Example:
-        chaoscypher node delete node-123
-        chaoscypher node delete node-123 --force
-        chaoscypher node delete node-123 --cascade
+        chaoscypher graph node delete node-123
+        chaoscypher graph node delete node-123 --force
+        chaoscypher graph node delete node-123 --cascade
     """
     try:
         ctx = get_context(database_name=database)

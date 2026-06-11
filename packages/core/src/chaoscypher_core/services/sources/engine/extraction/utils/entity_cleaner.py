@@ -385,9 +385,8 @@ def enforce_relationship_limits(
             degree cap so minor entities keep at least one connection.  When
             False the exception is gated off; orphan endpoints lose their
             relationships at the cap like everyone else.  Mirrors the same
-            toggle at the commit-time ``drop_orphan_entities`` site.
-            Phase 7 audit-remediation (2026-05-09): previously this exception
-            was unconditional — both sites now honor the same flag.
+            toggle at the commit-time ``drop_orphan_entities`` site — both
+            sites honor the same flag.
 
     Returns:
         Tuple of (capped_relationships, stats) where stats has keys

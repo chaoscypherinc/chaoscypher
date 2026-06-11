@@ -10,10 +10,10 @@ Commands for evaluating extraction quality:
 - recalculate: Batch recalculate and cache scores
 
 Example:
-    chaoscypher quality score <source_id>
-    chaoscypher quality analyze --domain literary
-    chaoscypher quality report --format json
-    chaoscypher quality recalculate --all
+    chaoscypher source quality score <source_id>
+    chaoscypher source quality analyze --domain literary
+    chaoscypher source quality report --format json
+    chaoscypher source quality recalculate
 """
 
 import click

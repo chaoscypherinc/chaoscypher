@@ -42,6 +42,7 @@ def push(path: str, message: str | None, public: bool, force: bool) -> None:
 
     from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
     from chaoscypher_cli.utils.console import get_console, print_error, print_success
+    from chaoscypher_core.exceptions import ExternalServiceError
     from chaoscypher_core.services.lexicon import LexiconClient, LexiconClientError
     from chaoscypher_core.services.package import (
         PackageManifest,
@@ -76,7 +77,7 @@ def push(path: str, message: str | None, public: bool, force: bool) -> None:
         manifest_path = path_obj / "manifest.json"
         if not manifest_path.exists():
             print_error(f"No manifest.json found in {path_obj}")
-            console.print("Run 'chaoscypher package init' to create a package.")
+            console.print("Create one with 'chaoscypher graph package export'.")
             sys.exit(1)
 
         # Validate the package
@@ -150,4 +151,15 @@ def push(path: str, message: str | None, public: bool, force: bool) -> None:
 
     except LexiconClientError as e:
         print_error(f"Upload failed: {e}")
+        sys.exit(1)
+    except ExternalServiceError as e:
+        # LexiconClient wraps httpx.ConnectError into ExternalServiceError when
+        # the hub isn't reachable — turn it into a one-line operator hint
+        # instead of a raw traceback.
+        print_error(f"Cannot reach Lexicon Hub at {lexicon_url}: {e}")
+        console.print(
+            "  [dim]Set LEXICON_URL or run a local hub. "
+            "Check connectivity with [cyan]curl -I "
+            f"{lexicon_url}[/cyan].[/dim]",
+        )
         sys.exit(1)

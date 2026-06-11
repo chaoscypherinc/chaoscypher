@@ -55,7 +55,7 @@ Every storage protocol method returns `dict[str, Any]` or `list[dict[str, Any]]`
 
 ### Available Protocols
 
-Each protocol lives in its own file under `chaoscypher_core.ports`. Storage protocols follow a per-feature naming convention (`storage_<feature>.py`).
+Each protocol lives in its own file under `chaoscypher_core.ports`. Storage protocols follow a per-feature naming convention (`storage_<feature>.py`). The tables below list the storage protocols a custom adapter typically implements; see `chaoscypher_core/ports/` for the full inventory (including `VisionStorageProtocol`, `StageProgressStorageProtocol`, `DatabaseProtocol`, `RetryPolicyPort`, `LLMProviderPort`, and `SourceRecoveryPorts`).
 
 **Per-feature storage protocols:**
 
@@ -160,7 +160,9 @@ settings = EngineSettings(current_database="default")
 with SqliteAdapter("data/databases/default") as adapter:
     # SqliteAdapter implements ChunkingProtocol (via SourceChunksMixin)
     chunking = ChunkingService(settings=settings, repository=adapter)
-    result = await chunking.create_chunks("Document text...")
+    # store=False defers persistence -- with a repository present,
+    # create_chunks would otherwise auto-persist immediately
+    result = await chunking.create_chunks("Document text...", store=False)
     print(f"{result.total_small_chunks} chunks in {result.total_groups} groups")
     # Persist chunks to storage (separate step)
     chunking.store_chunks(result)
@@ -179,13 +181,20 @@ with SqliteAdapter("data/databases/default") as adapter:
 | `SourceIndexingMixin` | Embedding storage, extraction gating |
 | `SourceExtractionJobsMixin` | Extraction job management |
 | `SourceChunkTasksMixin` | Chunk task analytics |
+| `SourceDeletionMixin` | Source deletion cascade |
 | `SourcesMixin` | Core source CRUD |
+| `StageProgressMixin` | Per-stage pipeline progress tracking |
 | `SourceTagsMixin` | Tag management |
 | `SourceChunksMixin` | Document chunk operations |
 | `SourceCitationsMixin` | Citation tracking |
+| `SourceRecoveryEventsMixin` | Crash-recovery events audit trail |
+| `VisionPagesMixin` | Per-page vision pipeline storage |
 | `ChatsMixin` | Chat history |
 | `TriggersMixin` | Event triggers |
 | `LLMMetricsMixin` | LLM call metrics |
+| `ExtractionSubmissionsMixin` | Extraction submission tracking |
+| `SearchRetryQueueMixin` | Durable retry queue for failed search index operations |
+| `SystemStateMixin` | System-wide pause/resume state |
 
 Mixins live in `chaoscypher_core.adapters.sqlite.mixins/` and inherit from `SqliteMixinBase` which provides shared utilities like entity-to-dict conversion.
 
@@ -280,11 +289,13 @@ class PostgresAdapter:
     def update_chunk_status(self, ...): ...
 
     # IndexingProtocol methods
+    # (update_chunk_status above is shared with this protocol)
     def get_chunks_by_source(self, ...): ...
     def update_chunk_embedding(self, ...): ...
     def get_chunk_by_id(self, ...): ...
-    def delete_chunks_by_source(self, ...): ...
     def update_chunk_source(self, ...): ...
+    def increment_source_counter(self, ...): ...
+    def update_source_columns(self, ...): ...
 ```
 
 ## Testing with Mock Adapters
@@ -335,11 +346,14 @@ mock_repo = MockChunkingAdapter()
 settings = EngineSettings(current_database="test")
 service = ChunkingService(settings=settings, repository=mock_repo)
 
-result = await service.create_chunks("Test document content for chunking.")
+result = await service.create_chunks(
+    "Test document content for chunking.", source_id="test_src", store=False
+)
 
 assert result.total_small_chunks > 0
 
-# Persist if needed
+# Persist explicitly (store=False above deferred the auto-persist;
+# source_id pins the key -- omitting it generates a random ID)
 service.store_chunks(result)
 assert len(mock_repo.chunks["test_src"]) == result.total_small_chunks
 ```
@@ -350,4 +364,4 @@ assert len(mock_repo.chunks["test_src"]) == result.total_small_chunks
 
 **Why structural typing (Protocols)?** Python's `Protocol` class enables duck typing with static type checking. Adapters do not need to inherit from a base class -- they just need to have the right method signatures. This makes it easy to create partial implementations for testing.
 
-**Why mixins?** The `SqliteAdapter` uses 14 mixins because the full protocol surface is large. Each mixin is focused on one domain (sources, chunks, workflows, etc.), following the Interface Segregation Principle. This keeps individual files maintainable while composing into a comprehensive adapter.
+**Why mixins?** The `SqliteAdapter` composes 20+ focused mixins because the full protocol surface is large. Each mixin is focused on one domain (sources, chunks, workflows, etc.), following the Interface Segregation Principle. This keeps individual files maintainable while composing into a comprehensive adapter.

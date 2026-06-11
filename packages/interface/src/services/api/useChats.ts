@@ -48,6 +48,21 @@ export function useChats() {
 }
 
 /**
+ * Server-side title search for the chat switcher. Only active while the
+ * user is typing a query — the unfiltered first page comes from
+ * `useChats`. Searching server-side is what makes every chat findable
+ * once the list grows past one page.
+ */
+export function useChatSearch(q: string) {
+  const query = q.trim();
+  return useQuery<ChatMetadata[]>({
+    queryKey: [...CHATS_QUERY_KEY, 'search', query],
+    queryFn: () => chatApi.listChats(query),
+    enabled: query.length > 0,
+  });
+}
+
+/**
  * History for a single chat. Disabled when no id is present (the new-chat
  * screen). Streaming writes partial assistant content into this same cache
  * entry, so the query data is the single source of truth for the rendered

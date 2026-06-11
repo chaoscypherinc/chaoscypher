@@ -420,7 +420,7 @@ chaoscypher source quality recalculate
 
 ```
 Recalculating quality scores for 5 source(s)
-Scoring algorithm version: 2.0
+Scoring algorithm version: 7
 
 ⠋ Processing: Research Paper v2...
 ⠙ Processing: Architecture Overview...
@@ -440,7 +440,7 @@ chaoscypher source quality recalculate --outdated-only
 
 ```
 Recalculating quality scores for 2 source(s)
-Scoring algorithm version: 2.0
+Scoring algorithm version: 7
 
 ⠋ Processing: Historical Analysis...
 ⠙ Processing: Meeting Notes...
@@ -471,7 +471,7 @@ chaoscypher source quality recalculate --database my-project --outdated-only
 
 ## Quality Grades
 
-The v2.0 scoring algorithm produces a grade from 0 to 100 with the following labels:
+The v7 scoring algorithm produces a grade from 0 to 100 with the following labels:
 
 | Grade Range | Label |
 |-------------|-------|

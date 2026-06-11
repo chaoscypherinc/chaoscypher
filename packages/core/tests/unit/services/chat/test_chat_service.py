@@ -34,7 +34,13 @@ class TestListChats:
         mock_storage.list_chats.return_value = [{"id": "c1"}]
         result = service.list_chats(limit=10)
         mock_storage.list_chats.assert_called_once_with(
-            database_name="test_db", user_id=None, status=None, limit=10, scoped=None
+            database_name="test_db",
+            user_id=None,
+            status=None,
+            limit=10,
+            offset=0,
+            scoped=None,
+            search=None,
         )
         assert result == [{"id": "c1"}]
 
@@ -42,20 +48,44 @@ class TestListChats:
         mock_storage.list_chats.return_value = []
         service.list_chats(status="active")
         mock_storage.list_chats.assert_called_once_with(
-            database_name="test_db", user_id=None, status="active", limit=50, scoped=None
+            database_name="test_db",
+            user_id=None,
+            status="active",
+            limit=50,
+            offset=0,
+            scoped=None,
+            search=None,
         )
 
     def test_passes_scoped_filter(self, service, mock_storage) -> None:
         mock_storage.list_chats.return_value = []
         service.list_chats(scoped=True)
         mock_storage.list_chats.assert_called_once_with(
-            database_name="test_db", user_id=None, status=None, limit=50, scoped=True
+            database_name="test_db",
+            user_id=None,
+            status=None,
+            limit=50,
+            offset=0,
+            scoped=True,
+            search=None,
         )
 
-    def test_applies_offset(self, service, mock_storage) -> None:
-        mock_storage.list_chats.return_value = [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}]
-        result = service.list_chats(offset=1)
-        assert result == [{"id": "c2"}, {"id": "c3"}]
+    def test_passes_offset_to_storage(self, service, mock_storage) -> None:
+        """Offset lives in SQL — Python slicing of a top-N fetch made every
+        page after the first come back empty (2026-06-10 audit P1).
+        """
+        mock_storage.list_chats.return_value = [{"id": "c2"}]
+        result = service.list_chats(limit=1, offset=1)
+        mock_storage.list_chats.assert_called_once_with(
+            database_name="test_db",
+            user_id=None,
+            status=None,
+            limit=1,
+            offset=1,
+            scoped=None,
+            search=None,
+        )
+        assert result == [{"id": "c2"}]
 
 
 # ============================================================================
@@ -347,10 +377,41 @@ class TestCountChats:
         mock_storage.count_chats.return_value = 5
         result = service.count_chats()
         assert result == 5
-        mock_storage.count_chats.assert_called_once_with(database_name="test_db", status=None)
+        mock_storage.count_chats.assert_called_once_with(
+            database_name="test_db", status=None, scoped=None, search=None
+        )
 
     def test_passes_status_filter(self, service, mock_storage) -> None:
         mock_storage.count_chats.return_value = 2
         result = service.count_chats(status="active")
         assert result == 2
-        mock_storage.count_chats.assert_called_once_with(database_name="test_db", status="active")
+        mock_storage.count_chats.assert_called_once_with(
+            database_name="test_db", status="active", scoped=None, search=None
+        )
+
+    def test_passes_scoped_filter(self, service, mock_storage) -> None:
+        mock_storage.count_chats.return_value = 1
+        result = service.count_chats(scoped=True)
+        assert result == 1
+        mock_storage.count_chats.assert_called_once_with(
+            database_name="test_db", status=None, scoped=True, search=None
+        )
+
+
+# ============================================================================
+# delete_all_chats
+# ============================================================================
+
+
+class TestDeleteAllChats:
+    """Tests for ChatService.delete_all_chats."""
+
+    def test_uses_bulk_delete(self, service, mock_storage) -> None:
+        """The list+loop approach only ever deleted the first 100 chats
+        (adapter default list limit); bulk delete removes them all
+        (2026-06-10 audit P2).
+        """
+        mock_storage.delete_all_chats.return_value = 250
+        assert service.delete_all_chats() == 250
+        mock_storage.delete_all_chats.assert_called_once_with(database_name="test_db")
+        mock_storage.list_chats.assert_not_called()

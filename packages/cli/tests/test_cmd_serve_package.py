@@ -8,7 +8,7 @@ Covers:
 - mcp/command.py — wiring, happy path with asyncio.run mocked, mode/flags
 - commands/package/load.py — happy path, merge mode, .cxl rejection, error path, display
 - commands/package/export.py — happy path, auto-filename, .ccx extension fix, empty guard,
-  _format_size helper, _display_export_results helper
+  _display_export_results helper
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from chaoscypher_cli.commands.package.export import _format_size, export
+from chaoscypher_cli.commands.package.export import export
 from chaoscypher_cli.commands.package.load import load
 from chaoscypher_cli.commands.runtime.serve import serve
 from chaoscypher_cli.mcp.command import mcp
@@ -64,6 +64,23 @@ def _make_import_stats(**kwargs: Any) -> Any:
         warnings=kwargs.get("warnings", []),
         errors=kwargs.get("errors", []),
     )
+
+
+def _consume_coro(return_value: Any) -> Any:
+    """asyncio.run stand-in that closes the received coroutine.
+
+    A bare return_value mock leaves the real ``import_from_path(...)``
+    coroutine argument unawaited, leaking RuntimeWarnings into unrelated
+    tests at GC time.
+    """
+
+    def _run(coro: Any) -> Any:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        return return_value
+
+    return _run
 
 
 # ===========================================================================
@@ -290,12 +307,14 @@ class TestServeFallbackServer:
             mock_settings.return_value.cors.dev_fallback_origins = ["http://localhost:3000"]
             _run_builtin_server("default", "localhost", 8000, False)
 
-        # uvicorn.run must be called with correct host/port
+        # uvicorn.run must be called with correct host/port. reload is never
+        # forwarded — uvicorn's reload mode needs an import string, not an
+        # app object, so the fallback server doesn't support it.
         mock_run.assert_called_once()
         call_kwargs = mock_run.call_args[1]
         assert call_kwargs["host"] == "localhost"
         assert call_kwargs["port"] == 8000
-        assert call_kwargs["reload"] is False
+        assert "reload" not in call_kwargs
 
     def test_run_builtin_server_routes_registered(self) -> None:
         """Route handlers in _run_builtin_server are callable and return correct shapes.
@@ -710,7 +729,10 @@ class TestPackageLoadHappyPath:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file)])
 
@@ -727,7 +749,10 @@ class TestPackageLoadHappyPath:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file), "--merge"])
 
@@ -744,7 +769,10 @@ class TestPackageLoadHappyPath:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file)])
 
@@ -765,7 +793,10 @@ class TestPackageLoadHappyPath:
         # so we intercept via the package's __init__ re-export.
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             # The real ImportOptions will be called; verify behaviour via stats
             result = runner.invoke(load, [str(ccx_file), "--no-templates"])
@@ -785,7 +816,10 @@ class TestPackageLoadHappyPath:
             patch(
                 "chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx
             ) as mock_gc,
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file), "--database", "research"])
 
@@ -822,7 +856,10 @@ class TestPackageLoadErrors:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
             patch("chaoscypher_cli.commands.package.load.sys.exit") as mock_exit,
         ):
             runner.invoke(load, [str(ccx_file)])
@@ -856,7 +893,10 @@ class TestPackageLoadErrors:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file)])
 
@@ -873,7 +913,10 @@ class TestPackageLoadErrors:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
         ):
             result = runner.invoke(load, [str(ccx_file)])
 
@@ -890,7 +933,10 @@ class TestPackageLoadErrors:
 
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.asyncio.run", return_value=stats),
+            patch(
+                "chaoscypher_cli.commands.package.load.asyncio.run",
+                side_effect=_consume_coro(stats),
+            ),
             patch("chaoscypher_cli.commands.package.load.sys.exit"),
         ):
             result = runner.invoke(load, [str(ccx_file)])
@@ -1241,31 +1287,3 @@ class TestPackageExportErrors:
 
         assert result.exit_code == 0, result.output
         mock_gc.assert_called_once_with(database_name="analytics")
-
-
-# ===========================================================================
-# _format_size helper
-# ===========================================================================
-
-
-class TestFormatSize:
-    """_format_size returns human-readable strings."""
-
-    def test_bytes_range(self) -> None:
-        assert _format_size(512) == "512.0 B"
-
-    def test_kilobytes_range(self) -> None:
-        result = _format_size(2048)
-        assert "KB" in result
-
-    def test_megabytes_range(self) -> None:
-        result = _format_size(5 * 1024 * 1024)
-        assert "MB" in result
-
-    def test_gigabytes_range(self) -> None:
-        result = _format_size(3 * 1024 * 1024 * 1024)
-        assert "GB" in result
-
-    def test_terabytes_range(self) -> None:
-        result = _format_size(2 * 1024 * 1024 * 1024 * 1024)
-        assert "TB" in result

@@ -17,10 +17,7 @@ from rich.panel import Panel
 
 from chaoscypher_cli.context import get_context
 from chaoscypher_core.app_config import get_settings
-from chaoscypher_core.settings import CLISettings
 
-
-_cli_defaults = CLISettings()
 
 # FastAPI Query() defaults must be evaluated at module import (they go into the
 # OpenAPI schema), so we resolve the page size once here. Operators changing
@@ -31,7 +28,17 @@ console = Console()
 
 
 @click.command()
-@click.option("--port", "-p", default=_cli_defaults.api_port, help="API port")
+@click.option(
+    "--port",
+    "-p",
+    # Live settings, not the bare CLISettings() schema default — a
+    # cli.api_port set in settings.yaml must be honored. The callable
+    # default defeats Click's type inference, hence the explicit type.
+    type=int,
+    default=lambda: get_settings().cli.api_port,
+    show_default="settings cli.api_port",
+    help="API port",
+)
 @click.option("--host", "-h", "host_addr", default="localhost", help="Host to bind to")
 @click.option("--database", "-d", default="default", help="Database to serve")
 @click.option("--reload", is_flag=True, help="Auto-reload on file changes (dev mode)")
@@ -145,7 +152,7 @@ def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> No
     """
     try:
         import uvicorn
-        from fastapi import FastAPI, HTTPException
+        from fastapi import FastAPI, HTTPException, Query
         from fastapi.middleware.cors import CORSMiddleware
 
         from chaoscypher_cli.context import get_context
@@ -177,11 +184,12 @@ def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> No
             ctx = get_context(database_name=database)
             return ctx.get_stats()
 
-        # Nodes endpoint
+        # Nodes endpoint. Query(ge=1) on limit: a client-supplied limit=0
+        # would otherwise ZeroDivisionError into a 500.
         @app.get("/api/v1/nodes")
         def list_nodes(
-            limit: int = _SERVE_PAGE_SIZE,
-            offset: int = 0,
+            limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
+            offset: int = Query(0, ge=0),
             template_id: str | None = None,
         ) -> dict[str, Any]:
             ctx = get_context(database_name=database)
@@ -203,8 +211,8 @@ def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> No
         # Edges endpoint
         @app.get("/api/v1/edges")
         def list_edges(
-            limit: int = _SERVE_PAGE_SIZE,
-            offset: int = 0,
+            limit: int = Query(_SERVE_PAGE_SIZE, ge=1),
+            offset: int = Query(0, ge=0),
             source_node_id: str | None = None,
         ) -> dict[str, Any]:
             ctx = get_context(database_name=database)
@@ -231,12 +239,20 @@ def _run_builtin_server(database: str, host: str, port: int, reload: bool) -> No
 
         console.print("[green]Fallback server starting...[/green]")
 
+        # uvicorn's reload mode needs an import string, not an app object —
+        # passing reload=True here would make uvicorn refuse to start. The
+        # fallback app is built inline, so reload simply isn't supported.
+        if reload:
+            console.print(
+                "[yellow]--reload is only supported by the full Cortex server; "
+                "ignoring it for the fallback server.[/yellow]"
+            )
+
         # Run the server
         uvicorn.run(
             app,
             host=host,
             port=port,
-            reload=reload,
             log_level="info",
         )
 

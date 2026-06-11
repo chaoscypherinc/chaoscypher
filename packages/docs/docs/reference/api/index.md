@@ -15,6 +15,12 @@ http://localhost/api/v1
 
 All endpoints described in this reference are relative to the base URL above.
 
+:::note
+
+On the multi-container dev stack, Cortex is also reachable directly at `http://127.0.0.1:8080` (bypassing nginx).
+
+:::
+
 ## Authentication
 
 Chaos Cypher is single-user and local-first. Nginx terminates every request and gates `/api/` behind an internal `auth_request` subrequest to `/api/v1/auth/verify`. Sessions are HMAC-signed `cc_session` cookies — no JWT, no bearer tokens, no user management.
@@ -38,7 +44,7 @@ curl -X POST http://localhost/api/v1/auth/login \
   -d '{"username": "admin", "password": "s3cureP4ss!"}'
 ```
 
-**Response** `200 OK`: empty body. The response sets an httpOnly `cc_session` cookie; pass `-b cookies.txt` on subsequent requests.
+**Response** `200 OK` with body `{"username": "admin"}`. The response also sets the httpOnly `cc_session` cookie; pass `-b cookies.txt` on subsequent requests.
 
 ### Authenticated requests
 
@@ -85,35 +91,24 @@ curl "http://localhost/api/v1/sources?page=3&page_size=10"
 
 ```json
 {
-  "items": [
+  "data": [
     { "id": "src_abc123", "name": "quarterly-report.pdf", "status": "committed" },
     { "id": "src_def456", "name": "meeting-notes.docx", "status": "indexed" }
   ],
-  "total": 47,
-  "page": 3,
-  "page_size": 10
+  "pagination": {
+    "total": 47,
+    "page": 3,
+    "page_size": 10,
+    "total_pages": 5,
+    "has_next": true,
+    "has_prev": true
+  }
 }
 ```
 
 :::tip[Queue task pagination]
 
-The queue task list endpoint uses `offset` instead of `skip` and returns a `pagination` object with additional fields:
-
-```json
-{
-  "tasks": [...],
-  "total": 10,
-  "total_in_queue": 3,
-  "queues": null,
-  "pagination": {
-    "limit": 50,
-    "offset": 0,
-    "total": 42,
-    "total_in_queue": 3,
-    "has_more": false
-  }
-}
-```
+The [queue task list](queue.md#list-tasks) returns the standard `{data, pagination}` envelope plus two sibling fields: `total_in_queue` (active queued + running tasks across matched queues) and `queues` (the queue-name filter echoed back, or `null`).
 
 :::
 
@@ -141,14 +136,16 @@ curl http://localhost/api/v1/queue/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
   "queue": "operations",
   "operation": "process_source",
   "status": "completed",
-  "priority": "50",
+  "priority": 50,
   "created_at": "2026-03-09T14:30:00Z",
   "started_at": "2026-03-09T14:30:01Z",
   "completed_at": "2026-03-09T14:30:45Z",
-  "attempts": "1",
-  "metadata": "{\"source_id\": \"src_abc123\"}"
+  "attempts": 1,
+  "metadata": {"source_id": "src_abc123"}
 }
 ```
+
+The detail response also carries `data` (the operation-specific input payload) and, for failed tasks, `error` (public-safe error message) and `error_type` (short error classification) — see [Get Task](queue.md#get-task).
 
 **Task status values:**
 
@@ -178,9 +175,7 @@ curl http://localhost/api/v1/queue/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890/re
 
 ### Error Format
 
-Errors use two formats depending on how they originate.
-
-**Domain exceptions** (raised by business logic) return a structured body with an `error` code, `message`, and optional `details`:
+Every error response uses a single unified envelope — a machine-readable `error` code, a human-readable `message`, and an optional `details` object:
 
 ```json
 {
@@ -193,22 +188,22 @@ Errors use two formats depending on how they originate.
 }
 ```
 
-**HTTP exceptions** (raised directly by endpoints) return a `detail` field:
+Domain exceptions (raised by business logic) carry semantic codes like `NOT_FOUND` or `CONFLICT`. Endpoints that raise plain HTTPExceptions surface as `error: "HTTP_<status>"` with the text in `message`:
 
 ```json
 {
-  "detail": "Source not found"
+  "error": "HTTP_409",
+  "message": "already initialized"
 }
 ```
 
-Or for structured HTTP errors:
+Request-body validation failures return `422` with:
 
 ```json
 {
-  "detail": {
-    "code": "VALIDATION_FAILED",
-    "message": "Invalid data provided for source upload"
-  }
+  "error": "VALIDATION_FAILED",
+  "message": "Request body failed validation",
+  "details": {"errors": [{"loc": ["body", "password"], "msg": "...", "type": "..."}]}
 }
 ```
 
@@ -281,10 +276,8 @@ Or for structured HTTP errors:
 
 ```json
 {
-  "detail": {
-    "code": "OPERATION_FAILED",
-    "message": "An unexpected error occurred. Please contact support if this persists."
-  }
+  "error": "INTERNAL_ERROR",
+  "message": "An unexpected error occurred"
 }
 ```
 

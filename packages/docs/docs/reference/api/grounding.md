@@ -53,13 +53,13 @@ The `q` parameter performs a case-insensitive match against node labels and all 
 Search for nodes by text:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/nodes?q=Einstein"
+curl -X GET "http://localhost/api/v1/graph/grounding/nodes?q=Einstein"
 ```
 
 Filter by template type with pagination:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/nodes?template_id=person&page=1&page_size=50"
+curl -X GET "http://localhost/api/v1/graph/grounding/nodes?template_id=person&page=1&page_size=50"
 ```
 
 #### Response — `200 OK`
@@ -137,7 +137,7 @@ Returns a single node with all its connected edges (both incoming and outgoing).
 #### Example Request
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/graph/grounding/nodes/node-abc-123
+curl -X GET http://localhost/api/v1/graph/grounding/nodes/node-abc-123
 ```
 
 #### Response — `200 OK`
@@ -229,19 +229,19 @@ Search and list edges (relationships) in the knowledge graph. Useful for underst
 Get all edges from a specific node:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/edges?source_node_id=node-abc-123"
+curl -X GET "http://localhost/api/v1/graph/grounding/edges?source_node_id=node-abc-123"
 ```
 
 Find a specific connection between two nodes:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/edges?source_node_id=node-abc-123&target_node_id=node-def-456"
+curl -X GET "http://localhost/api/v1/graph/grounding/edges?source_node_id=node-abc-123&target_node_id=node-def-456"
 ```
 
 Paginate through all edges:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/edges?page=3&page_size=50"
+curl -X GET "http://localhost/api/v1/graph/grounding/edges?page=3&page_size=50"
 ```
 
 #### Response — `200 OK`
@@ -323,7 +323,7 @@ Returns nodes connected to the specified node via edges. Enables graph traversal
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `direction` | string | No | `both` | Edge direction to follow: `outgoing`, `incoming`, or `both` |
-| `limit` | int | No | `100` | Maximum neighbors to return (min `1`, capped to server max) |
+| `limit` | int | No | `50` (server default page size) | Maximum neighbors to return (min `1`, capped to server max) |
 
 :::info[Direction semantics]
 
@@ -338,13 +338,13 @@ Returns nodes connected to the specified node via edges. Enables graph traversal
 Get all neighbors:
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/graph/grounding/nodes/node-abc-123/neighbors
+curl -X GET http://localhost/api/v1/graph/grounding/nodes/node-abc-123/neighbors
 ```
 
 Get only outgoing neighbors with a limit:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/graph/grounding/nodes/node-abc-123/neighbors?direction=outgoing&limit=10"
+curl -X GET "http://localhost/api/v1/graph/grounding/nodes/node-abc-123/neighbors?direction=outgoing&limit=10"
 ```
 
 #### Response — `200 OK`

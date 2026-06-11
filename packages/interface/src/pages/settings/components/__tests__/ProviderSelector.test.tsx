@@ -89,8 +89,6 @@ function makeSettings(overrides: Partial<Settings['llm']> = {}): Settings {
       enable_thinking: false,
       thinking_for_chat: false,
       thinking_for_tools: false,
-      thinking_auto_detect: false,
-      chat_interactive_streaming: true,
       enable_llm_queueing: false,
       llm_max_retries: 3,
       llm_max_concurrent: 4,

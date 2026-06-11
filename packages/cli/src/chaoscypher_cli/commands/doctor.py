@@ -17,6 +17,7 @@ Example:
 
 from __future__ import annotations
 
+import sys
 import urllib.error
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -301,3 +302,6 @@ def doctor() -> None:
     else:
         console.print(f"  [red]{issues} issue{'s' if issues != 1 else ''} found.[/red]")
     console.print()
+
+    if issues > 0:
+        sys.exit(1)

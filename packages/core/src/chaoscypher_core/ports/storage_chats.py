@@ -48,17 +48,24 @@ class ChatStorageProtocol(Protocol):
         user_id: int | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
         scoped: bool | None = None,
+        search: str | None = None,
     ) -> list[ChatDict]:
-        """List chats for database with optional filters."""
+        """List chats for database with optional filters (newest first).
+
+        ``search`` filters by case-insensitive title substring.
+        """
         ...
 
     def count_chats(
         self,
         database_name: str,
         status: str | None = None,
+        scoped: bool | None = None,
+        search: str | None = None,
     ) -> int:
-        """Count chats for database with optional status filter."""
+        """Count chats for database with optional filters."""
         ...
 
     # Messages
@@ -72,6 +79,30 @@ class ChatStorageProtocol(Protocol):
         Args:
             chat_id: Chat ID to retrieve messages for.
             limit: Maximum number of messages to return (most recent).
+        """
+        ...
+
+    def delete_messages_after(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> int:
+        """Delete the tail of a chat's history starting at/after a message.
+
+        Backs regenerate (exclusive: keep the last user message, drop the
+        answer) and edit-and-resend (inclusive: the edited message itself is
+        replaced). Ordering matches ``get_messages`` (timestamp, id tiebreak).
+
+        Args:
+            chat_id: Chat whose tail to remove.
+            message_id: Anchor message; must belong to ``chat_id``.
+            inclusive: Also delete the anchor itself.
+
+        Returns:
+            Number of rows deleted (0 when the anchor is unknown or belongs
+            to a different chat).
         """
         ...
 

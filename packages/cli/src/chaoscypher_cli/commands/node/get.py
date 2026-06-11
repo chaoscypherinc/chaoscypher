@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -36,9 +37,9 @@ def get(node_id: str, output_format: str, include_links: bool, database: str) ->
     NODE_ID is the unique identifier of the node to display.
 
     Example:
-        chaoscypher node get node-123
-        chaoscypher node get node-123 --format json
-        chaoscypher node get node-123 --include-links
+        chaoscypher graph node get node-123
+        chaoscypher graph node get node-123 --format json
+        chaoscypher graph node get node-123 --include-links
     """
     try:
         ctx = get_context(database_name=database)
@@ -72,7 +73,7 @@ def get(node_id: str, output_format: str, include_links: bool, database: str) ->
             output: dict[str, Any] = {"node": node}
             if include_links:
                 output["links"] = edges
-            console.print(json.dumps(output, indent=2, default=str))
+            print_json(json.dumps(output, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -84,7 +85,7 @@ def get(node_id: str, output_format: str, include_links: bool, database: str) ->
                 console.print(yaml.dump(output_yaml, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps({"node": node}, indent=2, default=str))
+                print_json(json.dumps({"node": node}, indent=2, default=str))
 
         else:  # table format
             # Node details table

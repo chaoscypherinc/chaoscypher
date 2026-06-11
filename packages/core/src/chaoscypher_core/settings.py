@@ -363,6 +363,20 @@ class OllamaInstance(BaseModel):
         return v
 
 
+def _default_ollama_base_url() -> str:
+    """Return the default Ollama base URL for first-boot settings.
+
+    Defaults to localhost so bare-metal installs (pip/CLI users running
+    Ollama on the same host) work out of the box. Docker images export
+    ``CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434`` to reach
+    the host's Ollama from inside the container instead.
+
+    Only consulted when no persisted settings.yaml provides a value
+    (first boot); an existing settings.yaml keeps whatever URL it stores.
+    """
+    return os.environ.get("CHAOSCYPHER_OLLAMA_URL", "http://localhost:11434")
+
+
 class LLMSettings(BaseModel):
     """LLM provider configuration.
 
@@ -376,20 +390,23 @@ class LLMSettings(BaseModel):
     )
 
     # Ollama instances. There is always at least one — the default factory
-    # seeds a single "default" instance pointed at the Docker host. Multi-GPU
-    # users can add more in the settings UI to enable load balancing.
+    # seeds a single "default" instance pointed at localhost (or at
+    # CHAOSCYPHER_OLLAMA_URL, which the Docker images set to the Docker
+    # host). Multi-GPU users can add more in the settings UI to enable
+    # load balancing.
     ollama_instances: list[OllamaInstance] = Field(
         default_factory=lambda: [
             OllamaInstance(
                 id="default",
                 name="Default",
-                base_url="http://host.docker.internal:11434",
+                base_url=_default_ollama_base_url(),
             )
         ],
         description=(
             "Ollama instances available for chat/embedding/extraction. The list "
             "must contain at least one entry; the default seeds one pointed at "
-            "the Docker host."
+            "http://localhost:11434, overridable via the CHAOSCYPHER_OLLAMA_URL "
+            "environment variable (the Docker images set it to the Docker host)."
         ),
     )
     ollama_load_balancing: str = Field(
@@ -535,7 +552,14 @@ class LLMSettings(BaseModel):
     ai_context_window: int = Field(
         default=8192,
         ge=8192,
-        description="LLM context window in tokens (minimum 8192 for 16GB VRAM)",
+        description=(
+            "Context window (tokens) used for prompt budgeting by chat and "
+            "extraction. One of THREE related knobs: this one drives budget "
+            "math; ollama_num_ctx is the value actually sent to the Ollama "
+            "API (keep them equal for Ollama — the VRAM presets do); the "
+            "per-provider *_context_window fields describe cloud model "
+            "limits. Minimum 8192 (16GB VRAM)."
+        ),
     )
     ai_temperature: float = Field(
         default=0.3,
@@ -574,14 +598,7 @@ class LLMSettings(BaseModel):
     thinking_for_extraction: bool = Field(
         default=False, description="Use thinking for entity extraction"
     )
-    thinking_auto_detect: bool = Field(
-        default=False, description="Auto-detect thinking support for models"
-    )
-
     # Streaming
-    chat_interactive_streaming: bool = Field(
-        default=True, description="Enable streaming for interactive chat"
-    )
     stream_chunk_timeout: float = Field(
         default=120.0, ge=1.0, description="Max seconds between streaming chunks before aborting"
     )
@@ -699,7 +716,7 @@ class LLMSettings(BaseModel):
                 return inst.base_url
         if self.ollama_instances:
             return self.ollama_instances[0].base_url
-        return "http://host.docker.internal:11434"
+        return _default_ollama_base_url()
 
 
 # ============================================================================
@@ -1358,14 +1375,14 @@ class ChatSettings(BaseModel):
         ge=1,
         description="Maximum tools to include per chat (prevents context overflow)",
     )
-    enable_response_validation: bool = Field(
-        default=True,
-        description="Run a post-response LLM call to verify answer relevance (adds ~1-3s latency after streaming)",
-    )
     tools_token_estimate: int = Field(
         default=2000,
         ge=0,
-        description="Estimated tokens consumed by tool schemas in chat context (used for budget calculation)",
+        description=(
+            "Estimated tokens consumed by tool schemas, used by the summarize "
+            "tool's context budget (chat prompt budgeting reads "
+            "chat_context.tools_token_estimate)"
+        ),
     )
     tool_approval: Literal["always-ask", "ask-on-write", "never-ask"] = Field(
         default="never-ask",
@@ -1374,12 +1391,21 @@ class ChatSettings(BaseModel):
             "'always-ask' requires user confirmation on every tool call; "
             "'ask-on-write' requires confirmation only for mutating tools "
             "(create/update/delete/add_document/remove_document/finalize_extraction); "
-            "'never-ask' runs tools automatically. Current code always runs "
-            "tools (never-ask behavior); the other modes are wired for a future "
-            "UI approval flow. Defense-in-depth: the system prompt instructs "
-            "the model to treat retrieved chunks as untrusted data regardless "
-            "of mode, so prompt-injection alone cannot trigger a write without "
-            "also bypassing the system prompt."
+            "'never-ask' runs tools automatically. Enforced by the shared "
+            "chat tool loop on every chat surface; an unanswered request is "
+            "denied after tool_approval_timeout_seconds. Defense-in-depth: "
+            "the system prompt instructs the model to treat retrieved chunks "
+            "as untrusted data regardless of mode, so prompt-injection alone "
+            "cannot trigger a write without also bypassing the system prompt."
+        ),
+    )
+    tool_approval_timeout_seconds: int = Field(
+        default=120,
+        ge=10,
+        description=(
+            "How long a tool call waits for the user's approval decision "
+            "before being denied (fail-closed). Applies to 'always-ask' and "
+            "'ask-on-write' modes."
         ),
     )
     mutating_tools: list[str] = Field(
@@ -2251,8 +2277,8 @@ class LoaderSettings(BaseModel):
     detection. Archive-handler walk depth and Markdown detection thresholds
     live in :class:`ArchiveSettings` since they are archive-specific.
 
-    Phase 3 (2026-05-08): lifted hardcoded literals here per the
-    "zero hardcoded config values" rule in CLAUDE.md.
+    These values were previously hardcoded literals in the loaders and are
+    lifted here so operators can configure them.
     """
 
     # Whisper transcription settings (audio + video loaders)

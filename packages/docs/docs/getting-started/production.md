@@ -14,7 +14,7 @@ This guide uses **Caddy**, which handles HTTPS automatically via Let's Encrypt w
 
 - **TLS** — encrypts traffic between clients and the server. Without it, authentication cookies travel in plaintext.
 - **Canonical hostname** — lets you reach Chaos Cypher at `https://cypher.example.com` instead of an IP:port.
-- **`Secure` cookie flag** — Chaos Cypher auto-resolves `cookie_secure` at boot: it is enabled (`true`) when TLS certificate files are detected in `tls.cert_dir`, and disabled (`false`) on plain-HTTP deployments (so LAN/HTTP installs don't hit a logout loop). Browsers reject `Secure` cookies on non-HTTPS connections, so if you terminate TLS at a reverse proxy (like Caddy) that doesn't expose certs to the app container, set `cookie_secure=true` explicitly in `settings.yaml` to avoid silent logout loops.
+- **`Secure` cookie flag** — Chaos Cypher auto-resolves `cookie_secure` at boot: it is enabled (`true`) when TLS certificate files are detected in `tls.cert_dir`, and disabled (`false`) on plain-HTTP deployments (so LAN/HTTP installs don't hit a logout loop). Browsers reject `Secure` cookies on non-HTTPS connections, so if you terminate TLS at a reverse proxy (like Caddy) that doesn't expose certs to the app container, set `local_auth.cookie_secure: true` explicitly in `settings.yaml` to avoid silent logout loops.
 
 ## Prerequisites
 
@@ -36,21 +36,17 @@ That is the entire config. Caddy obtains and renews the certificate automaticall
 
 ### Mapping the container port
 
-For alpha installs before GHCR publishing is enabled, build and tag the image locally from the repository:
-
-```bash
-docker build -f packages/docker/Dockerfile -t chaoscypher:local .
-```
-
-In `packages/docker/docker-compose.yml`, publish the container's internal port 80 on a non-privileged host port so Caddy can reach it without running as root:
+Use the published image and map the container's internal port 80 onto a non-privileged host port so Caddy can reach it without running as root. In your `docker-compose.yml`:
 
 ```yaml
 services:
   chaoscypher:
-    image: chaoscypher:local
+    image: ghcr.io/chaoscypherinc/chaoscypher:latest   # pin a vX.Y.Z tag for production
     ports:
       - "127.0.0.1:8080:80"   # bind on loopback only — Caddy is the public face
 ```
+
+If you are building from source instead, build and tag the image locally (`docker build -f packages/docker/Dockerfile -t chaoscypher:local .`) and use `image: chaoscypher:local`.
 
 Binding to `127.0.0.1` means the application port is not reachable directly from the internet; all traffic must flow through Caddy.
 
@@ -82,6 +78,7 @@ Chaos Cypher is a **single-user self-hosted product**. The main performance leve
       mem_limit: 12g   # example for a 16 GB host
   ```
 - **Valkey AOF persistence.** The queue uses Valkey (Redis-compatible) with AOF enabled. On a write-heavy import workload, place the data directory on an SSD.
+- **Mutation rate limit.** nginx throttles mutating requests (POST/PUT/PATCH/DELETE on `/api/*`) to 10 r/s per IP with a burst of 20. Scripted clients that submit rapidly (bulk imports, automation) can hit `503`s — raise `rate_limit.mutations_max_requests` / `rate_limit.mutations_burst` in `settings.yaml` and restart the container. See [rate limiting](./configuration.md#rate-limiting).
 - **There is no horizontal scaling path** for this edition. All components (Cortex API, Neuron worker, Valkey, SQLite) run inside one container. If you hit hard CPU limits, the answer is a bigger host, not more replicas.
 
 ## Log rotation
@@ -116,4 +113,4 @@ The backup lands in `<data_dir>/backups/<database_name>/app_YYYYMMDD_HHMMSS.db`.
 
 - [Upgrading](./upgrading.md) — tag-to-tag upgrade procedure and rollback
 - [Backup and Restore](./backup-restore.md) — backup contract, restore flow, retention
-- [Configuration reference](./configuration.md) — all settings including `cookie_secure`, `bind`, and `mem_limit`
+- [Configuration reference](./configuration.md) — all settings including `local_auth.cookie_secure`, `CHAOSCYPHER_BIND`, and `MEM_LIMIT`

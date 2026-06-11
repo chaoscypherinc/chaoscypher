@@ -2,7 +2,19 @@
 
 Thanks for helping improve Chaos Cypher.
 
-The public repositories are published from the upstream development workspace. Issues and discussions are the best way to report problems, ask questions, or propose changes. Direct pull requests may be closed if they cannot be applied upstream cleanly.
+The documentation lives in this monorepo under `packages/docs/`, so the
+standard contribution workflow applies: see the root
+[CONTRIBUTING.md](../../CONTRIBUTING.md) for the CLA, branching, commit
+conventions, and pull request expectations. This page covers only
+docs-specific guidance.
+
+## Previewing changes
+
+```bash
+cd packages/docs
+npm ci
+npm start
+```
 
 ## Good Issue Reports
 
@@ -15,11 +27,7 @@ Please include:
 
 ## Discussions
 
-Use discussions for design ideas, documentation suggestions, usage questions, and broader proposals that are not yet ready to become actionable issues.
-
-## Pull Requests
-
-If you open a pull request, keep it small and focused. For larger changes, open an issue or discussion first so we can decide how to route the work upstream.
+Use discussions for design ideas, documentation-structure proposals, usage questions, and broader proposals that are not yet ready to become actionable issues.
 
 ## Security
 

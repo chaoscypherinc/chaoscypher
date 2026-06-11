@@ -39,6 +39,54 @@ class TestExtractSync:
 
 @pytest.mark.unit
 @pytest.mark.core
+class TestTextOnlyCalls:
+    """extract_sync/chunk_sync accept text-only calls (the docs-promised API).
+
+    ``source`` must not be positionally required: ``extract_sync(text=...)``
+    has to work exactly like ``await extract(text=...)`` does, and an empty
+    call must surface the async path's ValueError — not a TypeError.
+    """
+
+    def test_extract_sync_accepts_text_only(self):
+        """extract_sync(text=...) forwards to extract(None, text=...)."""
+        from chaoscypher_core import extract_sync
+
+        mock_result = ExtractionResult(entities=[], relationships=[])
+        with patch("chaoscypher_core.extract", new_callable=AsyncMock) as mock_extract:
+            mock_extract.return_value = mock_result
+            result = extract_sync(text="raw text")
+            assert result is mock_result
+            mock_extract.assert_called_once_with(None, text="raw text")
+
+    def test_chunk_sync_accepts_text_only(self):
+        """chunk_sync(text=...) forwards to chunk(None, text=...)."""
+        from chaoscypher_core import chunk_sync
+        from chaoscypher_core.models import ChunksResult
+
+        mock_result = ChunksResult.model_construct()
+        with patch("chaoscypher_core.chunk", new_callable=AsyncMock) as mock_chunk:
+            mock_chunk.return_value = mock_result
+            result = chunk_sync(text="raw text")
+            assert result is mock_result
+            mock_chunk.assert_called_once_with(None, text="raw text")
+
+    def test_extract_sync_with_neither_raises_value_error(self):
+        """An empty extract_sync() call raises the async path's ValueError."""
+        from chaoscypher_core import extract_sync
+
+        with pytest.raises(ValueError, match="either 'source'"):
+            extract_sync()
+
+    def test_chunk_sync_with_neither_raises_value_error(self):
+        """An empty chunk_sync() call raises the async path's ValueError."""
+        from chaoscypher_core import chunk_sync
+
+        with pytest.raises(ValueError, match="either 'source'"):
+            chunk_sync()
+
+
+@pytest.mark.unit
+@pytest.mark.core
 class TestChatSync:
     """Tests for chat_sync()."""
 

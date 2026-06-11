@@ -27,7 +27,7 @@ This prevents misconfigured deployments from silently falling back to defaults.
 The primary configuration file is `settings.yaml`, located in the data directory. The location depends on how you run Chaos Cypher:
 
 - **Docker (all-in-one):** `/data/settings.yaml` (inside the container, persisted via volume mount)
-- **Docker (multi-container):** `packages/docker/data/settings.yaml` (created at first startup, gitignored)
+- **Docker (multi-container):** `/data/settings.yaml` inside the `app-data` named volume (same path as all-in-one) — edit via `docker exec -it <cortex-container> vi /data/settings.yaml`, or locate the volume on the host with `docker volume inspect`
 - **Local / CLI:** Platform-specific data directory (e.g., `~/.local/share/chaoscypher/settings.yaml` on Linux, `%LOCALAPPDATA%\chaoscypher\settings.yaml` on Windows)
 
 The file is auto-generated with sensible defaults on first startup. You can also configure settings from the web UI **Settings** page.
@@ -69,9 +69,14 @@ llm:
 
 ### Ollama (Default)
 
-Ollama is configured exclusively through the `ollama_instances` list. The
-backend always seeds a single default instance pointed at the Docker host,
-so a minimal config only needs the model name:
+Ollama is configured exclusively through the `ollama_instances` list. On
+first boot the backend seeds a single default instance pointed at
+`http://localhost:11434`; the `CHAOSCYPHER_OLLAMA_URL` environment variable
+overrides the seeded URL, and the Docker deployments set it to
+`http://host.docker.internal:11434` so the container reaches an Ollama
+running on the host. The seed happens on first boot only — an existing
+`settings.yaml` is never rewritten. A minimal config only needs the model
+name:
 
 ```yaml
 llm:
@@ -142,11 +147,23 @@ llm:
 
 ```yaml
 llm:
-  ai_temperature: 0.3           # Chat temperature (0.0-1.0)
+  ai_temperature: 0.3           # Chat temperature (0.0-2.0)
   extraction_temperature: 0.1   # Extraction temperature (lower = more deterministic)
   ai_max_tokens: 65536          # Max output tokens
   ai_context_window: 8192       # Context window size
 ```
+
+### Spend Caps
+
+Two opt-in token caps protect cloud-provider operators against runaway extraction spend. Both default to `null` (disabled):
+
+```yaml
+llm:
+  max_tokens_per_source: null   # Max total tokens (input + output) one source may consume during extraction
+  max_tokens_per_day: null      # Max total tokens per UTC day, per database
+```
+
+Once a cap is reached, the next LLM call fails permanently with `LLMSpendCapExceededError` — the source is marked failed instead of continuing to bill. The per-source counter is tracked in memory per worker; the daily counter is persisted in the database (`llm_daily_spend` table), so worker restarts cannot reset it. The daily window rolls over at UTC midnight.
 
 ## Chunking
 
@@ -224,6 +241,29 @@ search:
   rerank_model_name: Alibaba-NLP/gte-reranker-modernbert-base
 ```
 
+## Chat
+
+Tool-calling limits and the tool-approval gate for chat, under the `chat` settings group. These apply to every chat surface — web UI, CLI, and the REST API — via the shared chat tool loop.
+
+```yaml
+chat:
+  max_tool_iterations: 10             # Rounds of tool calling before forcing a final answer
+  max_total_tool_calls: 25            # Total tool calls across all iterations
+  max_tools: 14                       # Tools offered to the model per chat
+  tool_approval: never-ask            # always-ask | ask-on-write | never-ask
+  tool_approval_timeout_seconds: 120  # Unanswered approval requests are denied after this
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_tool_iterations` | `10` | Maximum rounds of tool calling before the model is forced to produce a final response. |
+| `max_total_tool_calls` | `25` | Maximum total tool calls across all iterations of one message. |
+| `max_tools` | `14` | Maximum tools included per chat (prevents context overflow). |
+| `tool_approval` | `never-ask` | `always-ask` requires confirmation for every tool call; `ask-on-write` only for mutating tools (the `chat.mutating_tools` list — create/update/delete node, edge, and template operations, add/remove document, extraction finalization); `never-ask` runs tools automatically. |
+| `tool_approval_timeout_seconds` | `120` | How long a pending tool call waits for an approval decision before being denied (fail-closed). Applies to `always-ask` and `ask-on-write`. |
+
+In the CLI, approval surfaces as a `y/N` prompt — pressing Enter (or EOF) denies, fail-closed. While a tool call waits for a decision, the loop polls every `intervals.chat_approval_poll_ms` milliseconds (default `500`, minimum `50`) — one of several polling knobs in the `intervals` settings group. See [Chat — Tool Approval](../user-guide/chat.md#tool-approval) for the workflow.
+
 ## Source Processing
 
 ```yaml
@@ -233,14 +273,30 @@ source_processing:
   entity_deduplication_mode: semantic            # exact | semantic
   entity_deduplication_similarity_threshold: 0.90
   relationship_confidence_threshold: 0.5
-  # Per-source extraction quality overrides (max_relationship_ratio, etc.)
+```
+
+:::note[Deprecated: `source_processing_max_file_size_gb`]
+
+`source_processing.source_processing_max_file_size_gb` was the legacy file-upload cap. As of 2026-05-06 it is **deprecated and no longer honored** — the upload pipeline (file uploads, URL fetches, MCP) now reads `batching.max_upload_bytes` exclusively (see below). Remove the deprecated key from your `settings.yaml` to silence the startup warning; the cap is now uniform across entry paths.
+
+:::
+
+## Extraction
+
+Extraction quality knobs — loop detection, semantic dedup thresholds, and relationship caps such as `max_relationship_ratio` — live in the separate `extraction` settings group (not under `source_processing`; writing them there fails strict validation):
+
+```yaml
+extraction:
+  loop_max_entity_count: 50        # Abort a chunk stream past this many entities
+  semantic_dedup_threshold: 0.95   # Cosine-similarity bar for merging entities
+  minimum_alias_length: 2          # Drop aliases shorter than this
 ```
 
 ### Filtering-mode knobs
 
 The [filtering mode](../reference/filtering-modes.md) you pick at
-upload time selects a preset bundle. The three knobs that actually
-move with the slider are wired through to the extraction pipeline:
+upload time selects a preset bundle. The three `extraction` knobs that
+actually move with the slider are wired through to the extraction pipeline:
 
 | Knob | Range | Effect |
 |------|-------|--------|
@@ -257,12 +313,6 @@ You'll usually pick a filtering mode rather than override these knobs
 individually — see the [Filtering Modes](../reference/filtering-modes.md) reference for the full
 preset matrix.
 
-:::note[Deprecated: `source_processing_max_file_size_gb`]
-
-`source_processing.source_processing_max_file_size_gb` was the legacy file-upload cap. As of 2026-05-06 it is **deprecated and no longer honored** — the upload pipeline (file uploads, URL fetches, MCP) now reads `batching.max_upload_bytes` exclusively (see below). Remove the deprecated key from your `settings.yaml` to silence the startup warning; the cap is now uniform across entry paths.
-
-:::
-
 ## Upload Limits
 
 Upload routes (`POST /sources`, `POST /sources/batch`, `POST /lexicon/upload`, `POST /exports/import`) are exempted from the per-route body cap and gated by `max_upload_bytes` only. Everything else is gated by `max_request_body_mb`.
@@ -271,9 +321,7 @@ Upload routes (`POST /sources`, `POST /sources/batch`, `POST /lexicon/upload`, `
 - `batching.max_request_body_mb` (default **128 MB**) — outer HTTP body limit for **non-upload** routes. The body-size middleware skips this check on the four upload paths above.
 - nginx `client_max_body_size` — rendered from `max_upload_bytes` (with a tight `1m` default at the server level and `{{ max_upload_bytes }}` on the upload locations).
 
-To raise the upload size, increase **`max_upload_bytes`** (the request is rejected by whichever layer has the lower limit):
-
-**1. Application layer** (`settings.yaml`):
+To raise the upload size, increase **`max_upload_bytes`** in `settings.yaml`:
 
 ```yaml
 batching:
@@ -282,17 +330,7 @@ batching:
   max_upload_files: 20          # Max files per batch upload
 ```
 
-**2. Nginx layer** (Docker only — `nginx-http.conf` and `nginx-https.conf`):
-
-```nginx
-client_max_body_size 10g;
-```
-
-:::warning[Both layers must match]
-
-The request is rejected by whichever layer has the lower limit. If you increase the application limit but not Nginx, uploads will still fail at the Nginx layer.
-
-:::
+The nginx `client_max_body_size` limits are rendered automatically from `batching.max_upload_bytes` at container start — restart the container after changing the setting. Manual edits to `nginx-http.conf`/`nginx-https.conf` are overwritten on the next start, so the setting is the single source of truth for both layers.
 
 ## Queue
 
@@ -400,6 +438,21 @@ These environment variables are used by the Docker services:
 | `VALKEY_LOGLEVEL` | `warning` | Valkey log level |
 | `SUPERVISOR_LOGLEVEL` | `warn` | Supervisord log level |
 
+**Deployment (compose):**
+
+These knobs are read by `packages/docker/docker-compose.yml` when starting the all-in-one container. Set them in a `.env` file next to the compose file (see `packages/docker/.env.example`) or in your shell:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CHAOSCYPHER_BIND` | `0.0.0.0` | Host interface the published ports bind to. Set `127.0.0.1` for loopback-only access. |
+| `CHAOSCYPHER_ALLOWED_HOSTS` | (empty) | Comma-separated Host-header allow-list for LAN/proxy deployments. Needed when clients reach the app via a LAN hostname/IP so they aren't rejected with `421`. |
+| `HOST_PORT_HTTP` | `80` | Host port mapped to the container's HTTP port. |
+| `HOST_PORT_HTTPS` | `443` | Host port mapped to the container's HTTPS port. |
+| `CHAOSCYPHER_DATA_DIR` | `/data` | Data directory inside the container. Fixed to `/data` by the compose file; must match the volume mount path. |
+| `MEM_LIMIT` | `4g` | Container memory limit. Raise to `8g`–`16g` for heavy ingest workloads. |
+| `CPU_LIMIT` | `4` | Container CPU limit. |
+| `CHAOSCYPHER_STOP_GRACE_PERIOD` | `60s` | How long Docker waits on shutdown before force-killing the container. Must cover the in-app shutdown grace periods (`shutdown.*` in `settings.yaml`). |
+
 ### Rate Limiting
 
 Rate limiting is **enabled by default**. To disable it (e.g., for local/single-user development), set `enabled: false` under the `rate_limit` key in your `settings.yaml`:
@@ -417,10 +470,11 @@ When enabled, the following rate limits apply:
 |------|------|------|-------|
 | Auth | `/api/v1/auth/` | 5 r/s | 3 |
 | Uploads | `/api/v1/sources` | 10 r/s | 5 |
+| Mutations | POST/PUT/PATCH/DELETE on `/api/*` | 10 r/s | 20 (nodelay) |
 | General API | `/` (catch-all) | 100 r/s | 50 |
 | Static assets | `/assets/` | No limit | — |
 
-Rate limits are per client IP. These zones are also tunable under `rate_limit` in `settings.yaml` (e.g. `login_max_requests`, `api_general_max_requests`). Keep rate limiting on if you expose Chaos Cypher to the internet or untrusted networks.
+Rate limits are per client IP. These zones are also tunable under `rate_limit` in `settings.yaml` (e.g. `login_max_requests`, `api_general_max_requests`, `mutations_max_requests`, `mutations_burst`). Keep rate limiting on if you expose Chaos Cypher to the internet or untrusted networks.
 
 ## Worker Configuration
 
@@ -430,12 +484,12 @@ Workers can be configured separately via `workers.yaml` (optional, requires rest
 llm_worker:
   max_concurrent: 1       # Concurrent LLM jobs
   max_tries: 5            # Max attempts for LLM jobs
-  timeout: 600            # Job timeout in seconds
+  timeout: 3600           # Job timeout in seconds (default: 1 hour)
 
 operations_worker:
   max_concurrent: 8       # Concurrent operation jobs
   max_tries: 5            # Max attempts for operations
-  timeout: 7200           # Job timeout in seconds
+  timeout: 3600           # Job timeout in seconds (default: 1 hour)
 ```
 
 ## MCP Server
@@ -454,6 +508,25 @@ MCP:
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |
 
 See [MCP Server](../user-guide/mcp.md) for setup and usage details.
+
+## Local Auth
+
+Single-user authentication settings live under the `local_auth` group:
+
+```yaml
+local_auth:
+  cookie_name: cc_session
+  cookie_ttl_seconds: 2592000   # 30 days, sliding
+  # cookie_secure: true         # Usually leave unset — auto-resolved at boot (see below)
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `cookie_name` | `cc_session` | Session cookie name. |
+| `cookie_ttl_seconds` | `2592000` | Session cookie lifetime in seconds (30 days, sliding). |
+| `cookie_secure` | auto | `Secure` flag on the session cookie. When not set explicitly, it is auto-resolved at boot: `true` if TLS certificate files are present in `tls.cert_dir`, `false` on plain-HTTP deployments. Set it to `true` explicitly when TLS terminates at a reverse proxy that doesn't expose certs to the container (see [Production Deployment](./production.md)). |
+
+The credential files are derived from the data dir rather than configured directly: the operator password hash and hashed API keys live in `<data_dir>/credentials.json`, and the session HMAC secret in `<data_dir>/secrets/session_secret`. `local_auth.credentials_path` / `local_auth.session_secret_path` can override the locations but normally follow `CHAOSCYPHER_DATA_DIR`. None of this is inside `app.db` — see [Backup and Restore](./backup-restore.md#full-disaster-recovery).
 
 ## HTTPS / TLS
 
@@ -478,6 +551,7 @@ For a complete reference of all available settings and their defaults, see the s
 | **search** | Vector search, re-ranking, similarity thresholds |
 | **embedding** | Embedding provider, model, dimensions, max text length |
 | **source_processing** | Extraction behavior, deduplication, quality controls |
+| **extraction** | Extraction quality knobs — loop detection, dedup thresholds, relationship caps |
 | **export** | Package metadata for CCX exports |
 | **lexicon** | Lexicon Hub connection settings |
 | **paths** | Data directory structure |
@@ -486,12 +560,14 @@ For a complete reference of all available settings and their defaults, see the s
 | **batching** | Upload limits, embedding batches, processing batches |
 | **pagination** | Page sizes and limits |
 | **cors** | Cross-origin request settings |
-| **auth** | Authentication (enabled by default) |
+| **local_auth** | Single-user auth: cookie settings, credential file paths |
 | **rate_limit** | Auth endpoint rate limits, nginx zone limits, and the master `enabled` toggle |
 | **retries** | Retry counts for various operations |
 | **backoff** | Exponential backoff configuration |
 | **analysis** | Graph analysis settings |
 | **chat_context** | Chat context window and history limits |
+| **chat** | Chat tool-loop limits (`max_tool_iterations`, `max_total_tool_calls`), tool approval mode/timeout, mutating-tool list |
+| **intervals** | Frontend/backend polling intervals, incl. `chat_approval_poll_ms` |
 | **services** | External service URLs |
 | **workers** | Worker concurrency and timeout defaults |
 
@@ -500,6 +576,18 @@ For a complete reference of all available settings and their defaults, see the s
 By default, Cortex binds to `0.0.0.0`. Read the [self-hosted threat model](../security/self-hosted-threat-model.md) before exposing the service beyond loopback.
 
 :::
+
+## Context window knobs explained
+
+Three settings describe "the context window", each with a distinct job:
+
+| Setting | What it controls |
+|---------|------------------|
+| `llm.ai_context_window` | The token budget chat and extraction use when fitting prompts (history compaction, truncation warnings). |
+| `llm.ollama_num_ctx` | The `num_ctx` value actually sent to the Ollama API. **Keep this equal to `ai_context_window` when using Ollama** — if it is smaller, Ollama silently drops the head of the prompt. The VRAM presets set both together. |
+| `llm.openai_context_window` / `anthropic_context_window` / `gemini_context_window` | The cloud models' context limits, used for budget math when a cloud provider is selected. |
+
+Separately, `llm.ai_max_tokens` limits the **output** length, bounded per cloud provider by `openai_max_output_tokens` / `anthropic_max_output_tokens` / `gemini_max_output_tokens` (the effective request limit is the smaller of the two).
 
 ## See also
 

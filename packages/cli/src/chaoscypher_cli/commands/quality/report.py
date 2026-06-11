@@ -59,10 +59,10 @@ def report(
     - Domain comparison (optional)
 
     Examples:
-        chaoscypher quality report
-        chaoscypher quality report --format json -o quality.json
-        chaoscypher quality report --format csv -o quality.csv
-        chaoscypher quality report --include-domains
+        chaoscypher source quality report
+        chaoscypher source quality report --format json -o quality.json
+        chaoscypher source quality report --format csv -o quality.csv
+        chaoscypher source quality report --include-domains
     """
     from chaoscypher_cli.commands.quality.utils import (
         build_entity_chunk_mentions,

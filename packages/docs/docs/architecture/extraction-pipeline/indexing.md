@@ -179,18 +179,23 @@ The `SearchRepository` provides maintenance operations:
 
 ## Phase 5b: Image-only PDF routing (2026-05-08)
 
-When `PdfLoader` determines that a PDF produced fewer characters than
-`LoaderSettings.pdf_image_only_threshold`, it sets `needs_vision=True`
-in the document metadata rather than raising an error. The indexing
-handler checks this flag after loading:
+When `PdfLoader` determines that **every attempted page produced empty
+text**, it sets `needs_vision=True` in the document metadata rather than
+raising an error. After loading, the indexing handler's
+`_is_image_bearing_no_text` predicate decides routing: it fires when
+`total_characters` is below the 50-character indexable floor
+(`_MIN_INDEXABLE_CHARS`) **and** the metadata carries an image-bearing
+hint — `needs_vision`, `image_page_count > 0`, or
+`extraction_method == "vision_pending"`:
 
-- If `needs_vision=True` **and** the source's `enable_vision` setting is
+- If the predicate fires **and** the source's `enable_vision` setting is
   `True` → the document is routed to the vision pipeline (LLM image
   description generation) before normalization proceeds.
-- If `needs_vision=True` **and** `enable_vision` is `False` → the
-  handler raises a `ValidationError` with an actionable message ("PDF
-  appears to be image-only — re-upload with vision enabled") and sets
-  the source status to `error`.
+- If no text survives **and** `enable_vision` is `False` → the
+  handler raises a `ValidationError` with an actionable message ("This
+  PDF has N image-only pages and produced no extractable text. Enable
+  vision in upload settings to extract content from scanned documents.")
+  and sets the source status to `error`.
 
 This replaces the pre-Phase-5b behaviour where image-only PDFs raised
 immediately in the loader with a generic "scanned PDF" error regardless
@@ -215,7 +220,7 @@ After embedding generation completes, the indexing handler rolls up the
 `LOADER_REPLACEMENT_CHARS_COUNT` counter across all chunks from the
 source. A non-zero rollup is logged at `WARNING` with
 `replacement_chars_found=<count>` so the signal appears in structured
-logs even if the operator is not watching the Data Quality tab.
+logs even if the operator is not watching the Pipeline flow counters.
 
 ## See also
 

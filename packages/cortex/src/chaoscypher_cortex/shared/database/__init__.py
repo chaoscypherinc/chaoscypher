@@ -3,11 +3,10 @@
 
 """Cortex Database Module — FastAPI session integration.
 
-After Phase 6, the database initialization (engine, schema migrator,
-seed) and the per-request adapter factory live in
-``chaoscypher_core.database``. This module retains only the
-FastAPI-specific session dependency that the cortex feature endpoints
-use as a ``Depends()`` target.
+The database initialization (engine, schema migrator, seed) and the
+per-request adapter factory live in ``chaoscypher_core.database``.
+This module retains only the FastAPI-specific session dependency that
+the cortex feature endpoints use as a ``Depends()`` target.
 """
 
 from chaoscypher_cortex.shared.database.session import get_current_session

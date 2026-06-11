@@ -4,10 +4,9 @@
 """Reset Operations.
 
 Heavy database and knowledge reset operations. Moved down from
-``chaoscypher_cortex.features.settings.reset_operations`` in PR2b
-Task 22. Return types are plain ``dict[str, Any]`` so Core stays
-HTTP-agnostic; Cortex wraps them in ``ResetResponse`` at the API
-boundary.
+``chaoscypher_cortex.features.settings.reset_operations``. Return
+types are plain ``dict[str, Any]`` so Core stays HTTP-agnostic;
+Cortex wraps them in ``ResetResponse`` at the API boundary.
 """
 
 from typing import TYPE_CHECKING, Any

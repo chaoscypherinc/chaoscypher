@@ -28,7 +28,8 @@ which stages to run:
 
 Extraction options:
     --domain DOMAIN   Domain for extraction (auto, technical, scientific, etc.)
-    --depth DEPTH     Extraction depth (quick, full)
+    --quick           Fast extraction (~30s) instead of the full pass
+    (--depth quick|full belongs to `source extract` / `source confirm`)
 
 Available domains: auto (default), generic, technical, scientific, medical,
 legal, financial, news, educational, biographical, historical, literary,

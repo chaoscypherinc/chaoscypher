@@ -220,8 +220,8 @@ class RelationshipCommitHandler:
             edge_descriptions: Domain-aware edge type descriptions from extraction
             edge_visuals: Domain-aware edge visuals (icon/color) from extraction
             inverse_relationships: Domain-specific inverse relationship map
-            enable_inverse_relationships: Phase 6 (2026-05-08) toggle. When False,
-                inverse edges are never created regardless of ``inverse_relationships``.
+            enable_inverse_relationships: When False, inverse edges are never
+                created regardless of ``inverse_relationships``.
 
         Returns:
             Tuple of (edges_to_create, created_edge_template_ids, all_used_edge_template_ids, edge_templates_inserted):

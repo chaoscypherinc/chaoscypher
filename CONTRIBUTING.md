@@ -16,7 +16,7 @@ Before we can accept your contributions, you must sign our Contributor License A
 - **Community Edition:** AGPL v3 (open source)
 - **Enterprise Edition:** Proprietary (additional features)
 
-The CLA grants the ChaosCypher Team the right to include your contributions in both editions. Without it, we cannot legally include community contributions in the enterprise product.
+The CLA grants Chaos Cypher, Inc. the right to include your contributions in both editions. Without it, we cannot legally include community contributions in the enterprise product.
 
 ### How to sign
 
@@ -26,16 +26,20 @@ The full CLA text is available in [CLA.md](CLA.md).
 
 ## SPDX headers
 
-Every source file (`.py`, `.ts`, `.tsx`, `.js`) must start with:
+Every source file (`.py`, `.ts`, `.tsx`) must start with:
 
 ```
+# Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-# SPDX-FileCopyrightText: <year> <your name or org>
 ```
 
-(For TypeScript/JavaScript, use `//` comments instead of `#`.)
+(For TypeScript, use `//` comments instead of `#`.)
 
-New files added without the header will fail pre-commit.
+Pre-commit enforces the `SPDX-License-Identifier` line on shipped source
+(`packages/{core,cortex,neuron,cli}/src`, `packages/interface/src`, plus
+`scripts/`, `tools/`, and `e2e/`); files missing it fail the hook. Run
+`uv run python scripts/check_spdx_headers.py --fix` to insert both lines
+automatically.
 
 ## Development setup
 
@@ -139,10 +143,9 @@ make docker-test        # produces coverage.xml
 make coverage-diff      # checks ≥90% on changed lines vs origin/main
 ```
 
-`make ci` currently runs diff-cover in **advisory mode** (prints the
-result, doesn't fail the build) so we can collect a baseline of typical
-diff-coverage levels. The threshold will be promoted to blocking after
-two weeks of advisory data.
+`make ci` runs diff-cover in **advisory mode** (prints the result,
+doesn't fail the build). The blocking gate is `make coverage-diff`,
+which you should run before pushing.
 
 Shortcut: `make ci` runs the full pipeline (lint, typecheck, docstrings, tests, security).
 
@@ -152,7 +155,7 @@ Three layers guard against committed secrets:
 
 1. **Pre-commit hook** — runs `gitleaks` (v8.21.2) on staged files. Bypassed by `git commit --no-verify`, web-UI commits, or any tool ignoring `core.hooksPath`.
 2. **Local `make lint-secrets`** — runs `gitleaks detect` against the entire working tree. Chained into `make ci` and `make ci-local`, so the full local CI run catches anything pre-commit missed. Run ad-hoc with `make lint-secrets`.
-3. **CI workflow** — `.github/workflows/gitleaks.yml` is active: it runs `gitleaks` (v8.21.2, mirroring the pre-commit hook and `make lint-secrets`) on every `push` to every branch (PR branches included) as the CI defeat-path guard for `git commit --no-verify` and web-UI commits, and is also available via `workflow_dispatch` for ad-hoc audits. It intentionally does **not** trigger on `pull_request` (the `push` trigger already covers PR branches, and gitleaks-action's pull_request path 403s under this workflow's read-only `contents` token). For organization-owned repos you must add a free `GITLEAKS_LICENSE` repo secret (obtain at gitleaks.io) before the first push, or org-repo runs will fail; it is not required while the repo lives under a personal account. Tune false positives by adding entries to `.gitleaks.toml`'s `allowlist`.
+3. **CI workflow** — `.github/workflows/gitleaks.yml` is active: it runs `gitleaks` (v8.21.2, mirroring the pre-commit hook and `make lint-secrets`) on every `push` to every branch (PR branches included) as the CI defeat-path guard for `git commit --no-verify` and web-UI commits, and is also available via `workflow_dispatch` for ad-hoc audits. It intentionally does **not** trigger on `pull_request` (the `push` trigger already covers PR branches, and gitleaks-action's pull_request path 403s under this workflow's read-only `contents` token). This repository is organization-owned, so the free `GITLEAKS_LICENSE` repo secret (obtain at gitleaks.io) is required and already configured; forks under personal accounts do not need it. Tune false positives by adding entries to `.gitleaks.toml`'s `allowlist`.
 
 If `make lint-secrets` flags something:
 

@@ -61,10 +61,10 @@ def load(
 
     \b
     Examples:
-        chaoscypher package load my-knowledge.ccx
-        chaoscypher package load export.ccx --no-templates
-        chaoscypher package load backup.ccx --merge
-        chaoscypher package load data.ccx -d my-project
+        chaoscypher graph package load my-knowledge.ccx
+        chaoscypher graph package load export.ccx --no-templates
+        chaoscypher graph package load backup.ccx --merge
+        chaoscypher graph package load data.ccx -d my-project
     """
     try:
         ctx = get_context(database_name=database)

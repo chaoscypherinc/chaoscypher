@@ -790,7 +790,7 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
 
         Used by the chunk-extraction handler to rehydrate the chunk
         content for a hierarchical group without carrying the text in
-        the queue payload (Phase 5 Task D — OP_EXTRACT_CHUNK shrink).
+        the queue payload, keeping the OP_EXTRACT_CHUNK payload small.
 
         Uses ``load_only()`` to project ``id``, ``chunk_index``, and
         ``content`` only — the 5 KB ``embedding`` BLOB and

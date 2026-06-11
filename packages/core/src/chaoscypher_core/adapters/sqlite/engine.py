@@ -228,7 +228,7 @@ def apply_schema_updates(engine: Engine) -> None:
     """Post-create-all housekeeping: idempotent data backfills + drift logger.
 
     The column-adding reflective migrator that used to live here was
-    retired in Phase 3 of the Alembic migration framework. Every
+    retired in favor of the Alembic migration framework. Every
     column/table/constraint change now ships as an Alembic migration
     file — see ``packages/core/src/chaoscypher_core/database/migrations/``.
 

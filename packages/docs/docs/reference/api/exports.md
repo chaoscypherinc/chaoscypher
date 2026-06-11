@@ -18,20 +18,20 @@ to track progress and download results.
 All three endpoints follow the same async pattern:
 
 1. Call the endpoint -- receive a `task_id` in the response.
-2. Poll [`GET /api/v1/queue/tasks/{task_id}`](queue.md#get-task) until `status` is `"complete"`.
+2. Poll [`GET /api/v1/queue/tasks/{task_id}`](queue.md#get-task) until `status` is `"completed"`.
 3. Fetch the result:
     - **Exports:** Download the `.ccx` file via [`GET /api/v1/queue/tasks/{task_id}/result`](queue.md#get-task-result).
     - **Imports:** Retrieve import statistics via the same result endpoint.
 
 ```bash
 # Poll task status
-curl http://localhost:8080/api/v1/queue/tasks/{task_id}
+curl http://localhost/api/v1/queue/tasks/{task_id}
 ```
 
 ```json
 {
   "task_id": "task_abc123",
-  "status": "complete"
+  "status": "completed"
 }
 ```
 
@@ -47,7 +47,7 @@ Queue a full knowledge graph export as a `.ccx` file. Select which graph
 components to include via query parameters.
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/exports?include_templates=true&include_knowledge=true&include_workflows=true&include_sources=true"
+curl -X POST "http://localhost/api/v1/exports?include_templates=true&include_knowledge=true&include_workflows=true&include_sources=true"
 ```
 
 ### Query Parameters
@@ -85,7 +85,7 @@ curl -X POST "http://localhost:8080/api/v1/exports?include_templates=true&includ
 Export only knowledge nodes and edges (no templates, workflows, or sources):
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/exports?include_templates=false&include_workflows=false&include_sources=false"
+curl -X POST "http://localhost/api/v1/exports?include_templates=false&include_workflows=false&include_sources=false"
 ```
 
 ---
@@ -100,7 +100,7 @@ Upload and import a `.ccx` package file. The file is sent as multipart form
 data.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/exports/import \
+curl -X POST http://localhost/api/v1/exports/import \
   -F "file=@my-export.ccx" \
   -F "merge=false"
 ```
@@ -138,7 +138,6 @@ statistics about the import:
 - Number of nodes imported
 - Number of edges imported
 - Number of workflows imported
-- Number of workflows imported
 - Any errors or warnings
 
 ### Errors
@@ -163,7 +162,7 @@ The list of source UUIDs is sent as a JSON request body. Component toggles are
 query parameters.
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/exports/by_sources?include_templates=true" \
+curl -X POST "http://localhost/api/v1/exports/by_sources?include_templates=true" \
   -H "Content-Type: application/json" \
   -d '["src_abc123", "src_def456"]'
 ```

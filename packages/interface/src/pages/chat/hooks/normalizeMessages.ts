@@ -39,6 +39,9 @@ export function normalizeMessages(messages: ChatMessage[]): ExtendedChatMessage[
       // Flatten referenced_entities from extra_metadata
       if (msg.extra_metadata.referenced_entities) {
         normalized.referenced_entities = msg.extra_metadata.referenced_entities;
+      } else if (msg.extra_metadata.entity_references) {
+        // Legacy key from the queued worker (2026-06-09..10) — existing rows only
+        normalized.referenced_entities = msg.extra_metadata.entity_references;
       }
       // Flatten chunk_citations from extra_metadata
       if (msg.extra_metadata.chunk_citations) {
@@ -55,6 +58,10 @@ export function normalizeMessages(messages: ChatMessage[]): ExtendedChatMessage[
       // Flatten validation from extra_metadata
       if (msg.extra_metadata.validation) {
         normalized.validation = msg.extra_metadata.validation;
+      }
+      // Flatten truncation/stream warnings from extra_metadata
+      if (msg.extra_metadata.warnings) {
+        normalized.warnings = msg.extra_metadata.warnings;
       }
       // Merge per_citation verdicts into chunk citations for persisted messages
       const perCitation = msg.extra_metadata.validation?.per_citation;

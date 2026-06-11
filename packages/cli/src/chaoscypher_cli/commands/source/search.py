@@ -19,6 +19,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -267,4 +268,7 @@ def _display_json(results: list[dict[str, Any]]) -> None:
     Args:
         results: List of result dictionaries.
     """
-    console.print(json.dumps(results, indent=2))
+    # print_json: result labels carry raw chunk content — bracketed text
+    # (markdown links, [/tag]-like strings) must not hit Rich markup, and
+    # piped output must not be hard-wrapped.
+    print_json(json.dumps(results, indent=2))

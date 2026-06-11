@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 
 
 console = Console()
@@ -42,11 +43,11 @@ def list_workflows(
     built-in and custom workflows.
 
     Example:
-        chaoscypher workflow list
-        chaoscypher workflow list --format json
-        chaoscypher workflow list --verbose
-        chaoscypher workflow list --category research
-        chaoscypher workflow list --active
+        chaoscypher graph workflow list
+        chaoscypher graph workflow list --format json
+        chaoscypher graph workflow list --verbose
+        chaoscypher graph workflow list --category research
+        chaoscypher graph workflow list --active
     """
     try:
         ctx = get_context(database_name=database)
@@ -58,7 +59,7 @@ def list_workflows(
         )
 
         if output_format == "json":
-            console.print(json.dumps(workflows, indent=2, default=str))
+            print_json(json.dumps(workflows, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -67,7 +68,7 @@ def list_workflows(
                 console.print(yaml.dump(workflows, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(workflows, indent=2, default=str))
+                print_json(json.dumps(workflows, indent=2, default=str))
 
         else:  # table format
             if not workflows:

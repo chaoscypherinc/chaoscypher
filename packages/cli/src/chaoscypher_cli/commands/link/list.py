@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 from chaoscypher_core.app_config import get_settings
 
 
@@ -50,10 +51,10 @@ def list_links(
     Supports filtering by source node and pagination.
 
     Example:
-        chaoscypher link list
-        chaoscypher link list --source node-123
-        chaoscypher link list --format json
-        chaoscypher link list --page 2 --limit 100
+        chaoscypher graph link list
+        chaoscypher graph link list --source node-123
+        chaoscypher graph link list --format json
+        chaoscypher graph link list --page 2 --limit 100
     """
     try:
         ctx = get_context(database_name=database)
@@ -69,7 +70,7 @@ def list_links(
         pagination = result.get("pagination", {})
 
         if output_format == "json":
-            console.print(json.dumps(result, indent=2, default=str))
+            print_json(json.dumps(result, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -78,14 +79,14 @@ def list_links(
                 console.print(yaml.dump(result, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(result, indent=2, default=str))
+                print_json(json.dumps(result, indent=2, default=str))
 
         else:  # table format
             if not edges:
                 console.print("[dim]No links found.[/dim]")
                 if source:
                     console.print(f"[dim]Filter: source={source}[/dim]")
-                console.print("\nCreate one with: chaoscypher link create <source> <target>")
+                console.print("\nCreate one with: chaoscypher graph link create <source> <target>")
                 return
 
             table = Table(title="Links", show_header=True)
@@ -136,7 +137,7 @@ def list_links(
 
             if current_page < total_pages:
                 console.print(
-                    f"[dim]Next page: chaoscypher link list --page {current_page + 1}[/dim]"
+                    f"[dim]Next page: chaoscypher graph link list --page {current_page + 1}[/dim]"
                 )
 
     except Exception as e:

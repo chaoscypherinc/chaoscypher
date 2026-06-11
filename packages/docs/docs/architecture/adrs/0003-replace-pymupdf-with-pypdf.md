@@ -63,7 +63,7 @@ Replace PyMuPDF4LLM with **pypdf** (BSD-3) for PDF text extraction.
 ### Neutral
 
 - **Same output contract** - Returns `list[dict[str, Any]]` with `content` and `metadata` keys
-- **Same page separator** - Uses `\n\n-----\n\n` between pages
+- **Page separator** - Pages are joined with a blank line (`\n\n`). (Updated: an earlier `\n\n-----\n\n` separator was later simplified.)
 - **Entity extraction unaffected** - LLM-based extraction works on raw text content
 
 ## References

@@ -78,21 +78,25 @@ The `ExtractionSettings.system_prompt` setting and its domain-level
 counterpart let operators replace the default extraction system prompt
 entirely:
 
-- **Global override** — `ExtractionSettings.system_prompt` (string or `null`). When set, it replaces the built-in system prompt for every LLM extraction call.
-- **Domain override** — the domain's JSON-LD can set `system_prompt` to a domain-specific string. A domain value takes precedence over the global setting; `null` in the domain config means "use the global setting".
+- **Global setting** — `ExtractionSettings.system_prompt` is a plain string whose default *is* the built-in extraction system prompt. Editing it changes the system prompt sent with every LLM extraction call globally (there is no null/unset state).
+- **Domain override** — the domain's JSON-LD can set `extraction_overrides.system_prompt` to a domain-specific string, which takes precedence over the global value.
 
 This is useful for operators running models that have been fine-tuned with
 domain-specific system prompts, or for A/B testing prompt variants.
 
 #### Phase 6: Template fallback for empty-template domains (2026-05-08)
 
-When a domain has no node or edge templates defined (e.g., a sparse custom
-domain that relies entirely on the LLM's generic extraction), `ExtractionSettings.allow_template_fallback` (default `False`) controls behaviour:
+When a domain has no node templates defined (e.g., a sparse custom domain
+that relies entirely on the LLM's generic extraction), the formatter falls
+back to the built-in generic templates by default
+(`allow_template_fallback=True`, the legacy behaviour), logging a
+`domain_node_templates_empty_using_fallback` warning so extraction always
+has baseline type guidance.
 
-- `False` (default) — extraction proceeds with empty template lists. The LLM receives no type guidance and may produce arbitrary types. This is the pre-Phase-6 behaviour.
-- `True` — when the resolved domain has no templates, the extractor falls back to the `generic` domain's templates so extraction always has baseline type guidance.
-
-This is an opt-in rather than a default to avoid changing behaviour for existing domains that intentionally operate without templates.
+Passing `allow_template_fallback=False` — a code-level option on
+`format_domain_node_templates()`, not a `settings.yaml` key — turns an
+empty template list into a hard `ValidationError` so misconfigured domains
+surface immediately rather than silently producing generic output.
 
 ## Depth Strategy
 
@@ -266,23 +270,27 @@ When source/target entity types don't match the edge template's constraints, the
 
 The correction logic runs before fall-through -- so a backwards relationship with a matching template gets fixed rather than passed through with wrong direction. If neither direction matches the constraints, the behavior follows `strict_edge_type_constraints` (drop when strict, fall through when not).
 
-Each successful swap increments `RELATIONSHIPS_DIRECTION_CORRECTED` /
-`relationships_direction_corrected`. The toggle
-`ExtractionSettings.enable_direction_correction` (Phase 4, default `True`)
-can disable swapping entirely so mismatches are dropped instead. See
+`RELATIONSHIPS_DIRECTION_CORRECTED` / `relationships_direction_corrected`
+counts every detected wrong-direction relationship regardless of the
+toggle — it measures the LLM's wrong-direction emission rate.
+`enable_direction_correction` (Phase 4, default `True`) only changes the
+handling: swap-and-keep (`True`, default) vs drop (`False`). See
 [Relationship toggles](relationships.md#phase-4--phase-6-toggles-2026-05-08)
 for the full cascade description.
 
 ## Loop Detection
 
-LLMs can enter degenerate output states where they repeat the same pattern indefinitely. The `call_llm()` method streams the response and monitors completed lines in real-time for three loop patterns:
+LLMs can enter degenerate output states where they repeat the same pattern indefinitely. The `call_llm()` method streams the response and monitors completed lines in real-time for seven loop patterns:
 
 | Pattern | Detection | Threshold Setting |
 |---------|-----------|-------------------|
 | **Entity count exceeded** | More than N entity lines | `loop_max_entity_count` |
-| **Out-of-bounds indices** | R| lines referencing non-existent entity indices | `loop_max_out_of_bounds` consecutive OOB |
+| **Out-of-bounds indices** | Relationship lines referencing non-existent entity indices | `loop_max_out_of_bounds` consecutive OOB |
 | **Repeating source-type** | Same `(source_index, relationship_type)` pair repeating | `loop_max_source_type_repeat` consecutive repeats |
 | **Repeating property key** | Same `(entity_index, key)` pair repeating | `loop_max_property_repeat` consecutive repeats |
+| **Invalid-relationship rate** | Fraction of relationship lines with out-of-bounds indices exceeds the threshold (checked only after a warmup count of lines) | `loop_invalid_relationship_rate_warmup` / `loop_invalid_relationship_rate_threshold` |
+| **Total relationship count** | More relationship lines than `loop_max_relationship_multiplier` x the entity-count cap | `loop_max_relationship_multiplier` |
+| **Repeated (source, target) pair** | Same `(source_index, target_index)` pair appearing too many times | `loop_max_same_pair` (default 6) |
 
 When a loop is detected, the stream is **aborted early**, saving GPU time. The content collected up to that point is still usable -- the parser handles partial output gracefully.
 
@@ -294,7 +302,7 @@ Between pass 1 and pass 2, extracted entities go through multiple filtering stag
 
 ### Evidence Validation
 
-Four modes controlled by `evidence_validation_mode` (domains can override):
+Five modes controlled by `evidence_validation_mode` (domains can override):
 
 | Mode | Entity Check | Relationship Check |
 |------|-------------|-------------------|
@@ -302,8 +310,11 @@ Four modes controlled by `evidence_validation_mode` (domains can override):
 | `standard` (default) | Any significant word (>= 4 chars) from name/aliases must appear | At least one entity name must appear |
 | `narrative` | Accepts one entity name (no keyword required) or zero names with a relationship type keyword present in the sentence | One entity name or relationship type keyword must appear |
 | `relaxed` | Valid `sent_ref` in bounds is sufficient | Valid `sent_ref` is sufficient |
+| `off` | Skipped entirely | Skipped entirely |
 
 The `narrative` mode sits between `standard` and `relaxed` and is designed for literary and narrative content where characters are often referred to by pronouns or descriptive phrases rather than by name. The `literary` domain uses this mode by default.
+
+The `off` mode bypasses both the entity and relationship evidence filters entirely. It is pinned automatically by the `unfiltered` filtering preset rather than configured directly.
 
 ### Exclusion Filter
 
@@ -318,12 +329,13 @@ When a domain enables `strict_entity_types`, entities with types not in the doma
 
 :::note[Phase 6: `enable_type_rescue` gating (2026-05-08)]
 
-The type rescue pass is now gated on `ExtractionSettings.enable_type_rescue`
-(default `True`). Setting this to `False` disables the three-tier rescue and
-applies the domain's `strict_entity_types` policy directly: entities with
-unrecognized types are dropped without a rescue attempt. This is useful when
-extraction prompts are very precise and rescue attempts introduce noise rather
-than recover signal.
+The type rescue pass is gated on `FilteringConfig.enable_type_rescue`
+(default `True`). The `minimal` and `unfiltered` presets disable it
+automatically; domains and per-source filtering overrides can flip it via
+the standard preset/domain/source override chain. It is **not** an
+`ExtractionSettings` key — setting it in `settings.yaml` fails validation.
+When disabled, the domain's `strict_entity_types` policy applies directly:
+entities with unrecognized types are dropped without a rescue attempt.
 
 :::
 
@@ -484,7 +496,7 @@ The `extraction_filtering_mode` setting selects a **preset** that controls which
 
 **`unfiltered`** provides data integrity only -- deduplication and index validation run, but no quality filtering is applied. Entities and relationships pass through as extracted. Useful for debugging extraction prompts or when all filtering will be done downstream.
 
-Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are accepted as aliases for backwards compatibility.
+Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are no longer accepted and raise an error — use one of the six canonical names (`unfiltered`, `minimal`, `lenient`, `balanced`, `strict`, `maximum`).
 
 ### Domain-to-Preset Mapping
 
@@ -497,7 +509,7 @@ Each built-in domain maps to one of these presets. Of the 19 built-in domains, 1
 | **`lenient`** | literary, biographical, historical |
 | **`minimal`** | news |
 
-Domain configs declare their preset via the `extraction_filtering_mode` field. Specific filter values can still be overridden per-domain when needed -- the preset provides the baseline, and overrides are applied on top. For example, the literary domain includes additional tuning: `plausibility_threshold` lowered to 0.12 (from 0.20 in the `lenient` preset) for title-as-name characters common in Russian literature, and `max_entity_degree` raised to 40 for dense character interaction scenes.
+Domain configs declare their preset via the `extraction_filtering_mode` field. Specific filter values can still be overridden per-domain when needed -- the preset provides the baseline, and overrides are applied on top. For example, the literary domain raises `max_entity_degree` to 40 (from 30 in the `lenient` preset) for dense character-interaction scenes.
 
 ### Override Hierarchy
 

@@ -7,9 +7,6 @@ Services needing retry behavior accept a ``RetryPolicyPort`` instead of
 hard-importing ``retry_on_db_lock_*`` from ``chaoscypher_core.utils.retry``.
 The Engine wires a concrete policy (e.g. ``DbLockRetryPolicy``) at
 construction time.
-
-Phase 2 migrates ~8 service files off direct ``retry_on_db_lock_*`` imports
-onto this port via DI.
 """
 
 from __future__ import annotations

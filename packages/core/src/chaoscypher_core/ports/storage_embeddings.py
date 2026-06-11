@@ -3,7 +3,7 @@
 
 """EntityEmbeddingStorageProtocol for ChaosCypher storage.
 
-Split from the original SourceStorageProtocol god-protocol (Phase 1 Task 12).
+Split from the original SourceStorageProtocol god-protocol.
 Covers SourceEntityEmbedding table operations — a self-contained concern
 separate from the SourceRow model.
 Binds to SourceIndexingMixin in the SQLite adapter.

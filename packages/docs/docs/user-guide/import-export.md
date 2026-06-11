@@ -26,10 +26,10 @@ CCX is a compressed archive format with the `.ccx` file extension. A CCX package
 Export the entire knowledge graph from the current database:
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/exports?include_templates=true&include_knowledge=true&include_workflows=true&include_sources=true"
+curl -X POST "http://localhost:8080/api/v1/exports?include_templates=true&include_knowledge=true&include_workflows=true&include_sources=true&include_embeddings=false"
 ```
 
-Returns a `task_id` — the export runs asynchronously. Poll the task status and download the result when complete.
+Returns a `task_id` — the export runs asynchronously. Poll `GET /api/v1/queue/tasks/{task_id}` until the task completes, then download the `.ccx` via `GET /api/v1/queue/tasks/{task_id}/result`. See the [Queue API reference](../reference/api/queue.md) for task-status details.
 
 ### Source-Filtered Export
 
@@ -50,7 +50,14 @@ This exports:
 
 ### Selective Components
 
-Toggle individual components to export exactly what you need. All flags default to `true` — set any to `false` to exclude that component.
+Toggle individual components to export exactly what you need. The four component flags (`include_templates`, `include_knowledge`, `include_workflows`, `include_sources`) default to `true` — set any to `false` to exclude that component.
+
+`include_embeddings` defaults to `false`; enable it only when migrating between instances that use the same embedding model. It is accepted on both `POST /exports` and `POST /exports/by_sources`.
+
+### Web UI
+
+- **Full-graph export** — open **Settings** → **General** → **Import & Export** and click **Export**. Choose which components to include (templates, knowledge, workflows, sources, embeddings) and the browser downloads a `.ccx` file. Exporting requires a Package Name, set under **Settings** → **Export Defaults**.
+- **Per-source export** — on the **Sources** page, open a source's action menu and choose **Export Source** to download a `.ccx` scoped to that source.
 
 ## Importing
 
@@ -66,7 +73,9 @@ curl -X POST "http://localhost:8080/api/v1/exports/import?merge=false" \
 | `merge=false` (default) | Replace existing data with package contents |
 | `merge=true` | Merge package data with existing data |
 
-Import runs asynchronously. The result includes counts of imported templates, nodes, edges, and workflows, plus any errors or warnings.
+Import runs asynchronously — poll `GET /api/v1/queue/tasks/{task_id}` and fetch the outcome from `GET /api/v1/queue/tasks/{task_id}/result` when complete. The result includes counts of imported templates, nodes, edges, and workflows, plus any errors or warnings.
+
+In the web UI, import a `.ccx` from **Settings** → **General** → **Import & Export** — click **Import** and select the file.
 
 ## Lexicon Hub
 

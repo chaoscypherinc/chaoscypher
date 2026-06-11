@@ -41,7 +41,7 @@ graph TB
 
 ## Feature Structure
 
-Each feature follows this structure:
+Each feature follows this canonical shape; larger features split the layers into multiple modules (e.g. `nodes/graph_repository.py` + `sql_repository.py`, `sources/upload_service.py` + `tag_service.py`), and some omit a dedicated repository module, calling shared repositories or Core directly:
 
 ```
 features/{feature}/
@@ -118,20 +118,33 @@ Cortex has 31 feature modules:
 Each feature has a factory function that wires dependencies:
 
 ```python
-def get_sources_service(
-    session: Annotated[Session, Depends(get_session)],
-    settings: Annotated[Settings, Depends(get_settings)]
-) -> SourcesService:
-    repository = SourcesRepository(session, settings.current_database)
-    return SourcesService(repository, settings)
+def get_source_service(
+    repos: Annotated[RepositoryBundle, Depends(get_repositories)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SourceService:
+    """Create SourceService with RepositoryBundle."""
+    engine_service = EngineSourceService(
+        repository=repos.adapter,
+        database_name=repos.database_name,
+        settings=build_engine_settings(settings),
+    )
+    return SourceService(
+        engine_service,
+        database_name=repos.database_name,
+        settings=settings,
+        storage_adapter=repos.adapter,
+        graph_repository=repos.graph,
+        search_repository=repos.search,
+    )
 ```
 
-**Naming convention:** `get_{feature}_service()`
+**Naming convention:** `get_<feature>_service()` — usually the singular form of the feature name (`sources` → `get_source_service`, `nodes` → `get_node_service`), with a few exceptions (e.g. `get_databases_service`).
 
 ## Shared Infrastructure
 
 ```
 shared/
+├── adapters/        # Shared adapters
 ├── api/             # Shared API helpers and dependencies
 ├── auth/            # Authentication and permissions
 ├── database/        # Session management, models

@@ -47,7 +47,7 @@ class MyPlugin:
 
     @property
     def output_schema(self) -> dict[str, Any]:
-        """JSON Schema describing the output structure."""
+        """JSON Schema describing the output structure (optional)."""
         ...
 
     async def execute(
@@ -64,7 +64,7 @@ class MyPlugin:
 | `name` | `property` | Human-readable name shown in the workflow builder (e.g., `"Text Summarizer"`). |
 | `description` | `property` | One-sentence description of the tool's purpose. |
 | `input_schema` | `property` | JSON Schema (Draft 7) defining the tool's input parameters, types, and validation rules. |
-| `output_schema` | `property` | JSON Schema (Draft 7) describing the structure of the returned dictionary. |
+| `output_schema` | `property` (optional) | JSON Schema (Draft 7) describing the structure of the returned dictionary. The registry's duck-typing check does not require it, but defining it helps workflow validation and UI documentation. |
 | `execute(inputs, context)` | `async method` | Core logic. Receives pre-validated inputs and a `ToolExecutionContext` with access to platform services. Must return a dictionary. |
 
 ### The Execution Context
@@ -78,22 +78,30 @@ class ToolExecutionContext:
     settings: Any | None            # Engine settings
     llm_service: Any | None         # LLM service for AI operations
     thinking_mode: str | None       # LLM thinking mode
+    discovery_service: Any | None   # Graph analysis service
     import_service: Any | None      # Source processing service
     operations_service: Any | None  # Background task queue
     search_repository: Any | None   # Vector/fulltext search
+    embedding_provider: EmbeddingProviderProtocol | None   # Direct text embedding
+    structured_extractor: StructuredExtractorPort | None   # JSON-schema-typed extraction
     workflow_state: dict[str, Any]  # Outputs from previous workflow steps
     database_name: str | None       # Current database name
 ```
 
 :::warning[Check for None before using optional services]
 
-Services like `llm_service`, `search_repository`, and `operations_service` may be `None` depending on the workflow configuration. Always check before use:
+Services like `llm_service`, `search_repository`, `operations_service`, `discovery_service`, `embedding_provider`, and `structured_extractor` may be `None` depending on the workflow configuration. Always check before use:
 ```python
 if not context.llm_service:
     raise RuntimeError("This tool requires the LLM service")
 ```
 
 :::
+
+Two of the optional services are protocol-typed injection points worth knowing about:
+
+- **`embedding_provider`** (`EmbeddingProviderProtocol`) lets a tool embed text directly -- `await context.embedding_provider.embed("some text")` -- without routing through the LLM service queue. `None` when no embedding provider is configured.
+- **`structured_extractor`** (`StructuredExtractorPort`) performs JSON-schema-typed structured extraction: `await context.structured_extractor.extract_structured(text, json_schema)` returns data validated against the schema you pass. `None` when not configured.
 
 ## Step-by-Step Example: Building a Text Summarizer
 
@@ -210,6 +218,8 @@ The `ToolRegistry` (defined in `packages/core/src/chaoscypher_core/services/work
 :::warning[User plugins override built-in plugins]
 
 If a user plugin has the same `tool_id` as a built-in plugin, the user plugin takes precedence. This lets you replace or customize any built-in tool.
+
+Overriding a built-in is the only permitted collision: if **two user plugins** claim the same `tool_id`, registration raises `DuplicatePluginError`. Discovery order is non-deterministic across operating systems, so silently letting one win would make behavior platform-dependent -- rename one of the plugins instead.
 
 :::
 

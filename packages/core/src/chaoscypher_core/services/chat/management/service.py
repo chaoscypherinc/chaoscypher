@@ -84,6 +84,7 @@ class ChatService:
         offset: int = 0,
         status: str | None = None,
         scoped: bool | None = None,
+        search: str | None = None,
     ) -> list[ChatDict]:
         """List chats with pagination.
 
@@ -92,22 +93,23 @@ class ChatService:
             offset: Number of chats to skip
             status: Filter by status
             scoped: Filter by scope status (True=scoped, False=unscoped, None=all)
+            search: Case-insensitive title substring filter
 
         Returns:
             List of chat dictionaries
 
         """
-        chats = self.storage.list_chats(
+        # Offset lives in SQL — slicing a top-N fetch in Python made every
+        # page after the first come back empty (2026-06-10 audit P1).
+        return self.storage.list_chats(
             database_name=self.database_name,
             user_id=None,
             status=status,
             limit=limit,
+            offset=offset,
             scoped=scoped,
+            search=search,
         )
-        # Apply offset in service layer
-        if offset > 0:
-            chats = chats[offset:]
-        return chats
 
     def get_chat(self, chat_id: str) -> dict[str, Any] | None:
         """Get chat by ID with all messages.
@@ -228,26 +230,18 @@ class ChatService:
 
         return success
 
-    def delete_all_chats(self, user_id: int | None = None) -> int:
+    def delete_all_chats(self) -> int:
         """Delete all chats for the current database.
 
-        Args:
-            user_id: Optional user ID filter (for auth-enabled mode)
+        Bulk SQL delete — the previous list+loop approach used the adapter's
+        default list limit, so only the first 100 chats were ever deleted.
+        Messages cascade via the chat_messages FK (ON DELETE CASCADE).
 
         Returns:
             Number of chats deleted
 
         """
-        chats = self.storage.list_chats(
-            database_name=self.database_name,
-            user_id=user_id,
-        )
-
-        deleted = 0
-        for chat in chats:
-            if self.storage.delete_chat(chat["id"]):
-                deleted += 1
-
+        deleted = self.storage.delete_all_chats(database_name=self.database_name)
         logger.info("all_chats_deleted", count=deleted, database=self.database_name)
         return deleted
 
@@ -361,6 +355,30 @@ class ChatService:
         for message in messages:
             self.storage.create_message(message)
 
+    def truncate_from_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> int:
+        """Remove the tail of the conversation starting at/after a message.
+
+        Backs regenerate (``inclusive=False``: keep the last user message,
+        drop the answer that followed) and edit-and-resend
+        (``inclusive=True``: the edited message itself is replaced).
+
+        Args:
+            chat_id: Chat whose tail to remove.
+            message_id: Anchor message id; must belong to the chat.
+            inclusive: Also delete the anchor itself.
+
+        Returns:
+            Number of messages deleted (0 for an unknown/foreign anchor).
+
+        """
+        return self.storage.delete_messages_after(chat_id, message_id, inclusive=inclusive)
+
     def get_chat_messages(
         self,
         chat_id: str,
@@ -393,11 +411,18 @@ class ChatService:
     # Utility Methods
     # ========================================================================
 
-    def count_chats(self, status: str | None = None) -> int:
+    def count_chats(
+        self,
+        status: str | None = None,
+        scoped: bool | None = None,
+        search: str | None = None,
+    ) -> int:
         """Count total chats.
 
         Args:
             status: Optional status filter
+            scoped: Filter by scope status (True=scoped, False=unscoped, None=all)
+            search: Case-insensitive title substring filter
 
         Returns:
             Number of chats
@@ -406,4 +431,6 @@ class ChatService:
         return self.storage.count_chats(
             database_name=self.database_name,
             status=status,
+            scoped=scoped,
+            search=search,
         )

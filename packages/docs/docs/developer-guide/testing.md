@@ -50,15 +50,35 @@ cd packages/cortex && pytest
 cd packages/cli && pytest
 ```
 
-## Coverage Requirements
+### End-to-End Tests
 
-The CI pipeline enforces **80% code coverage**. Check coverage locally:
+The system-level E2E harness at `e2e/` runs in tiers:
 
 ```bash
-make docker-test
+make e2e-cli       # CLI tier — subprocess tests, no Docker required
+make e2e-browser   # Playwright browser tier only (Docker)
+make e2e           # Full suite: CLI + Docker API + browser
 ```
 
-Coverage reports are generated in `coverage_html/` for detailed analysis.
+`make e2e` runs the Docker-backed tests in two phases: a **fresh** phase that wipes data and starts a clean stack, then a **resume** phase that restarts the app and verifies state survives the restart. HTML, JUnit, and JSON reports for every tier land in `test-reports/`.
+
+## Coverage Requirements
+
+Two complementary gates protect coverage:
+
+| Gate | Scope | Threshold | Command |
+|------|-------|-----------|---------|
+| Repo-wide | All source under `packages/{core,cortex,neuron,cli}/src/` | ≥80% | `make docker-test` (blocking) |
+| Diff-scoped | Lines changed in the current branch vs `origin/main` | ≥90% | `make coverage-diff` (blocking pre-merge; advisory in `make ci`) |
+
+The diff-scoped gate keeps **new** code well-tested without punishing legacy code that hasn't been backfilled yet. Check both locally:
+
+```bash
+make docker-test        # full suite + coverage reports (produces coverage.xml)
+make coverage-diff      # checks ≥90% on changed lines vs origin/main
+```
+
+After `make docker-test`, coverage reports land on the host at `packages/docker/test-output/` (HTML at `index.html`, Cobertura XML at `coverage.xml`). A local `make test-cov-internal` run writes them to `coverage_html/` at the repo root instead.
 
 ## Writing Tests
 
@@ -135,14 +155,21 @@ def test_core_service(mock_storage):
 
 ## CI Pipeline
 
-The full CI pipeline (`make ci`) runs:
+The full CI pipeline (`make ci`) runs, in order:
 
-1. **Lint + format** — Ruff linting and formatting checks
-2. **Type checking** — mypy (Python) + tsc (TypeScript)
-3. **Custom architectural rules** — `lint-claude` checks (factory naming, data boundaries, etc.)
-4. **Docstring coverage** — 100% required for public APIs
-5. **Dead code detection** — deadcode/vulture scanning
-6. **Tests + coverage** — 80% coverage gate in Docker
-7. **Security scan** — Vulnerability scanning
+1. **Lint + format** — Ruff (Python) and ESLint (frontend)
+2. **Type generation** — regenerate the TypeScript API types from the backend schema
+3. **Type checking** — mypy (Python) + tsc (TypeScript)
+4. **Custom architectural rules** — `lint-claude` (import-linter + semgrep + AST checker, with self-tests)
+5. **Secret scan** — gitleaks
+6. **Public-export hygiene** — internal-reference check + SPDX license headers
+7. **Docstring coverage** — 100% required for public APIs
+8. **Dead code detection** — vulture scanning
+9. **Bundle-size budget** — frontend build + size-limit check
+10. **License scan** — Python + frontend dependency license policy
+11. **Frontend tests + coverage** — Vitest with coverage
+12. **Docker tests** — full Python test suite with the 80% coverage gate
+13. **Diff coverage (advisory)** — ≥90% on changed lines vs `origin/main`
+14. **Security audit** — pip-audit + npm audit
 
-All checks must pass before merging.
+The authoritative step list lives in `scripts/run_ci.py` (`uv run python scripts/run_ci.py --list`). All blocking checks must pass before merging.

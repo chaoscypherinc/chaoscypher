@@ -8,6 +8,12 @@ description: Configure AI entity extraction with domain plugins — 19 built-in 
 
 Extraction domains configure how the AI extracts entities and relationships from your documents. Each domain is a `.jsonld` file that defines entity types, relationship types, detection rules, quality scoring, and LLM guidance -- **no Python code required**.
 
+:::note[API port]
+
+The `curl` examples on this page use `http://localhost:8080`, which is the API port for the multi-container development stack. The all-in-one container (the primary install) serves the API on port **80** instead — use `http://localhost/api/v1/...` there.
+
+:::
+
 ## How Domains Work
 
 When a document is processed, Chaos Cypher:
@@ -21,7 +27,7 @@ If no domain matches with sufficient confidence, the `generic` domain is used as
 
 ### Domain Detection
 
-Detection works by sampling document content (first 3 chunks + middle 2 chunks, up to 8000 characters) and scoring each domain:
+Detection works by sampling document content (first 5 chunks + 3 chunks from ~40% into the document, up to 12,000 characters total, 1,500 per chunk) and scoring each domain:
 
 | Factor | What It Checks | Example |
 |--------|---------------|---------|
@@ -94,7 +100,7 @@ Each domain specifies what the LLM should *not* extract to reduce noise:
 
 ## Content Exclusions
 
-Domains define which [content categories](../architecture/extraction-pipeline/overview.md#content-filtering) to strip before extraction. For example, the `technical` domain excludes `toc`, `changelog`, `legal`, `boilerplate`, `api_tables`, and `web_artifacts` because these rarely contain extractable entities.
+Domains define which [content categories](../architecture/extraction-pipeline/overview.md#content-filtering) to strip before extraction. For example, the `technical` domain excludes `toc`, `changelog`, `legal`, `boilerplate`, `metadata`, `web_artifacts`, and `advertising` because these rarely contain extractable entities.
 
 Exclusion configuration in domain `.jsonld` files:
 

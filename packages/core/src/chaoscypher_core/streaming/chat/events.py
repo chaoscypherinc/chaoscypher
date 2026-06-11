@@ -3,17 +3,17 @@
 
 """Chat SSE event models.
 
-Pydantic-discriminated union for every event the chat SSE stream can emit.
-Exported to TypeScript via the OpenAPI schema so the frontend gets a
-typed discriminated union instead of stringly-typed comparisons.
+Pydantic-discriminated union for every event the chat event stream
+(GET /chats/{id}/events) can deliver. Exported to TypeScript via the
+OpenAPI schema so the frontend gets a typed discriminated union instead
+of stringly-typed comparisons.
 
-The 13 event types are derived by grepping every ``format_sse_event(``
-call across ``features/chats/streaming/handler.py``,
-``features/chats/streaming/tools.py``, and
+The event types mirror every ``sink.emit(`` call in the shared chat tool
+loop (``streaming/chat/loop.py``) plus the bridge-level events emitted by
 ``features/chats/api.py``.
 
 No runtime validation of emitted events is performed — this module is
-a schema document consumed by Phase 7 OpenAPI→TS codegen.
+a schema document consumed by the OpenAPI→TS codegen.
 """
 
 from typing import Any, Literal
@@ -116,12 +116,32 @@ class ContextInfoEvent(BaseModel):
 
 
 class WarningEvent(BaseModel):
-    """Non-fatal warning (e.g. duplicate tool calls, tool call limit reached)."""
+    """Non-fatal warning (truncation, spend cap, tool-call limit, duplicates)."""
 
     type: Literal["warning"] = "warning"
     message: str
+    kind: str | None = None
     iteration: int | None = None
     duplicates: list[str] | None = None
+
+
+class ToolApprovalRequiredEvent(BaseModel):
+    """A tool call is paused waiting for the user's approval decision."""
+
+    type: Literal["tool_approval_required"] = "tool_approval_required"
+    tool_call_id: str
+    tool_name: str
+    arguments: dict[str, Any] | None = None
+    iteration: int | None = None
+
+
+class ToolRejectedEvent(BaseModel):
+    """A gated tool call was denied (user rejection or timeout)."""
+
+    type: Literal["tool_rejected"] = "tool_rejected"
+    tool_call_id: str
+    tool_name: str
+    decision: str | None = None
 
 
 ChatSSEEvent = (
@@ -138,8 +158,10 @@ ChatSSEEvent = (
     | ErrorEvent
     | ContextInfoEvent
     | WarningEvent
+    | ToolApprovalRequiredEvent
+    | ToolRejectedEvent
 )
-"""Discriminated union over all 13 chat SSE event types."""
+"""Discriminated union over all 15 chat SSE event types."""
 
 
 class ChatSSEEnvelope(BaseModel):

@@ -47,9 +47,9 @@ def score(ctx: Any, source_id: str, details: bool, output_json: bool) -> None:
     Formula: (R * 0.5) + (E * 0.35) + (T * 0.15) - Pollution - Structural = Grade
 
     Examples:
-        chaoscypher quality score if_abc123
-        chaoscypher quality score if_abc123 --details
-        chaoscypher quality score if_abc123 --json
+        chaoscypher source quality score if_abc123
+        chaoscypher source quality score if_abc123 --details
+        chaoscypher source quality score if_abc123 --json
     """
     from chaoscypher_cli.commands.quality.utils import (
         build_entity_chunk_mentions,

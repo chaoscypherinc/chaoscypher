@@ -42,10 +42,10 @@ def recalculate(
     - You want to refresh all quality metrics
 
     Examples:
-        chaoscypher quality recalculate
-        chaoscypher quality recalculate --domain literary
-        chaoscypher quality recalculate --outdated-only
-        chaoscypher quality recalculate -s if_abc123 -s if_xyz789
+        chaoscypher source quality recalculate
+        chaoscypher source quality recalculate --domain literary
+        chaoscypher source quality recalculate --outdated-only
+        chaoscypher source quality recalculate -s if_abc123 -s if_xyz789
     """
     from chaoscypher_cli.commands.quality.utils import (
         build_entity_chunk_mentions,

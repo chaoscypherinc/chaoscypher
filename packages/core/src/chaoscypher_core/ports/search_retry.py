@@ -10,7 +10,7 @@ does not need to know the table structure — it just hands over
 
 Absorbs the SQLModel leak in
 ``packages/core/src/chaoscypher_core/services/sources/engine/commit/service.py::_enqueue_search_retry``
-(the service-side call-site fix happens in PR2c Task 28).
+— the service-side call site goes through this protocol.
 """
 
 from __future__ import annotations

@@ -1,44 +1,27 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tool Call Handling and Execution.
+"""Tool-call dedup, guidance, and retry helpers for the shared chat loop.
 
-Manages tool call deduplication, execution, signature tracking,
-duplicate guidance generation, and follow-up LLM calls within
-the streaming chat tool-calling loop.
+Duplicate-call signature tracking, corrective guidance generation, the
+intent-fragment / leaked-tool-call detectors, and the unfulfilled-intent
+retry. The loop itself lives in :mod:`chaoscypher_core.streaming.chat.loop`.
 """
 
 from __future__ import annotations
 
 import contextlib
 import json
-import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from chaoscypher_core.app_config import get_settings as _get_settings
-from chaoscypher_core.app_config.engine_factory import (
-    build_engine_settings,
-)
 from chaoscypher_core.services.chat.engine.constants import (
     MAX_TOOL_ITERATIONS,
     MAX_TOTAL_TOOL_CALLS,
 )
-from chaoscypher_core.streaming.chat.approval import pending_approvals
-from chaoscypher_core.streaming.chat.utils import (
-    format_sse_event,
-    parse_tool_arguments,
-    strip_thinking_tags,
-)
-
-
-# Seconds to wait for the user to approve/reject a mutating tool call.
-# Kept modest — if the user steps away, the stream should bail rather than
-# tie up an LLM slot indefinitely.
-_APPROVAL_TIMEOUT_SECONDS: float = 300.0
 
 
 if TYPE_CHECKING:
@@ -72,6 +55,64 @@ _INTENT_PHRASES = (
     "i need to find",
 )
 
+# Content shorter than this that contains an intent phrase is treated as an
+# unfulfilled-intent narration fragment rather than a substantive answer.
+_SUBSTANTIVE_CONTENT_MIN_CHARS = 200
+
+
+def is_intent_fragment(content: str | None) -> bool:
+    """True when content is a short "let me / I'll ..." narration, not an answer.
+
+    Local models routinely narrate the next tool call ("Now let me get the
+    connections...") instead of answering; when a tool loop ends on such a
+    fragment, the caller should force one final no-tools answer rather than
+    present the narration as the result. Empty content returns False — the
+    empty case has its own recovery path.
+
+    Args:
+        content: Candidate final response content.
+
+    Returns:
+        True when the content is short and contains an intent phrase.
+
+    """
+    text = content or ""
+    if not text.strip() or len(text) > _SUBSTANTIVE_CONTENT_MIN_CHARS:
+        return False
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _INTENT_PHRASES)
+
+
+# Markers of a tool call leaked into text content. Local models sometimes emit
+# tool-call syntax — their own template's or a hallucinated foreign one — as
+# plain text instead of a native structured call (live failure cb4c1618:
+# qwen3:30b produced Anthropic-style '<invoke name="search_nodes">' XML).
+# Content carrying these markers is never an answer, whatever its length.
+_TOOL_CALL_LEAK_MARKERS = (
+    "<tool_call",  # qwen / hermes template: <tool_call> / <tool_calls>
+    "</tool_call",
+    "<invoke ",  # hallucinated Anthropic-style XML
+    "<function_call",
+    "[tool_calls]",  # mistral template (content is compared lowercase)
+    "<|tool",  # chatml-style tool sentinels
+)
+
+
+def contains_leaked_tool_call(content: str | None) -> bool:
+    """True when content contains tool-call syntax leaked as plain text.
+
+    Args:
+        content: Candidate final response content.
+
+    Returns:
+        True when any known tool-call marker appears in the content.
+
+    """
+    if not content:
+        return False
+    lowered = content.lower()
+    return any(marker in lowered for marker in _TOOL_CALL_LEAK_MARKERS)
+
 
 logger = structlog.get_logger(__name__)
 
@@ -85,71 +126,6 @@ async def _close_stream(stream: Any) -> None:
     """
     if hasattr(stream, "aclose"):
         await stream.aclose()
-
-
-@dataclass
-class ToolCallingState:
-    """Mutable state for the ``_handle_tool_calls`` iteration loop.
-
-    Groups the variables that previously lived as 10 bare locals so the
-    loop body has a single state object to mutate. Field names match the
-    original local names so behavior is preserved.
-
-    Lifetimes:
-        - ``iteration``, ``total_tool_calls``: counters that grow until
-          the loop terminates.
-        - ``current_*``: refreshed every iteration with the latest
-          tool_calls / content / thinking from the follow-up call.
-        - ``latest_content``, ``all_thinking_parts``,
-          ``executed_tool_signatures``, ``all_cached_tool_calls``:
-          accumulated across iterations and used by ``_finalize_tool_response``.
-    """
-
-    current_tool_calls: list[Any] | None
-    current_content: str
-    current_thinking: str | None
-    latest_content: str
-    iteration: int = 0
-    total_tool_calls: int = 0
-    all_thinking_parts: list[str] = field(default_factory=list)
-    executed_tool_signatures: dict[str, int] = field(default_factory=dict)
-    error_occurred: bool = False
-    all_cached_tool_calls: list[Any] = field(default_factory=list)
-
-
-def _check_tool_call_limit(
-    total_tool_calls: int,
-    chat_id: str,
-    iteration: int,
-) -> bytes | None:
-    """Check if total tool call limit has been exceeded.
-
-    Args:
-        total_tool_calls: Total tool calls made so far
-        chat_id: Chat ID for logging
-        iteration: Current iteration number
-
-    Returns:
-        SSE warning event if limit exceeded, None otherwise
-
-    """
-    if total_tool_calls <= MAX_TOTAL_TOOL_CALLS:
-        return None
-
-    logger.warning(
-        "chat_stream_tool_limit_exceeded",
-        chat_id=chat_id,
-        total_tool_calls=total_tool_calls,
-        max_allowed=MAX_TOTAL_TOOL_CALLS,
-    )
-    return format_sse_event(
-        "warning",
-        {
-            "message": f"Tool call limit reached ({MAX_TOTAL_TOOL_CALLS}). "
-            "Finalizing response with current results.",
-            "iteration": iteration,
-        },
-    )
 
 
 def _extract_tool_defaults(available_tools: list[Any]) -> dict[str, dict[str, Any]]:
@@ -317,242 +293,6 @@ def _track_tool_signature(
     """
     _name, signature = _tool_call_signature(tool_call, tool_defaults)
     executed_signatures[signature] = executed_signatures.get(signature, 0) + 1
-
-
-async def _execute_tool_batch(
-    tool_calls: list[Any],
-    current_content: str,
-    current_thinking: str | None,
-    chat_id: str,
-    chat_service: Any,
-    tool_executor: Any,
-    messages_for_llm: list[Any],
-    executed_tool_signatures: dict[str, int],
-    iteration: int,
-    tool_defaults: dict[str, dict[str, Any]] | None = None,
-    llm_debug: Any | None = None,
-) -> AsyncIterator[bytes]:
-    """Execute a batch of tool calls with message tracking.
-
-    Notifies the client about tool calls, saves the assistant message,
-    executes each tool, and tracks signatures for duplicate detection.
-
-    Args:
-        tool_calls: Tool calls to execute.
-        current_content: Current assistant content.
-        current_thinking: Current thinking content.
-        chat_id: Chat ID for logging.
-        chat_service: ChatService instance.
-        tool_executor: ToolExecutorService instance.
-        messages_for_llm: Current message history (mutated).
-        executed_tool_signatures: Signature tracker (mutated).
-        iteration: Current iteration number.
-        tool_defaults: Schema defaults for signature normalization.
-        llm_debug: Optional debug info for timing data.
-
-    Yields:
-        SSE-formatted response chunks.
-
-    """
-    # Notify about tool calls for this iteration
-    yield format_sse_event("tool_calls", {"tool_calls": tool_calls, "iteration": iteration})
-
-    # Add assistant message with tool calls to LLM context (not saved to DB).
-    # Only _save_and_emit_done() persists the final assistant message to avoid
-    # duplicate bubbles when the chat is reloaded from the database.
-    clean_content = strip_thinking_tags(current_content)
-    messages_for_llm.append(
-        {
-            "role": "assistant",
-            "content": clean_content,
-            "tool_calls": tool_calls,
-        }
-    )
-
-    # Resolve the approval policy once per batch. The settings are read
-    # fresh each iteration so a live settings-yaml change takes effect on
-    # the next tool batch without reloading the whole worker.
-    engine_settings = build_engine_settings(_get_settings())
-    approval_mode = engine_settings.chat.tool_approval
-    mutating_tools = set(engine_settings.chat.mutating_tools)
-
-    def _needs_approval(tool_name: str) -> bool:
-        """Return True if this tool requires user confirmation before running."""
-        if approval_mode == "never-ask":
-            return False
-        if approval_mode == "always-ask":
-            return True
-        # "ask-on-write" — only mutating tools.
-        return tool_name in mutating_tools
-
-    # Execute each tool call, gating mutating calls behind user approval
-    # when the configured policy demands it.
-    for tool_call in tool_calls:
-        tool_name = tool_call.get("function", {}).get("name", "")
-        tool_call_id = tool_call.get("id") or tool_call.get("tool_call_id", "")
-
-        # Parse arguments for display in the approval dialog. We intentionally
-        # swallow parse errors here — the approval UI just needs something
-        # human-readable, and the real parse happens later in _execute_single_tool.
-        raw_args = tool_call.get("function", {}).get("arguments", "{}")
-        try:
-            args_for_display = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-        except (ValueError, TypeError):  # fmt: skip
-            args_for_display = {}
-        if not isinstance(args_for_display, dict):
-            args_for_display = {"_raw": args_for_display}
-
-        if tool_call_id and _needs_approval(tool_name):
-            entry = await pending_approvals.create(
-                chat_id=chat_id,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                arguments=args_for_display,
-            )
-            yield format_sse_event(
-                "tool_approval_required",
-                {
-                    "tool_call_id": tool_call_id,
-                    "tool_name": tool_name,
-                    "arguments": args_for_display,
-                    "iteration": iteration,
-                },
-            )
-            try:
-                decision = await entry.wait(timeout_seconds=_APPROVAL_TIMEOUT_SECONDS)
-            finally:
-                await pending_approvals.cleanup(chat_id, tool_call_id)
-
-            if decision != "approve":
-                # Synthesize a tool-response message and skip execution so the
-                # LLM knows the call was denied and can continue the conversation.
-                denied_content = f"User {decision}ed this tool call. Do not retry."
-                messages_for_llm.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "name": tool_name,
-                        "content": denied_content,
-                    }
-                )
-                yield format_sse_event(
-                    "tool_rejected",
-                    {
-                        "tool_call_id": tool_call_id,
-                        "tool_name": tool_name,
-                        "decision": decision,
-                    },
-                )
-                # Record the signature so the duplicate-detection logic
-                # still counts this tool call as "attempted" and the LLM
-                # cannot loop on the same denied call forever.
-                _track_tool_signature(tool_call, executed_tool_signatures, tool_defaults)
-                continue
-
-        _track_tool_signature(tool_call, executed_tool_signatures, tool_defaults)
-        tool_chunk: bytes
-        async for tool_chunk in _execute_single_tool(
-            tool_call=tool_call,
-            chat_id=chat_id,
-            chat_service=chat_service,
-            tool_executor=tool_executor,
-            messages_for_llm=messages_for_llm,
-            iteration=iteration,
-            llm_debug=llm_debug,
-        ):
-            yield tool_chunk
-
-
-async def _execute_single_tool(
-    tool_call: dict[str, Any],
-    chat_id: str,
-    chat_service: Any,
-    tool_executor: Any,
-    messages_for_llm: list[Any],
-    iteration: int = 1,
-    llm_debug: Any | None = None,
-) -> AsyncIterator[bytes]:
-    """Execute a single tool call.
-
-    Args:
-        tool_call: Tool call to execute
-        chat_id: Chat ID for logging
-        chat_service: ChatService instance
-        tool_executor: ToolExecutorService instance
-        messages_for_llm: Current message history
-        iteration: Current iteration number (for logging/events)
-        llm_debug: Optional debug info for timing data
-
-    Yields:
-        SSE-formatted response chunks
-
-    """
-    function = tool_call.get("function", {})
-    tool_name = function.get("name")
-    arguments_raw = function.get("arguments", {})
-    arguments = parse_tool_arguments(arguments_raw, tool_name, chat_id)
-
-    logger.info(
-        "chat_stream_tool_executing",
-        chat_id=chat_id,
-        tool_name=tool_name,
-        iteration=iteration,
-    )
-    yield format_sse_event(
-        "tool_start", {"tool": tool_name, "arguments": arguments, "iteration": iteration}
-    )
-
-    # Execute tool with timing
-    tool_start = time.monotonic()
-    result = await tool_executor.execute_tool(tool_name, arguments)
-    tool_duration_ms = round((time.monotonic() - tool_start) * 1000)
-    result_preview = json.dumps(result)[: _get_settings().chat_context.json_result_preview_length]
-    logger.info(
-        "chat_stream_tool_result",
-        chat_id=chat_id,
-        tool_name=tool_name,
-        result_preview=result_preview,
-        iteration=iteration,
-        duration_ms=tool_duration_ms,
-    )
-
-    # Store per-tool timing on llm_debug
-    if llm_debug is not None:
-        tool_entry = {
-            "name": tool_name,
-            "args_preview": json.dumps(arguments)[:80],
-            "duration_ms": tool_duration_ms,
-            "iteration": iteration,
-            "tool_call_id": tool_call.get("id"),
-        }
-        llm_debug.timing.setdefault("tool_calls", []).append(tool_entry)
-
-    yield format_sse_event(
-        "tool_result",
-        {
-            "tool": tool_name,
-            "result": result,
-            "iteration": iteration,
-            "tool_call_id": tool_call.get("id"),
-            "duration_ms": tool_duration_ms,
-        },
-    )
-
-    # Add tool result to chat and messages
-    chat_service.add_message(
-        chat_id,
-        "tool",
-        json.dumps(result),
-        {"tool_call_id": tool_call.get("id"), "name": tool_name},
-    )
-    messages_for_llm.append(
-        {
-            "role": "tool",
-            "content": json.dumps(result),
-            "tool_call_id": tool_call.get("id"),
-            "name": tool_name,
-        }
-    )
 
 
 def _extract_found_nodes(messages_for_llm: list) -> list[dict]:
@@ -771,6 +511,7 @@ async def _process_iteration_stream(
                 "tool_calls": tool_calls,
                 "provider_timings": chunk.get("provider_timings"),
                 "usage": chunk.get("usage"),
+                "finish_reason": chunk.get("finish_reason"),
             }
             return
 
@@ -781,322 +522,6 @@ async def _process_iteration_stream(
         "thinking": thinking,
         "tool_calls": None,
     }
-
-
-async def _retry_all_duplicates_path(
-    duplicate_calls: list[Any],
-    messages_for_llm: list[Any],
-    chat_provider: Any,
-    available_tools: list[Any],
-    chat_id: str,
-    iteration: int,
-    latest_content: str,
-    state: dict[str, Any],
-    settings: Settings,
-) -> AsyncIterator[bytes]:
-    """Handle the case when all tool calls are duplicates.
-
-    Injects context-aware guidance, retries LLM call, and forces a final answer
-    if the LLM keeps describing actions instead of responding.
-
-    Updates state dict with:
-    - tool_calls: Next tool calls (list or None)
-    - content: Latest content string
-
-    Args:
-        duplicate_calls: List of duplicate call info dicts
-        messages_for_llm: Current message history (mutated)
-        chat_provider: LLM provider instance
-        available_tools: Available tools list
-        chat_id: Chat ID for logging
-        iteration: Current iteration number
-        latest_content: Current latest content for fallback
-        state: Mutable dict to communicate results back to caller
-        settings: Application settings for thinking configuration
-
-    Yields:
-        SSE-formatted response chunks
-
-    """
-    state["tool_calls"] = None
-    state["content"] = latest_content
-
-    logger.warning(
-        "chat_stream_all_tools_duplicate",
-        chat_id=chat_id,
-        iteration=iteration,
-        duplicate_count=len(duplicate_calls),
-    )
-
-    # Generate context-aware guidance based on what was already found
-    dup_names = [d.get("function", {}).get("name", "unknown") for d in duplicate_calls]
-    guidance = _generate_duplicate_guidance(messages_for_llm, dup_names)
-    messages_for_llm.append({"role": "user", "content": guidance})
-
-    yield format_sse_event(
-        "warning",
-        {
-            "message": "Duplicate tool calls detected. Trying different approach.",
-            "duplicates": dup_names,
-            "iteration": iteration,
-        },
-    )
-
-    # Make another LLM call to get a new response
-    retry_result = await chat_provider.chat(
-        messages=messages_for_llm,
-        tools=available_tools,
-        stream=True,
-        enable_thinking=settings.llm.thinking_for_tools,
-    )
-    retry_content = ""
-    try:
-        async for chunk in _process_iteration_stream(
-            stream_result=retry_result,
-            chat_id=chat_id,
-            iteration=iteration,
-        ):
-            chunk_type = chunk.get("_internal_type")
-            if chunk_type == "content":
-                yield format_sse_event(
-                    "content",
-                    {
-                        "delta": chunk.get("delta", ""),
-                        "accumulated": chunk.get("accumulated", ""),
-                    },
-                )
-                retry_content = chunk.get("accumulated", retry_content)
-                state["content"] = retry_content
-            elif chunk_type == "done":
-                next_tool_calls = chunk.get("tool_calls")
-                retry_content = chunk.get("content", retry_content)
-                state["content"] = retry_content
-                if next_tool_calls:
-                    state["tool_calls"] = next_tool_calls
-                else:
-                    # No tool calls - force final answer if LLM has unfulfilled intent
-                    async for event in _force_final_answer_if_intent(
-                        retry_content=retry_content,
-                        messages_for_llm=messages_for_llm,
-                        chat_provider=chat_provider,
-                        chat_id=chat_id,
-                        iteration=iteration,
-                        state=state,
-                        settings=settings,
-                    ):
-                        yield event
-                break
-    finally:
-        await _close_stream(retry_result)
-
-
-async def _force_final_answer_if_intent(
-    retry_content: str,
-    messages_for_llm: list[Any],
-    chat_provider: Any,
-    chat_id: str,
-    iteration: int,
-    state: dict[str, Any],
-    settings: Settings,
-) -> AsyncIterator[bytes]:
-    """Force a final answer if LLM content contains unfulfilled intent phrases.
-
-    When the LLM says "let me check" or "I'll search" without actually calling tools,
-    this makes a no-tools LLM call to force a direct textual answer.
-
-    Updates state["content"] with the forced answer content if applicable.
-
-    Args:
-        retry_content: Content from the retry LLM call
-        messages_for_llm: Current message history (mutated)
-        chat_provider: LLM provider instance
-        chat_id: Chat ID for logging
-        iteration: Current iteration number
-        state: Mutable dict to communicate results back
-        settings: Application settings for thinking configuration
-
-    Yields:
-        SSE-formatted content chunks from the forced final answer
-
-    """
-    content_lower = (retry_content or "").lower()
-    if not any(phrase in content_lower for phrase in _INTENT_PHRASES):
-        return
-
-    # Skip forcing when content is already a substantive answer
-    if len(retry_content or "") > 200:
-        logger.info(
-            "chat_stream_force_final_skipped_substantial",
-            chat_id=chat_id,
-            content_length=len(retry_content or ""),
-        )
-        return
-
-    # LLM is still trying to describe actions - force final answer
-    found_nodes = _extract_found_nodes(messages_for_llm)
-    if found_nodes:
-        node_names = [n["name"] for n in found_nodes[:3]]
-        summary_prompt = (
-            f"STOP. You've been searching but not completing the task. "
-            f"You found these entities: {', '.join(node_names)}. "
-            "Based on what you found, provide your final answer NOW. "
-            "If you couldn't find a direct connection between them, say so clearly. "
-            "Do not describe what you will do - just answer the user's question."
-        )
-    else:
-        summary_prompt = (
-            "STOP. Do not describe what you will do. Based on the information "
-            "you have already gathered, provide your final answer NOW. "
-            "If you couldn't find what the user asked for, say so clearly."
-        )
-
-    messages_for_llm.append({"role": "assistant", "content": retry_content})
-    messages_for_llm.append({"role": "user", "content": summary_prompt})
-
-    # One more try for final answer (no tools to force text response)
-    final_result = await chat_provider.chat(
-        messages=messages_for_llm,
-        tools=None,
-        stream=True,
-        enable_thinking=settings.llm.thinking_for_chat,
-    )
-    try:
-        async for final_chunk in _process_iteration_stream(
-            stream_result=final_result,
-            chat_id=chat_id,
-            iteration=iteration,
-        ):
-            if final_chunk.get("_internal_type") == "content":
-                yield format_sse_event(
-                    "content",
-                    {
-                        "delta": final_chunk.get("delta", ""),
-                        "accumulated": final_chunk.get("accumulated", ""),
-                    },
-                )
-                state["content"] = final_chunk.get("accumulated", state["content"])
-    finally:
-        await _close_stream(final_result)
-
-
-async def _execute_followup_call(
-    messages_for_llm: list[Any],
-    chat_provider: Any,
-    available_tools: list[Any],
-    chat_id: str,
-    iteration: int,
-    state: dict[str, Any],
-    settings: Settings,
-    llm_debug: Any | None = None,
-) -> AsyncIterator[bytes]:
-    """Execute follow-up LLM call and stream the response.
-
-    Makes an LLM call after tool execution to check for more tool calls
-    or get the final response. Forwards content/thinking chunks to the client.
-
-    Updates state dict with:
-    - content: Accumulated content from the follow-up
-    - thinking: Thinking content if any
-    - tool_calls: Next tool calls (list or None)
-
-    Args:
-        messages_for_llm: Current message history
-        chat_provider: LLM provider instance
-        available_tools: Available tools list
-        chat_id: Chat ID for logging
-        iteration: Current iteration number
-        state: Mutable dict to communicate results back
-        settings: Application settings for thinking configuration
-        llm_debug: Optional debug info for timing data.
-
-    Yields:
-        SSE-formatted response chunks
-
-    """
-    logger.info(
-        "chat_stream_iteration_followup",
-        chat_id=chat_id,
-        iteration=iteration,
-        message_count=len(messages_for_llm),
-        last_message_role=messages_for_llm[-1].get("role") if messages_for_llm else None,
-    )
-
-    followup_result = await chat_provider.chat(
-        messages=messages_for_llm,
-        tools=available_tools,
-        stream=True,
-        enable_thinking=settings.llm.thinking_for_tools,
-    )
-
-    state["content"] = ""
-    state["thinking"] = None
-    state["tool_calls"] = None
-    state["error"] = False
-
-    # Track generation window for the follow-up call
-    followup_first_token: float | None = None
-
-    try:
-        async for chunk in _process_iteration_stream(
-            stream_result=followup_result,
-            chat_id=chat_id,
-            iteration=iteration,
-        ):
-            chunk_type = chunk.get("_internal_type")
-
-            if chunk_type == "content":
-                followup_first_token = followup_first_token or time.monotonic()
-                yield format_sse_event(
-                    "content",
-                    {
-                        "delta": chunk.get("delta", ""),
-                        "accumulated": chunk.get("accumulated", ""),
-                    },
-                )
-                state["content"] = chunk.get("accumulated", state["content"])
-
-            elif chunk_type == "thinking":
-                state["thinking"] = chunk.get("thinking")
-                yield format_sse_event("thinking_delta", {"thinking": state["thinking"]})
-
-            elif chunk_type == "error":
-                error_msg = chunk.get("error", "LLM error during follow-up")
-                logger.error(
-                    "chat_stream_followup_error",
-                    chat_id=chat_id,
-                    iteration=iteration,
-                    error=error_msg,
-                )
-                state["error"] = True
-                yield format_sse_event(
-                    "error",
-                    {
-                        "error": error_msg,
-                        "error_code": chunk.get("error_code", "LLM_ERROR"),
-                        "error_details": {},
-                    },
-                )
-                break
-
-            elif chunk_type == "done":
-                state["content"] = chunk.get("content", state["content"])
-                state["thinking"] = chunk.get("thinking", state["thinking"])
-                state["tool_calls"] = chunk.get("tool_calls")
-                if llm_debug is not None:
-                    from chaoscypher_core.streaming.chat.handler import (
-                        _save_done_chunk_timing,
-                    )
-
-                    _save_done_chunk_timing(llm_debug, chunk)
-                    # Save the follow-up call's generation window
-                    if followup_first_token is not None:
-                        followup_done = time.monotonic()
-                        llm_debug.timing["content_generation_ms"] = round(
-                            (followup_done - followup_first_token) * 1000
-                        )
-                break
-    finally:
-        await _close_stream(followup_result)
 
 
 async def _retry_unfulfilled_intent(
@@ -1127,17 +552,29 @@ async def _retry_unfulfilled_intent(
 
     """
     content_lower = (followup_content or "").lower()
-    has_unfulfilled_intent = any(phrase in content_lower for phrase in _INTENT_PHRASES)
+    # A tool call leaked as text ("<tool_calls><invoke ...>") is unfulfilled
+    # intent in its strongest form: the model TRIED to call a tool but spoke
+    # the wrong dialect. Always retry those, whatever the content length.
+    leaked_tool_call = contains_leaked_tool_call(followup_content)
+    has_unfulfilled_intent = leaked_tool_call or any(
+        phrase in content_lower for phrase in _INTENT_PHRASES
+    )
 
-    if not has_unfulfilled_intent or iteration >= MAX_TOOL_ITERATIONS - 1:
+    # Live settings, falling back to the schema default (mirrors the loop's
+    # _tool_limits fail-open behavior for mocked settings).
+    max_iters = getattr(getattr(settings, "chat", None), "max_tool_iterations", None)
+    if not (isinstance(max_iters, int) and max_iters > 0):
+        max_iters = MAX_TOOL_ITERATIONS
+    if not has_unfulfilled_intent or iteration >= max_iters - 1:
         return None
 
     # Skip retry when the LLM already provided a substantive answer.
     # Short responses like "Let me search for X" are genuine unfulfilled
     # intent, but longer responses with citations or detailed content are
     # real answers that happen to use conversational transition phrases.
+    # (Never applies to leaked tool calls — those are not answers at any length.)
     content_len = len(followup_content or "")
-    if content_len > 200:
+    if not leaked_tool_call and content_len > _SUBSTANTIVE_CONTENT_MIN_CHARS:
         logger.info(
             "chat_stream_unfulfilled_intent_skipped_substantial",
             chat_id=chat_id,
@@ -1193,14 +630,13 @@ async def _retry_unfulfilled_intent(
 __all__ = [
     "MAX_TOOL_ITERATIONS",
     "MAX_TOTAL_TOOL_CALLS",
-    "ToolCallingState",
-    "_check_tool_call_limit",
     "_close_stream",
-    "_execute_followup_call",
-    "_execute_tool_batch",
     "_extract_tool_defaults",
     "_filter_duplicate_tool_calls",
+    "_generate_duplicate_guidance",
     "_process_iteration_stream",
-    "_retry_all_duplicates_path",
     "_retry_unfulfilled_intent",
+    "_track_tool_signature",
+    "contains_leaked_tool_call",
+    "is_intent_fragment",
 ]

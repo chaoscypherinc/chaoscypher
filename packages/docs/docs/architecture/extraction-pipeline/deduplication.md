@@ -63,7 +63,7 @@ The first deduplication pass uses **case-insensitive, diacritics-stripped name m
 
 **How it works:**
 
-1. Each entity's name is normalized via `normalize_name_key()`: Unicode NFD decomposition strips diacritics (e.g., "Francois" and "Francois" become `"francois"`), then lowercased and trimmed.
+1. Each entity's name is normalized via `normalize_name_key()`: Unicode NFD decomposition strips diacritics (e.g., "François" and "Francois" both become `"francois"`), then lowercased and trimmed.
 2. Entities with the same normalized name key are merged.
 3. When `require_type_compatibility` is enabled, same-name entities with incompatible types are kept separate (e.g., "Paris" the Person vs. "Paris" the Location use a type-qualified key `paris::location`).
 
@@ -148,7 +148,7 @@ Key design decisions:
 - **Confidence penalty:** Borderline merges (adjusted similarity within 0.10 of the threshold) receive a 0.05 confidence penalty on the merged entity.
 - **Type partitioning:** When `require_type_compatibility` is enabled and there are more than 50 entities, the algorithm partitions entities into type-compatible groups before computing similarity. This reduces comparisons by 80-90% for typical documents with many entity types.
 
-The default similarity threshold is configurable via `extraction.semantic_dedup_threshold` and can be overridden per domain via `extraction_limits.semantic_dedup_threshold`.
+The similarity threshold is configurable via `extraction.semantic_dedup_threshold` (default `0.95`) and can be overridden per domain via `extraction_limits.semantic_dedup_threshold`. Filtering presets pin the effective value per mode (`unfiltered` 0.99 → `maximum` 0.85; the default `balanced` preset runs at 0.90) — see the Filtering Modes reference.
 
 **Fallback:** If embedding generation fails, the semantic pass falls back to exact-only dedup. As of Phase 2 (2026-05-08) this fallback increments `SEMANTIC_DEDUP_FALLBACKS` / `semantic_dedup_fallbacks` so operators can see how often embedding-based dedup was unavailable.
 
@@ -229,9 +229,9 @@ property values were discarded during deduplication rather than silently
 losing them. The history is stored as a JSON property on the committed
 graph node.
 
-The field is populated only when `ExtractionSettings.track_merged_property_history`
-is `True` (default `True`). Set it to `False` to suppress the field and
-keep node property blobs smaller.
+`merged_property_history` is always recorded when a merge discards a
+conflicting value from the duplicate entity; there is no setting to
+suppress it.
 
 Title words (honorifics like "Mr", "Dr", "Sir") are filtered from alias lists to prevent overly generic aliases from polluting semantic matching.
 
@@ -240,20 +240,17 @@ Title words (honorifics like "Mr", "Dr", "Sir") are filtered from alias lists to
 ## Phase 3: Magic numbers lifted to settings (2026-05-08)
 
 Prior to Phase 3, several deduplication thresholds were hardcoded constants
-in `deduplication/service.py`. They are now configurable via `ExtractionSettings`:
+in `deduplication/service.py`. They are now configurable in settings:
 
-| Setting | Old constant | Default | Description |
-|---------|-------------|---------|-------------|
-| `semantic_dedup_threshold` | `0.92` | `0.92` | Minimum adjusted cosine similarity to trigger a semantic merge |
-| `semantic_dedup_name_bonus` | `0.20` | `0.20` | Similarity bonus for exact normalized name match |
-| `semantic_dedup_alias_bonus` | `0.15` | `0.15` | Similarity bonus when one entity's name appears in the other's aliases |
-| `semantic_dedup_shared_alias_bonus` | `0.10` | `0.10` | Similarity bonus for shared aliases |
-| `semantic_dedup_no_name_overlap_boost` | `0.08` | `0.08` | Additional threshold boost when entities share no name/alias overlap |
-| `dedup_description_word_overlap_threshold` | `0.50` | `0.50` | Word-overlap ratio above which descriptions are merged by keeping the longer one |
-| `dedup_description_max_length` | `8000` | `8000` | Maximum character length for concatenated descriptions |
-| `dedup_type_partition_threshold` | `50` | `50` | Minimum entity count before type-partitioned similarity computation is used |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `extraction.semantic_dedup_threshold` | `0.95` | Minimum adjusted cosine similarity to trigger a semantic merge (preset-tuned — filtering presets pin the effective value per mode) |
+| `extraction.dedup_no_overlap_boost` | `0.08` | Additional threshold boost when entities share no name/alias overlap |
+| `extraction.dedup_borderline_penalty` | `0.05` | Confidence penalty applied to entities merged within 0.10 of the similarity threshold |
+| `extraction.dedup_type_partition_cutoff` | `50` | Minimum entity count before type-partitioned similarity computation is used |
+| `source_processing.entity_max_description_length` | `8000` | Maximum character length for merged entity descriptions |
 
-All are overridable per-domain via `extraction_limits.*` using the same key names.
+The name/alias similarity bonuses (+0.20 exact-name match, +0.15 name-in-aliases per direction, +0.10 shared alias) are fixed constants in `similarity_matcher.py`, not settings.
 
 ## Type Rescue System
 

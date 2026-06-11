@@ -7,11 +7,11 @@ description: Decision record replacing the reflective auto-migrator with Alembic
 
 **Status:** Accepted
 **Date:** 2026-04-20
-**Supersedes (in part):** [ADR-0002 — Dependency / license policy](./0002-dependency-license-policy.md) §Consequences
+**Supersedes (in part):** the reflective auto-migrator approach adopted after [ADR-0002 — Dependency / license policy](./0002-dependency-license-policy.md)
 
 ## Context
 
-In ADR-0002 (Accepted 2026-02-06) we kept a reflective auto-migrator that ran `ALTER TABLE` at startup based on SQLModel introspection (`chaoscypher_core.adapters.sqlite.engine.apply_schema_updates`). Alembic was temporarily removed from dependencies in favour of this approach (noted in ADR-0002 on 2026-04-18).
+Alongside the dependency-policy work in [ADR-0002](./0002-dependency-license-policy.md) (Accepted 2026-02-06), we kept a reflective auto-migrator that ran `ALTER TABLE` at startup based on SQLModel introspection (`chaoscypher_core.adapters.sqlite.engine.apply_schema_updates`). Alembic was temporarily removed from dependencies in favour of this approach (April 2026).
 
 As the schema grew, three problems surfaced:
 
@@ -50,7 +50,10 @@ Re-adopt Alembic as the canonical schema migration framework, effective 2026-04-
 
 ## Implementation notes
 
-- See the migration tests and package README for the contributor workflow.
+- Contributor workflow for a schema change:
+  1. Update the SQLModel models, then add a new revision file under `packages/core/src/chaoscypher_core/database/migrations/versions/` — either generated with `alembic revision --autogenerate -m "..."` or written by hand mirroring the existing numbered revisions.
+  2. Declare the migration tier in the revision file via the `CC_TIER` module attribute: `"safe_auto"` (purely additive), `"needs_confirmation"` (data or type changes), or `"manual"` (destructive changes). By default the startup runner auto-applies all pending migrations; with `migrations.auto_apply_destructive` disabled it stops before the first `manual` migration and waits for an operator to apply it.
+  3. Run the migration parity tests under `packages/core/tests/unit/database/migrations/` (`test_baseline_matches_metadata.py`, `test_no_undeclared_changes.py`) — they fail whenever the migration chain and `SQLModel.metadata` disagree.
 - The baseline revision (`0001`) carries the full schema DDL — its `upgrade()` creates every table, verified equivalent to `SQLModel.metadata` by the `test_baseline_matches_metadata` and `test_no_undeclared_changes` parity tests. Subsequent revisions apply constraint/index/data changes on top.
 
 ### 2026-06-02 — migration chain squashed for the public launch

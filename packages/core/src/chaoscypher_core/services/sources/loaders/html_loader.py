@@ -17,9 +17,8 @@ through the shared ``detect_encoding`` helper so legacy cp1252 /
 Latin-1 HTML (Windows IE-saved pages, older corporate sites) keeps
 its characters intact.
 
-Workstream 7 (2026-05-07): added because a single ``.html`` file
-uploaded standalone previously had no loader and the upload failed
-with "no loader available."
+Added because a single ``.html`` file uploaded standalone previously
+had no loader and the upload failed with "no loader available."
 """
 
 from __future__ import annotations

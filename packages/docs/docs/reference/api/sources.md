@@ -30,7 +30,7 @@ Upload a document via multipart form data. Returns `202 Accepted` immediately wh
 indexing and extraction run in the background.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources \
+curl -X POST http://localhost/api/v1/sources \
   -F "file=@document.pdf"
 ```
 
@@ -40,11 +40,16 @@ curl -X POST http://localhost:8080/api/v1/sources \
 | `extract_entities` | bool | No | `true` | Run entity extraction after indexing |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
 | `domain` | string | No | `null` | Force extraction domain (e.g. `technical`, `generic`). Auto-detected if omitted. |
-| `enable_normalization` | bool | No | `true` | Normalize content on upload (encoding fixes, whitespace, OCR cleaning). Disable for code or structured data. |
+| `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, the source parks at `awaiting_confirmation` after indexing until confirmed via [`POST /sources/{id}/confirmation`](#confirm-domain-extraction-gate). |
+| `enable_normalization` | bool | No | auto | Normalize content on upload (encoding fixes, whitespace, OCR cleaning). Auto: on for prose files, off for structured formats (CSV, JSON, TSV, JSONL, NDJSON, XML); explicit `true`/`false` overrides. |
 | `enable_vision` | bool | No | auto-detect | Enable vision processing for images in PDFs and image files. Default: auto-detect based on vision model configuration. |
 | `content_filtering` | bool | No | `true` | Filter non-essential content (TOC, legal, boilerplate) from entity extraction. Filtered content remains searchable via RAG. |
-| `filtering_mode` | string | No | `balanced` | Strictness of post-extraction filters: `unfiltered`, `minimal`, `lenient`, `balanced`, `strict`, `maximum`. See [Filtering Modes](../filtering-modes.md). |
+| `filtering_mode` | string | No | domain default | Strictness of post-extraction filters: `unfiltered`, `minimal`, `lenient`, `balanced`, `strict`, `maximum`. Omitted = the domain's default; an explicit value overrides. See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip upload if identical content already exists (by SHA-256 hash) |
+| `enable_direction_correction` | bool | No | `null` | When `true`, misdirected relationships are swapped to fix source/target order; when `false`, they are dropped. `null` = domain config / global default (`true`). |
+| `protect_orphans` | bool | No | `null` | When `true`, orphan entities (no relationships) are kept; when `false`, dropped before commit. `null` = domain config / global default (`false`). |
+| `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
+| `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
 :::info[Upload settings are persistent]
 
@@ -73,7 +78,9 @@ Key fields shown above. The full response includes lifecycle timestamps (`indexi
 :::tip[Polling for progress]
 
 Use `GET /api/v1/sources/{id}` to poll the source status as it transitions
-through `pending` -> `indexing` -> `indexed` -> `extracting` -> `extracted` -> `committing` -> `committed`.
+through `pending` -> `indexing` -> (`awaiting_confirmation` ->) `indexed` -> `extracting` -> `extracted` -> `committing` -> `committed`.
+
+The `awaiting_confirmation` step occurs when no `domain` is forced and `auto_confirm` is `false` (the default): the source parks after indexing until its detected domain is confirmed via [Confirm Domain](#confirm-domain-extraction-gate).
 
 :::
 
@@ -88,7 +95,7 @@ POST /api/v1/sources/batch
 Upload multiple files simultaneously. Returns `202 Accepted`.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/batch \
+curl -X POST http://localhost/api/v1/sources/batch \
   -F "files=@doc1.pdf" \
   -F "files=@doc2.pdf"
 ```
@@ -98,12 +105,17 @@ curl -X POST http://localhost:8080/api/v1/sources/batch \
 | `files` | file[] | **Yes** | -- | Multiple document files |
 | `extract_entities` | bool | No | `true` | Run entity extraction after indexing |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
-| `enable_normalization` | bool | No | `true` | Normalize content on upload |
+| `enable_normalization` | bool | No | auto | Normalize content on upload (auto: on for prose, off for CSV/JSON/TSV/JSONL/NDJSON/XML; explicit `true`/`false` overrides) |
 | `enable_vision` | bool | No | auto-detect | Enable vision processing for images in PDFs and image files |
 | `domain` | string | No | `null` | Force extraction domain |
+| `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, each source parks at `awaiting_confirmation` after indexing until confirmed. |
 | `content_filtering` | bool | No | `true` | Filter non-essential content (TOC, legal, boilerplate) from entity extraction. Filtered content remains searchable via RAG. |
-| `filtering_mode` | string | No | `balanced` | Strictness of post-extraction filters. See [Filtering Modes](../filtering-modes.md). |
+| `filtering_mode` | string | No | domain default | Strictness of post-extraction filters (explicit value overrides the domain default). See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip files whose content already exists |
+| `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
+| `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for these sources. `null` = domain / global default. |
 
 **Response** `202 Accepted`
 
@@ -151,7 +163,7 @@ Fetch a web page, extract clean markdown content, and process it through the sta
 file pipeline.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/url \
+curl -X POST http://localhost/api/v1/sources/url \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com/article"}'
 ```
@@ -161,12 +173,17 @@ curl -X POST http://localhost:8080/api/v1/sources/url \
 | `url` | string | **Yes** | -- | URL to import (must start with `http://` or `https://`) |
 | `extract_entities` | bool | No | `true` | Run entity extraction after indexing |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
-| `enable_normalization` | bool | No | `true` | Normalize content on upload |
-| `enable_vision` | bool | No | auto-detect | Enable vision processing for images in fetched HTML / PDFs |
+| `enable_normalization` | bool | No | auto | Normalize content on upload (auto: on for prose, off for structured formats; explicit `true`/`false` overrides) |
+| `enable_vision` | bool | No | `true` | Enable vision processing for images in fetched HTML / PDFs |
 | `domain` | string | No | `null` | Force extraction domain |
+| `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, the imported source parks at `awaiting_confirmation` after indexing until confirmed. |
 | `content_filtering` | bool | No | `true` | Filter non-essential content from entity extraction. Filtered content remains searchable via RAG. |
-| `filtering_mode` | string | No | `balanced` | Strictness of post-extraction filters. See [Filtering Modes](../filtering-modes.md). |
+| `filtering_mode` | string | No | domain default | Strictness of post-extraction filters (explicit value overrides the domain default). See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip if identical content exists |
+| `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
+| `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
 :::note[URL fetcher Content-Type validation]
 
@@ -199,7 +216,7 @@ Paginated list of sources with optional filters. Returns
 [SourceSummaryResponse](#sourcesummaryresponse) items.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources?status=committed"
+curl "http://localhost/api/v1/sources?status=committed"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -259,7 +276,7 @@ Returns the full source detail including all lifecycle fields, LLM metrics, and
 user metadata.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123
+curl http://localhost/api/v1/sources/src_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -285,7 +302,7 @@ PATCH /api/v1/sources/{source_id}
 Update mutable source fields.
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/sources/src_abc123 \
+curl -X PATCH http://localhost/api/v1/sources/src_abc123 \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Updated Title",
@@ -320,7 +337,7 @@ Permanently deletes the source and cascades to all chunks, citations, graph node
 edges, templates, and search index entries.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/sources/src_abc123
+curl -X DELETE http://localhost/api/v1/sources/src_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -347,7 +364,7 @@ Returns available extraction domains for dropdown selection. Includes built-in
 domains and any per-database custom domains.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/domains
+curl http://localhost/api/v1/sources/domains
 ```
 
 **Response** `200 OK`
@@ -384,7 +401,7 @@ GET /api/v1/sources/stats
 Aggregate processing statistics across all sources.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/stats
+curl http://localhost/api/v1/sources/stats
 ```
 
 **Response** `200 OK`
@@ -417,7 +434,7 @@ Trigger manual entity extraction for a source. The source must be in `indexed` o
 `extracted` status. Returns `202 Accepted` while extraction runs in the background.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/extraction \
+curl -X POST http://localhost/api/v1/sources/src_abc123/extraction \
   -H "Content-Type: application/json" \
   -d '{
     "analysis_depth": "full",
@@ -465,7 +482,7 @@ Returns detailed extraction progress including job status, chunk-level counts,
 and timing estimates.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/extraction
+curl http://localhost/api/v1/sources/src_abc123/extraction
 ```
 
 | Parameter | Type | Required | Description |
@@ -535,7 +552,7 @@ chunks are not affected. Source status reverts to `indexed` (RAG search still
 works).
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/sources/src_abc123/extraction
+curl -X DELETE http://localhost/api/v1/sources/src_abc123/extraction
 ```
 
 | Parameter | Type | Required | Description |
@@ -659,7 +676,7 @@ results. Prefer this over setting `domain` at upload time — reclassify decoupl
 domain selection from the upload flow.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/reclassify \
+curl -X POST http://localhost/api/v1/sources/src_abc123/reclassify \
   -H "Content-Type: application/json" \
   -d '{"domain": "medical"}'
 ```
@@ -696,7 +713,7 @@ Paginated list of individual chunk extraction tasks (LLM processing groups).
 Useful for debugging and analytics.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/extraction/tasks?page=1&page_size=20"
+curl "http://localhost/api/v1/sources/src_abc123/extraction/tasks?page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -764,7 +781,7 @@ GET /api/v1/sources/{source_id}/extraction/tasks/{task_id}
 Returns a single extraction task with full details, including content fields.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/extraction/tasks/task_001
+curl http://localhost/api/v1/sources/src_abc123/extraction/tasks/task_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -793,7 +810,7 @@ Aggregate statistics (min/avg/max) for extraction tasks, computed via SQL
 aggregates without loading every row.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/extraction/stats
+curl http://localhost/api/v1/sources/src_abc123/extraction/stats
 ```
 
 | Parameter | Type | Required | Description |
@@ -860,7 +877,7 @@ Returns all extraction tasks with minimal fields for UI chart rendering.
 No pagination -- returns all tasks at once for efficient charting.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/extraction/charts
+curl http://localhost/api/v1/sources/src_abc123/extraction/charts
 ```
 
 | Parameter | Type | Required | Description |
@@ -905,7 +922,7 @@ merging stage. Shows entities and relationships removed during structural
 filtering, exact/semantic deduplication, and relationship deduplication.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/extraction/filteringlog
+curl http://localhost/api/v1/sources/src_abc123/extraction/filteringlog
 ```
 
 | Parameter | Type | Required | Description |
@@ -944,7 +961,7 @@ by `error_stage` on the source record — the service routes the source back to 
 appropriate pipeline stage (indexing, extraction, or commit).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/retry
+curl -X POST http://localhost/api/v1/sources/src_abc123/retry
 ```
 
 | Parameter | Type | Required | Description |
@@ -980,7 +997,7 @@ Use this when you want to re-analyze a document after changing the extraction do
 fixing domain-specific rules, or correcting the initial extraction output.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/re_extract
+curl -X POST http://localhost/api/v1/sources/src_abc123/re_extract
 ```
 
 | Parameter | Type | Required | Description |
@@ -1029,7 +1046,7 @@ GET /api/v1/sources/{source_id}/recovery_events
 Returns the recovery audit trail for a source — every automatic recovery attempt, what was dispatched, and when. Backs the source detail page's recovery panel so operators can diagnose repeated failures without grepping container logs. Events are returned newest first.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/recovery_events?limit=20"
+curl "http://localhost/api/v1/sources/src_abc123/recovery_events?limit=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1078,7 +1095,7 @@ run automatically on a schedule; use this endpoint to trigger it on demand
 after bulk operations or during recovery.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/cleanup/orphan_tasks
+curl -X POST http://localhost/api/v1/sources/cleanup/orphan_tasks
 ```
 
 **Response** `200 OK`
@@ -1107,7 +1124,7 @@ Cancels all queued/running tasks (indexing or extraction) and resets the source
 status appropriately.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/sources/src_abc123/processing
+curl -X DELETE http://localhost/api/v1/sources/src_abc123/processing
 ```
 
 | Parameter | Type | Required | Description |
@@ -1142,7 +1159,7 @@ GET /api/v1/sources/{source_id}/chunks
 Paginated list of document chunks for a source.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/chunks?page=1&page_size=20"
+curl "http://localhost/api/v1/sources/src_abc123/chunks?page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1186,7 +1203,7 @@ GET /api/v1/sources/{source_id}/chunks/batch
 Fetch multiple small chunks by ID in a single batch request. This is used by the UI to display the raw text of chunks related to an extraction task.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/chunks/batch?ids=chunk_001,chunk_002"
+curl "http://localhost/api/v1/sources/src_abc123/chunks/batch?ids=chunk_001,chunk_002"
 ```
 
 | Parameter | Type | Required | Description |
@@ -1230,7 +1247,7 @@ GET /api/v1/sources/{source_id}/chunks/{chunk_id}
 Returns a single chunk by ID.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/chunks/chunk_001
+curl http://localhost/api/v1/sources/src_abc123/chunks/chunk_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -1350,7 +1367,7 @@ Paginated list of entity citations (attributions) for a source. Each citation
 links an extracted entity back to the source chunk it was found in.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/citations?page=1&page_size=20"
+curl "http://localhost/api/v1/sources/src_abc123/citations?page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1396,7 +1413,7 @@ GET /api/v1/sources/{source_id}/stats
 Returns computed statistics for a single source.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/stats
+curl http://localhost/api/v1/sources/src_abc123/stats
 ```
 
 | Parameter | Type | Required | Description |
@@ -1432,7 +1449,7 @@ Paginated list of entities extracted from the document. Each entity includes
 a computed `quality_score` (0-100).
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/entities?page=1&page_size=20&sort_by=quality&sort_order=desc"
+curl "http://localhost/api/v1/sources/src_abc123/entities?page=1&page_size=20&sort_by=quality&sort_order=desc"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1484,7 +1501,7 @@ Paginated list of relationships extracted from the document. Each relationship
 is enriched with human-readable `from` and `to` entity names.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/relationships?page=1&page_size=20"
+curl "http://localhost/api/v1/sources/src_abc123/relationships?page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1533,7 +1550,7 @@ GET /api/v1/sources/{source_id}/templates
 Paginated list of graph templates created from extraction of this source.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/templates?page=1&page_size=20&template_type=node"
+curl "http://localhost/api/v1/sources/src_abc123/templates?page=1&page_size=20&template_type=node"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1583,7 +1600,7 @@ Summary of LLM usage metrics for a source, including call counts, token
 consumption, cost estimates, and derived rates.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/llm_metrics
+curl http://localhost/api/v1/sources/src_abc123/llm_metrics
 ```
 
 | Parameter | Type | Required | Description |
@@ -1634,7 +1651,7 @@ GET /api/v1/sources/{source_id}/llm_metrics/calls
 Paginated list of individual LLM API calls made during extraction of this source.
 
 ```bash
-curl "http://localhost:8080/api/v1/sources/src_abc123/llm_metrics/calls?page=1&page_size=20&success=true"
+curl "http://localhost/api/v1/sources/src_abc123/llm_metrics/calls?page=1&page_size=20&success=true"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -1691,7 +1708,7 @@ GET /api/v1/sources/tags
 Returns all tags in the current database.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/tags
+curl http://localhost/api/v1/sources/tags
 ```
 
 **Response** `200 OK` -- `list[TagResponse]`
@@ -1728,7 +1745,7 @@ GET /api/v1/sources/tags/{tag_id}
 Returns a single tag by ID.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/tags/tag_001
+curl http://localhost/api/v1/sources/tags/tag_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -1763,7 +1780,7 @@ POST /api/v1/sources/tags
 Create a new tag.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/tags \
+curl -X POST http://localhost/api/v1/sources/tags \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Research",
@@ -1795,7 +1812,7 @@ PATCH /api/v1/sources/tags/{tag_id}
 Update tag properties. All fields are optional.
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/sources/tags/tag_001 \
+curl -X PATCH http://localhost/api/v1/sources/tags/tag_001 \
   -H "Content-Type: application/json" \
   -d '{ "name": "Updated Name", "color": "#ff5722" }'
 ```
@@ -1825,7 +1842,7 @@ DELETE /api/v1/sources/tags/{tag_id}
 Delete a tag. Removes the tag and all source-tag associations.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/sources/tags/tag_001
+curl -X DELETE http://localhost/api/v1/sources/tags/tag_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -1851,7 +1868,7 @@ GET /api/v1/sources/{source_id}/tags
 Returns all tags assigned to a specific source.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/tags
+curl http://localhost/api/v1/sources/src_abc123/tags
 ```
 
 | Parameter | Type | Required | Description |
@@ -1884,7 +1901,7 @@ POST /api/v1/sources/{source_id}/tags/{tag_id}
 Assign a tag to a source.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/tags/tag_001
+curl -X POST http://localhost/api/v1/sources/src_abc123/tags/tag_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -1909,7 +1926,7 @@ DELETE /api/v1/sources/{source_id}/tags/{tag_id}
 Remove a tag from a source.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/sources/src_abc123/tags/tag_001
+curl -X DELETE http://localhost/api/v1/sources/src_abc123/tags/tag_001
 ```
 
 | Parameter | Type | Required | Description |
@@ -1941,7 +1958,7 @@ Returns a list of available rendered page images for a source document.
 Returns an empty list if no images have been generated.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/images
+curl http://localhost/api/v1/sources/src_abc123/images
 ```
 
 | Parameter | Type | Required | Description |
@@ -1979,7 +1996,7 @@ Path traversal is prevented -- the resolved path must remain within the
 source image directory.
 
 ```bash
-curl http://localhost:8080/api/v1/sources/src_abc123/images/page_1.png \
+curl http://localhost/api/v1/sources/src_abc123/images/page_1.png \
   --output page_1.png
 ```
 
@@ -2162,10 +2179,16 @@ The settings the user (or default) supplied at upload time, persisted on the sou
 | Field | Type | Description |
 |-------|------|-------------|
 | `auto_analyze` | bool | Auto-queue extraction after indexing finishes |
+| `extraction_depth` | string | `full` or `quick` |
+| `forced_domain` | string? | User-forced extraction domain, or `null` for auto-detect |
 | `enable_normalization` | bool? | `null` = use file-type default; `true`/`false` = user override |
 | `enable_vision` | bool | Use the vision model on images and scanned PDFs |
 | `content_filtering` | bool | Apply domain content-exclusion rules during extraction |
 | `filtering_mode` | string | `unfiltered` / `minimal` / `lenient` / `balanced` / `strict` / `maximum` |
+| `enable_direction_correction` | bool? | `null` = domain/global default; `true` swaps misdirected relationships, `false` drops them |
+| `protect_orphans` | bool? | `null` = domain/global default; `true` keeps orphan entities, `false` drops them before commit |
+| `enable_inverse_relationships` | bool? | `null` = global default (`true`); `false` skips inverse-edge creation at commit |
+| `max_entity_degree_override` | int? | Per-source cap on relationships per entity; `null` = domain/global default |
 
 ---
 

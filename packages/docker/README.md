@@ -129,7 +129,6 @@ packages/docker/
 ├── Dockerfile              # All-in-one image (default)
 ├── docker-compose.yml      # All-in-one compose (default)
 ├── .env.example            # Environment template
-├── data/                   # Persistent storage (gitignored)
 │
 ├── config/                 # All-in-one supporting configs
 │   ├── supervisord.conf    # Build-time stub; replaced at runtime by renderer

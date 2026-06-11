@@ -14,8 +14,8 @@ Chaos Cypher ships as a Docker image plus the Python CLI. This page covers tag-t
 # all-in-one
 docker compose pull && docker compose up -d
 
-# multi-container dev
-make docker-down && git pull && make docker-up
+# multi-container dev (requires QUEUE_PASSWORD exported — see Installation)
+make docker-down && git pull && make docker-dev
 ```
 
 Cortex runs `alembic upgrade head` on startup before serving any request.
@@ -42,10 +42,10 @@ This advisory is temporary — version negotiation is on the roadmap.
 
 ## Upgrade flow (all-in-one)
 
-1. Pull the new image: `docker pull ghcr.io/chaoscypherinc/chaoscypher:<tag>` (when published).
+1. Pull the new image: `docker pull ghcr.io/chaoscypherinc/chaoscypher:<tag>`.
 2. Stop the old container: `docker compose down`.
 3. Start the new: `docker compose up -d`.
-4. Watch the logs: `docker compose logs -f cortex`.
+4. Watch the logs: `docker compose logs -f chaoscypher`.
    - You'll see `alembic.runtime.migration` lines as Alembic walks pending revisions.
    - When you see `Application startup complete`, the upgrade succeeded.
 5. Verify health: `curl http://localhost/api/v1/health`.
@@ -56,30 +56,30 @@ This advisory is temporary — version negotiation is on the roadmap.
 make docker-down
 git pull origin main
 make install     # uv sync --all-packages --extra dev
-make docker-up
+make docker-dev  # requires QUEUE_PASSWORD exported — see Installation
 ```
 
 ## Rollback
 
 If migrations fail or the new tag is unhealthy:
 
-1. Stop cortex: `docker compose stop cortex`.
+1. Stop the app container: `docker compose stop chaoscypher`.
 2. Restore the pre-upgrade backup (see below for the exact path).
 3. Pull the previous tag (or check out the previous commit): `docker pull ghcr.io/chaoscypherinc/chaoscypher:<previous-tag>`.
 4. Start: `docker compose up -d`.
 
 ### Auto-backup location
 
-Cortex takes a backup automatically before applying any pending migrations. The file is written to:
+Cortex takes a backup automatically before applying any pending migrations. The file is written to the database's own folder:
 
 ```
-<data_dir>/backups/pre-<first-pending-revision>-<YYYYMMDDTHHMMSSZ>.db
+<data_dir>/databases/<db_name>/backups/pre-<first-pending-revision>-<YYYYMMDDTHHMMSSZ>.db
 ```
 
-For example, if your data directory is `/data` and the first pending migration is `0031`, you will find a file such as:
+For example, if your data directory is `/data`, the database is `default`, and the first pending migration is `0031`, you will find a file such as:
 
 ```
-/data/backups/pre-0031-20260601T123045Z.db
+/data/databases/default/backups/pre-0031-20260601T123045Z.db
 ```
 
 To restore the most recent auto-backup, use the dedicated CLI rollback:
@@ -119,11 +119,10 @@ If a database is somehow left at an unrecognized revision, simply restart Cortex
 `chaoscypher upgrade` runs `alembic upgrade head` against the configured database. Use it when you need to apply pending migrations without restarting the full stack — for example, after pulling a new package version in a dev environment or after restoring a backup.
 
 ```bash
-# These are equivalent — pick whichever fits your workflow:
 chaoscypher upgrade
-# or
-uv run alembic upgrade head
 ```
+
+`chaoscypher upgrade` is the supported invocation — it locates the `alembic.ini` shipped inside `chaoscypher_core` and resolves the database path from settings. A bare `uv run alembic upgrade head` from a checkout fails (there is no `alembic.ini` at the repo root, and the shipped one resolves the database URL at runtime); contributors who need raw Alembic can use `alembic -c packages/core/src/chaoscypher_core/database/migrations/alembic.ini upgrade head`.
 
 Per [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md), Alembic is the authoritative migration tool. Cortex runs the same `alembic upgrade head` on startup, so `chaoscypher upgrade` is useful when you need to trigger migrations outside the normal startup path.
 

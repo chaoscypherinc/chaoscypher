@@ -285,7 +285,10 @@ text and misaligned `raw_content` for every chunk of a CRLF file):
    chunk). Tagged `fuzzy`.
 5. **No match** — if every method fails, `char_start` and
    `char_end` are set to `null` and `citation_offset_method` is tagged
-   `none`. The `CITATIONS_SPLIT_SKIPPED` counter is incremented.
+   `none`. The failure is observable via `citation_offset_method="none"`
+   on the chunk and the `none` count in the
+   `citation_offsets_recomputed` structured-log summary (no quality
+   counter is incremented).
 
 Levels 2 and 3 search forward from the previous chunk's match first
 (chunks are sequential over the document), falling back to a

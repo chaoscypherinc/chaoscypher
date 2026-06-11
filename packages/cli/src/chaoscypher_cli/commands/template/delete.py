@@ -28,8 +28,8 @@ def delete(template_id: str, force: bool, database: str) -> None:
     but those nodes will no longer have a valid template reference.
 
     Example:
-        chaoscypher template delete Person
-        chaoscypher template delete tmpl-123 --force
+        chaoscypher graph template delete Person
+        chaoscypher graph template delete tmpl-123 --force
     """
     try:
         ctx = get_context(database_name=database)

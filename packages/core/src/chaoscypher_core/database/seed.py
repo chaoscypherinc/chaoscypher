@@ -6,7 +6,7 @@
 Provides idempotent seeding of default data:
 - System tools (40+ tools from registry)
 - Default workflows (3 system workflows)
-- Default triggers (2 auto-embed triggers)
+- Default triggers (1 auto-embed trigger on node.create)
 """
 
 from datetime import UTC, datetime
@@ -253,7 +253,11 @@ def seed_default_triggers(session: Session, database_name: str) -> None:
 
     Creates:
     - Auto-embed on node create trigger
-    - Auto-embed on node update trigger
+
+    A second "Auto-Embed on Node Update" trigger (``node.update``) used to
+    be seeded here, but no code path ever publishes that event — Cortex's
+    ``update_node`` re-embeds synchronously instead — so the dormant row
+    was removed (migration 0002 deletes it from existing databases).
 
     Args:
         session: Database session
@@ -268,17 +272,6 @@ def seed_default_triggers(session: Session, database_name: str) -> None:
             "database_name": database_name,
             "name": "Auto-Embed on Node Create",
             "event_source": "node.create",
-            "filters": {},
-            "workflow_id": "system_workflow_generate_embeddings_v1",
-            "workflow_inputs": {},
-            "enabled": True,
-            "priority": 0,
-        },
-        {
-            "id": "system_trigger_auto_embed_update_v1",
-            "database_name": database_name,
-            "name": "Auto-Embed on Node Update",
-            "event_source": "node.update",
             "filters": {},
             "workflow_id": "system_workflow_generate_embeddings_v1",
             "workflow_inputs": {},

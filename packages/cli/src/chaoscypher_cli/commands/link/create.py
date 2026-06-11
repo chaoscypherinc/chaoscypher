@@ -41,9 +41,9 @@ def create(
     TARGET_NODE is the ending node ID.
 
     Example:
-        chaoscypher link create person-1 company-1 --type "works_for"
-        chaoscypher link create node-1 node-2 -t "related_to" --bidirectional
-        chaoscypher link create a b -t "influences" -l "strongly influences"
+        chaoscypher graph link create person-1 company-1 --type "works_for"
+        chaoscypher graph link create node-1 node-2 -t "related_to" --bidirectional
+        chaoscypher graph link create a b -t "influences" -l "strongly influences"
     """
     try:
         ctx = get_context(database_name=database)

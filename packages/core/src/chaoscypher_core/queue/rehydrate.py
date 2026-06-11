@@ -130,7 +130,7 @@ def _build_extract_chunk_payload(task: Any) -> tuple[dict[str, Any], dict[str, A
     """Construct the ``OP_EXTRACT_CHUNK`` enqueue payload from a task row.
 
     The chunk handler reads chunk content out of the DB at execution time
-    (Phase 5 Task D -- queue payload carries only IDs), so ``chunk_content``
+    (the queue payload carries only IDs), so ``chunk_content``
     is intentionally empty.
     """
     data: dict[str, Any] = {

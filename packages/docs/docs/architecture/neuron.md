@@ -78,16 +78,21 @@ Higher values = higher priority (ZPOPMAX). Interactive chat preempts background 
 ### Startup
 
 1. Load worker configuration for both queues
-2. Initialize shared resources: database, settings, LLM provider, Valkey
-3. Register handlers for LLM and operations queues
-4. Start background settings listener (watches for config changes)
-5. Run extraction recovery (find orphaned tasks, unstick stuck sources)
-6. Begin polling both queues
+2. Initialize shared resources: database, settings, LLM provider, Valkey — database initialization runs the tier-aware migration runner, auto-applying any pending Alembic migrations (see [ADR-0006](./adrs/0006-re-adopt-alembic.md))
+3. Upgrade gate: if the database is blocked on a migration that requires operator confirmation, the worker waits — polling the upgrade state — before registering any handlers, so no work is claimed mid-upgrade
+4. Register handlers for LLM and operations queues
+5. Start background settings listener (watches for config changes)
+6. Run extraction recovery (find orphaned tasks, unstick stuck sources)
+7. Begin polling both queues
 
 ### Runtime
 
 - Independent pollers for each queue
 - Configurable poll interval (default: 0.5s)
+- Periodic reconcile loops run alongside the pollers:
+  - **Source recovery** (default: every 60s) — scans for non-terminal sources whose queued work was dropped (e.g. after a crash) and re-dispatches the missing queue tasks
+  - **Orphan file cleanup** (default: every 24h) — removes staging directories left behind when a hard kill lands between the file write and the source-record commit
+  - **Orphan task cleanup** (default: every 24h) — deletes stale orphaned chunk-extraction tasks past the retention window
 - Health reporting at configurable intervals
 - Settings listener monitors for configuration changes
 
@@ -121,7 +126,7 @@ Both queued and running tasks can be cancelled.
 
 **Running tasks** use a cooperative cancellation mechanism:
 
-1. A cancellation flag (`queue:cancel:{task_id}`) is set in Valkey with a 5-minute TTL
+1. A cancellation flag (`queue:cancel:{task_id}`) is set in Valkey with a TTL sized to outlive the worst-case handler lifetime (LLM worker timeout + 5 minutes — about 65 minutes with the default 1-hour timeout)
 2. The task status is updated to `cancelled` immediately (so the UI reflects the change)
 3. The worker handler checks for the flag between processing batches
 4. When detected, the handler raises `CancelledError` and exits gracefully
@@ -158,7 +163,7 @@ make docker-dev  # Starts worker as part of the stack
 
 ## Monitoring
 
-The queue monitor at [http://localhost:3000/queues](http://localhost:3000/queues) shows:
+The queue monitor at [http://localhost/queues](http://localhost/queues) (on the multi-container development stack the UI is served by the Vite dev server at http://localhost:3000/queues) shows:
 
 - Active jobs per queue
 - Queue depth

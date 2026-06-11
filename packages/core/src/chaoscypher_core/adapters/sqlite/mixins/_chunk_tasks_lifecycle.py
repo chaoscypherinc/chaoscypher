@@ -396,12 +396,12 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
                 the embedding service is unavailable; finalize will backfill.
             chunk_sentences: Pre-split sentences from this chunk (reused in finalization).
             filtering_log: Pipeline filtering diagnostics (per-chunk stages).
-            finish_reason: Normalized provider finish reason (Workstream 8).
+            finish_reason: Normalized provider finish reason.
                 One of ``stop`` / ``length`` / ``content_filter`` /
                 ``tool_calls`` / ``error`` / ``unknown``. Persisted on
                 the chunk task for per-chunk truncation visibility.
             aborted_by_loop: True when the streaming loop detector cut
-                the LLM stream short on a degenerate pattern (Workstream 8).
+                the LLM stream short on a degenerate pattern.
                 Persisted for per-chunk degenerate-stream visibility.
         """
         self._ensure_connected()

@@ -35,10 +35,10 @@ Score a single source's extraction quality. Returns quality metrics including en
 
 ```bash
 # Score a source (uses cache if available)
-curl "http://localhost:8080/api/v1/quality/sources/src-abc123"
+curl "http://localhost/api/v1/quality/sources/src-abc123"
 
 # Force recalculation
-curl "http://localhost:8080/api/v1/quality/sources/src-abc123?force_recalculate=true"
+curl "http://localhost/api/v1/quality/sources/src-abc123?force_recalculate=true"
 ```
 
 ### Response
@@ -140,7 +140,7 @@ Detail view always requires calculation as individual breakdowns are not cached.
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/quality/sources/src-abc123/details"
+curl "http://localhost/api/v1/quality/sources/src-abc123/details"
 ```
 
 ### Response
@@ -250,12 +250,12 @@ Recalculate and cache quality scores for all sources, or for sources in a specif
 
 ```bash
 # Recalculate all sources
-curl -X POST "http://localhost:8080/api/v1/quality/recalculate" \
+curl -X POST "http://localhost/api/v1/quality/recalculate" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # Recalculate only science domain
-curl -X POST "http://localhost:8080/api/v1/quality/recalculate" \
+curl -X POST "http://localhost/api/v1/quality/recalculate" \
   -H "Content-Type: application/json" \
   -d '{"domain": "science"}'
 ```
@@ -309,7 +309,7 @@ Get sources with outdated or missing cached quality scores. Returns sources that
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/quality/outdated"
+curl "http://localhost/api/v1/quality/outdated"
 ```
 
 ### Response
@@ -370,17 +370,17 @@ Analyze quality across multiple sources with optional filters. Returns all match
 
 ```bash
 # Analyze all sources
-curl -X POST "http://localhost:8080/api/v1/quality/analyze" \
+curl -X POST "http://localhost/api/v1/quality/analyze" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # Analyze specific sources
-curl -X POST "http://localhost:8080/api/v1/quality/analyze" \
+curl -X POST "http://localhost/api/v1/quality/analyze" \
   -H "Content-Type: application/json" \
   -d '{"source_ids": ["src-abc123", "src-def456"]}'
 
 # Filter by domain with minimum entity count
-curl -X POST "http://localhost:8080/api/v1/quality/analyze" \
+curl -X POST "http://localhost/api/v1/quality/analyze" \
   -H "Content-Type: application/json" \
   -d '{"domain": "science", "min_entities": 10}'
 ```
@@ -448,16 +448,16 @@ When `page_size` is not provided, the server default page size is used. Values e
 
 ```bash
 # Default paginated analysis (sorted by total_score descending)
-curl "http://localhost:8080/api/v1/quality/analyze"
+curl "http://localhost/api/v1/quality/analyze"
 
 # Filter by domain with custom pagination
-curl "http://localhost:8080/api/v1/quality/analyze?domain=science&page=2&page_size=10"
+curl "http://localhost/api/v1/quality/analyze?domain=science&page=2&page_size=10"
 
 # Sort by entity quality ascending
-curl "http://localhost:8080/api/v1/quality/analyze?sort_by=avg_entity_quality&sort_order=asc"
+curl "http://localhost/api/v1/quality/analyze?sort_by=avg_entity_quality&sort_order=asc"
 
 # Filter sources with at least 5 entities
-curl "http://localhost:8080/api/v1/quality/analyze?min_entities=5"
+curl "http://localhost/api/v1/quality/analyze?min_entities=5"
 ```
 
 ### Response
@@ -525,7 +525,7 @@ Compare quality performance across extraction domains. Returns aggregated qualit
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/quality/domains"
+curl "http://localhost/api/v1/quality/domains"
 ```
 
 ### Response
@@ -583,7 +583,7 @@ Get an overall quality summary for the entire database. Provides high-level stat
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/quality/summary"
+curl "http://localhost/api/v1/quality/summary"
 ```
 
 ### Response

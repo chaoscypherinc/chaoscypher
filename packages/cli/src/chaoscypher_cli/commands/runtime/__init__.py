@@ -3,11 +3,9 @@
 
 """Runtime Commands - ChaosCypher CLI.
 
-Commands for executing packages with grounding API:
-- run: Download and run a package
+Commands for running the local grounding API:
 - serve: Start local grounding API server
 
 Example:
-    chaoscypher run john/medical-ontology
     chaoscypher serve --port 8081
 """

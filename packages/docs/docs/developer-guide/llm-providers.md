@@ -45,7 +45,7 @@ If using `Engine`, access a pre-wired provider via `engine.llm_provider`, or use
 
 ```python
 LLMProvider(
-    settings: Any | None = None,            # Optional; defaults to EngineSettings() (Ollama on localhost)
+    settings: Any | None = None,            # Optional; defaults to EngineSettings() (Ollama on http://localhost:11434)
     managers: LLMManagers | None = None,    # Optional: service managers for tool execution
 )
 ```
@@ -61,10 +61,16 @@ llm = LLMProvider(settings=settings)
 
 # With tool execution support
 llm = LLMProvider(settings=settings, managers={
-    "graph": engine.graph_repository,
-    "search": engine.search_repository,
+    "graph_manager": engine.graph_repository,
+    "search_manager": engine.search_repository,
 })
 ```
+
+:::note
+
+Tool execution reads the `graph_manager` and `search_manager` keys. The bare `graph`, `search`, and `config` keys also exist on `LLMManagers` but are reserved for neuron worker wiring — they are ignored during tool execution.
+
+:::
 
 ### Chat Completion
 
@@ -89,13 +95,13 @@ print(response.content)
 print(f"Tokens: {response.usage.total_tokens}")
 ```
 
-**Response format** (returns a `ChatResponse` Pydantic model):
+**Response format** (returns an `LLMChatResponse` Pydantic model):
 
 ```python
 response.content       # "A knowledge graph is..."
 response.tool_calls    # None, or list of tool calls if tools were provided
 response.thinking      # None, or thinking process if enable_thinking=True
-response.usage         # ChatUsage(input_tokens=42, output_tokens=128, total_tokens=170)
+response.usage         # TokenUsage(input_tokens=42, output_tokens=128, total_tokens=170)
 response.provider      # "ollama"
 response.is_stream     # False
 ```
@@ -138,14 +144,14 @@ response = await llm.chat(
 
 if response.tool_calls:
     for call in response.tool_calls:
-        print(f"Tool: {call['name']}, Args: {call['args']}")
+        print(f"Tool: {call['function']['name']}, Args: {call['function']['arguments']}")
 ```
 
 ## Configuring Providers
 
 ### Ollama (Local, Default)
 
-Ollama is the default provider — zero configuration needed if Ollama is running locally with `qwen3:30b-instruct` pulled:
+Ollama is the default provider — zero configuration needed if Ollama is running locally with `qwen3:30b-instruct` pulled. The default instance URL is `http://localhost:11434`, overridable via the `CHAOSCYPHER_OLLAMA_URL` environment variable (the Docker images set `CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434` so containers reach Ollama on the host):
 
 ```python
 from chaoscypher_core import EngineSettings
@@ -165,10 +171,12 @@ settings = EngineSettings(llm={"ollama_chat_model": "llama3:70b"})
 | Setting | Default |
 |---------|---------|
 | `chat_provider` | `ollama` |
-| `ollama_instances` | `[OllamaInstance(id="default", name="Default", base_url="http://host.docker.internal:11434")]` |
+| `ollama_instances` | `[OllamaInstance(id="default", name="Default", base_url="http://localhost:11434")]` |
 | `ollama_chat_model` | `qwen3:30b-instruct` |
 | `ollama_num_ctx` | `32768` |
 | `ollama_extraction_model` | same as `ollama_chat_model` |
+
+The default instance `base_url` honors the `CHAOSCYPHER_OLLAMA_URL` environment variable when set. The Docker images and compose stack set it to `http://host.docker.internal:11434` so containers reach an Ollama running on the host.
 
 To override the URL programmatically, edit the seeded instance directly:
 
@@ -344,11 +352,11 @@ from chaoscypher_core import ProviderFactory
 
 factory = ProviderFactory(settings)
 
-# Check chat provider
+# Check chat provider -- returns a plain dict, not a model
 chat_health = await factory.check_provider_health("chat")
-print(f"Chat: {chat_health.status}")  # "healthy" or "unhealthy"
-print(f"Model: {chat_health.model}")
-print(f"Response time: {chat_health.response_time_ms}ms")
+print(f"Chat: {chat_health['status']}")  # "healthy" or "unhealthy"
+print(f"Model: {chat_health.get('model')}")
+print(f"Response time: {chat_health.get('response_time_ms')}ms")
 ```
 
 </details>
@@ -459,9 +467,10 @@ uppercase enum) to one of the six canonical tokens. Anything
 unrecognized normalizes to `"unknown"`.
 
 The four built-in providers (Ollama, OpenAI, Anthropic, Gemini) all
-go through this path. New providers added via `PROVIDER_REGISTRY`
-should follow the same pattern — populate `finish_reason` on the
-`ChatResponse` so chunk truncation and abort visibility don't break.
+go through this path. Providers added via the `chaoscypher.providers`
+entry-point group should follow the same pattern — populate
+`finish_reason` on the `LLMChatResponse` so chunk truncation and
+abort visibility don't break.
 
 ### Streaming line-buffer flush
 
@@ -480,24 +489,29 @@ All providers implement the `BaseLLMProvider` abstract base class:
 from chaoscypher_core import BaseLLMProvider
 ```
 
-**Required methods for concrete providers:**
+**Required members for concrete providers:**
 
-| Method | Description |
+| Member | Description |
 |--------|-------------|
+| `metadata` (property) | Returns a `PluginMetadata` instance whose `plugin_id` is the provider name used by `ProviderRegistry` and the `chaoscypher.providers` entry-point group. Return a cached instance (a classvar or an attribute set in `__init__`). |
 | `_init_llm()` | Initialize the LangChain chat model |
 | `chat(messages, tools, stream, **kwargs)` | Chat completion (streaming and non-streaming) |
 
-To add a new provider, create a class extending `BaseLLMProvider`, implement these methods, and register it in the `PROVIDER_REGISTRY`:
+All three are abstract -- a subclass implementing only `_init_llm()` and `chat()` cannot be instantiated.
 
-```python
-# In chaoscypher_core/adapters/llm/providers/__init__.py
-PROVIDER_REGISTRY: dict[str, type[BaseLLMProvider]] = {
-    "ollama": OllamaProvider,
-    "openai": OpenAIProvider,
-    "anthropic": AnthropicProvider,
-    "gemini": GeminiProvider,
-    # "my_provider": MyCustomProvider,  # Add here
-}
+### Registering a New Provider
+
+The four built-in providers are seeded by the `ProviderRegistry` class from its private `_BUILTIN_PROVIDERS` classvar. Third-party providers register through the `chaoscypher.providers` entry-point group -- no Core edits needed:
+
+1. Subclass `BaseLLMProvider`, implementing `metadata`, `_init_llm()`, and `chat()`.
+2. Set a `_METADATA` `PluginMetadata` classvar on the class (the registry reads `plugin_id` from it).
+3. Declare the entry point in your package's `pyproject.toml`:
+
+```toml
+[project.entry-points."chaoscypher.providers"]
+my_provider = "my_package.provider:MyCustomProvider"
 ```
+
+On startup, `ProviderRegistry` scans the entry-point group and registers each provider class. Classes that are not `BaseLLMProvider` subclasses and classes missing `_METADATA` are logged and skipped, so a misbehaving third-party provider cannot crash registry discovery.
 
 The registry pattern follows the Open/Closed Principle -- new providers can be added without modifying existing code.

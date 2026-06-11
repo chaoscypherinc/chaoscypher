@@ -11,7 +11,7 @@ You upload four research papers to your RAG chatbot. You ask: "How does Dr. Chen
 
 <!-- truncate -->
 
-This is the multi-hop problem, and it's the silent failure mode of every vector-only RAG system. Vector search embeds your question, compares it against document chunks, and returns the closest matches by cosine similarity. It works for single-hop questions: "What is CRISPR?" or "When did the Stanford trial begin?" But the moment an answer requires connecting information across documents -- following a citation chain, tracing a person through multiple sources, linking a cause in one report to an effect in another -- vector search falls apart. It can't follow relationships. It doesn't know that entities in different documents refer to the same thing. It just sees text.
+This is the multi-hop problem, and it's the silent failure mode of every vector-only RAG system. Vector search embeds your question, compares it against document chunks, and returns the closest matches by cosine similarity. It works for single-hop questions: "What is CRISPR?" or "When did the Stanford trial begin?" But the moment an answer requires connecting information across documents -- following a citation chain, tracing a person through multiple sources, linking a cause in one report to an effect in another -- vector search falls apart. It can't follow relationships. It doesn't know that entities in different documents refer to the same thing. It just sees text. In an independent benchmark, GraphRAG-style retrieval scored 53% vs 43% for reranked vector RAG on complex multi-hop reasoning ([GraphRAG-Bench, ICLR 2026](https://arxiv.org/abs/2506.05690)).
 
 The worst part: it fails silently. No error message, no "I couldn't find a complete answer." You get a confident-sounding response that happens to be shallow or wrong.
 
@@ -36,15 +36,13 @@ In our example, the algorithm discovers that "Dr. Sarah Chen" has a "published" 
 
 **Step 4: Assemble graph context.** The top-scoring entities from PageRank are collected along with their relationships. This produces a structured context: seed entities you asked about, related entities the graph discovered, and the relationship triples connecting them. This context gets passed to the language model alongside the document chunks, giving it the structural "map" it needs to reason about connections.
 
-**Step 5: Retrieve provenance chunks.** The first of two parallel retrieval paths. For each entity the graph surfaced, GraphRAG looks up which document chunks those entities were originally extracted from. Chen was extracted from page 3 of the research paper. The Stanford trial came from the clinical report abstract. The funding connection came from page 12 of the grant proposal. These "provenance chunks" contain the actual evidence for the graph relationships.
+**Step 5: Retrieve provenance chunks.** The first of two independent retrieval paths. For each entity the graph surfaced, GraphRAG looks up which document chunks those entities were originally extracted from. Chen was extracted from page 3 of the research paper. The Stanford trial came from the clinical report abstract. The funding connection came from page 12 of the grant proposal. These "provenance chunks" contain the actual evidence for the graph relationships.
 
-**Step 6: Retrieve vector chunks.** The second path runs simultaneously -- standard hybrid search (semantic + keyword) against all document chunks. It catches relevant passages that might not have generated graph entities but still contain useful context.
+**Step 6: Retrieve vector chunks.** The second path runs next -- standard hybrid search (semantic + keyword) against all document chunks. It catches relevant passages that might not have generated graph entities but still contain useful context.
 
 **Step 7: Merge and rank.** The two paths produce two independently ranked lists. GraphRAG merges them using Reciprocal Rank Fusion, which combines rankings without normalizing scores across systems. Chunks appearing in both lists get a combined boost. The result is a single, deduplicated, ranked list of the most relevant passages across all your documents.
 
 Instead of a shallow answer about CRISPR, you get the full chain: Chen's delivery mechanism research led to a cited clinical application at Stanford, connected through shared funding. The chat response includes both the graph context (discovered entities and relationships) and the document passages that prove those connections.
-
-<!-- DIAGRAM: The 7-step pipeline as a visual flow. Steps: Embed Query → Match Seeds → PageRank → Graph Context → Provenance Chunks → Vector Chunks → Merge & Rank. Show two parallel retrieval paths converging at merge. -->
 
 ![Knowledge graph with search highlighting entity paths](/img/screenshots/graph-search-highlight.png)
 
@@ -57,11 +55,7 @@ Instead of a shallow answer about CRISPR, you get the full chain: Chen's deliver
 
 Standard PageRank models a "random surfer" following links uniformly across a network. Personalized PageRank changes one thing: instead of teleporting to a random node, the surfer teleports back to seed nodes. This transforms a global importance metric into a query-specific relevance metric.
 
-Chaos Cypher's implementation uses power iteration. Starting from scores concentrated on seed entities, it iteratively updates every node based on contributions from inbound neighbors, weighted by out-degree. The damping factor (0.85 default) controls the balance: higher values explore further from seeds; lower values keep scores tightly clustered.
-
-Convergence is detected when the maximum score change drops below 1e-6, or after 100 iterations. In practice, most graphs converge in 15-30 iterations. The computation runs in-process with no external dependencies -- a graph of 10,000 nodes and 40,000 edges typically completes in under 100ms.
-
-The seed weights come from vector similarity scores in Step 2. If "Dr. Sarah Chen" matched at 0.82 and "CRISPR delivery vectors" at 0.71, those scores become the personalization weights. The random walk isn't just seeded on the right entities -- it's biased toward the ones most relevant to your specific question.
+Chaos Cypher's implementation uses rustworkx's compiled power iteration with a 0.85 damping factor and runs entirely in-process -- no external graph database or service required. The seed weights come from the vector similarity scores in Step 2, so the random walk isn't just seeded on the right entities -- it's biased toward the ones most relevant to your specific question.
 
 ### Reciprocal Rank Fusion
 
@@ -81,49 +75,25 @@ Not every database has a knowledge graph. Not every query matches graph entities
 
 The system never fails -- it always returns the best results it can. The retrieval stats in each response tell you exactly what happened: mode used, seeds found, entities explored, provenance versus vector chunk counts.
 
-### Tunable Parameters
-
-Six parameters in `settings.yaml` control the GraphRAG pipeline. The defaults work well for most databases, but here they are if you want to tune:
-
-| Parameter | Default | What It Controls |
-|-----------|---------|-----------------|
-| `seed_similarity_threshold` | 0.3 | Minimum cosine similarity for a graph entity to qualify as a PPR seed. Lower values cast a wider net but may introduce noise. |
-| `ppr_top_k` | 20 | Number of top-scoring entities from PageRank to include in graph context. Higher values give the LLM more structural context at the cost of token budget. |
-| `ppr_damping` | 0.85 | PageRank damping factor. Higher means more exploration away from seeds. Lower keeps results closer to directly matched entities. |
-| `max_triples` | 200 | Maximum relationship triples included in the graph context summary. Capped to avoid flooding the LLM context window. |
-| `vector_overfetch_multiplier` | 3 | When searching for seed entities, fetch 3x the seed limit from the vector index to account for non-entity results (chunks) that need filtering. |
-| `max_graph_nodes` | 50,000 | Safety limit. If your graph exceeds this, PPR is skipped (too expensive) and the system falls back to vector-only mode. |
-
+In plain English: the graph finds the *path* between things you asked about, the vector index finds *text* that sounds like your question, and the fusion step trusts evidence confirmed by both more than either alone.
 
 ## Try It Yourself
 
-Here's the good news: you don't need to configure anything. GraphRAG is the default search mode behind every chat conversation in Chaos Cypher. When you type a question, the chat system automatically calls `graphrag_search` as its first tool. If your database has extracted entities and embeddings, you get the full pipeline. If not, it degrades gracefully to vector or keyword search.
+Here's the good news: you don't need to configure anything. GraphRAG is the default search mode behind every chat conversation in Chaos Cypher. When you type a question, the chat system prioritizes `graphrag_search` as its first tool for most questions. If your database has extracted entities and embeddings, you get the full pipeline. If not, it degrades gracefully to vector or keyword search.
 
 The simplest way to see it in action:
 
 1. **Upload 3-4 related documents.** Pick sources that share entities -- research papers from the same field, chapters from the same book, reports about the same project. The key is overlap: the documents should reference some of the same people, organizations, concepts, or events.
 
-2. **Wait for extraction to complete.** Chaos Cypher will chunk the documents, generate embeddings (automatic), and then you can optionally run entity extraction to build the knowledge graph. The extraction step is what creates the graph nodes and edges that GraphRAG traverses. Without it, you still get vector-only search, which is fine -- but you miss the multi-hop connections.
+2. **Wait for extraction to complete.** Chaos Cypher will chunk the documents, generate embeddings (automatic), and then you can optionally run entity extraction to build the knowledge graph. (Update, May 2026: extraction now auto-detects your document's domain first and asks you to confirm it before the run starts -- you can also pre-confirm in the upload dialog.) The extraction step is what creates the graph nodes and edges that GraphRAG traverses. Without it, you still get vector-only search, which is fine -- but you miss the multi-hop connections.
 
 3. **Ask a question that spans documents.** Don't ask something that a single document can answer. Ask about connections: "How does X relate to Y?" or "What is the link between the findings in paper A and the methodology in paper B?" This is where GraphRAG earns its keep.
 
 4. **Check the retrieval stats.** In the chat response metadata, you'll see the retrieval mode (`full_graphrag`, `vector_only`, or `keyword_only`), the number of seed entities found, how many entities PageRank explored, and the breakdown of provenance versus vector chunks. This tells you exactly what the pipeline did for your query.
 
-GraphRAG is also available as an MCP tool called `graphrag_search`, meaning any AI assistant that supports MCP can use it directly against your Chaos Cypher instance. See our [MCP launch post](/blog/mcp-server-launch) for setup instructions with Claude Desktop, Cursor, and others. The tool accepts a query, an optional chunk limit, and optional source ID filters for scoping searches to specific documents.
+GraphRAG is also available as an MCP tool called `graphrag_search`, meaning any AI assistant that supports MCP can use it directly against your Chaos Cypher instance. See our [MCP launch post](/blog/mcp-server-launch) for setup instructions with Claude Desktop, Cursor, and others.
 
-If you want to fine-tune the pipeline for your specific use case, add a `graphrag` section to your `settings.yaml`:
-
-```yaml
-graphrag:
-  seed_similarity_threshold: 0.3
-  ppr_top_k: 20
-  ppr_damping: 0.85
-  max_triples: 200
-  vector_overfetch_multiplier: 3
-  max_graph_nodes: 50000
-```
-
-Most users will never need to touch these. The defaults were chosen based on the GraphRAG literature and testing across databases of varying sizes -- from small personal collections (hundreds of entities) to larger research corpora (tens of thousands of entities).
+The pipeline is tunable -- seed similarity threshold, PageRank top-K and damping, triple limits -- via a `graphrag` section in `settings.yaml`, though the defaults were chosen from the GraphRAG literature and testing across database sizes, and most users will never need to touch them. The full parameter reference is in the [search documentation](/docs/user-guide/search#graphrag-tuning).
 
 ![Chat conversation with AI response and source citations](/img/screenshots/chat-conversation.png)
 

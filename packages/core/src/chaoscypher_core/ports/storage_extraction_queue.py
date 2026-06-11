@@ -3,7 +3,7 @@
 
 """ExtractionQueueStorageProtocol for ChaosCypher storage.
 
-Split from the original SourceStorageProtocol god-protocol (Phase 1 Task 12).
+Split from the original SourceStorageProtocol god-protocol.
 Covers extraction queue gating — the "at most one extraction at a time per
 database" coordination primitive.
 Binds to SourceIndexingMixin in the SQLite adapter.

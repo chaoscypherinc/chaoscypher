@@ -45,26 +45,27 @@ Testing connection... Connected successfully
 How much GPU VRAM do you have?
 
   [1]  16GB  (RTX 4080, 5080)        → phi4:14b
-  [2]  20GB  (RTX 5080 Super)        → phi4:14b
+  [2]  20GB  (RTX A4000, A4500)      → phi4:14b
   [3]  24GB  (RTX 4090, 3090)        → qwen3:30b
-  [4]  32GB  (RTX 4090, 3090)        → qwen3:30b
+  [4]  32GB  (RTX 5090)              → qwen3:30b
   [5]  48GB  (A6000, 2x 4090)        → qwen3:30b
-  [6]  96GB  (H100)                  → gpt-oss:120b
-  [7]  128GB (Multi-H100)            → gpt-oss:120b
+  [6]  96GB  (RTX 6000 Pro)          → gpt-oss:120b
+  [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b
   [8]  Custom                        I'll specify models manually
 
 Select VRAM tier [1/2/3/4/5/6/7/8] (3): 3
 Applying 24GB VRAM preset...
   Chat model: qwen3:30b
   Extraction model: qwen3:30b-instruct
-  Context window: 32768
+  Vision model: qwen3-vl:30b
+  Context window: 16384
 
 ╭─ ✓ Configuration Complete ───────────────╮
 │ Provider       ollama                     │
 │ URL            http://localhost:11434      │
 │ Chat Model     qwen3:30b                  │
 │ Extraction     qwen3:30b-instruct         │
-│ Context Window 32768                      │
+│ Context Window 16384                      │
 │ Settings File  ~/.local/share/chaos.../settings.yaml │
 ╰──────────────────────────────────────────╯
 
@@ -121,12 +122,12 @@ When using Ollama, specify `--vram` to auto-configure optimal models for your ha
 | VRAM | GPUs | Chat Model |
 |------|------|------------|
 | 16 GB | RTX 4080, 5080 | `phi4:14b` |
-| 20 GB | RTX 5080 Super | `phi4:14b` |
+| 20 GB | RTX A4000, A4500 | `phi4:14b` |
 | 24 GB | RTX 4090, 3090 | `qwen3:30b` |
-| 32 GB | RTX 4090, 3090 | `qwen3:30b` |
+| 32 GB | RTX 5090 | `qwen3:30b` |
 | 48 GB | A6000, 2x 4090 | `qwen3:30b` |
-| 96 GB | H100 | `gpt-oss:120b` |
-| 128 GB | Multi-H100 | `gpt-oss:120b` |
+| 96 GB | RTX 6000 Pro | `gpt-oss:120b` |
+| 128 GB | DGX Spark, Ryzen AI Max+ 395 | `gpt-oss:120b` |
 
 ## Config Commands
 
@@ -449,29 +450,29 @@ Run `chaoscypher setup` once (or set the values you need with `config set`), the
 Settings are resolved in the following order (later sources override earlier ones):
 
 1. **Built-in defaults** -- hardcoded in the application
-2. **`settings.yaml`** -- the unified config file in the data directory
-3. **Environment variables** -- `CHAOSCYPHER_*` (and a few well-known names like `LEXICON_URL`, `OPENAI_API_KEY`) take precedence over the file
+2. **Environment-variable fallbacks** -- well-known names like `LEXICON_URL` and `OPENAI_API_KEY` supply the default when the key is absent from `settings.yaml`
+3. **`settings.yaml`** -- the unified config file in the data directory; an explicit file value wins over the env-var fallback
 
-This is the same Dynaconf-backed precedence the web backend uses, so an environment override changes behavior identically across the CLI, workers, and web app.
+Two kinds of variables sit outside this order: `CHAOSCYPHER_DATABASE` genuinely overrides `current_database` when the CLI resolves which database to use, and the `CHAOSCYPHER_*_DIR` path variables effectively override everything because they decide which `settings.yaml` is loaded in the first place.
 
 ## Environment Variables
 
-Environment variables override the matching value in `settings.yaml` for that process only — they do not rewrite the file. They are honored everywhere settings are read (CLI, workers, web backend).
+Most of these variables act as **fallback defaults** — they apply only when the key is absent from `settings.yaml`, and an explicit file value wins. None of them rewrite the file, and they are honored everywhere settings are read (CLI, workers, web backend).
 
-| Variable | Overrides |
-|----------|-----------|
-| `LEXICON_URL` | `lexicon.url` |
-| `CHAOSCYPHER_LEXICON_TIMEOUT` | `lexicon.timeout` |
-| `CHAOSCYPHER_LLM_PROVIDER` | `llm.chat_provider` |
-| `CHAOSCYPHER_OLLAMA_CHAT_MODEL` | `llm.ollama_chat_model` |
-| `CHAOSCYPHER_OLLAMA_EXTRACTION_MODEL` | `llm.ollama_extraction_model` |
-| `OPENAI_API_KEY` | `llm.openai_api_key` |
-| `ANTHROPIC_API_KEY` | `llm.anthropic_api_key` |
-| `GEMINI_API_KEY` | `llm.gemini_api_key` |
-| `CHAOSCYPHER_DATABASE` | `current_database` |
-| `CHAOSCYPHER_DATA_DIR` | `paths.data_dir` |
-| `CHAOSCYPHER_CONFIG_DIR` | `paths.config_dir` |
-| `CHAOSCYPHER_CACHE_DIR` | `paths.cache_dir` |
+| Variable | Applies to | Behavior |
+|----------|-----------|----------|
+| `LEXICON_URL` | `lexicon.url` | Fallback default |
+| `CHAOSCYPHER_LEXICON_TIMEOUT` | `lexicon.timeout` | Fallback default |
+| `CHAOSCYPHER_LLM_PROVIDER` | `llm.chat_provider` | Fallback default |
+| `OPENAI_API_KEY` | `llm.openai_api_key` | Fallback default |
+| `ANTHROPIC_API_KEY` | `llm.anthropic_api_key` | Fallback default |
+| `GEMINI_API_KEY` | `llm.gemini_api_key` | Fallback default |
+| `CHAOSCYPHER_DATABASE` | `current_database` | **True override** — outranks `settings.yaml` in CLI [database selection](index.md#database-selection) |
+| `CHAOSCYPHER_DATA_DIR` | `paths.data_dir` | **True override** — decides which `settings.yaml` is loaded |
+| `CHAOSCYPHER_CONFIG_DIR` | `paths.config_dir` | **True override** — decides where config-directory files live |
+| `CHAOSCYPHER_CACHE_DIR` | `paths.cache_dir` | **True override** |
+
+A handful of operational variables used in container deployments (`QUEUE_HOST`/`QUEUE_PORT`/`QUEUE_DB`/`QUEUE_PASSWORD`, `CHAOSCYPHER_EDGE_AUTH_TOKEN`, `CHAOSCYPHER_ALLOWED_HOSTS`, `SUPERVISOR_PASSWORD`) also genuinely override their settings; see the [Configuration guide](../../getting-started/configuration.md) for those.
 
 ### Color output
 

@@ -14,11 +14,11 @@ Links represent relationships between nodes in the knowledge graph.
 They are directed and can have relationship types.
 
 Example:
-    chaoscypher link list
-    chaoscypher link create node-1 node-2 --type "works_for"
-    chaoscypher link get edge-123
-    chaoscypher link update edge-123 --type "reports_to"
-    chaoscypher link delete edge-123
+    chaoscypher graph link list
+    chaoscypher graph link create node-1 node-2 --type "works_for"
+    chaoscypher graph link get edge-123
+    chaoscypher graph link update edge-123 --type "reports_to"
+    chaoscypher graph link delete edge-123
 """
 
 import click

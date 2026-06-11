@@ -28,6 +28,7 @@ Returns all chats without message bodies.
 | `page` | integer | No | `1` | Page number (>= 1) |
 | `page_size` | integer | No | Server default | Items per page (>= 1, clamped to server max) |
 | `scoped` | boolean | No | _none_ | Filter by scope status. `true` returns only chats with source scoping, `false` returns only unscoped chats. Omit to return all chats. |
+| `q` | string | No | _none_ | Case-insensitive title substring filter (max 200 chars). Used by the web UI's chat-switcher search. |
 
 #### Response
 
@@ -61,13 +62,13 @@ Returns all chats without message bodies.
 
 ```bash
 # List all chats
-curl -s http://localhost:8080/api/v1/chats
+curl -s http://localhost/api/v1/chats
 
 # With pagination
-curl -s "http://localhost:8080/api/v1/chats?page=1&page_size=10"
+curl -s "http://localhost/api/v1/chats?page=1&page_size=10"
 
 # Only scoped chats
-curl -s "http://localhost:8080/api/v1/chats?scoped=true"
+curl -s "http://localhost/api/v1/chats?scoped=true"
 ```
 
 ---
@@ -117,12 +118,12 @@ Creates a new conversation. Optionally scope it to specific sources or tags.
 
 ```bash
 # Create a basic chat
-curl -s -X POST http://localhost:8080/api/v1/chats \
+curl -s -X POST http://localhost/api/v1/chats \
   -H "Content-Type: application/json" \
   -d '{"title": "Research Discussion"}'
 
 # Create a scoped chat
-curl -s -X POST http://localhost:8080/api/v1/chats \
+curl -s -X POST http://localhost/api/v1/chats \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Scoped Discussion",
@@ -150,7 +151,7 @@ No response body.
 #### curl Example
 
 ```bash
-curl -s -X DELETE http://localhost:8080/api/v1/chats
+curl -s -X DELETE http://localhost/api/v1/chats
 ```
 
 ---
@@ -204,7 +205,7 @@ Returns a single chat with all of its messages.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/chats/abc123def456
+curl -s http://localhost/api/v1/chats/abc123def456
 ```
 
 ---
@@ -244,7 +245,7 @@ Returns the full chat object with updated title. See [Get Chat](#get-chat) for t
 #### curl Example
 
 ```bash
-curl -s -X PATCH http://localhost:8080/api/v1/chats/abc123def456 \
+curl -s -X PATCH http://localhost/api/v1/chats/abc123def456 \
   -H "Content-Type: application/json" \
   -d '{"title": "Updated Title"}'
 ```
@@ -286,7 +287,7 @@ Returns the full chat object with updated status. See [Get Chat](#get-chat) for 
 #### curl Example
 
 ```bash
-curl -s -X PATCH http://localhost:8080/api/v1/chats/abc123def456/status \
+curl -s -X PATCH http://localhost/api/v1/chats/abc123def456/status \
   -H "Content-Type: application/json" \
   -d '{"status": "completed"}'
 ```
@@ -316,7 +317,7 @@ No response body.
 #### curl Example
 
 ```bash
-curl -s -X DELETE http://localhost:8080/api/v1/chats/abc123def456
+curl -s -X DELETE http://localhost/api/v1/chats/abc123def456
 ```
 
 ---
@@ -342,7 +343,7 @@ Returns the total number of chats.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/chats/stats/count
+curl -s http://localhost/api/v1/chats/stats/count
 ```
 
 ---
@@ -396,7 +397,7 @@ Adds a message to an existing chat.
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/chats/abc123def456/messages \
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/messages \
   -H "Content-Type: application/json" \
   -d '{"role": "user", "content": "What are the key findings?"}'
 ```
@@ -446,140 +447,12 @@ Returns all messages for a chat in chronological order (oldest first).
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/chats/abc123def456/messages
+curl -s http://localhost/api/v1/chats/abc123def456/messages
 ```
 
 ---
 
-## Streaming
-
-### Stream AI Response
-
-```
-POST /api/v1/chats/{chat_id}/stream
-```
-
-Streams an AI response in real-time using Server-Sent Events (SSE). The user message is saved to the chat, then the AI generates a response using RAG context from the chat's scoped sources (or all sources if unscoped). Tool calls are executed during the stream.
-
-#### Path Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `chat_id` | string | Yes | Chat ID |
-
-#### Request Body
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `role` | string | Yes | Message role (typically `user`) |
-| `content` | string | Yes | User message content |
-| `extra_metadata` | object | No | Additional metadata |
-
-```json
-{
-  "role": "user",
-  "content": "What are the key findings from the uploaded paper?"
-}
-```
-
-#### Response
-
-**Status:** `200 OK`
-**Content-Type:** `text/event-stream`
-
-The response is a stream of SSE events. Each event is a single `data:` line containing a JSON object with a `type` field identifying the event kind.
-
-#### Event Types
-
-| Event | Description |
-|-------|-------------|
-| `content` | Text delta and accumulated response text |
-| `thinking_delta` | AI reasoning steps (streamed incrementally) |
-| `thinking` | Complete reasoning block |
-| `context_info` | Information about RAG context used |
-| `tool_calls` | List of tools the AI wants to invoke |
-| `tool_start` | A tool execution has begun |
-| `tool_result` | A tool execution has completed |
-| `iteration_progress` | Progress update for multi-iteration tool calling |
-| `cached_tool_calls` | Duplicate tool calls served from cache |
-| `warning` | Non-fatal warning during generation |
-| `done` | Stream completed successfully (includes final content) |
-| `error` | Error during generation |
-
-#### SSE Event Data Examples
-
-**`content` event** -- streamed as the AI generates text:
-
-```
-data: {"type": "content", "delta": "Based on", "accumulated": "Based on"}
-
-data: {"type": "content", "delta": " the analysis,", "accumulated": "Based on the analysis,"}
-```
-
-**`thinking_delta` event** -- reasoning steps (when thinking is enabled):
-
-```
-data: {"type": "thinking_delta", "thinking": "The user is asking about key findings. Let me search the indexed documents..."}
-```
-
-**`thinking` event** -- complete thinking block:
-
-```
-data: {"type": "thinking", "thinking": "The user is asking about key findings. Let me search the indexed documents and summarize the results."}
-```
-
-**`context_info` event** -- RAG context metadata:
-
-```
-data: {"type": "context_info", "sources_used": 3, "chunks_retrieved": 12}
-```
-
-**`tool_calls` event** -- tools the AI wants to invoke:
-
-```
-data: {"type": "tool_calls", "tool_calls": [{"id": "call_1", "name": "search_documents", "arguments": {"query": "key findings"}}], "iteration": 1}
-```
-
-**`tool_start` event** -- a tool begins executing:
-
-```
-data: {"type": "tool_start", "tool": "search_documents", "arguments": {"query": "key findings"}, "iteration": 1}
-```
-
-**`tool_result` event** -- a tool has completed:
-
-```
-data: {"type": "tool_result", "tool": "search_documents", "result": "Found 5 relevant chunks...", "iteration": 1}
-```
-
-**`done` event** -- stream completed with final content:
-
-```
-data: {"type": "done", "content": "Based on the analysis, the three key findings are...", "iterations": 1, "thinking": "...", "referenced_entities": [], "chunk_citations": []}
-```
-
-**`error` event** -- an error occurred:
-
-```
-data: {"type": "error", "error": "LLM provider returned an error"}
-```
-
-#### curl Example
-
-```bash
-curl -s -N -X POST http://localhost:8080/api/v1/chats/abc123def456/stream \
-  -H "Content-Type: application/json" \
-  -d '{"role": "user", "content": "What are the key findings?"}' \
-  --no-buffer
-```
-
-:::warning[Client disconnection]
-
-If the client disconnects mid-stream (tab closed, network drop), the server cancels the stream and the in-flight LLM work is lost — the assistant message is **not** persisted. For disconnect-safe, durable processing, use [`POST /api/v1/chats/{chat_id}/send`](#send-message-background) to queue the work on the background worker and [`GET /api/v1/chats/{chat_id}/events`](#subscribe-to-chat-events) to observe progress; those survive disconnect.
-
-:::
-
----
+## Tool Approval
 
 ### Approve or Reject a Tool Call
 
@@ -587,7 +460,7 @@ If the client disconnects mid-stream (tab closed, network drop), the server canc
 POST /api/v1/chats/{chat_id}/tool_decision
 ```
 
-Resolves a pending tool-call approval for an active streaming session. When the AI requests a tool that requires user approval, it emits a `tool_approval_required` SSE event and pauses. The UI sends this endpoint to approve or reject the queued tool call, waking the paused stream handler.
+Resolves a pending tool-call approval. When the AI requests a tool that requires user approval (per the `chat.tool_approval` setting), the chat worker emits a `tool_approval_required` event on `GET /chats/{chat_id}/events` and pauses. This endpoint records your decision; the worker picks it up and either runs the tool or tells the model the call was denied. An unanswered request is automatically denied after `chat.tool_approval_timeout_seconds` (default 120s).
 
 #### Path Parameters
 
@@ -618,9 +491,108 @@ No response body on success. Returns `404 Not Found` if no pending approval matc
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/chats/abc123def456/tool_decision \
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/tool_decision \
   -H "Content-Type: application/json" \
   -d '{"tool_call_id": "call_abc123", "decision": "approve"}'
+```
+
+---
+
+### Stop an In-Flight Response
+
+```
+POST /api/v1/chats/{chat_id}/cancel
+```
+
+Requests cancellation of the chat's running background turn. The worker stops at the next step boundary (between tool executions or before the next LLM call), keeps everything gathered so far, persists the partial answer with a "stopped at your request" notice, and publishes a `done` event with `status: "cancelled"` on `GET /chats/{chat_id}/events`. The chat returns to `active` and is immediately usable again.
+
+A turn that is mid-stream on a single long LLM response finishes that stream first — cancellation lands at step boundaries, not mid-token.
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chat_id` | string | Yes | Chat ID |
+
+#### Response
+
+**Status:** `202 Accepted`
+
+```json
+{
+  "status": "cancelling"
+}
+```
+
+Returns `404 Not Found` for an unknown chat, `409 Conflict` when the chat has no turn in progress, and `503 Service Unavailable` when the cancellation transport (Valkey) is unavailable.
+
+#### curl Example
+
+```bash
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/cancel
+```
+
+---
+
+### Retry a Failed Turn
+
+```
+POST /api/v1/chats/{chat_id}/retry
+```
+
+Re-runs the chat's last turn after a worker failure **without adding a new user message**. A failed run persists nothing, so the conversation history already ends with your message — retrying re-enqueues the background turn from that history. (Re-POSTing through `/send` would duplicate the user message.)
+
+#### Path Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `chat_id` | string | Yes | Chat ID |
+
+#### Response
+
+**Status:** `202 Accepted`
+
+```json
+{
+  "task_id": "task-abc123",
+  "status": "processing"
+}
+```
+
+Returns `404 Not Found` for an unknown chat, and `409 Conflict` when a turn is already in progress or the history contains no user message to answer. Like `/send`, this endpoint runs the LLM-readiness gate: `409 LLM_NOT_VERIFIED` when the configured provider has not been verified (Settings → LLM → Test), or `409 EXTRACTION_MODEL_MISSING` when configured Ollama model(s) are not pulled (`details.missing_models` lists them).
+
+#### curl Example
+
+```bash
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/retry
+```
+
+---
+
+### Regenerate the Last Answer
+
+```
+POST /api/v1/chats/{chat_id}/regenerate
+```
+
+Drops everything after the last user message (the old answer and its tool results) and re-runs the turn from the remaining history. Returns `202` with the new task id; `404` for an unknown chat; `409` when a turn is already processing or there is no user message to answer. Like `/send`, this endpoint runs the LLM-readiness gate: `409 LLM_NOT_VERIFIED` when the configured provider has not been verified, or `409 EXTRACTION_MODEL_MISSING` when configured Ollama model(s) are not pulled (`details.missing_models` lists them).
+
+```bash
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/regenerate
+```
+
+---
+
+### Export a Conversation
+
+```
+GET /api/v1/chats/{chat_id}/export?format=json|markdown
+```
+
+`format=json` (default) returns `{"data": <full chat object>}`. `format=markdown` returns a `text/markdown` attachment with role headings, entity markers reduced to bold labels, and citations rendered as numbered footnotes carrying the source filename and sentence text.
+
+```bash
+curl -s "http://localhost/api/v1/chats/abc123def456/export?format=markdown" -o chat.md
 ```
 
 ---
@@ -648,7 +620,7 @@ Returns the full chat object with the generated title. See [Get Chat](#get-chat)
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/chats/abc123def456/generate_title
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/generate_title
 ```
 
 ---
@@ -700,7 +672,7 @@ Returns the full chat object after scope update, including the injected system m
 #### curl Example
 
 ```bash
-curl -s -X PATCH http://localhost:8080/api/v1/chats/abc123def456/scope \
+curl -s -X PATCH http://localhost/api/v1/chats/abc123def456/scope \
   -H "Content-Type: application/json" \
   -d '{"source_ids": ["src-uuid-1"], "tag_ids": ["tag-uuid-1"]}'
 ```
@@ -730,14 +702,14 @@ Returns the full chat object after scope removal, including the injected system 
 #### curl Example
 
 ```bash
-curl -s -X DELETE http://localhost:8080/api/v1/chats/abc123def456/scope
+curl -s -X DELETE http://localhost/api/v1/chats/abc123def456/scope
 ```
 
 ---
 
 ## Background Processing
 
-`POST /send` enqueues a message for durable background processing. `GET /events` subscribes to the resulting SSE stream. Together they provide a disconnect-safe alternative to `POST /stream`: the worker keeps running even if the client closes the connection, and the client can reattach by opening a new events subscription.
+`POST /send` enqueues a message for durable background processing. `GET /events` subscribes to the resulting SSE stream. The worker keeps running even if the client closes the connection, and the client can reattach by opening a new events subscription — the finished answer is always persisted to the conversation.
 
 ### Send Message (Background)
 
@@ -758,6 +730,7 @@ Saves the user message, sets the chat status to `processing`, and enqueues the A
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `content` | string | Yes | User message text (max 500,000 characters) |
+| `replace_from_message_id` | string | No | Edit-and-resend: id of an existing **user** message to replace. The conversation is truncated from that message (inclusive) before this content is added, atomically. `409` when the id isn't a user message in this chat. |
 
 ```json
 {
@@ -781,10 +754,18 @@ Saves the user message, sets the chat status to `processing`, and enqueues the A
 | `task_id` | string | Unique identifier for the queued task |
 | `status` | string | Always `"processing"` on acceptance |
 
+#### Errors
+
+| Status | `error` | Condition |
+|--------|---------|-----------|
+| `404` | `NOT_FOUND` | Unknown chat |
+| `409` | `LLM_NOT_VERIFIED` | The configured LLM provider has not been verified — open Settings → LLM and click Test, then retry |
+| `409` | `EXTRACTION_MODEL_MISSING` | Configured Ollama model(s) are not pulled; `details.missing_models` lists them |
+
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/chats/abc123def456/send \
+curl -s -X POST http://localhost/api/v1/chats/abc123def456/send \
   -H "Content-Type: application/json" \
   -d '{"content": "What are the key findings?"}'
 ```
@@ -818,10 +799,20 @@ Opens a reconnectable Server-Sent Events stream that delivers processing events 
 
 | Event | Description |
 |-------|-------------|
-| `content` | LLM response content delta |
+| `content` | LLM response content delta and accumulated text |
+| `thinking_delta` | AI reasoning steps (when thinking is enabled) |
+| `thinking` | Complete thinking block emitted after a reasoning phase (field: `thinking`) |
+| `timing_update` | Thinking-phase timing payload; fields are open-ended for forward compatibility |
+| `context_info` | Context-window usage for the turn |
+| `iteration_progress` | A new tool-calling round started |
+| `tool_calls` | Tools the AI wants to invoke this round |
+| `cached_tool_calls` | Duplicate tool calls skipped (already executed this turn) |
 | `tool_start` | Tool execution started |
-| `tool_result` | Tool execution completed |
-| `done` | Processing completed successfully |
+| `tool_result` | Tool execution completed (includes `duration_ms`) |
+| `tool_approval_required` | A tool call is paused awaiting the user's decision (see [Tool Approval](#tool-approval)) |
+| `tool_rejected` | A gated tool call was denied (rejection or timeout) |
+| `warning` | Non-fatal notice (`kind`: `output_truncated`, `context_overflow`, `spend_cap`, `cancelled`, ...) |
+| `done` | Processing finished (final content, citations, entity references, validation). `status` is `"completed"` normally, `"cancelled"` when the user [stopped the turn](#stop-an-in-flight-response) — the partial answer is persisted either way |
 | `error` | Processing failed or stream error |
 
 #### SSE Event Data Examples
@@ -830,6 +821,18 @@ Opens a reconnectable Server-Sent Events stream that delivers processing events 
 
 ```
 data: {"type": "content", "delta": "Based on", "accumulated": "Based on"}
+```
+
+**`thinking` event** (the complete reasoning block, emitted once after a reasoning phase; `thinking_delta` carries the same text incrementally while the phase is running):
+
+```
+data: {"type": "thinking", "thinking": "The question concerns the uploaded paper, so I should search the graph first..."}
+```
+
+**`timing_update` event** (thinking-phase timing; the timing fields are intentionally open-ended, so treat unknown keys as forward-compatible):
+
+```
+data: {"type": "timing_update", "total_ms": 500}
 ```
 
 **`done` event:**
@@ -847,7 +850,7 @@ data: {"type": "error", "error": "Chat processing failed. Please try again.", "e
 #### curl Example
 
 ```bash
-curl -s -N http://localhost:8080/api/v1/chats/abc123def456/events \
+curl -s -N http://localhost/api/v1/chats/abc123def456/events \
   --no-buffer
 ```
 
@@ -861,7 +864,7 @@ curl -s -N http://localhost:8080/api/v1/chats/abc123def456/events \
 GET /api/v1/chats/_schema/sse_event
 ```
 
-Schema-only endpoint — **do not call at runtime**. Its sole purpose is to force FastAPI to register `ChatSSEEvent` and all 13 discriminated-union variant models as named `#/components/schemas` entries in `/openapi.json`, enabling TypeScript codegen to produce a typed discriminated union for SSE event handling.
+Schema-only endpoint — **do not call at runtime**. Its sole purpose is to force FastAPI to register `ChatSSEEvent` and all 15 discriminated-union variant models as named `#/components/schemas` entries in `/openapi.json`, enabling TypeScript codegen to produce a typed discriminated union for SSE event handling.
 
 This endpoint always returns `501 Not Implemented` if invoked directly. It appears in the OpenAPI schema so that code generators can reference the `ChatSSEEnvelope` type.
 
@@ -874,7 +877,7 @@ This endpoint always returns `501 Not Implemented` if invoked directly. It appea
 ```bash
 # Do not call this endpoint in production code.
 # It exists solely for OpenAPI schema generation.
-curl -s http://localhost:8080/api/v1/chats/_schema/sse_event
+curl -s http://localhost/api/v1/chats/_schema/sse_event
 ```
 
 ---

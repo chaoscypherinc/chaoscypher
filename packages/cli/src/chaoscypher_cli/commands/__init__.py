@@ -3,28 +3,38 @@
 
 """Commands - Chaos Cypher CLI.
 
-The Rock Solid command structure organized by user intent:
+The command tree organized by user intent:
 
-PACKAGE MANAGEMENT (top-level, like git/docker):
-- login, logout: Authentication with Lexicon Hub
-- pull, push: Package transfer
-- search: Hub discovery
-- list, info: Package information
+SETUP:
+- setup: First-run wizard (LLM provider configuration)
+- config: View and manage CLI configuration
+- completions: Generate shell completion scripts
+
+PACKAGE MANAGEMENT (like git/docker):
+- pull, push: Package transfer (root-level aliases)
+- lexicon: Hub account and packages (login, logout, whoami, search,
+  list, info, remove, pull, push)
 
 RUNTIME (like docker run):
 - serve: Start local API/UI server
 - compose: Multi-package orchestration (build, up)
+- mcp: MCP server over stdio
 
 BUILDER (like kubectl):
-- init: Create new project structure
-- node: Manipulate nodes (create, update, delete, get)
-- link: Manage links between nodes (create, delete)
-- template: Manage knowledge templates (create, list)
-- find: Search the knowledge graph (keyword, semantic, hybrid)
-- import: Ingest files into the graph
+- source: Document pipeline (add, extract, confirm, list, get, delete,
+  search, rebuild-search) plus quality scoring (source quality ...)
+- graph: Knowledge graph CRUD — node, link, template (full CRUD),
+  workflow (list, get), package (export, load)
 
-AUTOMATION:
-- workflow: Execute and manage workflows (run, list)
+AI:
+- chat: Chat with AI using your knowledge graph
+
+MAINTENANCE & DIAGNOSTICS:
+- db: Database management (create, list, switch, delete, info, migrate)
+- upgrade: Apply pending Alembic migrations
+- health, doctor, diagnostics: System checks and bug-report bundles
+- benchmark: Run and inspect the extraction benchmark
+- render-orchestration: Render orchestration configs (dev/debug)
 
 Each command module uses Click decorators and delegates to services.
 Command groups are registered in __main__.py.

@@ -16,7 +16,9 @@ Exposes four primitives:
 * :func:`pending_revisions` — list of revisions between current and head
 * :func:`upgrade_to_head` — apply every pending revision in order
 
-Phase 4 wraps these in a tier-aware runner that adds backup and routing.
+Higher-level orchestration (see
+:mod:`chaoscypher_core.database.migrations.upgrade`) builds on these
+primitives to add backup and tier-aware routing.
 """
 
 from __future__ import annotations

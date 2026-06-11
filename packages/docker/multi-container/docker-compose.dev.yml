@@ -97,6 +97,7 @@ services:
       - QUEUE_DB=0
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for dev environment}
       - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      - CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434  # First-boot Ollama URL (library default is localhost)
       - WATCHFILES_FORCE_POLLING=true
       - LOG_LEVEL=DEBUG
       - USE_JSON_LOGGING=false
@@ -187,6 +188,7 @@ services:
       - QUEUE_DB=0
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for dev environment}
       - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      - CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434  # First-boot Ollama URL (library default is localhost)
       - LOG_LEVEL=DEBUG
       - USE_JSON_LOGGING=false
       - HF_HUB_DISABLE_XET=1

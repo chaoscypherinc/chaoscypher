@@ -659,6 +659,30 @@ class ChatContextSettings(BaseModel):
         ge=1_000,
         description="Operator-tunable max length for chat message content (settings-driven validator).",
     )
+    response_token_reserve: int = Field(
+        default=4096,
+        ge=256,
+        description=(
+            "Tokens reserved for the model's reply (thinking + answer) when "
+            "budgeting the tool-calling loop prompt against the context window."
+        ),
+    )
+    compacted_tool_result_max_chars: int = Field(
+        default=2000,
+        ge=200,
+        description=(
+            "Characters of an older tool result kept when compacting the "
+            "tool-loop prompt to fit the model context window."
+        ),
+    )
+    context_overflow_warning_margin: int = Field(
+        default=256,
+        ge=0,
+        description=(
+            "Warn the user when reported prompt tokens come within this margin "
+            "of the model context window (the provider silently truncated input)."
+        ),
+    )
 
 
 class SourceRecoverySettings(BaseModel):
@@ -1026,6 +1050,14 @@ class IntervalsSettings(BaseModel):
     frontend_log_initial_lines: int = Field(default=2_000, ge=10)
     frontend_log_poll_lines: int = Field(default=200, ge=10)
     frontend_chat_poll_ms: int = Field(default=5_000, ge=100)
+    chat_approval_poll_ms: int = Field(
+        default=500,
+        ge=50,
+        description=(
+            "How often the chat tool loop polls Valkey for a pending "
+            "tool-approval decision while a tool call waits for the user."
+        ),
+    )
     frontend_sse_recent_event_window_ms: int = Field(default=10_000, ge=100)
     frontend_mcp_stale_threshold_ms: int = Field(default=600_000, ge=1_000)
     frontend_spotlight_hover_debounce_ms: int = Field(default=150, ge=10)
@@ -1154,6 +1186,40 @@ class BenchmarkSettings(BaseModel):
             "via settings.yaml."
         ),
     )
+
+
+# Settings keys removed from the schema; old settings.yaml files may still
+# carry them. Scrubbed (with a warning) instead of failing the sections'
+# extra="forbid" validation, so an upgrade never bricks startup.
+_RETIRED_KEYS: dict[str, frozenset[str]] = {
+    "llm": frozenset({"thinking_auto_detect", "chat_interactive_streaming"}),
+    "chat": frozenset({"enable_response_validation"}),
+}
+
+
+def _scrub_retired_keys(section: str, section_data: Any) -> Any:
+    """Drop schema-retired keys from a loaded settings section.
+
+    Args:
+        section: Section name (e.g. ``"llm"``).
+        section_data: Raw section dict from the YAML/dynaconf load.
+
+    Returns:
+        The section data without retired keys (dicts are mutated in place).
+
+    """
+    retired = _RETIRED_KEYS.get(section)
+    if not retired or not isinstance(section_data, dict):
+        return section_data
+    for key in list(section_data.keys()):
+        if str(key).lower() in retired:
+            section_data.pop(key)
+            logger.warning(
+                "settings_retired_key_ignored",
+                section=section,
+                key=str(key).lower(),
+            )
+    return section_data
 
 
 # ============================================================================
@@ -1365,7 +1431,7 @@ class Settings(BaseSettings):
             return data.get(key.upper(), data.get(key.lower(), default))
 
         # Extract nested settings (dynaconf converts keys to UPPERCASE)
-        llm_data = data.get("LLM", {})
+        llm_data = _scrub_retired_keys("llm", data.get("LLM", {}))
         local_auth_data = data.get("LOCAL_AUTH", {})
         queue_data = data.get("QUEUE", {})
 
@@ -1406,7 +1472,7 @@ class Settings(BaseSettings):
         backoff_data = data.get("BACKOFF", {})
         analysis_data = data.get("ANALYSIS", {})
         chat_context_data = data.get("CHAT_CONTEXT", {})
-        chat_data = data.get("CHAT", {})
+        chat_data = _scrub_retired_keys("chat", data.get("CHAT", {}))
         workers_data = data.get("WORKERS", {})
         cors_data = data.get("CORS", {})
         mcp_data = data.get("MCP", {})

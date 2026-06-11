@@ -106,9 +106,9 @@ def format_domain_node_templates(
                   from domain.get_templates()
         allow_template_fallback: When True (legacy default), an empty
             node-template list silently falls back to the built-in generic
-            templates. When False (Phase 6, 2026-05-08 opt-in), an empty
-            list raises ``ValidationError`` so operators see a misconfigured
-            domain immediately rather than silently getting generic output.
+            templates. When False (opt-in), an empty list raises
+            ``ValidationError`` so operators see a misconfigured domain
+            immediately rather than silently getting generic output.
 
     Returns:
         Formatted string for LLM prompt

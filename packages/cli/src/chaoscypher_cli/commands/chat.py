@@ -33,7 +33,6 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from chaoscypher_cli.context import get_context
-from chaoscypher_core.services.chat.engine.constants import MAX_TOOL_ITERATIONS
 
 
 logger = structlog.get_logger(__name__)
@@ -42,6 +41,10 @@ console = Console()
 # Maximum characters of context text injected into the system prompt.
 # Prevents oversized prompts when documents are large.
 _MAX_SYSTEM_PROMPT_CONTEXT_CHARS = 4000
+
+
+class ChatTurnError(RuntimeError):
+    """A chat turn failed inside the shared tool loop."""
 
 
 @click.command()
@@ -96,7 +99,7 @@ def chat(
                     "  2. Start Ollama: ollama serve\n"
                     "  3. Pull a model: ollama pull llama3.2\n\n"
                     "Or configure OpenAI/Anthropic/Gemini via:\n"
-                    "  chaoscypher config set llm.provider openai",
+                    "  chaoscypher config set llm.chat_provider openai",
                     title="LLM Required",
                     border_style="yellow",
                 )
@@ -120,12 +123,33 @@ def chat(
 
         # Build system prompt and tools
         system_prompt = _build_system_prompt(context_text, system, source_names=source_names)
-        tool_executor, tools = _create_tool_infrastructure(ctx, source_ids=source_ids)
+        chat_provider, tool_executor, tools = _create_tool_infrastructure(
+            ctx, source_ids=source_ids
+        )
 
-        if message:
-            _send_message(ctx, message, system_prompt, tools, tool_executor)
-        else:
-            _interactive_chat(ctx, system_prompt, tools, tool_executor, source_ids=source_ids)
+        # One event loop for the whole session: the factory-cached streaming
+        # providers hold async HTTP clients whose connection pools are bound
+        # to the loop they first ran on — a fresh loop per turn breaks them
+        # with "Event loop is closed" (same rationale as
+        # CLISourceProcessingService._run_async).
+        loop = asyncio.new_event_loop()
+        try:
+            if message:
+                _send_message(
+                    ctx, message, system_prompt, chat_provider, tools, tool_executor, loop
+                )
+            else:
+                _interactive_chat(
+                    ctx,
+                    system_prompt,
+                    chat_provider,
+                    tools,
+                    tool_executor,
+                    loop,
+                    source_ids=source_ids,
+                )
+        finally:
+            _close_loop(loop)
 
     except KeyboardInterrupt:
         console.print("\n[dim]Chat ended.[/dim]")
@@ -141,10 +165,15 @@ def _resolve_source_scope(
 ) -> list[str] | None:
     """Resolve --source and --tag flags into a list of source IDs.
 
+    ``--tag`` values are tag *names* (the storage lookup wants tag IDs), so
+    they are resolved against the database's tag list first; raw tag IDs are
+    accepted too. Unknown tags abort instead of silently widening the scope
+    to everything.
+
     Args:
         ctx: CLI context
         sources: Source IDs from --source flags
-        tags: Tag IDs from --tag flags
+        tags: Tag names (or IDs) from --tag flags
 
     Returns:
         List of source IDs or None if no scope
@@ -152,9 +181,19 @@ def _resolve_source_scope(
     source_ids = list(sources)
 
     if tags:
-        tag_source_ids = ctx.storage_adapter.get_source_ids_by_tag_ids(
-            list(tags), ctx.database_name
-        )
+        tag_ids = _resolve_tag_ids(ctx, tags)
+        tag_source_ids = ctx.storage_adapter.get_source_ids_by_tag_ids(tag_ids, ctx.database_name)
+        if not tag_source_ids and not source_ids:
+            console.print(
+                "[red]Error:[/red] No sources carry the requested tag(s); "
+                "refusing to chat unscoped."
+            )
+            sys.exit(1)
+        if not tag_source_ids:
+            console.print(
+                "[yellow]Warning:[/yellow] No sources carry the requested "
+                "tag(s); using --source scope only."
+            )
         source_ids = list(set(source_ids + tag_source_ids))
 
     if not source_ids:
@@ -162,6 +201,44 @@ def _resolve_source_scope(
 
     console.print(f"[dim]Scoped to {len(source_ids)} source(s)[/dim]")
     return source_ids
+
+
+def _resolve_tag_ids(ctx: Any, tags: tuple[str, ...]) -> list[str]:
+    """Resolve --tag values (names, or raw IDs) to tag IDs.
+
+    Exits with an error listing the available tags when a value matches
+    neither a tag name (case-insensitive) nor a tag ID.
+
+    Args:
+        ctx: CLI context
+        tags: Tag names or IDs from --tag flags
+
+    Returns:
+        List of tag IDs
+    """
+    available = ctx.storage_adapter.list_tags(ctx.database_name)
+    by_name = {tag["name"].lower(): tag["id"] for tag in available}
+    known_ids = {tag["id"] for tag in available}
+
+    resolved: list[str] = []
+    unknown: list[str] = []
+    for value in tags:
+        tag_id = by_name.get(value.lower())
+        if tag_id is None and value in known_ids:
+            tag_id = value
+        if tag_id is None:
+            unknown.append(value)
+        else:
+            resolved.append(tag_id)
+
+    if unknown:
+        console.print(f"[red]Error:[/red] Unknown tag(s): {', '.join(unknown)}")
+        if by_name:
+            console.print(f"[dim]Available tags: {', '.join(sorted(by_name))}[/dim]")
+        else:
+            console.print("[dim]No tags exist in this database.[/dim]")
+        sys.exit(1)
+    return resolved
 
 
 def _get_source_names(ctx: Any, source_ids: list[str]) -> list[str]:
@@ -258,25 +335,26 @@ def _build_system_prompt(
 def _create_tool_infrastructure(
     ctx: Any,
     source_ids: list[str] | None = None,
-) -> tuple[Any, list[dict[str, Any]]]:
-    """Create tool executor and tool schemas for chat.
+) -> tuple[Any, Any, list[dict[str, Any]]]:
+    """Create the streaming chat provider, tool executor, and tool schemas.
+
+    Routes through the same ``setup_chat_providers`` the web worker uses, so
+    the CLI consumes the chunk-dict streaming protocol the shared loop expects.
 
     Args:
         ctx: CLI context
         source_ids: Optional source scope filter
 
     Returns:
-        Tuple of (tool_executor, tools)
+        Tuple of (chat_provider, tool_executor, tools)
     """
-    from chaoscypher_core.services.chat.engine.constants import ESSENTIAL_TOOL_NAMES
-    from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
-    from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
-        get_essential_tool_schemas,
-    )
+    from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.streaming.chat import setup_chat_providers
 
-    scope = {"source_ids": source_ids} if source_ids else None
+    settings = get_settings()
 
-    # Create LLM chat callback wrapping the CLI's direct LLM provider
+    # Tool LLM callbacks (e.g. the summarize tool) call the provider
+    # directly — the CLI has no queue to route through.
     llm_provider = ctx.llm_provider
 
     async def llm_chat_callback(
@@ -293,160 +371,135 @@ def _create_tool_infrastructure(
         response = await llm_provider.chat(**kwargs)
         return {"content": response.content}
 
-    # Create embedding callback for semantic/hybrid search
-    _embedding_service = ctx.embedding_service
-
-    async def embedding_callback(text: str) -> Any:
-        """Local embedding via EmbeddingService."""
-        return await _embedding_service.embed(text)
-
-    tool_executor = ToolExecutorService(
-        graph_repository=ctx.graph_repository,
-        search_repository=ctx.search_repository,
-        indexing_repository=ctx.storage_adapter,
-        embedding_callback=embedding_callback,
-        llm_chat_callback=llm_chat_callback if llm_provider else None,
-        engine_settings=ctx.settings,
-        scope=scope,
+    chat_provider, tool_executor, tools = setup_chat_providers(
+        settings,
+        ctx.graph_repository,
+        ctx.search_repository,
+        chat_id="cli",
+        indexing_manager=ctx.storage_adapter,
+        source_ids=source_ids,
         source_storage=ctx.storage_adapter,
+        llm_chat_callback_override=llm_chat_callback if llm_provider else None,
     )
-    tools = get_essential_tool_schemas(ESSENTIAL_TOOL_NAMES)
-
-    return tool_executor, tools
+    return chat_provider, tool_executor, tools
 
 
-async def _chat_with_tools(
-    llm_provider: Any,
-    messages: list[dict[str, Any]],
-    tools: list[dict[str, Any]],
+async def _run_chat_turn(
+    ctx: Any,
+    chat_provider: Any,
     tool_executor: Any,
-    max_iterations: int = MAX_TOOL_ITERATIONS,
+    tools: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> str:
-    """Run the LLM with streaming and multi-step tool calling.
+    """Run one chat turn through the shared chat tool loop.
 
-    Streams text tokens directly to the console as they arrive.
-    When the LLM returns tool calls, executes them and loops until
-    a final text response (no tool calls) or the iteration limit.
-
-    Args:
-        llm_provider: LLM provider instance
-        messages: Conversation messages (mutated in place)
-        tools: Tool schemas in OpenAI function calling format
-        tool_executor: ToolExecutorService for executing tool calls
-        max_iterations: Safety limit on tool-calling rounds
-
-    Returns:
-        Final assistant text content (already displayed to console)
-    """
-    content = ""
-    streamed = False
-
-    for _ in range(max_iterations):
-        response = await llm_provider.chat(messages=messages, tools=tools, stream=True)
-
-        # Build citation data from tool results accumulated so far
-        citation_data = _build_citation_data(messages)
-
-        # Consume streaming response
-        if response.is_stream and response.stream:
-            content, tool_calls, streamed = await _consume_stream(
-                response.stream, citation_data=citation_data
-            )
-        else:
-            # Non-streaming fallback (provider doesn't support streaming)
-            content = response.content
-            tool_calls = response.tool_calls or []
-            streamed = False
-
-        if not tool_calls:
-            if streamed:
-                _write_raw("\n")  # End the streamed line
-            return content
-
-        # Newline after any streamed text before tool indicators
-        if streamed:
-            _write_raw("\n")
-
-        # Append assistant message with tool_calls
-        assistant_msg: dict = {"role": "assistant", "content": content or ""}
-        assistant_msg["tool_calls"] = tool_calls
-        messages.append(assistant_msg)
-
-        # Execute each tool call and append results
-        for tc in tool_calls:
-            func = tc.get("function", {})
-            tool_name = func.get("name", "")
-            arguments = func.get("arguments", {})
-            if isinstance(arguments, str):
-                try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    arguments = {}
-
-            console.print(f"  [dim]\u2192 {tool_name}({_summarize_args(arguments)})[/dim]")
-            result = await tool_executor.execute_tool(tool_name, arguments)
-
-            messages.append(
-                {
-                    "role": "tool",
-                    "content": json.dumps(result, default=str),
-                    "tool_call_id": tc.get("id", ""),
-                    "name": tool_name,
-                }
-            )
-
-        streamed = False
-
-    if streamed:
-        _write_raw("\n")
-    return content
-
-
-async def _consume_stream(
-    stream: Any,
-    citation_data: dict[str, dict[str, Any]] | None = None,
-) -> tuple[str, list[Any], bool]:
-    """Consume an LLM streaming response, printing text as it arrives.
-
-    Entity references like ``[[node:ID|Label]]`` are transformed to
-    bold labels in real-time. Chunk citations ``[[cite:C0:S1|file]]``
-    are resolved to sentence text and rendered as terminal blockquotes.
+    Streams text and tool activity to the console via RichConsoleSink and
+    prompts interactively for gated tool calls (tool_approval modes). The
+    CLI thereby gets the same protections as web chat: prompt-budget
+    compaction, truncation warnings, duplicate-call filtering, the
+    forced-final-answer recovery, and (via ``spend_guard``) the daily LLM
+    spend cap shared with the worker and extraction paths.
 
     Args:
-        stream: Async generator yielding chunk dicts
-        citation_data: Chunk alias → data mapping for citation resolution
+        ctx: CLI context (spend-cap enforcement and recording).
+        chat_provider: Streaming chat provider (chunk-dict protocol).
+        tool_executor: ToolExecutorService for executing tool calls.
+        tools: Tool schemas in OpenAI function calling format.
+        messages: Conversation messages (mutated in place).
 
     Returns:
-        Tuple of (accumulated_content, tool_calls, did_stream_any_text)
+        Final assistant text content (already displayed to console).
+
+    Raises:
+        ChatTurnError: The loop reported an error for this turn.
     """
-    writer = _StreamWriter(citation_data=citation_data)
-    content = ""
-    tool_calls: list = []
-    did_stream = False
+    from chaoscypher_cli.commands.chat_loop_adapter import (
+        CliMessageBuilder,
+        PromptApprovalBroker,
+        RichConsoleSink,
+    )
+    from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.streaming.chat.loop import ChatLoopDeps, run_chat_tool_loop
 
-    async for chunk in stream:
-        chunk_type = chunk.get("type", "")
+    sink = RichConsoleSink(console, messages)
+    deps = ChatLoopDeps(
+        chat_id="cli",
+        provider=chat_provider,
+        tool_executor=tool_executor,
+        chat_service=CliMessageBuilder(),
+        settings=get_settings(),
+        sink=sink,
+        approval=PromptApprovalBroker(console),
+        tools=tools,
+        spend_guard=_make_spend_guard(ctx),
+    )
+    result = await run_chat_tool_loop(messages, deps)
+    sink.finish()
 
-        if chunk_type == "content":
-            delta = chunk.get("delta", "")
-            if delta:
-                writer.write(delta)
-                did_stream = True
-            content = chunk.get("accumulated", content)
+    # Record before the error check — tokens were spent even on a failed turn.
+    _record_chat_spend(ctx, messages, result.content)
 
-        elif chunk_type == "done":
-            content = chunk.get("content", content)
-            tool_calls = chunk.get("tool_calls") or []
+    if result.error_occurred:
+        msg = f"The chat turn failed during {result.error_stage or 'chat'} (see output above)."
+        raise ChatTurnError(msg)
+    return result.content
 
-        elif chunk_type == "error":
-            writer.close()
-            error_msg = chunk.get("error", "Unknown error")
-            if did_stream:
-                _write_raw("\n")
-            console.print(f"[red]Error:[/red] {error_msg}")
 
-    writer.close()
-    return content, tool_calls, did_stream
+def _make_spend_guard(ctx: Any) -> Any:
+    """Build the loop's spend guard from the CLI context.
+
+    Mirrors the worker's chat handler: only the per-day cap applies (chat is
+    not tied to a source). The counter is persisted per-database in app.db,
+    so CLI chat shares the same daily ledger as extraction and web chat.
+
+    Args:
+        ctx: CLI context
+
+    Returns:
+        Async callable raising when the daily cap is reached.
+    """
+    from chaoscypher_core.services.llm.spend import get_llm_spend_tracker
+
+    async def _spend_guard() -> None:
+        # Synchronous SQLite read; brief enough for the single-user CLI loop
+        # (same in-loop usage as CLISourceProcessingService extraction).
+        get_llm_spend_tracker().check_and_raise(
+            None,
+            ctx.settings,
+            adapter=ctx.storage_adapter,
+            database_name=ctx.database_name,
+        )
+
+    return _spend_guard
+
+
+def _record_chat_spend(ctx: Any, messages: list[dict[str, Any]], content: str) -> None:
+    """Record this turn's estimated tokens against the persisted daily cap.
+
+    Streaming responses carry no exact usage, so tokens are estimated the
+    same way the worker's background-chat path does. Best-effort: a tracking
+    failure never breaks the just-completed chat.
+
+    Args:
+        ctx: CLI context
+        messages: Conversation messages after the loop (includes tool traffic)
+        content: Final assistant content
+    """
+    try:
+        from chaoscypher_core.services.llm.spend import get_llm_spend_tracker
+        from chaoscypher_core.utils.tokens import estimate_message_tokens, estimate_tokens
+
+        total = estimate_message_tokens(messages) + estimate_tokens(content or "")
+        if total <= 0:
+            return
+        get_llm_spend_tracker().record(
+            None,
+            total,
+            adapter=ctx.storage_adapter,
+            database_name=ctx.database_name,
+        )
+    except Exception:
+        logger.warning("cli_chat_spend_record_failed", exc_info=True)
 
 
 # Matches [[node:ID|Label]] and [[edge:ID|Label]] entity references
@@ -460,6 +513,10 @@ _CITE_RE = re.compile(
     r"\[\[cite:([A-Za-z0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]",
     re.IGNORECASE,
 )
+
+# Matches ANY [[cite:...]] marker — used to hide malformed ones the strict
+# pattern can't render (e.g. mixed refs like [[cite:C1:S15,C17|f]])
+_LOOSE_CITE_RE = re.compile(r"\[\[cite:[^\]]*\]\]", re.IGNORECASE)
 
 
 def _build_citation_data(
@@ -607,7 +664,7 @@ class _StreamWriter:
         Returns:
             Text with citations resolved to blockquotes or labels
         """
-        if not _CITE_RE.search(text):
+        if "[[cite:" not in text.lower():
             return text
 
         def _replace(match: re.Match[str]) -> str:
@@ -639,7 +696,10 @@ class _StreamWriter:
             lines.append(f"  -- {display_label}\n")
             return "".join(lines)
 
-        return _CITE_RE.sub(_replace, text)
+        transformed = _CITE_RE.sub(_replace, text)
+        # Hide malformed markers the strict pattern can't parse (mixed refs
+        # like [[cite:C1:S15,C17|f]]) instead of printing them raw.
+        return _LOOSE_CITE_RE.sub("", transformed)
 
 
 def _transform_entity_refs(text: str) -> str:
@@ -688,8 +748,33 @@ def _summarize_args(args: dict) -> str:
     return ", ".join(parts)
 
 
+def _close_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Cancel pending tasks and close the session event loop.
+
+    Args:
+        loop: The chat session's event loop
+    """
+    try:
+        pending = asyncio.all_tasks(loop)
+        for task in pending:
+            task.cancel()
+        if pending:
+            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+        loop.run_until_complete(loop.shutdown_asyncgens())
+    except Exception:
+        logger.debug("chat_loop_close_failed", exc_info=True)
+    finally:
+        loop.close()
+
+
 def _send_message(
-    ctx: Any, message: str, system_prompt: str, tools: list[Any], tool_executor: Any
+    ctx: Any,
+    message: str,
+    system_prompt: str,
+    chat_provider: Any,
+    tools: list[Any],
+    tool_executor: Any,
+    loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Send a single message and display the response.
 
@@ -697,15 +782,22 @@ def _send_message(
         ctx: CLI context
         message: User message
         system_prompt: System prompt
+        chat_provider: Streaming chat provider
         tools: Tool schemas
         tool_executor: ToolExecutorService instance
+        loop: Session event loop
+
+    Raises:
+        ChatTurnError: The turn errored (caller exits non-zero).
     """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": message},
     ]
 
-    content = asyncio.run(_chat_with_tools(ctx.llm_provider, messages, tools, tool_executor))
+    content = loop.run_until_complete(
+        _run_chat_turn(ctx, chat_provider, tool_executor, tools, messages)
+    )
 
     if not content:
         console.print("[dim]No response received.[/dim]")
@@ -714,8 +806,10 @@ def _send_message(
 def _interactive_chat(
     ctx: Any,
     system_prompt: str,
+    chat_provider: Any,
     tools: list[Any],
     tool_executor: Any,
+    loop: asyncio.AbstractEventLoop,
     source_ids: list[str] | None = None,
 ) -> None:
     """Run an interactive chat session.
@@ -723,8 +817,10 @@ def _interactive_chat(
     Args:
         ctx: CLI context
         system_prompt: System prompt
+        chat_provider: Streaming chat provider
         tools: Tool schemas
         tool_executor: ToolExecutorService instance
+        loop: Session event loop (reused across turns)
         source_ids: Optional source scope filter
     """
     scope_hint = ""
@@ -787,8 +883,8 @@ def _interactive_chat(
             # Get response with tool calling
             console.print("\n[bold green]Assistant[/bold green]")
 
-            content = asyncio.run(
-                _chat_with_tools(ctx.llm_provider, messages, tools, tool_executor)
+            content = loop.run_until_complete(
+                _run_chat_turn(ctx, chat_provider, tool_executor, tools, messages)
             )
 
             if not content:

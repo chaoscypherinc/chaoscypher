@@ -120,7 +120,7 @@ A dependency audit revealed that **PyMuPDF/pymupdf4llm is licensed under AGPL-3.
 - **Existing functionality preserved** - PDF extraction still works, just produces plain text instead of markdown
 - **Plugin architecture unchanged** - Custom loaders can still use any library the user chooses
 
-> **Note:** The reflective auto-migrator described above was superseded in part on 2026-04-20. See [ADR-0006 — Re-adopt Alembic](./0006-re-adopt-alembic.md).
+> **Note:** Alongside this policy, Alembic was temporarily dropped as a dependency in favour of a reflective auto-migrator that ran `ALTER TABLE` at startup (the original 2026-04-18 addendum describing it is not part of this public copy). That approach was superseded in part on 2026-04-20 — see [ADR-0006 — Re-adopt Alembic](./0006-re-adopt-alembic.md).
 
 ## References
 

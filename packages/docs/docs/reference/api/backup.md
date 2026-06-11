@@ -41,7 +41,7 @@ Creates a backup of the current database.
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/backup
+curl -s -X POST http://localhost/api/v1/backup
 ```
 
 ---
@@ -73,7 +73,7 @@ Lists all available backups for the current database.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/backup
+curl -s http://localhost/api/v1/backup
 ```
 
 ---
@@ -106,7 +106,7 @@ Restores the current database from a backup file.
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/backup/app_20260413_142530.db/restore
+curl -s -X POST http://localhost/api/v1/backup/app_20260413_142530.db/restore
 ```
 
 ---
@@ -135,7 +135,7 @@ Binary file download.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/backup/app_20260413_142530.db/download -o backup.db
+curl -s http://localhost/api/v1/backup/app_20260413_142530.db/download -o backup.db
 ```
 
 ---
@@ -163,7 +163,7 @@ No response body.
 #### curl Example
 
 ```bash
-curl -s -X DELETE http://localhost:8080/api/v1/backup/app_20260413_142530.db
+curl -s -X DELETE http://localhost/api/v1/backup/app_20260413_142530.db
 ```
 
 ---

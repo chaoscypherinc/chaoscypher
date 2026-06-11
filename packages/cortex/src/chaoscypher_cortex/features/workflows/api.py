@@ -307,7 +307,8 @@ async def duplicate_workflow(
     """Duplicate a workflow with all its steps.
 
     Exports the workflow and re-imports it with a renamed copy. The new
-    workflow name is "{original_name} (Copy)".
+    workflow name is "{original_name} (imported)", with a numeric suffix
+    (e.g. "{original_name} (imported) (2)") when that name is taken too.
 
     - Single-user mode: the local operator owns everything.
 

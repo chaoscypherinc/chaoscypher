@@ -261,11 +261,17 @@ RUN groupadd -g 1000 appuser && \
 # (~/.local/share/chaoscypher). The worker then can't find graph_templates and
 # document processing stalls forever. Setting it here keeps every component on
 # one data root regardless of how the container is launched.
+# CHAOSCYPHER_OLLAMA_URL: the library default is http://localhost:11434
+# (bare-metal installs talk to an Ollama on the same host), but inside a
+# container "localhost" is the container itself — the host's Ollama lives
+# at host.docker.internal. First-boot only: an existing settings.yaml
+# keeps whatever URL it persisted.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
     APP_NAME=web_ui \
     STATIC_DIR=/app/static \
     CHAOSCYPHER_DATA_DIR=/data \
+    CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434 \
     PYTHONWARNINGS="ignore::UserWarning:langchain_core._api.deprecation"
 
 # Copy healthcheck script (all-in-one: checks Nginx + Cortex + Valkey + workers)

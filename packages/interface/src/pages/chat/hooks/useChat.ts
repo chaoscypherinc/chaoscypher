@@ -56,6 +56,16 @@ interface UseChatReturn {
   clearError: () => void;
   /** Send a message (or a quick action message) */
   handleSend: (quickActionMessage?: string) => Promise<void>;
+  /** Request cancellation of the in-flight turn (Stop button / Esc). */
+  handleStop: () => Promise<void>;
+  /** Re-run the last turn after a worker failure (no message duplication). */
+  handleRetry: () => Promise<void>;
+  /** Drop the last answer and re-run the turn (Regenerate button). */
+  handleRegenerate: () => Promise<void>;
+  /** Arm edit-and-resend for a persisted user message. */
+  startEditMessage: (messageId: string, content: string) => void;
+  /** True between a Stop click and the turn actually ending. */
+  stopping: boolean;
   /** Start a new chat */
   handleNewChat: () => void;
   /** Navigate to a specific chat */
@@ -65,7 +75,7 @@ interface UseChatReturn {
   /** Delete a chat */
   handleDeleteChat: (chatId: string) => Promise<void>;
   /** Export a chat as JSON */
-  handleExportChat: (chatId: string) => Promise<void>;
+  handleExportChat: (chatId: string, format?: 'json' | 'markdown') => Promise<void>;
   /** Delete all chats */
   handleClearAllChats: () => Promise<void>;
   /** Set error (for retry action) */
@@ -136,6 +146,11 @@ export function useChat(): UseChatReturn {
     setInput: msg.setInput,
     clearError: msg.clearError,
     handleSend: msg.handleSend,
+    handleStop: msg.handleStop,
+    handleRetry: msg.handleRetry,
+    handleRegenerate: msg.handleRegenerate,
+    startEditMessage: msg.startEditMessage,
+    stopping: msg.stopping,
     handleNewChat,
     handleSelectChat: list.handleSelectChat,
     handleRenameChat: list.handleRenameChat,

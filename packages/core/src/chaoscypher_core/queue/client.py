@@ -447,8 +447,8 @@ class QueueClient:
         """Remove the heartbeat key at task completion.
 
         Called atomically alongside SREM via the atomic_complete Lua script
-        in task 5. This bare method is provided for tests and for the
-        reconciler's orphan cleanup path.
+        (see ``complete_task_atomic``). This bare method is provided for
+        tests and for the reconciler's orphan cleanup path.
         """
         if self.client is None:
             raise QueueUnavailableError("Queue server is not connected")

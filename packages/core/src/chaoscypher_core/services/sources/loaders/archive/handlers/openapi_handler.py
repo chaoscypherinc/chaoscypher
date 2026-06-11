@@ -6,7 +6,7 @@
 Processes OpenAPI/Swagger specifications, chunking by operation
 with schema references resolved inline using jsonref library.
 
-Phase 5c (2026-05-08) — full spec coverage:
+Full spec coverage:
 - All eight major sections are emitted: paths, schemas, securitySchemes,
   parameters, responses, requestBodies, tags + externalDocs, callbacks,
   webhooks, examples.

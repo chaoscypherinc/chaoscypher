@@ -11,6 +11,7 @@ import sys
 import click
 from rich.console import Console
 
+from chaoscypher_cli.commands.db.create import validate_database_name
 from chaoscypher_cli.commands.db.list import get_database_info, get_databases_dir
 from chaoscypher_cli.context import get_database_name
 
@@ -31,20 +32,28 @@ def delete(name: str, yes: bool) -> None:
         chaoscypher db delete old-project
         chaoscypher db delete old-project --yes
     """
-    # Safety check: cannot delete 'default'
-    if name == "default":
-        console.print("[red]Cannot delete the 'default' database.[/red]")
-        sys.exit(1)
-
-    # Safety check: cannot delete current database
-    if name == get_database_name():
-        console.print("[red]Cannot delete the current database.[/red]")
-        console.print("\nSwitch to another database first:")
-        console.print("  [cyan]chaoscypher db switch default[/cyan]")
+    # Same validation as `db create`: also blocks path traversal (..,
+    # separators, absolute paths) before any filesystem path is built.
+    if not validate_database_name(name):
+        console.print(f"[red]Invalid database name:[/red] {name}")
+        console.print("Database names must be alphanumeric (hyphens and underscores allowed).")
         sys.exit(1)
 
     databases_dir = get_databases_dir()
     db_path = databases_dir / name
+
+    # Path-level guards instead of string equality: Windows paths compare
+    # case-insensitively, so 'Default' cannot slip past onto the same
+    # directory as 'default'.
+    if db_path == databases_dir / "default":
+        console.print("[red]Cannot delete the 'default' database.[/red]")
+        sys.exit(1)
+
+    if db_path == databases_dir / get_database_name():
+        console.print("[red]Cannot delete the current database.[/red]")
+        console.print("\nSwitch to another database first:")
+        console.print("  [cyan]chaoscypher db switch default[/cyan]")
+        sys.exit(1)
 
     # Verify database exists
     db_info = get_database_info(name, db_path)

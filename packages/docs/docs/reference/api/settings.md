@@ -28,7 +28,7 @@ GET /api/v1/settings
 ### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings
+curl http://localhost/api/v1/settings
 ```
 
 ### Response
@@ -38,6 +38,12 @@ curl http://localhost:8080/api/v1/settings
 :::note[Trimmed for readability]
 
 Response includes all configuration sections. Only key fields shown per section -- see `settings.yaml` reference for the complete schema.
+
+:::
+
+:::info[Secrets are masked]
+
+Secret fields (API keys, tokens, passwords) are always masked in responses — a configured secret is returned as the placeholder string `"configured"`, an unset one as `null`. Plaintext secret values are never echoed back.
 
 :::
 
@@ -195,7 +201,7 @@ Any valid settings fields to update. Supports nested updates by passing the top-
 ### Example Request
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/settings \
+curl -X PATCH http://localhost/api/v1/settings \
   -H 'Content-Type: application/json' \
   -d '{
     "llm": {
@@ -219,7 +225,7 @@ curl -X PATCH http://localhost:8080/api/v1/settings \
     "current_database": "default",
     "llm": {
       "chat_provider": "openai",
-      "openai_api_key": "sk-..."
+      "openai_api_key": "configured"
     },
     "search": {
       "min_similarity_threshold": 0.6
@@ -234,6 +240,12 @@ curl -X PATCH http://localhost:8080/api/v1/settings \
   ]
 }
 ```
+
+:::info[Secrets are masked]
+
+As with [Get Settings](#get-settings), secret fields in the response are masked (`"configured"` when set, `null` when unset). Sending the masked placeholder back in a PATCH is ignored rather than stored, so round-tripping a fetched settings object never wipes a real secret.
+
+:::
 
 :::info[Automatic trigger sync]
 
@@ -260,7 +272,7 @@ POST /api/v1/settings/reset
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset
+curl -X POST http://localhost/api/v1/settings/reset
 ```
 
 ### Response
@@ -282,7 +294,7 @@ GET /api/v1/settings/logging/level
 ### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/logging/level
+curl http://localhost/api/v1/settings/logging/level
 ```
 
 ### Response
@@ -316,7 +328,7 @@ POST /api/v1/settings/logging/level
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/logging/level \
+curl -X POST http://localhost/api/v1/settings/logging/level \
   -H 'Content-Type: application/json' \
   -d '{"level": "WARNING"}'
 ```
@@ -351,7 +363,7 @@ GET /api/v1/settings/presets
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/presets
+curl http://localhost/api/v1/settings/presets
 ```
 
 #### Response
@@ -432,7 +444,7 @@ GET /api/v1/settings/presets/{preset_id}
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/presets/vram_24gb
+curl http://localhost/api/v1/settings/presets/vram_24gb
 ```
 
 #### Response
@@ -442,23 +454,25 @@ curl http://localhost:8080/api/v1/settings/presets/vram_24gb
 ```json
 {
   "name": "vram_24gb",
-  "display_name": "24 GB VRAM",
-  "description": "Large models for high-end GPUs",
+  "display_name": "24GB VRAM",
+  "description": "Enthusiast tier configuration for 30B parameter models with large context windows. Excellent for research and complex knowledge extraction.",
   "vram_gb": 24,
-  "gpu_examples": ["RTX 3090", "RTX 4090"],
+  "gpu_examples": ["RTX 4090", "RTX 3090", "RTX A5000", "RTX 3090 Ti"],
   "version": "1.0.0",
-  "author": "Chaos Cypher",
+  "author": "ChaosCypher Team",
   "builtin": true,
   "ollama_settings": {
-    "ollama_chat_model": "qwen3:30b-instruct",
-    "ollama_num_ctx": 32768,
-    "ollama_num_batch": 1024
+    "ollama_chat_model": "qwen3:30b",
+    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 16384,
+    "ollama_num_batch": 2048
   },
   "llm_settings": {
+    "ai_context_window": 16384,
     "ai_max_tokens": 65536,
-    "thinking_for_chat": true,
-    "thinking_for_tools": false,
-    "thinking_for_extraction": false
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false
   }
 }
 ```
@@ -488,7 +502,7 @@ POST /api/v1/settings/presets/apply
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/presets/apply \
+curl -X POST http://localhost/api/v1/settings/presets/apply \
   -H 'Content-Type: application/json' \
   -d '{"preset_id": "vram_24gb"}'
 ```
@@ -501,23 +515,27 @@ curl -X POST http://localhost:8080/api/v1/settings/presets/apply \
 {
   "success": true,
   "preset_id": "vram_24gb",
-  "preset_name": "24 GB VRAM",
+  "preset_name": "24GB VRAM",
   "settings_updated": {
-    "ollama_chat_model": "qwen3:30b-instruct",
-    "ollama_num_ctx": 32768,
-    "ollama_num_batch": 1024,
+    "ollama_chat_model": "qwen3:30b",
+    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_vision_model": "qwen3-vl:30b",
+    "ollama_num_ctx": 16384,
+    "ollama_num_batch": 2048,
+    "ai_context_window": 16384,
     "ai_max_tokens": 65536,
-    "thinking_for_chat": true,
-    "thinking_for_tools": false,
-    "thinking_for_extraction": false
+    "extraction_max_tokens": 16384,
+    "thinking_for_chat": false,
+    "ollama_quick_preset": "vram_24gb"
   },
-  "message": "Applied preset 'vram_24gb' successfully"
+  "message": "Applied 24GB VRAM preset successfully",
+  "missing_models": []
 }
 ```
 
 :::info[What gets updated]
 
-Applying a preset updates: `ollama_chat_model`, `ollama_num_ctx`, `ollama_num_batch`, `ai_max_tokens`, `thinking_for_chat`, `thinking_for_tools`, and `thinking_for_extraction`. All other settings (API keys, URLs, instances, etc.) are preserved.
+Applying a preset writes **every key** in the preset's `ollama_settings` and `llm_settings` — for built-in presets that includes the chat, extraction, **and** vision models, `ollama_num_ctx`/`ollama_num_batch`, `ai_context_window`, `ai_max_tokens`, `extraction_max_tokens`, and thinking flags — plus `ollama_quick_preset` (preset tracking). API keys, URLs, and Ollama instances are untouched, but model selections **are** overwritten.
 
 :::
 
@@ -544,7 +562,7 @@ GET /api/v1/settings/cloudmodels
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/cloudmodels
+curl http://localhost/api/v1/settings/cloudmodels
 ```
 
 #### Response
@@ -634,7 +652,7 @@ GET /api/v1/settings/cloudmodels/{provider}
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/cloudmodels/anthropic
+curl http://localhost/api/v1/settings/cloudmodels/anthropic
 ```
 
 #### Response
@@ -688,7 +706,7 @@ POST /api/v1/settings/ollama/verify
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/ollama/verify \
+curl -X POST http://localhost/api/v1/settings/ollama/verify \
   -H 'Content-Type: application/json' \
   -d '{"url": "http://localhost:11434", "timeout": 5}'
 ```
@@ -748,7 +766,7 @@ List all models installed on the configured Ollama instance.
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/ollama/models
+curl http://localhost/api/v1/settings/ollama/models
 ```
 
 #### Response
@@ -793,7 +811,7 @@ Pull (download) a model from the Ollama registry. Returns a Server-Sent Events (
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/ollama/models/pull \
+curl -X POST http://localhost/api/v1/settings/ollama/models/pull \
   -H 'Content-Type: application/json' \
   -d '{"model": "qwen3:8b-instruct"}'
 ```
@@ -830,7 +848,7 @@ Remove an installed model from Ollama.
 #### Example Request
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/settings/ollama/models/remove \
+curl -X DELETE http://localhost/api/v1/settings/ollama/models/remove \
   -H 'Content-Type: application/json' \
   -d '{"model": "qwen3:8b-instruct"}'
 ```
@@ -871,7 +889,7 @@ Get detailed information about a specific installed Ollama model, including para
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/ollama/models/qwen3:30b-instruct/details
+curl http://localhost/api/v1/settings/ollama/models/qwen3:30b-instruct/details
 ```
 
 #### Response
@@ -905,7 +923,7 @@ curl http://localhost:8080/api/v1/settings/ollama/models/qwen3:30b-instruct/deta
 
 ## Reset Operations
 
-Destructive operations that reset parts of the application database. All reset endpoints return a `ResetResponse` with success status and operation-specific statistics.
+Destructive operations that reset parts of the application database. Lightweight resets (`reset/workflows`, `reset/chats`, `reset/queue`, `reset/source_processing`, `seed/templates`) run inline and return a `ResetResponse` with success status and operation-specific statistics. Heavy operations — [Clean Up Orphaned Graph Items](#clean-up-orphaned-graph-items), [Reset Knowledge](#reset-knowledge), and [Reset All](#reset-all) — are queued to the background worker and return `202 Accepted` with a `QueuedResetResponse`; poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload.
 
 :::danger[Irreversible]
 
@@ -924,7 +942,7 @@ POST /api/v1/settings/reset/workflows
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/workflows
+curl -X POST http://localhost/api/v1/settings/reset/workflows
 ```
 
 #### Response
@@ -962,7 +980,7 @@ POST /api/v1/settings/reset/chats
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/chats
+curl -X POST http://localhost/api/v1/settings/reset/chats
 ```
 
 #### Response
@@ -992,7 +1010,7 @@ POST /api/v1/settings/reset/queue
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/queue
+curl -X POST http://localhost/api/v1/settings/reset/queue
 ```
 
 #### Response
@@ -1027,7 +1045,7 @@ POST /api/v1/settings/reset/source_processing
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/source_processing
+curl -X POST http://localhost/api/v1/settings/reset/source_processing
 ```
 
 #### Response
@@ -1064,27 +1082,23 @@ POST /api/v1/settings/reset/knowledge
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/knowledge
+curl -X POST http://localhost/api/v1/settings/reset/knowledge
 ```
 
 #### Response
 
-**Status:** `200 OK`
+**Status:** `202 Accepted`
 
 ```json
 {
-  "success": true,
-  "data": {
-    "import_history_deleted": 15,
-    "graph_nodes_deleted": 450,
-    "graph_edges_deleted": 1200,
-    "graph_templates_deleted": 0,
-    "sources_deleted": 8,
-    "chunks_deleted": 4500,
-    "search_indices_cleared": true
-  }
+  "task_id": "task-abc-123",
+  "status": "queued",
+  "operation_type": "reset_knowledge_base",
+  "message": "Reset operation queued for background execution"
 }
 ```
+
+The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`import_history_deleted`, `graph_nodes_deleted`, `graph_edges_deleted`, `graph_templates_deleted`, `sources_deleted`, `chunks_deleted`, `search_indices_cleared`).
 
 **Deletes:** Import history and file records, discovery sessions and AI suggestions, knowledge graph (nodes, edges, templates), document sources (sources, chunks, citations, tags), search indices (full-text and vector).
 
@@ -1109,31 +1123,25 @@ POST /api/v1/settings/reset/all
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/reset/all \
+curl -X POST http://localhost/api/v1/settings/reset/all \
   -H 'Content-Type: application/json' \
   -d '{"confirmation": "CONFIRM"}'
 ```
 
 #### Response
 
-**Status:** `200 OK`
+**Status:** `202 Accepted`
 
 ```json
 {
-  "success": true,
-  "data": {
-    "app_db_deleted": true,
-    "graphs_deleted": true,
-    "search_indices_deleted": true,
-    "imports_deleted": true,
-    "queue_cleared": true,
-    "database_recreated": true,
-    "system_tools_created": 40,
-    "default_workflows_created": 3,
-    "default_triggers_created": 2
-  }
+  "task_id": "task-abc-123",
+  "status": "queued",
+  "operation_type": "reset_all",
+  "message": "Reset operation queued for background execution"
 }
 ```
+
+The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`app_db_deleted`, `graphs_deleted`, `search_indices_deleted`, `imports_deleted`, `queue_cleared`, `database_recreated`, `system_tools_created`, `default_workflows_created`, `default_triggers_created`).
 
 **Deletes:** Entire `app.db` file (including all knowledge graph nodes, edges, templates, search indices, queue history), and uploaded import files.
 
@@ -1160,26 +1168,23 @@ POST /api/v1/settings/cleanup/orphans
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/cleanup/orphans
+curl -X POST http://localhost/api/v1/settings/cleanup/orphans
 ```
 
 #### Response
 
-**Status:** `200 OK`
+**Status:** `202 Accepted`
 
 ```json
 {
-  "success": true,
-  "data": {
-    "edges_scanned": 1200,
-    "edges_removed": 3,
-    "nodes_scanned": 450,
-    "nodes_removed": 1,
-    "templates_scanned": 25,
-    "templates_removed": 0
-  }
+  "task_id": "task-abc-123",
+  "status": "queued",
+  "operation_type": "cleanup_orphans",
+  "message": "Reset operation queued for background execution"
 }
 ```
+
+The cleanup runs on the background worker (it can take tens of seconds on large graphs). Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`edges_scanned`, `edges_removed`, `nodes_scanned`, `nodes_removed`, `templates_scanned`, `templates_removed`).
 
 **Removes:** Edges pointing to non-existent nodes, nodes with `source_id` pointing to non-existent sources, templates with `source_id` pointing to non-existent sources (except system templates).
 
@@ -1200,7 +1205,7 @@ POST /api/v1/settings/seed/templates
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/seed/templates
+curl -X POST http://localhost/api/v1/settings/seed/templates
 ```
 
 #### Response
@@ -1241,7 +1246,7 @@ GET /api/v1/settings/tls/status
 Returns the current TLS configuration state.
 
 ```bash
-curl http://localhost:8080/api/v1/settings/tls/status
+curl http://localhost/api/v1/settings/tls/status
 ```
 
 **Response** `200 OK`
@@ -1263,7 +1268,7 @@ POST /api/v1/settings/tls/selfsigned
 Generate a self-signed TLS certificate and enable HTTPS. Suitable for local development and self-hosted deployments where certificate warnings are acceptable. Accepts an optional `hostname` query parameter to set the certificate's subject.
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/settings/tls/selfsigned?hostname=localhost"
+curl -X POST "http://localhost/api/v1/settings/tls/selfsigned?hostname=localhost"
 ```
 
 **Response** `200 OK`
@@ -1286,7 +1291,7 @@ POST /api/v1/settings/tls/custom
 Upload a custom TLS certificate and private key (e.g. from Let's Encrypt or a CA).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/tls/custom \
+curl -X POST http://localhost/api/v1/settings/tls/custom \
   -F "cert_file=@fullchain.pem" \
   -F "key_file=@privkey.pem"
 ```
@@ -1311,7 +1316,7 @@ DELETE /api/v1/settings/tls
 Disable TLS and revert to plain HTTP.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/settings/tls
+curl -X DELETE http://localhost/api/v1/settings/tls
 ```
 
 **Response** `204 No Content`
@@ -1333,7 +1338,7 @@ GET /api/v1/settings/embedding/models
 Returns the curated list of supported embedding models with metadata. Used to populate the model selection UI.
 
 ```bash
-curl http://localhost:8080/api/v1/settings/embedding/models
+curl http://localhost/api/v1/settings/embedding/models
 ```
 
 **Response** `200 OK`
@@ -1377,7 +1382,7 @@ GET /api/v1/settings/embedding/local/models
 Returns embedding models already downloaded to the local data directory.
 
 ```bash
-curl http://localhost:8080/api/v1/settings/embedding/local/models
+curl http://localhost/api/v1/settings/embedding/local/models
 ```
 
 **Response** `200 OK`
@@ -1405,7 +1410,7 @@ POST /api/v1/settings/embedding/local/models
 Download a HuggingFace embedding model to the local data directory. This is a **blocking** operation: the model is downloaded and validated before the response returns (which can take minutes for large models). There is no background queuing or polling.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/embedding/local/models \
+curl -X POST http://localhost/api/v1/settings/embedding/local/models \
   -H "Content-Type: application/json" \
   -d '{"model": "Qwen/Qwen3-Embedding-0.6B"}'
 ```
@@ -1435,17 +1440,10 @@ DELETE /api/v1/settings/embedding/local/models/{model_id:path}
 Remove a downloaded embedding model from the local data directory. The `{model_id:path}` parameter accepts model IDs containing slashes (e.g. `Qwen/Qwen3-Embedding-0.6B`).
 
 ```bash
-curl -X DELETE "http://localhost:8080/api/v1/settings/embedding/local/models/Qwen/Qwen3-Embedding-0.6B"
+curl -X DELETE "http://localhost/api/v1/settings/embedding/local/models/Qwen/Qwen3-Embedding-0.6B"
 ```
 
-**Response** `200 OK`
-
-```json
-{
-  "success": true,
-  "message": "Model deleted"
-}
-```
+**Response** `204 No Content` (empty body)
 
 | Status | Description |
 |--------|-------------|
@@ -1464,19 +1462,41 @@ GET /api/v1/settings/public
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/public
+curl http://localhost/api/v1/settings/public
 ```
 
 #### Response
 
 **Status:** `200 OK`
 
+A flat DTO of frontend-relevant values (representative subset shown — never includes secrets):
+
 ```json
 {
-  "dark_mode": true,
-  "auto_enable": true
+  "pagination_default_page_size": 50,
+  "pagination_max_page_size": 1000,
+  "search_default_result_limit": 10,
+  "search_debounce_ms": 300,
+  "batch_max_upload_files": 20,
+  "intervals_status_poll_ms": 10000,
+  "cache_default_stale_time_ms": 30000,
+  "http_default_timeout_ms": 30000,
+  "chat_message_max_length": 500000
 }
 ```
+
+The full catalog spans these field groups:
+
+| Prefix | Contents |
+|--------|----------|
+| `pagination_*` | Default/max page sizes, workflow-execution fetch limit |
+| `search_*` | Default result limit, similarity threshold, omnibar entity/source limits, input debounce |
+| `batch_*` | Upload file/byte caps, upload timeouts, bulk-operation size, polling attempt/wait limits, graph source page size |
+| `recovery_*` | Source-recovery warn threshold and max attempts |
+| `intervals_*` | Polling intervals (logs, status, chat fallback), SSE skip-poll window, MCP staleness threshold, spotlight hover debounce |
+| `cache_*` | React Query staleTime/gcTime defaults and graph-snapshot refetch intervals |
+| `http_*` | Frontend HTTP client default timeout |
+| (validation lengths) | `chat_title_max_length`, `chat_message_max_length`, `pause_reason_max_chars` |
 
 ---
 
@@ -1491,7 +1511,7 @@ GET /api/v1/settings/host
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/host
+curl http://localhost/api/v1/settings/host
 ```
 
 #### Response
@@ -1527,7 +1547,7 @@ POST /api/v1/settings/llm/verify
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/settings/llm/verify \
+curl -X POST http://localhost/api/v1/settings/llm/verify \
   -H 'Content-Type: application/json' \
   -d '{"provider": "openai", "api_key": "sk-..."}'
 ```
@@ -1557,7 +1577,7 @@ GET /api/v1/settings/llm/health
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/settings/llm/health
+curl http://localhost/api/v1/settings/llm/health
 ```
 
 #### Response
@@ -1628,6 +1648,7 @@ Returned by the [Update Settings](#update-settings) endpoint.
 | `preset_name` | string | Display name of the applied preset |
 | `settings_updated` | object | Key-value pairs of all settings that were changed |
 | `message` | string | Human-readable confirmation message |
+| `missing_models` | list[string] | Configured-but-not-pulled Ollama models, surfaced for an immediate UI warning |
 
 ### OllamaVerifyResponse
 

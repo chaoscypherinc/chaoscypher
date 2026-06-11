@@ -1,9 +1,10 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
+  ButtonBase,
   IconButton,
   Typography,
   TextField,
@@ -20,6 +21,8 @@ import {
   DialogActions,
   Divider,
   InputAdornment,
+  Menu,
+  MenuItem,
 } from '@mui/material';
 import ConfirmDialog from './ConfirmDialog';
 import AddIcon from '@mui/icons-material/Add';
@@ -30,6 +33,7 @@ import ChevronDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterIcon from '@mui/icons-material/FilterList';
 import type { ChatMetadata } from '../types';
+import { useChatSearch } from '../services/api/useChats';
 import ScopeBadge from './chat/ScopeBadge';
 import { ghostButtonSx, ghostCancelBtnSx, ghostDialogPaperSx } from '../theme/ghostStyles';
 import { ChaosCypherPalette } from '../theme/palette';
@@ -41,7 +45,7 @@ interface ChatHeaderBarProps {
   onNewChat: () => void;
   onRenameChat: (chatId: string, newTitle: string) => void;
   onDeleteChat: (chatId: string) => void;
-  onExportChat: (chatId: string) => void;
+  onExportChat: (chatId: string, format?: 'json' | 'markdown') => void;
   onClearAllChats: () => void;
   onScopeBadgeClick?: () => void;
   /** Number of pending scope sources (for new chat, before first message) */
@@ -106,11 +110,17 @@ export default function ChatHeaderBar({
   // Clear all confirm dialog
   const [confirmClearAllOpen, setConfirmClearAllOpen] = useState(false);
 
-  const filteredChats = useMemo(() => {
-    if (!search.trim()) return chats;
-    const q = search.toLowerCase();
-    return chats.filter((c) => c.title.toLowerCase().includes(q));
-  }, [chats, search]);
+  // Server-side title search (debounced): the `chats` prop only holds the
+  // first page, so filtering it client-side could never find older chats.
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(search), 250);
+    return () => clearTimeout(timer);
+  }, [search]);
+  const { data: searchResults, isFetching: searchPending } = useChatSearch(debouncedSearch);
+
+  const searchActive = search.trim().length > 0;
+  const filteredChats = searchActive ? (searchResults ?? []) : chats;
 
   // --- Dropdown handlers ---
 
@@ -164,10 +174,19 @@ export default function ChatHeaderBar({
     setConfirmDeleteOpen(false);
   };
 
-  const handleExportClick = () => {
+  const [exportAnchor, setExportAnchor] = useState<HTMLElement | null>(null);
+
+  const handleExportClick = (event: React.MouseEvent<HTMLElement>) => {
     if (currentChat) {
-      onExportChat(currentChat.id);
+      setExportAnchor(event.currentTarget);
     }
+  };
+
+  const handleExportFormat = (format: 'json' | 'markdown') => {
+    if (currentChat) {
+      onExportChat(currentChat.id, format);
+    }
+    setExportAnchor(null);
   };
 
   const handleClearAllClick = () => {
@@ -196,12 +215,14 @@ export default function ChatHeaderBar({
       >
         {/* Left: title dropdown trigger + new chat */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0, flexShrink: 1 }}>
-          <Box
+          <ButtonBase
             onClick={handleOpenDropdown}
+            aria-label="Switch chat"
+            aria-haspopup="listbox"
+            aria-expanded={dropdownOpen}
             sx={{
               display: 'flex',
               alignItems: 'center',
-              cursor: 'pointer',
               borderRadius: 1,
               px: 1,
               py: 0.5,
@@ -221,7 +242,7 @@ export default function ChatHeaderBar({
                 transform: dropdownOpen ? 'rotate(180deg)' : 'none',
               }}
             />
-          </Box>
+          </ButtonBase>
 
           <Tooltip title="New chat">
             <IconButton aria-label="New chat" size="small" onClick={onNewChat} color="primary">
@@ -275,6 +296,14 @@ export default function ChatHeaderBar({
                 <ExportIcon fontSize="small" />
               </IconButton>
             </Tooltip>
+            <Menu
+              anchorEl={exportAnchor}
+              open={Boolean(exportAnchor)}
+              onClose={() => setExportAnchor(null)}
+            >
+              <MenuItem onClick={() => handleExportFormat('json')}>Export as JSON</MenuItem>
+              <MenuItem onClick={() => handleExportFormat('markdown')}>Export as Markdown</MenuItem>
+            </Menu>
             <Tooltip title="Delete">
               <IconButton
                 aria-label="Delete"
@@ -342,7 +371,11 @@ export default function ChatHeaderBar({
               <Typography variant="body2" sx={{
                 color: "text.secondary"
               }}>
-                {search ? 'No matches' : 'No chats yet'}
+                {searchActive && searchPending
+                  ? 'Searching…'
+                  : search
+                    ? 'No matches'
+                    : 'No chats yet'}
               </Typography>
             </Box>
           ) : (

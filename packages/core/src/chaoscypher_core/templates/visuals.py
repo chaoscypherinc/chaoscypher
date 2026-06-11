@@ -5,10 +5,10 @@
 
 Canonical location for template visual helpers (icons and colors).
 Relocated from `chaoscypher_core.services.sources.engine.extraction.utils.template_visuals`
-as part of Phase 1 architecture remediation (Task 5) — the old location caused
-adapters/sqlite/engine.py to import from the services layer, inverting hexagonal
-architecture direction. This package (chaoscypher_core.templates) is neutral and may
-be imported by both services and adapters.
+because the old location caused adapters/sqlite/engine.py to import from the
+services layer, inverting hexagonal architecture direction. This package
+(chaoscypher_core.templates) is neutral and may be imported by both services
+and adapters.
 
 CONTRACT: This module must NOT import from `chaoscypher_core.services.*` or
 `chaoscypher_core.adapters.*`.

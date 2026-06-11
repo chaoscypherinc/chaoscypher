@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 
 
 console = Console()
@@ -47,10 +48,10 @@ def list_templates(
     Lists all templates defined in the database.
 
     Example:
-        chaoscypher template list
-        chaoscypher template list --format json
-        chaoscypher template list --verbose
-        chaoscypher template list --type node
+        chaoscypher graph template list
+        chaoscypher graph template list --format json
+        chaoscypher graph template list --verbose
+        chaoscypher graph template list --type node
     """
     try:
         ctx = get_context(database_name=database)
@@ -60,7 +61,7 @@ def list_templates(
         templates = result.get("data", [])
 
         if output_format == "json":
-            console.print(json.dumps(templates, indent=2, default=str))
+            print_json(json.dumps(templates, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -69,12 +70,12 @@ def list_templates(
                 console.print(yaml.dump(templates, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(templates, indent=2, default=str))
+                print_json(json.dumps(templates, indent=2, default=str))
 
         else:  # table format
             if not templates:
                 console.print("[dim]No templates found.[/dim]")
-                console.print("\nCreate one with: chaoscypher template create --interactive")
+                console.print("\nCreate one with: chaoscypher graph template create --interactive")
                 return
 
             table = Table(title="Templates", show_header=True)

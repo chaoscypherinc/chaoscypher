@@ -363,6 +363,12 @@ async with Engine("./data/databases/default") as engine:
     print(response.content)
 ```
 
+:::note
+
+`engine.chat` sends the prompt directly to the configured LLM provider — it does not search your indexed content or return citations. For document-grounded chat with citations, use the Web UI, CLI, or the `/chats` REST API shown in the other tabs.
+
+:::
+
 </TabItem>
 <TabItem value="api" label="API">
 
@@ -373,17 +379,21 @@ curl -X POST http://localhost:8080/api/v1/chats \
   -H "Content-Type: application/json" \
   -d '{"title": "Quick Start Chat"}'
 
-# 2. Stream an AI response (SSE)
-curl -N -X POST http://localhost:8080/api/v1/chats/{chat_id}/stream \
+# 2. Submit a message for processing
+curl -X POST http://localhost:8080/api/v1/chats/{chat_id}/send \
   -H "Content-Type: application/json" \
-  -d '{"role": "user", "content": "What are the key findings?"}'
+  -d '{"content": "What are the key findings?"}'
+
+# 3. Watch the live response (SSE) — survives disconnects; the answer
+#    is persisted to the conversation either way
+curl -N http://localhost:8080/api/v1/chats/{chat_id}/events
 ```
 
-The stream endpoint returns Server-Sent Events with `content`, `tool_calls`, `tool_result`, and `done` events. The `done` event includes the final response with citations:
+The events endpoint returns Server-Sent Events with `content`, `tool_calls`, `tool_result`, and `done` events. The `done` event includes the final response with citations:
 
 ```
-data: {"type": "content", "delta": "Based on", "accumulated": "Based on"}
-data: {"type": "done", "content": "Based on the analysis...", "chunk_citations": [...]}
+data: {"type": "content", "data": {"delta": "Based on", "accumulated": "Based on"}}
+data: {"type": "done", "data": {"content": "Based on the analysis...", "chunk_citations": {...}}}
 ```
 
 </TabItem>

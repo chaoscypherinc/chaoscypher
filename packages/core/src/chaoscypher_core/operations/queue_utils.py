@@ -166,7 +166,7 @@ async def queue_import_commit(
 ) -> str:
     """Queue import commit operation (IDs-only queue payload).
 
-    Phase 5 Task D: the large ``commit_data`` dict (entities,
+    The large ``commit_data`` dict (entities,
     relationships, suggested templates — can be MB-scale for large
     documents) is persisted onto the source row via
     ``adapter.set_source_commit_payload`` BEFORE enqueue. The queue

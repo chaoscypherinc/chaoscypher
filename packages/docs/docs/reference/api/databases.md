@@ -20,7 +20,7 @@ GET /api/v1/databases
 Returns all available databases sorted alphabetically by name. Only directories containing an initialized `app.db` are included.
 
 ```bash
-curl http://localhost:8080/api/v1/databases
+curl http://localhost/api/v1/databases
 ```
 
 **Response** `200 OK` -- [DatabaseListResponse](#databaselistresponse)
@@ -57,7 +57,7 @@ GET /api/v1/databases/current
 Returns the name and metadata of the currently active database.
 
 ```bash
-curl http://localhost:8080/api/v1/databases/current
+curl http://localhost/api/v1/databases/current
 ```
 
 **Response** `200 OK` -- [CurrentDatabaseResponse](#currentdatabaseresponse)
@@ -99,7 +99,7 @@ PATCH /api/v1/databases/current
 Switch the active database. If the target database directory exists but has no `app.db`, one is created automatically. After switching, the frontend should refresh to load the new database context.
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/databases/current \
+curl -X PATCH http://localhost/api/v1/databases/current \
   -H "Content-Type: application/json" \
   -d '{"name": "research-project"}'
 ```
@@ -144,7 +144,7 @@ GET /api/v1/databases/{name}
 Returns metadata for a specific database.
 
 ```bash
-curl http://localhost:8080/api/v1/databases/research-project
+curl http://localhost/api/v1/databases/research-project
 ```
 
 ### Path Parameters
@@ -189,7 +189,7 @@ POST /api/v1/databases
 Create a new database with a fully initialized directory structure including `app.db` (with default seed data, search indices, and knowledge graph tables).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/databases \
+curl -X POST http://localhost/api/v1/databases \
   -H "Content-Type: application/json" \
   -d '{"name": "my_new_database"}'
 ```
@@ -248,7 +248,7 @@ DELETE /api/v1/databases/{name}
 Permanently delete a database and all its data, including knowledge graphs, search indices, and application data. This operation cannot be undone.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/databases/old-project
+curl -X DELETE http://localhost/api/v1/databases/old-project
 ```
 
 ### Path Parameters

@@ -335,7 +335,7 @@ class TestHealthCommand:
             ollama_result=(False, None, []),
             db_result={"context_error": True},
         )
-        assert result.exit_code == 0  # exit code is always 0 for health
+        assert result.exit_code != 0  # issues found → non-zero exit
         assert "Not reachable" in result.output
         assert "issue" in result.output
 
@@ -512,6 +512,7 @@ class TestHealthCommand:
         )
         # Should say "1 issue found." not "1 issues found."
         assert "1 issue found." in result.output
+        assert result.exit_code == 1
 
     def test_ollama_unreachable_chat_model_branch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When Ollama unreachable, chat model row says '(Ollama unreachable)'."""

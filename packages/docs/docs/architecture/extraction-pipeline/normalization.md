@@ -125,10 +125,10 @@ Four trafilatura options are now configurable via `NormalizerSettings`:
 
 | Setting | Default | Trafilatura kwarg | Description |
 |---------|---------|-------------------|-------------|
-| `web_favor_precision` | `True` | `favor_precision` | Prefer a smaller high-quality extract over a larger noisy one |
-| `web_include_images` | `False` | `include_images` | Include alt-text from `<img>` tags in the extract |
-| `web_include_comments` | `False` | `include_comments` | Include comment sections (e.g., blog comments) |
-| `web_basic_strip_tags` | `["script", "style", "nav", "footer", "header", "aside", "noscript"]` | N/A | Tag list used by the regex fallback path when trafilatura is unavailable |
+| `web_trafilatura_favor_precision` | `True` | `favor_precision` | Prefer a smaller high-quality extract over a larger noisy one |
+| `web_trafilatura_include_images` | `False` | `include_images` | Include alt-text from `<img>` tags in the extract |
+| `web_trafilatura_include_comments` | `False` | `include_comments` | Include comment sections (e.g., blog comments) |
+| `web_basic_strip_tags` | `["nav", "footer", "header", "aside"]` | N/A | Chrome-tag list used by the regex fallback path when trafilatura is unavailable. `<script>` / `<style>` blocks are always removed by the fallback regardless of this list. |
 
 The basic strip-tag list was previously hardcoded; it is now a setting so
 operators can suppress additional tags (e.g., `"figure"`, `"table"`) or
@@ -168,9 +168,9 @@ returns truthy for the source's metadata. Cleaners without an
 `applies_to` predicate (the text and web cleaners) always fire.
 
 When the OCR cleaner's predicate returns `False`, the skip is counted in
-`OCR_PREDICATE_SKIPPED` / `ocr_predicate_skipped` (Phase 2, 2026-05-08)
-so operators can confirm that the cleaner was intentionally bypassed for
-non-OCR content rather than silently inactive.
+`OCR_CLEANER_SKIPPED_BY_PREDICATE` / `ocr_cleaner_skipped_by_predicate`
+(Phase 2, 2026-05-08) so operators can confirm that the cleaner was
+intentionally bypassed for non-OCR content rather than silently inactive.
 
 **Operations (applied in order):**
 
@@ -315,14 +315,14 @@ Pre-W5, the operator's `NormalizerSettings` were silently ignored — the indexi
 | `enable_ocr_cleaning` | `True` | Enable OCR artifact removal |
 | `enable_duplicate_removal` | `True` | Enable paragraph deduplication |
 | `enable_markdown_normalize` | `True` | Enable markdown formatting normalization |
-| `min_line_length` | `10` | Threshold for short line gibberish detection (formerly `ocr_min_line_length`) |
-| `min_alpha_ratio` | `0.60` | Minimum alphabetic character ratio for longer lines (formerly `ocr_min_alpha_ratio`) |
-| `duplicate_similarity_threshold` | `0.85` | SequenceMatcher threshold for fuzzy dedup (formerly `ocr_duplicate_similarity_threshold`) |
+| `min_line_length` | `5` | Threshold for short line gibberish detection |
+| `min_alpha_ratio` | `0.4` | Minimum alphabetic character ratio for longer lines |
+| `duplicate_similarity_threshold` | `0.85` | SequenceMatcher threshold for fuzzy dedup |
 | `target_format` | `"markdown"` | Output format for web extraction |
-| `web_favor_precision` | `True` | Trafilatura precision mode (Phase 6) |
-| `web_include_images` | `False` | Include image alt-text in web extract (Phase 6) |
-| `web_include_comments` | `False` | Include comment sections in web extract (Phase 6) |
-| `web_basic_strip_tags` | (see Phase 6 above) | Tag list for fallback regex stripper (Phase 6) |
+| `web_trafilatura_favor_precision` | `True` | Trafilatura precision mode (Phase 6) |
+| `web_trafilatura_include_images` | `False` | Include image alt-text in web extract (Phase 6) |
+| `web_trafilatura_include_comments` | `False` | Include comment sections in web extract (Phase 6) |
+| `web_basic_strip_tags` | `["nav", "footer", "header", "aside"]` | Chrome-tag list for fallback regex stripper (Phase 6) |
 
 ## Phase 4: Domain normalizer overrides (2026-05-08)
 
@@ -351,17 +351,17 @@ so the override is transparent to individual cleaner implementations.
 
 Previously hardcoded constants have been promoted to `NormalizerSettings`:
 
-| Setting | Old constant | Default | Description |
-|---------|-------------|---------|-------------|
-| `ocr_min_line_length` | `10` | `10` | Short-line threshold for gibberish detection |
-| `ocr_min_alpha_ratio` | `0.60` | `0.60` | Minimum alphabetic-character ratio for longer lines |
-| `ocr_duplicate_similarity_threshold` | `0.85` | `0.85` | SequenceMatcher threshold for fuzzy duplicate detection |
-| `ocr_artifact_line_max_length` | `30` | `30` | Lines shorter than this repeated 3+ times are treated as headers/footers |
-| `ocr_max_recent_paragraphs_check` | `50` | `50` | Window of recent paragraphs to check for near-duplicates |
-| `ftfy_fix_encoding` | `True` | `True` | Enable ftfy's encoding-fix pass |
-| `ftfy_fix_latin_ligatures` | `True` | `True` | Expand Latin ligatures (ﬁ → fi, etc.) |
-| `ftfy_fix_character_width` | `True` | `True` | Normalize full-width/half-width characters |
-| `ftfy_uncurl_quotes` | `True` | `True` | Normalize curly quotes to straight quotes |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `min_line_length` | `5` | Short-line threshold for gibberish detection |
+| `min_alpha_ratio` | `0.4` | Minimum alphabetic-character ratio for valid text |
+| `gibberish_threshold` | `0.5` | Threshold for gibberish detection (lower = stricter) |
+| `duplicate_similarity_threshold` | `0.85` | SequenceMatcher threshold for fuzzy duplicate detection |
+| `ocr_page_artifact_min_repeats` | `3` | Minimum repeats before a short line is treated as a header/footer artifact |
+| `ocr_page_artifact_max_line_length` | `30` | Maximum line length for a repeated line to enter the artifact set |
+| `ocr_page_artifact_candidate_max_length` | `50` | Maximum line length counted toward the repeat tally at all |
+| `ftfy_fix_character_width` | `True` | Pass `fix_character_width` to `ftfy.fix_text` (normalize full-width/half-width characters) |
+| `ftfy_fix_line_breaks` | `True` | Pass `fix_line_breaks` to `ftfy.fix_text` (convert unusual line endings to `\n`) |
 
 These are overridable in `settings.yaml` under the `normalizer:` key.
 

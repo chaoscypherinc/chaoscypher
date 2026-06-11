@@ -123,7 +123,7 @@ curl -s -X POST http://localhost/api/v1/auth/setup \
 curl -s -X POST http://localhost/api/v1/auth/setup \
     -d '{"username": "alice", "password": "a-good-passphrase"}' \
     -H "Content-Type: application/json"
-{"error": "CONFLICT", "message": "already initialized", "details": null}
+{"error": "HTTP_409", "message": "already initialized"}
 ```
 
 ---
@@ -503,7 +503,7 @@ curl -s -o /dev/null -w "%{http_code}" \
 
 ## Error Envelope
 
-All error responses use the unified envelope:
+Error responses from Cortex use the unified envelope:
 
 ```json
 {"error": "ERROR_CODE", "message": "Human-readable message.", "details": {...}}
@@ -513,10 +513,17 @@ Common codes for auth endpoints:
 
 | HTTP Status | `error` | When |
 |-------------|---------|------|
-| `401` | `AUTH_REQUIRED` | No session cookie or API key (via nginx; Cortex returns `not authenticated`) |
-| `403` | (varies) | Wrong password on `/password` or `/username` |
-| `409` | `CONFLICT` | Already initialized (on setup) or setup required (on login before setup) |
-| `422` | `VALIDATION_FAILED` | Request body failed field validation |
+| `401` | `authentication_required` | No session cookie or API key — nginx answers the request itself with the minimal body `{"error":"authentication_required"}` (no `message` field). |
+| `401` | `HTTP_401` | `invalid credentials` on `/login`; `not authenticated` on session-gated endpoints reached past nginx. |
+| `403` | `HTTP_403` | `invalid password` — wrong password confirmation on `/password` or `/username`. |
+| `409` | `HTTP_409` | `already initialized` (on setup) or `setup required` (on login before setup). |
+| `422` | `VALIDATION_FAILED` | Request body failed field validation. |
+
+:::note
+
+`AUTH_REQUIRED` ("Authentication required") appears only on requests made directly to Cortex that lack the nginx identity header — in the default deployment, unauthenticated requests never reach Cortex, so you will see nginx's `authentication_required` body instead.
+
+:::
 
 Validation error structure:
 

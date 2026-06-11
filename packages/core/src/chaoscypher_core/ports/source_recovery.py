@@ -10,9 +10,9 @@ is required — ``SqliteAdapter`` satisfies this Protocol automatically
 once every listed method is implemented on its mixins.
 
 Used by
-``packages/core/src/chaoscypher_core/services/sources/recovery.py``
-once the service is rewired in PR2c Task 27 to take
-``adapter: SourceRecoveryPorts`` instead of the concrete adapter.
+``packages/core/src/chaoscypher_core/services/sources/recovery.py``,
+which takes ``adapter: SourceRecoveryPorts`` instead of the concrete
+adapter.
 """
 
 from __future__ import annotations

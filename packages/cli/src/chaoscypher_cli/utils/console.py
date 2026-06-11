@@ -6,12 +6,12 @@
 Provides reusable console formatting and output utilities.
 
 Example:
-    from chaoscypher_cli.utils.console import get_console, print_table
+    from chaoscypher_cli.utils.console import get_console, print_error
 
     console = get_console()
     console.print("[green]Success![/green]")
 
-    print_table(["Name", "Version"], [["package1", "1.0.0"]])
+    print_error("something went wrong")
 """
 
 from rich.console import Console
@@ -28,21 +28,8 @@ def get_console() -> Console:
     return _console
 
 
-def print_table(headers: list[str], rows: list[list[str]]) -> None:
-    """Print a formatted table."""
-    from rich.table import Table
-
-    console = get_console()
-    table = Table()
-    for header in headers:
-        table.add_column(header)
-    for row in rows:
-        table.add_row(*row)
-    console.print(table)
-
-
 def print_json(payload: str) -> None:
-    """Print a pre-serialized JSON string without any line wrapping.
+    """Print a pre-serialized JSON string verbatim — no wrapping, no markup.
 
     Machine-readable output must never be hard-wrapped to the terminal width.
     When stdout is not a TTY (pipes, CI runners) Rich defaults to an 80-column
@@ -50,10 +37,15 @@ def print_json(payload: str) -> None:
     so it can no longer be parsed downstream. ``soft_wrap=True`` emits the
     string verbatim regardless of console width.
 
+    ``markup=False`` and ``highlight=False`` keep user data intact: a value
+    containing ``[bold]``-like substrings would otherwise be swallowed as Rich
+    markup (or crash with ``MarkupError`` on an unbalanced ``[/red]``), and
+    syntax highlighting would inject ANSI codes into piped output.
+
     Args:
         payload: An already-serialized JSON document (e.g. ``json.dumps(...)``).
     """
-    get_console().print(payload, soft_wrap=True)
+    get_console().print(payload, soft_wrap=True, markup=False, highlight=False)
 
 
 def print_unwrapped(message: str) -> None:
@@ -80,9 +72,3 @@ def print_success(message: str) -> None:
     """Print success message in green."""
     console = get_console()
     console.print(f"[green]Success:[/green] {message}")
-
-
-def print_warning(message: str) -> None:
-    """Print warning message in yellow."""
-    console = get_console()
-    console.print(f"[yellow]Warning:[/yellow] {message}")

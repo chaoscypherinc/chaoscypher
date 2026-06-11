@@ -105,7 +105,7 @@ def up(
         console.print(
             "[yellow]Note:[/yellow] Not logged in. Lexicon packages may require authentication."
         )
-        console.print("Run 'chaoscypher login' to authenticate.\n")
+        console.print("Run 'chaoscypher lexicon login' to authenticate.\n")
 
     async def do_up() -> Any:
         """Run the async ComposeService.up call."""

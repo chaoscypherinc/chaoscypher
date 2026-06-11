@@ -191,19 +191,18 @@ class SourceService:
             force: When True, allow re-extraction on an already-committed source.
             filtering_mode: Optional filtering-mode override.
             content_filtering: Enable chunk content-filtering.
-            enable_direction_correction: Phase 4 (2026-05-08). When not None,
-                persists the value on the source row so the import worker reads
-                it. None leaves the current row value untouched.
-            protect_orphans: Phase 4 (2026-05-08). When not None, persists the
-                value on the source row. True keeps orphan entities; False drops
-                them. None leaves the current row value untouched.
-            enable_inverse_relationships: Phase 6 (2026-05-08). When not None,
-                persists the value on the source row so the commit worker reads
-                it. None leaves the current row value untouched.
-            max_entity_degree_override: Phase 6 (2026-05-08). When a positive
-                int, persists the per-source degree cap on the source row so the
-                extraction worker applies it. None leaves the current row
-                value untouched.
+            enable_direction_correction: When not None, persists the value on
+                the source row so the import worker reads it. None leaves the
+                current row value untouched.
+            protect_orphans: When not None, persists the value on the source
+                row. True keeps orphan entities; False drops them. None leaves
+                the current row value untouched.
+            enable_inverse_relationships: When not None, persists the value on
+                the source row so the commit worker reads it. None leaves the
+                current row value untouched.
+            max_entity_degree_override: When a positive int, persists the
+                per-source degree cap on the source row so the extraction
+                worker applies it. None leaves the current row value untouched.
 
         Returns:
             ``{"source_id": source_id, "status": SourceStatus.EXTRACTING}``

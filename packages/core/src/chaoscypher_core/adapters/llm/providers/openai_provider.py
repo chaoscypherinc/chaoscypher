@@ -129,8 +129,9 @@ class OpenAIProvider(BaseLLMProvider):
         # Add generic LLM settings
         if self.config.get("ai_temperature") is not None:
             kwargs["temperature"] = self.config.get("ai_temperature")
-        if self.config.get("ai_max_tokens") is not None:
-            kwargs["max_tokens"] = self.config.get("ai_max_tokens")
+        effective_max = self._effective_max_tokens("openai_max_output_tokens")
+        if effective_max is not None:
+            kwargs["max_tokens"] = effective_max
 
         # Bounded request timeout — LangChain forwards to the httpx client.
         timeout = self.config.get("llm_request_timeout")

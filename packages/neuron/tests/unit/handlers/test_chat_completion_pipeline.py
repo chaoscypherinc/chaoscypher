@@ -13,10 +13,6 @@ outer ``chat_completion_handler`` wrapper directly:
   status to ``error``, publishes a ``WORKER_ERROR`` event, and re-raises.
 * ``_run_chat_completion`` — chat-not-found, source-scope metadata building,
   and the two early-return error bail-outs (stream / tool-loop).
-* ``_consume_llm_stream`` — the pure async-generator state machine (content /
-  thinking / error / done chunks, ``aclose`` in ``finally``), with no DB.
-* ``_handle_tool_loop`` — the tool-call ceiling, a follow-up error break, and
-  the multi-iteration thinking-parts join.
 * ``_finalize_and_publish`` — empty-content apology fallback, the
   thinking + tool_calls metadata/done-event keys, and citation/entity
   enrichment when tool results are present (citation helpers patched to
@@ -29,13 +25,13 @@ harness (``chat_service`` fixture, ``_patch_streaming_seams``, ``_run_kwargs``,
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from sqlmodel import SQLModel
-from structlog.testing import capture_logs
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import get_engine
@@ -79,31 +75,6 @@ def chat_service(tmp_path: Path) -> Iterator[ChatService]:
 # ---------------------------------------------------------------------------
 
 
-class _ClosableStream:
-    """Async iterator over scripted chunks that records ``aclose``.
-
-    Mirrors a real provider stream: ``_consume_llm_stream`` must call
-    ``aclose()`` in its ``finally`` block, and this records that it did.
-    """
-
-    def __init__(self, *chunks: dict[str, Any]) -> None:
-        self._chunks = list(chunks)
-        self.closed = False
-
-    def __aiter__(self) -> _ClosableStream:
-        self._it = iter(self._chunks)
-        return self
-
-    async def __anext__(self) -> dict[str, Any]:
-        try:
-            return next(self._it)
-        except StopIteration:  # pragma: no cover - loop terminator
-            raise StopAsyncIteration from None
-
-    async def aclose(self) -> None:
-        self.closed = True
-
-
 def _make_llm_debug() -> Any:
     """A real ``LLMDebugInfo`` so ``_finalize_and_publish`` timing/dict work."""
     from chaoscypher_core.streaming.chat import LLMDebugInfo
@@ -127,6 +98,7 @@ _CITATION_HELPERS = (
     "inject_citations_for_uncited_paragraphs",
     "normalize_chunk_references",
     "strip_duplicated_citation_text",
+    "strip_malformed_citations",
 )
 
 
@@ -283,6 +255,10 @@ async def test_handler_exception_sets_error_publishes_and_reraises(
     assert args[0] == "c1"
     assert args[1] == "error"
     assert args[2]["error_code"] == "WORKER_ERROR"
+    # The UI's Retry button keys off this: a worker failure persisted nothing
+    # (buffered-flush idempotency), so the turn is safely re-runnable.
+    assert args[2]["error_details"]["is_retryable"] is True
+    assert "Retry" in args[2]["error_details"]["suggested_action"]
 
 
 # ===========================================================================
@@ -423,266 +399,6 @@ async def test_run_tool_loop_error_returns_failure_status_error(
         "error": "LLM failed during tool processing",
     }
     assert chat_service.get_chat("chat-1")["status"] == "error"
-
-
-# ===========================================================================
-# _consume_llm_stream (pure async-generator, no DB)
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_consume_stream_content_thinking_then_done(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Content + thinking deltas accumulate; ``done`` yields tool_calls; aclose runs."""
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-
-    tool_call = {"function": {"name": "x", "arguments": "{}"}, "id": "tc"}
-    stream = _ClosableStream(
-        {"type": "content", "delta": "Hel", "accumulated": "Hel"},
-        {"type": "content", "delta": "lo", "accumulated": "Hello"},
-        {"type": "thinking_delta", "accumulated": "pondering"},
-        {"type": "done", "content": "Hello world", "tool_calls": [tool_call]},
-    )
-
-    content, thinking, tool_calls, stream_error = await cc._consume_llm_stream(stream, "c1")
-
-    assert content == "Hello world"
-    assert thinking == "pondering"
-    assert tool_calls == [tool_call]
-    assert stream_error is False
-    # aclose() was invoked in finally.
-    assert stream.closed is True
-    # content x2 + thinking_delta x1 published (done publishes nothing here).
-    published_types = [call.args[1] for call in publish.await_args_list]
-    assert published_types == ["content", "content", "thinking_delta"]
-
-
-@pytest.mark.asyncio
-async def test_consume_stream_error_chunk_sets_flag_and_breaks(
-    monkeypatch: pytest.MonkeyPatch,
-    structlog_for_caplog: None,
-) -> None:
-    """An ``error`` chunk sets ``stream_error`` True, breaks, and logs."""
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-
-    stream = _ClosableStream(
-        {"type": "error", "error": "bad", "error_code": "OOPS"},
-        # This chunk must never be consumed because the loop breaks first.
-        {"type": "content", "delta": "should-not-see", "accumulated": "x"},
-    )
-
-    with capture_logs() as captured:
-        content, thinking, tool_calls, stream_error = await cc._consume_llm_stream(stream, "c1")
-
-    assert stream_error is True
-    assert content == ""
-    assert tool_calls is None
-    assert stream.closed is True
-    # error event published; trailing content chunk never reached.
-    types = [call.args[1] for call in publish.await_args_list]
-    assert types == ["error"]
-    assert any(e["event"] == "chat_completion_stream_error" for e in captured)
-
-
-@pytest.mark.asyncio
-async def test_consume_stream_no_aclose_attr_is_safe(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A bare async generator (no ``aclose``) still finalises cleanly."""
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-
-    async def _gen() -> Any:
-        yield {"type": "done", "content": "ok", "tool_calls": None}
-
-    gen = _gen()
-    # Async generators DO have aclose; wrap to strip it and hit the hasattr guard.
-    content, thinking, tool_calls, stream_error = await cc._consume_llm_stream(gen, "c1")
-    assert content == "ok"
-    assert stream_error is False
-
-
-# ===========================================================================
-# _handle_tool_loop
-# ===========================================================================
-
-
-def _tool_loop_kwargs(
-    *,
-    tool_calls: list[Any],
-    chat_provider: Any,
-    tool_executor: Any,
-    messages_for_llm: list[Any] | None = None,
-    content: str = "",
-    thinking: str | None = None,
-) -> dict[str, Any]:
-    settings = MagicMock()
-    settings.llm.thinking_for_tools = False
-    return {
-        "tool_calls": tool_calls,
-        "content": content,
-        "thinking": thinking,
-        "chat_id": "c1",
-        "chat_service": MagicMock(),
-        "chat_provider": chat_provider,
-        "tool_executor": tool_executor,
-        "available_tools": [],
-        "messages_for_llm": messages_for_llm if messages_for_llm is not None else [],
-        "settings": settings,
-        "pending_messages": [],
-    }
-
-
-@pytest.mark.asyncio
-async def test_tool_loop_exceeds_total_limit_publishes_warning_and_breaks(
-    monkeypatch: pytest.MonkeyPatch,
-    structlog_for_caplog: None,
-) -> None:
-    """A batch over ``MAX_TOTAL_TOOL_CALLS`` publishes a warning and breaks.
-
-    The batch is sized one above the ceiling so the very first iteration trips
-    the guard before any tool executes or any follow-up LLM call is made.
-    """
-    from chaoscypher_core.services.chat.engine.constants import MAX_TOTAL_TOOL_CALLS
-
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-    monkeypatch.setattr(
-        "chaoscypher_core.streaming.chat.strip_thinking_tags",
-        lambda content, *a, **k: content,
-    )
-
-    big_batch = [
-        {"function": {"name": "search", "arguments": "{}"}, "id": f"tc-{i}"}
-        for i in range(MAX_TOTAL_TOOL_CALLS + 1)
-    ]
-    chat_provider = MagicMock()
-    chat_provider.chat = AsyncMock()  # must NOT be called
-    tool_executor = MagicMock()
-    tool_executor.execute_tool = AsyncMock()  # must NOT be called
-
-    with capture_logs() as captured:
-        final_content, final_thinking, total, error = await cc._handle_tool_loop(
-            **_tool_loop_kwargs(
-                tool_calls=big_batch,
-                chat_provider=chat_provider,
-                tool_executor=tool_executor,
-                content="partial",
-            )
-        )
-
-    assert total == MAX_TOTAL_TOOL_CALLS + 1
-    assert error is False
-    # No follow-up call, no tool execution — the guard broke the loop first.
-    chat_provider.chat.assert_not_called()
-    tool_executor.execute_tool.assert_not_called()
-    # Warning event published.
-    warn_events = [c for c in publish.await_args_list if c.args[1] == "warning"]
-    assert len(warn_events) == 1
-    assert warn_events[0].args[2]["limit"] == MAX_TOTAL_TOOL_CALLS
-    assert any(e["event"] == "chat_completion_tool_limit_reached" for e in captured)
-
-
-@pytest.mark.asyncio
-async def test_tool_loop_followup_error_breaks_with_error_occurred(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A follow-up stream error stops the loop and returns error_occurred=True."""
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-    monkeypatch.setattr(
-        "chaoscypher_core.streaming.chat.strip_thinking_tags",
-        lambda content, *a, **k: content,
-    )
-    monkeypatch.setattr(
-        "chaoscypher_core.streaming.chat.parse_tool_arguments",
-        lambda raw, name, chat_id: {},
-    )
-
-    tool_call = {"function": {"name": "search", "arguments": "{}"}, "id": "tc-1"}
-    chat_provider = MagicMock()
-    chat_provider.chat = AsyncMock(
-        side_effect=[_stream({"type": "error", "error": "down", "error_code": "X"})]
-    )
-    tool_executor = MagicMock()
-    tool_executor.execute_tool = AsyncMock(return_value={"ok": True})
-
-    final_content, final_thinking, total, error = await cc._handle_tool_loop(
-        **_tool_loop_kwargs(
-            tool_calls=[tool_call],
-            chat_provider=chat_provider,
-            tool_executor=tool_executor,
-            content="seed",
-        )
-    )
-
-    assert error is True
-    assert total == 1
-    # The one tool executed before the failed follow-up.
-    tool_executor.execute_tool.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_tool_loop_multi_iteration_joins_thinking_parts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Thinking from each iteration is joined with the ``---`` separator."""
-    publish = AsyncMock()
-    monkeypatch.setattr(cc, "publish_chat_event", publish)
-    monkeypatch.setattr(
-        "chaoscypher_core.streaming.chat.strip_thinking_tags",
-        lambda content, *a, **k: content,
-    )
-    monkeypatch.setattr(
-        "chaoscypher_core.streaming.chat.parse_tool_arguments",
-        lambda raw, name, chat_id: {},
-    )
-
-    tc1 = {"function": {"name": "search", "arguments": "{}"}, "id": "tc-1"}
-    tc2 = {"function": {"name": "search", "arguments": "{}"}, "id": "tc-2"}
-    chat_provider = MagicMock()
-    chat_provider.chat = AsyncMock(
-        side_effect=[
-            # Iteration 1 follow-up: more thinking + asks for another tool.
-            _stream(
-                {
-                    "type": "done",
-                    "content": "mid",
-                    "thinking": "second-thought",
-                    "tool_calls": [tc2],
-                }
-            ),
-            # Iteration 2 follow-up: final answer, no more tools.
-            _stream(
-                {
-                    "type": "done",
-                    "content": "final",
-                    "thinking": "third-thought",
-                    "tool_calls": None,
-                }
-            ),
-        ]
-    )
-    tool_executor = MagicMock()
-    tool_executor.execute_tool = AsyncMock(return_value={"ok": True})
-
-    final_content, final_thinking, total, error = await cc._handle_tool_loop(
-        **_tool_loop_kwargs(
-            tool_calls=[tc1],
-            chat_provider=chat_provider,
-            tool_executor=tool_executor,
-            content="start",
-            thinking="first-thought",
-        )
-    )
-
-    assert error is False
-    assert final_content == "final"
-    assert total == 2  # one tool in each of two iterations
-    assert final_thinking == "first-thought\n\n---\n\nsecond-thought\n\n---\n\nthird-thought"
 
 
 # ===========================================================================
@@ -827,7 +543,186 @@ async def test_finalize_citation_and_entity_enrichment_with_tool_results(
     persisted = kwargs["chat_service"].persist_messages.call_args.args[0]
     meta = _assistant_message(persisted)["extra_metadata"]
     assert meta["chunk_citations"] == {"chunk-1": {"sentence_text": "quote"}}
-    assert meta["entity_references"] == {"ent-1": {"label": "Entity One"}}
+    # Key MUST be referenced_entities — the frontend and the SSE path read
+    # that key; the worker writing entity_references silently dropped all
+    # entity enrichment on the web path (2026-06-10 audit P1).
+    assert meta["referenced_entities"] == {"ent-1": {"label": "Entity One"}}
     done = _done_event(publish)
     assert done["chunk_citations"] == {"chunk-1": {"sentence_text": "quote"}}
-    assert done["entity_references"] == {"ent-1": {"label": "Entity One"}}
+    assert done["referenced_entities"] == {"ent-1": {"label": "Entity One"}}
+
+
+@pytest.mark.asyncio
+async def test_finalize_strips_blockquote_duplicating_citation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Parity with the SSE path: an LLM blockquote next to a [[cite:]] marker
+    is stripped (the citation renders its own blockquote, so the prose copy
+    would display the quoted text twice).
+    """
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+
+    chunk = {
+        "chunk_id": "aaaa1111-2222-3333-4444-555566667777",
+        "chunk_alias": "C0",
+        "filename": "war.txt",
+        "original_content": "Quoted sentence from the source text here.",
+    }
+    messages = [
+        {"role": "tool", "content": json.dumps({"chunks": [chunk]}), "name": "search"},
+    ]
+    kwargs = _finalize_kwargs(
+        content='> "Quoted sentence from the source text here." [[cite:C0:S1|war.txt]]',
+        thinking=None,
+        messages_for_llm=messages,
+        total_tool_calls=1,
+    )
+    await cc._finalize_and_publish(**kwargs)
+
+    persisted = kwargs["chat_service"].persist_messages.call_args.args[0]
+    final = _assistant_message(persisted)["content"]
+    # The blockquote prose is gone; only the (alias-resolved) marker remains.
+    assert "Quoted sentence" not in final
+    assert "[[cite:aaaa1111-2222-3333-4444-555566667777:S1|war.txt]]" in final
+
+
+@pytest.mark.asyncio
+async def test_finalize_reflows_punctuation_after_citation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Trailing punctuation moves before the citation marker (SSE parity)."""
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+
+    chunk = {
+        "chunk_id": "bbbb1111-2222-3333-4444-555566667777",
+        "chunk_alias": "C0",
+        "filename": "war.txt",
+        "original_content": "body",
+    }
+    messages = [
+        {"role": "tool", "content": json.dumps({"chunks": [chunk]}), "name": "search"},
+    ]
+    kwargs = _finalize_kwargs(
+        content="The result is clear [[cite:C0:S1|war.txt]].",
+        thinking=None,
+        messages_for_llm=messages,
+        total_tool_calls=1,
+    )
+    await cc._finalize_and_publish(**kwargs)
+
+    persisted = kwargs["chat_service"].persist_messages.call_args.args[0]
+    final = _assistant_message(persisted)["content"]
+    assert final.index(".") < final.index("[[cite:")
+
+
+@pytest.mark.asyncio
+async def test_finalize_salvages_and_scrubs_malformed_citations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mixed-ref markers are salvaged and unusable refs scrubbed (real helpers).
+
+    Live bug 2026-06-10: the model crammed a chunk alias into the sentence
+    list (``[[cite:C1:S15,C17|f]]``), no pattern matched, and the raw marker
+    text rendered in the UI. Finalize must keep the salvageable part (C1
+    resolved to its UUID) and drop the hallucinated ref (C17 unknown).
+    """
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+
+    chunk = {
+        "chunk_id": "aaaa1111-2222-3333-4444-555566667777",
+        "chunk_alias": "C1",
+        "filename": "war_and_peace.txt",
+        "original_content": "body",
+    }
+    messages = [
+        {"role": "tool", "content": json.dumps({"chunks": [chunk]}), "name": "search"},
+    ]
+    kwargs = _finalize_kwargs(
+        content="Son of Vasíli [[cite:C1:S15,C17|war_and_peace.txt]] indeed.",
+        thinking=None,
+        messages_for_llm=messages,
+        total_tool_calls=1,
+    )
+    result = await cc._finalize_and_publish(**kwargs)
+
+    assert result["success"] is True
+    persisted = kwargs["chat_service"].persist_messages.call_args.args[0]
+    final = _assistant_message(persisted)["content"]
+    assert "[[cite:aaaa1111-2222-3333-4444-555566667777:S15|war_and_peace.txt]]" in final
+    assert "C17" not in final
+    assert "S15," not in final
+    assert _done_event(publish)["content"] == final
+
+
+@pytest.mark.asyncio
+async def test_finalize_persists_warnings_in_metadata_and_done_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Collected warnings ride extra_metadata and the done event payload."""
+    _patch_citation_helpers(monkeypatch)
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+
+    chat_service = MagicMock()
+    persisted: list[dict[str, Any]] = []
+    chat_service.build_message.side_effect = lambda chat_id, role, body, meta: {
+        "chat_id": chat_id,
+        "role": role,
+        "content": body,
+        "extra_metadata": meta,
+    }
+    chat_service.persist_messages.side_effect = persisted.extend
+
+    warnings = [{"kind": "context_overflow", "message": "window overflowed"}]
+    import time
+
+    result = await cc._finalize_and_publish(
+        content="answer",
+        thinking=None,
+        chat_id="c1",
+        chat_service=chat_service,
+        messages_for_llm=[],
+        llm_debug=MagicMock(timing={}, to_dict=dict),
+        stream_start=time.monotonic(),
+        total_tool_calls=0,
+        pending_messages=[],
+        warnings=warnings,
+    )
+
+    assert result["success"] is True
+    assistant = next(m for m in persisted if m["role"] == "assistant")
+    assert assistant["extra_metadata"]["warnings"] == warnings
+    done_payload = next(c.args[2] for c in publish.await_args_list if c.args[1] == "done")
+    assert done_payload["warnings"] == warnings
+
+
+@pytest.mark.asyncio
+async def test_finalize_ships_validation_verdicts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Validation verdicts ride extra_metadata and the done event (1b).
+
+    Web chat never received verdicts before the loop unification — the
+    validator only ran on the consumer-less /stream path.
+    """
+    _patch_citation_helpers(monkeypatch)
+    validator = AsyncMock(return_value={"verdict": "correct", "reason": "ok", "per_citation": {}})
+    monkeypatch.setattr(
+        "chaoscypher_core.streaming.chat.finalize.validate_finalized_answer", validator
+    )
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+
+    kwargs = _finalize_kwargs(content="The answer.", thinking=None, messages_for_llm=[])
+    kwargs["settings"] = get_settings()
+    result = await cc._finalize_and_publish(**kwargs)
+
+    assert result["success"] is True
+    validator.assert_awaited_once()
+    persisted = kwargs["chat_service"].persist_messages.call_args.args[0]
+    meta = _assistant_message(persisted)["extra_metadata"]
+    assert meta["validation"]["verdict"] == "correct"
+    assert _done_event(publish)["validation"]["verdict"] == "correct"

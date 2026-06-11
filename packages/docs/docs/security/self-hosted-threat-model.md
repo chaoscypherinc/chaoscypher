@@ -44,7 +44,7 @@ If you set `CHAOSCYPHER_BIND=0.0.0.0` (the default) and expose the box beyond yo
 3. **Set `CHAOSCYPHER_ALLOWED_HOSTS`** to your hostname/IP — blocks DNS-rebinding probes and Host-header spoofing. You can also flip this on later from the UI (see *Allowing external access from the UI* below).
 4. **Put the box behind a VPN, SSH tunnel, or Tailscale** if possible. The box is designed to be safe on a small trusted network, not on the open internet.
 5. **First-boot on a private network.** Either set `CHAOSCYPHER_BIND=127.0.0.1` for the initial `/setup` (then flip to `0.0.0.0`), or do the first boot on a trusted network where you'll be the first to reach the API.
-6. **Restrict `/api/v1/health` to your monitoring source** with a dedicated nginx `allow … ; deny all;` block if you don't want LAN scanners to fingerprint your stack. (Note: even unauthenticated `/health` only returns `{status}` after the E1 hardening — the detailed payload requires auth.)
+6. **Restrict `/api/v1/health` to your monitoring source** with a dedicated nginx `allow … ; deny all;` block if you don't want LAN scanners to fingerprint your stack. (Note: unauthenticated `/health` returns only `{healthy, status}` — the detailed per-subsystem payload requires auth.)
 7. **Rotate the API keys** you've minted (`/api/v1/auth/keys`) on a cadence that matches your threat model.
 
 ## Allowing external access from the UI

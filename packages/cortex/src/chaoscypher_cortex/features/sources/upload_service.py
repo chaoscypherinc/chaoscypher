@@ -3,8 +3,7 @@
 
 """UploadService — owns sources-feature file-upload orchestration.
 
-Extracted from ``sources/api.py`` (Workstream B / Decision 4 of the
-2026-04-23 architecture audit). Encapsulates:
+Extracted from ``sources/api.py``. Encapsulates:
 
 - The process-wide upload concurrency semaphore (formerly a module-level
   mutable ``_upload_semaphore`` in ``api.py``).
@@ -17,9 +16,9 @@ Extracted from ``sources/api.py`` (Workstream B / Decision 4 of the
 - Batch orchestration (formerly the body of the ``upload_batch`` route
   handler).
 
-Route handlers in ``api.py`` are thin after Task 5 wires this up: parse
-form → delegate to this service → shape response. Business logic lives
-here, testable without the FastAPI stack.
+Route handlers in ``api.py`` stay thin: parse form → delegate to this
+service → shape response. Business logic lives here, testable without
+the FastAPI stack.
 """
 
 from __future__ import annotations

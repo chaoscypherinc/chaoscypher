@@ -1,11 +1,16 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Badge,
   Box,
+  ButtonBase,
+  Fab,
   Typography,
 } from '@mui/material';
 import BotIcon from '@mui/icons-material/SmartToy';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import { CHAT_STARTERS } from '../../constants/chatStarters';
 import type { ChunkCitationMap, ContextInfo, EntityReferenceMap } from '../../types';
 import type { ExtendedChatMessage } from './types';
@@ -27,6 +32,10 @@ interface ChatMessageListProps {
   contextInfo: ContextInfo | null;
   /** Callback for quick action buttons (approve/decline) */
   onQuickAction: (response: string) => void;
+  /** Regenerate the latest answer (rendered on the last assistant bubble) */
+  onRegenerate?: () => void;
+  /** Arm edit-and-resend for a persisted user message */
+  onEditMessage?: (messageId: string, content: string) => void;
   /** Ref for scroll-to-bottom anchor element */
   messagesEndRef: React.RefObject<HTMLDivElement | null>;
 }
@@ -124,13 +133,18 @@ function mergeAssistantGroup(group: IndexedMessage[]): IndexedMessage {
   };
 }
 
+/** How close to the bottom (px) still counts as "following" the stream. */
+const NEAR_BOTTOM_THRESHOLD_PX = 120;
+
 /**
  * Renders the scrollable message list area, including:
  * - Empty state with welcome prompt when no messages exist
  * - Filtered message display (tool messages hidden, shown inline in tool calls)
  * - Consecutive assistant message grouping into single bubbles
  * - Loading/thinking indicator during processing
- * - Scroll anchor for auto-scroll behavior
+ * - Scroll behavior: auto-follow only while the reader is near the bottom;
+ *   scrolled-up position is preserved and a jump-to-latest FAB (with a
+ *   new-content badge) appears instead.
  */
 export default function ChatMessageList({
   messages,
@@ -138,6 +152,8 @@ export default function ChatMessageList({
   chatStatus: _chatStatus,
   contextInfo,
   onQuickAction,
+  onRegenerate,
+  onEditMessage,
   messagesEndRef,
 }: ChatMessageListProps) {
   const toolResultMessages = messages.filter(msg => msg.role === 'tool');
@@ -147,8 +163,42 @@ export default function ChatMessageList({
 
   const groupedMessages = groupConsecutiveAssistantMessages(displayMessages);
 
+  // ---- Scroll-follow state -------------------------------------------------
+  const [nearBottom, setNearBottom] = useState(true);
+  const nearBottomRef = useRef(true);
+  const [hasNewBelow, setHasNewBelow] = useState(false);
+
+  const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    const el = event.currentTarget;
+    const isNear = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD_PX;
+    nearBottomRef.current = isNear;
+    setNearBottom(isNear);
+    if (isNear) setHasNewBelow(false);
+  }, []);
+
+  // Auto-follow new content only while the reader is at the bottom; while
+  // scrolled up, keep their place and light the FAB badge instead.
+  useEffect(() => {
+    if (nearBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setHasNewBelow(true);
+    }
+  }, [messages, loading, messagesEndRef]);
+
+  const jumpToLatest = useCallback(() => {
+    nearBottomRef.current = true;
+    setNearBottom(true);
+    setHasNewBelow(false);
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messagesEndRef]);
+
   return (
-    <Box sx={{ flexGrow: 1, flexShrink: 1, overflowY: 'auto', p: 2, minHeight: 0 }}>
+    <Box
+      data-testid="chat-scroll-region"
+      onScroll={handleScroll}
+      sx={{ flexGrow: 1, flexShrink: 1, overflowY: 'auto', p: 2, minHeight: 0 }}
+    >
       {messages.length === 0 ? (
         <Box sx={{ textAlign: 'center', mt: 8 }}>
           <BotIcon sx={{ fontSize: 60, color: 'text.secondary', mb: 2 }} />
@@ -167,9 +217,10 @@ export default function ChatMessageList({
           </Typography>
           <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'center', flexWrap: 'wrap' }}>
             {CHAT_STARTERS.map((starter) => (
-              <Box
+              <ButtonBase
                 key={starter.prompt}
                 onClick={() => onQuickAction(starter.prompt)}
+                aria-label={starter.label}
                 sx={{
                   display: 'flex',
                   alignItems: 'center',
@@ -179,7 +230,6 @@ export default function ChatMessageList({
                   borderRadius: '20px',
                   border: '1px solid rgba(255, 255, 255, 0.08)',
                   bgcolor: 'rgba(255, 255, 255, 0.03)',
-                  cursor: 'pointer',
                   transition: 'all 0.2s',
                   '&:hover': {
                     borderColor: 'rgba(0, 229, 255, 0.25)',
@@ -191,7 +241,7 @@ export default function ChatMessageList({
                 <Typography sx={{ fontSize: 13, color: 'text.secondary' }}>
                   {starter.label}
                 </Typography>
-              </Box>
+              </ButtonBase>
             ))}
           </Box>
         </Box>
@@ -203,11 +253,38 @@ export default function ChatMessageList({
             messageIndex={originalIndex}
             firstInContextIndex={contextInfo?.first_in_context_index ?? 0}
             onQuickAction={onQuickAction}
+            onRegenerate={onRegenerate}
+            onEditMessage={onEditMessage}
             isLatest={displayIndex === groupedMessages.length - 1}
             loading={loading}
             toolResults={toolResultMessages}
           />
         ))
+      )}
+      {/* Jump-to-latest FAB: floats over the bottom edge while scrolled up */}
+      {!nearBottom && messages.length > 0 && (
+        <Box
+          sx={{
+            position: 'sticky',
+            bottom: 8,
+            height: 0,
+            overflow: 'visible',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            pr: 1,
+          }}
+        >
+          <Badge color="primary" variant="dot" invisible={!hasNewBelow} overlap="circular">
+            <Fab
+              size="small"
+              aria-label="Jump to latest"
+              onClick={jumpToLatest}
+              sx={{ transform: 'translateY(-100%)' }}
+            >
+              <KeyboardArrowDownIcon />
+            </Fab>
+          </Badge>
+        </Box>
       )}
       {/* Thinking indicator handled by the message bubble's internal timer */}
       <div ref={messagesEndRef as React.RefObject<HTMLDivElement>} />

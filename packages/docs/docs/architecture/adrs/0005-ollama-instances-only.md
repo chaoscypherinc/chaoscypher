@@ -31,12 +31,13 @@ Result: two sources of truth, drift risk between them, and an explicit
 
 ### Why we cared
 
-`CLAUDE.md` is unambiguous about backwards-compat shims:
+The project's contributor guidelines at the time (April 2026) were
+unambiguous about backwards-compat shims:
 
 > NEVER add support for legacy/deprecated formats no longer in use.
 > If you discover legacy support code, propose removing it.
 
-This refactor was discovered during a CLAUDE.md compliance audit. The
+This refactor was discovered during a guidelines-compliance audit. The
 reviewer flagged the "Backward compatibility: if no instances configured,
 create one from legacy URL" branch in the load balancer as a textbook
 violation. Chaos Cypher is pre-production, so no migration window was
@@ -64,7 +65,8 @@ Remove `ollama_base_url` from `LLMSettings` entirely. Make
   top-level URL field.
 - The CLI's `ollama_url` field (its own user-visible config name) is now
   materialized into a single instance dict when constructing `LLMSettings`,
-  rather than being passed as `ollama_base_url`.
+  rather than being passed as `ollama_base_url`. *(Superseded — see the
+  2026-06 addendum below.)*
 
 ## Consequences
 
@@ -98,7 +100,7 @@ Remove `ollama_base_url` from `LLMSettings` entirely. Make
 - `packages/cortex/src/chaoscypher_cortex/features/settings/ollama_models_api.py`
 - `packages/cortex/src/chaoscypher_cortex/features/chats/streaming_utils.py`
 - `packages/cli/src/chaoscypher_cli/context.py`
-- `packages/cli/src/chaoscypher_cli/config.py`
+- `packages/cli/src/chaoscypher_cli/config.py` *(since removed — see the 2026-06 addendum)*
 - `packages/interface/src/types/settings.ts`
 - `packages/interface/src/pages/settings/hooks/useProviderSettings.ts`
 - `packages/interface/src/pages/settings/components/ProviderSelector.tsx`
@@ -110,3 +112,21 @@ Remove `ollama_base_url` from `LLMSettings` entirely. Make
 - `packages/docs/docs/developer-guide/llm-providers.md`
 - `packages/docs/docs/reference/api/settings.md`
 - `packages/docs/blog/2026-03-12-local-ai-knowledge-graph.md`
+
+## Addenda
+
+### 2026-06 — config unification supersedes the CLI bullet
+
+The June 2026 config unification retired `cli.yaml`; the CLI no longer has
+its own `ollama_url` field or `config.py`. It reads the same `settings.yaml`
+`llm.ollama_instances` list directly (via `LLMSettings.primary_ollama_url`),
+so the materialization shim described in the last Decision bullet no longer
+exists.
+
+### Update (2026-06-11) — default URL changed to localhost
+
+The library default for the seeded instance changed from
+`http://host.docker.internal:11434` to `http://localhost:11434`, with a
+`CHAOSCYPHER_OLLAMA_URL` environment variable override. Docker deployments
+pin `host.docker.internal:11434` via that env var, so container behaviour is
+unchanged. The historical decision text above is left as written.

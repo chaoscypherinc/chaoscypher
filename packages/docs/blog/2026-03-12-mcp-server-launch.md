@@ -43,8 +43,6 @@ You ask: *"What are the connections between quantum computing and machine learni
 
 Claude calls `search_nodes` to find nodes matching both topics, then `get_node_context` to pull the immediate neighborhood of the most central ones, including the edges that connect them and the source document chunks that support each relationship. You get back a structured map of how your research connects these fields -- not a generic internet answer, but one grounded in the specific papers you've indexed.
 
-<!-- SCREENSHOT: Claude Desktop showing a research query about quantum computing and machine learning, with structured results showing entities, relationships, and source citations from the knowledge graph -->
-
 ### Scenario 2: Coding -- Your Project's Knowledge Base in Your Editor
 
 You're in Cursor, working on a codebase that has an associated knowledge graph mapping its architecture -- services, APIs, data flows, dependencies. You need to understand how the authentication service connects to the billing pipeline.
@@ -52,8 +50,6 @@ You're in Cursor, working on a codebase that has an associated knowledge graph m
 You ask: *"Traverse from the Authentication Service node to anything related to billing. What's the path?"*
 
 Cursor calls `resolve_node` to find the canonical node for "Authentication Service" (even if you didn't remember the exact label), then `traverse_path` to walk the graph two hops out, filtered to the relevant edge types. You see the chain: Authentication Service -> User Session -> Subscription Manager -> Billing Pipeline. Without leaving your editor.
-
-<!-- SCREENSHOT: Cursor IDE showing an MCP query to traverse from an authentication node to billing-related nodes, with the path result displayed in the chat panel -->
 
 ### Scenario 3: Writing -- Summarize With Citations
 
@@ -63,109 +59,40 @@ You ask: *"Summarize all my sources related to climate policy in the European Un
 
 Claude calls `get_summary_context` to retrieve and cluster document chunks relevant to the query. Because this tool returns the raw chunks with their source metadata rather than making an LLM call, Claude itself does the summarization -- giving you a synthesis grounded in your documents, with each claim traced back to a specific source.
 
-<!-- SCREENSHOT: Claude Desktop showing a summarization query with results that include document citations and source references -->
-
 ## Under the Hood: 31 Tools, 7 Categories
 
-Chaos Cypher exposes 31 tools through MCP, organized into seven categories. The design principle is that read operations are always safe and always available. Write operations are opt-in.
+Chaos Cypher exposes 31 tools through MCP, organized into seven categories: **GraphRAG search** (the flagship -- Personalized PageRank fused with hybrid vector/keyword retrieval), **nodes**, **edges**, **templates**, **analytics** (shortest paths, similarity, community detection, multi-hop traversal), **documents** (upload, status, summarization context), and **client-driven extraction** -- where the AI assistant reads chunks, extracts entities itself, and submits them back, no server LLM required. The [full tool reference is in the docs](/docs/user-guide/mcp#available-tools).
 
-| Category | Read | Write | What It Does |
-|---|---|---|---|
-| **GraphRAG** | `graphrag_search` | -- | The flagship tool. Fuses Personalized PageRank over the knowledge graph with hybrid vector/keyword search. Finds answers that pure vector search misses because it follows relationships. |
-| **Nodes** | `search_nodes`, `search_chunks`, `get_node`, `get_node_context`, `resolve_node` | `create_node`, `update_node`, `delete_node` | Full CRUD for graph nodes. Search by name, properties, or semantic similarity. Resolve aliases to canonical nodes. Get a node's full neighborhood with edges and supporting document chunks. |
-| **Edges** | `list_edges`, `get_node_edges` | `create_edge` | Explore and create relationships. Filter by direction (incoming/outgoing), edge type, or connected node. |
-| **Templates** | `list_templates`, `search_templates` | `create_template`, `delete_template` | Templates define the schema for nodes and edges. Search by name or description. Create new types on the fly. |
-| **Analytics** | `analyze_graph_structure`, `find_shortest_path`, `find_similar_nodes`, `traverse_path` | -- | Structural analysis: community detection, PageRank centrality, degree distribution. Path finding between any two nodes. Semantic similarity via embeddings. Multi-hop traversal with depth and type filters. |
-| **Documents** | `get_summary_context`, `get_document_status` | `add_document`, `confirm_extraction`, `wait_for_document`, `remove_document` | MCP-native document management. Queue files for background indexing and entity extraction. Confirm or override the auto-detected extraction domain for a source parked at `awaiting_confirmation`. Check processing status. Wait for completion. Retrieve clustered chunks for summarization. Full cascade delete. |
-| **Extraction** | `get_extraction_tasks`, `get_extraction_chunks`, `get_extraction_progress` | `submit_chunk_extraction`, `finalize_extraction` | Client-driven entity extraction. The AI assistant reads chunks, extracts entities itself, and submits results back — no server LLM required. Track progress and finalize to commit to the knowledge graph. |
-
-**Read/write mode split:** 19 tools are read-only and always available. 12 tools require write mode to be explicitly enabled. This is controlled by a single setting -- if you're not comfortable with an AI modifying your graph, just leave it in read mode. The AI can still search, traverse, and analyze everything.
+The design principle: read operations are always safe and always available, write operations are opt-in. **19 tools are read-only; 12 require write mode to be explicitly enabled** by a single setting. If you're not comfortable with an AI modifying your graph, leave it in read mode -- the AI can still search, traverse, and analyze everything.
 
 **Two transport modes:** The MCP server runs in two ways depending on your setup:
 
 - **stdio** -- For desktop AI tools like Claude Desktop and Cursor. The CLI starts a server that communicates over standard input/output. No network involved.
-- **Streamable HTTP** -- For the Docker stack. The Cortex API exposes MCP at `/api/v1/mcp` using the Streamable HTTP transport, so any MCP client on the network can connect.
+- **Streamable HTTP** -- For the Docker stack. The Cortex API exposes MCP at `/api/v1/mcp` using the Streamable HTTP transport, so MCP clients on your network can connect after authenticating.
 
 Both transports expose the same 31 tools with the same behavior. The only difference is how they're connected.
 
 ## Try It Yourself
 
-Setup depends on how you run Chaos Cypher. Three paths, all quick.
-
-### Path 1: CLI + Claude Desktop
-
-If you have Chaos Cypher installed as a CLI tool, add this to your Claude Desktop configuration file (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "chaoscypher": {
-      "command": "chaoscypher",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-Restart Claude Desktop. You should see Chaos Cypher listed as an available MCP server in the tools panel.
-
-<!-- SCREENSHOT: Claude Desktop settings showing the Chaos Cypher MCP server listed and connected in the MCP servers panel -->
-
-### Path 2: CLI + Claude Code
-
-One command:
+If you have the Chaos Cypher CLI installed, connecting Claude Code is one command:
 
 ```bash
 claude mcp add chaoscypher -- chaoscypher mcp
 ```
 
-That's it. Claude Code will discover Chaos Cypher's tools automatically on the next session.
-
-### Path 3: CLI + Cursor
-
-Add this to your Cursor MCP configuration (`.cursor/mcp.json` in your project, or the global settings):
+For Claude Desktop, add the equivalent two-line entry to `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "chaoscypher": {
-      "command": "chaoscypher",
-      "args": ["mcp"],
-      "transportType": "stdio"
-    }
+    "chaoscypher": { "command": "chaoscypher", "args": ["mcp"] }
   }
 }
 ```
 
-<!-- SCREENSHOT: Cursor settings showing Chaos Cypher MCP server configured and connected -->
+That's genuinely it -- restart the client and Chaos Cypher's tools appear automatically. Cursor and other stdio clients use the same two-line config, and if you run the Docker stack, the MCP endpoint is *already live* at `http://localhost/api/v1/mcp` for any Streamable-HTTP client that signs in with your Chaos Cypher credentials -- it sits behind the same edge authentication as the rest of the API (or `http://localhost:8080/api/v1/mcp` if you run the multi-container dev stack, which publishes Cortex's port directly). Per-client walkthroughs are in the [MCP setup docs](/docs/user-guide/mcp#setup).
 
-### Path 4: Docker Stack (Already Running)
-
-If you run Chaos Cypher via `docker-compose`, the MCP endpoint is already live. Your Cortex API serves MCP at:
-
-```
-http://localhost:8080/api/v1/mcp
-```
-
-Any MCP client that supports the Streamable HTTP transport can connect directly. No additional configuration on the Chaos Cypher side.
-
-### Configuring Access Mode
-
-By default, MCP runs in read-only mode. To enable write tools (creating nodes, adding documents, etc.), update your `settings.yaml`:
-
-```yaml
-mcp:
-  mode: write         # "read" (default) or "write" for full access
-  auto_extract: true  # auto-extract entities from documents uploaded via MCP
-```
-
-Read mode exposes the 19 read tools. Write mode exposes all 31. The `auto_extract` flag controls whether documents uploaded via the `add_document` tool automatically go through entity extraction after indexing, or just get chunked and embedded for RAG search.
-
-If you're using the CLI with a specific database, pass it as a flag:
-
-```bash
-chaoscypher mcp --database my-research
-```
+By default the server runs in read-only mode; flip `mcp.mode: write` in `settings.yaml` to enable the 12 write tools, and use `chaoscypher mcp --database my-research` to point at a specific database. The [configuration reference](/docs/user-guide/mcp#configuration) covers the rest, including `auto_extract` for documents uploaded via MCP.
 
 ## Your Data Stays Local
 

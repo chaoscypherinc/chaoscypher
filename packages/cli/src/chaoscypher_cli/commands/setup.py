@@ -97,10 +97,10 @@ def _seed_wizard_state(settings: Settings) -> WizardState:
     s = state.llm
     if llm.chat_provider:
         s.provider = llm.chat_provider
-    # The factory-default instance points at host.docker.internal (the
-    # Docker-host alias used by containerized deployments) — wrong for a
-    # wizard run on bare metal. Seed localhost unless the operator has
-    # actually configured instances (then their URL is the right default).
+    # The factory-default instance may point somewhere environment-specific
+    # (CHAOSCYPHER_OLLAMA_URL — e.g. host.docker.internal inside the Docker
+    # images) — only an operator-configured instance list should carry
+    # through to the prompt default. Otherwise seed plain localhost.
     if "ollama_instances" in llm.model_fields_set:
         s.ollama_url = llm.primary_ollama_url
     else:
@@ -193,15 +193,21 @@ PROVIDERS = {
 }
 
 
-# VRAM preset mappings (models must match preset JSONs in core/services/presets/plugins/)
+# VRAM preset mappings (GPU examples and models must match the preset JSONs
+# in core/services/presets/plugins/ — pinned by TestVramPresetTableAccuracy)
 VRAM_PRESETS = [
     {"vram": 16, "preset": "vram_16gb", "gpus": "RTX 4080, 5080", "model": "phi4:14b"},
-    {"vram": 20, "preset": "vram_20gb", "gpus": "RTX 5080 Super", "model": "phi4:14b"},
+    {"vram": 20, "preset": "vram_20gb", "gpus": "RTX A4000, A4500", "model": "phi4:14b"},
     {"vram": 24, "preset": "vram_24gb", "gpus": "RTX 4090, 3090", "model": "qwen3:30b"},
-    {"vram": 32, "preset": "vram_32gb", "gpus": "RTX 4090, 3090", "model": "qwen3:30b"},
+    {"vram": 32, "preset": "vram_32gb", "gpus": "RTX 5090", "model": "qwen3:30b"},
     {"vram": 48, "preset": "vram_48gb", "gpus": "A6000, 2x 4090", "model": "qwen3:30b"},
-    {"vram": 96, "preset": "vram_96gb", "gpus": "H100", "model": "gpt-oss:120b"},
-    {"vram": 128, "preset": "vram_128gb", "gpus": "Multi-H100", "model": "gpt-oss:120b"},
+    {"vram": 96, "preset": "vram_96gb", "gpus": "RTX 6000 Pro", "model": "gpt-oss:120b"},
+    {
+        "vram": 128,
+        "preset": "vram_128gb",
+        "gpus": "DGX Spark, Ryzen AI Max+ 395",
+        "model": "gpt-oss:120b",
+    },
 ]
 
 
@@ -331,6 +337,12 @@ def _test_gemini_connection(api_key: str) -> tuple[bool, str]:
 def _get_vram_preset_settings(preset_name: str) -> dict:
     """Load settings from a VRAM preset.
 
+    Preset registry discovery logs noisily, so stdlib logging and structlog
+    are silenced for the duration of the load. Both are process-global, so
+    the prior state (``logging.disable`` level and structlog configuration)
+    is saved up front and restored in a ``finally`` — even a failed load
+    must not leave logging disabled for the rest of the process.
+
     Args:
         preset_name: Name of the preset (e.g., 'vram_24gb')
 
@@ -343,19 +355,23 @@ def _get_vram_preset_settings(preset_name: str) -> dict:
 
         import structlog
 
+        previous_disable_level = logging.root.manager.disable
+        previous_structlog_config = structlog.get_config()
+
         logging.disable(logging.CRITICAL)
         structlog.configure(
             wrapper_class=structlog.make_filtering_bound_logger(logging.CRITICAL),
         )
 
-        from chaoscypher_core.services.presets import get_preset_registry
+        try:
+            from chaoscypher_core.services.presets import get_preset_registry
 
-        registry = get_preset_registry()
-        preset = registry.get(preset_name)
-
-        # Restore logging
-        logging.disable(logging.NOTSET)
-        structlog.reset_defaults()
+            registry = get_preset_registry()
+            preset = registry.get(preset_name)
+        finally:
+            # Restore the caller's global logging state exactly as it was.
+            logging.disable(previous_disable_level)
+            structlog.configure(**previous_structlog_config)
 
         if preset:
             return preset.get_ollama_settings()
@@ -739,6 +755,16 @@ def _configure_embedding_interactive(state: WizardState) -> None:
     except (ValueError, IndexError, KeyboardInterrupt):  # fmt: skip
         return
 
+    # Snapshot so a Ctrl+C in a later prompt rolls back instead of
+    # persisting a half-configured section (e.g. provider switched to
+    # openai while model still names a local one and no API key was set).
+    saved_provider = state.embedding.provider
+    saved_model = state.embedding.model
+
+    def _rollback() -> None:
+        state.embedding.provider = saved_provider
+        state.embedding.model = saved_model
+
     state.embedding.provider = emb_provider
 
     # Model selection
@@ -773,6 +799,7 @@ def _configure_embedding_interactive(state: WizardState) -> None:
             else:
                 state.embedding.model = Prompt.ask("Model name", default=state.embedding.model)
         except (ValueError, IndexError, KeyboardInterrupt):  # fmt: skip
+            _rollback()
             return
 
     elif emb_provider in ("openai", "gemini"):
@@ -807,6 +834,7 @@ def _configure_embedding_interactive(state: WizardState) -> None:
                 else:
                     state.embedding.model = Prompt.ask("Model name", default=state.embedding.model)
             except (ValueError, IndexError, KeyboardInterrupt):  # fmt: skip
+                _rollback()
                 return
 
         # API key for cloud providers

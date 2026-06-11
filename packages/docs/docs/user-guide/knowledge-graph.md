@@ -39,7 +39,7 @@ Nodes are created in two ways:
 
 
 1. Open the **Graph** page
-2. Click **Add Node** in the toolbar
+2. Open the speed dial (the **+** button in the bottom-left corner) and choose **Create Item** — or right-click the canvas and choose **Create Item Here**
 3. Select a template, enter a label, and fill in properties
 
 ![Entity detail page showing properties and metadata](/img/screenshots/entity-detail.png)
@@ -141,9 +141,8 @@ Like nodes, edges are created through extraction or manually:
 <TabItem value="web-ui" label="Web UI">
 
 
-1. Select a source node on the graph canvas
-2. Click **Add Link** in the node context menu
-3. Select the target node, relationship type, and any properties
+1. On the **Graph** page, open the speed dial (the **+** button in the bottom-left corner) and choose **Create Link**
+2. Select the source and target nodes, relationship type, and any properties
 
 ![Entity connections table with relationship labels](/img/screenshots/entity-connections.png)
 
@@ -212,9 +211,9 @@ A node template defines an entity type:
   "description": "A human individual",
   "template_type": "node",
   "properties": [
-    {"name": "nationality", "type": "string", "required": false},
-    {"name": "birth_date", "type": "string", "required": false},
-    {"name": "occupation", "type": "string", "required": false}
+    {"name": "nationality", "display_name": "Nationality", "property_type": "string", "required": false},
+    {"name": "birth_date", "display_name": "Birth Date", "property_type": "string", "required": false},
+    {"name": "occupation", "display_name": "Occupation", "property_type": "string", "required": false}
   ]
 }
 ```
@@ -229,8 +228,8 @@ An edge template defines a relationship type:
   "description": "Employment relationship between person and organization",
   "template_type": "edge",
   "properties": [
-    {"name": "start_date", "type": "string", "required": false},
-    {"name": "role", "type": "string", "required": false}
+    {"name": "start_date", "display_name": "Start Date", "property_type": "string", "required": false},
+    {"name": "role", "display_name": "Role", "property_type": "string", "required": false}
   ]
 }
 ```
@@ -261,7 +260,6 @@ The web UI provides an interactive graph canvas for exploring the knowledge grap
 - **Pan** — Click and drag the background
 - **Zoom** — Scroll wheel or pinch gesture
 - **Select** — Click a node to view its details
-- **Multi-select** — Hold Shift and click multiple nodes
 
 ### Exploring Connections
 

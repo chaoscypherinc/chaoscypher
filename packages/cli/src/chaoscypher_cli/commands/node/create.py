@@ -38,10 +38,10 @@ def create(
     Creates a node using either an interactive wizard or command-line flags.
 
     Example:
-        chaoscypher node create -t Person -l "John Doe"
-        chaoscypher node create -t Person -l "Jane" -p role=CEO -p department=Executive
-        chaoscypher node create -t Event -l "Meeting" -j '{"date": "2024-01-15"}'
-        chaoscypher node create --interactive
+        chaoscypher graph node create -t Person -l "John Doe"
+        chaoscypher graph node create -t Person -l "Jane" -p role=CEO -p department=Executive
+        chaoscypher graph node create -t Event -l "Meeting" -j '{"date": "2024-01-15"}'
+        chaoscypher graph node create --interactive
     """
     try:
         ctx = get_context(database_name=database)
@@ -56,7 +56,7 @@ def create(
 
             if not templates:
                 console.print("[yellow]No templates found. Create a template first.[/yellow]")
-                console.print("  Use: chaoscypher template create")
+                console.print("  Use: chaoscypher graph template create")
                 sys.exit(1)
 
             console.print("[dim]Available templates:[/dim]")

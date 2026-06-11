@@ -27,7 +27,10 @@ flowchart TD
 
     subgraph Extraction Stage
         Analysis["Prepare Extraction\n(ImportOperationsService)"] --> DomainDetect["Detect Domain\n(DomainRegistry)"]
-        DomainDetect --> ContentFilter["Filter Non-Essential Content\n(orchestration.py)"]
+        DomainDetect -->|"gate active"| Park["Park: awaiting_confirmation\n(domain-confirmation gate)"]
+        Park -->|"human confirms"| Requeue["confirm_extraction()\nCAS back to indexed + re-queue"]
+        Requeue --> ContentFilter["Filter Non-Essential Content\n(orchestration.py)"]
+        DomainDetect -->|"confirmed / bypassed"| ContentFilter
         ContentFilter --> DepthFilter["Apply Depth Strategy\n(quick/full)"]
         DepthFilter -->|Queue: LLM| ChunkExtract["Extract Entities per Chunk\n(AIEntityExtractor)"]
         ChunkExtract -->|All chunks done| Finalize["Finalize Extraction\n(extraction_finalizer)"]
@@ -57,12 +60,13 @@ flowchart TD
 
 ### Public phases (API and UI)
 
-The `progress` field on `SourceDetailResponse` (and `SourceResponse`) exposes a simplified 4-phase view that the UI can display directly, without needing to understand the internal state machine:
+The `progress` field on `SourceDetailResponse` (and `SourceResponse`) exposes a simplified 5-phase view that the UI can display directly, without needing to understand the internal state machine:
 
 | Phase | `is_searchable` | Meaning |
 |-------|:---------------:|---------|
 | `waiting_to_index` | No | Pending or failed — nothing useful exists yet |
 | `indexing` | No | Chunking and embedding in progress |
+| `awaiting_input` | **Yes** | Indexing done and searchable; auto-detected extraction domain needs human confirmation before extraction runs (UI shows a Confirm-domain action, not a spinner) |
 | `extracting` | **Yes** | Indexed and searchable; optional extraction is running or complete |
 | `ready` | **Yes** | Fully committed to the knowledge graph |
 
@@ -81,7 +85,7 @@ Sources progress through these 11 internal statuses as the pipeline executes. Ea
 | `indexing` | `indexing` | `handle_index_document()` via `adapter.start_indexing()` |
 | `vision_pending` | `indexing` | `handle_index_document()` after enqueuing per-page vision tasks (atomic CAS `INDEXING → VISION_PENDING`); the vision finalizer CAS-reverts it to `indexing` |
 | `indexed` | `extracting` | `adapter.complete_indexing()` |
-| `awaiting_confirmation` | `extracting` | `park_for_confirmation()` (domain-confirmation gate; `bootstrap.py`). `confirm_extraction()` CASes it back to `indexed` and re-queues |
+| `awaiting_confirmation` | `awaiting_input` | `park_for_confirmation()` (domain-confirmation gate; `bootstrap.py`). `confirm_extraction()` CASes it back to `indexed` and re-queues |
 | `extracting` | `extracting` | `adapter.try_claim_extraction()` |
 | `mcp_extracting` | `extracting` | `adapter.try_claim_extraction()` (MCP path) |
 | `extracted` | `extracting` | Extraction finalizer |
@@ -179,6 +183,19 @@ There is no `waiting` value in `SourceStatus`. When the extraction queue is paus
 
 :::
 
+## Domain-Confirmation Gate
+
+When the domain-confirmation gate is active (the default — uploads with `auto_confirm` bypass it), a source parks at `awaiting_confirmation` (public phase `awaiting_input`) after indexing instead of proceeding straight to extraction. A human confirms the auto-detected extraction domain before the expensive LLM extraction runs. The shared primitives live in `operations/importing/confirmation_gate.py` so the worker, CLI, MCP, and API all evaluate the gate identically:
+
+- **`gate_decision()`** — pure read over persisted `SourceRow` fields returning `proceed` or `park`. Already-confirmed sources (`extraction_confirmed_at` set), sources past the gate, and explicit `forced_domain` choices always proceed.
+- **`park_for_confirmation()`** — one atomic row update: `status=awaiting_confirmation` plus the `detection_proposal` blob (`ranking`, `confidence`, `detected_domain`, `low_confidence`).
+- **`confirm_extraction()`** — state-aware confirm. For a parked source it CASes `awaiting_confirmation → indexed`, persists `forced_domain` + any extraction-option overrides, stamps `extraction_confirmed_at` (write-once), and re-queues extraction with the confirmed domain. A confirm that lands *before* the gate runs (status `pending` / `indexing` / `vision_pending` / `indexed`) records the decision without a status change — the gate then proceeds on its own. Confirms past the gate, on errored sources, or repeated confirms are rejected with a 409 conflict.
+
+Two supporting behaviours make the confirmation UI responsive:
+
+- **Eager detection proposal** — the indexing handler runs domain detection at chunk time and writes `detection_proposal` onto the row while status is still `indexing` (`detection_proposal_written_eagerly` log), so the upload wizard can show the proposed domain while embedding is still running.
+- **No-text fallback** — image-only documents that produce no text get a synthesized generic proposal with `no_text: true`, so the wizard renders "not enough text to detect — pick a domain" instead of a bogus detection result.
+
 ## Error Handling and Recovery
 
 ### Stage-Level Failure
@@ -240,7 +257,7 @@ Key settings that control pipeline behavior:
 | `analysis.quick_sample_size` | Settings | Max groups for `quick` depth |
 | `llm.extraction_examples_enabled` | Settings | Include domain examples in prompts |
 | `priorities.background` | Settings | Queue priority for pipeline tasks |
-| `batching.max_upload_bytes` | Settings | Maximum upload file size (unified across file uploads + URL fetches; default 500 MB). The legacy `source_processing.source_processing_max_file_size_gb` is deprecated as of 2026-05-06 and no longer honored. |
+| `batching.max_upload_bytes` | Settings | Maximum upload file size (unified across file uploads + URL fetches; default 5 GB). The separate in-process parser cap `loader.max_disk_bytes` (default 500 MiB) bounds PDF/CSV/DOCX/text parsing; video/audio stream via ffmpeg and are bounded only by the upload cap. The legacy `source_processing.source_processing_max_file_size_gb` is deprecated as of 2026-05-06 and no longer honored. |
 
 ## Content Filtering
 

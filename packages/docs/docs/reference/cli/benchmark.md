@@ -14,10 +14,21 @@ chaoscypher benchmark --help
 ```
 
 A benchmark **config** names the seed, temperature, datasets, and models for a
-run. Configs ship as built-ins (e.g. `extraction`, `quick`) and can be
+run. Configs ship as built-ins and can be
 overlaid with user configs at `<data_dir>/benchmark/config/<name>.yaml`.
 Datasets are referenced by id and discovered from both built-in locations and
 `<data_dir>/benchmark/datasets/`.
+
+Built-in configs:
+
+- `extraction` — canonical multi-genre extraction leaderboard (the default).
+- `quick` — 3-model smoke test on a single dataset.
+- `full` — three-stage pipeline benchmark (extraction + embedding retrieval +
+  GraphRAG chat with an LLM judge).
+- `workstation` — large-iron local extraction benchmark (`llama3.1:70b` ~40 GB,
+  `gpt-oss:120b` ~80 GB, `qwen3.6:35b-a3b`) plus Claude Opus 4.8 as a
+  quality-ceiling reference. The large models are **not pulled automatically**;
+  48 GB+ VRAM is recommended to run the full set without offloading.
 
 ---
 
@@ -163,8 +174,18 @@ that every in-scope labeled query's gold entities resolve against the dataset's
 live entities. This is an advanced workflow for contributors building or
 curating benchmark fixtures, not part of a normal benchmarking run.
 
+`validate` builds a reference graph before resolving gold entities; the
+`--canonical-extractor PROVIDER/MODEL` option (default: `ollama/llama3.1:8b`)
+selects the provider/model used to build that reference graph.
+
 ```bash
 chaoscypher benchmark fixture --help
+
+# Validate against the default reference extractor
+chaoscypher benchmark fixture validate <dataset_id>
+
+# Validate against a different reference extractor
+chaoscypher benchmark fixture validate <dataset_id> --canonical-extractor ollama/qwen3:14b
 ```
 
 ---

@@ -12,11 +12,11 @@ non-Western files) charset-normalizer is consulted as a tie-breaker.
 Strips a UTF-8 BOM if present. Records which encoding was used so the
 source's ``loader_encoding_used`` quality counter can surface it.
 
-Workstream 6 (2026-05-07): replaces the assorted hardcoded
-``encoding="utf-8", errors="replace"`` / ``errors="ignore"`` calls
-sprinkled across loaders. Strict decoding before any replacement so
-cp1252 / Latin-1 files keep their characters intact instead of
-turning every special character into U+FFFD or silently truncating.
+Replaces the assorted hardcoded ``encoding="utf-8", errors="replace"``
+/ ``errors="ignore"`` calls previously sprinkled across loaders.
+Strict decoding before any replacement so cp1252 / Latin-1 files keep
+their characters intact instead of turning every special character
+into U+FFFD or silently truncating.
 
 Why cp1252 strict before charset-normalizer: charset-normalizer's
 best guess can be overconfident on short snippets and pick obscure
@@ -25,27 +25,26 @@ files that are plain Western European cp1252. Trying cp1252 strict
 first gives deterministic behaviour for the overwhelmingly common
 case without needing heuristics on top of a heuristic library.
 
-Phase 4 (2026-05-08): three improvements for short legacy-encoded
-files (cp1251 Cyrillic, Shift-JIS Japanese, GB18030 Chinese):
+Three behaviours help short legacy-encoded files (cp1251 Cyrillic,
+Shift-JIS Japanese, GB18030 Chinese):
 
-1. The charset-normalizer threshold is now configurable via
-   ``LoaderSettings.encoding_chardet_min_input_size`` (default 32,
-   previously hardcoded 256). Short files now get statistical
-   detection instead of falling all the way to Latin-1.
+1. The charset-normalizer threshold is configurable via
+   ``LoaderSettings.encoding_chardet_min_input_size`` (default 32).
+   Short files get statistical detection instead of falling all the
+   way to Latin-1.
 
 2. When charset-normalizer's top result has ``coherence`` below
    ``LoaderSettings.encoding_chardet_confidence_threshold`` (default
    0.7), chardet is consulted as a second-opinion detector.  The
    higher-confidence result wins.
 
-3. The ``encoding_used`` label is now granular:
+3. The ``encoding_used`` label is granular:
    ``charset-normalizer-cp1251``, ``chardet-shift_jis``,
    ``latin-1-fallback``, ``utf-8-replace`` — so the data-quality tab
    can surface exactly which step fired.
 
-``LOADER_REPLACEMENT_CHARS_COUNT`` (Phase 2) still counts U+FFFD
-insertions correctly; the new paths all use strict decoding and
-return 0.
+``LOADER_REPLACEMENT_CHARS_COUNT`` still counts U+FFFD insertions
+correctly; the strict-decode paths all return 0.
 """
 
 from __future__ import annotations
@@ -112,7 +111,7 @@ def detect_encoding(  # noqa: C901, PLR0911, PLR0912 - tiered detector: each bra
         Optional :class:`~chaoscypher_core.settings.LoaderSettings` used
         to tune the charset-normalizer min-input-size threshold and the
         chardet confidence threshold.  When *None* a default-constructed
-        instance is used (i.e. all Phase 4 defaults apply).
+        instance is used (i.e. all defaults apply).
     """
     if settings is None:
         from chaoscypher_core.settings import LoaderSettings

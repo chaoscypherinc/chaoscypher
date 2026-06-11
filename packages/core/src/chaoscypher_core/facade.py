@@ -310,7 +310,7 @@ class ChaosCypher:
 
     @staticmethod
     async def extract(
-        source: str | Path,
+        source: str | Path | None = None,
         **kwargs: Any,
     ) -> ExtractionResult:
         """Extract entities and relationships from a file or text.
@@ -410,7 +410,7 @@ class ChaosCypher:
 
     @staticmethod
     async def chunk(
-        source: str | Path,
+        source: str | Path | None = None,
         **kwargs: Any,
     ) -> ChunksResult:
         """Chunk a file or text into hierarchical segments for RAG.
@@ -445,7 +445,7 @@ class ChaosCypher:
 
     @staticmethod
     def extract_sync(
-        source: str | Path,
+        source: str | Path | None = None,
         **kwargs: Any,
     ) -> ExtractionResult:
         """Synchronous wrapper for extract().
@@ -540,7 +540,7 @@ class ChaosCypher:
 
     @staticmethod
     def chunk_sync(
-        source: str | Path,
+        source: str | Path | None = None,
         **kwargs: Any,
     ) -> ChunksResult:
         """Synchronous wrapper for chunk().

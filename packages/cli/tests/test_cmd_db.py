@@ -27,6 +27,7 @@ loads.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -511,6 +512,63 @@ class TestDelete:
 
         assert result.exit_code == 1
         assert "Database not found" in result.output
+
+    @pytest.mark.parametrize(
+        "bad_name",
+        ["..", "../x", "..\\x", "sub/dir", "sub\\dir", "C:\\evil", "/abs/path", "a b"],
+    )
+    def test_delete_rejects_invalid_names(self, tmp_path: Path, bad_name: str) -> None:
+        """Names with separators/traversal never reach the filesystem."""
+        runner = CliRunner()
+        databases_dir = tmp_path / "databases"
+        _make_db(databases_dir, "victim")
+
+        with _patch_current_db("delete", "default"):
+            with patch(
+                "chaoscypher_cli.commands.db.delete.get_databases_dir",
+                return_value=databases_dir,
+            ):
+                result = runner.invoke(delete, [bad_name, "--yes"])
+
+        assert result.exit_code == 1
+        assert "Invalid database name" in result.output
+        assert (databases_dir / "victim").exists()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive filesystem guard")
+    def test_delete_default_guarded_case_insensitively(self, tmp_path: Path) -> None:
+        """'Default' resolves to the same dir as 'default' on Windows — guarded."""
+        runner = CliRunner()
+        databases_dir = tmp_path / "databases"
+        _make_db(databases_dir, "default")
+
+        with _patch_current_db("delete", "other"):
+            with patch(
+                "chaoscypher_cli.commands.db.delete.get_databases_dir",
+                return_value=databases_dir,
+            ):
+                result = runner.invoke(delete, ["Default", "--yes"])
+
+        assert result.exit_code == 1
+        assert "Cannot delete the 'default' database" in result.output
+        assert (databases_dir / "default").exists()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive filesystem guard")
+    def test_delete_current_guarded_case_insensitively(self, tmp_path: Path) -> None:
+        """'Active' resolves to the same dir as current 'active' on Windows — guarded."""
+        runner = CliRunner()
+        databases_dir = tmp_path / "databases"
+        _make_db(databases_dir, "active")
+
+        with _patch_current_db("delete", "active"):
+            with patch(
+                "chaoscypher_cli.commands.db.delete.get_databases_dir",
+                return_value=databases_dir,
+            ):
+                result = runner.invoke(delete, ["Active", "--yes"])
+
+        assert result.exit_code == 1
+        assert "Cannot delete the current database" in result.output
+        assert (databases_dir / "active").exists()
 
     def test_delete_rmtree_failure(self, tmp_path: Path) -> None:
         runner = CliRunner()

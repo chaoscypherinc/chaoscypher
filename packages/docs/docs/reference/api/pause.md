@@ -9,7 +9,7 @@ Control processing at both the individual source level and system-wide. Pausing
 prevents new extraction and indexing work from starting; resuming re-queues any
 paused sources for recovery.
 
-Eight endpoints are split across two path prefixes:
+Nine endpoints are split across two path prefixes:
 
 - **Per-source** endpoints are mounted at `/api/v1/sources`
 - **System-wide** endpoints are mounted at `/api/v1/system/processing`
@@ -28,7 +28,7 @@ Pause processing for a single source. The source will not be picked up for
 extraction or recovery until it is resumed.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/pause \
+curl -X POST http://localhost/api/v1/sources/src_abc123/pause \
   -H "Content-Type: application/json" \
   -d '{"reason": "Reviewing extraction settings"}'
 ```
@@ -59,7 +59,7 @@ Resume a paused source and immediately trigger recovery so it re-queues for
 any pending processing.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/resume
+curl -X POST http://localhost/api/v1/sources/src_abc123/resume
 ```
 
 | Parameter | Type | Required | Description |
@@ -87,7 +87,7 @@ Pause multiple sources in a single request. Returns the count of sources
 successfully paused.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/pause \
+curl -X POST http://localhost/api/v1/sources/pause \
   -H "Content-Type: application/json" \
   -d '{
     "source_ids": ["src_abc123", "src_def456"],
@@ -120,7 +120,7 @@ Resume multiple sources in a single request. Each resumed source immediately
 triggers recovery.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/resume \
+curl -X POST http://localhost/api/v1/sources/resume \
   -H "Content-Type: application/json" \
   -d '{
     "source_ids": ["src_abc123", "src_def456"]
@@ -157,7 +157,7 @@ will be started until the system is resumed. Existing in-flight tasks are
 not interrupted.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/system/processing/pause \
+curl -X POST http://localhost/api/v1/system/processing/pause \
   -H "Content-Type: application/json" \
   -d '{"reason": "Scheduled maintenance"}'
 ```
@@ -185,7 +185,7 @@ POST /api/v1/system/processing/resume
 Resume system-wide processing after a system pause.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/system/processing/resume
+curl -X POST http://localhost/api/v1/system/processing/resume
 ```
 
 **Response** `200 OK`
@@ -208,7 +208,7 @@ Returns the current system-wide pause state, including when the pause started
 and the reason if provided.
 
 ```bash
-curl http://localhost:8080/api/v1/system/processing/status
+curl http://localhost/api/v1/system/processing/status
 ```
 
 **Response** `200 OK` -- [SystemPauseStatusResponse](#systempausestatusresponse)
@@ -244,7 +244,7 @@ and diagnosing pause / resume activity, health changes, task failures, and
 recovery operations.
 
 ```bash
-curl "http://localhost:8080/api/v1/system/processing/events?event_type=pause&limit=20"
+curl "http://localhost/api/v1/system/processing/events?event_type=pause&limit=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -252,26 +252,49 @@ curl "http://localhost:8080/api/v1/system/processing/events?event_type=pause&lim
 | `event_type` | string (query) | No | `null` | Filter by event type: `pause`, `resume`, `health_change`, `task_failed`, `recovery` |
 | `limit` | int (query) | No | `50` | Maximum number of events to return |
 
-**Response** `200 OK` -- `list[object]`
+**Response** `200 OK` -- `list[SystemEventResponse]`
 
 ```json
 [
   {
-    "id": "evt_001",
-    "event_type": "pause",
-    "created_at": "2026-04-13T09:00:00",
+    "id": 1,
+    "timestamp": "2026-04-13T09:00:00Z",
+    "type": "pause",
+    "action": "System processing paused",
+    "source": "user",
     "reason": "Scheduled maintenance",
+    "details": null,
     "database_name": "default"
   },
   {
-    "id": "evt_002",
-    "event_type": "resume",
-    "created_at": "2026-04-13T10:30:00",
+    "id": 2,
+    "timestamp": "2026-04-13T10:30:00Z",
+    "type": "resume",
+    "action": "System processing resumed",
+    "source": "user",
     "reason": null,
+    "details": null,
     "database_name": "default"
   }
 ]
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Auto-incrementing primary key |
+| `timestamp` | string? | ISO-8601 timestamp when the event was recorded |
+| `type` | string? | Event type category: `pause`, `resume`, `health_change`, `task_failed`, or `recovery` |
+| `action` | string? | Human-readable action description within the type (e.g. `"System processing paused"`) |
+| `source` | string? | Who or what triggered the event (e.g. `user`, `health_monitor`, `reconciler`, `worker`) or the originating `source_id` |
+| `reason` | string? | Human-readable reason captured at event time, if any |
+| `details` | object? | Arbitrary structured payload; schema depends on event type |
+| `database_name` | string? | Database the event originated from (events are not cross-database) |
+
+:::note
+
+The query parameter is named `event_type`, but the corresponding **response** field is named `type`.
+
+:::
 
 ---
 
@@ -284,7 +307,7 @@ DELETE /api/v1/system/processing/events
 Permanently deletes all system events from the audit log.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/system/processing/events
+curl -X DELETE http://localhost/api/v1/system/processing/events
 ```
 
 **Response** `200 OK`

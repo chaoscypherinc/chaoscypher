@@ -43,7 +43,7 @@ Press Ctrl+C to stop
 |--------|-------|---------|-------------|
 | `--port` | `-p` | `8081` | Port to listen on |
 | `--host` | `-h` | `localhost` | Host address to bind to |
-| `--database` | `-d` | `default` | Database to serve |
+| `--database` | `-d` | current database | Database to serve (see [Database selection](index.md#database-selection)) |
 | `--reload` | | off | Auto-reload on file changes (development mode) |
 
 ## Examples
@@ -111,7 +111,7 @@ pip install 'chaoscypher-cli[server]'
 
 ## CORS
 
-The built-in fallback server includes CORS middleware allowing requests from `localhost:3000`, `localhost:8080`, and `localhost:8081` for local development. When using the full Cortex backend, CORS is configured via `settings.yaml`.
+The built-in fallback server allows cross-origin requests from `http://localhost:3000` and `http://127.0.0.1:3000` by default (read-only methods only: `GET`, `OPTIONS`, `HEAD`). Override the allowlist via the `cors.dev_fallback_origins` setting. When using the full Cortex backend, CORS is configured via `settings.yaml`.
 
 ## Stopping the Server
 

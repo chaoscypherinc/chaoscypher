@@ -130,6 +130,78 @@ class TestChaosCypherNamespace:
 
 @pytest.mark.unit
 @pytest.mark.core
+class TestFacadeTextOnlyCalls:
+    """Facade extract/chunk (and their sync twins) accept text-only calls.
+
+    ``source`` must not be positionally required on the facade either —
+    ``ChaosCypher.extract_sync(text=...)`` is the documented notebook API.
+    """
+
+    @pytest.mark.asyncio
+    async def test_extract_accepts_text_only(self):
+        """ChaosCypher.extract(text=...) forwards to extract(None, text=...)."""
+        from chaoscypher_core import ChaosCypher
+
+        mock_result = ExtractionResult(entities=[], relationships=[])
+        with patch("chaoscypher_core.extract", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_result
+            result = await ChaosCypher.extract(text="raw text")
+            assert result is mock_result
+            mock.assert_called_once_with(None, text="raw text")
+
+    @pytest.mark.asyncio
+    async def test_chunk_accepts_text_only(self):
+        """ChaosCypher.chunk(text=...) forwards to chunk(None, text=...)."""
+        from chaoscypher_core import ChaosCypher
+        from chaoscypher_core.models import ChunksResult
+
+        mock_result = ChunksResult.model_construct()
+        with patch("chaoscypher_core.chunk", new_callable=AsyncMock) as mock:
+            mock.return_value = mock_result
+            result = await ChaosCypher.chunk(text="raw text")
+            assert result is mock_result
+            mock.assert_called_once_with(None, text="raw text")
+
+    def test_extract_sync_accepts_text_only(self):
+        """ChaosCypher.extract_sync(text=...) forwards text-only calls."""
+        from chaoscypher_core import ChaosCypher
+
+        mock_result = ExtractionResult(entities=[], relationships=[])
+        with patch("chaoscypher_core.extract_sync") as mock:
+            mock.return_value = mock_result
+            result = ChaosCypher.extract_sync(text="raw text")
+            assert result is mock_result
+            mock.assert_called_once_with(None, text="raw text")
+
+    def test_chunk_sync_accepts_text_only(self):
+        """ChaosCypher.chunk_sync(text=...) forwards text-only calls."""
+        from chaoscypher_core import ChaosCypher
+        from chaoscypher_core.models import ChunksResult
+
+        mock_result = ChunksResult.model_construct()
+        with patch("chaoscypher_core.chunk_sync") as mock:
+            mock.return_value = mock_result
+            result = ChaosCypher.chunk_sync(text="raw text")
+            assert result is mock_result
+            mock.assert_called_once_with(None, text="raw text")
+
+    def test_extract_sync_with_neither_raises_value_error(self):
+        """An empty facade extract_sync() call raises the async ValueError."""
+        from chaoscypher_core import ChaosCypher
+
+        with pytest.raises(ValueError, match="either 'source'"):
+            ChaosCypher.extract_sync()
+
+    def test_chunk_sync_with_neither_raises_value_error(self):
+        """An empty facade chunk_sync() call raises the async ValueError."""
+        from chaoscypher_core import ChaosCypher
+
+        with pytest.raises(ValueError, match="either 'source'"):
+            ChaosCypher.chunk_sync()
+
+
+@pytest.mark.unit
+@pytest.mark.core
 class TestCCAlias:
     """Tests for CC alias."""
 

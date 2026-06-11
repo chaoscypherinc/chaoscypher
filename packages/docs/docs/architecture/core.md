@@ -75,7 +75,18 @@ packages/core/src/chaoscypher_core/
 │   └── web/           # Web adapter
 ├── services/          # Business logic
 │   └── vision/        # Vision processing (image description via LLM)
+├── streaming/         # Chat streaming subsystem
+│   └── chat/          # Shared chat tool loop, sinks, approval broker, cancellation, citations
+├── operations/        # Queue operation handlers (importing/indexing, extraction, confirmation gate, exports)
+├── queue/             # Valkey queue client + pub/sub
+├── llm_queue/         # LLM-queue wrapper (enqueue + wait-for-result helpers)
+├── database/          # Database engine + Alembic migrations
+├── app_config/        # Application settings (settings.yaml) — distinct from settings.py engine config
+├── analytics/         # Framework-agnostic analytics and aggregations
+├── factories/         # Shared service factories (tools, triggers, workflows)
 ├── repo_factories/    # Repository factories
+├── templates/         # Template utilities (defaults, visuals)
+├── vision/            # Vision pipeline state enums
 ├── plugins/           # Plugin system base
 ├── mcp/               # MCP server (tools, bridge, server factory)
 ├── models.py          # Pure Pydantic DTOs
@@ -83,6 +94,10 @@ packages/core/src/chaoscypher_core/
 ├── utils/             # Cross-cutting utilities
 └── exceptions.py      # Exception hierarchy
 ```
+
+### Chat Streaming Subsystem
+
+The chat tool loop lives in Core (`streaming/chat/loop.py`): it runs conversation history assembly, RAG/GraphRAG retrieval, LLM streaming, tool calls, and citation finalization. Both chat surfaces consume the same loop through surface-specific adapters — the Neuron worker (web chat) plugs in a Valkey pub/sub sink and approval broker, while the CLI (terminal chat) plugs in terminal-rendering sink and approval adapters. This keeps chat behavior identical across the web UI and the CLI.
 
 ## Ports (Protocols)
 

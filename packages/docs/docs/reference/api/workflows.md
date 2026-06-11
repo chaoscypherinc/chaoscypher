@@ -24,7 +24,7 @@ GET /api/v1/workflows
 Returns all workflows with optional filters. Paginated.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows?is_active=true
+curl http://localhost/api/v1/workflows?is_active=true
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -88,7 +88,7 @@ POST /api/v1/workflows
 ```
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows \
+curl -X POST http://localhost/api/v1/workflows \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Auto-Extract Pipeline",
@@ -134,7 +134,7 @@ GET /api/v1/workflows/{workflow_id}
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123
+curl http://localhost/api/v1/workflows/wf_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -154,7 +154,7 @@ PATCH /api/v1/workflows/{workflow_id}
 Partial update -- only include the fields you want to change. System workflows cannot be updated.
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/workflows/wf_abc123 \
+curl -X PATCH http://localhost/api/v1/workflows/wf_abc123 \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Renamed Pipeline",
@@ -191,7 +191,7 @@ DELETE /api/v1/workflows/{workflow_id}
 Permanently deletes a workflow and its steps. System workflows cannot be deleted.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/workflows/wf_abc123
+curl -X DELETE http://localhost/api/v1/workflows/wf_abc123
 ```
 
 **Response** `204 No Content`
@@ -204,10 +204,10 @@ curl -X DELETE http://localhost:8080/api/v1/workflows/wf_abc123
 POST /api/v1/workflows/{workflow_id}/duplicate
 ```
 
-Creates a copy of a workflow and all its steps. The new workflow name is `"{original_name} (Copy)"`.
+Creates a copy of a workflow and all its steps. The new workflow name is `"{original_name} (imported)"` (numeric suffixes like `" (imported) (2)"` are appended on repeated duplication).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/duplicate
+curl -X POST http://localhost/api/v1/workflows/wf_abc123/duplicate
 ```
 
 | Parameter | Type | Required | Description |
@@ -219,7 +219,7 @@ curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/duplicate
 ```json
 {
   "workflow_id": "wf_new456",
-  "message": "Workflow duplicated successfully",
+  "message": "Workflow 'Auto-Extract Pipeline (imported)' imported successfully with 1 steps.",
   "was_existing": false
 }
 ```
@@ -230,7 +230,23 @@ curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/duplicate
 
 ## Workflow Steps
 
-Steps define the ordered sequence of tool invocations within a workflow.
+Steps define the tool invocations within a workflow. Steps execute as a
+dependency **DAG**, not a strict sequence — `depends_on` governs execution
+order, and independent steps run in parallel.
+
+### Execution Model
+
+- Steps with an empty `depends_on` start immediately and run **in parallel**.
+- A step with dependencies runs only after **all** the steps listed in its
+  `depends_on` have completed (AND-join). It runs exactly once, with every
+  upstream result available.
+- Sibling steps that share a parent fan out and run concurrently once that
+  parent completes.
+- If an upstream step fails hard, its dependent steps are skipped
+  (fail-stop) while independent branches continue to run.
+- `step_number` is display ordering only — `depends_on` governs execution.
+  A workflow whose steps form a single chain via `depends_on` behaves
+  exactly like a sequential pipeline.
 
 ### List Steps
 
@@ -241,7 +257,7 @@ GET /api/v1/workflows/{workflow_id}/steps
 Returns all steps for a workflow sorted by `step_number`.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/steps
+curl http://localhost/api/v1/workflows/wf_abc123/steps
 ```
 
 **Response** `200 OK`
@@ -279,7 +295,7 @@ POST /api/v1/workflows/{workflow_id}/steps
 ```
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/steps \
+curl -X POST http://localhost/api/v1/workflows/wf_abc123/steps \
   -H "Content-Type: application/json" \
   -d '{
     "step_number": 1,
@@ -302,7 +318,7 @@ curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/steps \
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `step_number` | int | Yes | -- | Position in execution order |
+| `step_number` | int | Yes | -- | Display ordering in the UI — execution order is governed by `depends_on` (see [Execution Model](#execution-model)) |
 | `name` | string | Yes | -- | Step name |
 | `description` | string | No | `null` | Description |
 | `tool_type` | string | Yes | -- | `system_tool`, `user_tool`, or `workflow` |
@@ -311,7 +327,7 @@ curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/steps \
 | `condition` | object | No | `null` | Conditional execution rules |
 | `retry_on_failure` | bool | No | `false` | Retry this step on failure |
 | `timeout_seconds` | int | No | `null` | Per-step timeout |
-| `depends_on` | string[] | No | `[]` | Step IDs that must complete first |
+| `depends_on` | string[] | No | `[]` | Step IDs that must **all** complete before this step runs (AND-join). Defines the execution DAG — see [Execution Model](#execution-model) |
 | `continue_on_error` | bool | No | `false` | Continue workflow if step fails |
 | `thinking_mode` | string | No | `null` | LLM thinking mode override |
 
@@ -326,7 +342,7 @@ GET /api/v1/workflows/{workflow_id}/steps/{step_id}
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/steps/step_001
+curl http://localhost/api/v1/workflows/wf_abc123/steps/step_001
 ```
 
 **Response** `200 OK` -- returns a single `WorkflowStepResponse`.
@@ -342,7 +358,7 @@ PATCH /api/v1/workflows/{workflow_id}/steps/{step_id}
 Partial update -- only include fields to change. System workflow steps cannot be modified.
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/workflows/wf_abc123/steps/step_001 \
+curl -X PATCH http://localhost/api/v1/workflows/wf_abc123/steps/step_001 \
   -H "Content-Type: application/json" \
   -d '{
     "timeout_seconds": 600,
@@ -363,7 +379,7 @@ DELETE /api/v1/workflows/{workflow_id}/steps/{step_id}
 ```
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/workflows/wf_abc123/steps/step_001
+curl -X DELETE http://localhost/api/v1/workflows/wf_abc123/steps/step_001
 ```
 
 **Response** `204 No Content`
@@ -379,7 +395,7 @@ PUT /api/v1/workflows/{workflow_id}/steps/reorder
 Updates `step_number` for all steps based on the provided ordering. The request must include every step ID belonging to the workflow.
 
 ```bash
-curl -X PUT http://localhost:8080/api/v1/workflows/wf_abc123/steps/reorder \
+curl -X PUT http://localhost/api/v1/workflows/wf_abc123/steps/reorder \
   -H "Content-Type: application/json" \
   -d '{
     "step_order": ["step_003", "step_001", "step_002"]
@@ -407,7 +423,7 @@ GET /api/v1/workflows/{workflow_id}/export
 Exports a workflow with all its steps to a portable JSON format suitable for backup or sharing between databases.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/export
+curl http://localhost/api/v1/workflows/wf_abc123/export
 ```
 
 **Response** `200 OK`
@@ -415,7 +431,8 @@ curl http://localhost:8080/api/v1/workflows/wf_abc123/export
 ```json
 {
   "data": {
-    "format_version": "1",
+    "version": "1.0",
+    "exported_at": "2026-04-13T09:00:00.000000+00:00Z",
     "workflow": {
       "name": "Auto-Extract Pipeline",
       "description": "Automatically extract entities from new uploads",
@@ -450,15 +467,16 @@ POST /api/v1/workflows/import
 Imports a workflow from previously exported JSON. Supports duplicate handling strategies.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/import \
+curl -X POST http://localhost/api/v1/workflows/import \
   -H "Content-Type: application/json" \
   -d '{
     "workflow_data": {
-      "format_version": "1",
+      "version": "1.0",
       "workflow": {
         "name": "Auto-Extract Pipeline",
         "description": "Imported pipeline",
         "input_schema": {"type": "object"},
+        "output_schema": null,
         "tags": ["extraction"]
       },
       "steps": []
@@ -481,12 +499,12 @@ curl -X POST http://localhost:8080/api/v1/workflows/import \
 ```json
 {
   "workflow_id": "wf_new456",
-  "message": "Workflow imported successfully as 'Auto-Extract Pipeline (copy)'",
+  "message": "Workflow 'Auto-Extract Pipeline (imported)' imported successfully with 0 steps.",
   "was_existing": false
 }
 ```
 
-**Errors:** `400` if the export data is invalid or `on_duplicate` is `"fail"` and a workflow with the same name exists.
+**Errors:** `400` if the export data is invalid (missing/incompatible `version`, missing required workflow fields — `name`, `input_schema`, `output_schema`); `409` if `on_duplicate` is `"fail"` and a workflow with the same name already exists.
 
 ---
 
@@ -501,7 +519,7 @@ GET /api/v1/workflows/{workflow_id}/triggers
 Returns all triggers configured to fire this workflow.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/triggers
+curl http://localhost/api/v1/workflows/wf_abc123/triggers
 ```
 
 **Response** `200 OK`
@@ -536,7 +554,7 @@ POST /api/v1/workflows/{workflow_id}/executions
 Queues a workflow for asynchronous execution. Returns immediately with an execution ID that you can use to poll for status.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/executions \
+curl -X POST http://localhost/api/v1/workflows/wf_abc123/executions \
   -H "Content-Type: application/json" \
   -d '{
     "inputs": {
@@ -570,7 +588,7 @@ GET /api/v1/workflows/{workflow_id}/executions
 Paginated execution history for a workflow.
 
 ```bash
-curl "http://localhost:8080/api/v1/workflows/wf_abc123/executions?status=completed&page=1&page_size=20"
+curl "http://localhost/api/v1/workflows/wf_abc123/executions?status=completed&page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -616,7 +634,7 @@ GET /api/v1/workflows/{workflow_id}/executions/{execution_id}
 Returns full execution details including individual step execution results.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/executions/exec_xyz789
+curl http://localhost/api/v1/workflows/wf_abc123/executions/exec_xyz789
 ```
 
 **Response** `200 OK`
@@ -663,7 +681,7 @@ POST /api/v1/workflows/{workflow_id}/executions/{execution_id}/cancel
 Gracefully cancels a running or queued execution.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/executions/exec_xyz789/cancel
+curl -X POST http://localhost/api/v1/workflows/wf_abc123/executions/exec_xyz789/cancel
 ```
 
 **Response** `200 OK`
@@ -691,7 +709,7 @@ GET /api/v1/workflows/{workflow_id}/stats
 Aggregate execution statistics for a single workflow.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/stats
+curl http://localhost/api/v1/workflows/wf_abc123/stats
 ```
 
 **Response** `200 OK`
@@ -725,7 +743,7 @@ GET /api/v1/workflows/stats
 Aggregated statistics across all workflows in the current database.
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/stats
+curl http://localhost/api/v1/workflows/stats
 ```
 
 **Response** `200 OK`
@@ -752,7 +770,7 @@ A typical execute-poll-result workflow:
 **1. Start execution**
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/workflows/wf_abc123/executions \
+curl -X POST http://localhost/api/v1/workflows/wf_abc123/executions \
   -H "Content-Type: application/json" \
   -d '{"inputs": {"source_id": "src_789"}}'
 ```
@@ -770,7 +788,7 @@ Response (`202 Accepted`):
 **2. Poll for status**
 
 ```bash
-curl http://localhost:8080/api/v1/workflows/wf_abc123/executions/exec_xyz789
+curl http://localhost/api/v1/workflows/wf_abc123/executions/exec_xyz789
 ```
 
 While running, the `status` field will be `"running"` and `current_step_id` will indicate which step is active.

@@ -122,16 +122,14 @@ def test_upgrade_to_head_via_revision_matches_head(tmp_path: Path) -> None:
     assert current_revision(db) == head
 
 
-# After the 2026-06-02 squash there is exactly one revision (the 0001
-# baseline), so there is no intermediate downgrade target left to walk to.
-# The baseline's ``downgrade()`` is an intentional guarded no-op — the
+# The 0001 baseline's ``downgrade()`` is an intentional guarded no-op — the
 # baseline is the schema floor; rolling below it would wipe the DB, so
 # production rollback uses a backup restore instead (see the baseline's
 # downgrade docstring). The two tests below pin that floor behaviour.
 
 
 def test_downgrade_baseline_to_base_is_guarded_noop(tmp_path: Path) -> None:
-    """Downgrading the baseline to ``base`` runs its no-op and leaves the schema.
+    """Downgrading head to ``base`` runs the no-ops and leaves the schema.
 
     The baseline ``downgrade()`` is a deliberate ``pass`` (it does NOT drop
     tables), so a downgrade-to-base unstamps the version row without
@@ -140,7 +138,7 @@ def test_downgrade_baseline_to_base_is_guarded_noop(tmp_path: Path) -> None:
     """
     db = _fresh_db(tmp_path)
     upgrade_to_head(db)
-    assert current_revision(db) == "0001"
+    assert current_revision(db) == head_revision()
 
     downgrade_to(db, "base")  # must not raise
 

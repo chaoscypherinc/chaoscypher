@@ -492,9 +492,9 @@ def _build_extraction_config(
         relationship_guidance: Relationship-specific extraction guidance.
         settings: Application settings.
         file_info: File metadata dict (legacy fallback when ``source_row``
-            is missing). Workstream 1 (2026-05-07) moved every user
-            upload setting onto the source row; this dict is now only
-            used for backwards-compatible recovery.
+            is missing). Every user upload setting now lives on the
+            source row; this dict is only used for
+            backwards-compatible recovery.
         source_row: Authoritative source-row state. When present, drives
             ``filtering_mode``, ``content_filtering``, ``enable_vision``,
             and ``extraction_depth`` regardless of what the queue
@@ -915,11 +915,11 @@ class ImportOperationsService:
     ) -> str:
         """Queue import commit operation (persists payload to DB first).
 
-        Phase 5 Task D: ``commit_data`` is stashed on the source row
+        ``commit_data`` is stashed on the source row
         via ``set_source_commit_payload`` before enqueue so the queue
         payload stays small. The adapter comes from
-        ``self.source_repository`` (Task A wired this through on the
-        worker).
+        ``self.source_repository``, which is wired through on the
+        worker.
 
         Raises:
             OperationError: If ``source_repository`` is not configured.

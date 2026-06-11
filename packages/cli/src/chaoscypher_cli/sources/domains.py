@@ -11,7 +11,10 @@ here so ``add``, ``extract``, and ``confirm`` stay in lockstep.
 from __future__ import annotations
 
 
-# The 14 registry domains in display order. ``generic`` is the fallback domain.
+# The builtin registry domains in display order. ``generic`` is the fallback
+# domain. Must stay in lockstep with the core registry plugins
+# (``chaoscypher_core/.../extraction/domains/plugins/*.jsonld``) — enforced by
+# ``tests/test_source_domains_constant.py::test_domain_names_match_builtin_registry``.
 DOMAIN_NAMES: tuple[str, ...] = (
     "generic",
     "technical",
@@ -27,6 +30,11 @@ DOMAIN_NAMES: tuple[str, ...] = (
     "philosophical",
     "political",
     "theological",
+    "cybersecurity",
+    "design",
+    "intelligence",
+    "investigation",
+    "reference",
 )
 
 # ``add`` lists "auto" first because its --domain default is "auto".

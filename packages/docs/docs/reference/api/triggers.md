@@ -18,7 +18,7 @@ GET /api/v1/triggers
 Returns all triggers with optional filters. The response contains summary data only -- use the detail endpoint for full trigger configuration including `filters` and `workflow_inputs`.
 
 ```bash
-curl http://localhost:8080/api/v1/triggers?event_source=node.create&enabled=true
+curl http://localhost/api/v1/triggers?event_source=node.create&enabled=true
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -72,7 +72,7 @@ GET /api/v1/triggers/{trigger_id}/stats
 Returns aggregate execution statistics for a single trigger, computed from the persisted execution history.
 
 ```bash
-curl http://localhost:8080/api/v1/triggers/trg_abc123/stats
+curl http://localhost/api/v1/triggers/trg_abc123/stats
 ```
 
 | Parameter | Type | Required | Description |
@@ -120,7 +120,7 @@ Creates a new event trigger linked to a workflow.
 The local operator owns all triggers (single-user deployment).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/triggers \
+curl -X POST http://localhost/api/v1/triggers \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Auto-Embed on Node Create",
@@ -137,7 +137,7 @@ curl -X POST http://localhost:8080/api/v1/triggers \
 |-------|------|----------|---------|-------------|
 | `name` | string | Yes | -- | Human-readable trigger name |
 | `event_source` | string | Yes | -- | Event source to listen for (see [Event Sources](#event-sources)) |
-| `filters` | object | Yes | -- | Filter criteria applied to event data before firing |
+| `filters` | object | Yes | -- | Filter criteria applied to event data before firing — see [Event Payloads and Filter Matching](#event-payloads-and-filter-matching) |
 | `workflow_id` | string | Yes | -- | ID of the workflow to execute when the trigger fires |
 | `workflow_inputs` | object | No | `null` | Static inputs passed to the workflow on each execution |
 | `enabled` | bool | No | `true` | Whether the trigger is active |
@@ -173,7 +173,7 @@ Returns full details for a specific trigger, including `filters` and `workflow_i
 Returns the trigger by ID. Returns `404` if no trigger with that ID exists.
 
 ```bash
-curl http://localhost:8080/api/v1/triggers/trg_abc123
+curl http://localhost/api/v1/triggers/trg_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -212,7 +212,7 @@ Partial update -- only include the fields you want to change.
 The local operator can update any trigger (single-user deployment).
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/triggers/trg_abc123 \
+curl -X PATCH http://localhost/api/v1/triggers/trg_abc123 \
   -H "Content-Type: application/json" \
   -d '{
     "enabled": false,
@@ -262,7 +262,7 @@ Permanently deletes a trigger.
 The local operator can delete any trigger (single-user deployment).
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/triggers/trg_abc123
+curl -X DELETE http://localhost/api/v1/triggers/trg_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -286,14 +286,36 @@ Built-in event sources dispatched by Chaos Cypher:
 | Event Source | Dispatched When |
 |--------------|-----------------|
 | `node.create` | A new node is added to the knowledge graph |
-| `node.update` | An existing node is modified |
 | `edge.create` | A new edge (relationship) is added to the knowledge graph |
 
 :::tip
 
-These are the event sources used by the default seed triggers (Auto-Embed on Node Create / Update). Custom workflows and plugins can dispatch additional event sources via `publish_event_sync()`.
+`node.create` is the event source used by the default seed trigger (Auto-Embed on Node Create). Custom workflows and plugins can dispatch additional event sources via `publish_event_sync()`.
 
 :::
+
+:::note[No `node.update` event]
+
+Editing an existing node does not emit an event — the API layer re-embeds edited nodes synchronously, so no trigger is needed (or fired) for node updates.
+
+:::
+
+### Event Payloads and Filter Matching
+
+Both built-in events publish the same minimal payload:
+
+```json
+{
+  "entity_type": "node",
+  "entity_id": "node-abc-123"
+}
+```
+
+`entity_type` is `"node"` for `node.create` and `"edge"` for `edge.create`; `entity_id` is the ID of the created entity.
+
+`filters` are matched against this payload by **top-level literal equality**: every filter key must exist in the event payload and its value must compare equal. An empty `filters` object matches every event. Because the built-in payload carries only `entity_type` and `entity_id`, those are the only filter keys that can ever match a built-in event — a filter key absent from the payload (e.g. `template_id`) can structurally never match, and the engine logs a WARNING when it encounters one so a misconfigured trigger doesn't sit in the registry looking healthy while never firing.
+
+Custom events published via `publish_event_sync()` define their own payloads; filter keys match against whatever top-level keys that payload carries.
 
 ---
 

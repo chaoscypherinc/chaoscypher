@@ -7,11 +7,15 @@ Covers all five lexicon CLI commands through Click's CliRunner with all
 network/filesystem I/O mocked.  The test matrix is:
   - search: results found / empty results / client error
   - list:   no packages dir / empty dir / table/json/simple formats / --all flag
-  - pull:   happy path / file-exists-no-force / not-found error / with extract / not-authed warning
+  - pull:   happy path / file-exists-no-force / not-found error / with extract /
+            not-authed warning / hub-unreachable hint
   - push:   ccx file happy path / directory happy path / not-logged-in / validation error /
-            non-ccx file / no manifest / cancelled confirmation
+            non-ccx file / no manifest / cancelled confirmation / hub-unreachable hint
   - remove: ccx file / directory package / version-not-found / not-found /
-            with --force / confirm-cancelled / user-scoped path / remove --all
+            with --force / confirm-cancelled / user-scoped path / remove --all /
+            path-traversal rejection
+  - paths:  list and remove resolve the SAME canonical packages dir
+            (CHAOSCYPHER_DATA_DIR honored)
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from chaoscypher_cli.commands.lexicon.list import list_packages
@@ -563,6 +568,41 @@ class TestPullCommand:
         assert result.exit_code == 1
         assert "Download failed" in result.output
 
+    def test_pull_hub_unreachable_prints_hint_not_traceback(self, tmp_path: Path) -> None:
+        """A plain ExternalServiceError (hub down) yields a friendly one-line hint."""
+        runner = CliRunner()
+        from chaoscypher_core.exceptions import ExternalServiceError
+
+        client_mock = MagicMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=False)
+        client_mock.get_package_info = AsyncMock(
+            side_effect=ExternalServiceError("Lexicon", "Connection refused")
+        )
+
+        with (
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_auth_config",
+                return_value=MagicMock(token="tok"),
+            ),
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_lexicon_url",
+                return_value="https://lexicon.test",
+            ),
+            patch(
+                "chaoscypher_core.services.lexicon.LexiconClient",
+                return_value=client_mock,
+            ),
+        ):
+            result = runner.invoke(pull, ["testuser/test-pkg", "--output", str(tmp_path)])
+
+        assert result.exit_code == 1
+        assert "Cannot reach Lexicon Hub" in result.output
+        assert "lexicon.test" in result.output
+        assert "Traceback" not in result.output
+        # The command exited via sys.exit, not an unhandled exception
+        assert isinstance(result.exception, SystemExit)
+
     def test_pull_simple_package_name_no_slash(self, tmp_path: Path) -> None:
         """Package name without '/' sets owner_username to empty string."""
         runner = CliRunner()
@@ -862,6 +902,46 @@ class TestPushCommand:
         assert result.exit_code == 1
         assert "Upload failed" in result.output
 
+    def test_push_hub_unreachable_prints_hint_not_traceback(self, tmp_path: Path) -> None:
+        """A plain ExternalServiceError (hub down) yields a friendly one-line hint."""
+        runner = CliRunner()
+        ccx = self._make_ccx(tmp_path)
+        from chaoscypher_core.exceptions import ExternalServiceError
+
+        client_mock = MagicMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=False)
+        client_mock.upload = AsyncMock(
+            side_effect=ExternalServiceError("Lexicon", "Connection refused")
+        )
+
+        with (
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_auth_config",
+                return_value=MagicMock(token="tok"),
+            ),
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_lexicon_url",
+                return_value="https://lexicon.test",
+            ),
+            patch(
+                "chaoscypher_core.services.lexicon.LexiconClient",
+                return_value=client_mock,
+            ),
+            patch(
+                "chaoscypher_core.services.package.format_size",
+                return_value="20 B",
+            ),
+        ):
+            result = runner.invoke(push, [str(ccx), "--force"])
+
+        assert result.exit_code == 1
+        assert "Cannot reach Lexicon Hub" in result.output
+        assert "lexicon.test" in result.output
+        assert "Traceback" not in result.output
+        # The command exited via sys.exit, not an unhandled exception
+        assert isinstance(result.exception, SystemExit)
+
     def test_push_private_flag(self, tmp_path: Path) -> None:
         runner = CliRunner()
         ccx = self._make_ccx(tmp_path)
@@ -1099,3 +1179,97 @@ class TestRemoveCommand:
 
         assert result.exit_code == 0, result.output
         assert not pkg_dir.exists()
+
+    @pytest.mark.parametrize(
+        "bad_name",
+        [
+            "..",
+            "../x",
+            "..\\..\\x",
+            "/abs/path",
+            "C:/evil",
+            "C:\\evil",
+            "alice/../escape",
+            "alice/./pkg",
+            "pkg/",
+            "sub\\pkg",
+        ],
+    )
+    def test_remove_rejects_path_traversal_names(self, bad_name: str, tmp_path: Path) -> None:
+        """Names that could resolve outside the packages dir are rejected up front."""
+        runner = CliRunner()
+        packages_dir = tmp_path / "packages"
+        packages_dir.mkdir()
+
+        with patch(
+            "chaoscypher_cli.commands.lexicon.remove.get_packages_dir",
+            return_value=packages_dir,
+        ) as mock_dir:
+            result = runner.invoke(remove, [bad_name, "--force"])
+
+        assert result.exit_code == 1
+        assert "Invalid package name" in result.output
+        # Validation happens before ANY filesystem operation
+        mock_dir.assert_not_called()
+
+    def test_remove_traversal_cannot_delete_outside_packages_dir(self, tmp_path: Path) -> None:
+        """A relative-traversal name must never reach (or delete) a sibling directory."""
+        runner = CliRunner()
+        packages_dir = tmp_path / "data" / "packages"
+        packages_dir.mkdir(parents=True)
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "file.txt").write_text("precious")
+
+        with patch(
+            "chaoscypher_cli.commands.lexicon.remove.get_packages_dir",
+            return_value=packages_dir,
+        ):
+            result = runner.invoke(remove, ["../../victim", "--force"])
+
+        assert result.exit_code == 1
+        assert "Invalid package name" in result.output
+        assert victim.exists()
+        assert (victim / "file.txt").read_text() == "precious"
+
+    def test_remove_rejects_traversal_version(self, tmp_path: Path) -> None:
+        """--version '..' would resolve to the packages dir itself — rejected."""
+        runner = CliRunner()
+        packages_dir = tmp_path / "packages"
+        pkg_dir = packages_dir / "my-package"
+        pkg_dir.mkdir(parents=True)
+
+        with patch(
+            "chaoscypher_cli.commands.lexicon.remove.get_packages_dir",
+            return_value=packages_dir,
+        ):
+            result = runner.invoke(remove, ["my-package", "--version", "..", "--force"])
+
+        assert result.exit_code == 1
+        assert "Invalid version" in result.output
+        assert packages_dir.exists()
+        assert pkg_dir.exists()
+
+
+# ---------------------------------------------------------------------------
+# packages-dir resolution (list and remove must agree)
+# ---------------------------------------------------------------------------
+
+
+class TestPackagesDirResolution:
+    """`lexicon list` and `lexicon remove` must scan the SAME packages dir."""
+
+    def test_list_and_remove_share_canonical_packages_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import chaoscypher_cli.commands.lexicon.list as list_module
+        import chaoscypher_cli.commands.lexicon.remove as remove_module
+
+        monkeypatch.setenv("CHAOSCYPHER_DATA_DIR", str(tmp_path / "data"))
+
+        # Both commands use the one canonical resolver from utils.paths ...
+        assert list_module.get_packages_dir is remove_module.get_packages_dir
+        # ... and that resolver honors CHAOSCYPHER_DATA_DIR identically for both.
+        resolved = list_module.get_packages_dir()
+        assert resolved == remove_module.get_packages_dir()
+        assert resolved == tmp_path / "data" / "packages"

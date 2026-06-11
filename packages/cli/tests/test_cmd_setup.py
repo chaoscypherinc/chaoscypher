@@ -30,7 +30,7 @@ Scenarios covered:
 - Error/abort branches: cancelled config exits 1, KeyboardInterrupt exits
   130, unexpected exception exits 1.
 - Connection-test helpers happy/error/HTTP-error/timeout branches.
-- VRAM preset settings loader fallback.
+- VRAM preset settings loader fallback + global logging-state restoration.
 """
 
 from __future__ import annotations
@@ -254,10 +254,11 @@ class TestWizardMapping:
         assert state.embedding.model == "qwen3-embedding:0.6b"
 
     def test_seed_defaults_to_localhost_ollama_url_on_fresh_install(self) -> None:
-        """Factory-default instances point at host.docker.internal (the
-        Docker-host alias). A wizard run on a fresh bare-metal install must
-        seed localhost instead — only an operator-configured instance list
-        should carry through to the prompt default.
+        """Factory-default instances may point somewhere environment-specific
+        (CHAOSCYPHER_OLLAMA_URL — e.g. host.docker.internal inside the Docker
+        images). A wizard run on a fresh bare-metal install must seed
+        localhost — only an operator-configured instance list should carry
+        through to the prompt default.
         """
         state = _seed_wizard_state(Settings())
 
@@ -893,9 +894,15 @@ class TestEmbeddingConfiguration:
         assert state.embedding.is_configured is False
 
     def test_embedding_cloud_model_selection_cancelled(self) -> None:
-        """Cloud model selection that raises returns early (not configured)."""
+        """Cloud model selection that raises rolls back the provider switch.
+
+        A half-configured section (openai provider + local model + no API
+        key) must never be left behind for the wizard to persist.
+        """
         state = _fresh_state()
         state.llm.provider = "ollama"
+        original_provider = state.embedding.provider
+        original_model = state.embedding.model
         calls: list[int] = []
 
         def _ask(*args: Any, **kwargs: Any) -> str:
@@ -906,7 +913,8 @@ class TestEmbeddingConfiguration:
 
         with patch.object(setup_mod.Prompt, "ask", side_effect=_ask):
             setup_mod._configure_embedding_interactive(state)
-        assert state.embedding.provider == "openai"
+        assert state.embedding.provider == original_provider
+        assert state.embedding.model == original_model
         assert state.embedding.is_configured is False
 
     def test_embedding_openai_cloud_with_key_reuse(self) -> None:
@@ -1083,6 +1091,70 @@ class TestGetVramPresetSettings:
         ):
             result = setup_mod._get_vram_preset_settings("vram_24gb")
         assert result["ollama_chat_model"] == setup_mod._DEFAULT_OLLAMA_CHAT_MODEL
+
+    def test_restores_logging_state_after_load_failure(self) -> None:
+        """A failing preset load must not leave process-global logging dead.
+
+        The loader silences stdlib logging + structlog while the registry
+        loads; if the load blows up, both must still be restored — otherwise
+        every later log call in the process (and any structlog-capturing
+        test in the same run) is silently swallowed.
+        """
+        import logging
+
+        import structlog
+
+        config_before = structlog.get_config()
+        try:
+            with patch(
+                "chaoscypher_core.services.presets.get_preset_registry",
+                side_effect=AttributeError("boom"),
+            ):
+                setup_mod._get_vram_preset_settings("vram_24gb")
+            disable_after = logging.root.manager.disable
+            config_after = structlog.get_config()
+        finally:
+            # Undo any leak ourselves so a RED assertion below can't poison
+            # sibling tests in the same pytest invocation.
+            logging.disable(logging.NOTSET)
+            structlog.configure(**config_before)
+
+        assert disable_after == logging.NOTSET
+        assert config_after == config_before
+
+    def test_restores_prior_global_state_after_successful_load(self) -> None:
+        """A successful load hands back the caller's exact prior state.
+
+        Both the pre-existing ``logging.disable`` level and the pre-existing
+        structlog configuration must survive the call — not be reset to
+        library defaults.
+        """
+        import logging
+
+        import structlog
+
+        config_before = structlog.get_config()
+        distinctive_wrapper = structlog.make_filtering_bound_logger(logging.WARNING)
+        mock_preset = MagicMock()
+        mock_preset.get_ollama_settings.return_value = {"ollama_num_ctx": 32768}
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = mock_preset
+        try:
+            logging.disable(logging.WARNING)
+            structlog.configure(wrapper_class=distinctive_wrapper)
+            with patch(
+                "chaoscypher_core.services.presets.get_preset_registry",
+                return_value=mock_registry,
+            ):
+                setup_mod._get_vram_preset_settings("vram_24gb")
+            disable_after = logging.root.manager.disable
+            wrapper_after = structlog.get_config()["wrapper_class"]
+        finally:
+            logging.disable(logging.NOTSET)
+            structlog.configure(**config_before)
+
+        assert disable_after == logging.WARNING
+        assert wrapper_after is distinctive_wrapper
 
 
 # ===========================================================================
@@ -1324,3 +1396,54 @@ class TestShowSummary:
         text = self._render(state)
         assert "gemini" in text
         assert "gemini-2.5-pro" in text
+
+
+# ---------------------------------------------------------------------------
+# VRAM preset table accuracy (display rows vs core preset JSONs)
+# ---------------------------------------------------------------------------
+
+
+class TestVramPresetTableAccuracy:
+    """VRAM_PRESETS display rows must agree with the core preset JSONs.
+
+    The wizard table is the only thing many operators read before picking a
+    tier — a wrong GPU example (e.g. a 24 GB card listed on the 32 GB row)
+    steers them into a preset whose context size OOMs their hardware.
+    """
+
+    @staticmethod
+    def _load_preset_json(preset_name: str) -> dict:
+        """Read the bundled core preset JSON for ``preset_name``."""
+        import json
+        from importlib import resources
+
+        pkg = resources.files("chaoscypher_core.services.presets.plugins")
+        return json.loads((pkg / f"{preset_name}.json").read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _norm(value: str) -> str:
+        """Normalize a GPU name for fuzzy display-vs-JSON comparison."""
+        return value.lower().replace("nvidia", "").replace("rtx", "").replace(" ", "")
+
+    def test_32gb_row_names_rtx_5090(self) -> None:
+        """The 32 GB row lists the RTX 5090 (not the 24 GB 4090/3090 cards)."""
+        row = next(p for p in setup_mod.VRAM_PRESETS if p["vram"] == 32)
+        assert row["gpus"] == "RTX 5090"
+
+    @pytest.mark.parametrize("row", setup_mod.VRAM_PRESETS, ids=lambda r: str(r["preset"]))
+    def test_row_gpus_exist_in_preset_json(self, row: dict) -> None:
+        """Every GPU named in a display row appears in the preset's gpu_examples."""
+        preset = self._load_preset_json(str(row["preset"]))
+        examples = [self._norm(e) for e in preset["gpu_examples"]]
+        for piece in str(row["gpus"]).split(","):
+            needle = self._norm(piece)
+            assert any(needle in example for example in examples), (
+                f"{row['preset']}: display GPU {piece.strip()!r} not found in "
+                f"preset gpu_examples {preset['gpu_examples']}"
+            )
+
+    @pytest.mark.parametrize("row", setup_mod.VRAM_PRESETS, ids=lambda r: str(r["preset"]))
+    def test_row_model_matches_preset_json(self, row: dict) -> None:
+        """Every display row's model equals the preset's ollama_chat_model."""
+        preset = self._load_preset_json(str(row["preset"]))
+        assert row["model"] == preset["ollama_settings"]["ollama_chat_model"]

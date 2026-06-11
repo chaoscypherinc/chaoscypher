@@ -68,10 +68,10 @@ def export(
 
     \b
     Examples:
-        chaoscypher package export
-        chaoscypher package export --output my-backup.ccx --title "My Research"
-        chaoscypher package export --no-workflows --lens-id lens_abc123
-        chaoscypher package export -d my-project -o project.ccx -t "Project A"
+        chaoscypher graph package export
+        chaoscypher graph package export --output my-backup.ccx --title "My Research"
+        chaoscypher graph package export --no-workflows --lens-id lens_abc123
+        chaoscypher graph package export -d my-project -o project.ccx -t "Project A"
     """
     if not any([templates, knowledge, lenses, workflows]):
         raise click.UsageError(
@@ -140,6 +140,8 @@ def _display_export_results(output_path: Path, file_size: int, ctx: CLIContext) 
         file_size: Size of the exported file in bytes.
         ctx: CLI context for getting database stats.
     """
+    from chaoscypher_core.services.package.archive.info import format_size
+
     # Get stats from context
     stats = ctx.get_stats()
 
@@ -148,7 +150,7 @@ def _display_export_results(output_path: Path, file_size: int, ctx: CLIContext) 
     table.add_column("Value", justify="right")
 
     table.add_row("Output file", str(output_path))
-    table.add_row("File size", _format_size(file_size))
+    table.add_row("File size", format_size(file_size))
     table.add_row("Database", stats["database_name"])
     table.add_row("Nodes in DB", str(stats["nodes"]))
     table.add_row("Edges in DB", str(stats["edges"]))
@@ -156,20 +158,3 @@ def _display_export_results(output_path: Path, file_size: int, ctx: CLIContext) 
 
     console.print(table)
     console.print(f"\n[green]✓ Export complete: {output_path}[/green]")
-
-
-def _format_size(size_bytes: int) -> str:
-    """Format file size in human-readable format.
-
-    Args:
-        size_bytes: Size in bytes.
-
-    Returns:
-        Human-readable size string.
-    """
-    size = float(size_bytes)
-    for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"

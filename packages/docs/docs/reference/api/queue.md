@@ -66,7 +66,7 @@ Queues a new background task for processing.
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks \
+curl -s -X POST http://localhost/api/v1/queue/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "queue": "operations",
@@ -146,16 +146,16 @@ Returns recent tasks across all queues or filtered by specific queues. Supports 
 
 ```bash
 # List all recent tasks
-curl -s http://localhost:8080/api/v1/queue/tasks
+curl -s http://localhost/api/v1/queue/tasks
 
 # With pagination
-curl -s "http://localhost:8080/api/v1/queue/tasks?page=1&page_size=10"
+curl -s "http://localhost/api/v1/queue/tasks?page=1&page_size=10"
 
 # Filter by queue
-curl -s "http://localhost:8080/api/v1/queue/tasks?queues=operations"
+curl -s "http://localhost/api/v1/queue/tasks?queues=operations"
 
 # Filter by multiple queues
-curl -s "http://localhost:8080/api/v1/queue/tasks?queues=operations,llm"
+curl -s "http://localhost/api/v1/queue/tasks?queues=operations,llm"
 ```
 
 ---
@@ -178,7 +178,7 @@ Returns full details for a single task including status, data, attempts, and tim
 
 **Status:** `200 OK`
 
-Returns a single task object (same schema as the items in [List Tasks](#list-tasks)), plus an `error` field that contains the error message for failed tasks or `null` otherwise.
+Returns a single task object (same schema as the items in [List Tasks](#list-tasks)), plus `error` (public-safe error message for failed tasks, `null` otherwise) and `error_type` (short error classification such as `ValidationError` or `TimeoutError`, `null` otherwise).
 
 #### Errors
 
@@ -190,7 +190,7 @@ Returns a single task object (same schema as the items in [List Tasks](#list-tas
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/tasks/task-abc123def456
+curl -s http://localhost/api/v1/queue/tasks/task-abc123def456
 ```
 
 ---
@@ -233,7 +233,7 @@ Returns the result data for a completed task. Results may expire after a configu
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/tasks/task-abc123def456/result
+curl -s http://localhost/api/v1/queue/tasks/task-abc123def456/result
 ```
 
 ---
@@ -273,7 +273,7 @@ Cancels a single task. Both queued and running tasks can be cancelled. Running t
 #### curl Example
 
 ```bash
-curl -s -X DELETE http://localhost:8080/api/v1/queue/tasks/task-abc123def456
+curl -s -X DELETE http://localhost/api/v1/queue/tasks/task-abc123def456
 ```
 
 ---
@@ -314,7 +314,7 @@ Re-enqueues a failed task with the same parameters. Creates a new task with a ne
 #### curl Example
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks/task-abc123def456/retry
+curl -s -X POST http://localhost/api/v1/queue/tasks/task-abc123def456/retry
 ```
 
 ---
@@ -369,10 +369,10 @@ This permanently cancels all active tasks. Use with caution.
 
 ```bash
 # Cancel all tasks across all queues
-curl -s -X DELETE http://localhost:8080/api/v1/queue/tasks
+curl -s -X DELETE http://localhost/api/v1/queue/tasks
 
 # Cancel all tasks in a specific queue
-curl -s -X DELETE "http://localhost:8080/api/v1/queue/tasks?queue=operations"
+curl -s -X DELETE "http://localhost/api/v1/queue/tasks?queue=operations"
 ```
 
 ---
@@ -454,12 +454,12 @@ You must provide either `task_ids` or `metadata`, but not both. Batch mode is pr
 
 ```bash
 # Batch cancel by task IDs
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks/cancel \
+curl -s -X POST http://localhost/api/v1/queue/tasks/cancel \
   -H "Content-Type: application/json" \
   -d '{"task_ids": ["task-abc123", "task-def456"]}'
 
 # Cancel by metadata
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks/cancel \
+curl -s -X POST http://localhost/api/v1/queue/tasks/cancel \
   -H "Content-Type: application/json" \
   -d '{
     "metadata": {"source_id": "src-uuid-1"},
@@ -520,16 +520,16 @@ This permanently removes task history and cannot be undone.
 
 ```bash
 # Clear all task history
-curl -s -X DELETE http://localhost:8080/api/v1/queue/tasks/history
+curl -s -X DELETE http://localhost/api/v1/queue/tasks/history
 
 # Clear history for a specific queue
-curl -s -X DELETE "http://localhost:8080/api/v1/queue/tasks/history?queue=operations"
+curl -s -X DELETE "http://localhost/api/v1/queue/tasks/history?queue=operations"
 
 # Clear tasks older than 24 hours
-curl -s -X DELETE "http://localhost:8080/api/v1/queue/tasks/history?older_than_hours=24"
+curl -s -X DELETE "http://localhost/api/v1/queue/tasks/history?older_than_hours=24"
 
 # Combine filters
-curl -s -X DELETE "http://localhost:8080/api/v1/queue/tasks/history?queue=llm&older_than_hours=48"
+curl -s -X DELETE "http://localhost/api/v1/queue/tasks/history?queue=llm&older_than_hours=48"
 ```
 
 ---
@@ -555,20 +555,28 @@ Returns statistics for all known queues.
       "queue": "llm",
       "queued": 2,
       "running": 1,
-      "completed": 145,
-      "failed": 3
+      "completed_recent": 0,
+      "failed_recent": 0,
+      "workers": 1
     },
     {
       "queue": "operations",
       "queued": 0,
       "running": 4,
-      "completed": 892,
-      "failed": 12
+      "completed_recent": 0,
+      "failed_recent": 0,
+      "workers": 1
     }
   ],
   "note": "Queue configuration managed in worker/config.py"
 }
 ```
+
+:::note
+
+`completed_recent` / `failed_recent` are placeholders that are currently always `0` (reserved for future windowed stats). `workers` is `1` when a worker health key is present for the queue, else `0`.
+
+:::
 
 If the queue service is unavailable, the response returns an empty list with a note:
 
@@ -582,7 +590,7 @@ If the queue service is unavailable, the response returns an empty list with a n
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/stats
+curl -s http://localhost/api/v1/queue/stats
 ```
 
 ---
@@ -610,10 +618,13 @@ Returns statistics for a single queue.
   "queue": "operations",
   "queued": 0,
   "running": 4,
-  "completed": 892,
-  "failed": 12
+  "completed_recent": 0,
+  "failed_recent": 0,
+  "workers": 1
 }
 ```
+
+As with [Get All Queue Stats](#get-all-queue-stats), `completed_recent` / `failed_recent` are placeholders that are currently always `0`, and `workers` is `1` when a worker health key is present for the queue, else `0`.
 
 #### Errors
 
@@ -624,7 +635,7 @@ Returns statistics for a single queue.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/stats/operations
+curl -s http://localhost/api/v1/queue/stats/operations
 ```
 
 ---
@@ -668,7 +679,7 @@ When the queue is unavailable:
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/health
+curl -s http://localhost/api/v1/queue/health
 ```
 
 ---
@@ -723,12 +734,12 @@ Triggers an immediate queue reconciliation pass. This self-healing admin endpoin
 
 ```bash
 # Reconcile all queues
-curl -s -X POST http://localhost:8080/api/v1/queue/reconcile \
+curl -s -X POST http://localhost/api/v1/queue/reconcile \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # Reconcile a specific queue
-curl -s -X POST http://localhost:8080/api/v1/queue/reconcile \
+curl -s -X POST http://localhost/api/v1/queue/reconcile \
   -H "Content-Type: application/json" \
   -d '{"queue": "operations"}'
 ```
@@ -764,7 +775,7 @@ stateDiagram-v2
 **1. Create the task:**
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks \
+curl -s -X POST http://localhost/api/v1/queue/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "queue": "operations",
@@ -781,19 +792,19 @@ curl -s -X POST http://localhost:8080/api/v1/queue/tasks \
 **2. Poll for status** (returns the full task object -- see [Get Task](#get-task)):
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/tasks/task-abc123def456
+curl -s http://localhost/api/v1/queue/tasks/task-abc123def456
 ```
 
 **3. Retrieve the result once completed** (see [Get Task Result](#get-task-result)):
 
 ```bash
-curl -s http://localhost:8080/api/v1/queue/tasks/task-abc123def456/result
+curl -s http://localhost/api/v1/queue/tasks/task-abc123def456/result
 ```
 
 **4. If the task failed, retry it:**
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/queue/tasks/task-abc123def456/retry
+curl -s -X POST http://localhost/api/v1/queue/tasks/task-abc123def456/retry
 ```
 
 ```json

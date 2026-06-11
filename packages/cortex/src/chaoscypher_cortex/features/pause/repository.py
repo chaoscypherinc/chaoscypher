@@ -5,7 +5,7 @@
 
 Exists so the service layer never touches the adapter directly. Each
 method is a one-line delegation that normalizes keyword arguments for
-the adapter's source-pause / system-state methods from task 4.
+the adapter's source-pause / system-state methods.
 """
 
 from __future__ import annotations

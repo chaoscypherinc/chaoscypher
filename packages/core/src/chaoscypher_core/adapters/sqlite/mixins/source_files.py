@@ -903,7 +903,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
 
         When `is_paused` is True, records `paused_at` (now, UTC) and
         `paused_reason`. When False, clears both. Used by the pause
-        feature slice (task 8) and by service-layer bulk operations.
+        feature and by service-layer bulk operations.
         """
         self._ensure_connected()
 

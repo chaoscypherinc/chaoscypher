@@ -522,9 +522,13 @@ class CLISourceProcessingService:
             enable_normalization=enable_normalization,
         )
 
-        # Check status
+        # Check status. INDEXING is allowed for crash recovery: the CLI is
+        # single-process, so a row still in INDEXING means a previous run
+        # died mid-index (Ctrl+C, crash). Re-indexing is idempotent — chunks
+        # are recreated — and this is what lets the resume picker actually
+        # resume such sources instead of erroring.
         status = file_record.get("status", "")
-        if status not in (SourceStatus.PENDING, "uploaded", "failed"):
+        if status not in (SourceStatus.PENDING, SourceStatus.INDEXING, "uploaded", "failed"):
             msg = f"Cannot index file with status '{status}' - must be 'pending' or 'uploaded'"
             raise ValueError(msg)
 
@@ -1095,7 +1099,15 @@ class CLISourceProcessingService:
             )
 
             if not all_chunks:
+                # Status was already flipped to EXTRACTING above — without an
+                # explicit terminal transition the row would wedge there
+                # forever (index/extract/commit all reject EXTRACTING).
+                # Failing keeps it recoverable: both index_file and
+                # extract_entities accept 'failed'.
                 logger.warning("extract_no_chunks", file_id=file_id)
+                self.ctx.storage_adapter.fail_extraction(
+                    file_id, "No chunks available for extraction"
+                )
                 return ({}, {})
 
             # Detect domain using sample text from chunks

@@ -3,13 +3,13 @@
 
 r"""CSV Document Loader.
 
-Workstream 6 (2026-05-07): the previous loader hardcoded LangChain's
-``CSVLoader`` which uses the comma delimiter and the platform default
-encoding. TSV-saved-as-csv and EU semicolon-delimited files came out as
-single-cell rows; cp1252 exports got mojibake. The new loader uses
-:func:`csv.Sniffer.sniff` over ``,;\t|`` and routes through
-:func:`detect_encoding` so the dialect and encoding are detected
-explicitly and recorded on each document's metadata.
+Replaces the previous loader, which hardcoded LangChain's ``CSVLoader``
+(comma delimiter, platform default encoding): TSV-saved-as-csv and EU
+semicolon-delimited files came out as single-cell rows, and cp1252
+exports got mojibake. This loader uses :func:`csv.Sniffer.sniff` over
+``,;\t|`` and routes through :func:`detect_encoding` so the dialect
+and encoding are detected explicitly and recorded on each document's
+metadata.
 """
 
 from __future__ import annotations

@@ -33,9 +33,9 @@ def update(
     LINK_ID is the unique identifier of the link to update.
 
     Example:
-        chaoscypher link update edge-123 --label "Works For"
-        chaoscypher link update edge-123 -s context="Updated context"
-        chaoscypher link update edge-123 -u obsolete_field
+        chaoscypher graph link update edge-123 --label "Works For"
+        chaoscypher graph link update edge-123 -s context="Updated context"
+        chaoscypher graph link update edge-123 -u obsolete_field
     """
     try:
         ctx = get_context(database_name=database)

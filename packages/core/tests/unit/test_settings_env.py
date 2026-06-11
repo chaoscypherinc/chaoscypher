@@ -70,6 +70,47 @@ class TestLLMSettingsEnvVars:
 
 @pytest.mark.unit
 @pytest.mark.core
+class TestOllamaDefaultUrl:
+    """Default Ollama base URL is localhost, overridable via CHAOSCYPHER_OLLAMA_URL.
+
+    The library default must work for bare-metal installs (pip/CLI users
+    running Ollama on the same host). Docker images opt back into
+    ``host.docker.internal`` by exporting CHAOSCYPHER_OLLAMA_URL.
+    """
+
+    def test_default_instance_is_localhost_when_env_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without the env var, the seeded default instance targets localhost."""
+        monkeypatch.delenv("CHAOSCYPHER_OLLAMA_URL", raising=False)
+        settings = LLMSettings()
+        assert settings.ollama_instances[0].base_url == "http://localhost:11434"
+
+    def test_default_instance_honors_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CHAOSCYPHER_OLLAMA_URL overrides the seeded default instance URL."""
+        monkeypatch.setenv("CHAOSCYPHER_OLLAMA_URL", "http://gpu-box:11434")
+        settings = LLMSettings()
+        assert settings.ollama_instances[0].base_url == "http://gpu-box:11434"
+
+    def test_primary_url_fallback_is_localhost_when_env_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The empty-instances fallback also defaults to localhost."""
+        monkeypatch.delenv("CHAOSCYPHER_OLLAMA_URL", raising=False)
+        settings = LLMSettings(ollama_instances=[])
+        assert settings.primary_ollama_url == "http://localhost:11434"
+
+    def test_primary_url_fallback_honors_env_override(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The empty-instances fallback honors CHAOSCYPHER_OLLAMA_URL too."""
+        monkeypatch.setenv("CHAOSCYPHER_OLLAMA_URL", "http://10.0.0.5:11434")
+        settings = LLMSettings(ollama_instances=[])
+        assert settings.primary_ollama_url == "http://10.0.0.5:11434"
+
+
+@pytest.mark.unit
+@pytest.mark.core
 class TestLexiconSettingsEnvVars:
     """LexiconSettings.timeout honours CHAOSCYPHER_LEXICON_TIMEOUT.
 

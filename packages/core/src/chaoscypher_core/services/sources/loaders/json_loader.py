@@ -3,9 +3,9 @@
 
 """JSON / JSONL / NDJSON Document Loader.
 
-Workstream 6 (2026-05-07): replaces the LangChain-backed loader (which
-silently failed on ``.jsonl`` files because it tried ``json.load`` on a
-multi-document file and swallowed the exception). The new loader:
+Replaces the LangChain-backed loader (which silently failed on
+``.jsonl`` files because it tried ``json.load`` on a multi-document
+file and swallowed the exception). This loader:
 
 - Branches on extension: ``.json`` is parsed as a single document;
   ``.jsonl`` / ``.ndjson`` is parsed line-by-line with per-line error

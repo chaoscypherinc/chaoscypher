@@ -164,8 +164,8 @@ class NormalizedContent:
         quality_metrics: Quality assessment metrics for the normalized content.
         metadata: Additional metadata from the source document.
         lines_removed: Aggregate count of gibberish / artifact lines dropped
-            across every cleaner that ran. Workstream 11 (2026-05-08) —
-            surfaced to the source row as ``cleaner_lines_removed``.
+            across every cleaner that ran. Surfaced to the source row as
+            ``cleaner_lines_removed``.
         paragraphs_deduplicated: Aggregate count of duplicate paragraphs
             collapsed across every cleaner that ran. Surfaced to the
             source row as ``cleaner_paragraphs_deduplicated``.

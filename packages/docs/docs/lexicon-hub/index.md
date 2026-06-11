@@ -66,7 +66,7 @@ chaoscypher graph package load john-medical-ontology.ccx
 <TabItem value="web-ui" label="Web UI">
 
 
-1. Navigate to **Settings** → **Lexicon Hub**
+1. Navigate to **Lexicon** in the sidebar
 2. Search for packages by keyword, author, or tag
 3. Click **Pull** to download and import
 
@@ -121,22 +121,20 @@ curl -X POST "http://localhost:8080/api/v1/lexicon/upload?public=true&message=In
 
 ## What's in a Package?
 
-A CCX (Chaos Cypher eXchange) package is a compressed archive containing:
+A CCX (Chaos Cypher eXchange) package is a compressed archive with a flat layout:
 
 ```
 my-package.ccx
 ├── manifest.json           # Package metadata and checksums
-├── templates/              # Node and edge type definitions
-│   ├── person.json
-│   └── organization.json
-├── graph/                  # Knowledge graph data
-│   ├── entities.jsonld     # Nodes with properties
-│   └── relationships.jsonld # Edges with properties
-└── workflows/              # Automation definitions
-    └── extraction-pipeline.json
+├── templates.jsonld        # Node and edge type definitions
+├── knowledge.jsonld        # Graph nodes and edges (JSON-LD)
+├── workflows.jsonld        # Automation definitions
+├── sources.jsonl           # Source records
+├── graph_preview.png       # Graph thumbnail (optional)
+└── README.txt              # Human-readable summary
 ```
 
-Packages are versioned, checksummed, and can be public or private. The manifest includes metadata like author, description, tags, and compatibility information.
+Only non-empty files are included — a templates-only export, for example, contains just `manifest.json`, `templates.jsonld`, and `README.txt`. Packages are versioned, checksummed, and can be public or private. The manifest includes metadata like author, description, tags, and compatibility information.
 
 ## Authentication
 

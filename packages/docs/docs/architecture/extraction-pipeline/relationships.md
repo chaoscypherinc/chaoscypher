@@ -176,7 +176,8 @@ These properties flow through the entire pipeline unchanged (deduplication only 
 ## Phase 4 / Phase 6 Toggles (2026-05-08)
 
 The following toggles are new as of the Phase 4 and Phase 6 hardening
-passes. All participate in the **3-layer cascade**:
+passes. Most participate in the **3-layer cascade** (exceptions are
+noted on the individual toggles below):
 
 | Layer | Mechanism |
 |-------|-----------|
@@ -193,8 +194,13 @@ whether the pipeline auto-corrects backwards relationships by swapping
 source and target when the swapped direction satisfies edge-template type
 constraints.
 
-- `True` (default) — swap and keep; increments `RELATIONSHIPS_DIRECTION_CORRECTED`.
+- `True` (default) — swap and keep.
 - `False` — direction mismatches are **dropped** instead of swapped.
+
+`RELATIONSHIPS_DIRECTION_CORRECTED` counts every detected wrong-direction
+relationship regardless of the toggle — it measures the LLM's
+wrong-direction emission rate. `enable_direction_correction` only changes
+the handling: swap-and-keep (`True`, default) vs drop (`False`).
 
 ### `enable_inverse_relationships` (Phase 6)
 
@@ -202,21 +208,26 @@ constraints.
 whether the commit phase auto-generates inverse edges for domain-defined
 inverse pairs (e.g., `parent_of` → `child_of`).
 
-- `True` (default) — inverse edges are generated and written to the graph alongside the canonical edge. Each inverse edge carries `inverse_of` set to the canonical edge's ID.
+- `True` (default) — inverse edges are generated and written to the graph alongside the canonical edge. Each inverse edge carries `inverse_of` set to the canonical (original) edge type string (e.g. `inverse_of: "parent_of"` on the generated `child_of` edge).
 - `False` — only the canonical direction is written. This is useful when consumers query both directions explicitly and the duplicated inverse edges add noise.
 
 ### `allow_self_loops` (Phase 6)
 
-`ExtractionSettings.allow_self_loops` (default `False`) — controls whether
+`FilteringConfig.allow_self_loops` (default `False`) — controls whether
 self-referential edges (source == target entity) survive the deduplication
 pipeline and reach the commit phase.
 
 - `False` (default) — self-loops are dropped at the `remap_relationship_indices` stage. This is the historical behaviour.
 - `True` — self-loops are kept. Useful for domains where a node relationship with itself is meaningful (e.g., a legal clause that references itself, or a recursive function in a code graph).
 
-### `max_entity_degree_override` (Phase 6)
+Unlike most toggles in this section, `allow_self_loops` is **not** an
+`ExtractionSettings` key — setting it in `settings.yaml` fails validation.
+It resolves through the filtering-config chain instead: filtering preset
+defaults → domain filtering overrides → per-source filtering overrides.
 
-`ExtractionSettings.max_entity_degree_override` (integer or `null`, default `null`) — a per-source override for the `max_entity_degree` cap (the maximum number of relationships any single entity can have as source or target combined).
+### `max_entity_degree_override` (per-source upload option, Phase 6)
+
+`max_entity_degree_override` (integer or `null`, default `null`) — a per-source upload option (an API / CLI / UI / MCP upload parameter persisted on the sources row, not an `ExtractionSettings` key) that overrides the `max_entity_degree` cap (the maximum number of relationships any single entity can have as source or target combined).
 
 When set on a source, it overrides both the global `ExtractionSettings.max_entity_degree` and any domain-level `extraction_limits.max_entity_degree`. This is a per-source knob only — it does not participate in the domain-level cascade. Use it for sources where a specific entity (e.g., a central historical figure) legitimately has a very high degree.
 

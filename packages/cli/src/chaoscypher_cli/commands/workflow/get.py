@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 
 
 console = Console()
@@ -35,8 +36,8 @@ def get(workflow_id: str, output_format: str, database: str) -> None:
     WORKFLOW_ID is the unique identifier or name of the workflow.
 
     Example:
-        chaoscypher workflow get entity-extraction
-        chaoscypher workflow get wf-123 --format json
+        chaoscypher graph workflow get entity-extraction
+        chaoscypher graph workflow get wf-123 --format json
     """
     try:
         ctx = get_context(database_name=database)
@@ -63,7 +64,7 @@ def get(workflow_id: str, output_format: str, database: str) -> None:
 
         if output_format == "json":
             workflow_dict["steps"] = steps
-            console.print(json.dumps(workflow_dict, indent=2, default=str))
+            print_json(json.dumps(workflow_dict, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -74,7 +75,7 @@ def get(workflow_id: str, output_format: str, database: str) -> None:
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
                 workflow_dict["steps"] = steps
-                console.print(json.dumps(workflow_dict, indent=2, default=str))
+                print_json(json.dumps(workflow_dict, indent=2, default=str))
 
         else:  # table format
             name = workflow_dict.get("name", workflow_id)

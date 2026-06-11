@@ -6,14 +6,13 @@
 Defines the :class:`CleanerProtocol` interface and the :class:`CleanerResult`
 dataclass every cleaner returns from :meth:`CleanerProtocol.clean`.
 
-Workstream 11 (2026-05-08): the protocol used to return a
-``(content, ops_list[str])`` tuple. To wire the per-source quality counters
-``CLEANER_LINES_REMOVED`` / ``CLEANER_PARAGRAPHS_DEDUPLICATED`` /
-``CLEANER_CHARS_REMOVED``, cleaners now return a structured result that
-carries those counts alongside the content and ops list. Counts default to
-0 so a cleaner that doesn't naturally track a particular signal (e.g. the
-text cleaner has no concept of "paragraphs deduplicated") can stay honest
-without contorting itself.
+The protocol used to return a ``(content, ops_list[str])`` tuple. To wire
+the per-source quality counters ``CLEANER_LINES_REMOVED`` /
+``CLEANER_PARAGRAPHS_DEDUPLICATED`` / ``CLEANER_CHARS_REMOVED``, cleaners
+now return a structured result that carries those counts alongside the
+content and ops list. Counts default to 0 so a cleaner that doesn't
+naturally track a particular signal (e.g. the text cleaner has no concept
+of "paragraphs deduplicated") can stay honest without contorting itself.
 
 Example:
     from chaoscypher_core.services.sources.normalizer.cleaners import (
@@ -91,7 +90,7 @@ class CleanerResult:
     def __iter__(self):  # type: ignore[no-untyped-def]
         """Tuple-unpacking compatibility for legacy callers.
 
-        Pre-Workstream-11 callers wrote ``content, ops = cleaner.clean(...)``.
+        Legacy callers wrote ``content, ops = cleaner.clean(...)``.
         Yielding ``(content, ops)`` keeps that pattern working for any
         external user plugins or third-party code that still expects the
         old tuple shape. New code should index the dataclass fields by

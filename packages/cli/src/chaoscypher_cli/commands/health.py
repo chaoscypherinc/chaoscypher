@@ -11,6 +11,7 @@ Example:
 """
 
 import json
+import sys
 import urllib.request
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
@@ -212,3 +213,6 @@ def health() -> None:
     else:
         console.print(f"  [red]{issues} issue{'s' if issues != 1 else ''} found.[/red]")
     console.print()
+
+    if issues > 0:
+        sys.exit(1)

@@ -1602,14 +1602,16 @@ Handles CRUD for:
 
 **Methods:**
 
-#### `count_chats(database_name: str, status: str | None = None) -> int`
+#### `count_chats(database_name: str, status: str | None = None, scoped: bool | None = None, search: str | None = None) -> int`
 
-Count chats for database with optional status filter.
+Count chats for database with optional filters.
 
 | Parameter | Type | Description |
 |---|---|---|
 | `database_name` | `str` |  |
 | `status` | `str \| None` |  |
+| `scoped` | `bool \| None` |  |
+| `search` | `str \| None` |  |
 
 #### `create_chat(chat: dict[str, Any]) -> ChatDict`
 
@@ -1649,6 +1651,29 @@ Delete chat.
 |---|---|---|
 | `chat_id` | `str` |  |
 
+#### `delete_messages_after(chat_id: str, message_id: str, inclusive: bool = False) -> int`
+
+Delete the tail of a chat's history starting at/after a message.
+
+Backs regenerate (exclusive: keep the last user message, drop the
+answer) and edit-and-resend (inclusive: the edited message itself is
+replaced). Ordering matches `get_messages` (timestamp, id tiebreak).
+
+Args:
+    chat_id: Chat whose tail to remove.
+    message_id: Anchor message; must belong to `chat_id`.
+    inclusive: Also delete the anchor itself.
+
+Returns:
+    Number of rows deleted (0 when the anchor is unknown or belongs
+    to a different chat).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `chat_id` | `str` |  |
+| `message_id` | `str` |  |
+| `inclusive` | `bool` |  |
+
 #### `delete_messages_by_chat_ids(chat_ids: list[str]) -> int`
 
 Delete ChatMessage rows whose chat_id is in the given list.
@@ -1685,9 +1710,11 @@ Args:
 | `chat_id` | `str` |  |
 | `limit` | `int` |  |
 
-#### `list_chats(database_name: str, user_id: int | None = None, status: str | None = None, limit: int = 100, scoped: bool | None = None) -> list[ChatDict]`
+#### `list_chats(database_name: str, user_id: int | None = None, status: str | None = None, limit: int = 100, offset: int = 0, scoped: bool | None = None, search: str | None = None) -> list[ChatDict]`
 
-List chats for database with optional filters.
+List chats for database with optional filters (newest first).
+
+`search` filters by case-insensitive title substring.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1695,7 +1722,9 @@ List chats for database with optional filters.
 | `user_id` | `int \| None` |  |
 | `status` | `str \| None` |  |
 | `limit` | `int` |  |
+| `offset` | `int` |  |
 | `scoped` | `bool \| None` |  |
+| `search` | `str \| None` |  |
 
 #### `update_chat(chat_id: str, updates: dict[str, Any]) -> ChatDict`
 
@@ -2271,11 +2300,9 @@ Returns:
 Get source statistics for database (counts by status).
 
 Corresponds to the adapter-level get_stats() method on
-SourceIndexingMixin.  The investigation doc proposed renaming this
-to get_database_source_stats to avoid confusion with the per-source
-CitationStorageProtocol.get_source_stats(source_id), but Task 12
-uses the adapter's existing method name so that isinstance() checks
-pass without touching the mixin.  Task 13 can add the alias.
+SourceIndexingMixin.  Note this aggregates database-wide counts,
+distinct from the per-source
+CitationStorageProtocol.get_source_stats(source_id).
 
 Args:
     database_name: Database to query.

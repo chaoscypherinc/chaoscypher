@@ -12,7 +12,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Normalization** — preprocessing that fixes encoding, removes structural noise, and produces clean text from a loaded source.
 
-**Chunk** (small chunk) — a ~225-token segment used as the unit of retrieval. Chunks have stable IDs derived from content hashes.
+**Chunk** (small chunk) — a ~225-token segment used as the unit of retrieval. Chunks are identified by UUIDs assigned at chunking time. (Citation IDs — not chunk IDs — are content-addressed.)
 
 **Group** (hierarchical group) — a ~900-token aggregation of small chunks used as the unit of entity extraction. Groups summarize and provide context across multiple chunks.
 
@@ -30,7 +30,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Commit** — the final transactional stage that writes deduplicated nodes and edges to the graph and updates the source's status to `committed`.
 
-**Status flow** — the lifecycle of a source: `pending → indexing → indexed → extracting → extracted → committing → committed`, plus `error` and `mcp_extracting`.
+**Status flow** — the lifecycle of a source: `pending → indexing → indexed → extracting → extracted → committing → committed`, plus `error`, `mcp_extracting`, `awaiting_confirmation` (domain confirmation gate — the default for auto-detected domains), and `vision_pending` (vision pipeline).
 
 **Citation** — a back-reference from a generated answer to the chunk(s) that grounded it.
 
@@ -38,7 +38,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Operations queue / LLM queue** — the two named worker queues. Operations (8 concurrent) handles indexing/dedup/commit; LLM (1 concurrent) handles extraction LLM calls.
 
-**Lexicon Hub** — Chaos Cypher's hosted domain-template registry. (Preview — see banner on the [Lexicon Hub pages](./lexicon-hub/index.md).)
+**Lexicon Hub** — Chaos Cypher's hosted registry for CCX knowledge packages (templates, graph data, workflows). (Preview — see banner on the [Lexicon Hub pages](./lexicon-hub/index.md).)
 
 **CCX** — Chaos Cypher eXchange, the canonical backup/export format.
 

@@ -4,13 +4,12 @@
 """Reset / graph-cleanup services.
 
 Folded down from ``chaoscypher_cortex.features.settings.reset_operations``
-and ``chaoscypher_cortex.shared.reset`` by the Core boundary refactor
-(PR2b, 2026-04-21). Cortex and the CLI import these services from here
-going forward; ``chaoscypher_core.operations.reset_handler`` calls them
-directly.
+and ``chaoscypher_cortex.shared.reset`` by the Core boundary refactor.
+Cortex and the CLI import these services from here;
+``chaoscypher_core.operations.reset_handler`` calls them directly.
 
-The SQLModel-to-Protocol refactor happens in Task 23; until then these
-modules still import SQLModel directly.
+These modules currently import SQLModel directly rather than going
+through a storage Protocol.
 """
 
 from __future__ import annotations

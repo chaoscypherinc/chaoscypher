@@ -59,8 +59,12 @@ VITE_API_URL=http://localhost:8080 npm run dev
 ### Docker
 
 ```bash
-docker run -p 3000:80 -e VITE_API_URL=http://backend:8080 chaoscypher-interface
+docker run -p 3000:80 chaoscypher-interface
 ```
+
+The production image serves the compiled bundle behind nginx, which proxies
+`/api` to the backend (see `packages/docker/config/multi-interface-nginx.conf`);
+`VITE_*` variables are compile-time only and have no effect at container runtime.
 
 ## Configuration
 
@@ -116,27 +120,34 @@ gate also runs as part of `make ci`.
 1. **Create Component**: `src/components/FeatureName/`
 2. **Add Page**: `src/pages/FeatureName.tsx`
 3. **Add Route**: Update `src/App.tsx`
-4. **Add API Service**: `src/services/featureService.ts`
+4. **Add API module + query hook**: `src/services/api/<feature>.ts` and `src/services/api/use<Feature>.ts`
 5. **Add Types**: `src/types/feature.ts`
 
 ## API Integration
 
-The Interface connects to Cortex backend via REST API:
+The Interface connects to the Cortex backend through per-feature API modules
+(typed functions over `src/services/api/client.ts`, which prefixes every path
+with `VITE_API_BASE`, default `/api/v1`) plus TanStack Query hooks:
 
 ```typescript
-// src/services/workflowService.ts
-import { apiClient } from './apiClient';
+// src/services/api/workflows.ts — typed functions over client.ts
+import { apiClient } from './client';
 
-export const workflowService = {
-  async listWorkflows() {
-    return apiClient.get('/api/v1/workflows');
-  },
+export const workflowsApi = {
+  list: () =>
+    apiClient.get<{ data: Workflow[] }>('/workflows').then((r) => r.data.data),
 
-  async executeWorkflow(id: string, params: any) {
-    return apiClient.post(`/api/v1/workflows/${id}/execute`, params);
-  }
+  execute: (workflowId: string, inputs: Record<string, unknown>) =>
+    apiClient
+      .post<ExecuteWorkflowResponse>(`/workflows/${workflowId}/executions`, { inputs })
+      .then((r) => r.data),
 };
 ```
+
+Components never call the API module directly — they consume the TanStack
+Query hooks that wrap it (`useWorkflows`, `useExecuteWorkflow` in
+`src/services/api/useWorkflows.ts`; `useWorkflowExecutions` in
+`src/services/api/useWorkflowExecutions.ts`).
 
 ## Production Build
 
@@ -166,10 +177,13 @@ VITE_API_BASE=/api/v1                 # Client request prefix (default /api/v1)
 ## Testing
 
 ```bash
-# Run tests (when configured)
+# Run tests
 npm test
 
-# Run tests with coverage
+# Interactive UI
+npm run test:ui
+
+# With coverage
 npm run test:coverage
 ```
 

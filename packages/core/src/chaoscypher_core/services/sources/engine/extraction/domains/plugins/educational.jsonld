@@ -10,7 +10,7 @@
   "@type": "ExtractionDomain",
   "@id": "domain:educational",
   "name": "educational",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "description": "Educational materials, textbooks, courses, and instructional content",
   "author": "ChaosCypher Team",
   "builtin": true,
@@ -1414,7 +1414,6 @@
           "Theory",
           "Framework",
           "Taxonomy",
-          "Philosophical Tradition",
           "Learning Path"
         ],
         "target_types": [

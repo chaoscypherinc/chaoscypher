@@ -521,10 +521,11 @@ describe('handleStreamEvent — tool_result', () => {
       false,
       doneCallbacks,
     );
-    expect(dispatchers.setMessages).toHaveBeenCalledOnce();
-    // The updater is a direct array spread — call it with empty prev
+    // Two updates: clear running_tool on the assistant, then append the
+    // tool message (call index 1).
+    expect(dispatchers.setMessages).toHaveBeenCalledTimes(2);
     const mock = dispatchers.setMessages as ReturnType<typeof vi.fn>;
-    const updater = mock.mock.calls[0][0];
+    const updater = mock.mock.calls[1][0];
     const msgs = (typeof updater === 'function' ? updater([]) : updater) as unknown[];
     const msg = msgs[0] as { role: string; name: string; content: string; tool_call_id: string };
     expect(msg.role).toBe('tool');
@@ -882,6 +883,114 @@ describe('handleStreamEvent — error', () => {
 });
 
 // ---------------------------------------------------------------------------
+// warning
+// ---------------------------------------------------------------------------
+
+describe('handleStreamEvent — warning', () => {
+  it('appends the warning to the last assistant message', () => {
+    handleStreamEvent(
+      {
+        type: 'warning',
+        kind: 'context_overflow',
+        message: 'The conversation filled the model context window.',
+      } as unknown as Record<string, unknown>,
+      acc,
+      dispatchers,
+      'c1',
+      false,
+      doneCallbacks,
+    );
+    const result = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: 'partial answer' },
+    ]) as Array<{ warnings?: Array<{ kind: string; message: string }> }>;
+    expect(result[0].warnings).toEqual([
+      { kind: 'context_overflow', message: 'The conversation filled the model context window.' },
+    ]);
+  });
+
+  it('deduplicates identical warnings', () => {
+    const event = {
+      type: 'warning',
+      kind: 'output_truncated',
+      message: 'The answer was cut off.',
+    } as unknown as Record<string, unknown>;
+    handleStreamEvent(event, acc, dispatchers, 'c1', false, doneCallbacks);
+    const prev = [
+      {
+        role: 'assistant',
+        content: 'x',
+        warnings: [{ kind: 'output_truncated', message: 'The answer was cut off.' }],
+      },
+    ];
+    const result = applySetMessagesWithPrev(dispatchers, prev) as Array<{
+      warnings?: unknown[];
+    }>;
+    expect(result[0].warnings).toHaveLength(1);
+  });
+
+  it('creates a fallback assistant message when none exists', () => {
+    handleStreamEvent(
+      {
+        type: 'warning',
+        kind: 'context_overflow',
+        message: 'overflow',
+      } as unknown as Record<string, unknown>,
+      acc,
+      dispatchers,
+      'c1',
+      false,
+      doneCallbacks,
+    );
+    const result = applySetMessages(dispatchers) as Array<{
+      role: string;
+      warnings?: Array<{ kind: string }>;
+    }>;
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe('assistant');
+    expect(result[0].warnings?.[0].kind).toBe('context_overflow');
+  });
+
+  it('defaults kind and message when fields are missing', () => {
+    handleStreamEvent(
+      { type: 'warning' } as unknown as Record<string, unknown>,
+      acc,
+      dispatchers,
+      'c1',
+      false,
+      doneCallbacks,
+    );
+    const result = applySetMessages(dispatchers) as Array<{
+      warnings?: Array<{ kind: string; message: string }>;
+    }>;
+    expect(result[0].warnings?.[0].kind).toBe('generic');
+    expect(result[0].warnings?.[0].message).toContain('problem');
+  });
+
+  it('done event merges warnings into the message and extra_metadata', () => {
+    handleStreamEvent(
+      {
+        type: 'done',
+        content: 'final',
+        warnings: [{ kind: 'output_truncated', message: 'cut off' }],
+      } as unknown as Record<string, unknown>,
+      acc,
+      dispatchers,
+      'c1',
+      false,
+      doneCallbacks,
+    );
+    const result = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: 'final' },
+    ]) as Array<{
+      warnings?: Array<{ kind: string }>;
+      extra_metadata?: { warnings?: Array<{ kind: string }> };
+    }>;
+    expect(result[0].warnings?.[0].kind).toBe('output_truncated');
+    expect(result[0].extra_metadata?.warnings?.[0].kind).toBe('output_truncated');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // context_info
 // ---------------------------------------------------------------------------
 
@@ -1065,8 +1174,10 @@ describe('handleStreamEvent — done', () => {
     expect(chunkCitations.chunk1.validation_verdict).toBe('correct');
   });
 
-  it('calls logger.error and sets fallback content when stream completes with no content', () => {
-    // acc starts with empty currentPhaseContent and no iterationContents
+  it('logs a warning (no fake apology) when a contentless done arrives', () => {
+    // Contentless done = subscribe race: the bridge synthesizes done with no
+    // content. The persisted answer arrives via the next poll, so the bubble
+    // must NOT be overwritten with an apology (2026-06-10 audit).
     handleStreamEvent(
       { type: 'done' } as unknown as Record<string, unknown>,
       acc,
@@ -1075,16 +1186,16 @@ describe('handleStreamEvent — done', () => {
       false,
       doneCallbacks,
     );
-    expect(logger.error).toHaveBeenCalled();
-    // Second setMessages call is the fallback
+    expect(logger.warn).toHaveBeenCalledWith('done_without_content_waiting_for_poll');
     const mock = dispatchers.setMessages as ReturnType<typeof vi.fn>;
-    expect(mock.mock.calls.length).toBeGreaterThanOrEqual(2);
-    const fallbackUpdater = mock.mock.calls[1][0];
-    const msgs = (typeof fallbackUpdater === 'function'
-      ? fallbackUpdater([{ role: 'assistant', content: '' }])
-      : fallbackUpdater) as unknown[];
-    const msg = msgs[0] as { content: string };
-    expect(msg.content).toContain('apologize');
+    for (const call of mock.mock.calls) {
+      const updater = call[0];
+      const msgs = (typeof updater === 'function'
+        ? updater([{ role: 'assistant', content: '' }])
+        : updater) as unknown[];
+      const msg = msgs[0] as { content?: string };
+      expect(msg.content ?? '').not.toContain('apologize');
+    }
   });
 
   it('uses acc.accumulatedThinking as finalThinking when present', () => {
@@ -1192,5 +1303,76 @@ describe('handleStreamEvent — multi-event sequence', () => {
     expect(acc.isDone).toBe(true);
     expect(doneCallbacks.onDone).toHaveBeenCalledWith('chat-final', false);
     expect(dispatchers.setLoading).toHaveBeenCalledWith(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 0 fixes (2026-06-10 audit): tool_start status, phantom thinking
+// placeholder, contentless-done apology guard
+// ---------------------------------------------------------------------------
+
+describe('tool_start running status', () => {
+  it('sets running_tool on the assistant message', () => {
+    handleStreamEvent(
+      { type: 'tool_start', tool: 'search_nodes' },
+      acc, dispatchers, 'chat-1', false, doneCallbacks,
+    );
+    const msgs = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: '' },
+    ]);
+    expect((msgs[0] as { running_tool?: string }).running_tool).toBe('search_nodes');
+  });
+
+  it('clears running_tool when the tool result arrives', () => {
+    handleStreamEvent(
+      { type: 'tool_result', tool: 'search_nodes', result: {}, tool_call_id: 't1' },
+      acc, dispatchers, 'chat-1', false, doneCallbacks,
+    );
+    const msgs = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: '', running_tool: 'search_nodes' },
+    ]);
+    expect((msgs[0] as { running_tool?: string }).running_tool).toBeUndefined();
+  });
+});
+
+describe('done event cleanup (phase 0)', () => {
+  it('clears the optimistic "..." thinking placeholder when no thinking arrived', () => {
+    handleStreamEvent(
+      { type: 'done', content: 'Answer.' },
+      acc, dispatchers, 'chat-1', false, doneCallbacks,
+    );
+    const msgs = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: 'Answer.', thinking: '...' },
+    ]);
+    expect((msgs[0] as { thinking?: string }).thinking).toBeUndefined();
+  });
+
+  it('keeps real thinking past done', () => {
+    handleStreamEvent(
+      { type: 'done', content: 'Answer.' },
+      acc, dispatchers, 'chat-1', false, doneCallbacks,
+    );
+    const msgs = applySetMessagesWithPrev(dispatchers, [
+      { role: 'assistant', content: 'Answer.', thinking: 'real reasoning' },
+    ]);
+    expect((msgs[0] as { thinking?: string }).thinking).toBe('real reasoning');
+  });
+
+  it('does not overwrite the bubble with an apology on a contentless done', () => {
+    handleStreamEvent(
+      { type: 'done' },
+      acc, dispatchers, 'chat-1', false, doneCallbacks,
+    );
+    const mock = dispatchers.setMessages as ReturnType<typeof vi.fn>;
+    for (let i = 0; i < mock.mock.calls.length; i++) {
+      const msgs = applySetMessagesWithPrev(
+        dispatchers,
+        [{ role: 'assistant', content: '' }],
+        i,
+      );
+      const content = (msgs[0] as { content?: string })?.content ?? '';
+      expect(content).not.toContain('I apologize');
+    }
+    expect(logger.warn).toHaveBeenCalledWith('done_without_content_waiting_for_poll');
   });
 });

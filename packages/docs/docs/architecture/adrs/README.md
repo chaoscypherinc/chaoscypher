@@ -25,9 +25,8 @@ NNNN-title-in-kebab-case.md
 For example:
 - `0001-remove-discovery-and-lenses-features.md`
 - `0002-dependency-license-policy.md`
-- `0003-replace-pymupdf-with-pypdf.md`
-- `0004-redis-to-valkey-migration.md`
-- `0005-ollama-instances-only.md`
+
+(See the [Current ADRs](#current-adrs) table below for the full index.)
 
 ## ADR Template
 

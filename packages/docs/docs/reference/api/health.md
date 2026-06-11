@@ -18,7 +18,7 @@ Returns the overall health status and individual subsystem checks.
 ### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/health
+curl http://localhost/api/v1/health
 ```
 
 ### Response
@@ -30,40 +30,67 @@ curl http://localhost:8080/api/v1/health
   "healthy": true,
   "status": "ok",
   "checks": {
-    "llm": {
+    "ollama": {
       "status": "ok",
+      "message": "Connected (v0.9.0)",
+      "details": {
+        "base_url": "http://localhost:11434",
+        "version": "0.9.0"
+      }
+    },
+    "chat_model": {
+      "status": "ok",
+      "message": "qwen3:30b-instruct installed"
+    },
+    "extraction_model": {
+      "status": "warning",
+      "message": "Not configured (using chat model)"
+    },
+    "embeddings": {
+      "status": "ok",
+      "message": "Qwen3-Embedding-0.6B ready (ollama)",
       "details": {
         "provider": "ollama",
-        "model": "qwen3:30b-instruct"
-      }
-    },
-    "queue": {
-      "status": "ok",
-      "details": {
-        "host": "valkey",
-        "port": 6379
-      }
-    },
-    "search": {
-      "status": "ok",
-      "details": {
-        "fulltext_doc_count": 1500,
-        "vector_index_size": 1500,
-        "embedding_model": "Qwen/Qwen3-Embedding-0.6B"
-      }
-    },
-    "embedding": {
-      "status": "ok",
-      "details": {
         "model": "Qwen/Qwen3-Embedding-0.6B",
         "dimensions": 1024
       }
     },
+    "queue": {
+      "status": "ok",
+      "message": "Valkey connected"
+    },
+    "llm_worker": {
+      "status": "ok",
+      "message": "Running (idle)"
+    },
+    "ops_worker": {
+      "status": "ok",
+      "message": "Running (idle)"
+    },
+    "search_index": {
+      "status": "ok",
+      "message": "1,500 docs / 1,500 vectors",
+      "details": {
+        "fulltext_count": 1500,
+        "vector_count": 1500,
+        "vector_dimension": 1024
+      }
+    },
+    "graph": {
+      "status": "ok",
+      "message": "1,500 entities / 3,200 relationships"
+    },
+    "disk_space": {
+      "status": "ok",
+      "message": "Disk space OK: 412.5 GB free"
+    },
+    "error_rate": {
+      "status": "ok",
+      "message": "Error rate 2% (1/50 tasks)"
+    },
     "database": {
       "status": "ok",
-      "details": {
-        "database_name": "default"
-      }
+      "message": "Database accessible and writable"
     }
   }
 }
@@ -73,14 +100,25 @@ curl http://localhost:8080/api/v1/health
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `healthy` | bool | `true` when all critical subsystems are up |
-| `status` | string | Overall status: `"ok"` (healthy) or `"degraded"` (one or more checks failing) |
+| `healthy` | bool | `true` when no **critical** check reports `error` (see below) |
+| `status` | string | Overall status: `"ok"` (healthy) or `"degraded"` (a critical check is failing) |
 | `checks` | object | Per-subsystem check results — **omitted for unauthenticated callers** |
-| `checks.llm` | object | LLM provider connectivity and model availability |
+| `checks.ollama` | object | Ollama connectivity, version, and installed models (Ollama provider only) |
+| `checks.provider` | object | Cloud provider API-key configuration (OpenAI / Anthropic / Gemini providers — replaces `ollama`) |
+| `checks.chat_model` | object | Whether the configured chat model is installed (Ollama only) |
+| `checks.extraction_model` | object | Whether the configured extraction model is installed (Ollama only; `warning` when unconfigured) |
+| `checks.vision_model` | object | Whether the configured vision model is installed (Ollama only; present only when configured) |
+| `checks.embeddings` | object | Embedding provider status (`provider`, `model`, `dimensions`) |
 | `checks.queue` | object | Valkey queue connection status |
-| `checks.search` | object | Search index status and embedding model info |
-| `checks.embedding` | object | Embedding service status |
-| `checks.database` | object | Database connectivity |
+| `checks.llm_worker` | object | LLM queue worker heartbeat |
+| `checks.ops_worker` | object | Operations queue worker heartbeat |
+| `checks.search_index` | object | Search index status (details: `fulltext_count`, `vector_count`, `vector_dimension`) |
+| `checks.graph` | object | Knowledge graph entity / relationship counts |
+| `checks.disk_space` | object | Free disk space on the data directory vs. warn/error thresholds |
+| `checks.error_rate` | object | Recent task failure rate across the worker queues |
+| `checks.database` | object | Database connectivity and writability |
+
+When Ollama itself is unreachable, the model checks (`chat_model`, `extraction_model`, `vision_model`) are omitted — only the `ollama` error is reported.
 
 Each subsystem check includes:
 
@@ -89,6 +127,14 @@ Each subsystem check includes:
 - `details` — provider-specific key-value pairs (optional)
 - `category` — `"resource"`, `"service"`, or `"operational"` (optional)
 - `auto_recoverable` — `true` when the check expects self-healing (optional)
+
+### What Drives `healthy`
+
+Only the **critical** checks flip the overall flag: `ollama` (or `provider` on cloud providers), `chat_model` (Ollama only), `queue`, `llm_worker`, and `ops_worker`. Any other check (`search_index`, `graph`, `disk_space`, `error_rate`, `database`, `embeddings`, ...) can report `error` without changing `healthy` — inspect `checks` directly if you need to alert on those.
+
+### Response Caching
+
+Detailed health responses are cached in-process for **5 seconds** — polling faster than that returns the cached snapshot without re-running the probes.
 
 :::note[Unauthenticated access]
 
@@ -109,7 +155,7 @@ When nginx's `auth_request` directive is misconfigured, `X-Auth-User` may not ar
 ### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/health/auth
+curl http://localhost/api/v1/health/auth
 ```
 
 ### Response

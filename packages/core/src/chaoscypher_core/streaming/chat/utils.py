@@ -221,7 +221,11 @@ def setup_chat_providers(
 
     # Get tool schemas from registry for essential tools
     all_tools = get_essential_tool_schemas(ESSENTIAL_TOOL_NAMES)
-    available_tools = select_tools(all_tools, chat_id)
+    available_tools = select_tools(
+        all_tools,
+        chat_id,
+        max_tools=getattr(getattr(settings, "chat", None), "max_tools", None),
+    )
 
     logger.info(
         "chat_stream_tools_loaded",
@@ -233,17 +237,24 @@ def setup_chat_providers(
     return chat_provider, tool_executor, available_tools
 
 
-def select_tools(all_tools: list[dict[str, Any]], chat_id: str) -> list[dict[str, Any]]:
+def select_tools(
+    all_tools: list[dict[str, Any]],
+    chat_id: str,
+    max_tools: int | None = None,
+) -> list[dict[str, Any]]:
     """Select tools for chat, prioritizing essential ones.
 
     Args:
         all_tools: All available tools
         chat_id: Chat ID for logging
+        max_tools: Live ``chat.max_tools`` setting; falls back to the schema
+            default when absent/invalid (mocked settings fail open).
 
     Returns:
-        List of selected tools (up to MAX_TOOLS)
+        List of selected tools (up to the resolved cap)
 
     """
+    limit = max_tools if isinstance(max_tools, int) and max_tools > 0 else MAX_TOOLS
     available_tools = []
 
     # Add essential tools first
@@ -254,7 +265,7 @@ def select_tools(all_tools: list[dict[str, Any]], chat_id: str) -> list[dict[str
 
     # Add remaining tools until limit
     for tool in all_tools:
-        if len(available_tools) >= MAX_TOOLS:
+        if len(available_tools) >= limit:
             break
         if tool not in available_tools:
             available_tools.append(tool)

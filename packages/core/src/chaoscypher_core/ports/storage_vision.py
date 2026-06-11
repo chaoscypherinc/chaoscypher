@@ -56,7 +56,7 @@ class VisionStorageProtocol(Protocol):
     """Per-page vision storage operations.
 
     Sync ``def`` methods (matches the rest of the storage-port surface).
-    The indexing handler — the only caller in PR 2 — invokes these
+    The indexing handler — currently the only caller — invokes these
     via ``await asyncio.to_thread(...)`` where appropriate.
     """
 

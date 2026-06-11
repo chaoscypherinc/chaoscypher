@@ -6,11 +6,12 @@ Neuron is ChaosCypher's background worker process. A single `cc-neuron`
 entry point runs two independently-paced queues in one process:
 
 - **LLM queue** — serialized (default 1 concurrent) for chat, embeddings,
-  tool calls, and chunk extraction. Sequential execution avoids overwhelming
-  the LLM provider and keeps priority queueing fair.
+  tool calls, chunk extraction, and per-page vision analysis. Sequential
+  execution avoids overwhelming the LLM provider and keeps priority
+  queueing fair.
 - **Operations queue** — parallel (default 8 concurrent) for source
-  processing, exports, workflows, vision-page work, and other CPU/IO-bound
-  tasks that benefit from concurrency.
+  indexing, imports/exports, workflows, vision finalization, and other
+  CPU/IO-bound tasks that benefit from concurrency.
 
 Tasks are pulled from [Valkey](https://valkey.io/) via ChaosCypher's own
 queue client (`chaoscypher_core.queue`); there is no ARQ, Celery, or RQ
@@ -50,7 +51,7 @@ process.
 In the all-in-one image, `cc-neuron` is launched by supervisord alongside
 cortex, valkey, and nginx. In the multi-container deployments
 (`packages/docker/multi-container/docker-compose.{dev,prod}.yml`) the
-worker runs in its own `worker` service:
+worker runs in its own `neuron` service:
 
 ```bash
 docker run -e QUEUE_HOST=valkey -e QUEUE_PORT=6379 chaoscypher-neuron
@@ -59,7 +60,8 @@ docker run -e QUEUE_HOST=valkey -e QUEUE_PORT=6379 chaoscypher-neuron
 ## Configuration
 
 Worker behaviour is configured through ChaosCypher's settings layer
-(env var → `packages/docker/data/settings.yaml` → package default).
+(env var → `settings.yaml` in the data dir (`/data/settings.yaml` inside
+the `app-data` Docker volume) → package default).
 Concurrency and timeouts live under `QueueSettings`; only the Valkey
 connection itself is read directly from the environment so the worker
 can bootstrap before settings are loaded:
@@ -102,18 +104,24 @@ Neuron is part of the ChaosCypher neural architecture:
 ## Task types
 
 ### LLM queue
-- `llm_chat` — chat completion
-- `llm_embedding` — generate embeddings
-- `llm_tool_call` — execute tool with LLM
-- `llm_extract_chunk` — entity / relationship extraction over a chunk
+- `chat_completion` / `chat_background` — chat completions (interactive and background)
+- `tool_execution` — execute a tool with the LLM
+- `extract_chunk` / `finalize_extraction` — entity / relationship extraction over a chunk + finalize pass
+- `vision_page` — per-page vision analysis
+- `embed_chunks` — generate chunk embeddings
+- `regenerate_template_embeddings` — refresh template embeddings
 
 ### Operations queue
-- `operations_indexing` — chunking + entity prep
-- `operations_embedding` — bulk embedding writeback
-- `operations_commit` — graph commit + search index update
-- `operations_vision_page` / `operations_vision_finalize` — per-page vision
-- `operations_export` / `operations_import` — package export / import
-- `operations_workflow` — workflow step execution
+- `index_document` — chunking + entity prep
+- `import_ccx` / `import_commit` / `import_analysis` — package import pipeline
+- `export_graph` / `export_by_sources` — package export
+- `execute_workflow` / `execute_step` — workflow execution
+- `vision_finalize` — assemble per-page vision results
+- `fetch_url` — URL source fetching
+- bulk / reset / cleanup ops — `bulk_nodes`, `bulk_edges`, `bulk_templates`,
+  `lexicon_import`, `recalculate_quality_scores`, `rebuild_search_indexes`,
+  `reset_knowledge_base`, `reset_all`, `graph_cleanup`, `cleanup_orphans`,
+  `build_graph_snapshot`
 
 Canonical mapping lives in `chaoscypher_core.constants.OPERATION_QUEUE_ROUTING`
 (enforced by lint rule CC044).
@@ -123,10 +131,11 @@ Canonical mapping lives in `chaoscypher_core.constants.OPERATION_QUEUE_ROUTING`
 ```bash
 # Container logs
 docker compose logs -f chaoscypher           # all-in-one (supervisord muxes)
-docker compose logs -f worker                # multi-container worker service
+docker compose logs -f neuron                # multi-container neuron service
 
-# Queue depth + per-task status via cortex
-curl http://localhost/api/v1/queue/status
+# Queue depth + per-task status via cortex (must carry an authenticated
+# session — nginx auth_request gates /api/v1)
+curl http://localhost/api/v1/queue/stats
 ```
 
 ## Development
@@ -138,19 +147,20 @@ uv sync --all-packages --extra dev
 # Run tests
 uv run pytest packages/neuron
 
-# Auto-restart on source edits
-uv run watchmedo auto-restart -d packages/neuron/src -p '*.py' -- cc-neuron
+# Auto-restart on source edits (watchdog is not a workspace dependency;
+# --with adds it for this run)
+uv run --with watchdog watchmedo auto-restart -d packages/neuron/src -p "*.py" -- cc-neuron
 ```
 
 ## Scaling
 
 The all-in-one image runs exactly one `cc-neuron` instance under
 supervisord. For horizontal scale-out, use the multi-container
-deployment and replicate the `worker` service:
+deployment and replicate the `neuron` service:
 
 ```bash
 cd packages/docker/multi-container
-docker compose -f docker-compose.prod.yml up -d --scale worker=4
+docker compose -f docker-compose.prod.yml up -d --scale neuron=4
 ```
 
 Each replica polls both queues; Valkey distributes tasks across them.

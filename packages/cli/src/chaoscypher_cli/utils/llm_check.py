@@ -7,16 +7,16 @@ Provides functions to verify LLM is configured before operations
 that require it (like entity extraction).
 
 Example:
-    from chaoscypher_cli.utils.llm_check import require_llm_configured
+    from chaoscypher_cli.utils.llm_check import check_llm_or_skip
 
-    if not require_llm_configured("entity extraction"):
-        return  # User declined setup
+    proceed, skip_llm = check_llm_or_skip("entity extraction")
+    if not proceed:
+        return  # User cancelled
 """
 
 from __future__ import annotations
 
 from rich.console import Console
-from rich.prompt import Confirm
 
 
 console = Console()
@@ -54,49 +54,6 @@ def is_llm_configured() -> bool:
 
     except Exception:
         return False
-
-
-def require_llm_configured(operation: str = "entity extraction") -> bool:
-    """Check if LLM is configured, prompt for setup if not.
-
-    Shows a warning if LLM is not configured and offers to run the
-    setup wizard. Returns True if LLM is configured (either already
-    or after running setup).
-
-    Args:
-        operation: Description of the operation requiring LLM
-
-    Returns:
-        True if LLM is configured and ready to use
-    """
-    if is_llm_configured():
-        return True
-
-    # Show warning
-    console.print("\n[yellow]Warning:[/yellow] LLM not configured.")
-    console.print(f"[dim]{operation.capitalize()} requires an LLM provider.[/dim]\n")
-
-    # Offer to run setup
-    if Confirm.ask("Run setup wizard now?", default=True):
-        try:
-            from chaoscypher_cli.commands.setup import setup as setup_cmd
-
-            # Run setup command in current terminal
-            ctx = setup_cmd.make_context("setup", [])
-            setup_cmd.invoke(ctx)
-
-            # Check if now configured
-            from chaoscypher_core.app_config import reload_settings
-
-            reload_settings()  # pick up what the wizard just wrote
-            return is_llm_configured()
-
-        except Exception as e:
-            console.print(f"[red]Setup failed:[/red] {e}")
-            console.print("\nRun 'chaoscypher setup' manually to configure LLM.")
-            return False
-
-    return False
 
 
 def check_llm_or_skip(operation: str = "entity extraction") -> tuple[bool, bool]:
@@ -140,9 +97,14 @@ def check_llm_or_skip(operation: str = "entity extraction") -> tuple[bool, bool]
             ctx = setup_cmd.make_context("setup", [])
             setup_cmd.invoke(ctx)
 
+            from chaoscypher_cli.context import refresh_llm_state
             from chaoscypher_core.app_config import reload_settings
 
             reload_settings()  # pick up what the wizard just wrote
+            # The live CLIContext (and its cached has_llm probe) predates
+            # the wizard — refresh it, or the very operation that triggered
+            # the wizard still sees "no LLM configured".
+            refresh_llm_state()
             if is_llm_configured():
                 return True, False
             # Setup completed but still not configured
@@ -161,5 +123,4 @@ def check_llm_or_skip(operation: str = "entity extraction") -> tuple[bool, bool]
 __all__ = [
     "check_llm_or_skip",
     "is_llm_configured",
-    "require_llm_configured",
 ]

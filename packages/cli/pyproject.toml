@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-cli"
-version = "0.1.1"
+version = "0.2.0"
 description = "Command-line tools for Chaos Cypher knowledge graph library"
 readme = "README.md"
 license = "AGPL-3.0-only"

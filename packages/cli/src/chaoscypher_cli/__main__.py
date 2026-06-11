@@ -5,18 +5,28 @@
 
 Organized by user intent:
 
-1. Package Manager (docker-like):
-   - pull, push (root level)
-   - lexicon/ (login, logout, whoami, search, list, info, remove)
+1. Setup & configuration:
+   - setup, config, completions
 
-2. Runtime (like docker run):
-   - serve, run, compose
+2. Package manager (docker-like):
+   - pull, push (root-level aliases)
+   - lexicon/ (login, logout, whoami, search, list, info, remove, pull, push)
 
-3. Builder:
-   - init, source/, graph/
+3. Runtime:
+   - serve, compose, mcp
 
-4. Graph building:
-   - graph/ (node, link, template, workflow, package)
+4. Builder:
+   - source/ (add, extract, confirm, list, get, delete, search,
+     rebuild-search, quality)
+   - graph/ (node, link, template — full CRUD; workflow list/get;
+     package export/load)
+
+5. AI:
+   - chat
+
+6. Maintenance & diagnostics:
+   - db (create, list, switch, delete, info, migrate), upgrade,
+     health, doctor, diagnostics, benchmark, render-orchestration
 """
 
 import os
@@ -164,7 +174,10 @@ LAZY_COMMANDS = {
     # AI chat
     "chat": ("chaoscypher_cli.commands.chat:chat", "Chat with AI using your knowledge graph"),
     # Database management
-    "db": ("chaoscypher_cli.commands.db:db", "Manage databases (create, list, delete, reset)"),
+    "db": (
+        "chaoscypher_cli.commands.db:db",
+        "Manage databases (create, list, switch, delete, info, migrate)",
+    ),
     # Configuration
     "config": ("chaoscypher_cli.commands.config_cmd:config", "View and manage CLI configuration"),
     "completions": (
@@ -193,7 +206,9 @@ LAZY_COMMANDS = {
         "chaoscypher_cli.commands.upgrade:upgrade_command",
         "Apply pending Alembic migrations (alembic upgrade head)",
     ),
-    # Orchestration template renderer (called by entrypoint.sh)
+    # Orchestration template renderer. The Docker entrypoint calls
+    # `python -m chaoscypher_core.services.orchestration` directly; this CLI
+    # command is kept for dev/debug use.
     "render-orchestration": (
         "chaoscypher_cli.commands.render_orchestration:render_orchestration_command",
         "Render nginx/supervisord/valkey configs from current Pydantic settings",

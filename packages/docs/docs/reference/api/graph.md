@@ -35,7 +35,7 @@ Use this endpoint to:
 #### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/graph/cleanup
+curl -X POST http://localhost/api/v1/graph/cleanup
 ```
 
 #### Response — `202 Accepted`
@@ -75,7 +75,7 @@ Returns image-type sources with their extracted entity node IDs for graph canvas
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/graph/source_groups
+curl http://localhost/api/v1/graph/source_groups
 ```
 
 #### Response — `200 OK`
@@ -88,6 +88,8 @@ curl http://localhost:8080/api/v1/graph/source_groups
       "title": "temple_photo.jpg",
       "source_type": "jpg",
       "filename": "temple_photo.jpg",
+      "extraction_domain": "historical",
+      "extraction_domain_icon": "castle",
       "entity_count": 5,
       "entity_node_ids": ["node-1", "node-2", "node-3", "node-4", "node-5"]
     }
@@ -104,6 +106,8 @@ curl http://localhost:8080/api/v1/graph/source_groups
 | `groups[].title` | string | Display title (filename if no title set) |
 | `groups[].source_type` | string | File extension (e.g., "jpg", "png") |
 | `groups[].filename` | string | Original filename |
+| `groups[].extraction_domain` | string \| null | Domain the source was extracted under |
+| `groups[].extraction_domain_icon` | string \| null | Icon name for the domain, enriched for canvas display |
 | `groups[].entity_count` | int | Number of extracted entities |
 | `groups[].entity_node_ids` | string[] | Entity node IDs in the graph |
 
@@ -126,13 +130,13 @@ Bulk fetch all graph data for canvas rendering in a single request. Returns mini
 #### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/graph/canvas
+curl http://localhost/api/v1/graph/canvas
 ```
 
 With source filtering:
 
 ```bash
-curl "http://localhost:8080/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002"
+curl "http://localhost/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002"
 ```
 
 #### Response — `200 OK`
@@ -205,7 +209,7 @@ GET /api/v1/graph/snapshot
 Returns the latest pre-computed graph breakdown. If no snapshot exists yet, enqueues a background build and returns `204 No Content`. If the snapshot is stale (older than 1 hour or node count has drifted by more than 10%), a background rebuild is enqueued automatically while the stale data is returned immediately.
 
 ```bash
-curl http://localhost:8080/api/v1/graph/snapshot
+curl http://localhost/api/v1/graph/snapshot
 ```
 
 **Response** `200 OK` — `GraphBreakdown` (see response model below), or `204 No Content` when no snapshot has been built yet.
@@ -223,7 +227,7 @@ POST /api/v1/graph/snapshot/refresh
 Manually enqueue a graph snapshot rebuild. The rebuild runs asynchronously on the Neuron worker.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/graph/snapshot/refresh
+curl -X POST http://localhost/api/v1/graph/snapshot/refresh
 ```
 
 **Response** `202 Accepted`

@@ -11,11 +11,11 @@ Commands for manipulating nodes in the knowledge graph:
 - delete: Remove a node
 
 Example:
-    chaoscypher node list
-    chaoscypher node create
-    chaoscypher node get node-123
-    chaoscypher node update node-123 --label "New Name"
-    chaoscypher node delete node-123
+    chaoscypher graph node list
+    chaoscypher graph node create
+    chaoscypher graph node get node-123
+    chaoscypher graph node update node-123 --label "New Name"
+    chaoscypher graph node delete node-123
 """
 
 import click

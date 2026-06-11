@@ -133,7 +133,18 @@ export interface ContextInfo {
   model: string;
 }
 
+/**
+ * Backend-detected problem with a streamed response (e.g. the answer was cut
+ * off by the output limit, or the prompt overflowed the model context window).
+ */
+export interface ChatStreamWarning {
+  kind: string;
+  message: string;
+}
+
 export interface ChatMessage {
+  /** Persisted message id (absent on optimistic rows not yet saved). */
+  id?: string;
   role: string;
   content: string;
   tool_calls?: unknown[];
@@ -147,6 +158,8 @@ export interface ChatMessage {
     cached_tool_calls?: unknown[];
     thinking?: string;
     referenced_entities?: EntityReferenceMap;
+    /** Legacy key written by the queued worker 2026-06-09..10; superseded by referenced_entities. */
+    entity_references?: EntityReferenceMap;
     chunk_citations?: ChunkCitationMap;
     llm_debug?: LLMDebugInfo;
     validation?: {
@@ -155,6 +168,7 @@ export interface ChatMessage {
       better_passage?: string | null;
       per_citation?: Record<string, { verdict: string; reason: string }>;
     };
+    warnings?: ChatStreamWarning[];
   };
 }
 

@@ -82,10 +82,8 @@ export interface Settings {
     enable_thinking: boolean;
     thinking_for_chat: boolean;
     thinking_for_tools: boolean;
-    thinking_auto_detect: boolean;
 
     // Performance
-    chat_interactive_streaming: boolean;
 
     // Queue Configuration
     enable_llm_queueing: boolean;
@@ -180,7 +178,6 @@ export interface Settings {
     max_tool_iterations?: number;
     max_total_tool_calls?: number;
     max_tools?: number;
-    enable_response_validation?: boolean;
     tools_token_estimate?: number;
     tool_approval?: 'always-ask' | 'ask-on-write' | 'never-ask';
     mutating_tools?: string[];

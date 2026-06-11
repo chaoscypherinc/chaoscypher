@@ -56,10 +56,10 @@ def analyze(
     extraction quality across different sources and domains.
 
     Examples:
-        chaoscypher quality analyze
-        chaoscypher quality analyze --domain literary
-        chaoscypher quality analyze --min-entities 10 --sort quality
-        chaoscypher quality analyze --json
+        chaoscypher source quality analyze
+        chaoscypher source quality analyze --domain literary
+        chaoscypher source quality analyze --min-entities 10 --sort quality
+        chaoscypher source quality analyze --json
     """
     from chaoscypher_cli.commands.quality.utils import (
         build_entity_chunk_mentions,

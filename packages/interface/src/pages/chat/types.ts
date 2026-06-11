@@ -1,7 +1,7 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import type { ChatMessage, ChunkCitationMap, EntityReferenceMap, LLMDebugInfo } from '../../types';
+import type { ChatMessage, ChatStreamWarning, ChunkCitationMap, EntityReferenceMap, LLMDebugInfo } from '../../types';
 
 /**
  * Validation result from post-response grounding check.
@@ -23,4 +23,7 @@ export interface ExtendedChatMessage extends ChatMessage {
   cached_tool_calls?: unknown[];
   llm_debug?: LLMDebugInfo;
   validation?: ValidationResult;
+  warnings?: ChatStreamWarning[];
+  /** Tool currently executing (live streaming only — never persisted). */
+  running_tool?: string;
 }

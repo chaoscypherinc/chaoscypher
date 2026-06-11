@@ -41,7 +41,7 @@ Binary ZIP file download.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/diagnostics/export -o chaoscypher-diagnostics.zip
+curl -s http://localhost/api/v1/diagnostics/export -o chaoscypher-diagnostics.zip
 ```
 
 The bundle gracefully handles missing components (e.g., if Valkey is unreachable, queue stats are omitted rather than causing an error).
@@ -57,7 +57,7 @@ GET /api/v1/system/dashboard
 Aggregated live-status snapshot consumed by the UI dashboard polling loop. Returns entity counts, LLM queue statistics, operations queue depth, workflow run statistics, and the system pause status in a single request.
 
 ```bash
-curl http://localhost:8080/api/v1/system/dashboard
+curl http://localhost/api/v1/system/dashboard
 ```
 
 **Response** `200 OK` -- `DashboardResponse`
@@ -65,14 +65,31 @@ curl http://localhost:8080/api/v1/system/dashboard
 ```json
 {
   "counts": {
-    "nodes": 1500,
-    "edges": 3200,
+    "knowledge_nodes": 1500,
+    "links": 3200,
+    "templates": 8,
+    "workflows": 3,
+    "lenses": 0,
     "sources": 42,
-    "templates": 8
+    "awaiting_confirmation": 0
   },
-  "llm": {},
-  "queue": {},
-  "workflows": {},
+  "llm": {
+    "data": {}
+  },
+  "queue": {
+    "queues": [],
+    "note": null
+  },
+  "workflows": {
+    "total_workflows": 3,
+    "active_workflows": 2,
+    "inactive_workflows": 1,
+    "total_executions": 150,
+    "successful_executions": 142,
+    "failed_executions": 6,
+    "cancelled_executions": 2,
+    "success_rate": 0.9467
+  },
   "processing": {
     "paused": false,
     "paused_at": null,
@@ -83,10 +100,10 @@ curl http://localhost:8080/api/v1/system/dashboard
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `counts` | object | Knowledge entity counts (nodes, edges, sources, templates) |
-| `llm` | object | LLM queue and cost statistics |
-| `queue` | object | Operations and LLM queue depth |
-| `workflows` | object | Workflow run statistics |
+| `counts` | object | Entity counts — same shape as [`GET /api/v1/counts`](counts.md): `knowledge_nodes`, `links`, `templates`, `workflows`, `lenses`, `sources`, `awaiting_confirmation`. Unlike the plain counts endpoint, `awaiting_confirmation` is computed live here (sources parked pending domain confirmation). |
+| `llm` | object | LLM queue and cost statistics, wrapped in a `data` object (`{"data": {...}}`) |
+| `queue` | object | Operations and LLM queue depth: a `queues` array plus an optional `note` |
+| `workflows` | object | Workflow run statistics — same shape as [global workflow stats](workflows.md#global-stats) |
 | `processing` | object | System pause status — see [Pause API](pause.md) |
 
 ---
@@ -104,7 +121,7 @@ GET /api/v1/upgrade/pending
 Returns the current upgrade state and any unapplied schema migrations.
 
 ```bash
-curl http://localhost:8080/api/v1/upgrade/pending
+curl http://localhost/api/v1/upgrade/pending
 ```
 
 **Response** `200 OK`
@@ -114,7 +131,9 @@ curl http://localhost:8080/api/v1/upgrade/pending
   "ready": true,
   "blocked_on": [],
   "message": "Database is up to date.",
-  "last_backup": "/data/backups/pre-upgrade-2026-05-01.db"
+  "last_backup": "/data/backups/pre-upgrade-2026-05-01.db",
+  "last_applied": ["a1b2c3d4e5f6"],
+  "data_changing": false
 }
 ```
 
@@ -124,6 +143,8 @@ curl http://localhost:8080/api/v1/upgrade/pending
 | `blocked_on` | object[] | Pending migrations blocking the app (empty when `ready=true`) |
 | `message` | string | Human-readable status message |
 | `last_backup` | string \| null | Path to the pre-upgrade backup, or `null` if none exists |
+| `last_applied` | string[] | Revision IDs the startup self-healing runner silently auto-applied (empty if none). This is the only API surface that reports what the auto-migrator just did. |
+| `data_changing` | bool | `true` if a silently auto-applied migration changed data (not just schema). Paired with a non-empty `last_applied`, this is what the UI uses to surface a dismissible notice with a rollback option. |
 
 ---
 
@@ -136,7 +157,7 @@ POST /api/v1/upgrade/apply
 Applies all pending schema migrations. Creates a backup of the database before applying if the startup runner did not already do so.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/upgrade/apply
+curl -X POST http://localhost/api/v1/upgrade/apply
 ```
 
 **Response** `200 OK`
@@ -166,7 +187,7 @@ POST /api/v1/upgrade/rollback
 Restores the database from the pre-upgrade backup. Use this to undo a failed migration.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/upgrade/rollback
+curl -X POST http://localhost/api/v1/upgrade/rollback
 ```
 
 **Response** `200 OK`
@@ -198,16 +219,16 @@ POST /api/v1/admin/plugins/reload
 Invalidates all plugin registry caches so the next call rediscovers installed plugins. Use this after installing or removing a plugin without restarting the backend.
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/admin/plugins/reload
+curl -X POST http://localhost/api/v1/admin/plugins/reload
 ```
 
 **Response** `200 OK`
 
 ```json
 {
-  "cleared": 3,
-  "registries": ["LoaderRegistry", "CleanerRegistry", "ArchiveRegistry"]
+  "invalidated": ["LoaderRegistry", "CleanerRegistry"],
+  "total": 3
 }
 ```
 
-The response contains the list of registry classes whose cache had entries and the total number of cache entries cleared.
+The response lists `invalidated` (registry classes whose cache had entries) and `total` (cache entries cleared across all registries).

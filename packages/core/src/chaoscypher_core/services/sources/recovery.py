@@ -500,8 +500,7 @@ class SourceRecovery:
             ``{"compound": [<single>, <single>, ...]}``
 
         Commit (routes to ``_dispatch_commit`` via ``_recover_one`` so
-        the recovery counter is bumped before any queue interaction —
-        audit fix #H7):
+        the recovery counter is bumped before any queue interaction):
             ``{"dispatch_kind": "commit", "operation": str,
                "commit_data": dict}``
 
@@ -509,11 +508,11 @@ class SourceRecovery:
         responsibility to increment the counter and then call the
         appropriate dispatcher based on the returned descriptor.
 
-        Filled in incrementally across Tasks 15-18:
-        - Task 15: ``pending`` and ``indexing`` → dispatch index_document
-        - Task 16: ``indexed`` and ``extracted`` → dispatch next stage
-        - Task 17: ``extracting`` → three sub-cases (no job, partial, stalled)
-        - Task 18: ``committing`` → dispatch import_commit
+        Recovery cases by source status:
+        - ``pending`` and ``indexing`` → dispatch index_document
+        - ``indexed`` and ``extracted`` → dispatch next stage
+        - ``extracting`` → three sub-cases (no job, partial, stalled)
+        - ``committing`` → dispatch import_commit
         - vision_pending → compound dispatch OP_VISION_PAGE for each
           stalled PENDING vision_page_descriptions row; or dispatch
           OP_VISION_FINALIZE when the job is already terminal.

@@ -314,7 +314,7 @@ async def get_neighbors(
       - `outgoing`: Follow edges where this node is the source
       - `incoming`: Follow edges where this node is the target
       - `both`: Follow edges in both directions (default)
-    - `limit`: Maximum neighbors (1-1000, default: 100)
+    - `limit`: Maximum neighbors (defaults to settings, capped at max)
 
     **Returns:**
     Neighbor list with relationship context:

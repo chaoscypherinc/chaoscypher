@@ -38,13 +38,13 @@ When `minimal=true`, only `id`, `source_node_id`, `target_node_id`, `label`, and
 ### Example Request
 
 ```bash
-curl "http://localhost:8080/api/v1/edges?source_node_id=node-abc-123"
+curl "http://localhost/api/v1/edges?source_node_id=node-abc-123"
 ```
 
 Filtering by multiple source documents:
 
 ```bash
-curl -X GET "http://localhost:8080/api/v1/edges?source_ids=src-001&source_ids=src-002"
+curl -X GET "http://localhost/api/v1/edges?source_ids=src-001&source_ids=src-002"
 ```
 
 ### Response — `200 OK`
@@ -101,7 +101,7 @@ Creates a new edge (relationship) between two existing nodes.
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/edges \
+curl -X POST http://localhost/api/v1/edges \
   -H "Content-Type: application/json" \
   -d '{
     "template_id": "rel-works-at",
@@ -152,7 +152,7 @@ Returns full details for a single edge.
 ### Example Request
 
 ```bash
-curl -X GET http://localhost:8080/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000
+curl -X GET http://localhost/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000
 ```
 
 ### Response — `200 OK`
@@ -211,7 +211,7 @@ Providing `properties` replaces the entire properties object. Include all desire
 ### Example Request
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000 \
+curl -X PATCH http://localhost/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000 \
   -H "Content-Type: application/json" \
   -d '{
     "label": "employed by",
@@ -251,7 +251,7 @@ Permanently deletes an edge.
 ### Example Request
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000
+curl -X DELETE http://localhost/api/v1/edges/edge-550e8400-e29b-41d4-a716-446655440000
 ```
 
 ### Response — `204 No Content`
@@ -291,7 +291,7 @@ Queues a batch of create, update, and delete operations for background processin
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/edges/batch \
+curl -X POST http://localhost/api/v1/edges/batch \
   -H "Content-Type: application/json" \
   -d '{
     "operations": [

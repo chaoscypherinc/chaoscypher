@@ -23,17 +23,17 @@ Abstractions are boring. Let's look at a real workflow you might build: automati
 
 Here's the pipeline:
 
-**Trigger:** A new source file is uploaded (`file.upload` event fires).
+**Trigger:** Extraction commits new entities to the graph (`node.create` event fires) -- the signal that a freshly uploaded paper has finished processing. (You can also invoke the workflow manually or through the API.)
 
 **Step 1 -- AI Prompt:** Summarize the document in three sentences. The `ai.prompt` tool sends the document text to your configured LLM with instructions to produce a concise summary. If the document is long, it automatically chunks the text and processes sections in parallel, then merges the results.
 
 **Step 2 -- AI Extract JSON:** Pull out structured metadata. Authors, publication date, journal name, key findings, methodology type. The `ai.extract_json` tool takes the document text and a JSON schema defining exactly what you want, then returns validated structured data. It retries if the extraction doesn't match the schema.
 
-**Step 3 -- Conditional:** Check if this is a clinical study. The `logic.conditional` tool evaluates whether `{{steps.step_2.methodology_type}}` equals `"clinical_trial"`. If true, the workflow branches to run additional [medical-domain extraction](/blog/domain-extraction-guide). If false, it skips ahead.
+**Step 3 -- Conditional:** Check if this is a clinical study. The `logic.conditional` tool evaluates whether `{{steps.extract_metadata.extracted_data.methodology_type}}` equals `"clinical_trial"`. If true, the workflow branches to run additional [medical-domain extraction](/blog/domain-extraction-guide). If false, it skips ahead.
 
-**Step 4 -- HTTP Request:** Post a notification to a Slack webhook with the summary from Step 1 and the metadata from Step 2. The `http.request` tool sends a POST to your webhook URL with a JSON body containing `{{steps.step_1.result}}` and `{{steps.step_2.extracted_data}}`.
+**Step 4 -- HTTP Request:** Post a notification to a Slack webhook with the summary from Step 1 and the metadata from Step 2. The `http.request` tool sends a POST to your webhook URL with a JSON body containing `{{steps.summarize.result}}` and `{{steps.extract_metadata.extracted_data}}`.
 
-Notice the `{{steps.step_1.result}}` syntax. That's the interpolation engine at work. Every step's output is available to every subsequent step via dot-notation paths. You can reference `{{inputs.document_text}}` for the original trigger data, `{{steps.step_2.extracted_data.authors}}` for a nested field from a previous step, or even `{{steps.step_3.branch_taken}}` to see which conditional path was followed. The interpolation preserves types too -- if a previous step returned a number, you get a number, not the string `"42"`.
+Notice the `{{steps.summarize.result}}` syntax. That's the interpolation engine at work. Every step's output is keyed by the step's ID -- reference it as `{{steps.<step_id>.<field>}}` from any later step. The IDs here (`summarize`, `extract_metadata`) are placeholders: IDs are instance-specific, so check a step's actual ID in the builder (or via `GET /api/v1/workflows/{id}`) before wiring references -- and re-check after importing a workflow, because the export format does not carry step IDs, so import assigns fresh ones and cross-step references in configurations must be updated. You can reference `{{inputs.<field>}}` for the data the workflow was invoked with, `{{steps.extract_metadata.extracted_data.authors}}` for a nested field from a previous step, or even `{{steps.check_clinical.branch_taken}}` to see which conditional path was followed. The interpolation preserves types too -- if a previous step returned a number, you get a number, not the string `"42"`.
 
 This entire pipeline runs without human intervention. Upload a PDF, walk away, come back to a summarized, metadata-tagged, conditionally-processed document with a Slack notification waiting for you.
 
@@ -53,23 +53,15 @@ The workflow engine ships with ten built-in tools organized into five categories
 | **HTTP** | `http.request` | External API calls with all HTTP methods, bearer/basic auth, configurable timeouts, and SSRF protection that blocks localhost access |
 | **Templates** | `templates.list` | Query your knowledge graph schema to discover available node templates |
 
-A few things worth highlighting about specific tools:
-
-**`ai.prompt`** is smarter than a simple LLM call. It supports chunk strategies (`quick` and `full`) for documents that exceed the model's context window. When chunking is enabled, it splits the document on paragraph boundaries, processes each chunk in parallel via the LLM queue, and intelligently merges the results -- concatenating text outputs, extending arrays, and merging objects.
-
-**`ai.extract_json`** enforces structure. You provide a JSON schema defining what you expect (say, `{"entities": [{"name": "string", "type": "string"}]}`), and the tool validates the LLM's output against it. If the output doesn't match, it retries automatically. This makes extraction reliable enough to run unattended.
-
-**`ai.vector_search`** lets workflows query the knowledge graph semantically. Give it a natural language query and it performs hybrid search -- combining vector similarity with keyword fallback -- to find matching nodes. You can filter by template type and set a similarity threshold. This is how you build workflows that reason about existing knowledge: "find all entities similar to what we just extracted and check for duplicates."
-
-**`http.request`** has built-in security. URLs are validated before any request is sent -- only `http` and `https` schemes are allowed, and direct `localhost` access is blocked to prevent SSRF attacks. It supports all standard HTTP methods (GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS), bearer and basic authentication, custom headers, and JSON or string request bodies. Since Chaos Cypher runs in Docker, access to other containers via their service names works fine.
+Three details that make these reliable enough to run unattended: `ai.prompt` automatically chunks documents that exceed the model's context window, processes the chunks in parallel, and merges the results; `ai.extract_json` validates the LLM's output against your JSON schema and retries on mismatch; and `http.request` validates URLs before sending (https/http only, localhost blocked against SSRF) while supporting all standard methods and auth schemes. `ai.vector_search` is the interesting one for graph-aware pipelines -- workflows can semantically query existing knowledge, enabling steps like "find entities similar to what we just extracted and check for duplicates."
 
 ### How Triggers Work
 
 Triggers are the entry point for automated workflows. They listen for events in the system and fire workflows when conditions are met.
 
-**Event sources** define what happened: `node.create` (a new node was added to the graph), `node.update` (an existing node was modified), `file.upload` (a new source file was uploaded), `import.completed` (a batch import finished). The system ships with built-in triggers for auto-embedding -- every time a node is created or updated, a workflow automatically generates vector embeddings for it.
+**Event sources** define what happened. Two are live today: `node.create` (a new node was committed to the graph) and `edge.create` (a new relationship was committed) -- both fire on the extraction-commit path. Other event sources, like file-upload and import-complete, are selectable in the builder but not yet emitted by the engine. The system ships with a built-in auto-embedding trigger -- nodes created when an extraction commits to the graph automatically get vector embeddings generated.
 
-**Filters** let you narrow the scope. A trigger on `node.create` with a filter `{"template_id": "person_template"}` only fires when a Person node is created, not when any node is created. Filters use exact key-value matching against the event data.
+**Filters** let you narrow the scope, using exact key-value matching against the event data. A trigger on `node.create` with a filter `{"entity_type": "node"}` fires only for node events. The `node.create` payload currently carries `entity_type` and `entity_id`, so filters on other keys (like a template id) can never match -- the engine logs a warning when a trigger is wired to a structurally impossible filter.
 
 **Statistics tracking** gives you visibility. Every trigger execution records success/failure status, execution time, and error messages. You can see your success rate, average execution time, and recent execution history -- useful for debugging workflows that occasionally fail.
 
@@ -83,11 +75,7 @@ Workflows calling workflows. Each one focused on a single job, composed together
 
 ### Workflow Portability
 
-Workflows are portable. You can export any workflow to a version-stamped JSON file that includes the workflow definition, all its steps, and their configurations. Import it into another Chaos Cypher instance -- or share it with someone else running their own instance.
-
-The import process is deliberate about safety. Before importing, the system validates the export version for compatibility and checks that all referenced tools exist in the target instance. It walks through every step, resolves each `tool_id` against the registry of system tools and user tools, and fails early if anything is missing. If a workflow references `ai.prompt` and `http.request`, those tools must be available. If a custom tool plugin is missing, the import fails with a clear error message rather than creating a broken workflow.
-
-This design means workflows are self-describing and portable. The JSON file contains everything needed to reconstruct the workflow -- no hidden state, no implicit dependencies on database IDs. Export from your laptop, import on a server, share with a colleague. The only requirement is that the target instance has the same tools installed.
+Workflows export to a version-stamped, self-describing JSON file -- the definition, all steps, all configurations, no hidden state, no implicit database IDs. Import validates the version and resolves every referenced tool against the target instance's registry before creating anything, so a missing tool produces a clear error instead of a broken workflow. Export from your laptop, import on a server, share with a colleague.
 
 ## Try It Yourself
 
@@ -136,32 +124,18 @@ The fastest way to see the workflow engine in action is to look at the export fo
 
 This is everything the system needs. The `version` field ensures forward compatibility. The `input_schema` and `output_schema` define the contract. The `steps` array contains the pipeline.
 
-Each step specifies its `tool_type` (`system_tool`, `user_tool`, or `workflow`), a `tool_id` that references a registered tool, and a `configuration` object whose shape matches the tool's input schema. The `{{inputs.document_text}}` template variable gets resolved at execution time with the actual trigger data.
+Each step specifies its `tool_type` (`system_tool`, `user_tool`, or `workflow`), a `tool_id` that references a registered tool, and a `configuration` object whose shape matches the tool's input schema. The `{{inputs.document_text}}` template variable gets resolved at execution time with the inputs the workflow was invoked with.
 
-When importing, you have three options for handling name conflicts:
+To wire it up, create a trigger with the event source (like `node.create`), link it to your workflow, and optionally add filters. From there the engine scales with you: steps can declare `depends_on`, `continue_on_error`, `max_retries` (per-step, falling back to the workflow-level default), and `timeout_seconds`; imports handle name conflicts (`fail`/`skip`/`rename`) and can land inactive for a test run first. The [workflows API reference](/docs/reference/api/workflows) documents the step fields and import options.
 
-- **`fail`** -- refuse to import if a workflow with the same name exists (the default, prevents accidental overwrites)
-- **`skip`** -- silently keep the existing workflow and skip the import
-- **`rename`** -- import with ` (imported)` appended to the name
-
-You can also import as inactive (`import_as_inactive: true`) to test a workflow before enabling it in production. This creates the workflow with `is_active: false`, letting you review the steps and do a manual test run before flipping it on.
-
-![Settings page with import and export graph options](/img/screenshots/settings-general.png)
-
-![Queue monitor with task tracking and auto-refresh](/img/screenshots/queue-monitor.png)
-
-To set up the trigger, create a trigger record with the event source (like `file.upload`), link it to your workflow, and optionally add filters. The trigger system runs as a background event loop -- events are queued and processed asynchronously, so trigger evaluation never blocks the main API.
-
-For more complex workflows, the step dependency system lets you control execution order beyond simple sequential numbering. Each step can declare `depends_on` (a list of step IDs that must complete before it runs) and `continue_on_error` (proceed even if the step fails). You can also set `retry_on_failure` to have the engine retry a step automatically, and `timeout_seconds` to cap how long any individual step can run. Combined with `logic.conditional` for branching and `logic.loop` for iteration, you can express surprisingly sophisticated pipelines.
-
-The execution model tracks everything. Each workflow run produces an execution record with status (pending, running, completed, failed, cancelled), the inputs that were provided, the outputs that were produced, timing data for each step, and -- critically -- which step failed and why if something goes wrong. This execution history is what makes workflows debuggable. When a workflow fails at 3am, you don't have to guess what happened. You look at the execution detail, see that Step 3 timed out after 120 seconds waiting for the LLM, and adjust accordingly.
+One more thing worth knowing before you trust a pipeline to run unattended: every run produces an execution record -- status, inputs, outputs, per-step timing, and which step failed and why. When a workflow fails at 3am, you don't guess. You look at the execution detail, see that Step 3 timed out after 120 seconds waiting for the LLM, and adjust accordingly.
 
 ## What's Next
 
-The workflow engine is designed to grow. The tool system uses a plugin architecture -- the same pattern that powers Chaos Cypher's loader plugins, domain plugins, and LLM providers. Custom tool plugins in Python are on the roadmap for users who need capabilities beyond the built-in ten. Implement a class with `tool_id`, `input_schema`, `output_schema`, and an `execute` method, drop it in the plugins directory, and it auto-registers.
+The workflow engine is designed to grow. The tool system uses a plugin architecture -- the same pattern that powers Chaos Cypher's loader plugins, domain plugins, and LLM providers. Custom tool plugins in Python shipped: drop a `*_plugin.py` file in `data/plugins/tools/` implementing `tool_id`, `category`, `name`, `description`, `input_schema`, and an `execute` method, and it auto-registers on startup (user plugins even override built-ins with the same `tool_id`). See the [tool plugins guide](/docs/user-guide/tool-plugins) for the full interface.
 
 More trigger event sources are coming as the platform grows. Scheduling (run a workflow every Tuesday at 9am) and webhook triggers (fire a workflow from an external system) are natural extensions of the existing event-driven architecture.
 
 If you've built an interesting automation workflow -- whether it's a multi-step research pipeline, a quality assurance checker, or an integration with external tools -- I'd genuinely like to hear about it. The export format makes sharing straightforward: export your workflow, share the JSON, and someone else can import it and adapt it to their use case. That's the whole point of portability.
 
-For the full API reference and detailed configuration options, check out the [workflow documentation](/docs/reference/api/workflows). The built-in system workflows (like auto-embedding on node create/update) are also good starting points -- export them and study the step configurations to see how the engine's own automation is wired together.
+For the full API reference and detailed configuration options, check out the [workflow documentation](/docs/reference/api/workflows). The built-in system workflows (like auto-embedding on node create) are also good starting points -- export them and study the step configurations to see how the engine's own automation is wired together.

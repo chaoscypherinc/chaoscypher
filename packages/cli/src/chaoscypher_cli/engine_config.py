@@ -12,7 +12,8 @@ validated settings use ``app_config.get_settings()`` directly.
 settings.yaml is the single persisted home for engine-level config (llm,
 embedding, current database) as of the 2026-06 config unification: the CLI
 wizard writes it, the CLI engine reads it through the shared app_config
-pipeline, and cli.yaml is reduced to client-only concerns.
+pipeline, and cli.yaml was retired entirely (it is no longer read and is
+ignored).
 """
 
 from __future__ import annotations

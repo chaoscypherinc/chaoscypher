@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 from chaoscypher_cli.utils.display import get_quality_color, get_status_color
 from chaoscypher_core.models import SourceStatus
 
@@ -76,7 +77,7 @@ def list_files(
             files = [f for f in files if f.get("status") not in (SourceStatus.COMMITTED, "failed")]
 
         if output_format == "json":
-            console.print(json.dumps(files, indent=2, default=str))
+            print_json(json.dumps(files, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -85,7 +86,7 @@ def list_files(
                 console.print(yaml.dump(files, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(files, indent=2, default=str))
+                print_json(json.dumps(files, indent=2, default=str))
 
         else:  # table format
             if not files:

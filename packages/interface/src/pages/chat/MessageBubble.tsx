@@ -12,16 +12,24 @@
 
 import { useState, useEffect, useRef } from 'react';
 import {
+  Alert,
   Box,
+  ButtonBase,
   Typography,
   Chip,
   Collapse,
+  IconButton,
   Tooltip,
   Avatar,
 } from '@mui/material';
 import SparkIcon from '@mui/icons-material/AutoAwesome';
 import UserIcon from '@mui/icons-material/Person';
 import ExpandIcon from '@mui/icons-material/ExpandMore';
+import ReplayIcon from '@mui/icons-material/Replay';
+import EditIcon from '@mui/icons-material/EditOutlined';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import CheckIcon from '@mui/icons-material/Check';
+import { copyToClipboard } from '../../utils/clipboard';
 import { ChatTheme } from '../../theme/chatTheme';
 import type { ExtendedChatMessage } from './types';
 import {
@@ -48,6 +56,10 @@ interface MessageBubbleProps {
   firstInContextIndex: number;
   /** Callback for quick action buttons (approve/decline) */
   onQuickAction: (response: string) => void;
+  /** Regenerate the answer (shown on the latest assistant bubble when idle) */
+  onRegenerate?: () => void;
+  /** Arm edit-and-resend for this user message (persisted rows only) */
+  onEditMessage?: (messageId: string, content: string) => void;
   /** Whether this is the most recent displayed message */
   isLatest: boolean;
   /** Whether a message is currently being sent/streamed */
@@ -72,12 +84,22 @@ export default function MessageBubble({
   messageIndex,
   firstInContextIndex,
   onQuickAction,
+  onRegenerate,
+  onEditMessage,
   isLatest,
   loading,
   toolResults,
 }: MessageBubbleProps) {
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [advancedExpanded, setAdvancedExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyMessage = async () => {
+    if (await copyToClipboard(message.content)) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  };
   const [thinkingElapsed, setThinkingElapsed] = useState<number | null>(null);
   const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isUser = message.role === 'user';
@@ -229,6 +251,79 @@ export default function MessageBubble({
             chunkCitations={message.chunk_citations}
           />
 
+          {/* Live tool status while the loop is executing (streaming only) */}
+          {!isUser && isLatest && loading && message.running_tool && (
+            <Typography
+              variant="caption"
+              sx={{ display: 'block', mt: 0.75, color: 'text.secondary', fontStyle: 'italic' }}
+            >
+              Running {message.running_tool}…
+            </Typography>
+          )}
+
+          {/* Turn actions (idle only): regenerate the latest answer; edit a
+              persisted user message to resend from that point. */}
+          {!loading && (
+            <Box sx={{ mt: 0.5, display: 'flex', gap: 0.5 }}>
+              {message.content.trim().length > 0 && (
+                <Tooltip title={copied ? 'Copied' : 'Copy message'}>
+                  <IconButton
+                    size="small"
+                    aria-label={copied ? 'Copied' : 'Copy message'}
+                    onClick={handleCopyMessage}
+                    sx={{ color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
+                  >
+                    {copied ? (
+                      <CheckIcon sx={{ fontSize: 16 }} />
+                    ) : (
+                      <ContentCopyIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </Tooltip>
+              )}
+              {!isUser && isLatest && onRegenerate && (
+                <Tooltip title="Regenerate answer">
+                  <IconButton
+                    size="small"
+                    aria-label="Regenerate answer"
+                    onClick={onRegenerate}
+                    sx={{ color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
+                  >
+                    <ReplayIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              {isUser && onEditMessage && message.id && (
+                <Tooltip title="Edit and resend">
+                  <IconButton
+                    size="small"
+                    aria-label="Edit message"
+                    onClick={() => onEditMessage(message.id!, message.content)}
+                    sx={{ color: 'text.disabled', '&:hover': { color: 'text.secondary' } }}
+                  >
+                    <EditIcon sx={{ fontSize: 16 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
+          )}
+
+          {/* Stream warnings (answer truncated, context window overflow, ...) */}
+          {!isUser && (message.warnings?.length ?? 0) > 0 && (
+            <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+              {message.warnings!.map((warning, idx) => (
+                <Alert
+                  key={`${warning.kind}-${idx}`}
+                  severity="warning"
+                  variant="outlined"
+                  sx={{ py: 0, alignItems: 'center', fontSize: '0.8rem' }}
+                >
+                  {warning.message}
+                </Alert>
+              ))}
+            </Box>
+          )}
+
           {/* Chip Bar - horizontal row of toggle chips */}
           {(hasDetailsSection || message.llm_debug) && (
             <Box sx={{ mt: 2, display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -262,16 +357,16 @@ export default function MessageBubble({
               {/* Spacer to push Advanced to far right */}
               <Box sx={{ flexGrow: 1 }} />
 
-              {/* Advanced - ghost link style */}
+              {/* Advanced - ghost link style (a real button for keyboard/AT) */}
               {message.llm_debug && (
-                <Typography
-                  component="span"
-                  variant="caption"
+                <ButtonBase
                   onClick={() => setAdvancedExpanded(!advancedExpanded)}
+                  aria-expanded={advancedExpanded}
+                  aria-label="Advanced LLM debug details"
                   sx={{
-                    cursor: 'pointer',
                     color: 'secondary.main',
                     fontWeight: 500,
+                    fontSize: '0.75rem',
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: 0.25,
@@ -284,7 +379,7 @@ export default function MessageBubble({
                 >
                   Advanced
                   <ExpandIcon sx={{ fontSize: 16, transform: advancedExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                </Typography>
+                </ButtonBase>
               )}
             </Box>
           )}

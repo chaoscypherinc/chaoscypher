@@ -1,15 +1,17 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Chip, Tooltip, Box, Typography, Divider, Stack } from '@mui/material';
+import { Chip, Tooltip, Box, Typography, Divider, Stack, CircularProgress } from '@mui/material';
 import NodeIcon from '@mui/icons-material/AccountTree';
 import EdgeIcon from '@mui/icons-material/Link';
 import ArrowIcon from '@mui/icons-material/ArrowForward';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import TypeIcon from '@mui/icons-material/Category';
 import type { EntityReferenceSummary } from '../../types';
+import { nodeApi } from '../../services/api/nodes';
+import { edgeApi } from '../../services/api/edges';
 import { CardColors, hexToRgba } from '../../theme/cardStyles';
 
 interface EntityReferenceProps {
@@ -31,26 +33,61 @@ function getEntityColor(entity: EntityReferenceSummary): string {
   return CardColors.primary;
 }
 
+/** Values that look like internal identifiers — never useful in a hover. */
+const ID_LIKE_VALUE = /^(node_|edge_|tpl_|[0-9a-f]{8}-)/i;
+
+/** Max property rows shown in the hover card. */
+const MAX_HOVER_PROPS = 3;
+
+/** Max characters of a property value before truncation. */
+const MAX_PROP_VALUE_CHARS = 60;
+
+/**
+ * Pick the most useful property rows for the hover card: priority keys
+ * first, then fill in declaration order; id-like keys/values, objects,
+ * and the description (shown separately) are skipped; long values are
+ * truncated.
+ */
+function topProperties(
+  props: EntityReferenceSummary['properties'],
+): Array<{ key: string; value: string }> {
+  if (!props) return [];
+  const out: Array<{ key: string; value: string }> = [];
+  const seen = new Set<string>();
+  const pick = (key: string) => {
+    if (out.length >= MAX_HOVER_PROPS || seen.has(key)) return;
+    const raw = props[key];
+    if (raw == null || typeof raw === 'object') return;
+    const lower = key.toLowerCase();
+    if (lower === 'description' || lower === 'id' || lower.endsWith('_id')) return;
+    const text = String(raw);
+    if (!text || ID_LIKE_VALUE.test(text)) return;
+    seen.add(key);
+    out.push({
+      key,
+      value:
+        text.length > MAX_PROP_VALUE_CHARS
+          ? `${text.slice(0, MAX_PROP_VALUE_CHARS - 3)}...`
+          : text,
+    });
+  };
+  for (const key of ['type', 'status', 'category']) pick(key);
+  for (const key of Object.keys(props)) pick(key);
+  return out;
+}
+
 /**
  * Tooltip content component
  */
-function TooltipContent({ entity }: { entity: EntityReferenceSummary }) {
+function TooltipContent({ entity, fetching = false }: { entity: EntityReferenceSummary; fetching?: boolean }) {
   const color = entity.type === 'node' ? CardColors.primary : CardColors.error;
   const Icon = entity.type === 'node' ? NodeIcon : EdgeIcon;
 
   const description = entity.description || (entity.properties?.description as string | undefined);
-  const entityTypeLabel = entity.entity_type || entity.template_name || entity.template_id;
+  // Raw IDs are never shown — entity_type / template_name or nothing.
+  const entityTypeLabel = entity.entity_type || entity.template_name;
 
-  // Get a few key properties
-  const keyProps: Array<{ key: string; value: string }> = [];
-  if (entity.properties) {
-    const priorityKeys = ['type', 'status', 'category'];
-    for (const key of priorityKeys) {
-      if (entity.properties[key] && keyProps.length < 2) {
-        keyProps.push({ key, value: String(entity.properties[key]) });
-      }
-    }
-  }
+  const keyProps = topProperties(entity.properties);
 
   return (
     <Stack spacing={1} sx={{ maxWidth: 300 }}>
@@ -130,6 +167,15 @@ function TooltipContent({ entity }: { entity: EntityReferenceSummary }) {
           ))}
         </>
       )}
+      {/* Lazy-fetch progress */}
+      {fetching && (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+          <CircularProgress size={12} />
+          <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+            Loading details…
+          </Typography>
+        </Box>
+      )}
       {/* Click hint */}
       <Typography
         variant="caption"
@@ -144,18 +190,91 @@ function TooltipContent({ entity }: { entity: EntityReferenceSummary }) {
 }
 
 /**
+ * Module-level cache of lazily fetched entity summaries (keyed by entity
+ * id) so repeated hovers across messages never refetch.
+ */
+const fetchedDetailCache = new Map<string, EntityReferenceSummary>();
+
+/**
+ * Default detail fetcher over the nodes/edges services. Used when no
+ * `onFetchEntity` is injected, so hover details are universal regardless
+ * of which tools ran this turn. Failures resolve to null (silent degrade).
+ */
+async function defaultFetchEntity(
+  id: string,
+  type: 'node' | 'edge',
+): Promise<EntityReferenceSummary | null> {
+  try {
+    const raw = type === 'node' ? await nodeApi.getFull(id) : await edgeApi.get(id);
+    const data = (raw && typeof raw === 'object' && 'data' in (raw as object)
+      ? (raw as { data: unknown }).data
+      : raw) as Record<string, unknown> | null;
+    if (!data || typeof data !== 'object') return null;
+    return {
+      id,
+      type,
+      label: (data.label as string) || (data.name as string) || '',
+      description: (data.description as string) || undefined,
+      entity_type: (data.entity_type as string) || undefined,
+      template_name: (data.template_name as string) || undefined,
+      properties: (data.properties as Record<string, unknown>) || undefined,
+      incoming_count: data.incoming_count as number | undefined,
+      outgoing_count: data.outgoing_count as number | undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** True when the entity already carries something worth hovering for. */
+function hasDetails(entity: EntityReferenceSummary): boolean {
+  return Boolean(
+    entity.description || (entity.properties && Object.keys(entity.properties).length > 0),
+  );
+}
+
+/**
  * Inline entity reference component.
  * Displays as a styled chip that shows entity details on hover
  * and navigates to the entity detail page on click.
  */
 export default function EntityReference({
   entity,
-  onFetchEntity: _onFetchEntity,
-  isLoading: _isLoading = false,
+  onFetchEntity,
+  isLoading = false,
 }: EntityReferenceProps) {
   const navigate = useNavigate();
   const color = getEntityColor(entity);
   const Icon = entity.type === 'node' ? NodeIcon : EdgeIcon;
+
+  // Lazily fetched details for chips the turn's tools didn't describe.
+  const [fetched, setFetched] = useState<EntityReferenceSummary | null>(
+    () => fetchedDetailCache.get(entity.id) ?? null,
+  );
+  const [fetching, setFetching] = useState(false);
+  const displayEntity = fetched ? { ...entity, ...fetched, label: entity.label } : entity;
+
+  const handleTooltipOpen = useCallback(() => {
+    if (fetched || fetching || hasDetails(entity)) return;
+    const cached = fetchedDetailCache.get(entity.id);
+    if (cached) {
+      setFetched(cached);
+      return;
+    }
+    const fetcher = onFetchEntity ?? defaultFetchEntity;
+    setFetching(true);
+    fetcher(entity.id, entity.type)
+      .then((summary) => {
+        if (summary) {
+          fetchedDetailCache.set(entity.id, summary);
+          setFetched(summary);
+        }
+      })
+      .catch(() => {
+        // Silent degrade: the basic card is still useful.
+      })
+      .finally(() => setFetching(false));
+  }, [entity, fetched, fetching, onFetchEntity]);
 
   const handleClick = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -172,7 +291,8 @@ export default function EntityReference({
 
   return (
     <Tooltip
-      title={<TooltipContent entity={entity} />}
+      title={<TooltipContent entity={displayEntity} fetching={fetching || isLoading} />}
+      onOpen={handleTooltipOpen}
       arrow
       enterDelay={300}
       leaveDelay={100}

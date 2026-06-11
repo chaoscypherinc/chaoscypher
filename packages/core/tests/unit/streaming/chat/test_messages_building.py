@@ -33,7 +33,7 @@ from chaoscypher_core.streaming.chat.messages import (
     build_messages_for_llm,
     log_messages_debug,
 )
-from chaoscypher_core.utils.tokens import estimate_tokens
+from chaoscypher_core.utils.tokens import estimate_tokens, estimate_tokens_dense
 
 
 # ---------------------------------------------------------------------------
@@ -42,12 +42,14 @@ from chaoscypher_core.utils.tokens import estimate_tokens
 
 
 def test_count_tool_call_tokens_string_args_with_overhead():
-    """String arguments are token-counted directly and each call adds overhead."""
+    """String arguments are counted at the dense JSON ratio; calls add overhead."""
     tool_calls = [
         {"function": {"name": "search", "arguments": '{"query": "hello world"}'}},
     ]
     overhead = 10
-    expected = estimate_tokens("search") + estimate_tokens('{"query": "hello world"}') + overhead
+    expected = (
+        estimate_tokens("search") + estimate_tokens_dense('{"query": "hello world"}') + overhead
+    )
     assert _count_tool_call_tokens(tool_calls, overhead) == expected
 
 
@@ -58,7 +60,7 @@ def test_count_tool_call_tokens_dict_args_are_stringified():
     args = {"query": "hello world", "limit": 5}
     tool_calls = [{"function": {"name": "search", "arguments": args}}]
     overhead = 10
-    expected = estimate_tokens("search") + estimate_tokens(json.dumps(args)) + overhead
+    expected = estimate_tokens("search") + estimate_tokens_dense(json.dumps(args)) + overhead
     assert _count_tool_call_tokens(tool_calls, overhead) == expected
 
 

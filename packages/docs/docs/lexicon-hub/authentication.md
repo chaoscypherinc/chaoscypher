@@ -178,9 +178,9 @@ Lexicon login state is stored locally in `auth.json` in the config directory:
 |----------|------|
 | Linux | `~/.config/chaoscypher/auth.json` |
 | macOS | `~/Library/Application Support/chaoscypher/auth.json` |
-| Windows | `%APPDATA%\chaoscypher\auth.json` |
+| Windows | `%LOCALAPPDATA%\chaoscypher\chaoscypher\auth.json` |
 
-The file contains the access token and Hub URL (permissions `0600` on Unix). It is created on login and removed on logout.
+The file contains the access token and Hub URL (permissions `0600` on Unix). It is created on login and removed on logout. Setting the `CHAOSCYPHER_CONFIG_DIR` environment variable overrides the config directory; `chaoscypher lexicon login` prints the exact path it saved to.
 
 :::note[Upgrading]
 

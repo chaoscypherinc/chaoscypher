@@ -53,16 +53,16 @@ Values exceeding the server maximum (1000) are clamped automatically.
 
 ```bash
 # Keyword search
-curl "http://localhost:8080/api/v1/search?q=machine+learning&search_type=keyword"
+curl "http://localhost/api/v1/search?q=machine+learning&search_type=keyword"
 
 # Semantic search
-curl "http://localhost:8080/api/v1/search?q=artificial+intelligence&search_type=semantic"
+curl "http://localhost/api/v1/search?q=artificial+intelligence&search_type=semantic"
 
 # Hybrid search (semantic with keyword fallback)
-curl "http://localhost:8080/api/v1/search?q=neural+networks&search_type=hybrid"
+curl "http://localhost/api/v1/search?q=neural+networks&search_type=hybrid"
 
 # Keyword search with a custom result limit
-curl "http://localhost:8080/api/v1/search?q=deep+learning&search_type=keyword&limit=10"
+curl "http://localhost/api/v1/search?q=deep+learning&search_type=keyword&limit=10"
 ```
 
 ### Response
@@ -91,19 +91,9 @@ curl "http://localhost:8080/api/v1/search?q=deep+learning&search_type=keyword&li
       "score": 0.75,
       "node": {
         "id": "node-789ghi",
-        "template_id": "concept",
         "label": "Machine Learning",
-        "properties": {},
-        "position": null,
-        "embedding": null,
-        "source_id": null,
-        "created_at": "2026-01-15T10:30:00",
-        "updated_at": "2026-01-15T10:30:00",
-        "edge_count": null,
-        "incoming_edge_count": null,
-        "outgoing_edge_count": null,
-        "citation_count": null,
-        "relationship_type_count": null
+        "template_id": "concept",
+        "edge_count": 7
       },
       "chunk": null
     }
@@ -125,8 +115,19 @@ curl "http://localhost:8080/api/v1/search?q=deep+learning&search_type=keyword&li
 |---------------|---------------------|---------------------------------------------------|
 | `result_type` | string              | `"node"` or `"chunk"`                             |
 | `score`       | float               | Relevance score                                   |
-| `node`        | `NodeResponse|null` | Node data (present when `result_type` is `node`)  |
+| `node`        | `SearchNodeHit|null` | Node data (present when `result_type` is `node`)  |
 | `chunk`       | `ChunkResult|null`  | Chunk data (present when `result_type` is `chunk`) |
+
+#### SearchNodeHit
+
+A narrow projection of a graph node — only the fields the search engine actually populates. Full node payloads (properties, position, embedding, timestamps, citation counts) are never present in search results; fetch the node via the [Nodes API](nodes.md) when you need them.
+
+| Field         | Type           | Description                                             |
+|---------------|----------------|---------------------------------------------------------|
+| `id`          | string         | Node identifier                                         |
+| `label`       | string         | Node label                                              |
+| `template_id` | string or null | Template the node was created from (null if untemplated) |
+| `edge_count`  | int            | Number of edges connected to the node (batched lookup; default 0) |
 
 #### ChunkResult
 
@@ -153,7 +154,7 @@ Returns statistics about the current search indexes.
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/search/stats"
+curl "http://localhost/api/v1/search/stats"
 ```
 
 ### Response
@@ -189,7 +190,7 @@ Check whether the search indexes need rebuilding. Returns the current model and 
 ### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/search/indexes/status"
+curl "http://localhost/api/v1/search/indexes/status"
 ```
 
 ### Response
@@ -244,7 +245,7 @@ Rebuilds search indexes from all graph nodes and document chunks. Auto-detects w
 ### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/search/indexes"
+curl -X POST "http://localhost/api/v1/search/indexes"
 ```
 
 ### Response (Fast Rebuild)
@@ -263,16 +264,14 @@ curl -X POST "http://localhost:8080/api/v1/search/indexes"
 
 ### Response (Full Rebuild with Re-embedding)
 
-`202 Accepted`
+`202 Accepted` — returns a different model, `QueuedRebuildResponse`:
 
 ```json
 {
   "task_id": "task-rebuild-abc123",
-  "success": true,
-  "total_nodes": 1500,
-  "nodes_with_embeddings": 0,
-  "chunks_indexed": 3400,
-  "message": "Embeddings need regeneration. Queued re-embedding for 1500 nodes and 3400 chunks."
+  "status": "queued",
+  "regenerated": true,
+  "message": "Embedding regeneration and index rebuild queued"
 }
 ```
 
@@ -282,7 +281,7 @@ When a `202` response is returned, use [`GET /api/v1/queue/tasks/{task_id}`](que
 
 :::
 
-#### RebuildIndexResponse
+#### RebuildIndexResponse (`200 OK`)
 
 | Field                   | Type   | Description                                    |
 |-------------------------|--------|------------------------------------------------|
@@ -291,7 +290,15 @@ When a `202` response is returned, use [`GET /api/v1/queue/tasks/{task_id}`](que
 | `nodes_with_embeddings` | int    | Nodes that have vector embeddings               |
 | `chunks_indexed`        | int    | Number of document chunks indexed (default: 0)  |
 | `message`               | string | Human-readable status message                   |
-| `task_id`               | string? | Background task ID (only present for `202` responses) |
+
+#### QueuedRebuildResponse (`202 Accepted`)
+
+| Field         | Type   | Description                                           |
+|---------------|--------|-------------------------------------------------------|
+| `task_id`     | string | Background task ID for the queued re-embedding job    |
+| `status`      | string | Always `"queued"`                                      |
+| `regenerated` | bool   | Always `true` — embeddings will be regenerated         |
+| `message`     | string | Always `"Embedding regeneration and index rebuild queued"` |
 
 ---
 
@@ -301,11 +308,11 @@ When a `202` response is returned, use [`GET /api/v1/queue/tasks/{task_id}`](que
 POST /api/v1/search/embeddings
 ```
 
-Queues embedding generation for all graph nodes that do not yet have vector embeddings. Processing happens asynchronously in the background via the Operations queue.
+Generates embeddings synchronously for every graph node missing one — the request blocks until done and can take minutes on large graphs. Each embedding is generated inline before the response is returned.
 
-:::tip[Monitor progress]
+:::warning[Blocking request]
 
-Use [`GET /api/v1/search/stats`](#index-statistics) to check `vector_index_size` as embeddings are generated.
+This endpoint does not queue background work. On a graph with many unembedded nodes, expect a long-running request — set a generous client timeout.
 
 :::
 
@@ -317,7 +324,7 @@ Use [`GET /api/v1/search/stats`](#index-statistics) to check `vector_index_size`
 ### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/search/embeddings"
+curl -X POST "http://localhost/api/v1/search/embeddings"
 ```
 
 ### Response
@@ -328,16 +335,18 @@ curl -X POST "http://localhost:8080/api/v1/search/embeddings"
 {
   "success": true,
   "total_nodes": 1500,
-  "nodes_queued": 300,
-  "message": "Queued 300 nodes for embedding generation"
+  "processed_count": 300,
+  "message": "Generated embeddings for 300 nodes"
 }
 ```
 
+If some nodes fail, the failure count is appended to the message, e.g. `"Generated embeddings for 295 nodes (5 failed)"`.
+
 #### GenerateEmbeddingsResponse
 
-| Field          | Type   | Description                                          |
-|----------------|--------|------------------------------------------------------|
-| `success`      | bool   | Whether the queuing completed successfully            |
-| `total_nodes`  | int    | Total nodes in the graph                             |
-| `nodes_queued` | int    | Number of nodes queued for embedding generation       |
-| `message`      | string | Human-readable status message                         |
+| Field             | Type   | Description                                          |
+|-------------------|--------|------------------------------------------------------|
+| `success`         | bool   | Whether the run completed                             |
+| `total_nodes`     | int    | Total nodes in the graph                             |
+| `processed_count` | int    | Number of nodes that received a new embedding         |
+| `message`         | string | Human-readable status message                         |

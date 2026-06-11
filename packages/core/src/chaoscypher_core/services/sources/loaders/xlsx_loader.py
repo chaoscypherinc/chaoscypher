@@ -3,11 +3,11 @@
 
 """Microsoft Excel (.xlsx / .xlsm) loader.
 
-Workstream 7 (2026-05-07): walks every sheet, treats the sheet name as
-a section heading, and flattens each non-empty row to a
-``col1 | col2 | …`` line. Uses ``data_only=True`` so cached formula
-values come out as numbers/strings rather than ``=SUM(A1:A3)``;
-``read_only=True`` keeps memory bounded for very large books.
+Walks every sheet, treats the sheet name as a section heading, and
+flattens each non-empty row to a ``col1 | col2 | …`` line. Uses
+``data_only=True`` so cached formula values come out as numbers/strings
+rather than ``=SUM(A1:A3)``; ``read_only=True`` keeps memory bounded
+for very large books.
 """
 
 from __future__ import annotations

@@ -11,6 +11,7 @@
 
 import type {
   ChatMessage,
+  ChatStreamWarning,
   ChunkCitationMap,
   ContextInfo,
   ChatError,
@@ -223,6 +224,16 @@ export function handleStreamEvent(
       return now;
     }
 
+    // ----- tool start -----
+    // Live "Running <tool>..." status during multi-minute tool loops; the
+    // worker already publishes this event, the UI previously dropped it.
+    case 'tool_start':
+      setMessages((prev) => updateAssistant(
+        prev,
+        (msg) => ({ ...msg, running_tool: (data.tool as string) || undefined }),
+      ));
+      return now;
+
     // ----- tool result -----
     case 'tool_result': {
       if (data.duration_ms) {
@@ -232,6 +243,10 @@ export function handleStreamEvent(
           tool_call_id: data.tool_call_id as string | undefined,
         });
       }
+      setMessages((prev) => updateAssistant(
+        prev,
+        (msg) => ({ ...msg, running_tool: undefined }),
+      ));
       const toolResultMessage: ChatMessage = {
         role: 'tool',
         content: JSON.stringify(data.result),
@@ -305,6 +320,30 @@ export function handleStreamEvent(
         name: toolName,
       };
       setMessages((prev) => [...prev, rejectedResultMessage]);
+      return now;
+    }
+
+    // ----- warning -----
+    // Backend detected a problem with this response (answer cut off by the
+    // output limit, prompt overflowed the model context window, tool-call
+    // limit reached, ...). Attach it to the assistant message so the user
+    // sees why the answer may be degraded and how to work through it.
+    case 'warning': {
+      const warning: ChatStreamWarning = {
+        kind: (data.kind as string) || 'generic',
+        message: (data.message as string) || 'A problem was detected with this response.',
+      };
+      setMessages((prev) => updateAssistant(
+        prev,
+        (msg) => {
+          const existing = msg.warnings ?? [];
+          if (existing.some((w) => w.kind === warning.kind && w.message === warning.message)) {
+            return msg;
+          }
+          return { ...msg, warnings: [...existing, warning] };
+        },
+        { role: 'assistant', content: '', warnings: [warning] },
+      ));
       return now;
     }
 
@@ -392,39 +431,39 @@ function handleDoneEvent(
   const normalizedContent = (data.content as string) || undefined;
 
   const cachedToolCalls = (data.cached_tool_calls as unknown[]) || undefined;
+  const warnings = (data.warnings as ChatStreamWarning[]) || undefined;
 
   setMessages((prev) => updateAssistant(
     prev,
     (msg) => ({
       ...msg,
       ...(normalizedContent ? { content: normalizedContent } : {}),
-      thinking: finalThinking || msg.thinking,
+      // '...' is the optimistic placeholder — never keep it past done
+      thinking: finalThinking || (msg.thinking === '...' ? undefined : msg.thinking),
+      running_tool: undefined,
       tool_calls: acc.allToolCalls.length > 0 ? acc.allToolCalls : msg.tool_calls,
       cached_tool_calls: cachedToolCalls || (acc.allCachedToolCalls.length > 0 ? acc.allCachedToolCalls : msg.cached_tool_calls),
       referenced_entities: referencedEntities || msg.referenced_entities,
       chunk_citations: chunkCitations || msg.chunk_citations,
       llm_debug: llmDebug || msg.llm_debug,
       ...(validation ? { validation } : {}),
+      warnings: warnings || msg.warnings,
       extra_metadata: {
         ...msg.extra_metadata,
         cached_tool_calls: cachedToolCalls || (acc.allCachedToolCalls.length > 0 ? acc.allCachedToolCalls : undefined),
         chunk_citations: chunkCitations,
         llm_debug: llmDebug || msg.llm_debug,
         ...(validation ? { validation } : {}),
+        ...(warnings ? { warnings } : {}),
       },
     }),
   ));
 
-  // Safety net: if stream completes with no content, show error message
-  if (!finalFullContent || finalFullContent.trim() === '') {
-    logger.error('Stream completed without content. This should not happen.');
-    const fallbackContent = "I apologize, but I encountered an issue generating a response. Please try sending your message again.";
-
-    setMessages((prev) => updateAssistant(
-      prev,
-      (msg) => ({ ...msg, content: fallbackContent }),
-      { role: 'assistant', content: fallbackContent },
-    ));
+  // Contentless done = we subscribed after the worker finished (the events
+  // bridge synthesizes done without content). The persisted answer arrives
+  // via the next poll — do NOT overwrite the bubble with a fake apology.
+  if ((!finalFullContent || finalFullContent.trim() === '') && !normalizedContent) {
+    logger.warn('done_without_content_waiting_for_poll');
   }
 
   setLoading(false);

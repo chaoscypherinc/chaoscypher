@@ -11,7 +11,9 @@ keeps a bespoke ``credentials.json`` helper set.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
@@ -46,6 +48,27 @@ def _write_auth(config_dir: Path, **fields: object) -> Path:
     auth_file = config_dir / "auth.json"
     auth_file.write_text(json.dumps(fields), encoding="utf-8")
     return auth_file
+
+
+def _stub_asyncio_run(
+    result: object = None, raises: BaseException | None = None
+) -> Callable[[Coroutine[Any, Any, Any]], object]:
+    """Build an ``asyncio.run`` replacement that closes the received coroutine.
+
+    ``login()`` constructs the real ``_device_auth_flow(...)`` coroutine at the
+    call site; patching ``asyncio.run`` with a plain ``Mock`` leaves that
+    coroutine un-awaited and leaks ``RuntimeWarning: coroutine ... was never
+    awaited`` into unrelated tests. Close it explicitly before returning (or
+    raising) the stubbed outcome.
+    """
+
+    def run(coro: Coroutine[Any, Any, Any]) -> object:
+        coro.close()
+        if raises is not None:
+            raise raises
+        return result
+
+    return run
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +206,10 @@ def test_login_device_auth_happy_path(tmp_path: Path) -> None:
     with (
         patch("chaoscypher_cli.commands.lexicon.login.get_config_dir", return_value=config_dir),
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
-        patch("chaoscypher_cli.commands.lexicon.login.asyncio.run", return_value=returned_auth),
+        patch(
+            "chaoscypher_cli.commands.lexicon.login.asyncio.run",
+            new=_stub_asyncio_run(result=returned_auth),
+        ),
     ):
         result = runner.invoke(login, [])
 
@@ -213,7 +239,7 @@ def test_login_device_auth_timeout_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=LexiconClientError(status_code=408, message="timed out"),
+            new=_stub_asyncio_run(raises=LexiconClientError(status_code=408, message="timed out")),
         ),
     ):
         result = runner.invoke(login, [])
@@ -233,7 +259,9 @@ def test_login_device_auth_denied_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=LexiconClientError(status_code=403, message="Access denied"),
+            new=_stub_asyncio_run(
+                raises=LexiconClientError(status_code=403, message="Access denied")
+            ),
         ),
     ):
         result = runner.invoke(login, [])
@@ -253,7 +281,7 @@ def test_login_device_auth_expired_code_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=LexiconClientError(status_code=410, message="expired"),
+            new=_stub_asyncio_run(raises=LexiconClientError(status_code=410, message="expired")),
         ),
     ):
         result = runner.invoke(login, [])
@@ -273,7 +301,9 @@ def test_login_device_auth_generic_error_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=LexiconClientError(status_code=500, message="Internal error"),
+            new=_stub_asyncio_run(
+                raises=LexiconClientError(status_code=500, message="Internal error")
+            ),
         ),
     ):
         result = runner.invoke(login, [])
@@ -294,7 +324,9 @@ def test_login_external_service_error_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=ExternalServiceError(service_name="Lexicon", reason="Connection refused"),
+            new=_stub_asyncio_run(
+                raises=ExternalServiceError(service_name="Lexicon", reason="Connection refused")
+            ),
         ),
     ):
         result = runner.invoke(login, [])
@@ -314,7 +346,7 @@ def test_login_keyboard_interrupt_exits_nonzero(tmp_path: Path) -> None:
         patch("chaoscypher_core.app_config.get_settings", return_value=mock_settings),
         patch(
             "chaoscypher_cli.commands.lexicon.login.asyncio.run",
-            side_effect=KeyboardInterrupt,
+            new=_stub_asyncio_run(raises=KeyboardInterrupt()),
         ),
     ):
         result = runner.invoke(login, [])
@@ -403,7 +435,9 @@ def test_whoami_when_not_logged_in(tmp_path: Path) -> None:
 
     assert result.exit_code == 0, result.output
     assert "Not logged in" in result.output
-    assert "chaoscypher login" in result.output
+    # The login command lives under the lexicon group — there is no
+    # top-level `chaoscypher login`, so the hint must name the real path.
+    assert "chaoscypher lexicon login" in result.output
 
 
 # ---------------------------------------------------------------------------

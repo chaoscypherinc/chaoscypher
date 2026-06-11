@@ -312,6 +312,29 @@ class BaseLLMProvider(ABC):
                 action="all_requests_bypass_semaphore",
             )
 
+    def _effective_max_tokens(self, provider_cap_key: str) -> int | None:
+        """Resolve the request max_tokens from generic + provider caps.
+
+        The generic ``ai_max_tokens`` is bounded by the provider-specific
+        output cap (e.g. ``anthropic_max_output_tokens``) when that is set —
+        the Settings sliders were previously defined but unwired
+        (2026-06-10 audit). Either knob alone applies as-is; both unset
+        means no explicit limit.
+
+        Args:
+            provider_cap_key: Config key of the provider's output cap.
+
+        Returns:
+            The effective max output tokens, or None when neither knob is set.
+
+        """
+        candidates = [
+            value
+            for value in (self.config.get("ai_max_tokens"), self.config.get(provider_cap_key))
+            if isinstance(value, int) and value > 0
+        ]
+        return min(candidates) if candidates else None
+
     @property
     @abstractmethod
     def metadata(self) -> PluginMetadata:

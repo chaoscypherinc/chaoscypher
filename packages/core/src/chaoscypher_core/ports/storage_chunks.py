@@ -3,7 +3,7 @@
 
 """ChunkStorageProtocol for ChaosCypher storage.
 
-Split from the original SourceStorageProtocol god-protocol (Phase 1 Task 12).
+Split from the original SourceStorageProtocol god-protocol.
 Covers DocumentChunk table operations.
 Binds to SourceChunksMixin in the SQLite adapter.
 

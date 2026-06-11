@@ -83,7 +83,7 @@ Core has zero knowledge of FastAPI, SQLModel, or any web framework. If you wante
 
 ### Dual Deployment
 
-Core supports both async (Cortex/Neuron) and sync (CLI) execution modes through its adapter pattern.
+Core runs both server-side (Cortex/Neuron processes) and embedded in-process (the CLI imports Core directly — no HTTP server — driving the same async APIs via `asyncio.run`).
 
 ## Package Dependencies
 
@@ -119,6 +119,7 @@ packages/
 ├── neuron/        # chaoscypher-neuron  — Background workers
 ├── interface/     # chaoscypher-interface — React UI
 ├── cli/           # chaoscypher-cli     — CLI tools
+├── docs/          # Documentation site  — Docusaurus
 └── docker/        # Orchestration only  — Docker Compose files
 ```
 

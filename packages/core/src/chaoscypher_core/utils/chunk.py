@@ -51,8 +51,8 @@ class LocationBoundary(TypedDict):
 
     Coordinates match the loader's ``content`` field (pre-normalization),
     which approximates raw-upload coordinates. The chunker's lookup runs
-    after Phase 5a (``_recompute_chunk_offsets``) so the coordinate
-    systems align when ``original_text`` is provided.
+    after offset recomputation (``_recompute_chunk_offsets``) so the
+    coordinate systems align when ``original_text`` is provided.
     """
 
     start_char: int
@@ -461,7 +461,7 @@ class ChunkingService:
         1. Split text into ALL small chunks (~900 chars, sentence boundaries)
         2. Create ALL hierarchical groups (4 small chunks per group)
         3. Filter based on analysis_depth (quick=5 groups / full=all)
-        4. (Phase 5a) Recompute char offsets against ``original_text`` when
+        4. Recompute char offsets against ``original_text`` when
            provided so citation anchors reference the raw upload, not the
            post-cleaner text.
 
@@ -479,14 +479,14 @@ class ChunkingService:
                 Chunks that cannot be located receive NULL offsets and method
                 ``'none'``.  When ``None`` the existing offset values computed
                 against the cleaned text are kept and tagged ``'exact'`` (the
-                pre-Phase-5a behaviour — slightly inaccurate but consistent
-                with what was shipped before this phase).
+                legacy behaviour — slightly inaccurate but consistent with
+                earlier releases).
             location_index: Optional per-document location index built by
                 the loader. Each boundary maps a char range to a
                 ``page_number`` and/or ``section``. Coordinates are in
                 the loader-content coordinate system (≈ raw-upload). The
-                lookup runs after Phase 5a so chunk char_start aligns
-                with the index. When None, page_number and section
+                lookup runs after offset recomputation so chunk char_start
+                aligns with the index. When None, page_number and section
                 stay None on every chunk.
 
         Returns:
@@ -769,8 +769,7 @@ class ChunkingService:
 
         NO EMBEDDINGS - those are generated at index time!
 
-        Workstream 5.3 (2026-05-07): three previously-inert chunking settings
-        are now honored:
+        Three chunking settings shape the output:
 
         - ``min_chunk_size`` — sub-threshold chunks are **coalesced** into a
           neighbor (merged with the next chunk that brings the combination

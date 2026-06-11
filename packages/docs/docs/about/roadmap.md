@@ -14,11 +14,11 @@ High-level planned features and improvements for Chaos Cypher.
 
 Remaining package management commands:
 
-- `chaoscypher package init` — Create package structure with manifest
-- `chaoscypher package validate` — Validate package manifest
-- `chaoscypher package build` — Build `.ccx` package from directory
+- `chaoscypher graph package init` — Create package structure with manifest
+- `chaoscypher graph package validate` — Validate package manifest
+- `chaoscypher graph package build` — Build `.ccx` package from directory
 
-Already implemented: `chaoscypher package export`, `chaoscypher package load`, `chaoscypher compose build/up/down/run`.
+Already implemented: `chaoscypher graph package export`, `chaoscypher graph package load`, `chaoscypher compose build/up/down/run`.
 
 ## Wishlist
 
@@ -42,7 +42,13 @@ Reimplement agent execution with LangChain agents for autonomous multi-step reas
 
 ## Completed Recently
 
-- **Import Pipeline Remediation (May 2026)** — Upload settings persist on the source row; 15 quality counters and a Data Quality tab; filtering modes 0–5 redesigned with three previously-dead settings now wired; Cortex / CLI / MCP at extraction parity; 6 new loaders (HTML / RST / DOCX / XLSX / PPTX / EPUB); LLM `finish_reason` propagation; upload contract hardening; `SearchStatusBadge` and `vector_indexing_status`.
+- **Chat reliability/UX overhaul (v0.1.1, June 2026)** — cancel, retry, regenerate, export, edit-and-resend, and chat title search
+- **Model benchmark v2 (v0.1.1, June 2026)** — composite Overall scoring; model metadata consolidated in `models_registry.yaml`
+- **Parallel workflow execution (June 2026)** — DAG fan-out with AND-join semantics in the LangGraph executor
+- **Self-healing migrations (June 2026)** — migrations auto-apply on startup, with an MCP maintenance mode while they run (see [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md))
+- **Config unification (June 2026)** — `settings.yaml` is the single config home; `cli.yaml` retired; Lexicon login state moved to `auth.json`
+- **Domain confirmation gate + upload wizard (May–June 2026)** — auto-detected extraction domains park for human confirmation before the long extraction runs
+- **Import Pipeline Remediation (May 2026)** — Upload settings persist on the source row; per-stage quality counters (the Pipeline flow section on the source page); filtering modes 0–5 redesigned with three previously-dead settings now wired; Cortex / CLI / MCP at extraction parity; 6 new loaders (HTML / RST / DOCX / XLSX / PPTX / EPUB); LLM `finish_reason` propagation; upload contract hardening; `SearchStatusBadge` and `vector_indexing_status`.
 - Content Filtering — Pre-extraction filtering of 15 non-essential content categories per domain
 - Domain Extraction Limits — Per-domain caps on entity degree, relationship ratios, and streaming entity count
 - Container Logs & Diagnostics — Real-time log viewer, runtime log level selector, diagnostic ZIP export
@@ -57,7 +63,7 @@ Reimplement agent execution with LangChain agents for autonomous multi-step reas
 - Local CPU Embedding Service — sentence-transformers based embeddings replacing LLM-provider embeddings
 - GraphRAG Search — graph-enhanced retrieval fusing knowledge graph traversal with vector search
 - DX Zero-Boilerplate — typed Pydantic returns, `ChaosCypher` convenience namespace, `check_health()`
-- Automations — workflow builder UI, execution engine, 10 tool plugins, triggers
+- Automations — workflow builder UI, execution engine (now with parallel step execution), 10 tool plugins, triggers
 - Source-scoped chat with tag-based scoping
 - Tag system redesign with inline editor
 - Source scope enforcement on all graph tools

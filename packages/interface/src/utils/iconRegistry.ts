@@ -90,6 +90,8 @@ import Handshake from '@mui/icons-material/Handshake';
 import HandshakeOutlined from '@mui/icons-material/HandshakeOutlined';
 import Healing from '@mui/icons-material/Healing';
 import HealingOutlined from '@mui/icons-material/HealingOutlined';
+import HistoryEdu from '@mui/icons-material/HistoryEdu';
+import HistoryEduOutlined from '@mui/icons-material/HistoryEduOutlined';
 import Home from '@mui/icons-material/Home';
 import HomeOutlined from '@mui/icons-material/HomeOutlined';
 import HowToVote from '@mui/icons-material/HowToVote';
@@ -126,6 +128,8 @@ import MonitorHeart from '@mui/icons-material/MonitorHeart';
 import MonitorHeartOutlined from '@mui/icons-material/MonitorHeartOutlined';
 import Newspaper from '@mui/icons-material/Newspaper';
 import NewspaperOutlined from '@mui/icons-material/NewspaperOutlined';
+import Palette from '@mui/icons-material/Palette';
+import PaletteOutlined from '@mui/icons-material/PaletteOutlined';
 import Payments from '@mui/icons-material/Payments';
 import PaymentsOutlined from '@mui/icons-material/PaymentsOutlined';
 import People from '@mui/icons-material/People';
@@ -146,6 +150,8 @@ import School from '@mui/icons-material/School';
 import SchoolOutlined from '@mui/icons-material/SchoolOutlined';
 import Science from '@mui/icons-material/Science';
 import ScienceOutlined from '@mui/icons-material/ScienceOutlined';
+import Search from '@mui/icons-material/Search';
+import SearchOutlined from '@mui/icons-material/SearchOutlined';
 import Security from '@mui/icons-material/Security';
 import SecurityOutlined from '@mui/icons-material/SecurityOutlined';
 import Shield from '@mui/icons-material/Shield';
@@ -164,6 +170,8 @@ import TrendingUp from '@mui/icons-material/TrendingUp';
 import TrendingUpOutlined from '@mui/icons-material/TrendingUpOutlined';
 import ViewModule from '@mui/icons-material/ViewModule';
 import ViewModuleOutlined from '@mui/icons-material/ViewModuleOutlined';
+import Visibility from '@mui/icons-material/Visibility';
+import VisibilityOutlined from '@mui/icons-material/VisibilityOutlined';
 import Work from '@mui/icons-material/Work';
 import WorkOutlined from '@mui/icons-material/WorkOutlined';
 
@@ -238,6 +246,8 @@ export const ICON_REGISTRY: Record<string, SvgIconComponent> = {
   HandshakeOutlined,
   Healing,
   HealingOutlined,
+  HistoryEdu,
+  HistoryEduOutlined,
   Home,
   HomeOutlined,
   HowToVote,
@@ -274,6 +284,8 @@ export const ICON_REGISTRY: Record<string, SvgIconComponent> = {
   MonitorHeartOutlined,
   Newspaper,
   NewspaperOutlined,
+  Palette,
+  PaletteOutlined,
   Payments,
   PaymentsOutlined,
   People,
@@ -294,6 +306,8 @@ export const ICON_REGISTRY: Record<string, SvgIconComponent> = {
   SchoolOutlined,
   Science,
   ScienceOutlined,
+  Search,
+  SearchOutlined,
   Security,
   SecurityOutlined,
   Shield,
@@ -312,6 +326,8 @@ export const ICON_REGISTRY: Record<string, SvgIconComponent> = {
   TrendingUpOutlined,
   ViewModule,
   ViewModuleOutlined,
+  Visibility,
+  VisibilityOutlined,
   Work,
   WorkOutlined,
 };

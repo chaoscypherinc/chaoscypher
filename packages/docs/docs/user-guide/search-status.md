@@ -45,7 +45,7 @@ the missing entries.
 
 If a single source consistently lands in `failed` after a rebuild,
 that's a bug — file an issue with the source ID and the counter values
-from the [Data Quality tab](data-quality.md).
+from the [Pipeline flow & quality counters](data-quality.md).
 
 ## Counters reset on Re-extract
 
@@ -56,5 +56,5 @@ fresh chance.
 
 ## See also
 
-- [Data Quality tab](data-quality.md) — the counters that track silent drops
+- [Pipeline flow & quality counters](data-quality.md) — the counters that track silent drops
 - [Search](search.md) — search modes and how RAG retrieval works

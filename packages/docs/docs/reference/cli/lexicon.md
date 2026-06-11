@@ -58,9 +58,9 @@ Browser opened. Complete authentication there.
   Credentials saved to: /home/jane/.config/chaoscypher/auth.json
 
 You can now use:
-  chaoscypher pull <package>   - Download packages
-  chaoscypher push             - Upload packages
-  chaoscypher search <query>   - Search packages
+  chaoscypher pull <package>            - Download packages
+  chaoscypher push                      - Upload packages
+  chaoscypher lexicon search <query>    - Search packages
 ```
 
 #### Token Auth (CI/Automation)
@@ -120,7 +120,7 @@ If not authenticated:
 chaoscypher lexicon whoami
 Not logged in.
 
-Use 'chaoscypher login' to authenticate.
+Use 'chaoscypher lexicon login' to authenticate.
 ```
 
 ---
@@ -244,7 +244,7 @@ No packages installed yet.
 
 To install packages:
   chaoscypher pull <package>
-  chaoscypher package load <file.ccx>
+  chaoscypher graph package load <file.ccx>
 ```
 
 ---
@@ -357,7 +357,7 @@ Downloading john/medical-ontology... ━━━━━━━━━━━━━━�
   Size: 245.3 KB
 
 Next steps:
-  chaoscypher package load john-medical-ontology.ccx
+  chaoscypher graph package load john-medical-ontology.ccx
 ```
 
 Download a specific version and extract:
@@ -378,7 +378,7 @@ Extracting to packages/john-medical-ontology...
 ✓ Extracted to packages/john-medical-ontology
 
 Next steps:
-  chaoscypher package load packages/john-medical-ontology
+  chaoscypher graph package load packages/john-medical-ontology
 ```
 
 If the file already exists:

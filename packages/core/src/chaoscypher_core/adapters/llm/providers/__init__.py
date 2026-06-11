@@ -49,7 +49,7 @@ class ProviderRegistry(BaseRegistry[type[BaseLLMProvider]]):
     config. Discovery seeds the four built-in providers from
     ``_BUILTIN_PROVIDERS``. The ``chaoscypher.providers`` entry-point
     group wires in third-party providers without editing Core (see
-    :meth:`_discover_entry_points`, Phase 7 Task E).
+    :meth:`_discover_entry_points`).
     """
 
     _BUILTIN_PROVIDERS: ClassVar[dict[str, str]] = {

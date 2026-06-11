@@ -38,6 +38,33 @@ def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+# JSON-like content (tool results, tool-call arguments) tokenizes denser
+# than prose: quoted keys, punctuation, UUIDs, and \uXXXX escapes fragment
+# into more tokens. Measured live 2026-06-10 (qwen3.6 via Ollama): a
+# 102,168-char tool-loop prompt occupied >=32,763 real tokens — a ratio of
+# <=3.12 chars/token, vs the 4.0 prose heuristic.
+DENSE_CHARS_PER_TOKEN = 3
+
+
+def estimate_tokens_dense(text: str) -> int:
+    """Estimate tokens for JSON-like content (3 chars per token).
+
+    Use for tool results and tool-call argument JSON. Under-counting these
+    with the prose heuristic lets oversized tool-loop prompts pass budget
+    checks and silently overflow the provider's context window.
+
+    Args:
+        text: JSON-like text to estimate tokens for
+
+    Returns:
+        Estimated token count (minimum 1 for non-empty text)
+
+    """
+    if not text:
+        return 0
+    return max(1, len(text) // DENSE_CHARS_PER_TOKEN)
+
+
 def estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
     """Estimate tokens for a list of chat messages.
 
@@ -65,4 +92,9 @@ def estimate_message_tokens(messages: list[dict[str, Any]]) -> int:
     return total
 
 
-__all__ = ["estimate_message_tokens", "estimate_tokens"]
+__all__ = [
+    "DENSE_CHARS_PER_TOKEN",
+    "estimate_message_tokens",
+    "estimate_tokens",
+    "estimate_tokens_dense",
+]

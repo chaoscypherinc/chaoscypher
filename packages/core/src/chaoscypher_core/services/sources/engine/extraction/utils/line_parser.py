@@ -773,7 +773,7 @@ def parse_extraction_output(
             rename, plus relationships skipped by loop detection). Lets
             the indexing pipeline surface the parser-drop count as a
             quality counter on the source row without changing the
-            return shape. Workstream 2 (2026-05-08).
+            return shape.
 
     Returns:
         Tuple of (entities, relationships, properties)

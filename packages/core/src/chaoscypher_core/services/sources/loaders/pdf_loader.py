@@ -8,7 +8,7 @@ Output is plain text (no markdown structure preservation).
 
 Implements BaseLoader protocol for auto-discovery by LoaderRegistry.
 
-Phase 5b hardening (2026-05-08):
+Hardening:
 - Per-page try/except: a corrupt page no longer kills the whole document.
   Each failure is recorded in ``loader_pdf_pages_failed`` metadata which
   the indexing handler rolls up onto the source-row counter.

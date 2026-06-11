@@ -21,7 +21,7 @@ fuzzy-type-match additions. The exact list always lives in the
 on this page are illustrative.
 
 This page is the internal architecture reference; for the user-facing
-explanation see the [Data Quality tab](../../user-guide/data-quality.md)
+explanation see the [Pipeline flow & quality counters](../../user-guide/data-quality.md)
 in the user guide and the [Quality Metrics API](../../reference/api/quality-metrics.md)
 for the field-level reference.
 
@@ -70,7 +70,7 @@ The string value matches the SQL column on `sources`. Keeping the enum
 in lockstep with the columns means a typo in a stage's `increment` call
 surfaces as a static type error rather than a silent miss.
 
-### Original 15 counters (migration 0021)
+### Original 15 counters
 
 ```python
 class QualityCounter(StrEnum):
@@ -142,7 +142,7 @@ drop sites (the `QualityCounter` enum is the authoritative list):
     LOADER_PDF_PAGES_FAILED = "loader_pdf_pages_failed"
 ```
 
-### Phase 6 additions (2026-05-08, on `feat/import-pipeline-phase6-completeness`)
+### Phase 6 additions (2026-05-08)
 
 6 new loader-observability counters for granular per-format drop
 visibility:
@@ -248,21 +248,20 @@ The storage adapter implements two methods on
 | `increment_source_counter(*, source_id, database_name, column, n)` | Atomic `COALESCE(col, 0) + :n` UPDATE on a single allowlisted column. The allowlist is the `QualityCounter` enum. |
 | `update_source_columns(*, source_id, database_name, updates)` | Bulk-set a dict of columns in one statement. Used by the encoding-set helper, the search-status transitions, and the reset path. |
 
-## Migration 0021
+## Schema history
 
-The counter columns plus the upload-settings columns and the
-`vector_indexed_at` / `vector_indexing_status` fields all landed in
-one migration: `0021_upload_settings_and_quality_counters.py`. Adding
-them together kept the schema in sync with the design intent of the
-W1+W2 workstreams (what you set is what you get; nothing disappears
-silently).
-
-The migration adds, on the `sources` table:
+The counter columns, the upload-settings columns, and the
+`vector_indexed_at` / `vector_indexing_status` fields originally landed
+together in one internal migration. Adding them together kept the schema
+in sync with the design intent of the W1+W2 workstreams (what you set is
+what you get; nothing disappears silently). The public repository's
+migration history is squashed into a single `0001_baseline.py`, where
+all 45 counter columns are defined today on the `sources` table,
+alongside:
 
 - 5 upload-settings columns: `auto_analyze`, `enable_normalization`,
   `enable_vision`, `content_filtering`, `filtering_mode`
 - 1 loader-encoding column: `loader_encoding_used`
-- 15 counter columns (the StrEnum values above)
 - 2 vector-search columns: `vector_indexed_at`, `vector_indexing_status`
 
 ## Reset-on-re-extract
@@ -273,12 +272,15 @@ The migration adds, on the `sources` table:
 issues one `update_source_columns` setting every counter back to its
 post-upload default:
 
-- All 15 counters → `0`
+- Every counter column (45 as of today) → its post-upload default — `0`
+  for integer counters, `null` for the JSON-shaped
+  `loader_html_dropped_tags` / `loader_pptx_shapes_skipped` breakdowns
+- The cumulative `llm_*` metrics → their zero/empty defaults
 - `loader_encoding_used` → `null`
 - `vector_indexed_at` → `null`
 - `vector_indexing_status` → `"pending"`
 
-The reset is symmetric with the migration's column defaults — the row
+The reset is symmetric with the baseline migration's column defaults — the row
 ends up looking exactly like a freshly-uploaded source as far as the
 counters are concerned. The cached quality grade (`cached_quality_grade`,
 `cached_avg_entity_quality`, etc.) is **not** in the reset set; it gets
@@ -296,16 +298,15 @@ source enters `ERROR` state) was also updated to match
 baseline.
 
 (The original `vision_pages_failed` / `vision_failed_pages` /
-`loader_pdf_failed_pages` columns referenced here were dropped in
-migration 0034 — vision failure history now lives in the
+`loader_pdf_failed_pages` columns referenced here were later
+dropped — vision failure history now lives in the
 `vision_page_descriptions` table filtered by `status`.)
 
 :::
 
-**Migration note:** each new counter batch (Phase 2, 5b, 6) ships in
-its own Alembic migration that adds the SQL columns; the
-`QualityCounter` enum and `_RESET_DEFAULTS` are updated in the same
-commit so the column list and the code stay in lockstep.
+**Migration note:** new counters are added in a new Alembic migration
+alongside the `QualityCounter` enum and `_RESET_DEFAULTS` updates in
+the same commit, so the column list and the code stay in lockstep.
 
 ## Vector-search status transitions
 
@@ -336,6 +337,6 @@ logged and swallowed. Status is observability, not control flow.
 
 ## See also
 
-- [Data Quality tab (user guide)](../../user-guide/data-quality.md) — when to consult counters vs. the grade
+- [Pipeline flow & quality counters (user guide)](../../user-guide/data-quality.md) — when to consult counters vs. the grade
 - [Quality Metrics API](../../reference/api/quality-metrics.md) — field-level reference
 - [Search Status (user guide)](../../user-guide/search-status.md) — the four `vector_indexing_status` states

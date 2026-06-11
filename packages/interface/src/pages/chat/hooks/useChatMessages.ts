@@ -66,6 +66,23 @@ interface UseChatMessagesReturn {
   inputRef: React.RefObject<HTMLInputElement | null>;
   /** Send a message (or a quick action message) */
   handleSend: (quickActionMessage?: string) => Promise<void>;
+  /**
+   * Request cancellation of the in-flight turn. The worker stops at the
+   * next step boundary; the `done {status: "cancelled"}` event (not this
+   * call) is what ends the spinner, so the partial answer stays truthful.
+   */
+  handleStop: () => Promise<void>;
+  /**
+   * Re-run the last turn after a worker failure WITHOUT re-posting the
+   * user message (it is already persisted; re-sending would duplicate it).
+   */
+  handleRetry: () => Promise<void>;
+  /** Drop the last answer and re-run the turn (Regenerate button). */
+  handleRegenerate: () => Promise<void>;
+  /** Arm edit-and-resend for a persisted user message (populates the input). */
+  startEditMessage: (messageId: string, content: string) => void;
+  /** True between a Stop click and the turn actually ending (button guard). */
+  stopping: boolean;
   /** Update the source scope of the current chat */
   handleUpdateScope: (sourceIds: string[]) => Promise<void>;
   /** Clear the source scope of the current chat */
@@ -122,12 +139,15 @@ export function useChatMessages(): UseChatMessagesReturn {
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<ChatError | null>(null);
   const [isStreamingActive, setIsStreamingActive] = useState(false);
   const [contextInfo, setContextInfo] = useState<ContextInfo | null>(null);
 
   const [pendingScope, setPendingScope] = useState<string[]>([]);
   const [pendingApproval, setPendingApproval] = useState<PendingToolApproval | null>(null);
+  /** When set, the next send REPLACES this user message (edit-and-resend). */
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const initialMessageHandledRef = useRef(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -151,21 +171,21 @@ export function useChatMessages(): UseChatMessagesReturn {
   );
 
   // ---------------------------------------------------------------------------
-  // Scroll & Focus Effects
+  // Focus Effects (scroll-follow lives in ChatMessageList, which owns the
+  // scroll container and knows whether the reader is near the bottom)
   // ---------------------------------------------------------------------------
-
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
 
   // Auto-focus input on mount and when chat changes
   useEffect(() => {
     const timer = setTimeout(() => inputRef.current?.focus(), 50);
     return () => clearTimeout(timer);
+  }, [urlChatId]);
+
+  // Stale chat-A context stats must not dim chat-B messages, and chat-A
+  // errors must not show on chat B (2026-06-10 audit).
+  useEffect(() => {
+    setContextInfo(null);
+    setError(null);
   }, [urlChatId]);
 
   // Restore focus when loading completes (after streaming finishes)
@@ -175,6 +195,56 @@ export function useChatMessages(): UseChatMessagesReturn {
       return () => clearTimeout(timer);
     }
   }, [loading, isStreamingActive]);
+
+  // The turn is over (done/error event flipped loading) — Stop is re-armed.
+  useEffect(() => {
+    if (!loading) setStopping(false);
+  }, [loading]);
+
+  // ---------------------------------------------------------------------------
+  // Refresh-resilience + cross-chat isolation
+  // ---------------------------------------------------------------------------
+
+  /** Chat that owns the in-flight stream; null during new-chat creation. */
+  const [streamingChatId, setStreamingChatId] = useState<string | null>(null);
+  /** Guards the reattach effect against re-subscribing the same chat. */
+  const resubscribedForRef = useRef<string | null>(null);
+
+  // A loaded chat that is still processing in the background gets its live
+  // stream (and spinner) reattached — covers page refresh mid-turn AND
+  // switching back to a processing chat. Without this the page is blind
+  // until the slow poll catches up (2026-06-10 audit).
+  useEffect(() => {
+    const id = currentChat?.id;
+    if (!id || currentChat?.status !== 'processing') return;
+    if (resubscribedForRef.current === id || isStreamingActive) return;
+    resubscribedForRef.current = id;
+    setStreamingChatId(id);
+    setLoading(true);
+    setIsStreamingActive(true);
+    lastStreamEventTimeRef.current = Date.now();
+    void streamEvents(id, false).catch((err) => {
+      if (isAbortError(err)) return;
+      logger.error('Failed to reattach chat stream:', err);
+      setLoading(false);
+      setIsStreamingActive(false);
+    });
+  }, [currentChat?.id, currentChat?.status, isStreamingActive, streamEvents, lastStreamEventTimeRef]);
+
+  // Re-arm the reattach guard when leaving the chat so revisiting works.
+  useEffect(() => {
+    if (resubscribedForRef.current && resubscribedForRef.current !== urlChatId) {
+      resubscribedForRef.current = null;
+    }
+  }, [urlChatId]);
+
+  // Stream flags shown to the UI are scoped to the OWNING chat — chat A's
+  // spinner must never render on chat B. (The null sentinel covers the
+  // new-chat window before an id exists.)
+  const ownsStream =
+    streamingChatId === null || streamingChatId === (currentChat?.id ?? streamingChatId);
+  const loadingForThisChat = loading && ownsStream;
+  const isStreamingForThisChat = isStreamingActive && ownsStream;
 
   // ---------------------------------------------------------------------------
   // Send Message (SSE Streaming)
@@ -193,16 +263,31 @@ export function useChatMessages(): UseChatMessagesReturn {
     setError(null);
     setLoading(true);
     setIsStreamingActive(true);
+    // Until the chat id is resolved (new-chat creation), no chat owns the
+    // stream — the null sentinel keeps the spinner on the page being viewed.
+    setStreamingChatId(currentChat?.id ?? null);
     lastStreamEventTimeRef.current = Date.now();
 
-    /** Append the optimistic user message + assistant placeholder into the
-     * `['chat', id]` cache (immutably). */
+    // Edit-and-resend: the armed message (and everything after it) is
+    // replaced server-side; mirror that in the optimistic cache write.
+    const replaceFromId = quickActionMessage ? null : editingMessageId;
+    if (replaceFromId) setEditingMessageId(null);
+
+    /** Write the optimistic user message + assistant placeholder into the
+     * `['chat', id]` cache (immutably), honoring an armed edit. */
     const appendOptimistic = (chatId: string) => {
-      cacheWriter.updateMessages(chatId, (prev) => [
-        ...prev,
-        { role: 'user', content: messageToSend },
-        { role: 'assistant', content: '', thinking: '...' },
-      ]);
+      cacheWriter.updateMessages(chatId, (prev) => {
+        let kept = prev;
+        if (replaceFromId) {
+          const anchorIdx = prev.findIndex((m) => (m as { id?: string }).id === replaceFromId);
+          if (anchorIdx >= 0) kept = prev.slice(0, anchorIdx);
+        }
+        return [
+          ...kept,
+          { role: 'user', content: messageToSend },
+          { role: 'assistant', content: '', thinking: '...' },
+        ];
+      });
     };
 
     try {
@@ -224,8 +309,11 @@ export function useChatMessages(): UseChatMessagesReturn {
         appendOptimistic(chatId);
       }
 
+      // The id is resolved (created or existing): it owns the stream now.
+      setStreamingChatId(chatId);
+
       // Submit message for background processing
-      await chatApi.send(chatId, messageToSend);
+      await chatApi.send(chatId, messageToSend, replaceFromId ?? undefined);
 
       // Subscribe to live events via SSE
       await streamEvents(chatId, wasNewChat);
@@ -244,7 +332,134 @@ export function useChatMessages(): UseChatMessagesReturn {
       setLoading(false);
       setIsStreamingActive(false);
     }
-  }, [input, loading, currentChat, pendingScope, navigate, createChat, cacheWriter, streamEvents, lastStreamEventTimeRef]);
+  }, [input, loading, currentChat, pendingScope, editingMessageId, navigate, createChat, cacheWriter, streamEvents, lastStreamEventTimeRef]);
+
+  // ---------------------------------------------------------------------------
+  // Stop / cancel the in-flight turn
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /chats/{id}/cancel. Does NOT optimistically flip `loading` — the
+   * worker's `done {status: "cancelled"}` event is the single source of
+   * truth for the turn ending (it carries the persisted partial answer).
+   * 404/409 mean the turn already finished; treat as a no-op.
+   */
+  const handleStop = useCallback(async () => {
+    const chatId = currentChat?.id;
+    if (!chatId || !loading || stopping) return;
+    setStopping(true);
+    try {
+      await chatApi.cancel(chatId);
+    } catch (err) {
+      const status =
+        err && typeof err === 'object' && 'status' in err ? (err as { status: unknown }).status : null;
+      if (status === 404 || status === 409) {
+        return; // turn already over — the done/error event will land shortly
+      }
+      logger.error('Failed to cancel chat turn:', err);
+      setStopping(false); // genuine failure: let the user try again
+    }
+  }, [currentChat, loading, stopping]);
+
+  // ---------------------------------------------------------------------------
+  // Retry a failed turn
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /chats/{id}/retry then reattach the stream. Used by the error
+   * panel's Retry button for worker/stream failures (where the user message
+   * is already persisted). A failed retry surfaces as a fresh error.
+   */
+  const handleRetry = useCallback(async () => {
+    const chatId = currentChat?.id;
+    if (!chatId || loading) return;
+    setError(null);
+    setLoading(true);
+    setIsStreamingActive(true);
+    setStreamingChatId(chatId);
+    lastStreamEventTimeRef.current = Date.now();
+    try {
+      await chatApi.retry(chatId);
+      await streamEvents(chatId, false);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      logger.error('Chat retry error:', err);
+      setError({
+        message: getApiErrorMessage(err) || 'Failed to retry',
+        code: 'NETWORK_ERROR',
+        details: {
+          is_retryable: true,
+          suggested_action: 'Check your network connection and try again.',
+        },
+      });
+      setLoading(false);
+      setIsStreamingActive(false);
+    }
+  }, [currentChat, loading, streamEvents, lastStreamEventTimeRef]);
+
+  // ---------------------------------------------------------------------------
+  // Regenerate the last answer
+  // ---------------------------------------------------------------------------
+
+  /**
+   * POST /chats/{id}/regenerate then reattach the stream. The backend drops
+   * everything after the last user message; the cache mirrors that
+   * optimistically (trailing assistant rows replaced by the placeholder).
+   */
+  const handleRegenerate = useCallback(async () => {
+    const chatId = currentChat?.id;
+    if (!chatId || loading) return;
+    setError(null);
+    setLoading(true);
+    setIsStreamingActive(true);
+    setStreamingChatId(chatId);
+    lastStreamEventTimeRef.current = Date.now();
+    cacheWriter.updateMessages(chatId, (prev) => {
+      const roles = prev.map((m) => m.role);
+      const lastUserIdx = roles.lastIndexOf('user');
+      const kept = lastUserIdx >= 0 ? prev.slice(0, lastUserIdx + 1) : prev;
+      return [...kept, { role: 'assistant', content: '', thinking: '...' }];
+    });
+    try {
+      await chatApi.regenerate(chatId);
+      await streamEvents(chatId, false);
+    } catch (err) {
+      if (isAbortError(err)) return;
+      logger.error('Chat regenerate error:', err);
+      setError({
+        message: getApiErrorMessage(err) || 'Failed to regenerate',
+        code: 'NETWORK_ERROR',
+        details: {
+          is_retryable: true,
+          suggested_action: 'Check your network connection and try again.',
+        },
+      });
+      setLoading(false);
+      setIsStreamingActive(false);
+    }
+  }, [currentChat, loading, cacheWriter, streamEvents, lastStreamEventTimeRef]);
+
+  // ---------------------------------------------------------------------------
+  // Edit-and-resend
+  // ---------------------------------------------------------------------------
+
+  /** Populate the input with a persisted user message and arm replacement. */
+  const startEditMessage = useCallback((messageId: string, content: string) => {
+    setEditingMessageId(messageId);
+    setInput(content);
+    inputRef.current?.focus();
+  }, []);
+
+  // Clearing the input (or switching chats) disarms a pending edit so a
+  // fresh question can never silently replace an old message.
+  const setInputAndMaybeDisarm = useCallback((value: string) => {
+    setInput(value);
+    if (value === '') setEditingMessageId(null);
+  }, []);
+
+  useEffect(() => {
+    setEditingMessageId(null);
+  }, [urlChatId]);
 
   // ---------------------------------------------------------------------------
   // Auto-send initial message from omnibar (passed via router state)
@@ -338,16 +553,21 @@ export function useChatMessages(): UseChatMessagesReturn {
     currentChat,
     messages,
     input,
-    setInput,
-    loading,
+    setInput: setInputAndMaybeDisarm,
+    loading: loadingForThisChat,
     error,
     setError,
     clearError,
-    isStreamingActive,
+    isStreamingActive: isStreamingForThisChat,
     contextInfo,
     messagesEndRef,
     inputRef,
     handleSend,
+    handleStop,
+    handleRetry,
+    handleRegenerate,
+    startEditMessage,
+    stopping,
     handleUpdateScope,
     handleClearScope,
     pendingScope,

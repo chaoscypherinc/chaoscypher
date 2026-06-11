@@ -308,17 +308,18 @@ curl http://localhost:8080/api/v1/quality/outdated
 </Tabs>
 
 
-## Data Quality tab
+## Pipeline flow counters
 
 The **Quality** grade scores how good the extracted graph is. The
-**Data Quality** tab — a separate tab on the source detail page —
-records what the pipeline silently dropped, deduplicated, or merged on
-the way to that graph.
+**Pipeline flow** section — a collapsible panel on the source detail
+page's Overview tab — records what the pipeline silently dropped,
+deduplicated, or merged on the way to that graph.
 
-The **Data Quality** tab records a counter for every silent-drop site
-across all pipeline stages — loading, normalization, chunking, LLM
-extraction, post-extraction, and commit. For the full list and
-per-counter semantics, see the [Data Quality tab](data-quality.md) page.
+Expand the Pipeline flow panel to see a per-stage counter board with a
+counter for every silent-drop site across all pipeline stages —
+loading, normalization, chunking, LLM extraction, post-extraction, and
+commit. For the full list and per-counter semantics, see the
+[Pipeline flow & quality counters](data-quality.md) page.
 
 When the grade is surprisingly low, the counters usually tell you why
 — a huge `cleaner_lines_removed` means the document was mostly OCR
@@ -329,7 +330,7 @@ Counters reset to zero on `Re-extract`, so you can compare the new run
 against the old one. The Quality grade is recomputed and persisted
 separately — it doesn't reset.
 
-For the full counter reference, see the [Data Quality tab](data-quality.md) page.
+For the full counter reference, see the [Pipeline flow & quality counters](data-quality.md) page.
 
 ## Improving Quality
 

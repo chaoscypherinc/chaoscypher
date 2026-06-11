@@ -1,13 +1,14 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tests for CLI utility helpers: llm_check, paths, files, console, display."""
+"""Tests for CLI utility helpers: llm_check, paths, console, display."""
 
 from __future__ import annotations
 
+import json
 from io import StringIO
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
@@ -100,93 +101,6 @@ class TestIsLlmConfigured:
         from chaoscypher_cli.utils.llm_check import is_llm_configured
 
         assert is_llm_configured() is True
-
-
-# ============================================================================
-# utils/llm_check.py — require_llm_configured
-# ============================================================================
-
-
-class TestRequireLlmConfigured:
-    """Tests for require_llm_configured()."""
-
-    def test_returns_true_immediately_when_llm_configured(self) -> None:
-        from chaoscypher_cli.utils.llm_check import require_llm_configured
-
-        with patch("chaoscypher_cli.utils.llm_check.is_llm_configured", return_value=True):
-            result = require_llm_configured("test operation")
-
-        assert result is True
-
-    def test_returns_false_when_user_declines_setup(self) -> None:
-        from chaoscypher_cli.utils.llm_check import require_llm_configured
-
-        with patch("chaoscypher_cli.utils.llm_check.is_llm_configured", return_value=False):
-            with patch("chaoscypher_cli.utils.llm_check.Confirm.ask", return_value=False):
-                with patch("chaoscypher_cli.utils.llm_check.console") as mock_console:
-                    result = require_llm_configured("entity extraction")
-
-        assert result is False
-        mock_console.print.assert_called()
-
-    def test_prints_operation_name_in_warning(self) -> None:
-        from chaoscypher_cli.utils.llm_check import require_llm_configured
-
-        captured_prints: list[str] = []
-
-        with patch("chaoscypher_cli.utils.llm_check.is_llm_configured", return_value=False):
-            with patch("chaoscypher_cli.utils.llm_check.Confirm.ask", return_value=False):
-                with patch("chaoscypher_cli.utils.llm_check.console") as mock_console:
-                    mock_console.print.side_effect = lambda msg: captured_prints.append(str(msg))
-                    require_llm_configured("graph search")
-
-        combined = " ".join(captured_prints)
-        # The operation name is capitalized inside the function
-        assert "graph search" in combined or "Graph search" in combined
-
-    def test_returns_false_when_setup_raises(self) -> None:
-        from chaoscypher_cli.utils.llm_check import require_llm_configured
-
-        fake_setup = MagicMock()
-        fake_setup.setup.make_context.side_effect = RuntimeError("setup broken")
-
-        with patch("chaoscypher_cli.utils.llm_check.is_llm_configured", return_value=False):
-            with patch("chaoscypher_cli.utils.llm_check.Confirm.ask", return_value=True):
-                with patch("chaoscypher_cli.utils.llm_check.console"):
-                    with patch.dict(
-                        "sys.modules",
-                        {"chaoscypher_cli.commands.setup": fake_setup},
-                    ):
-                        result = require_llm_configured("extraction")
-
-        assert result is False
-
-    def test_returns_true_after_successful_setup(self) -> None:
-        """If user accepts setup and LLM becomes configured, returns True."""
-        from chaoscypher_cli.utils.llm_check import require_llm_configured
-
-        # First call (before setup) returns False; second call (after setup) returns True.
-        side_effects = [False, True]
-        call_count = [0]
-
-        def side_effect() -> bool:
-            val = side_effects[min(call_count[0], len(side_effects) - 1)]
-            call_count[0] += 1
-            return val
-
-        fake_setup = MagicMock()
-        fake_setup.setup.make_context.return_value = MagicMock()
-
-        with patch("chaoscypher_cli.utils.llm_check.is_llm_configured", side_effect=side_effect):
-            with patch("chaoscypher_cli.utils.llm_check.Confirm.ask", return_value=True):
-                with patch("chaoscypher_cli.utils.llm_check.console"):
-                    with patch.dict(
-                        "sys.modules",
-                        {"chaoscypher_cli.commands.setup": fake_setup},
-                    ):
-                        result = require_llm_configured("test op")
-
-        assert result is True
 
 
 # ============================================================================
@@ -322,312 +236,60 @@ class TestGetConfigDir:
         assert target.exists()
 
 
-class TestGetCacheDir:
-    """get_cache_dir returns a Path and creates it."""
-
-    def test_returns_path_instance(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_cache_dir
-
-        expected = tmp_path / "cache" / "chaoscypher"
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(expected)):
-            result = get_cache_dir()
-
-        assert isinstance(result, Path)
-        assert result.exists()
-
-    def test_creates_directory(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_cache_dir
-
-        target = tmp_path / "cache_new"
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(target)):
-            result = get_cache_dir()
-
-        assert result.exists()
-        assert result == target
-
-
-class TestGetDataDir:
-    """get_data_dir returns a Path and creates it."""
-
-    def test_returns_existing_path(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_data_dir
-
-        target = tmp_path / "data"
-
-        with patch("chaoscypher_cli.utils.paths.user_data_dir", return_value=str(target)):
-            result = get_data_dir()
-
-        assert isinstance(result, Path)
-        assert result.exists()
-        assert result == target
-
-
 class TestGetPackagesDir:
-    """get_packages_dir is data_dir / 'packages' and is created."""
+    """get_packages_dir resolves data_dir like engine_config and appends 'packages'."""
 
-    def test_returns_packages_subdir(self, tmp_path: Path) -> None:
+    def test_env_var_override_wins(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from chaoscypher_cli.utils.paths import get_packages_dir
 
-        base = tmp_path / "data"
+        monkeypatch.setenv("CHAOSCYPHER_DATA_DIR", str(tmp_path / "data"))
 
-        with patch("chaoscypher_cli.utils.paths.user_data_dir", return_value=str(base)):
-            result = get_packages_dir()
+        result = get_packages_dir()
 
-        assert result == base / "packages"
-        assert result.exists()
+        assert result == tmp_path / "data" / "packages"
+        assert result.exists()  # mkdir parity with the historical implementation
 
+    def test_matches_engine_config_data_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Single packages-dir authority: identical resolution to engine_config."""
+        from chaoscypher_cli import engine_config
+        from chaoscypher_cli.utils.paths import get_packages_dir
 
-class TestGetDatabasesDir:
-    """get_databases_dir is data_dir / 'databases' and is created."""
+        monkeypatch.setenv("CHAOSCYPHER_DATA_DIR", str(tmp_path / "dd"))
 
-    def test_returns_databases_subdir(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_databases_dir
+        assert get_packages_dir() == engine_config.data_dir() / "packages"
 
-        base = tmp_path / "data"
+    def test_windows_default_path_has_no_doubled_app_segment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        r"""Default resolution must not produce ``chaoscypher\chaoscypher``.
 
-        with patch("chaoscypher_cli.utils.paths.user_data_dir", return_value=str(base)):
-            result = get_databases_dir()
+        The old implementation called platformdirs without ``appauthor=False``,
+        which on Windows doubles the app segment
+        (``%LOCALAPPDATA%\chaoscypher\chaoscypher``) — the split-brain that
+        made ``lexicon list`` and ``lexicon remove`` scan different dirs.
+        """
+        import platformdirs
 
-        assert result == base / "databases"
-        assert result.exists()
+        from chaoscypher_cli.utils.paths import get_packages_dir
 
+        monkeypatch.delenv("CHAOSCYPHER_DATA_DIR", raising=False)
 
-class TestGetPackageCacheDir:
-    """get_package_cache_dir handles name/version variants."""
+        resolved: dict[str, str] = {}
+        real_user_data_dir = platformdirs.user_data_dir
 
-    def test_simple_name_no_version(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_package_cache_dir
+        def spy(*args: object, **kwargs: object) -> str:
+            # Record what production would resolve, but sandbox the mkdir.
+            resolved["data_dir"] = real_user_data_dir(*args, **kwargs)  # type: ignore[arg-type]
+            return str(tmp_path / "sandbox")
 
-        base_cache = tmp_path / "cache"
+        monkeypatch.setattr(platformdirs, "user_data_dir", spy)
 
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(base_cache)):
-            result = get_package_cache_dir("mypkg")
+        result = get_packages_dir()
 
-        assert result == base_cache / "packages" / "mypkg"
-        assert result.exists()
-
-    def test_namespaced_name_splits_on_slash(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_package_cache_dir
-
-        base_cache = tmp_path / "cache"
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(base_cache)):
-            result = get_package_cache_dir("john/medical-ontology")
-
-        assert result == base_cache / "packages" / "john" / "medical-ontology"
-        assert result.exists()
-
-    def test_version_appended_when_given(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_package_cache_dir
-
-        base_cache = tmp_path / "cache"
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(base_cache)):
-            result = get_package_cache_dir("john/medical-ontology", version="1.2.3")
-
-        assert result == base_cache / "packages" / "john" / "medical-ontology" / "1.2.3"
-        assert result.exists()
-
-    def test_version_none_omits_version_segment(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_package_cache_dir
-
-        base_cache = tmp_path / "cache"
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(base_cache)):
-            result = get_package_cache_dir("mypkg", version=None)
-
-        assert result == base_cache / "packages" / "mypkg"
-
-    def test_creates_directory(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.paths import get_package_cache_dir
-
-        base_cache = tmp_path / "cache"
-        assert not (base_cache / "packages" / "newpkg").exists()
-
-        with patch("chaoscypher_cli.utils.paths.user_cache_dir", return_value=str(base_cache)):
-            result = get_package_cache_dir("newpkg")
-
-        assert result.exists()
-
-
-# ============================================================================
-# utils/files.py
-# ============================================================================
-
-
-def _make_async_client_mock(
-    file_content: bytes,
-    headers: dict[str, str] | None = None,
-) -> MagicMock:
-    """Build an httpx.AsyncClient async context manager mock that streams content."""
-
-    async def aiter_bytes(chunk_size: int = 1024):  # type: ignore[no-untyped-def]
-        yield file_content
-
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
-    mock_response.headers = {"content-length": str(len(file_content))}
-    mock_response.aiter_bytes = aiter_bytes
-
-    # response is also an async context manager
-    mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-    mock_response.__aexit__ = AsyncMock(return_value=False)
-
-    mock_client = MagicMock()
-    mock_client.stream.return_value = mock_response
-    # AsyncClient itself is an async context manager
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-
-    return mock_client
-
-
-class TestDownloadFile:
-    """Tests for download_file() — network mocked via httpx."""
-
-    @pytest.mark.asyncio
-    async def test_creates_dest_and_returns_path(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.files import download_file
-
-        dest = tmp_path / "subdir" / "file.ccx"
-        file_content = b"hello archive"
-
-        mock_client = _make_async_client_mock(file_content)
-        mock_settings = MagicMock()
-        mock_settings.cli.download_chunk_size_bytes = 1024
-
-        with patch("chaoscypher_cli.utils.files.get_settings", return_value=mock_settings):
-            with patch("chaoscypher_cli.utils.files.httpx.AsyncClient", return_value=mock_client):
-                result = await download_file("https://example.com/file.ccx", dest, progress=False)
-
-        assert result == dest
-        assert dest.exists()
-        assert dest.read_bytes() == file_content
-
-    @pytest.mark.asyncio
-    async def test_raises_on_http_error(self, tmp_path: Path) -> None:
-        import httpx
-
-        from chaoscypher_cli.utils.files import download_file
-
-        dest = tmp_path / "file.ccx"
-        mock_settings = MagicMock()
-        mock_settings.cli.download_chunk_size_bytes = 1024
-
-        # Client itself raises RequestError when used as async context manager
-        mock_client = MagicMock()
-        mock_client.__aenter__ = AsyncMock(side_effect=httpx.RequestError("no route"))
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("chaoscypher_cli.utils.files.get_settings", return_value=mock_settings):
-            with patch("chaoscypher_cli.utils.files.httpx.AsyncClient", return_value=mock_client):
-                with pytest.raises(httpx.RequestError):
-                    await download_file("https://bad.example.com/pkg.ccx", dest, progress=False)
-
-    @pytest.mark.asyncio
-    async def test_download_with_auth_headers(self, tmp_path: Path) -> None:
-        from chaoscypher_cli.utils.files import download_file
-
-        dest = tmp_path / "auth_file.ccx"
-        file_content = b"authenticated content"
-        mock_settings = MagicMock()
-        mock_settings.cli.download_chunk_size_bytes = 512
-
-        captured_kwargs: list[dict] = []
-
-        async def aiter_bytes(chunk_size: int = 512):  # type: ignore[no-untyped-def]
-            yield file_content
-
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-        mock_response.headers = {"content-length": str(len(file_content))}
-        mock_response.aiter_bytes = aiter_bytes
-        mock_response.__aenter__ = AsyncMock(return_value=mock_response)
-        mock_response.__aexit__ = AsyncMock(return_value=False)
-
-        def capture_stream(method: str, url: str, headers: dict) -> MagicMock:
-            captured_kwargs.append({"headers": headers})
-            return mock_response
-
-        mock_client = MagicMock()
-        mock_client.stream.side_effect = capture_stream
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("chaoscypher_cli.utils.files.get_settings", return_value=mock_settings):
-            with patch("chaoscypher_cli.utils.files.httpx.AsyncClient", return_value=mock_client):
-                await download_file(
-                    "https://example.com/file.ccx",
-                    dest,
-                    progress=False,
-                    headers={"Authorization": "Bearer token123"},
-                )
-
-        assert captured_kwargs[0]["headers"].get("Authorization") == "Bearer token123"
-
-    @pytest.mark.asyncio
-    async def test_download_with_progress_branch(self, tmp_path: Path) -> None:
-        """Exercises the progress=True + content-length>0 branch (lines 94-103)."""
-        from chaoscypher_cli.utils.files import download_file
-
-        dest = tmp_path / "progress_file.ccx"
-        file_content = b"binary data"
-        mock_settings = MagicMock()
-        mock_settings.cli.download_chunk_size_bytes = 64
-
-        mock_client = _make_async_client_mock(file_content)
-        # Rich Progress renders to a real console; mock it out to keep test fast
-        with patch("chaoscypher_cli.utils.files.get_settings", return_value=mock_settings):
-            with patch("chaoscypher_cli.utils.files.httpx.AsyncClient", return_value=mock_client):
-                with patch("chaoscypher_cli.utils.files.Progress") as mock_progress_cls:
-                    mock_prog = MagicMock()
-                    mock_prog.__enter__ = MagicMock(return_value=mock_prog)
-                    mock_prog.__exit__ = MagicMock(return_value=False)
-                    mock_prog.add_task.return_value = 0
-                    mock_progress_cls.return_value = mock_prog
-
-                    result = await download_file(
-                        "https://example.com/progress.ccx",
-                        dest,
-                        progress=True,  # trigger the progress branch
-                    )
-
-        assert result == dest
-        # Progress.add_task should have been called with the filename
-        mock_prog.add_task.assert_called_once()
-        call_args = mock_prog.add_task.call_args[0][0]
-        assert "progress_file.ccx" in call_args
-
-
-class TestFilesReExports:
-    """Verify the re-exported symbols from chaoscypher_core are present."""
-
-    def test_ccx_extension_is_dot_ccx(self) -> None:
-        from chaoscypher_cli.utils.files import CCX_EXTENSION
-
-        assert CCX_EXTENSION == ".ccx"
-
-    def test_create_archive_is_callable(self) -> None:
-        from chaoscypher_cli.utils.files import create_archive
-
-        assert callable(create_archive)
-
-    def test_extract_archive_is_callable(self) -> None:
-        from chaoscypher_cli.utils.files import extract_archive
-
-        assert callable(extract_archive)
-
-    def test_format_size_is_callable(self) -> None:
-        from chaoscypher_cli.utils.files import format_size
-
-        assert callable(format_size)
-
-    def test_get_archive_info_is_callable(self) -> None:
-        from chaoscypher_cli.utils.files import get_archive_info
-
-        assert callable(get_archive_info)
+        assert result == tmp_path / "sandbox" / "packages"
+        assert Path(resolved["data_dir"]).parts.count("chaoscypher") == 1
 
 
 # ============================================================================
@@ -721,71 +383,47 @@ class TestPrintSuccess:
         assert "Success" in buf.getvalue()
 
 
-class TestPrintWarning:
-    """print_warning formats message with [yellow]Warning:[/yellow] prefix."""
+class TestPrintJson:
+    """print_json emits machine-safe output: verbatim, unwrapped, markup-proof."""
 
-    def test_output_contains_message(self) -> None:
-        from chaoscypher_cli.utils.console import print_warning
+    def test_markup_like_substrings_survive_verbatim(self) -> None:
+        """User data resembling Rich markup must not be swallowed as tags."""
+        from chaoscypher_cli.utils.console import print_json
 
+        payload = json.dumps({"name": "[bold]not-markup[/bold]"})
         buf = StringIO()
-        test_console = Console(file=buf, highlight=False, markup=True)
+        test_console = Console(file=buf, width=80)
 
         with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
-            print_warning("low disk space")
+            print_json(payload)
 
-        assert "low disk space" in buf.getvalue()
+        assert json.loads(buf.getvalue()) == {"name": "[bold]not-markup[/bold]"}
 
-    def test_output_contains_warning_label(self) -> None:
-        from chaoscypher_cli.utils.console import print_warning
+    def test_unbalanced_closing_tag_does_not_raise(self) -> None:
+        """A dangling [/red]-style substring must not crash with MarkupError."""
+        from chaoscypher_cli.utils.console import print_json
 
+        payload = json.dumps({"name": "[/red] dangling close"})
         buf = StringIO()
-        test_console = Console(file=buf, highlight=False, markup=True)
+        test_console = Console(file=buf, width=80)
 
         with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
-            print_warning("check logs")
+            print_json(payload)  # must not raise
 
-        assert "Warning" in buf.getvalue()
+        assert json.loads(buf.getvalue()) == {"name": "[/red] dangling close"}
 
+    def test_long_payload_not_wrapped(self) -> None:
+        """Payloads wider than the console must stay on one parseable line."""
+        from chaoscypher_cli.utils.console import print_json
 
-class TestPrintTable:
-    """print_table renders headers and rows."""
-
-    def test_headers_appear_in_output(self) -> None:
-        from chaoscypher_cli.utils.console import print_table
-
+        payload = json.dumps({"key": "x" * 300})
         buf = StringIO()
-        test_console = Console(file=buf, highlight=False, markup=True)
+        test_console = Console(file=buf, width=40)
 
         with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
-            print_table(["Name", "Version"], [["mypkg", "1.0.0"]])
+            print_json(payload)
 
-        output = buf.getvalue()
-        assert "Name" in output
-        assert "Version" in output
-
-    def test_row_values_appear_in_output(self) -> None:
-        from chaoscypher_cli.utils.console import print_table
-
-        buf = StringIO()
-        test_console = Console(file=buf, highlight=False, markup=True)
-
-        with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
-            print_table(["Package", "Tag"], [["alpha", "stable"], ["beta", "dev"]])
-
-        output = buf.getvalue()
-        assert "alpha" in output
-        assert "stable" in output
-
-    def test_empty_rows_no_error(self) -> None:
-        from chaoscypher_cli.utils.console import print_table
-
-        buf = StringIO()
-        test_console = Console(file=buf, highlight=False, markup=True)
-
-        with patch("chaoscypher_cli.utils.console.get_console", return_value=test_console):
-            print_table(["Name"], [])  # no rows — must not raise
-
-        assert "Name" in buf.getvalue()
+        assert json.loads(buf.getvalue()) == {"key": "x" * 300}
 
 
 # ============================================================================

@@ -322,6 +322,27 @@ class CLIContext:
             _ = self.llm_provider
         return self._llm_provider is not None
 
+    def refresh_llm(self) -> None:
+        """Forget the cached LLM probe and re-read settings from disk.
+
+        Called after the in-command setup wizard writes settings.yaml: this
+        context (and its negative has_llm probe) was built before the wizard
+        ran, so without a refresh the very operation that triggered the
+        wizard still sees "no LLM configured". Only the settings object is
+        rebuilt — the engine keeps its storage wiring (the wizard writes
+        LLM/embedding settings, not paths), and the engine-adjusted fields
+        are carried over.
+        """
+        self._llm_checked = False
+        self._llm_provider = None
+        if self._connected and self._settings is not None:
+            fresh = self._create_engine_settings()
+            # Preserve the adjustments Engine() made at connect time (see
+            # connect(): paths.data_dir and current_database).
+            fresh.paths.data_dir = self._settings.paths.data_dir
+            fresh.current_database = self._settings.current_database
+            self._settings = fresh
+
     @property
     def llm_provider(self) -> LLMProvider | None:
         """Get the LLM provider (lazy-initialized).
@@ -653,6 +674,16 @@ def _make_pass_context() -> Any:
 pass_context = _make_pass_context()
 
 
+def refresh_llm_state() -> None:
+    """Refresh the cached context's LLM probe after settings changed on disk.
+
+    No-op when no context exists yet (the next ``get_context()`` builds
+    fresh and sees the new settings anyway).
+    """
+    if _context_instance is not None:
+        _context_instance.refresh_llm()
+
+
 def reset_context() -> None:
     """Tear down the cached CLI context (test-isolation helper).
 
@@ -674,5 +705,6 @@ __all__ = [
     "get_context",
     "get_database_name",
     "pass_context",
+    "refresh_llm_state",
     "reset_context",
 ]

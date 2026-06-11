@@ -547,7 +547,7 @@ class ExtractionOrchestrator:
         """Build the file_info dict expected by commit_service.commit().
 
         Includes ``filtering_mode`` so the commit-side orphan-drop honours the
-        row's filtering preset (Workstream 3, Task 3.5). Falls back to
+        row's filtering preset. Falls back to
         ``"balanced"`` when the row was uploaded before the column existed —
         the same default ``resolve_filtering_config`` uses.
 

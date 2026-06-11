@@ -438,7 +438,9 @@ def add(
                     source_id=file_id,
                     confirm_all=False,
                     domain=None,
-                    depth="quick" if quick else "full",
+                    # None = keep the depth persisted on the row; only an
+                    # explicit --quick here overrides it.
+                    depth="quick" if quick else None,
                     filtering_mode=filtering_mode,
                     yes=False,
                     database=database,
@@ -540,9 +542,11 @@ def add(
         if output_json:
             import json
 
+            from chaoscypher_cli.utils.console import print_json
+
             output = [_result_to_dict(r) for r in results]
             # Single file: output dict directly (backwards compatible)
-            console.print(json.dumps(output[0] if len(output) == 1 else output, indent=2))
+            print_json(json.dumps(output[0] if len(output) == 1 else output, indent=2))
 
         elif quiet:
             for r in results:

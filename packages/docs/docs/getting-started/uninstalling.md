@@ -39,8 +39,9 @@ That removes everything: the SQLite database, uploaded sources, embeddings, chat
 ```bash
 make docker-down
 docker compose -f packages/docker/multi-container/docker-compose.dev.yml down --volumes
-rm -rf packages/docker/data/        # local data dir
 ```
+
+`down --volumes` removes the dev stack's `app-data` and `valkey-data` named volumes — there is no host-side data directory to delete.
 
 ## CLI install (`pip install chaoscypher-cli`)
 
@@ -57,7 +58,7 @@ rm -rf "~/Library/Application Support/chaoscypher/"  # macOS
 # Config dir (auth.json login state)
 rm -rf ~/.config/chaoscypher/                        # Linux
 rm -rf "~/Library/Application Support/chaoscypher/"  # macOS (same as data)
-# Windows: rmdir /s "%APPDATA%\chaoscypher"
+# Windows: rmdir /s "%LOCALAPPDATA%\chaoscypher"   (same directory as the data dir — already covered above)
 
 # Cache dir
 rm -rf ~/.cache/chaoscypher/                         # Linux
@@ -75,9 +76,10 @@ docker ps | grep chaoscypher    # should print nothing
 
 ## Data deletion checklist
 
-- [ ] Persistent volume removed (`docker volume ls | grep chaoscypher`)
-- [ ] Local data dir removed (`packages/docker/data/` for dev; the platform data/config/cache dirs above for CLI — e.g. `~/.local/share/chaoscypher` on Linux, `%LOCALAPPDATA%\chaoscypher` on Windows)
-- [ ] Backups deleted if you no longer need them (`backups/*.ccx`)
+- [ ] Persistent volume removed (`docker volume ls | grep chaoscypher` — Docker installs, including the multi-container dev stack, keep all data in named volumes)
+- [ ] Local data dir removed (the platform data/config/cache dirs above for CLI installs — e.g. `~/.local/share/chaoscypher` on Linux, `%LOCALAPPDATA%\chaoscypher` on Windows)
+- [ ] Backups deleted if you no longer need them (`backups/*.db` — API backups `app_*.db` plus migration auto-backups `databases/<db>/backups/pre-*.db`)
+- [ ] Exported `.ccx` knowledge packages deleted if you saved any outside the data dir
 - [ ] LLM provider API keys revoked at the source (OpenAI / Anthropic / Gemini consoles) if you'll never reinstall
 
 See the [self-hosted threat model](../security/self-hosted-threat-model.md) for an inventory of what's stored locally.

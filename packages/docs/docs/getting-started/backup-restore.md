@@ -14,13 +14,13 @@ A backup captures the entire `app.db` file for a given database, which includes:
 
 - **All graph data** — nodes, edges, templates, relationships.
 - **All source metadata and extraction results** — source rows, chunk records, quality counters, stage-progress entries.
-- **Settings** — every configuration row stored in the database (LLM provider choice, embedding settings, filter presets).
 - **Automations** — workflow definitions, trigger rules, execution history.
 - **Chat history** — all chat sessions and message threads for that database.
-- **Authentication tokens** — hashed credentials and session data.
 
 What a backup does **not** capture:
 
+- **Configuration** — `settings.yaml` in the data dir (LLM provider, API keys, embedding settings). Back it up separately; it contains secrets, so store the copy securely.
+- **Login and API keys** — `<data_dir>/credentials.json` (operator password hash, hashed API keys) and `<data_dir>/secrets/` (session secret) live outside `app.db`; copy them alongside the backup or you will need to re-run `/setup` and re-mint API keys after a disaster restore.
 - **Uploaded source files** — raw documents under `<data_dir>/databases/<db_name>/uploads/`. Back these up separately if you need to re-run extraction without re-uploading.
 - **Valkey queue state** — in-flight tasks. Drain the queue (wait for the Queue Monitor to show zero pending tasks) before taking a backup you intend to restore from.
 - **Vector index files** — the sqlite-vec virtual tables are embedded in `app.db`, so they are included. Cached embedding model weights under `<data_dir>/models/` are not; they are re-downloaded on demand.
@@ -107,22 +107,27 @@ Open **Settings → Maintenance → Backups**, find the backup in the list, and 
 
 ### Manual restore (container stopped)
 
-If the API is unreachable, restore manually:
+If the API is unreachable, restore manually. On the default install, `/data` is a named Docker volume — those paths do not exist on the host — so run the copy inside a helper container that mounts the volume (find the name with `docker volume ls | grep chaoscypher`):
 
 ```bash
 # Stop the container
 docker compose stop chaoscypher
 
-# Replace the database (adjust paths to match your data_dir and database name)
-cp /data/backups/default/app_20260601_143022.db \
-   /data/databases/default/app.db
-
-# Remove WAL files to prevent corruption
-rm -f /data/databases/default/app.db-wal \
-      /data/databases/default/app.db-shm
+# Replace the database and remove WAL files (adjust the volume name,
+# database name, and backup filename to match your install)
+docker run --rm -v chaoscypher_app-data:/data alpine sh -c '
+  cp /data/backups/default/app_20260601_143022.db /data/databases/default/app.db &&
+  rm -f /data/databases/default/app.db-wal /data/databases/default/app.db-shm'
 
 # Restart
 docker compose start chaoscypher
+```
+
+If you bind-mount `/data` from a host directory instead, the plain commands work directly on the host:
+
+```bash
+cp /data/backups/default/app_20260601_143022.db /data/databases/default/app.db
+rm -f /data/databases/default/app.db-wal /data/databases/default/app.db-shm
 ```
 
 ### After restoring
@@ -135,10 +140,16 @@ chaoscypher upgrade
 
 ## Migration pre-upgrade backups
 
-Cortex automatically creates a backup before applying any pending Alembic migration. These auto-backups land at:
+Cortex automatically creates a backup before applying any pending Alembic migration. These auto-backups land in the database's own folder (not the API backup directory):
 
 ```
-<data_dir>/backups/pre-<first-pending-revision>-<YYYYMMDDTHHMMSSZ>.db
+<data_dir>/databases/<db_name>/backups/pre-<first-pending-revision>-<YYYYMMDDTHHMMSSZ>.db
+```
+
+For example, with `data_dir=/data` and database `default`:
+
+```
+/data/databases/default/backups/pre-0001-20260601T123045Z.db
 ```
 
 To roll back a failed migration, use the `db migrate` command:
@@ -152,7 +163,7 @@ See [Upgrading](./upgrading.md) for the full upgrade and rollback procedure.
 
 ## Worked example: cron backup with retention
 
-This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days from the local filesystem.
+This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days. The retention `find` runs inside the container (`docker exec`) because `/data` is a named Docker volume on the default install; if you bind-mount `/data` from the host, you can run `find /data/backups/default ...` directly instead.
 
 ```bash
 # /etc/cron.d/chaoscypher-backup
@@ -160,7 +171,7 @@ This cron job runs daily at 02:00, creates a backup via the API, and deletes bac
 # rather than inlining it in the crontab.
 0 2 * * * root \
   curl -s -H "Authorization: Bearer $(cat /etc/chaoscypher/api_key)" -X POST http://localhost/api/v1/backup > /dev/null && \
-  find /data/backups/default -name "app_*.db" -mtime +14 -delete
+  docker exec chaoscypher find /data/backups/default -name "app_*.db" -mtime +14 -delete
 ```
 
 You can also use the API's delete endpoint to prune old backups by filename:
@@ -177,9 +188,23 @@ curl -s -H "Authorization: Bearer $CHAOSCYPHER_API_KEY" \
 By default, backups are written under `<data_dir>/backups/`. If you mount `/data` as a Docker named volume or bind-mount, backups persist across container recreations. Copy the backup directory to off-site storage (object storage, another host) for disaster recovery:
 
 ```bash
-# Example: rsync to a remote host
-rsync -az /data/backups/ user@backup-host:/backups/chaoscypher/
+# On a named-volume install, first copy the backups out of the container:
+docker cp chaoscypher:/data/backups ./chaoscypher-backups
+
+# Then ship them off-site (or rsync /data/backups/ directly on bind-mount installs):
+rsync -az ./chaoscypher-backups/ user@backup-host:/backups/chaoscypher/
 ```
+
+## Full disaster recovery
+
+A database backup alone is not enough to rebuild a working install on a fresh host — the configuration and credential files live outside `app.db`. For complete recovery, copy these alongside your backups:
+
+- **`<data_dir>/settings.yaml`** — all engine configuration: LLM provider choice, API keys, embedding settings. Contains secrets, so store the copy securely.
+- **`<data_dir>/credentials.json`** — the operator password hash and hashed API keys. Without it you must re-run `/setup` and re-mint API keys.
+- **`<data_dir>/secrets/`** — the session secret and other auto-generated tokens.
+- **`<data_dir>/databases/<db_name>/uploads/`** — raw uploaded source files (optional; only needed to re-run extraction without re-uploading).
+
+The simplest approach is to periodically snapshot the entire `/data` volume in addition to the API-driven database backups.
 
 ## See also
 

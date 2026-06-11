@@ -341,11 +341,9 @@ class SourceStorageProtocol(Protocol):
         """Get source statistics for database (counts by status).
 
         Corresponds to the adapter-level get_stats() method on
-        SourceIndexingMixin.  The investigation doc proposed renaming this
-        to get_database_source_stats to avoid confusion with the per-source
-        CitationStorageProtocol.get_source_stats(source_id), but Task 12
-        uses the adapter's existing method name so that isinstance() checks
-        pass without touching the mixin.  Task 13 can add the alias.
+        SourceIndexingMixin.  Note this aggregates database-wide counts,
+        distinct from the per-source
+        CitationStorageProtocol.get_source_stats(source_id).
 
         Args:
             database_name: Database to query.

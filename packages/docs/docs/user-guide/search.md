@@ -11,6 +11,12 @@ import TabItem from '@theme/TabItem';
 
 Chaos Cypher provides three search modes that work across your indexed documents and knowledge graph.
 
+:::note[API port]
+
+The `curl` examples on this page use `http://localhost:8080`, which is the API port for the multi-container development stack. The all-in-one container (the primary install) serves the API on port **80** instead — use `http://localhost/api/v1/...` there.
+
+:::
+
 ## Why GraphRAG
 
 Pairing a knowledge graph with vector search beats embeddings alone on multi-hop questions — where the answer comes from connecting several facts, not matching one passage. Independent, peer-reviewed research on the GraphRAG approach finds:
@@ -107,7 +113,7 @@ Best for: conceptual queries, finding related content, when you don't know the e
 
 ### Hybrid Search
 
-Attempts semantic search first, then falls back to keyword search if no results exceed the minimum similarity threshold (default: 0.55).
+Runs keyword and semantic search together and merges the results — semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included, and each result keeps the higher of its two scores. Very short queries (under 3 characters) use keyword search only.
 
 Best for: general-purpose search that combines both approaches.
 
@@ -124,6 +130,8 @@ Graph-enhanced retrieval that fuses knowledge graph traversal with vector search
 5. Fuses graph and vector results using Reciprocal Rank Fusion
 
 GraphRAG is available as the `graphrag_search` tool in AI chat and as an MCP tool. The chat system automatically prioritizes GraphRAG when your database has a knowledge graph with extracted entities.
+
+**Seeing what GraphRAG retrieved:** in the web chat, every answer that used tools shows a **Tool Activity** panel beneath it. Expand the `graphrag_search` entry to inspect its input and full result, including `retrieval_stats` — the retrieval mode (`full_graphrag`, `vector_only`, or `keyword_only`), seed entities found, PageRank entities explored, and provenance/vector chunk counts. A mode of `vector_only` usually means no graph entities matched the query (for example, when extraction hasn't run yet).
 
 Best for: multi-hop questions, finding connections across documents, questions that span multiple topics or entities.
 
@@ -188,6 +196,21 @@ search:
   rerank_model_name: Alibaba-NLP/gte-reranker-modernbert-base
 ```
 
+### GraphRAG Tuning
+
+Six parameters in the `graphrag` section of `settings.yaml` control the GraphRAG pipeline. The defaults were chosen from the GraphRAG literature and testing across database sizes — most users never need to change them.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `seed_similarity_threshold` | `0.3` | Minimum cosine similarity for a graph entity to qualify as a PageRank seed. Lower values cast a wider net but may introduce noise. |
+| `ppr_top_k` | `20` | Number of top-scoring entities from Personalized PageRank to include in graph context. Higher values give the LLM more structural context at the cost of token budget. |
+| `ppr_damping` | `0.85` | PageRank damping factor. Higher means more exploration away from seeds; lower keeps results closer to directly matched entities. |
+| `max_triples` | `200` | Maximum relationship triples included in the graph context summary. Capped to avoid flooding the LLM context window. |
+| `vector_overfetch_multiplier` | `3` | When searching for seed entities, fetch this multiple of the seed limit from the vector index to account for non-entity results that need filtering. |
+| `max_graph_nodes` | `50000` | Safety limit. If the graph exceeds this, PageRank is skipped (too expensive) and search falls back to vector-only mode. |
+
+One related cap lives outside the `graphrag` section: `batching.graphrag_edge_query_limit` (default `50`) limits how many edges per direction are loaded for each top-ranked entity when assembling the graph context.
+
 ### Re-ranking
 
 When enabled, search results are re-ranked using a cross-encoder model for improved relevance. The re-ranker evaluates each result against your query and reorders them by true relevance rather than raw similarity scores. Chaos Cypher defaults to `Alibaba-NLP/gte-reranker-modernbert-base`, a ModernBERT-based cross-encoder (149M params, ~600MB) that scores ~56.2 NDCG@10 on the BEIR benchmark. Any HuggingFace cross-encoder model can be used via the `rerank_model_name` setting.
@@ -209,13 +232,19 @@ If search results seem stale or incomplete, rebuild the indexes:
 <TabItem value="web-ui" label="Web UI">
 
 
-Go to **Settings** → **Search** and click **Rebuild Indexes**.
+Go to **Settings** → **Search** and click **Rebuild Search Indexes**.
 
 </TabItem>
 <TabItem value="cli" label="CLI">
 
 
-Index rebuilding is available via the API.
+```bash
+chaoscypher source rebuild-search
+# or for a specific database
+chaoscypher source rebuild-search --database my-project
+```
+
+The command auto-detects whether embeddings need regeneration: if the embedding model or dimensions changed, it regenerates all embeddings (slower); otherwise it rebuilds the indexes from stored embeddings (fast).
 
 </TabItem>
 <TabItem value="api" label="API">
@@ -239,7 +268,7 @@ Generate vector embeddings for nodes that don't have them:
 <TabItem value="web-ui" label="Web UI">
 
 
-Go to **Settings** → **Search** and click **Generate Missing Embeddings**.
+Go to **Settings** → **Search** and click **Rebuild Search Indexes** — it auto-detects missing or mismatched embeddings and regenerates them in the background.
 
 </TabItem>
 <TabItem value="cli" label="CLI">

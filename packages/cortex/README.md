@@ -34,6 +34,8 @@ set of directories under
 
 ```
 packages/cortex/src/chaoscypher_cortex/
+├── api/                      # API composition
+│   └── v1/router.py          # Router registration (mounts all feature routers)
 ├── features/                 # VSA slices (chats, sources, nodes, edges,
 │                             # templates, search, llm, queue, settings,
 │                             # settings_public, workflows, triggers, tools,
@@ -46,7 +48,12 @@ packages/cortex/src/chaoscypher_cortex/
 │   ├── database/            # Database session
 │   ├── llm/                 # LLM factory
 │   └── queue/               # Queue utilities
-└── main.py                   # FastAPI application + router registration
+├── app_factory.py            # create_app() — FastAPI app assembly
+├── boot.py                   # Startup orchestration
+├── lifespan.py               # Lifespan (startup/shutdown) wiring
+├── middleware.py             # Middleware stack
+├── shutdown.py               # Graceful shutdown
+└── main.py                   # Thin CLI entrypoint
 ```
 
 Each feature slice contains:
@@ -110,7 +117,9 @@ uvicorn.run(app, host="0.0.0.0", port=8080)
 
 ## Configuration
 
-Configure via environment variables or `packages/docker/data/settings.yaml`:
+Configure via environment variables or `settings.yaml` in the data directory
+(`/data/settings.yaml` inside the `app-data` volume under Docker; the platform
+data dir, e.g. `~/.local/share/chaoscypher`, when running bare):
 
 ```bash
 # Queue (Valkey)
@@ -125,16 +134,14 @@ CHAOSCYPHER_CONFIG_DIR=~/.config/chaoscypher
 LOG_LEVEL=INFO
 USE_JSON_LOGGING=false
 
-# LLM Provider
-LLM_CHAT_PROVIDER=ollama
-LLM_CHAT_MODEL=llama3.2
-LLM_EMBEDDING_PROVIDER=ollama
-LLM_EMBEDDING_MODEL=snowflake-arctic-embed2
+# LLM Provider (provider only — models are configured in the Settings UI
+# or via settings.yaml llm.* keys)
+CHAOSCYPHER_LLM_PROVIDER=ollama   # ollama | openai | anthropic | gemini
 
 # API Keys (if using cloud providers)
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=...
+GEMINI_API_KEY=...
 ```
 
 ## API Endpoints
@@ -143,19 +150,20 @@ Routes live under `/api/v1/` and are gated by nginx `auth_request` (no
 register/login flow inside Cortex). The full surface includes:
 
 - **Knowledge graph** — `/nodes`, `/edges`, `/templates`, `/graph`
-- **Sources** — `/sources` (upload, list, extract, commit, citations, chunks). `SourceResponse` exposes user upload-time choices via the nested `upload_options` object (`auto_analyze`, `enable_normalization`, `enable_vision`, `content_filtering`, `filtering_mode`, `extraction_depth`, `forced_domain`), per-stage drop / merge counters via `quality_metrics` (45 typed counters + companion fields like `loader_encoding_used`), and search-index health via `quality_metrics.vector_indexing_status` (`pending` / `indexed` / `degraded` / `failed`). New persisted upload settings must round-trip through `upload_options`, never as siblings on `SourceResponse` — see `packages/docs/docs/reference/api/sources.md`.
+- **Sources** — `/sources` (upload, list, extract, commit, citations, chunks). `SourceResponse` exposes user upload-time choices via the nested `upload_options` object (`auto_analyze`, `enable_normalization`, `enable_vision`, `content_filtering`, `filtering_mode`, `extraction_depth`, `forced_domain`), per-stage drop / merge counters via `quality_metrics` (40+ typed counters + companion fields like `loader_encoding_used`), and search-index health via `quality_metrics.vector_indexing_status` (`pending` / `indexed` / `degraded` / `failed`). New persisted upload settings must round-trip through `upload_options`, never as siblings on `SourceResponse` — see `packages/docs/docs/reference/api/sources.md`.
 - **Search** — `/search` (FTS5, vector, hybrid, GraphRAG)
-- **Chat** — `/chats`, `/chats/{id}/messages`
-- **Workflows** — `/workflows`, `/workflows/{id}/execute`, `/triggers`, `/tools`
+- **Chat** — `/chats`, `/chats/{id}/messages`, `/chats/{id}/send` + `/chats/{id}/events` (SSE), plus `/cancel`, `/retry`, `/regenerate`, `/export`
+- **Workflows** — `/workflows`, `/workflows/{id}/executions`, `/triggers`, `/tools`
 - **Settings** — `/settings`, `/settings/reset` (plus scoped `/settings/reset/{scope}` variants)
-- **Queue** — `/queue/tasks`, `/queue/status`
-- **Operations** — `/llm/instances`, `/databases`, `/exports`, `/backup`
-- **Diagnostics** — `/health`, `/diagnostics`, `/logs`, `/pause`, `/edition`
-- **MCP** — `/mcp/sse`, `/mcp/messages`
+- **Queue** — `/queue/tasks`, `/queue/stats`
+- **Operations** — `/llm/stats`, `/llm/tasks` (Ollama instance management lives under `/settings/ollama`), `/databases`, `/exports`, `/backup`
+- **Diagnostics** — `/health`, `/diagnostics`, `/logs`, `/edition`, plus pause/resume under `/sources/{id}/...` and `/system/processing/...`
+- **MCP** — `/mcp` (Streamable HTTP transport: POST for JSON-RPC, GET for the SSE stream, DELETE to end a session)
 
 The complete reference (request/response shapes, query params, error envelopes)
-is in `packages/docs/docs/reference/api/` and at the live OpenAPI page:
-http://localhost:8080/docs (when running).
+is in `packages/docs/docs/reference/api/` and at the live OpenAPI page
+http://localhost:8080/docs (disabled by default — start Cortex with
+`ENABLE_API_DOCS=true` to enable `/docs`, `/redoc`, and `/openapi.json`).
 
 ## Development
 
@@ -164,9 +172,10 @@ http://localhost:8080/docs (when running).
 ```
 packages/cortex/
 ├── src/chaoscypher_cortex/
+│   ├── api/                # Router registration (api/v1/router.py)
 │   ├── features/           # VSA feature slices
 │   ├── shared/             # Shared infrastructure
-│   └── main.py             # FastAPI app
+│   └── main.py             # Thin CLI entrypoint
 ├── tests/                  # Test suite
 ├── Dockerfile              # Production image
 ├── Dockerfile.dev          # Development image
@@ -181,7 +190,7 @@ packages/cortex/
 4. Create service: `{feature}/service.py`
 5. Create API + factory: `{feature}/api.py`
 6. Export: `{feature}/__init__.py`
-7. Register router in `main.py`
+7. Register router in `api/v1/router.py`
 
 Example:
 
@@ -227,9 +236,6 @@ pytest
 # Unit tests only
 pytest -m unit
 
-# Integration tests
-pytest -m integration
-
 # With coverage
 pytest --cov=chaoscypher_cortex --cov-report=html
 ```
@@ -237,8 +243,9 @@ pytest --cov=chaoscypher_cortex --cov-report=html
 ### Hot-Reload Development
 
 ```bash
-# Using watchdog
-watchmedo auto-restart -d src -p '*.py' -- cc-cortex start
+# Using watchdog (not a workspace dependency — uv adds it for this run;
+# it is preinstalled only in the dev Docker image)
+uv run --with watchdog watchmedo auto-restart -d src -p "*.py" -- cc-cortex start
 
 # Using Docker
 docker compose -f packages/docker/multi-container/docker-compose.dev.yml up cortex
@@ -249,7 +256,7 @@ docker compose -f packages/docker/multi-container/docker-compose.dev.yml up cort
 - **Core**: `chaoscypher-core` - Business logic
 - **FastAPI**: Web framework
 - **SQLModel**: Database ORM
-- **ARQ**: Background task queue
+- **Valkey** (via `chaoscypher_core.queue`): Background task queue
 - **Structlog**: Structured logging
 - **Pydantic**: Data validation
 

@@ -47,9 +47,9 @@ def create(
     Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME, URL, EMAIL, JSON
 
     Example:
-        chaoscypher template create --interactive
-        chaoscypher template create -n Person -p name:string:required -p age:integer
-        chaoscypher template create -n WorksFor -t edge -p start_date:date
+        chaoscypher graph template create --interactive
+        chaoscypher graph template create -n Person -p name:string:required -p age:integer
+        chaoscypher graph template create -n WorksFor -t edge -p start_date:date
     """
     try:
         ctx = get_context(database_name=database)

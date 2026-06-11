@@ -3,23 +3,15 @@
 
 """List command - List installed/cached packages."""
 
-import os
-from pathlib import Path
-
 import click
 from rich.console import Console
 from rich.table import Table
 
+from chaoscypher_cli.utils.console import print_json
+from chaoscypher_cli.utils.paths import get_packages_dir
+
 
 console = Console()
-
-
-def get_packages_dir() -> Path:
-    """Get the packages cache directory."""
-    data_dir = Path(
-        os.getenv("CHAOSCYPHER_DATA_DIR", Path.home() / ".local" / "share" / "chaoscypher")
-    )
-    return data_dir / "packages"
 
 
 @click.command(name="list")
@@ -50,20 +42,20 @@ def list_packages(show_all: bool, output_format: str) -> None:
 
     # Check if packages directory exists
     if not packages_dir.exists():
-        console.print("[dim]No packages installed yet.[/dim]")
+        console.print(f"[dim]No packages installed yet in {packages_dir}.[/dim]")
         console.print("\nTo install packages:")
         console.print("  chaoscypher pull <package>")
-        console.print("  chaoscypher package load <file.ccx>")
+        console.print("  chaoscypher graph package load <file.ccx>")
         return
 
     # Find .ccx files in packages directory
     packages = list(packages_dir.glob("**/*.ccx"))
 
     if not packages:
-        console.print("[dim]No packages found.[/dim]")
+        console.print(f"[dim]No packages found in {packages_dir}.[/dim]")
         console.print("\nTo install packages:")
         console.print("  chaoscypher pull <package>")
-        console.print("  chaoscypher package load <file.ccx>")
+        console.print("  chaoscypher graph package load <file.ccx>")
         return
 
     if output_format == "simple":
@@ -74,7 +66,7 @@ def list_packages(show_all: bool, output_format: str) -> None:
         import json
 
         pkg_list = [{"name": p.stem, "path": str(p), "size": p.stat().st_size} for p in packages]
-        console.print(json.dumps(pkg_list, indent=2))
+        print_json(json.dumps(pkg_list, indent=2))
 
     else:  # table format
         table = Table(show_header=True)

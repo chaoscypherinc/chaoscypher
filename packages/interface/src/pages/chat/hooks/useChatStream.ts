@@ -216,6 +216,12 @@ export function useChatStream(
           });
         }
 
+        // The turn is over: patch the cached status directly so the
+        // processing-keyed poller stops immediately instead of limping on
+        // until a refetch resolves (2026-06-10 audit).
+        cacheWriter.patchChat(dChatId, { status: 'active' });
+        cacheWriter.patchListEntry(dChatId, { status: 'active' });
+
         // Refresh the sidebar list (status / message_count / new chat).
         cacheWriter.invalidateList();
       },

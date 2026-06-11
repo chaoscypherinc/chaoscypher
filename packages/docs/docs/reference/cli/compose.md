@@ -17,7 +17,7 @@ chaoscypher compose --help
 |------------|-------------|
 | [`build`](#build) | Compile `axiomatize.yaml` into a runtime database |
 | [`up`](#up) | Build (if needed) and run the composition server |
-| [`down`](#down) | Stop a running composition server |
+| [`down`](#down) | Stop the composition server (see limitations) |
 | [`run`](#run) | Execute a one-off command in the composition context |
 
 ---
@@ -83,7 +83,7 @@ chaoscypher compose build --clean
 
 If your packages require authentication, log in first:
 ```bash
-chaoscypher login
+chaoscypher lexicon login
 ```
 Unauthenticated builds can still access public Lexicon packages.
 
@@ -147,6 +147,16 @@ To stop:
   chaoscypher compose down -c axiomatize.yaml
 ```
 
+:::warning[Stopping a detached server]
+
+Despite the hint in the output above, `compose down` cannot currently stop a
+server started by an earlier `compose up --detach` — see [`down`](#down).
+Stop the detached server manually by terminating the `chaoscypher_cortex`
+process (e.g. `pkill -f chaoscypher_cortex` on Linux/macOS, or Task Manager
+on Windows).
+
+:::
+
 **Custom port:**
 
 ```bash
@@ -163,36 +173,36 @@ chaoscypher compose up --build
 
 ## down
 
-Stop the server that was started with `compose up --detach`.
+Intended to stop the server started with `compose up --detach`.
 
 ```bash
 chaoscypher compose down [OPTIONS]
 ```
+
+:::warning[Known limitation]
+
+`compose down` cannot currently stop a detached server. The process handle
+created by `compose up --detach` lives only in the memory of the `up`
+invocation and is not persisted, so a fresh `compose down` has nothing to
+terminate — it prints `Composition stopped` but leaves the server running.
+
+To stop a detached server, terminate the `chaoscypher_cortex` process
+manually:
+
+```bash
+# Linux/macOS
+pkill -f chaoscypher_cortex
+```
+
+On Windows, end the process via Task Manager or `Stop-Process`.
+
+:::
 
 ### Options
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--config PATH` | `-c` | `axiomatize.yaml` | Path to composition config file |
-
-### Examples
-
-**Stop the default composition:**
-
-```bash
-chaoscypher compose down
-```
-
-```
-Stopping composition: my-knowledge-base
-Composition stopped
-```
-
-**Stop a named composition:**
-
-```bash
-chaoscypher compose down --config research-compose.yaml
-```
 
 ---
 
@@ -203,6 +213,13 @@ Execute a one-off command with the composition's environment variables set. The 
 ```bash
 chaoscypher compose run [OPTIONS] COMMAND...
 ```
+
+### Injected environment variables
+
+| Variable | Value |
+|----------|-------|
+| `CHAOSCYPHER_DATABASE` | `<output_dir>/databases/default` — path to the composed database |
+| `CHAOSCYPHER_COMPOSE_NAME` | The composition's `name` from `axiomatize.yaml` |
 
 ### Arguments
 
@@ -257,11 +274,12 @@ chaoscypher compose build
 chaoscypher compose up --detach
 
 # 3. Query the API or run tools while it's running
-curl http://localhost:8081/api/v1/stats
+curl http://localhost:8081/api/v1/health
 chaoscypher compose run python my_analysis.py
 
-# 4. Stop when done
-chaoscypher compose down
+# 4. Stop when done by killing the detached server process
+#    (see the limitation note under `down`)
+pkill -f chaoscypher_cortex
 ```
 
 For interactive development, run in the foreground instead:

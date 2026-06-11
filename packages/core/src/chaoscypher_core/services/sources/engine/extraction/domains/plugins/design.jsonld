@@ -10,7 +10,7 @@
   "@type": "ExtractionDomain",
   "@id": "domain:design",
   "name": "design",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "UI/UX design books, design systems documentation, typography, color theory, accessibility guidelines, visual design principles, and interaction design references",
   "author": "ChaosCypher Team",
   "builtin": true,
@@ -32,7 +32,12 @@
     "Wireframe": "Mockup",
     "Prototype": "Mockup",
     "A11y Guideline": "Accessibility Guideline",
-    "WCAG Guideline": "Accessibility Guideline"
+    "WCAG Guideline": "Accessibility Guideline",
+    "Studio": "Organization",
+    "Design Studio": "Organization",
+    "Agency": "Organization",
+    "Design Agency": "Organization",
+    "Company": "Organization"
   },
   "entity_exclusions": [
     {
@@ -386,9 +391,38 @@
             "display_name": "Affiliation",
             "property_type": "text",
             "absorbs_types": [
-              "Affiliation",
-              "Studio",
-              "Agency"
+              "Affiliation"
+            ]
+          }
+        ]
+      },
+      {
+        "@type": "NodeTemplate",
+        "id": "design_template_organization",
+        "name": "Organization",
+        "description": "A design studio, agency, company, school, or standards body that creates or maintains design work (e.g., IDEO, Bauhaus, Adobe, Pentagram, W3C)",
+        "icon": "Business",
+        "color": "#bc41d6",
+        "requires_named_referent": true,
+        "quality_score": 25,
+        "compatibility_group": "organizations",
+        "normalization_keywords": [
+          "studio",
+          "design studio",
+          "agency",
+          "design agency",
+          "company",
+          "design firm",
+          "design school",
+          "organization"
+        ],
+        "properties": [
+          {
+            "name": "org_type",
+            "display_name": "Type",
+            "property_type": "text",
+            "absorbs_types": [
+              "Organization Type"
             ]
           }
         ]

@@ -57,10 +57,9 @@ class StageProgressRecord(BaseModel):
 class UrlImportRequest(BaseModel):
     """Request model for importing a source from a URL.
 
-    Workstream 1 (2026-05-07) added ``enable_vision`` so URL imports
-    have parity with the file-upload routes; every upload-time choice
-    is persisted on the source row and surfaced via
-    ``SourceResponse.upload_options``.
+    ``enable_vision`` gives URL imports parity with the file-upload
+    routes; every upload-time choice is persisted on the source row
+    and surfaced via ``SourceResponse.upload_options``.
     """
 
     url: str
@@ -115,12 +114,12 @@ class SourceUpdate(BaseModel):
 class UploadOptions(BaseModel):
     """The user's choices at upload time, persisted on the source row.
 
-    Workstream 1 (2026-05-07): every entry path (file upload, URL,
-    CLI) sets these on the row so recovery / retry / re-extract use
-    exactly what the user picked. The API surfaces them under
-    ``SourceResponse.upload_options`` so the UI can show "you uploaded
-    this with vision off, filtering=strict" etc., and so source export
-    can preserve the choices.
+    Every entry path (file upload, URL, CLI) sets these on the row so
+    recovery / retry / re-extract use exactly what the user picked.
+    The API surfaces them under ``SourceResponse.upload_options`` so
+    the UI can show "you uploaded this with vision off,
+    filtering=strict" etc., and so source export can preserve the
+    choices.
     """
 
     auto_analyze: bool = True
@@ -140,16 +139,14 @@ class UploadOptions(BaseModel):
 class QualityMetrics(BaseModel):
     """Per-stage drop / merge counters for a single source.
 
-    Workstream 2 (2026-05-07): every stage of the import pipeline
-    increments one of these counters when it filters, drops, merges,
-    truncates, or replaces content.  The "Data Quality" tab on the
-    source detail page renders the counters grouped by stage with
-    plain-English explanations so the operator can see exactly what
-    happened to their data.
+    Every stage of the import pipeline increments one of these
+    counters when it filters, drops, merges, truncates, or replaces
+    content.  The "Data Quality" tab on the source detail page renders
+    the counters grouped by stage with plain-English explanations so
+    the operator can see exactly what happened to their data.
 
-    Per-stage increment call-sites are added incrementally in
-    Workstreams 3-10; this model only exposes the columns - it does
-    NOT itself change pipeline behavior.
+    This model only exposes the columns - it does NOT itself change
+    pipeline behavior.
 
     Field order mirrors the pipeline order: loader -> cleanup ->
     chunking -> AI extraction -> post-extraction -> commit -> search.
@@ -567,7 +564,7 @@ class SourceResponse(BaseModel):
           (ADR-0003); other types leave the field as None.
         - ``progress``: 5-phase public progress derived from ``status``.
         - ``upload_options``: nested object assembled from the per-row
-          columns above (Workstream 1, 2026-05-07).
+          columns above.
         """
         if self.indexing_extraction_method is None and self.source_type == "pdf":
             self.indexing_extraction_method = "pypdf"

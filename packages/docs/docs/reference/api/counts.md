@@ -27,12 +27,12 @@ Returns counts of all major resource types, with system resources filtered out.
 | `workflows` | `int` | Workflow count (nodes with `template_id='system_workflow'`) |
 | `lenses` | `int` | **Deprecated.** Effectively `0` since Lenses were retired in [ADR-0001](../../architecture/adrs/0001-remove-discovery-and-lenses-features.md) (computed live from `system_lens` nodes, of which none are created post-removal). Field preserved for API backward-compatibility. |
 | `sources` | `int` | Document sources (PDFs, text, CSV, etc.) |
-| `awaiting_confirmation` | `int` | Sources parked in the `awaiting_confirmation` state pending domain confirmation (default `0`) |
+| `awaiting_confirmation` | `int` | Always `0` on this endpoint — the live count of sources parked pending domain confirmation is only computed by [`GET /api/v1/system/dashboard`](diagnostics.md#system-dashboard) (`counts.awaiting_confirmation`). Present here for schema compatibility. |
 
 #### Example
 
 ```bash
-curl http://localhost:8080/api/v1/counts
+curl http://localhost/api/v1/counts
 ```
 
 ```json

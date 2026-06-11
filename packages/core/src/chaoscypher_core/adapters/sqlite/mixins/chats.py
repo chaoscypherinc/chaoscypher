@@ -6,6 +6,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, func, select
 
@@ -13,6 +14,21 @@ from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import Chat, ChatMessage
 from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_core.ports.storage_chats import ChatStorageProtocol
+
+
+def _scope_predicate(scoped: bool) -> Any:
+    """SQL predicate for the chat scope filter.
+
+    ``source_ids`` is a JSON column: a Python ``None`` is persisted as the
+    JSON ``'null'`` text, NOT SQL NULL (SQLAlchemy ``none_as_null`` defaults
+    off), so a bare ``IS NOT NULL`` matched every row and the scoped filter
+    never worked. Unscoped = SQL NULL (legacy rows) OR JSON null.
+    """
+    unscoped = or_(
+        col(Chat.source_ids).is_(None),
+        cast(col(Chat.source_ids), String) == "null",
+    )
+    return ~unscoped if scoped else unscoped
 
 
 class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
@@ -74,9 +90,14 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         user_id: int | None = None,
         status: str | None = None,
         limit: int = 100,
+        offset: int = 0,
         scoped: bool | None = None,
+        search: str | None = None,
     ) -> list[dict[str, Any]]:
-        """List chats for database with optional filters."""
+        """List chats for database with optional filters (newest first).
+
+        ``search`` filters by case-insensitive title substring.
+        """
         self._ensure_connected()
         stmt = (
             select(Chat)
@@ -100,12 +121,12 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
             stmt = stmt.where(Chat.user_id == user_id)
         if status is not None:
             stmt = stmt.where(Chat.status == status)
-        if scoped is True:
-            stmt = stmt.where(Chat.source_ids.is_not(None))
-        elif scoped is False:
-            stmt = stmt.where(Chat.source_ids.is_(None))
+        if scoped is not None:
+            stmt = stmt.where(_scope_predicate(scoped))
+        if search:
+            stmt = stmt.where(col(Chat.title).ilike(f"%{search}%"))
 
-        stmt = stmt.order_by(Chat.created_at.desc()).limit(limit)
+        stmt = stmt.order_by(Chat.created_at.desc()).limit(limit).offset(offset)
 
         results = self.session.exec(stmt)
         return self._entities_to_dicts(results.all())
@@ -114,12 +135,16 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         self,
         database_name: str,
         status: str | None = None,
+        scoped: bool | None = None,
+        search: str | None = None,
     ) -> int:
-        """Count chats for database with optional status filter.
+        """Count chats for database with optional filters.
 
         Args:
             database_name: Database name to filter by
             status: Optional status filter
+            scoped: Filter by scope status (True=scoped, False=unscoped, None=all)
+            search: Case-insensitive title substring filter
 
         Returns:
             Number of matching chats
@@ -129,13 +154,21 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         stmt = select(func.count()).select_from(Chat).where(Chat.database_name == database_name)
         if status is not None:
             stmt = stmt.where(Chat.status == status)
+        if scoped is not None:
+            stmt = stmt.where(_scope_predicate(scoped))
+        if search:
+            stmt = stmt.where(col(Chat.title).ilike(f"%{search}%"))
         return self.session.exec(stmt).one()
 
     def create_message(self, message_data: dict[str, Any]) -> dict[str, Any]:
-        """Create chat message."""
+        """Create chat message and maintain the owning chat's message_count."""
         self._ensure_connected()
         message = ChatMessage(**message_data)
         self.session.add(message)
+        chat = self.session.get(Chat, message_data["chat_id"])
+        if chat:
+            chat.message_count = (chat.message_count or 0) + 1
+            self.session.add(chat)
         self._maybe_commit()
         self.session.refresh(message)
         return self._entity_to_dict(message)
@@ -177,6 +210,51 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         )
         results = self.session.exec(stmt)
         return self._entities_to_dicts(results.all())
+
+    def delete_messages_after(
+        self,
+        chat_id: str,
+        message_id: str,
+        *,
+        inclusive: bool = False,
+    ) -> int:
+        """Delete the tail of a chat's history starting at/after a message.
+
+        Ordering matches ``get_messages`` (timestamp ascending; id as a
+        deterministic tiebreak for equal timestamps). Maintains the owning
+        chat's ``message_count`` and ``updated_at``.
+
+        Args:
+            chat_id: Chat whose tail to remove.
+            message_id: Anchor message; must belong to ``chat_id``.
+            inclusive: Also delete the anchor itself.
+
+        Returns:
+            Number of rows deleted (0 when the anchor is unknown or belongs
+            to a different chat).
+        """
+        self._ensure_connected()
+        anchor = self.session.get(ChatMessage, message_id)
+        if not anchor or anchor.chat_id != chat_id:
+            return 0
+
+        after = or_(
+            col(ChatMessage.timestamp) > anchor.timestamp,
+            (col(ChatMessage.timestamp) == anchor.timestamp) & (col(ChatMessage.id) > anchor.id),
+        )
+        condition = or_(after, col(ChatMessage.id) == anchor.id) if inclusive else after
+        stmt = delete(ChatMessage).where(col(ChatMessage.chat_id) == chat_id).where(condition)
+        result = self.session.exec(stmt)
+        deleted = int(result.rowcount or 0)
+
+        if deleted:
+            chat = self.session.get(Chat, chat_id)
+            if chat:
+                chat.message_count = max((chat.message_count or 0) - deleted, 0)
+                chat.updated_at = datetime.now(UTC)
+                self.session.add(chat)
+        self._maybe_commit()
+        return deleted
 
     # ------------------------------------------------------------------
     # Bulk / reset operations (PR2a Task 7).

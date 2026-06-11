@@ -20,7 +20,7 @@ rather than showing nothing until the background job completes.  On any
 pre-upload failure the placeholder is promoted to ERROR with
 ``error_stage='url_fetch'`` so the user can see what went wrong.
 
-Workstream 9 (2026-05-08): The handler now drives the WebScraper with
+The handler drives the WebScraper with
 the upload Content-Type allowlist + max_bytes pulled from settings, and
 routes binary fetches (PDF, images) through a staged file with the
 correct extension so the loader registry picks the right loader.

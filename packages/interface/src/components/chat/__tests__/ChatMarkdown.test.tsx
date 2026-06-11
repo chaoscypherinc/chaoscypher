@@ -414,6 +414,38 @@ describe('ChatMarkdown', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Tokens inside headings (live bug 2026-06-10: %%ENTITY_0%% leaked because
+  // heading elements had no placeholder-aware renderer)
+  // -------------------------------------------------------------------------
+  describe('tokens inside headings', () => {
+    it('renders an entity reference chip inside an h4 heading without leaking the placeholder', () => {
+      const { container } = renderMarkdown(
+        `#### Prince Andrew Bolkónski [[node:${ENTITY_ID_1}|Prince Andrew Bolkónski]]`,
+      );
+      expect(screen.getByTestId('entity-ref')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('%%ENTITY');
+      expect(screen.getByRole('heading', { level: 4 })).toHaveTextContent('Prince Andrew Bolkónski');
+    });
+
+    it('renders entity chips in every heading level h1-h6', () => {
+      const content = [1, 2, 3, 4, 5, 6]
+        .map((level) => `${'#'.repeat(level)} Title ${level} [[node:${ENTITY_ID_1}|Entity ${level}]]`)
+        .join('\n\n');
+      const { container } = renderMarkdown(content);
+      expect(screen.getAllByTestId('entity-ref')).toHaveLength(6);
+      expect(container.textContent).not.toContain('%%ENTITY');
+    });
+
+    it('renders a citation chip inside a heading without leaking the placeholder', () => {
+      const { container } = renderMarkdown(
+        `## Key Findings [[cite:${CHUNK_ID_A}:S1|war_and_peace.txt]]`,
+      );
+      expect(screen.getByTestId('chunk-citation')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('%%CITE');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // Malformed / unknown token syntax
   // -------------------------------------------------------------------------
   describe('malformed token handling', () => {
@@ -421,6 +453,34 @@ describe('ChatMarkdown', () => {
       // [[foo:bar]] does not match either pattern — rendered literally
       const { container } = renderMarkdown('Hello [[foo:bar|baz]] world');
       expect(container.textContent).toContain('foo');
+    });
+
+    it('strips a mixed-ref citation marker instead of rendering it as raw text', () => {
+      // Live bug 2026-06-10: [[cite:C1:S15,C17|f]] matches no pattern (C17 is
+      // a chunk alias in the sentence list) — must be hidden, never shown raw.
+      const { container } = renderMarkdown(
+        'Son of Prince Vasíli [[cite:C1:S15,C17|war_and_peace.txt]] and Old Tíkhon.',
+      );
+      expect(container.textContent).not.toContain('[[cite:');
+      expect(container.textContent).toContain('Son of Prince Vasíli');
+    });
+
+    it('strips a malformed citation even when it is the only token in the content', () => {
+      // The reference-processing gate must not skip sanitization when no
+      // valid token exists.
+      const { container } = renderMarkdown('Claim [[cite:C2:O8,C9|war_and_peace.txt]] end.');
+      expect(container.textContent).not.toContain('[[cite:');
+      expect(container.textContent).toContain('Claim');
+    });
+
+    it('keeps a valid citation while stripping an adjacent malformed one', () => {
+      const { container } = renderMarkdown(
+        `Valid [[cite:${CHUNK_ID_A}:S1|src.txt]] but broken [[cite:C2:S1,O5|src.txt]] here.`,
+        {},
+        {},
+      );
+      expect(screen.getByTestId('chunk-citation')).toBeInTheDocument();
+      expect(container.textContent).not.toContain('[[cite:');
     });
 
     it('renders incomplete citation (missing close brackets) as plain text', () => {

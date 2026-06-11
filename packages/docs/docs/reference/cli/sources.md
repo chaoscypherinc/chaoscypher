@@ -64,7 +64,7 @@ chaoscypher source add document.pdf --database research
 | `--domain DOMAIN` | | Domain for extraction (see [Extraction Domains](#extraction-domains)) |
 | `--no-confirm` | `-y` | Skip the domain confirmation gate and extract immediately with the auto-detected domain. |
 | `--skip-duplicates` | | Skip upload if identical content already exists (matched by SHA-256 hash). |
-| `--database DATABASE` | `-d` | Target database (default: `default`) |
+| `--database DATABASE` | `-d` | Target database (default: the current database — see [Database selection](index.md#database-selection)) |
 | `--verbose` | `-v` | Show real-time processing logs |
 | `--quiet` | `-q` | Minimal output (just OK/FAILED) |
 | `--json` | | Output results as JSON |
@@ -85,7 +85,7 @@ The choices you set here persist on the source row, so a later
 
 ### Extraction Domains
 
-Available domains: `auto` (default), `generic`, `technical`, `scientific`, `medical`, `legal`, `financial`, `news`, `educational`, `biographical`, `historical`, `literary`, `philosophical`, `political`, `theological`.
+Available domains: `auto` (default), `generic`, `technical`, `scientific`, `medical`, `legal`, `financial`, `news`, `educational`, `biographical`, `historical`, `literary`, `philosophical`, `political`, `theological`, `cybersecurity`, `design`, `intelligence`, `investigation`, `reference`. See [Extraction Domains](../../user-guide/domains.md) for what each domain extracts.
 
 :::info[Domain confirmation gate]
 
@@ -245,7 +245,7 @@ chaoscypher source list
 | `--pending` | `-p` | Show only files not yet committed (excludes committed and failed) |
 | `--awaiting` | `-a` | Show only sources awaiting domain confirmation |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json`, `yaml` |
-| `--database DATABASE` | `-d` | Database name (default: `default`) |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Sample Table Output
 
@@ -327,7 +327,7 @@ chaoscypher source get SOURCE_ID
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--database DATABASE` | `-d` | Database name (default: `default`) |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Sample Output
 
@@ -394,7 +394,7 @@ chaoscypher source extract SOURCE_ID
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--force` | | Re-extract a committed source. Deletes existing graph nodes and edges before re-running extraction. |
 | `--yes` | `-y` | Skip the destructive-action confirmation prompt (use with `--force`). |
-| `--database DATABASE` | `-d` | Target database (default: `default`). |
+| `--database DATABASE` | `-d` | Target database (default: the current database). |
 | `--quiet` | `-q` | Minimal output. |
 
 ```bash
@@ -431,7 +431,7 @@ chaoscypher source confirm --all --yes
 | `--depth {quick,full}` | | Extraction depth (default: `full`). |
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--yes` | `-y` | Accept the recommended domain without prompting (required when not a TTY). |
-| `--database DATABASE` | `-d` | Target database (default: `default`). |
+| `--database DATABASE` | `-d` | Target database (default: the current database). |
 | `--quiet` | `-q` | Minimal output. |
 
 List parked sources with `chaoscypher source list --awaiting`.
@@ -451,7 +451,7 @@ chaoscypher source delete FILE_ID
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--force` | `-f` | Skip confirmation prompt |
-| `--database DATABASE` | `-d` | Database name (default: `default`) |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Sample Output
 
@@ -497,20 +497,20 @@ chaoscypher source search "machine learning algorithms"
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--mode MODE` | `-m` | Search mode: `hybrid` (default), `keyword` (fast, no LLM), `semantic` (AI only) |
-| `--limit N` | `-l` | Maximum results (default: `10`) |
+| `--mode MODE` | `-m` | Search mode: `hybrid` (default), `keyword` (fast), `semantic` (vector only) |
+| `--limit N` | `-l` | Maximum results (default: `20`, configurable via `settings.cli.search_default_limit`) |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json` |
-| `--database DATABASE` | `-d` | Database name (default: `default`) |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Search Modes
 
-| Mode | Description | LLM Required |
-|------|-------------|:------------:|
-| `hybrid` | Semantic + keyword fallback (most robust) | Yes |
+| Mode | Description | Embeddings Required |
+|------|-------------|:-------------------:|
+| `hybrid` | Semantic + keyword combined (most robust) | Yes |
 | `keyword` | Fast full-text search | No |
 | `semantic` | Pure vector similarity | Yes |
 
-If LLM is not configured and `hybrid` or `semantic` mode is requested, the command automatically falls back to `keyword` mode.
+Semantic and hybrid modes use the configured embedding provider — by default the local CPU sentence-transformers provider, which needs no LLM and no API key. Hybrid mode internally falls back to keyword-only results for very short queries (fewer than 3 characters); semantic mode returns vector results only.
 
 ### Sample Table Output
 
@@ -574,8 +574,7 @@ chaoscypher source rebuild-search
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--database DATABASE` | `-d` | Database name (default: `default`) |
-| `--json` | | Output as JSON |
+| `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Sample Output
 
@@ -584,25 +583,25 @@ chaoscypher source rebuild-search
 ```
 
 ``` { .text .no-copy }
-Rebuilding search indexes...
-
-  FTS index rebuilt: 3400 chunks, 1500 nodes
-  Vector index: embeddings current (no regeneration needed)
-
-Done in 2.1s
+Rebuilding search indexes from stored embeddings...
+Search indexes rebuilt successfully.
+  Nodes indexed: 1500
+  Nodes with embeddings: 1500
+  Chunks indexed: 3400
 ```
 
-When embeddings need regeneration:
+When the embedding model or dimensions have changed, all embeddings are regenerated first:
 
 ``` { .text .no-copy }
-Rebuilding search indexes...
-
-  FTS index rebuilt: 3400 chunks, 1500 nodes
-  Embedding model changed: regenerating embeddings...
-  Re-embedding ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-Done in 84.3s (4900 embeddings regenerated)
+Embedding mismatch detected. Regenerating all embeddings with current model...
+Search indexes rebuilt successfully.
+  Sources re-embedded: 12
+  Nodes indexed: 1500
+  Nodes with embeddings: 1500
+  Chunks indexed: 3400
 ```
+
+On failure, the command prints `Rebuild failed: <message>` and exits non-zero.
 
 ---
 

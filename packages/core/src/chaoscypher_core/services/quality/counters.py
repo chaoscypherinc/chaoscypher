@@ -17,10 +17,9 @@ implemented on ``SourceLifecycleMixin``:
   bulk-sets a dict of columns on the row in one statement.
 
 Counter columns and the ``vector_indexed_at`` / ``vector_indexing_status``
-fields were added by the same migration (Workstream 1, 0021_*).  Per-stage
-increment call-sites are added in Workstreams 3-10 as those stages are
-touched; this module is the single typed entry point all of them go
-through.
+fields were added by the same migration (0021_*).  Every per-stage
+increment call-site across the pipeline goes through this module — it is
+the single typed entry point for counter writes.
 """
 
 from __future__ import annotations
@@ -244,9 +243,9 @@ async def increment_quality_counter(
     """Best-effort atomic increment.
 
     The underlying UPDATE is synchronous — wrapping it in ``async def``
-    is purely a contract decision: every pipeline-stage call site in
-    Workstreams 3-10 lives in async code, so making the helper async
-    lets it be ``await``ed inline without a ``run_in_executor`` dance.
+    is purely a contract decision: every pipeline-stage call site lives
+    in async code, so making the helper async lets it be ``await``ed
+    inline without a ``run_in_executor`` dance.
     Failures are logged at WARNING and swallowed.
     """
     try:

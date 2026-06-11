@@ -93,20 +93,34 @@ POST http://localhost:8080/api/v1/mcp
 
 The HTTP transport supports Server-Sent Events (SSE) for streaming responses and respects all existing Cortex authentication settings.
 
+:::note[API port]
+
+`http://localhost:8080` is the API port for the multi-container development stack. The all-in-one container (the primary install) serves the API on port **80** instead — use `http://localhost/api/v1/mcp` there.
+
+:::
+
 ## Configuration
 
 MCP settings are configured in [`settings.yaml`](../getting-started/configuration.md):
 
 ```yaml
 mcp:
-  mode: read              # "read" (default) or "write"
-  auto_extract: false     # Run server-side entity extraction after indexing (opt-in)
+  mode: read                              # "read" (default) or "write"
+  auto_extract: false                     # Run server-side entity extraction after indexing (opt-in)
+  confirmation_required_default: true     # Domain-confirmation gate default for MCP uploads
+  max_extraction_payload_bytes: 10485760  # Per-call cap on submit_chunk_extraction payloads
+  extraction_rate_limit_per_minute: 100   # submit_chunk_extraction calls per source per minute
+  completed_history_limit: 20             # Completed uploads kept in the in-memory status history
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `mode` | `read` | Tool access level. `read` exposes 19 search/query tools. `write` exposes all 31 tools including create, update, and delete operations. |
 | `auto_extract` | `false` | When `true`, the server runs entity extraction after indexing uploaded documents. When `false` (default), the MCP client drives extraction itself using `submit_chunk_extraction` and `finalize_extraction`. |
+| `confirmation_required_default` | `true` | Server-wide default for the [domain-confirmation gate](#document-processing-via-mcp). When `true`, an upload with an auto-detected domain parks at `awaiting_confirmation` until `confirm_extraction` is called; a per-call `auto_confirm: true` on `add_document` overrides it for a single upload. |
+| `max_extraction_payload_bytes` | `10485760` | Maximum combined UTF-8 size (10 MiB) of `entities_text` + `relationships_text` accepted per `submit_chunk_extraction` call. Larger submissions are rejected with `PAYLOAD_TOO_LARGE`. |
+| `extraction_rate_limit_per_minute` | `100` | Maximum `submit_chunk_extraction` calls per source per 60-second sliding window. |
+| `completed_history_limit` | `20` | Completed MCP uploads retained in the in-memory status history before the oldest are evicted. |
 
 :::tip[Safe by default]
 
@@ -155,7 +169,7 @@ These tools are only available when `mcp.mode` is set to `write`:
 | `create_template` | Create a node or edge template with schema |
 | `delete_template` | Delete a template from the schema |
 | `add_document` | Queue a file for background indexing and optional entity extraction |
-| `wait_for_document` | Wait for a document to finish processing, polling until it reaches the target status |
+| `wait_for_document` | Wait for a document to finish processing, polling until it reaches the target status. Cannot see a source parked at `awaiting_confirmation` — see [Document Processing via MCP](#document-processing-via-mcp) |
 | `remove_document` | Delete a source document and all its derived data |
 | `confirm_extraction` | Confirm (or override) the auto-detected extraction domain for a source parked at `awaiting_confirmation` and start extraction |
 | `submit_chunk_extraction` | Submit extracted entities and relationships for a specific document chunk |
@@ -178,8 +192,17 @@ When using write mode, the `add_document` tool queues files for background proce
 
 1. The file is added to an in-memory processing queue
 2. Documents are processed one at a time (chunking, embedding, indexing)
-3. If `auto_extract` is enabled, entity extraction runs automatically after indexing
-4. Use `get_document_status` to check progress of queued and in-progress uploads
+3. If extraction is requested with an auto-detected domain, the source parks at `awaiting_confirmation` after indexing. Call `confirm_extraction` (optionally overriding the domain) to start extraction, or pass `auto_confirm: true` to `add_document` to skip the gate for that upload
+4. Once the domain is confirmed (or the gate skipped), extraction proceeds — server-side if `auto_extract` is enabled, otherwise client-driven (below)
+5. Use `get_document_status` to check progress of queued and in-progress uploads
+
+:::warning[Parked sources are invisible to wait_for_document]
+
+`wait_for_document` only sees in-memory processor jobs — it cannot see a source parked at `awaiting_confirmation` (that state lives in the database). For a parked upload, poll `get_document_status` and call `confirm_extraction` to proceed.
+
+:::
+
+The same domain-confirmation gate applies to REST API uploads: `POST /api/v1/sources` accepts an `auto_confirm` form field that also defaults to `false`, so a default API upload without a forced domain parks at `awaiting_confirmation` after indexing. See [Sources](sources.md) for the confirmation workflow.
 
 ### Client-Driven Extraction
 
@@ -190,7 +213,25 @@ MCP defaults to **client-driven extraction** — the AI assistant performs entit
 - After all chunks are processed, `finalize_extraction` commits results to the knowledge graph
 - Set `auto_extract: false` in settings to use this workflow exclusively
 
+The domain-confirmation gate applies here too: if extraction is requested with an auto-detected domain, the source parks at `awaiting_confirmation` after indexing. Call `confirm_extraction` (optionally overriding the domain) to start extraction, or pass `auto_confirm: true` to `add_document` to skip the gate for that upload.
+
+Two operational limits apply to client-driven extraction (both [configurable](#configuration)):
+
+- Each `submit_chunk_extraction` call may carry at most `mcp.max_extraction_payload_bytes` (default 10 MiB) of combined `entities_text` + `relationships_text`; larger submissions are rejected with `PAYLOAD_TOO_LARGE`.
+- Each source accepts at most `mcp.extraction_rate_limit_per_minute` (default 100) `submit_chunk_extraction` calls per 60-second sliding window.
+
 This is useful when the AI assistant has better extraction capabilities than the local LLM, or when no local LLM is configured.
+
+## Maintenance Mode
+
+If the database is blocked on a pending schema upgrade — for example, a destructive migration is pending with auto-apply disabled, or the pre-upgrade backup failed — the MCP server starts in a degraded **maintenance mode** instead of failing with an opaque JSON-RPC error. In this mode the normal toolset is not advertised; only two tools are available:
+
+| Tool | Description |
+|------|-------------|
+| `upgrade_status` | Reports the pending migrations blocking normal use (each with its risk tier and a plain-language description), the most recent pre-upgrade backup path, and the last-applied revisions. Call this first. |
+| `apply_upgrade` | Applies the pending migrations. Safe and data-changing migrations apply automatically; destructive migrations (which may drop columns or force re-extraction) require `confirm_destructive: true`. A verified backup is taken before anything is applied. |
+
+Any other tool call returns a clear error explaining that the database needs a one-time upgrade. After a successful `apply_upgrade`, reconnect the MCP server to restore the normal toolset. This is the MCP equivalent of the web maintenance page — see [Upgrading](../getting-started/upgrading.md).
 
 ## Privacy
 

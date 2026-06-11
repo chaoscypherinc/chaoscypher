@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING
 
 import click
@@ -21,6 +22,24 @@ from chaoscypher_cli.utils.paths import get_packages_dir
 
 
 console = Console()
+
+
+def _is_unsafe_name(value: str) -> bool:
+    """Return True if a user-supplied name could escape the packages directory.
+
+    Legitimate names are ``packagename``, ``packagename.ccx``, or
+    ``user/packagename`` — anything with backslashes, drive letters, absolute
+    paths, or ``.``/``..``/empty segments would let ``remove`` resolve (and
+    offer to delete) paths outside the packages directory.
+    """
+    if "\\" in value:
+        return True
+    # Drive letters ("C:...") and absolute paths; PureWindowsPath also treats
+    # POSIX-style "/abs" as anchored, so this covers both platforms.
+    pure = PureWindowsPath(value)
+    if pure.drive or pure.is_absolute() or value.startswith("/"):
+        return True
+    return any(part in ("", ".", "..") for part in value.split("/"))
 
 
 @click.command()
@@ -39,6 +58,20 @@ def remove(package: str, version: str | None, remove_all: bool, force: bool) -> 
         chaoscypher remove my-package --all
         chaoscypher remove my-package --force
     """
+    # Validate user-supplied names BEFORE any filesystem operation so a name
+    # like "..\\..\\x" can never resolve (and rmtree) outside the packages dir.
+    if _is_unsafe_name(package):
+        console.print(f"[red]Invalid package name:[/red] {package}")
+        console.print(
+            "Package names must look like 'packagename' or 'user/packagename' "
+            "(no absolute paths, drive letters, backslashes, or '..')."
+        )
+        sys.exit(1)
+    if version is not None and _is_unsafe_name(version):
+        console.print(f"[red]Invalid version:[/red] {version}")
+        console.print("Versions must be plain names (no path separators or '..').")
+        sys.exit(1)
+
     try:
         packages_dir = get_packages_dir()
 

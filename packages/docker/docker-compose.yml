@@ -11,6 +11,11 @@ services:
       args:
         INCLUDE_MEDIA: ${INCLUDE_MEDIA:-0}
     container_name: chaoscypher
+    # Make host.docker.internal resolve on Linux engines too (Docker Desktop
+    # provides it natively) — the image's CHAOSCYPHER_OLLAMA_URL default
+    # points the first-boot Ollama instance at the host through this alias.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       # Default 0.0.0.0 — accessible from your LAN, matches the self-hosted
       # convention (Vaultwarden / Jellyfin / Home Assistant / Gitea).

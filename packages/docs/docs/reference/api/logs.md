@@ -45,10 +45,10 @@ Returns interleaved logs from all managed services (Cortex, Neuron, Nginx, Valke
 
 ```bash
 # Get recent logs from all services
-curl -s http://localhost:8080/api/v1/logs
+curl -s http://localhost/api/v1/logs
 
 # Get last 100 lines
-curl -s "http://localhost:8080/api/v1/logs?lines=100"
+curl -s "http://localhost/api/v1/logs?lines=100"
 ```
 
 ---
@@ -91,8 +91,8 @@ Returns logs for a specific service.
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/logs/cortex
-curl -s "http://localhost:8080/api/v1/logs/neuron?lines=50"
+curl -s http://localhost/api/v1/logs/cortex
+curl -s "http://localhost/api/v1/logs/neuron?lines=50"
 ```
 
 ---
@@ -145,7 +145,7 @@ When supervisord is not reachable (e.g., multi-container deployment):
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/logs/status
+curl -s http://localhost/api/v1/logs/status
 ```
 
 ---

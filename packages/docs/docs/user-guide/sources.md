@@ -39,7 +39,7 @@ The `curl` examples on this page use `http://localhost:8080`, which is the API p
 chaoscypher source add document.pdf
 ```
 
-The CLI runs the full pipeline (upload → index → extract → commit) with a progress bar for each stage.
+The CLI runs the full pipeline (upload → index → extract → commit) with a progress bar for each stage; by default it pauses after indexing to let you confirm the auto-detected extraction domain (skip with `--no-confirm`).
 
 </TabItem>
 <TabItem value="python" label="Python">
@@ -221,7 +221,8 @@ Every source goes through a multi-stage pipeline. The first stage (indexing) run
 graph LR
     A[Upload] --> B[Indexing]
     B --> C[Indexed]
-    C --> D[Extraction]
+    C --> W[Awaiting confirmation]
+    W --> D[Extraction]
     C --> M[MCP Extracting]
     D --> E[Extracted]
     M --> E
@@ -229,6 +230,7 @@ graph LR
     F --> G[Committed]
 
     style B fill:#12121e,stroke:#00fff0,color:#e0e0f0
+    style W fill:#12121e,stroke:#ffd24d,color:#e0e0f0
     style D fill:#12121e,stroke:#39ff14,color:#e0e0f0
     style M fill:#12121e,stroke:#39ff14,color:#e0e0f0
     style F fill:#12121e,stroke:#7b2ff7,color:#e0e0f0
@@ -248,6 +250,16 @@ Runs automatically after upload. The document is chunked into segments and each 
 **Time:** ~30 seconds for a 100-page PDF.
 
 After indexing, the source is searchable via RAG — you can chat about it and search it immediately, without waiting for extraction.
+
+### Confirm the Extraction Domain
+
+By default, extraction doesn't start until you confirm the auto-detected [extraction domain](domains.md). After indexing, an auto-domain source parks at `awaiting_confirmation` (phase `awaiting_input`) — it's already searchable via RAG while it waits.
+
+- **Web UI** — a confirmation dialog shows the detected domain and its ranking; confirm it (or pick a different domain) to start extraction.
+- **CLI** — `chaoscypher source add` prompts interactively ("Confirm extraction domain") when run in a terminal. Non-interactive or quiet runs park the source instead; confirm it later with `chaoscypher source confirm <SOURCE_ID>`, or pass `--no-confirm` to accept the auto-detected domain and skip the gate.
+- **API** — confirm a parked source with `POST /api/v1/sources/{source_id}/confirmation`, or bypass the gate at upload time with the `auto_confirm=true` form field (default `false`).
+
+Forcing a domain at upload (the `domain` field / `--domain` flag) skips the gate entirely — there is nothing to confirm.
 
 ### Stage 2: Entity Extraction (Optional)
 
@@ -282,12 +294,13 @@ Automatically runs after extraction. Imports extracted entities and relationship
 
 ### Status Flow
 
-Every source exposes a `progress` object with a 4-phase summary designed for the UI:
+Every source exposes a `progress` object with a 5-phase summary designed for the UI:
 
 | Phase | Searchable | Meaning |
 |-------|:----------:|---------|
 | `waiting_to_index` | No | Pending or failed — nothing useful exists yet |
 | `indexing` | No | Chunking and embedding in progress |
+| `awaiting_input` | **Yes** | Indexed and searchable; waiting for you to confirm the auto-detected extraction domain |
 | `extracting` | **Yes** | Indexed and searchable; extraction is optional and may be running |
 | `ready` | **Yes** | Fully committed to the knowledge graph |
 
@@ -300,7 +313,9 @@ The `is_searchable` flag in `progress` lets the UI immediately determine whether
 |--------|---------|---------|
 | `pending` | `waiting_to_index` | Uploaded, waiting to start |
 | `indexing` | `indexing` | Chunking and embedding in progress |
+| `vision_pending` | `indexing` | Waiting for vision processing of images |
 | `indexed` | `extracting` | Searchable via RAG, ready for extraction |
+| `awaiting_confirmation` | `awaiting_input` | Searchable via RAG; parked for domain confirmation before extraction |
 | `extracting` | `extracting` | LLM entity extraction in progress |
 | `mcp_extracting` | `extracting` | [Model Context Protocol](https://modelcontextprotocol.io/) (MCP)-driven entity extraction in progress |
 | `extracted` | `extracting` | Extraction complete, ready to commit |
@@ -522,7 +537,7 @@ curl -X DELETE http://localhost:8080/api/v1/sources/{source_id}
 
 :::warning
 
-Deletion is permanent and cannot be undone. Graph nodes and edges created from the source remain in the knowledge graph after deletion.
+Deletion is permanent and cannot be undone. Graph entities cited only by this source are deleted along with it (and removed from the search index); entities also cited by other sources remain in the knowledge graph.
 
 :::
 

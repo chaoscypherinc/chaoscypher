@@ -4,10 +4,10 @@
 """Vision processing service.
 
 Single-page describe with an output-token cap and finish_reason
-surfacing. The legacy batched ``describe_images`` helper was removed in
-PR 2 (Task 12, 2026-05-13) alongside the indexing_handler rewire — the
-per-page queue handler now calls ``describe_image`` directly, one page
-per task on QUEUE_LLM.
+surfacing. The legacy batched ``describe_images`` helper was removed
+when the indexing_handler was rewired to per-page queue decomposition —
+the per-page queue handler now calls ``describe_image`` directly, one
+page per task on QUEUE_LLM.
 """
 
 from __future__ import annotations

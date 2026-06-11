@@ -289,9 +289,9 @@ def format_extraction_templates(
         domain: Domain instance (may be ``None`` for generic fallback).
         examples_enabled: Whether to include domain-specific examples.
         examples_max_chars: Maximum character count for each example section.
-        allow_template_fallback: Phase 6 (2026-05-08). When False, an empty
-            domain template list raises ValidationError instead of silently
-            using generic built-in templates. Passed through to
+        allow_template_fallback: When False, an empty domain template list
+            raises ValidationError instead of silently using generic
+            built-in templates. Passed through to
             ``format_domain_node_templates`` and ``format_domain_edge_templates``.
 
     Returns:
@@ -357,8 +357,8 @@ def apply_depth_strategy(
     Args:
         groups: Full list of hierarchical groups.
         depth: One of ``"quick"`` or ``"full"``. Any other value raises
-            ``ValidationError`` (Phase 6, 2026-05-08 — previously unrecognised
-            values were silently treated as ``"full"``).
+            ``ValidationError`` (previously unrecognised values were
+            silently treated as ``"full"``).
         quick_sample_size: Maximum groups for quick depth.
 
     Returns:

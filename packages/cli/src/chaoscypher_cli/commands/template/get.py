@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 
 
 console = Console()
@@ -34,8 +35,8 @@ def get(template_id: str, output_format: str, database: str) -> None:
     TEMPLATE_ID is the unique identifier of the template.
 
     Example:
-        chaoscypher template get Person
-        chaoscypher template get tmpl-123 --format json
+        chaoscypher graph template get Person
+        chaoscypher graph template get tmpl-123 --format json
     """
     try:
         ctx = get_context(database_name=database)
@@ -53,7 +54,7 @@ def get(template_id: str, output_format: str, database: str) -> None:
             template_dict = dict(template) if not isinstance(template, dict) else template
 
         if output_format == "json":
-            console.print(json.dumps(template_dict, indent=2, default=str))
+            print_json(json.dumps(template_dict, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -62,7 +63,7 @@ def get(template_id: str, output_format: str, database: str) -> None:
                 console.print(yaml.dump(template_dict, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(template_dict, indent=2, default=str))
+                print_json(json.dumps(template_dict, indent=2, default=str))
 
         else:  # table format
             name = template_dict.get("name", template_id)

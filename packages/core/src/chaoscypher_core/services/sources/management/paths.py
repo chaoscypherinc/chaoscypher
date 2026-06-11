@@ -8,8 +8,8 @@ Canonical path formulas for per-source artefacts stored on disk under
 source of truth shared by the indexing handler (writer) and any future reader
 (e.g. a re-extraction path that needs to reload original.txt).
 
-Phase 5a (2026-05-08): adds ``get_original_text_path`` for the raw-upload
-preservation feature (``preserve_original_text_for_citations``).
+``get_original_text_path`` supports the raw-upload preservation feature
+(``preserve_original_text_for_citations``).
 """
 
 from __future__ import annotations

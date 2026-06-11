@@ -112,10 +112,10 @@ class SourceIndexingMixin(
         Centralizes the lifecycle write so fail_indexing / fail_extraction /
         fail_commit cannot drift apart on what they clear. UI relies on the
         progress fields being zeroed so an errored source does not keep
-        rendering "Indexing 1/2" forever (audit fix #7).
+        rendering "Indexing 1/2" forever.
 
         ``stage`` must be a ``SourceErrorStage`` member so the persisted
-        string is always locked to the enum definition (audit fix Task 2).
+        string is always locked to the enum definition.
         """
         source.status = SourceStatus.ERROR
         source.error_stage = stage.value
@@ -524,13 +524,13 @@ class SourceIndexingMixin(
     def reset_to_indexed_for_re_extract(self, source_id: str) -> None:
         """Reset a non-ERROR, non-COMMITTED source back to INDEXED for re-extraction.
 
-        Phase 5 Task E state-machine method. Handles the
+        State-machine method handling the
         ``INDEXED / EXTRACTED / EXTRACTING / MCP_EXTRACTING / COMMITTING``
         re-extract paths that previously routed through a bare
         ``update_file({"status": SourceStatus.INDEXED, ...})`` dict write
         in cortex.features.sources.service.re_extract — bypassing the
-        adapter's state-machine discipline (Phase 5 Task E lint, file
-        ``tests/unit/shared/test_phase5_task_e_status_writer_discipline.py``).
+        adapter's state-machine discipline (now enforced by a status-writer
+        lint test in the cortex test suite).
 
         ``reset_for_retry`` cannot be used for these statuses because its
         ``WHERE status = 'error'`` guard rejects everything except ERROR.

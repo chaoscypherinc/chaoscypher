@@ -30,13 +30,13 @@ GET /api/v1/templates
 ### Example Request
 
 ```bash
-curl 'http://localhost:8080/api/v1/templates?page=1&page_size=20'
+curl 'http://localhost/api/v1/templates?page=1&page_size=20'
 ```
 
 Filter by type:
 
 ```bash
-curl 'http://localhost:8080/api/v1/templates?template_type=node'
+curl 'http://localhost/api/v1/templates?template_type=node'
 ```
 
 ### Response
@@ -66,9 +66,12 @@ curl 'http://localhost:8080/api/v1/templates?template_type=node'
     }
   ],
   "pagination": {
+    "total": 14,
     "page": 1,
     "page_size": 20,
-    "total": 14
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
   }
 }
 ```
@@ -106,7 +109,7 @@ Template names starting with `system_` are reserved for built-in templates and w
 ### Example Request
 
 ```bash
-curl -X POST 'http://localhost:8080/api/v1/templates' \
+curl -X POST 'http://localhost/api/v1/templates' \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "Person",
@@ -179,7 +182,7 @@ GET /api/v1/templates/{template_id}
 ### Example Request
 
 ```bash
-curl 'http://localhost:8080/api/v1/templates/tmpl-person-abc123'
+curl 'http://localhost/api/v1/templates/tmpl-person-abc123'
 ```
 
 ### Response
@@ -248,7 +251,7 @@ When `properties` is provided, the entire property list is replaced. To add a pr
 ### Example Request
 
 ```bash
-curl -X PATCH 'http://localhost:8080/api/v1/templates/tmpl-person-abc123' \
+curl -X PATCH 'http://localhost/api/v1/templates/tmpl-person-abc123' \
   -H 'Content-Type: application/json' \
   -d '{
     "description": "A person entity with extended biographical details",
@@ -326,13 +329,13 @@ DELETE /api/v1/templates/{template_id}
 ### Example Request
 
 ```bash
-curl -X DELETE 'http://localhost:8080/api/v1/templates/tmpl-person-abc123'
+curl -X DELETE 'http://localhost/api/v1/templates/tmpl-person-abc123'
 ```
 
 Force delete a template that is in use:
 
 ```bash
-curl -X DELETE 'http://localhost:8080/api/v1/templates/tmpl-person-abc123?force=true'
+curl -X DELETE 'http://localhost/api/v1/templates/tmpl-person-abc123?force=true'
 ```
 
 ### Response
@@ -369,7 +372,7 @@ POST /api/v1/templates/embeddings
 ### Example Request
 
 ```bash
-curl -X POST 'http://localhost:8080/api/v1/templates/embeddings'
+curl -X POST 'http://localhost/api/v1/templates/embeddings'
 ```
 
 ### Response
@@ -416,7 +419,7 @@ Each operation in the list has the following structure:
 ### Example Request
 
 ```bash
-curl -X POST 'http://localhost:8080/api/v1/templates/batch' \
+curl -X POST 'http://localhost/api/v1/templates/batch' \
   -H 'Content-Type: application/json' \
   -d '{
     "operations": [

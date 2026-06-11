@@ -10,13 +10,13 @@ Example:
     scraper = WebScraper()
     result = await scraper.extract_full_content("https://example.com/article")
 
-Workstream 9 (2026-05-08): ``extract_full_content`` returns a
-``FetchResult`` dataclass instead of an untyped dict so callers can
-distinguish text vs binary responses, see the resolved Content-Type,
-and route binary content (PDF, images) through the staging pipeline.
-The scraper now also validates the response Content-Type against the
-upload allowlist and honors the response charset rather than
-hardcoding UTF-8 with replacement.
+``extract_full_content`` returns a ``FetchResult`` dataclass instead
+of an untyped dict so callers can distinguish text vs binary
+responses, see the resolved Content-Type, and route binary content
+(PDF, images) through the staging pipeline. The scraper also
+validates the response Content-Type against the upload allowlist and
+honors the response charset rather than hardcoding UTF-8 with
+replacement.
 """
 
 from __future__ import annotations

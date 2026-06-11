@@ -3,7 +3,7 @@
 
 """Pause / Resume API Endpoints.
 
-Eight endpoints split across two routers so they can be mounted at
+Endpoints are split across two routers so they can be mounted at
 different prefixes (``/sources`` and ``/system/processing``).
 
 Per-source (mounted at /sources):
@@ -17,6 +17,7 @@ System-wide (mounted at /system/processing):
     POST   /resume
     GET    /status
     GET    /events
+    DELETE /events
 """
 
 from typing import Annotated

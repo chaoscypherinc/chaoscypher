@@ -19,6 +19,13 @@ interface ContextPanelProps {
   messages: ExtendedChatMessage[];
   /** Called to populate the input with a message for retry */
   onRetry: (message: string) => void;
+  /**
+   * Re-run the failed turn server-side (the user message is already
+   * persisted). Used for worker/stream errors; send-POST failures
+   * (`NETWORK_ERROR`) fall back to repopulating the input instead, since
+   * nothing was persisted for those.
+   */
+  onRetryTurn?: () => void;
 }
 
 /**
@@ -33,6 +40,7 @@ export default function ContextPanel({
   onClearError,
   messages,
   onRetry,
+  onRetryTurn,
 }: ContextPanelProps) {
   if (!error) return null;
 
@@ -48,6 +56,13 @@ export default function ContextPanel({
             size="small"
             onClick={() => {
               onClearError();
+              // Worker/stream failures persisted the user message — re-run
+              // the turn without re-posting it (no duplicates). A failed
+              // send POST persisted nothing, so repopulate the input.
+              if (onRetryTurn && error.code !== 'NETWORK_ERROR') {
+                onRetryTurn();
+                return;
+              }
               const lastUserMsg = messages.filter(m => m.role === 'user').pop();
               if (lastUserMsg) {
                 onRetry(lastUserMsg.content);

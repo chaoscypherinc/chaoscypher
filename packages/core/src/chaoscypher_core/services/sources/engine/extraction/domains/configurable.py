@@ -712,8 +712,8 @@ class ConfigurableDomain:
     def get_system_prompt_override(self) -> str | None:
         """Return the per-domain system-prompt override if configured.
 
-        Phase 6 (2026-05-08): allows a domain JSONLD config to replace the
-        global ``ExtractionSettings.system_prompt`` for all extraction calls
+        Allows a domain JSONLD config to replace the global
+        ``ExtractionSettings.system_prompt`` for all extraction calls
         on this domain.  ``None`` means "no override — use the global default".
 
         Example JSONLD::

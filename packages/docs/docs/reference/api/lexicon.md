@@ -32,7 +32,7 @@ Starts an OAuth 2.0 Device Authorization Grant flow (RFC 8628). Returns a user c
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/auth/device" \
+curl -X POST "http://localhost/api/v1/lexicon/auth/device" \
   -H "Content-Type: application/json" \
   -d '{
     "lexicon_url": "https://lexicon.chaoscypher.com",
@@ -88,7 +88,7 @@ Single non-blocking poll to check whether the user has completed browser authent
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/auth/poll" \
+curl -X POST "http://localhost/api/v1/lexicon/auth/poll" \
   -H "Content-Type: application/json" \
   -d '{
     "device_code": "d1b2c3d4-e5f6-7890-abcd-ef1234567890",
@@ -151,7 +151,7 @@ Authenticates with the Lexicon using username and password credentials.
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/auth/login" \
+curl -X POST "http://localhost/api/v1/lexicon/auth/login" \
   -H "Content-Type: application/json" \
   -d '{
     "username": "johndoe",
@@ -209,7 +209,7 @@ Sets a JWT access token directly, bypassing interactive login. Designed for CI/C
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/auth/token" \
+curl -X POST "http://localhost/api/v1/lexicon/auth/token" \
   -H "Content-Type: application/json" \
   -d '{
     "token": "eyJhbGciOiJIUzI1NiIs...",
@@ -243,7 +243,7 @@ Clears all stored Lexicon credentials.
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/auth/logout"
+curl -X POST "http://localhost/api/v1/lexicon/auth/logout"
 ```
 
 #### Response
@@ -272,7 +272,7 @@ Returns the current authentication status without making any external requests.
 #### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/lexicon/auth/status"
+curl "http://localhost/api/v1/lexicon/auth/status"
 ```
 
 #### Response -- Authenticated
@@ -328,7 +328,7 @@ Search for packages on the Lexicon registry. An empty query returns all packages
 |----------------|-------------|----------|-------------|--------------------------------------------------------------------|
 | `query`        | string      | No       | `""`        | Search query string (empty returns all)                            |
 | `page`         | int         | No       | `1`         | Page number (1-indexed, minimum: 1)                                |
-| `limit`        | int/null    | No       | server default (50) | Results per page (minimum: 1, capped at server max: 1000) |
+| `limit`        | int/null    | No       | server default (50) | Results per page (minimum: 1, maximum: 100 — values above 100 are rejected) |
 | `sort_by`      | string      | No       | `downloads` | Sort field: `relevance`, `stars`, `downloads`, `newest`, `updated`, `name` |
 | `is_public`    | bool/null   | No       | `null`      | Filter by visibility (`true` or `false`)                           |
 | `owner_id`     | string/null | No       | `null`      | Filter by owner ID                                                 |
@@ -338,16 +338,16 @@ Search for packages on the Lexicon registry. An empty query returns all packages
 
 ```bash
 # Search all packages
-curl "http://localhost:8080/api/v1/lexicon/search"
+curl "http://localhost/api/v1/lexicon/search"
 
 # Search by keyword
-curl "http://localhost:8080/api/v1/lexicon/search?query=medical"
+curl "http://localhost/api/v1/lexicon/search?query=medical"
 
 # Search with filters
-curl "http://localhost:8080/api/v1/lexicon/search?query=finance&sort_by=stars&is_public=true&package_type=KNOWLEDGE"
+curl "http://localhost/api/v1/lexicon/search?query=finance&sort_by=stars&is_public=true&package_type=KNOWLEDGE"
 
 # Paginated results
-curl "http://localhost:8080/api/v1/lexicon/search?query=science&page=2&limit=10"
+curl "http://localhost/api/v1/lexicon/search?query=science&page=2&limit=10"
 ```
 
 #### Response
@@ -426,7 +426,7 @@ Retrieve metadata for a specific package by owner and name.
 #### Example
 
 ```bash
-curl "http://localhost:8080/api/v1/lexicon/r/johndoe/medical-ontology"
+curl "http://localhost/api/v1/lexicon/r/johndoe/medical-ontology"
 ```
 
 #### Response
@@ -510,7 +510,7 @@ Queue a Lexicon package import from the registry into the current Chaos Cypher d
 #### curl Example
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/lexicon/import \
+curl -X POST http://localhost/api/v1/lexicon/import \
   -H "Content-Type: application/json" \
   -d '{
     "owner_username": "acme",
@@ -555,7 +555,7 @@ Multipart form upload with query parameters for metadata.
 #### Example
 
 ```bash
-curl -X POST "http://localhost:8080/api/v1/lexicon/upload?public=true&message=Initial+release" \
+curl -X POST "http://localhost/api/v1/lexicon/upload?public=true&message=Initial+release" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -F "file=@my-package.ccx"
 ```
@@ -588,20 +588,20 @@ curl -X POST "http://localhost:8080/api/v1/lexicon/upload?public=true&message=In
 |--------|-------------------------------|
 | `401`  | Authentication required       |
 | `403`  | Insufficient permissions      |
+| `413`  | Package file exceeds `batching.max_upload_bytes` (default 5 GB) — error code `PAYLOAD_TOO_LARGE` |
 | `503`  | Lexicon server unavailable    |
 
 ---
 
 ## Error Handling
 
-All Lexicon endpoints return errors in a consistent format:
+All Lexicon endpoints return errors in the unified envelope used across the API (see [Error Format](index.md#error-format)):
 
 ```json
 {
-  "detail": {
-    "message": "Human-readable error message",
-    "details": {}
-  }
+  "error": "LEXICON_UPSTREAM_ERROR",
+  "message": "Upstream lexicon request failed",
+  "details": null
 }
 ```
 

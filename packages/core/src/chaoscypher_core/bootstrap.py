@@ -455,7 +455,7 @@ class Engine:
         """Convenience alias for :attr:`embedding_service`.
 
         Named to match the ``EmbeddingProviderProtocol`` port terminology
-        used by services migrated in Phase 2. Returns the same instance
+        used by services that consume the port. Returns the same instance
         as :attr:`embedding_service`.
         """
         return self.embedding_service

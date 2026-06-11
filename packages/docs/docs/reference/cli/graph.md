@@ -29,7 +29,7 @@ chaoscypher graph node list [OPTIONS]
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
 | `--page` | `-p` | `1` | Page number |
 | `--limit` | `-l` | `50` | Items per page |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -74,7 +74,7 @@ chaoscypher graph node create [OPTIONS]
 | `--label` | `-l` | Yes | | Label/name of the node |
 | `--property` | `-p` | No | | Property in `key=value` format (repeatable) |
 | `--json-props` | `-j` | No | | Properties as a JSON string |
-| `--database` | `-d` | No | `default` | Database name |
+| `--database` | `-d` | No | current database | Database name |
 | `--interactive` | `-i` | No | | Use interactive wizard |
 
 **Examples:**
@@ -122,7 +122,7 @@ chaoscypher graph node get NODE_ID [OPTIONS]
 |--------|-------|---------|-------------|
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
 | `--include-links` | `-l` | `false` | Include connected links |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -176,7 +176,7 @@ chaoscypher graph node update NODE_ID [OPTIONS]
 | `--label` | `-l` | New label for the node |
 | `--set` | `-s` | Set a property (`key=value`, repeatable) |
 | `--unset` | `-u` | Remove a property by key (repeatable) |
-| `--database` | `-d` | Database name (default: `default`) |
+| `--database` | `-d` | Database name (default: the current database) |
 
 **Examples:**
 
@@ -206,7 +206,7 @@ chaoscypher graph node delete NODE_ID [OPTIONS]
 |--------|-------|---------|-------------|
 | `--force` | `-f` | `false` | Skip confirmation prompt |
 | `--cascade` | `-c` | `false` | Also delete connected links |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -248,7 +248,7 @@ chaoscypher graph link list [OPTIONS]
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
 | `--page` | `-p` | `1` | Page number |
 | `--limit` | `-l` | `50` | Items per page |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -297,7 +297,7 @@ chaoscypher graph link create SOURCE_NODE TARGET_NODE [OPTIONS]
 | `--type` | `-t` | Yes | | Relationship type/template (e.g., `works_for`, `owns`) |
 | `--label` | `-l` | No | | Optional display label (defaults to the type value) |
 | `--bidirectional` | `-b` | No | `false` | Create link in both directions |
-| `--database` | `-d` | No | `default` | Database name |
+| `--database` | `-d` | No | current database | Database name |
 
 **Examples:**
 
@@ -332,7 +332,7 @@ chaoscypher graph link get LINK_ID [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -371,7 +371,7 @@ chaoscypher graph link update LINK_ID [OPTIONS]
 | `--label` | `-l` | New label for the link |
 | `--set` | `-s` | Set a property (`key=value`, repeatable) |
 | `--unset` | `-u` | Remove a property by key (repeatable) |
-| `--database` | `-d` | Database name (default: `default`) |
+| `--database` | `-d` | Database name (default: the current database) |
 
 **Examples:**
 
@@ -404,7 +404,7 @@ Links can be deleted by ID or by specifying the source and target node pair.
 | `--target` | `-t` | | Target node ID (used with `--source`) |
 | `--type` | | | Link type to filter by (used with `--source`/`--target`) |
 | `--force` | `-f` | `false` | Skip confirmation prompt |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -445,7 +445,7 @@ chaoscypher graph template list [OPTIONS]
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
 | `--verbose` | `-v` | `false` | Show properties and descriptions |
 | `--type` | `-t` | | Filter by template type (`node` or `edge`) |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -507,7 +507,7 @@ chaoscypher graph template create [OPTIONS]
 | `--type` | `-t` | No | `node` | Template type (`node` or `edge`) |
 | `--description` | | No | | Template description |
 | `--property` | `-p` | No | | Property definition in `name:type[:required]` format (repeatable) |
-| `--database` | `-d` | No | `default` | Database name |
+| `--database` | `-d` | No | current database | Database name |
 | `--interactive` | `-i` | No | | Use interactive wizard |
 
 *Required unless using `--interactive`.
@@ -568,7 +568,10 @@ Templates use typed properties. The following types are available:
 | `DATETIME` | Date and time | `"2026-01-15T10:30:00"` |
 | `URL` | Web address | `"https://example.com"` |
 | `EMAIL` | Email address | `"user@example.com"` |
+| `ENUM` | Value restricted to a fixed set of options | `"active"`, `"archived"` |
 | `JSON` | Structured JSON data | `'{"key": "value"}'` |
+| `NODE_REFERENCE` | Link to another node by ID | `"nd_a1b2c3d4e5f6"` |
+| `NODE_REFERENCE_LIST` | List of node references | `["nd_a1b2c3...", "nd_f6e5d4..."]` |
 
 Types are case-insensitive in the CLI (e.g., `string`, `String`, `STRING` all work).
 
@@ -581,7 +584,7 @@ chaoscypher graph template get TEMPLATE_ID [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -623,7 +626,7 @@ chaoscypher graph template update TEMPLATE_ID [OPTIONS]
 | `--description` | | New description |
 | `--add-property` | `-a` | Add a property (`name:type[:required]`, repeatable) |
 | `--remove-property` | `-r` | Remove a property by name (repeatable) |
-| `--database` | `-d` | Database name (default: `default`) |
+| `--database` | `-d` | Database name (default: the current database) |
 
 **Examples:**
 
@@ -655,7 +658,7 @@ chaoscypher graph template delete TEMPLATE_ID [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--force` | `-f` | `false` | Skip confirmation |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -688,7 +691,7 @@ chaoscypher graph workflow list [OPTIONS]
 | `--verbose` | `-v` | `false` | Show step counts and descriptions |
 | `--category` | `-c` | | Filter by category |
 | `--active/--inactive` | | | Filter by active status |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
@@ -715,7 +718,7 @@ chaoscypher graph workflow get WORKFLOW_ID [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 You can pass either the workflow ID or its name.
 
@@ -730,7 +733,7 @@ chaoscypher graph workflow get wf_abc123 --format json
 
 ## Packages
 
-Export and import knowledge graph packages in CCX (Chaos Cypher eXchange) format. Packages are portable ZIP archives containing templates, nodes, edges, and workflows in JSON-LD format.
+Export and import knowledge graph packages in CCX (Chaos Cypher eXchange) format. Packages are portable ZIP archives containing templates, nodes, edges, lenses, and workflows in JSON-LD format (optionally with embedding vectors).
 
 ### Export
 
@@ -743,8 +746,14 @@ chaoscypher graph package export [OPTIONS]
 | `--output` | `-o` | Auto-generated | Output `.ccx` file path |
 | `--templates/--no-templates` | | `--templates` | Include templates |
 | `--knowledge/--no-knowledge` | | `--knowledge` | Include knowledge nodes and edges |
+| `--lenses/--no-lenses` | | `--lenses` | Include lens definitions |
 | `--workflows/--no-workflows` | | `--workflows` | Include workflows |
-| `--database` | `-d` | `default` | Database name |
+| `--embeddings/--no-embeddings` | | `--no-embeddings` | Include embedding vectors (only useful when the importing database uses the same embedding model) |
+| `--lens-id <id>` | | — | Export only a specific lens by ID |
+| `--title` | `-t` | — | Display title shown on the graph preview image |
+| `--database` | `-d` | current database | Database name |
+
+At least one of `--templates`, `--knowledge`, `--lenses`, or `--workflows` must remain enabled — disabling all four is a usage error.
 
 **Examples:**
 
@@ -752,11 +761,17 @@ chaoscypher graph package export [OPTIONS]
 # Export everything (auto-generated filename)
 chaoscypher graph package export
 
-# Export to a specific file
-chaoscypher graph package export --output my-backup.ccx
+# Export to a specific file with a display title
+chaoscypher graph package export --output my-backup.ccx --title "My Research"
 
 # Export only templates and knowledge (no workflows)
 chaoscypher graph package export --no-workflows
+
+# Export a single lens
+chaoscypher graph package export --lens-id lens_abc123
+
+# Include embedding vectors (same-embedding-model migrations only)
+chaoscypher graph package export --embeddings -o full-backup.ccx
 
 # Export from a specific database
 chaoscypher graph package export -d my-project -o project.ccx
@@ -793,20 +808,20 @@ chaoscypher graph package load PACKAGE [OPTIONS]
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--merge/--replace` | | `--merge` | Merge with existing data (skip duplicates) or replace |
+| `--merge/--replace` | | `--replace` | Default `--replace`: every import creates fresh, fully self-contained templates and IDs (existing data is never overwritten). Pass `--merge` to reuse local templates that share a name with a packaged template. |
 | `--templates/--no-templates` | | `--templates` | Import templates |
 | `--knowledge/--no-knowledge` | | `--knowledge` | Import knowledge nodes and edges |
 | `--workflows/--no-workflows` | | `--workflows` | Import workflows |
-| `--database` | `-d` | `default` | Database name |
+| `--database` | `-d` | current database | Database name |
 
 **Examples:**
 
 ```bash
-# Import a package (merge mode — skip existing templates)
+# Import a package (replace mode — fresh self-contained templates and IDs)
 chaoscypher graph package load my-knowledge.ccx
 
-# Replace mode (overwrite existing data)
-chaoscypher graph package load backup.ccx --replace
+# Merge mode (reuse local templates that share a name)
+chaoscypher graph package load backup.ccx --merge
 
 # Import only knowledge, skip templates
 chaoscypher graph package load export.ccx --no-templates
@@ -819,27 +834,27 @@ chaoscypher graph package load data.ccx -d my-project
 
 ```
 Importing: my-knowledge.ccx
-Mode: Merge (skip existing templates)
+Mode: Replace (fresh templates, fully self-contained)
          Import Results
 ┌─────────────────────────┬───────┐
 │ Category                │ Count │
 ├─────────────────────────┼───────┤
-│ Templates imported      │     8 │
-│ Templates skipped       │     2 │
+│ Templates imported      │    10 │
+│ Templates skipped       │     0 │
 │ Nodes imported          │    47 │
 │ Edges imported          │    83 │
 │ Workflows imported      │     2 │
 │ Workflow edges imported │     6 │
 └─────────────────────────┴───────┘
 ✓ Checksums verified
-✓ Imported 164 items
+✓ Imported 148 items
 ```
 
 ---
 
 ## Global Options
 
-All graph subcommands support the `--database` (`-d`) option to target a specific database. The default database is `default`.
+All graph subcommands support the `--database` (`-d`) option to target a specific database. When omitted, the CLI uses the current database: the `CHAOSCYPHER_DATABASE` environment variable if set, else the database set by `chaoscypher db switch`, else `default` — see [Database selection](index.md#database-selection).
 
 ```bash
 # All commands work with any database

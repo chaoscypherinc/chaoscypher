@@ -4,16 +4,18 @@
 """Chat completion handler (LLM queue).
 
 Registers a handler on the LLM queue that runs the full chat LLM + tool
-chain in the background.  Messages are persisted to the database and
-streaming events are published to a per-chat Valkey pub/sub channel so
-the SSE endpoint can relay them to the client.
+chain in the background via the shared :mod:`chaoscypher_core.streaming.chat.loop`.
+This module owns the queue/worker concerns: status transitions, idempotent
+persistence of the loop's buffered messages, the done-event publication,
+and daily spend-cap accounting. The loop itself (iterations, tool
+execution, budget compaction, truncation warnings, recovery) lives in core
+and is shared with every other chat surface.
 """
 
 import asyncio
 import copy
-import json
+import functools
 import time
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from chaoscypher_core.constants import QUEUE_LLM
@@ -32,21 +34,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 __all__ = ["register_chat_completion_handler"]
-
-
-@dataclass
-class _ToolLoopState:
-    """Mutable state for the tool-calling iteration loop.
-
-    Tracks accumulated content, thinking, and tool call counts across
-    multiple LLM -> tool -> LLM iterations.
-    """
-
-    content: str = ""
-    thinking: str | None = None
-    all_thinking_parts: list[str] = field(default_factory=list)
-    total_tool_calls: int = 0
-    iteration: int = 0
 
 
 def register_chat_completion_handler(
@@ -77,10 +64,9 @@ def register_chat_completion_handler(
     ) -> dict[str, Any]:
         """Run a full chat LLM + tool chain in the background.
 
-        Loads the chat, builds the LLM context, streams the response,
-        executes tools if requested, and persists the final assistant
-        message.  Events are published via Valkey pub/sub for the SSE
-        endpoint.
+        Loads the chat, builds the LLM context, runs the shared tool loop,
+        and persists the final assistant message. Events are published via
+        Valkey pub/sub for the SSE endpoint.
 
         Args:
             data: Task data containing ``chat_id`` and optionally
@@ -138,6 +124,12 @@ def register_chat_completion_handler(
                 {
                     "error": "An unexpected error occurred during chat completion",
                     "error_code": "WORKER_ERROR",
+                    # A failed run persisted nothing (buffered-flush
+                    # idempotency), so re-running the turn is always safe.
+                    "error_details": {
+                        "is_retryable": True,
+                        "suggested_action": "Click Retry to run this turn again.",
+                    },
                 },
             )
 
@@ -237,9 +229,9 @@ async def _run_chat_completion(
 ) -> dict[str, Any]:
     """Execute the full chat completion pipeline.
 
-    Loads the chat, resolves source scope, builds LLM messages, makes the
-    initial LLM call, handles tool loops if needed, saves the final
-    assistant message, and publishes the done event.
+    Loads the chat, resolves source scope, builds LLM messages, runs the
+    shared chat tool loop, saves the final assistant message, and publishes
+    the done event.
 
     Args:
         chat_id: Chat session identifier.
@@ -263,6 +255,10 @@ async def _run_chat_completion(
         get_model_name,
         setup_chat_providers,
     )
+    from chaoscypher_core.streaming.chat.approval_broker import ValkeyApprovalBroker
+    from chaoscypher_core.streaming.chat.cancellation import clear_cancel, is_cancel_requested
+    from chaoscypher_core.streaming.chat.loop import ChatLoopDeps, run_chat_tool_loop
+    from chaoscypher_core.streaming.chat.sinks import ValkeyPubSubSink
 
     # Load chat from database
     chat = chat_service.get_chat(chat_id)
@@ -273,16 +269,8 @@ async def _run_chat_completion(
         msg = f"Chat {chat_id} not found"
         raise ValueError(msg)
 
-    # Buffer every message this run produces (tool results + the final
-    # assistant answer) and persist them only once the run succeeds. A
-    # transient error mid-run re-raises so the queue worker retries the same
-    # task_id and re-runs this function from the top; deferring all writes to
-    # _finalize_and_publish means a failed attempt leaves nothing behind, so
-    # the retry cannot duplicate tool/assistant rows or pollute the rebuilt
-    # LLM context. See test_chat_completion_idempotency.
-    pending_messages: list[dict[str, Any]] = []
-
-    # Status already set to "processing" by the POST /send endpoint
+    # A stale cancel flag from a previous turn must never kill this one.
+    await clear_cancel(chat_id)
 
     # Resolve source scope for scoped chats
     source_ids = chat.get("source_ids")
@@ -376,74 +364,65 @@ async def _run_chat_completion(
         tools=available_tools or [],
     )
 
-    # First LLM call
-    enable_thinking = settings.llm.thinking_for_chat
+    async def _spend_guard() -> None:
+        """Enforce the daily spend cap before spending tokens on this turn.
 
-    # Enforce the daily spend cap before spending tokens on this turn. The
-    # background chat path calls the provider directly (bypassing
-    # LLMQueueService._chat_handler_wrapper), so without this gate a configured
-    # max_tokens_per_day is blind to the primary chat surface — mirror
-    # stream_chat_response. LLMSpendCapExceededError is permanent, so the outer
-    # handler marks the chat failed without retry. Offloaded to a thread: the
-    # check opens an adapter + runs blocking SQLite that must not stall the loop.
-    await asyncio.to_thread(_spend_check, settings)
+        LLMSpendCapExceededError is permanent, so the outer handler marks
+        the chat failed without retry. Offloaded to a thread: the check
+        opens an adapter + runs blocking SQLite that must not stall the loop.
+        """
+        await asyncio.to_thread(_spend_check, settings)
+
+    deps = ChatLoopDeps(
+        chat_id=chat_id,
+        provider=chat_provider,
+        tool_executor=tool_executor,
+        chat_service=chat_service,
+        settings=settings,
+        sink=ValkeyPubSubSink(chat_id, publish_chat_event),
+        # Cross-process approval: POST /chats/{id}/tool_decision (cortex)
+        # flips the Valkey key this broker polls.
+        approval=ValkeyApprovalBroker(),
+        spend_guard=_spend_guard,
+        # Cross-process stop: POST /chats/{id}/cancel (cortex) sets the
+        # Valkey flag this check polls at step boundaries.
+        cancel_check=functools.partial(is_cancel_requested, chat_id),
+        tools=available_tools,
+    )
 
     stream_start = time.monotonic()
-    llm_result = await chat_provider.chat(
-        messages=messages_for_llm,
-        tools=available_tools,
-        stream=True,
-        enable_thinking=enable_thinking,
-    )
-    logger.info("chat_completion_llm_call_initiated", chat_id=chat_id)
+    loop_result = await run_chat_tool_loop(messages_for_llm, deps)
 
-    # Consume the streaming response
-    content, thinking, tool_calls, stream_error = await _consume_llm_stream(llm_result, chat_id)
-
-    # If the initial LLM call errored, set chat to error and bail out
-    if stream_error:
+    if loop_result.error_occurred:
         chat_service.update_chat_status(chat_id, "error")
-        return {"success": False, "chat_id": chat_id, "error": "LLM streaming failed"}
-
-    # Handle tool loop if the LLM requested tools
-    total_tool_calls = 0
-    tool_loop_error = False
-    if tool_calls:
-        content, thinking, total_tool_calls, tool_loop_error = await _handle_tool_loop(
-            tool_calls=tool_calls,
-            content=content,
-            thinking=thinking,
-            chat_id=chat_id,
-            chat_service=chat_service,
-            chat_provider=chat_provider,
-            tool_executor=tool_executor,
-            available_tools=available_tools,
-            messages_for_llm=messages_for_llm,
-            settings=settings,
-            pending_messages=pending_messages,
+        error_msg = (
+            "LLM streaming failed"
+            if loop_result.error_stage == "initial_stream"
+            else "LLM failed during tool processing"
         )
+        return {"success": False, "chat_id": chat_id, "error": error_msg}
 
-    # If tool loop errored, set chat to error and bail out
-    if tool_loop_error:
-        chat_service.update_chat_status(chat_id, "error")
-        return {"success": False, "chat_id": chat_id, "error": "LLM failed during tool processing"}
+    # Per-tool durations feed the Telemetry HUD (llm_debug.timing.tool_calls)
+    llm_debug.timing["tool_calls"] = loop_result.tool_timings
 
     result = await _finalize_and_publish(
-        content=content,
-        thinking=thinking,
+        content=loop_result.content,
+        thinking=loop_result.thinking,
         chat_id=chat_id,
         chat_service=chat_service,
         messages_for_llm=messages_for_llm,
         llm_debug=llm_debug,
         stream_start=stream_start,
-        total_tool_calls=total_tool_calls,
-        pending_messages=pending_messages,
+        total_tool_calls=loop_result.total_tool_calls,
+        pending_messages=loop_result.pending_messages,
+        warnings=loop_result.warnings,
+        settings=settings,
+        done_status="cancelled" if loop_result.cancelled else "completed",
     )
 
     # Record this turn's tokens against the daily spend cap (success path only —
-    # the stream/tool-loop error bail-outs above return before here, the same as
-    # stream_chat_response, which records only on its success path).
-    await _record_turn_spend(settings, messages_for_llm, content)
+    # the error bail-out above returns before here).
+    await _record_turn_spend(settings, messages_for_llm, loop_result.content)
 
     return result
 
@@ -458,14 +437,19 @@ async def _finalize_and_publish(
     stream_start: float,
     total_tool_calls: int,
     pending_messages: list[dict[str, Any]],
+    warnings: list[dict[str, str]] | None = None,
+    settings: Any = None,
+    done_status: str = "completed",
 ) -> dict[str, Any]:
-    """Clean content, persist the buffered messages, and publish the done event.
+    """Finalize the answer, persist the buffered messages, publish done.
 
-    This is the run's only persistence point: the assistant message is
+    Content cleanup and reference extraction live in the shared
+    ``finalize_chat_content``; this function owns the worker-side concerns.
+    It is the run's only persistence point: the assistant message is
     appended to ``pending_messages`` (which already holds any tool-result
     messages produced during the loop) and the whole buffer is flushed here,
-    on the success path. A run that raised earlier never reaches this call, so
-    its buffered messages are simply discarded — that is what makes a
+    on the success path. A run that raised earlier never reaches this call,
+    so its buffered messages are simply discarded — that is what makes a
     transient-error retry idempotent.
 
     Args:
@@ -480,100 +464,51 @@ async def _finalize_and_publish(
         pending_messages: Buffered, not-yet-persisted messages from this run
             (tool results); the assistant message is appended and the buffer
             is flushed before the done event is published.
+        warnings: Truncation warnings collected across the turn (persisted so
+            the "this answer was cut off" context survives a reload).
+        settings: Application settings; enables post-response validation
+            when provided (None skips it — unit-test default).
+        done_status: Status carried by the ``done`` event — ``"completed"``
+            normally, ``"cancelled"`` when the user stopped the turn (the
+            partial answer is persisted either way).
 
     Returns:
         Result dictionary with success flag and response summary.
 
     """
-    from chaoscypher_core.streaming.chat import (
-        correct_mismatched_citations,
-        enrich_chunk_citations_from_tool_results,
-        enrich_entity_references_from_tool_results,
-        extract_chunk_citations,
-        extract_entity_references,
-        inject_citations_for_uncited_paragraphs,
-        inject_citations_into_blockquotes,
-        normalize_chunk_references,
-        strip_duplicated_citation_text,
-        strip_thinking_tags,
+    from chaoscypher_core.streaming.chat.finalize import (
+        build_optional_payload,
+        finalize_chat_content,
+        validate_finalized_answer,
     )
-    from chaoscypher_core.streaming.chat.utils import extract_thinking_from_tags
 
-    clean_content = strip_thinking_tags(content) if content else ""
-    if not clean_content.strip():
-        clean_content = "I apologize, but I was unable to generate a response. Please try again."
+    answer = finalize_chat_content(content, thinking, messages_for_llm)
 
-    # Extract thinking from <think> tags if not already provided
-    if not thinking:
-        thinking = extract_thinking_from_tags(content) if content else None
-
-    # ---- Citation post-processing ------------------------------------------
-    # Collect tool result messages so the citation injectors can match
-    # quoted prose back to the chunks the LLM actually saw. Tool messages in
-    # ``messages_for_llm`` carry the original chunk JSON the LLM consumed.
-    tool_results = [m for m in messages_for_llm if m.get("role") == "tool"]
-
-    if tool_results and clean_content:
-        clean_content = normalize_chunk_references(clean_content, tool_results)
-        clean_content = correct_mismatched_citations(clean_content, tool_results)
-        clean_content = inject_citations_into_blockquotes(clean_content, tool_results)
-        # Fallback: when the LLM forgot the [[cite:...]] marker but quoted
-        # chunk text inline, append a marker so the UI can render the
-        # supporting blockquote / pill instead of leaving the claim
-        # unsourced. (Bug #4 v2.)
-        clean_content = inject_citations_for_uncited_paragraphs(clean_content, tool_results)
-    elif clean_content:
-        clean_content = normalize_chunk_references(clean_content, None)
-
-    # Extract structured references for the done event so the frontend can
-    # hydrate inline citation chips and entity links.
-    chunk_citations = extract_chunk_citations(clean_content)
-    if tool_results and chunk_citations:
-        chunk_citations = enrich_chunk_citations_from_tool_results(chunk_citations, tool_results)
-        # Once enriched sentence_text is present, drop any prose that
-        # duplicates the cited quote (the UI already renders it once via
-        # the citation blockquote).
-        clean_content = strip_duplicated_citation_text(clean_content, chunk_citations)
-
-    entity_refs = extract_entity_references(clean_content)
-    if tool_results and entity_refs:
-        entity_refs = enrich_entity_references_from_tool_results(entity_refs, tool_results)
-    # ------------------------------------------------------------------------
-
-    # Collect all tool call objects from the message history
-    all_tool_calls = [
-        tc
-        for msg in messages_for_llm
-        if msg.get("role") == "assistant" and msg.get("tool_calls")
-        for tc in msg["tool_calls"]
-    ]
+    # Post-response validation (citation verdicts) — None when disabled or
+    # settings are absent. Web chat never got verdicts before the loop
+    # unification (2026-06-10 audit P2).
+    validation = await validate_finalized_answer(answer, messages_for_llm, settings, chat_id)
 
     # Finalize LLM debug info with timing
     total_ms = round((time.monotonic() - stream_start) * 1000)
     llm_debug.timing["total_ms"] = total_ms
     llm_debug.final_messages = copy.deepcopy(messages_for_llm)
-    llm_debug.response_content = clean_content
+    llm_debug.response_content = answer.content
     llm_debug.iterations = total_tool_calls
     llm_debug.tool_calls_made = total_tool_calls
 
-    # Build extra metadata
-    extra_metadata: dict[str, Any] = {}
-    if thinking:
-        extra_metadata["thinking"] = thinking
-    if all_tool_calls:
-        extra_metadata["tool_calls"] = all_tool_calls
-    extra_metadata["llm_debug"] = llm_debug.to_dict()
-    # Persist enriched citation / entity-reference metadata so the
-    # source-text blockquote and entity pills survive a page refresh.
-    # Without this, the chat history endpoint returns only the raw
-    # ``[[cite:...]]`` markers and the UI loses the supporting sentences.
-    if chunk_citations:
-        extra_metadata["chunk_citations"] = dict(chunk_citations)
-    if entity_refs:
-        extra_metadata["entity_references"] = dict(entity_refs)
+    # Optional payload shared by the persisted metadata and the done event.
+    # Persisting citations / entity references / warnings means the source-text
+    # blockquotes, entity pills, and truncation context survive a page refresh
+    # (the chat history endpoint otherwise returns only raw [[cite:...]] markers).
+    optional_payload = build_optional_payload(answer, warnings)
+    if validation:
+        optional_payload["validation"] = validation
+
+    extra_metadata: dict[str, Any] = {**optional_payload, "llm_debug": llm_debug.to_dict()}
 
     pending_messages.append(
-        chat_service.build_message(chat_id, "assistant", clean_content, extra_metadata)
+        chat_service.build_message(chat_id, "assistant", answer.content, extra_metadata)
     )
     # Single persistence point for the whole run — tool results buffered during
     # the loop plus this assistant answer, written together on success.
@@ -582,350 +517,24 @@ async def _finalize_and_publish(
 
     # Publish done event
     done_data: dict[str, Any] = {
-        "status": "completed",
-        "content": clean_content,
+        "status": done_status,
+        "content": answer.content,
         "llm_debug": llm_debug.to_dict(),
+        **optional_payload,
     }
-    if thinking:
-        done_data["thinking"] = thinking
-    if all_tool_calls:
-        done_data["tool_calls"] = all_tool_calls
-    # ChunkCitationData / EntityRefData are TypedDicts — already JSON-serialisable.
-    if chunk_citations:
-        done_data["chunk_citations"] = dict(chunk_citations)
-    if entity_refs:
-        done_data["entity_references"] = dict(entity_refs)
     await publish_chat_event(chat_id, "done", done_data)
 
     logger.info(
         "chat_completion_done",
         chat_id=chat_id,
-        content_length=len(clean_content),
+        status=done_status,
+        content_length=len(answer.content),
         tool_calls_made=total_tool_calls,
     )
 
     return {
         "success": True,
         "chat_id": chat_id,
-        "content_length": len(clean_content),
+        "content_length": len(answer.content),
         "tool_calls_made": total_tool_calls,
     }
-
-
-async def _consume_llm_stream(
-    llm_result: Any,
-    chat_id: str,
-) -> tuple[str, str | None, list[Any] | None, bool]:
-    """Consume an LLM streaming response and publish events via pub/sub.
-
-    Iterates over the async stream, forwarding content and thinking
-    deltas to the pub/sub channel, and returns the accumulated state.
-
-    Args:
-        llm_result: Async iterator of LLM response chunks.
-        chat_id: Chat ID for event publishing.
-
-    Returns:
-        Tuple of (accumulated_content, thinking, tool_calls, stream_error).
-
-    """
-    accumulated_content = ""
-    thinking: str | None = None
-    tool_calls: list[Any] | None = None
-    stream_error = False
-
-    try:
-        async for chunk in llm_result:
-            chunk_type = chunk.get("type")
-
-            if chunk_type == "content":
-                delta = chunk.get("delta", "")
-                accumulated_content = chunk.get("accumulated", accumulated_content)
-                await publish_chat_event(
-                    chat_id,
-                    "content",
-                    {"delta": delta, "accumulated": accumulated_content},
-                )
-
-            elif chunk_type == "thinking_delta":
-                thinking = chunk.get("accumulated", "")
-                await publish_chat_event(chat_id, "thinking_delta", {"thinking": thinking})
-
-            elif chunk_type == "error":
-                error_msg = chunk.get("error", "Unknown LLM error")
-                error_code = chunk.get("error_code", "LLM_ERROR")
-                logger.error(
-                    "chat_completion_stream_error",
-                    chat_id=chat_id,
-                    error=error_msg,
-                    error_code=error_code,
-                )
-                await publish_chat_event(
-                    chat_id,
-                    "error",
-                    {"error": error_msg, "error_code": error_code},
-                )
-                stream_error = True
-                break
-
-            elif chunk_type == "done":
-                accumulated_content = chunk.get("content", accumulated_content)
-                thinking = chunk.get("thinking", thinking)
-                tool_calls = chunk.get("tool_calls")
-                logger.info(
-                    "chat_completion_stream_done",
-                    chat_id=chat_id,
-                    content_length=len(accumulated_content) if accumulated_content else 0,
-                    tool_call_count=len(tool_calls) if tool_calls else 0,
-                )
-                break
-    finally:
-        if hasattr(llm_result, "aclose"):
-            await llm_result.aclose()
-
-    return accumulated_content, thinking, tool_calls, stream_error
-
-
-async def _handle_tool_loop(
-    tool_calls: list[Any],
-    content: str,
-    thinking: str | None,
-    chat_id: str,
-    chat_service: Any,
-    chat_provider: Any,
-    tool_executor: Any,
-    available_tools: list[Any],
-    messages_for_llm: list[Any],
-    settings: Any,
-    pending_messages: list[dict[str, Any]],
-) -> tuple[str, str | None, int, bool]:
-    """Execute the iterative tool-calling loop.
-
-    Runs up to ``MAX_TOOL_ITERATIONS`` rounds of tool execution followed
-    by follow-up LLM calls.  Each round publishes tool events, executes
-    tools, and checks whether the LLM wants to call more tools.
-
-    Args:
-        tool_calls: Initial tool calls from the first LLM response.
-        content: Accumulated content from the first LLM response.
-        thinking: Thinking content from the first LLM response.
-        chat_id: Chat session identifier.
-        chat_service: ChatService instance for DB persistence.
-        chat_provider: LLM provider for follow-up calls.
-        tool_executor: ToolExecutorService for executing tools.
-        available_tools: Available tool schemas.
-        messages_for_llm: Mutable message history.
-        settings: Application settings.
-        pending_messages: Run-level buffer; tool-result messages are appended
-            here (not persisted immediately) and flushed on success by
-            _finalize_and_publish.
-
-    Returns:
-        Tuple of (final_content, final_thinking, total_tool_calls, error_occurred).
-
-    """
-    from chaoscypher_core.services.chat.engine.constants import (
-        MAX_TOOL_ITERATIONS,
-        MAX_TOTAL_TOOL_CALLS,
-    )
-    from chaoscypher_core.streaming.chat import strip_thinking_tags
-
-    state = _ToolLoopState(
-        content=content,
-        thinking=thinking,
-        all_thinking_parts=[thinking] if thinking else [],
-    )
-    current_tool_calls: list[Any] | None = tool_calls
-    error_occurred = False
-
-    while current_tool_calls and state.iteration < MAX_TOOL_ITERATIONS:
-        state.iteration += 1
-        batch_size = len(current_tool_calls)
-        state.total_tool_calls += batch_size
-
-        logger.info(
-            "chat_completion_tool_iteration",
-            chat_id=chat_id,
-            iteration=state.iteration,
-            tool_count=batch_size,
-            total_tool_calls=state.total_tool_calls,
-        )
-
-        # Publish tool_calls event
-        await publish_chat_event(
-            chat_id,
-            "tool_calls",
-            {"tool_calls": current_tool_calls, "iteration": state.iteration},
-        )
-
-        # Check total tool call limit
-        if state.total_tool_calls > MAX_TOTAL_TOOL_CALLS:
-            logger.warning(
-                "chat_completion_tool_limit_reached",
-                chat_id=chat_id,
-                total=state.total_tool_calls,
-                limit=MAX_TOTAL_TOOL_CALLS,
-            )
-            await publish_chat_event(
-                chat_id,
-                "warning",
-                {"message": "Tool call limit reached", "limit": MAX_TOTAL_TOOL_CALLS},
-            )
-            break
-
-        # Add assistant message with tool calls to LLM context
-        clean_content = strip_thinking_tags(state.content)
-        messages_for_llm.append(
-            {
-                "role": "assistant",
-                "content": clean_content,
-                "tool_calls": current_tool_calls,
-            }
-        )
-
-        # Execute each tool in the batch
-        for tool_call in current_tool_calls:
-            await _execute_tool(
-                tool_call=tool_call,
-                chat_id=chat_id,
-                chat_service=chat_service,
-                tool_executor=tool_executor,
-                messages_for_llm=messages_for_llm,
-                iteration=state.iteration,
-                pending_messages=pending_messages,
-            )
-
-        # Follow-up LLM call to check for more tools or final response
-        followup_result = await chat_provider.chat(
-            messages=messages_for_llm,
-            tools=available_tools,
-            stream=True,
-            enable_thinking=settings.llm.thinking_for_tools,
-        )
-
-        (
-            followup_content,
-            followup_thinking,
-            next_tool_calls,
-            followup_error,
-        ) = await _consume_llm_stream(followup_result, chat_id)
-
-        # If follow-up errored, stop the tool loop (error event already published)
-        if followup_error:
-            error_occurred = True
-            break
-
-        # Update state with follow-up results
-        if followup_content:
-            state.content = followup_content
-        if followup_thinking:
-            state.all_thinking_parts.append(followup_thinking)
-
-        current_tool_calls = next_tool_calls
-
-    # Join all thinking parts for multi-step display
-    final_thinking = (
-        "\n\n---\n\n".join(state.all_thinking_parts) if state.all_thinking_parts else None
-    )
-
-    return state.content, final_thinking, state.total_tool_calls, error_occurred
-
-
-async def _execute_tool(
-    tool_call: dict[str, Any],
-    chat_id: str,
-    chat_service: Any,
-    tool_executor: Any,
-    messages_for_llm: list[Any],
-    iteration: int,
-    pending_messages: list[dict[str, Any]],
-) -> None:
-    """Execute a single tool call, publish events, and buffer the result.
-
-    Parses arguments from the tool call, runs the tool via the executor,
-    publishes start/result events, buffers the tool result message for
-    end-of-run persistence, and appends it to the LLM message history.
-
-    Args:
-        tool_call: Tool call dict with ``function.name`` and
-            ``function.arguments``.
-        chat_id: Chat session identifier.
-        chat_service: ChatService used to build (not yet persist) the result.
-        tool_executor: ToolExecutorService for execution.
-        messages_for_llm: Mutable message history.
-        iteration: Current tool iteration number.
-        pending_messages: Run-level buffer the tool result is appended to;
-            flushed on success by _finalize_and_publish so a transient-error
-            retry never duplicates it.
-
-    """
-    from chaoscypher_core.streaming.chat import parse_tool_arguments
-
-    function = tool_call.get("function", {})
-    tool_name = function.get("name", "unknown")
-    arguments_raw = function.get("arguments", {})
-    arguments = parse_tool_arguments(arguments_raw, tool_name, chat_id)
-    tool_call_id = tool_call.get("id")
-
-    logger.info(
-        "chat_completion_tool_executing",
-        chat_id=chat_id,
-        tool_name=tool_name,
-        iteration=iteration,
-    )
-
-    # Publish tool_start event
-    await publish_chat_event(
-        chat_id,
-        "tool_start",
-        {"tool": tool_name, "arguments": arguments, "iteration": iteration},
-    )
-
-    # Execute tool with timing
-    tool_start = time.monotonic()
-    result = await tool_executor.execute_tool(tool_name, arguments)
-    duration_ms = round((time.monotonic() - tool_start) * 1000)
-
-    result_json = json.dumps(result)
-    logger.info(
-        "chat_completion_tool_result",
-        chat_id=chat_id,
-        tool_name=tool_name,
-        result_preview=result_json[:200],
-        iteration=iteration,
-        duration_ms=duration_ms,
-    )
-
-    # Publish tool_result event
-    await publish_chat_event(
-        chat_id,
-        "tool_result",
-        {
-            "tool": tool_name,
-            "result": result,
-            "iteration": iteration,
-            "tool_call_id": tool_call_id,
-            "duration_ms": duration_ms,
-        },
-    )
-
-    # Buffer the tool result (persisted at end-of-run, not now) so a
-    # transient failure later in the loop leaves nothing to duplicate on retry.
-    pending_messages.append(
-        chat_service.build_message(
-            chat_id,
-            "tool",
-            result_json,
-            {"tool_call_id": tool_call_id, "name": tool_name},
-        )
-    )
-
-    # Append tool result to LLM message history
-    messages_for_llm.append(
-        {
-            "role": "tool",
-            "content": result_json,
-            "tool_call_id": tool_call_id,
-            "name": tool_name,
-        }
-    )

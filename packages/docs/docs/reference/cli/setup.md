@@ -38,12 +38,12 @@ Select provider [1]:
 How much GPU VRAM do you have?
 
  [1]  16GB  (RTX 4080, 5080)    → phi4:14b
- [2]  20GB  (RTX 5080 Super)    → phi4:14b
+ [2]  20GB  (RTX A4000, A4500)  → phi4:14b
  [3]  24GB  (RTX 4090, 3090)    → qwen3:30b
- [4]  32GB  (RTX 4090, 3090)    → qwen3:30b
+ [4]  32GB  (RTX 5090)          → qwen3:30b
  [5]  48GB  (A6000, 2x 4090)    → qwen3:30b
- [6]  96GB  (H100)              → gpt-oss:120b
- [7]  128GB (Multi-H100)        → gpt-oss:120b
+ [6]  96GB  (RTX 6000 Pro)      → gpt-oss:120b
+ [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b
  [8]  Custom                    I'll specify models manually
 
 Select VRAM tier [3]:
@@ -51,7 +51,8 @@ Select VRAM tier [3]:
 Applying 24GB VRAM preset...
   Chat model: qwen3:30b
   Extraction model: qwen3:30b-instruct
-  Context window: 32768
+  Vision model: qwen3-vl:30b
+  Context window: 16384
 
 Configure embedding provider? [y/N]:
 
@@ -62,7 +63,7 @@ Configure embedding provider? [y/N]:
 │  URL               http://localhost:11434               │
 │  Chat Model        qwen3:30b                            │
 │  Extraction Model  qwen3:30b-instruct                   │
-│  Context Window    32768                                │
+│  Context Window    16384                                │
 │                                                         │
 │  Embedding Provider  ollama                             │
 │  Embedding Model     qwen3-embedding:0.6b               │
@@ -97,17 +98,19 @@ The wizard configures separate models for chat (interactive conversation) and ex
 
 ## VRAM Presets (Ollama)
 
-When using Ollama, select a VRAM tier to automatically apply the optimal model configuration for your hardware:
+When using Ollama, select a VRAM tier to automatically apply the optimal model configuration for your hardware. Each preset configures the chat, extraction, and vision models plus the context window (`llm.ollama_num_ctx`):
 
-| VRAM | Example GPUs | Recommended Model |
-|------|-------------|-------------------|
-| 16 GB | RTX 4080, 5080 | phi4:14b |
-| 20 GB | RTX 5080 Super | phi4:14b |
-| 24 GB | RTX 4090, 3090 | qwen3:30b |
-| 32 GB | RTX 4090, 3090 | qwen3:30b |
-| 48 GB | A6000, 2x 4090 | qwen3:30b |
-| 96 GB | H100 | gpt-oss:120b |
-| 128 GB | Multi-H100 | gpt-oss:120b |
+| VRAM | Example GPUs | Chat Model | Extraction Model | Vision Model | Context Window |
+|------|-------------|------------|------------------|--------------|----------------|
+| 16 GB | RTX 4080, 5080 | phi4:14b | phi4:14b | qwen3-vl:8b | 16384 |
+| 20 GB | RTX A4000, A4500 | phi4:14b | phi4:14b | qwen3-vl:8b | 24576 |
+| 24 GB | RTX 4090, 3090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 16384 |
+| 32 GB | RTX 5090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 32768 |
+| 48 GB | A6000, 2x 4090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 49152 |
+| 96 GB | RTX 6000 Pro | gpt-oss:120b | gpt-oss:120b | qwen3-vl:30b | 49152 |
+| 128 GB | DGX Spark, Ryzen AI Max+ 395 | gpt-oss:120b | gpt-oss:120b | qwen3-vl:30b | 65536 |
+
+Beyond the models, each preset also tunes per-tier LLM limits — Ollama batch size, `llm.ai_context_window` (matching the Ollama context window), `llm.ai_max_tokens`, and `llm.extraction_max_tokens` — and disables chat "thinking" (`llm.thinking_for_chat: false`). The presets ship as JSON plugins in `chaoscypher_core/services/presets/plugins/vram_*.json`; every value they set can be adjusted afterwards with [`chaoscypher config set`](config.md#set-a-value).
 
 Choose **Custom** to specify models manually if your hardware is not listed or you prefer different models.
 
@@ -144,7 +147,7 @@ chaoscypher setup --non-interactive --provider ollama --no-test
 
 **Auto-detection priority:** `OPENAI_API_KEY` → `ANTHROPIC_API_KEY` → `GEMINI_API_KEY` → `ollama`
 
-In non-interactive mode, API keys are read directly from environment variables — they are not saved to the config file.
+In non-interactive mode the wizard reads the API key from the provider environment variable and persists it into `settings.yaml` (same as interactive setup). Keep the env var unset at runtime only if you intend the file copy to be the source of truth, and protect the settings file accordingly.
 
 ## Reconfiguring
 

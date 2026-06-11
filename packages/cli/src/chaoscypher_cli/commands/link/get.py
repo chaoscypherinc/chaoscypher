@@ -12,6 +12,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.console import print_json
 
 
 console = Console()
@@ -34,8 +35,8 @@ def get(link_id: str, output_format: str, database: str) -> None:
     LINK_ID is the unique identifier of the link.
 
     Example:
-        chaoscypher link get edge-123
-        chaoscypher link get edge-123 --format json
+        chaoscypher graph link get edge-123
+        chaoscypher graph link get edge-123 --format json
     """
     try:
         ctx = get_context(database_name=database)
@@ -53,7 +54,7 @@ def get(link_id: str, output_format: str, database: str) -> None:
             link_dict = dict(link) if not isinstance(link, dict) else link
 
         if output_format == "json":
-            console.print(json.dumps(link_dict, indent=2, default=str))
+            print_json(json.dumps(link_dict, indent=2, default=str))
 
         elif output_format == "yaml":
             try:
@@ -62,7 +63,7 @@ def get(link_id: str, output_format: str, database: str) -> None:
                 console.print(yaml.dump(link_dict, default_flow_style=False))
             except ImportError:
                 console.print("[yellow]YAML output requires PyYAML. Using JSON.[/yellow]")
-                console.print(json.dumps(link_dict, indent=2, default=str))
+                print_json(json.dumps(link_dict, indent=2, default=str))
 
         else:  # table format
             # Display link details

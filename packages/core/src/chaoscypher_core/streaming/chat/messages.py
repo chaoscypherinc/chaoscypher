@@ -23,13 +23,25 @@ from chaoscypher_core.streaming.chat.utils import (
     get_context_window_for_provider,
     strip_thinking_tags,
 )
-from chaoscypher_core.utils.tokens import estimate_tokens
+from chaoscypher_core.utils.tokens import (
+    DENSE_CHARS_PER_TOKEN,
+    estimate_tokens,
+    estimate_tokens_dense,
+)
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.app_config import Settings
 
 logger = structlog.get_logger(__name__)
+
+
+# Appended to a tool-result message whose body was head-truncated to keep the
+# tool-loop prompt inside the model context window.
+TOOL_RESULT_COMPACTION_NOTICE = (
+    "\n... [tool result truncated by the system to keep the conversation "
+    "within the model's context window]"
+)
 
 
 @dataclass
@@ -79,14 +91,14 @@ def _count_tool_call_tokens(tool_calls: list[dict[str, Any]], tool_call_overhead
         if name:
             tokens += estimate_tokens(name)
 
-        # Count arguments (can be large JSON strings)
+        # Count arguments (can be large JSON strings — dense content)
         arguments = func.get("arguments", "")
         if arguments:
             if isinstance(arguments, str):
-                tokens += estimate_tokens(arguments)
+                tokens += estimate_tokens_dense(arguments)
             else:
                 # If arguments is a dict, stringify it
-                tokens += estimate_tokens(json.dumps(arguments))
+                tokens += estimate_tokens_dense(json.dumps(arguments))
 
         tokens += tool_call_overhead
 
@@ -111,10 +123,16 @@ def _estimate_message_tokens_full(
     """
     tokens = 0
 
-    # Count content tokens
+    # Count content tokens. Tool results are dense JSON and tokenize at
+    # ~3 chars/token, not prose's ~4 — under-counting them let oversized
+    # tool-loop prompts pass the budget check and silently overflow the
+    # context window (live 2026-06-10: 102,168 chars -> >=32,763 tokens).
     content = msg.get("content", "")
     if content:
-        tokens += estimate_tokens(content)
+        if msg.get("role") == "tool":
+            tokens += estimate_tokens_dense(content)
+        else:
+            tokens += estimate_tokens(content)
 
     # Count tool calls tokens (from extra_metadata for stored messages)
     extra_metadata = msg.get("extra_metadata") or {}
@@ -330,6 +348,230 @@ def build_messages_for_llm(
     )
 
 
+def enforce_tool_loop_budget(
+    messages_for_llm: list[dict[str, Any]],
+    settings: Settings | None,
+    chat_id: str,
+) -> dict[str, Any] | None:
+    """Compact older tool results in place so the prompt fits the context window.
+
+    The tool-calling loop appends large JSON tool results to
+    ``messages_for_llm`` every iteration with no per-call budget. Once the
+    prompt exceeds the provider context window, Ollama silently truncates the
+    HEAD of the prompt (``keep=4``) — the system prompt and the user's
+    question are the first content dropped, which degrades multi-hop answers
+    to confident 1-2 sentence fragments.
+
+    Compaction head-truncates tool-result message bodies (oldest first) down
+    to ``compacted_tool_result_max_chars`` and appends
+    :data:`TOOL_RESULT_COMPACTION_NOTICE`. Tool results from the current
+    batch (after the last assistant tool_calls message) are only compacted as
+    a last resort, since the imminent follow-up call reasons over exactly
+    those results.
+
+    Args:
+        messages_for_llm: Message list for the next LLM call (mutated in place).
+        settings: Application settings (None disables enforcement).
+        chat_id: Chat ID for logging.
+
+    Returns:
+        Summary dict (tokens_before/tokens_after/budget/context_window/
+        compacted_count/still_over_budget) when compaction ran, or None when
+        the prompt already fit.
+
+    """
+    if settings is None:
+        return None
+
+    # Best-effort: budget enforcement must never break the stream itself
+    # (e.g. partially faked settings in tests).
+    try:
+        context_window, provider, model = get_context_window_for_provider(settings)
+        cc = settings.chat_context
+        budget = context_window - cc.response_token_reserve
+        estimate = partial(
+            _estimate_message_tokens_full,
+            tool_call_overhead=cc.tool_call_token_overhead,
+            message_overhead=cc.message_structure_token_overhead,
+        )
+        tokens_before = sum(estimate(m) for m in messages_for_llm) + cc.tools_token_estimate
+        within_budget = tokens_before <= budget
+    except (TypeError, AttributeError) as e:
+        logger.debug(
+            "chat_stream_budget_check_skipped",
+            chat_id=chat_id,
+            error_type=type(e).__name__,
+        )
+        return None
+
+    if within_budget:
+        return None
+
+    # Tool results after the last assistant tool_calls message belong to the
+    # current batch; everything before it is an older, already-reasoned-over
+    # result and gets compacted first.
+    last_assistant_idx = -1
+    for i, msg in enumerate(messages_for_llm):
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            last_assistant_idx = i
+
+    max_chars = cc.compacted_tool_result_max_chars
+    tokens = tokens_before
+    compacted_count = 0
+
+    def _compact(msg: dict[str, Any]) -> int:
+        nonlocal compacted_count
+        content = msg.get("content") or ""
+        if len(content) <= max_chars + len(TOOL_RESULT_COMPACTION_NOTICE):
+            return 0
+        before = estimate(msg)
+        msg["content"] = content[:max_chars] + TOOL_RESULT_COMPACTION_NOTICE
+        compacted_count += 1
+        return before - estimate(msg)
+
+    # Pass 1: older tool results, oldest first.
+    for i, msg in enumerate(messages_for_llm):
+        if tokens <= budget:
+            break
+        if msg.get("role") == "tool" and i < last_assistant_idx:
+            tokens -= _compact(msg)
+
+    # Pass 2: current-batch tool results, only if still over budget. The
+    # imminent follow-up call reasons over exactly these results, so trim
+    # only what the deficit requires (largest first) instead of slashing
+    # every result to the floor — a 70K-char graphrag result a few hundred
+    # tokens over budget should lose a few hundred tokens, not 97% of it.
+    if tokens > budget:
+        current_batch = [
+            m
+            for i, m in enumerate(messages_for_llm)
+            if m.get("role") == "tool" and i > last_assistant_idx
+        ]
+        current_batch.sort(key=lambda m: len(m.get("content") or ""), reverse=True)
+        for msg in current_batch:
+            if tokens <= budget:
+                break
+            content = msg.get("content") or ""
+            before = estimate(msg)
+            # Token room left for this message if everything else stays.
+            allowed = budget - (tokens - before)
+            target = (
+                (allowed - cc.message_structure_token_overhead) * DENSE_CHARS_PER_TOKEN
+                - len(TOOL_RESULT_COMPACTION_NOTICE)
+                - DENSE_CHARS_PER_TOKEN  # floor-rounding slack
+            )
+            target = max(max_chars, target)
+            if target >= len(content):
+                continue
+            msg["content"] = content[:target] + TOOL_RESULT_COMPACTION_NOTICE
+            compacted_count += 1
+            tokens -= before - estimate(msg)
+
+    summary = {
+        "tokens_before": tokens_before,
+        "tokens_after": tokens,
+        "budget": budget,
+        "context_window": context_window,
+        "compacted_count": compacted_count,
+        "still_over_budget": tokens > budget,
+    }
+    logger.warning(
+        "chat_stream_tool_loop_compacted",
+        chat_id=chat_id,
+        provider=provider,
+        model=model,
+        **summary,
+    )
+    return summary
+
+
+def detect_truncation_warnings(
+    done_chunk: dict[str, Any],
+    settings: Settings | None,
+    chat_id: str,
+) -> list[dict[str, str]]:
+    """Detect silent truncation signals on a provider ``done`` chunk.
+
+    Two independent signals, both verified against Ollama behavior:
+
+    - ``finish_reason == "length"`` — generation stopped because the output
+      token budget (or the remaining context room) ran out; the visible
+      answer is cut off mid-thought.
+    - ``usage.prompt_tokens`` pinned at the context window — Ollama silently
+      truncates an oversized prompt (server log: ``truncating input prompt``)
+      and reports ``prompt_eval_count == num_ctx - 1``; the count is the only
+      response-level signal that instructions/history were dropped.
+
+    Args:
+        done_chunk: Provider done chunk with finish_reason/usage fields.
+        settings: Application settings (None skips the overflow check).
+        chat_id: Chat ID for logging.
+
+    Returns:
+        List of ``{"kind", "message"}`` warning dicts (possibly empty),
+        ordered output_truncated first.
+
+    """
+    warnings: list[dict[str, str]] = []
+
+    if done_chunk.get("finish_reason") == "length":
+        warnings.append(
+            {
+                "kind": "output_truncated",
+                "message": (
+                    "The model ran out of room and this answer was cut off. "
+                    "Increase the model's context window or output token limit "
+                    "in Settings, or ask a narrower question."
+                ),
+            }
+        )
+
+    usage = done_chunk.get("usage") or {}
+    prompt_tokens = usage.get("prompt_tokens") or 0
+    if settings is not None and prompt_tokens:
+        # Best-effort diagnostics: a malformed usage payload or partially
+        # faked settings must never break the stream itself.
+        try:
+            context_window, provider, _model = get_context_window_for_provider(settings)
+            margin = settings.chat_context.context_overflow_warning_margin
+            overflowed = prompt_tokens >= context_window - margin
+        except (TypeError, AttributeError) as e:
+            logger.debug(
+                "chat_stream_overflow_check_skipped",
+                chat_id=chat_id,
+                error_type=type(e).__name__,
+            )
+            overflowed = False
+        if overflowed:
+            hint = (
+                "Increase the Ollama context window (Settings → LLM → context size)"
+                if provider == "ollama"
+                else "Increase the model's context window in Settings → LLM"
+            )
+            warnings.append(
+                {
+                    "kind": "context_overflow",
+                    "message": (
+                        f"The conversation and tool results filled the model's "
+                        f"context window ({prompt_tokens:,} of {context_window:,} "
+                        "tokens). Earlier context — including instructions and "
+                        "your question — may have been dropped, degrading this "
+                        f"answer. {hint}, or start a new chat."
+                    ),
+                }
+            )
+
+    if warnings:
+        logger.warning(
+            "chat_stream_truncation_detected",
+            chat_id=chat_id,
+            kinds=[w["kind"] for w in warnings],
+            finish_reason=done_chunk.get("finish_reason"),
+            prompt_tokens=prompt_tokens,
+        )
+    return warnings
+
+
 def log_messages_debug(
     messages_for_llm: list[dict[str, Any]],
     chat: dict[str, Any],
@@ -415,8 +657,11 @@ def log_messages_debug(
 
 
 __all__ = [
+    "TOOL_RESULT_COMPACTION_NOTICE",
     "ContextInfo",
     "MessageBuildResult",
     "build_messages_for_llm",
+    "detect_truncation_warnings",
+    "enforce_tool_loop_budget",
     "log_messages_debug",
 ]

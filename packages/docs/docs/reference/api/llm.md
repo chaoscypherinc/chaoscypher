@@ -22,7 +22,7 @@ GET /api/v1/llm/stats
 Returns current LLM queue statistics including queue depth, token usage, cost tracking, estimated completion times, and semaphore state.
 
 ```bash
-curl http://localhost:8080/api/v1/llm/stats
+curl http://localhost/api/v1/llm/stats
 ```
 
 **Response** `200 OK` -- [LLMStatsResponse](#llmstatsresponse)
@@ -89,10 +89,10 @@ Clear all LLM queue statistics and remove old completed tasks from Valkey. Also 
 
 ```bash
 # Clear tasks older than 48 hours
-curl -X DELETE "http://localhost:8080/api/v1/llm/stats?older_than_hours=48"
+curl -X DELETE "http://localhost/api/v1/llm/stats?older_than_hours=48"
 
 # Clear with default (24 hours)
-curl -X DELETE http://localhost:8080/api/v1/llm/stats
+curl -X DELETE http://localhost/api/v1/llm/stats
 ```
 
 | Parameter | Type | Required | Default | Description |
@@ -121,7 +121,7 @@ GET /api/v1/llm/tasks
 List currently queued and running LLM tasks. Completed and failed tasks are excluded.
 
 ```bash
-curl http://localhost:8080/api/v1/llm/tasks
+curl http://localhost/api/v1/llm/tasks
 ```
 
 **Response** `200 OK` -- [LLMTasksResponse](#llmtasksresponse)
@@ -171,7 +171,7 @@ GET /api/v1/llm/tasks/{task_id}
 Get the status of a specific LLM task by its ID.
 
 ```bash
-curl http://localhost:8080/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl http://localhost/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
 | Parameter | Type | Required | Description |
@@ -218,7 +218,7 @@ DELETE /api/v1/llm/tasks/{task_id}
 Cancel a specific queued or running LLM task.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
+curl -X DELETE http://localhost/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
 ```
 
 | Parameter | Type | Required | Description |
@@ -245,7 +245,7 @@ DELETE /api/v1/llm/tasks
 Bulk cancel all queued and running LLM tasks.
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/llm/tasks
+curl -X DELETE http://localhost/api/v1/llm/tasks
 ```
 
 **Response** `200 OK` -- [CancelAllTasksResponse](#cancelalltasksresponse)
@@ -284,7 +284,7 @@ This can cause deadlock if workers are actively waiting. Only use when Valkey qu
 :::
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/llm/semaphore
+curl -X DELETE http://localhost/api/v1/llm/semaphore
 ```
 
 **Response** `200 OK` -- [ClearSemaphoreResponse](#clearsemaphoreresponse)

@@ -150,6 +150,35 @@ The chat command has access to the following tools:
 | `analyze_graph_structure` | Get graph statistics and structure analysis |
 | `summarize` | Summarize large amounts of document content |
 
+## Tool Approval
+
+By default, the chat runs tools automatically. The `chat.tool_approval` setting can gate tool calls behind an interactive confirmation:
+
+| Mode | Behavior |
+|------|----------|
+| `never-ask` (default) | All tool calls run automatically |
+| `ask-on-write` | Mutating tools (create/update/delete operations) require confirmation; read-only tools run automatically |
+| `always-ask` | Every tool call requires confirmation |
+
+```bash
+chaoscypher config set chat.tool_approval ask-on-write
+```
+
+When a gated tool call occurs, the CLI prints an approval line and prompts:
+
+```
+  Approval required: create_node(template_id=tmpl_a1b2c3, label=New Concept)
+  Allow create_node to run? [y/n] (n):
+```
+
+The prompt is **fail-closed**: only an explicit yes runs the tool. Pressing Enter, sending EOF, or interrupting with Ctrl-C denies the call, and an unanswered request is automatically denied after `chat.tool_approval_timeout_seconds` (default: 120 seconds). Denied calls render as `✗ create_node denied (reject)` — or `(timeout)` when auto-denied — and the model is told the call was rejected so it can answer without it.
+
+The same gating applies to every chat surface — see [Chat → Tool Approval](../../user-guide/chat.md#tool-approval) in the user guide and the [Chat API approval endpoint](../api/chat.md#tool-approval).
+
+### Warnings and Errors
+
+The chat loop also surfaces operational notices inline. `Warning:` lines (yellow) report prompt-budget compaction, context truncation, and the loop forcing a final answer after the tool-iteration limit; `Error:` lines (red) report failures from the LLM provider or the loop itself.
+
 ## Options
 
 | Option | Description |
@@ -158,7 +187,7 @@ The chat command has access to the following tools:
 | `--source, -s TEXT` | Scope to specific source ID (repeatable) |
 | `--tag, -t TEXT` | Scope to all sources with this tag (repeatable) |
 | `--system, -S TEXT` | Custom system prompt |
-| `--database, -d TEXT` | Database name (default: `default`) |
+| `--database, -d TEXT` | Database name (default: the current database — see [Database selection](index.md#database-selection)) |
 
 ## Scoping
 
@@ -217,6 +246,6 @@ When context is provided, the first few chunks or node properties are included i
 2. Sends your message to the LLM with tool-calling capabilities
 3. The LLM searches nodes, retrieves relationships, and queries the knowledge graph as needed
 4. Streams the response with entity references and citations
-5. Supports multi-step tool calling (up to 10 iterations) for complex queries
+5. Supports multi-step tool calling (iteration limit configurable via settings, default 10) for complex queries
 
 Responses are streamed in real-time, so you see the answer as it is generated. Entity references like node names are rendered in bold, and document citations are displayed as inline blockquotes with source attribution.

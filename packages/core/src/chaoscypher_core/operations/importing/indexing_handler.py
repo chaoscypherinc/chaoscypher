@@ -13,8 +13,8 @@ optional analysis queueing).
 Called by ``ImportOperationsService`` with dependencies from the worker
 context.
 
-Vision processing (PR 2, 2026-05-13): the indexing handler no longer
-issues vision LLM calls. ``_apply_vision_processing`` instead creates a
+Vision processing: the indexing handler does not issue vision LLM
+calls itself. ``_apply_vision_processing`` instead creates a
 vision_job + N pending vision_page_descriptions rows, flips the source
 to ``vision_pending``, and enqueues one ``OP_VISION_PAGE`` task per
 image page on ``QUEUE_LLM``. The finalizer (``OP_VISION_FINALIZE``)
@@ -189,16 +189,13 @@ async def _rollup_phase6_loader_counters(
     source_id: str,
     database_name: str,
 ) -> None:
-    """Roll up Phase 6 loader counters from per-doc metadata.
+    """Roll up loader quality counters from per-doc metadata.
 
     Scalar counters (DOCX paragraphs, XLSX rows, CSV rows) sum to a single int
     and increment via QualityCounter atomic-add. Dict counters (HTML tags,
     PPTX shapes) merge into a dict and write via update_source_columns since
-    the column is a JSON dict, not an int.
-
-    Phase 7 audit-remediation (2026-05-09): split into scalar and dict paths.
-    Pairs with migration 0029 (column type INTEGER -> TEXT for HTML/PPTX) and
-    loader updates 3de84fa32 (HTML) + ce0c6ad60 (PPTX).
+    the column is a JSON dict, not an int (migration 0029 changed the HTML and
+    PPTX counter columns from INTEGER to TEXT).
 
     Args:
         documents: List of document dicts produced by the loader.
@@ -522,9 +519,9 @@ async def _run_indexing(
     stages. Embedding + finalization moved to ``embedding_handler.py``
     (``OP_EMBED_CHUNKS`` on ``QUEUE_LLM``).
 
-    PR 2 (2026-05-13, Task 12): ``resume_after_vision`` is set by the
-    vision finalizer when re-enqueuing this handler after every per-page
-    vision task is terminal. On the resume path:
+    ``resume_after_vision`` is set by the vision finalizer when
+    re-enqueuing this handler after every per-page vision task is
+    terminal. On the resume path:
 
     * ``start_indexing`` is skipped — state is already INDEXING via the
       finalizer's compare-and-swap, and re-running ``start_indexing``
@@ -1243,7 +1240,7 @@ def _resolve_content_type(
     Returns:
         The resolved ``ContentType`` for this document.
 
-    Phase 7 audit-remediation (2026-05-09): a loader-supplied
+    Background: a loader-supplied
     ``metadata["content_type"]`` like ``"application/vnd.ms-excel"`` was
     previously split on ``"/"`` yielding ``"vnd.ms-excel"``, then fed to
     ``ContentType.from_extension``.  Unknown post-split keys silently
@@ -1301,25 +1298,23 @@ def _extract_text(
         engine_settings: Engine settings to thread into the normalizer so
             operator flags (``enable_ocr_cleaning`` etc.) and the real
             ``data_dir`` for plugin discovery actually take effect.
-            Workstream 5.2 (2026-05-07).
         domain_normalizer_overrides: Optional ``DomainNormalizerOverrides``
             from the source's resolved domain config.  When provided, each
             non-``None`` flag overrides the corresponding global
             ``NormalizerSettings`` flag for this source only.  Per-source
             granularity is intentionally limited to the existing single
             ``enable_normalization`` kill-switch — the per-cleaner
-            granularity lives at the domain level (Phase 4 Task 4,
-            2026-05-08).
+            granularity lives at the domain level.
 
     Returns:
         Tuple of ``(full_text, cleaner_counts)`` where ``cleaner_counts``
         is a ``{lines_removed, paragraphs_deduplicated, chars_removed,
         ocr_predicate_skips}`` dict summed across every document the
         normalizer touched. Counts are zero when normalization was skipped
-        or when no cleaner reported a removal (Workstream 11, 2026-05-08).
+        or when no cleaner reported a removal.
         ``ocr_predicate_skips`` is non-zero when the OCR cleaner was
         globally enabled but skipped by its predicate due to an unknown
-        extraction_method (Phase 2 observability, 2026-05-08).
+        extraction_method.
 
     """
     from chaoscypher_core.services.sources.normalizer import (
@@ -1615,8 +1610,8 @@ async def _apply_vision_processing(
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Loader-phase entry point: enqueue per-page vision tasks.
 
-    PR 2 (2026-05-13, Task 12) rewire. The legacy gather-and-merge body
-    is replaced with a queue-driven hand-off. Behaviour:
+    The legacy gather-and-merge body was replaced with a queue-driven
+    hand-off. Behaviour:
 
     1. Collect image pages (PDF pages with images, standalone images).
     2. If vision is disabled, no model is configured, or there are no

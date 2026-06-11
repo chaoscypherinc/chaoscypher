@@ -21,9 +21,8 @@ After the last per-page vision task completes, this handler:
 5. Transitions the source from ``VISION_PENDING`` to ``INDEXING`` via an
    atomic compare-and-swap.
 6. Enqueues the next indexing step — a fresh ``OP_INDEX_DOCUMENT`` task
-   with ``resume_after_vision=True`` so the indexing handler (after the
-   Task 12 rewire) can skip the vision phase and continue with
-   normalize → chunk → embed.
+   with ``resume_after_vision=True`` so the indexing handler can skip
+   the vision phase and continue with normalize → chunk → embed.
 
 Idempotent: re-runs read from durable state and converge regardless of
 where a prior attempt crashed:
@@ -36,7 +35,7 @@ where a prior attempt crashed:
   entered the vision phase). Skip cleanly.
 
 The splice helpers (``_splice_descriptions_into_documents``) are exported
-so the indexing handler's resume branch (Task 12) can reuse the exact
+so the indexing handler's resume branch can reuse the exact
 same merge logic against an in-memory re-load, keeping the splice as the
 single source of truth.
 """
@@ -252,12 +251,12 @@ async def _enqueue_resume_indexing(
     """Enqueue an OP_INDEX_DOCUMENT to resume after vision.
 
     The resume task carries ``resume_after_vision=True`` so the indexing
-    handler (Task 12 rewire) can detect the second-pass entry, skip the
+    handler can detect the second-pass entry, skip the
     vision phase entirely (page rows are already terminal), re-load the
     documents + descriptions, and continue with chunking + embedding.
 
     Mirrors the ``queue_import_indexing`` shape but adds the resume flag
-    on the payload so the rewired handler has an unambiguous signal.
+    on the payload so the handler has an unambiguous signal.
     """
     await queue_client.enqueue_task(
         queue=QUEUE_OPERATIONS,

@@ -99,19 +99,37 @@ _ENTITY_DIRECT_FIELDS = (
     "target_node_id",
 )
 
-# Keys that may contain nested entity data for recursive collection
+# Keys that may contain nested entity data for recursive collection.
+# Verified against the actual tool handlers (node/edge/analytics/graphrag):
+# every container that carries node-like dicts must be listed, or chips for
+# entities mentioned only there get no hover details (2026-06-10 audit).
 _ENTITY_RECURSE_KEYS = frozenset(
     (
-        "results",
-        "nodes",
-        "edges",
-        "node",
+        "communities",  # analyze_graph_structure
         "context",
-        "relationships",
+        "edges",
+        "graph_context",  # graphrag_search
         "incoming",
+        "incoming_edges",  # get_node_context
+        "isolated_nodes",  # analyze_graph_structure
+        "node",
+        "nodes",
         "outgoing",
+        "outgoing_edges",  # get_node_context
+        "path",  # find_shortest_path / traverse_path
+        "related_entities",  # graphrag_search
+        "related_node",  # get_node_edges
+        "relationships",
+        "results",
+        "sample_members",  # analyze_graph_structure communities
+        "seed_entities",  # graphrag_search
+        "similar_nodes",  # find_similar_nodes
+        "source",  # get_node_context edge rows (nested node dict)
         "source_node",
+        "start_node",  # traverse_path
+        "target",  # get_node_context edge rows (nested node dict)
         "target_node",
+        "top_nodes",  # analyze_graph_structure
     )
 )
 
@@ -283,6 +301,126 @@ _ALIAS_CITE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# Loose pattern: ANY [[cite:...]] marker regardless of internal validity.
+# Used by the salvage and scrub passes to find markers the strict pattern
+# rejects (e.g. mixed refs like [[cite:C1:S15,C17|f]]).
+_LOOSE_CITE_PATTERN = re.compile(
+    r"\[\[cite:([^\]|]*)(?:\|([^\]]+))?\]\]",
+    re.IGNORECASE,
+)
+
+# Token classifiers for salvaging malformed citation ref lists (fullmatch use)
+_SENTENCE_TOKEN_RE = re.compile(r"S\d+", re.IGNORECASE)
+_ALIAS_TOKEN_RE = re.compile(r"C\d+", re.IGNORECASE)
+_UUIDISH_TOKEN_RE = re.compile(r"[a-f0-9-]{8,}", re.IGNORECASE)
+
+
+def _tidy_removal_whitespace(text: str) -> str:
+    """Collapse mid-line whitespace runs left where markers were removed.
+
+    Lookbehind/lookahead guards keep leading indentation intact — markdown
+    code blocks and nested lists depend on it.
+    """
+    text = re.sub(r"(?<=\S)[ \t]{2,}(?=\S)", " ", text)
+    return re.sub(r"(?<=\S)[ \t]+([.,;:!?])", r"\1", text)
+
+
+def _salvage_mixed_ref_citations(
+    content: str,
+    alias_map: dict[str, tuple[str, str]],
+) -> str:
+    """Split malformed multi-chunk citation markers into valid per-chunk markers.
+
+    LLMs sometimes cram several chunk refs into one marker's sentence list
+    (``[[cite:C1:S15,C17|f]]`` — C17 is a chunk alias, not a sentence) or
+    invent junk tokens (``O5``). The strict patterns reject these outright,
+    so without salvage the raw marker text reaches the UI. This pass
+    re-groups the token list into one marker per chunk ref, drops junk
+    tokens, and (when an alias map is available) drops chunk refs that
+    don't correspond to any chunk the LLM actually saw.
+
+    Args:
+        content: LLM response text.
+        alias_map: Mapping of chunk alias to (chunk_id, filename); may be
+            empty, in which case alias existence is not validated.
+
+    Returns:
+        Content with malformed markers rewritten to strict syntax (aliases
+        still unresolved — step 3 of ``normalize_chunk_references`` handles
+        that) or removed when nothing salvageable remains.
+
+    """
+
+    def _fix(match: re.Match[str]) -> str:
+        original = match.group(0)
+        if CHUNK_CITATION_PATTERN.fullmatch(original):
+            return original  # already valid — leave for alias resolution
+
+        label = (match.group(2) or "source").strip()
+        # Group tokens into (chunk_ref, [sentence_refs]) runs: a chunk-like
+        # token starts a new group, sentence tokens attach to the current one.
+        groups: list[tuple[str, list[str]]] = []
+        for token in re.split(r"[:#,;\s]+", match.group(1)):
+            if not token:
+                continue
+            if _SENTENCE_TOKEN_RE.fullmatch(token):
+                if groups:
+                    groups[-1][1].append(token.upper())
+            elif _ALIAS_TOKEN_RE.fullmatch(token) or _UUIDISH_TOKEN_RE.fullmatch(token):
+                groups.append((token, []))
+            # anything else (O5, ...) is junk — drop it
+
+        parts: list[str] = []
+        for chunk_ref, sentences in groups:
+            is_alias = _ALIAS_TOKEN_RE.fullmatch(chunk_ref)
+            if alias_map and is_alias and chunk_ref.upper() not in alias_map:
+                continue  # hallucinated alias — no such chunk in tool results
+            refs = ",".join(sentences) if sentences else "S1"
+            parts.append(f"[[cite:{chunk_ref}:{refs}|{label}]]")
+
+        logger.info(
+            "citation_salvaged",
+            original=original[:120],
+            salvaged_markers=len(parts),
+        )
+        return "".join(parts)
+
+    salvaged = _LOOSE_CITE_PATTERN.sub(_fix, content)
+    if salvaged == content:
+        return content
+    return _tidy_removal_whitespace(salvaged)
+
+
+def strip_malformed_citations(content: str) -> str:
+    """Remove citation markers that would render as raw text or dead chips.
+
+    Final scrub before reference extraction: drops (a) markers the strict
+    pattern still can't parse after salvage and (b) well-formed markers
+    whose chunk ref is an unresolved ``C0``-style alias — those can't be
+    enriched or clicked, so showing them only adds noise.
+
+    Args:
+        content: LLM response after ``normalize_chunk_references``.
+
+    Returns:
+        Content with unusable citation markers removed and removal
+        whitespace artifacts tidied.
+
+    """
+
+    def _check(match: re.Match[str]) -> str:
+        full = match.group(0)
+        strict = CHUNK_CITATION_PATTERN.fullmatch(full)
+        if strict and not _ALIAS_TOKEN_RE.fullmatch(strict.group(1)):
+            return full
+        logger.info("citation_stripped_malformed", marker=full[:120])
+        return ""
+
+    stripped = _LOOSE_CITE_PATTERN.sub(_check, content)
+    if stripped == content:
+        return content
+    return _tidy_removal_whitespace(stripped)
+
 
 def _build_chunk_alias_map(
     tool_results: list[dict[str, Any]],
@@ -385,6 +523,10 @@ def normalize_chunk_references(
             return "".join(parts)
 
         content = _BARE_ALIAS_PAREN_PATTERN.sub(_replace_bare_alias, content)
+
+    # 2c. Salvage malformed multi-chunk markers (e.g. [[cite:C1:S15,C17|f]])
+    # into one valid marker per chunk so step 3 can resolve the aliases.
+    content = _salvage_mixed_ref_citations(content, alias_map)
 
     # 3. Resolve aliases (C0, C1, ...) to real UUIDs in [[cite:...]] patterns
     if alias_map:
@@ -1195,4 +1337,5 @@ __all__ = [
     "inject_citations_into_blockquotes",
     "normalize_chunk_references",
     "strip_duplicated_citation_text",
+    "strip_malformed_citations",
 ]

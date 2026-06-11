@@ -85,19 +85,19 @@ The PDF loader received several resilience improvements:
 
 - **Per-page error isolation** — extraction is wrapped in a per-page `try/except`. A page that raises (corrupt page stream, unsupported font, etc.) increments `LOADER_PDF_PAGES_FAILED` / `loader_pdf_pages_failed` and continues to the next page. Previously a single bad page aborted the entire document.
 - **Encrypted PDF detection** — when `pypdf` reports `is_encrypted=True`, the loader first attempts an empty-password decrypt. Many real-world PDFs (Adobe Acrobat output, OCR scans, journal articles) declare encryption only to advertise permission restrictions; `decrypt("")` returns `USER_PASSWORD` / `OWNER_PASSWORD` and the document loads normally. The loader only raises `EncryptedPDFError` (a Core exception mapped to HTTP 422) when the empty-password attempt returns `NOT_DECRYPTED` or raises. Operators see "This PDF is password-protected" only when the file genuinely requires one.
-- **Image-only detection** — after extraction, if total extracted text is below `LoaderSettings.pdf_image_only_threshold` characters and the PDF has at least one page, the loader sets `needs_vision=True` in the document metadata rather than raising immediately. The indexing handler respects this flag and can route the source through the vision pipeline automatically when `enable_vision=true`.
-- **Page cap** — `LoaderSettings.pdf_max_pages` (default unlimited) lets operators cap extraction at N pages. Pages beyond the cap are silently skipped (no counter increment — the cap is intentional, not a quality signal).
+- **Image-only detection** — when every attempted page returns empty text, the loader sets `needs_vision=True` in the document metadata, appends a `loader_warnings` entry ("all N pages produced empty text; vision processing required"), and emits a `pdf_image_only_detected` log event. The indexing handler then routes the source through the vision pipeline when vision is enabled.
+- **Page cap** — `LoaderSettings.pdf_max_pages` (default `None` = unlimited) caps extraction at N pages. Truncation appends a `loader_warnings` entry (surfaced via `loader_warnings_count`) and emits a `pdf_pages_truncated` log event.
 
 ### TextLoader
 
 | Property | Value |
 |----------|-------|
 | Extensions | `.txt`, `.md`, `.log` |
-| Library | Built-in `open()` |
+| Library | `detect_encoding()` helper |
 | OCR Support | No |
 | Output | Raw file content |
 
-Reads UTF-8 text files with `errors="replace"` for encoding tolerance. The simplest loader -- returns the full file content as a single document.
+Routes through `detect_encoding()` (strict UTF-8 → cp1252 → charset-normalizer/chardet → Latin-1 fallback) and records `encoding_used` + `replacement_chars_count` in document metadata. The simplest loader -- returns the full file content as a single document.
 
 ### CSVLoader
 
@@ -347,12 +347,12 @@ visibility. Each is incremented inside the relevant loader:
 
 | Counter | Loader | What it counts |
 |---------|--------|----------------|
-| `LOADER_HTML_TAGS_DROPPED` | `HTMLLoader` | Tags stripped during boilerplate removal |
+| `LOADER_HTML_DROPPED_TAGS` | `HTMLLoader` | Tags stripped during boilerplate removal |
 | `LOADER_DOCX_PARAGRAPHS_SKIPPED` | `DOCXLoader` | Empty or otherwise-skipped paragraphs |
 | `LOADER_XLSX_ROWS_SKIPPED` | `XLSXLoader` | Empty rows, header-only rows, or rows over the row limit |
 | `LOADER_PPTX_SHAPES_SKIPPED` | `PPTXLoader` | Shapes with no extractable text content |
 | `LOADER_CSV_ROWS_TRUNCATED` | `CSVLoader` | Rows whose content was truncated to the per-row character cap |
-| `LOADER_PLUGIN_LOAD_FAILURES` | `LoaderRegistry` | User plugin files that raised during import or instantiation |
+| `CLEANER_PLUGIN_LOAD_FAILURES` | `LoaderRegistry` | User plugin files that raised during import or instantiation (counter shared with the cleaner-plugin path, hence the `CLEANER_` prefix) |
 
 Additionally, `MarkdownHandler` and `GenericHandler` (archive handlers)
 now expose configurable skip-lists so operators can suppress specific
@@ -366,7 +366,7 @@ files or extensions without writing a custom plugin.
 | File not found | `FileNotFoundError` raised |
 | Loader dependency missing | Loader-specific handling — wrapped in `ValidationError` with an actionable install hint |
 | Library raises during parse | Wrapped in `ValidationError` so the indexing handler records a clean `error_message` instead of a third-party stack trace |
-| Scanned PDF (zero text post-extract) | `PdfLoader` raises a specific `ValidationError` ("scanned PDF — enable vision to extract content") rather than returning an empty document |
+| Scanned PDF (zero text post-extract) | `PdfLoader` sets `needs_vision=True` (does not raise — see the Image-only PDF row); when vision is disabled and no text survives, the indexing handler raises `ValidationError`: "This PDF has N image-only pages and produced no extractable text. Enable vision in upload settings..." |
 | Encrypted PDF (genuine password) | `PdfLoader` tries empty-password decrypt first; raises `EncryptedPDFError` only when `decrypt("")` returns `NOT_DECRYPTED`. Cortex maps the error to HTTP 422 (Phase 5b; empty-password hardening 2026-05-09). |
 | Restriction-only "encrypted" PDF | Empty-password decrypt succeeds (returns `USER_PASSWORD` / `OWNER_PASSWORD`); document loads normally. Emits `pdf_decrypted_with_empty_password` log event for observability. |
 | Image-only PDF | `PdfLoader` sets `needs_vision=True` in metadata; does not raise (Phase 5b) |
@@ -378,7 +378,7 @@ All errors propagate up to `handle_index_document()`, which catches them and cal
 
 :::note[`application/octet-stream` is not in the default upload allowlist]
 
-The default `batching.allowed_content_types` list does **not** include `application/octet-stream` — including it would defeat the allowlist (the browser sends `octet-stream` for any binary it doesn't recognize). Operators who genuinely need to accept arbitrary binaries can add it via `settings.yaml`.
+The default `batching.upload_content_type_allowlist` list does **not** include `application/octet-stream` — including it would defeat the allowlist (the browser sends `octet-stream` for any binary it doesn't recognize). Operators who genuinely need to accept arbitrary binaries can add it via `settings.yaml`.
 
 :::
 

@@ -496,7 +496,7 @@ class TestNodeList:
 
         assert result.exit_code == 0, result.output
         assert "No nodes found" in result.output
-        assert "chaoscypher node create" in result.output
+        assert "chaoscypher graph node create" in result.output
 
     def test_list_empty_with_template_filter_shows_filter_hint(self) -> None:
         """Empty result when --template filter active shows filter info."""

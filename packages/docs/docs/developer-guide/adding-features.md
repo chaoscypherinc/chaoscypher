@@ -25,10 +25,10 @@ packages/cortex/src/chaoscypher_cortex/features/{feature}/
 
 ## Step 2: Define the Database Model
 
-Add your SQLModel entity to the shared database models:
+Persistent table entities live in the core package, not in Cortex. Add your SQLModel entity to `packages/core/src/chaoscypher_core/adapters/sqlite/models.py` (the single module serving the `SqliteAdapter` session), keeping the `database_name` index field for per-database scoping:
 
 ```python
-# packages/cortex/src/chaoscypher_cortex/shared/database/models.py
+# packages/core/src/chaoscypher_core/adapters/sqlite/models.py
 
 class MyEntity(SQLModel, table=True):
     """My new entity."""
@@ -42,6 +42,18 @@ class MyEntity(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 ```
+
+Adding a table here changes `SQLModel.metadata`, so it always requires an Alembic migration — see Step 2b.
+
+## Step 2b: Create the Alembic Migration
+
+Every change to `SQLModel.metadata` ships with an Alembic revision. Generate one:
+
+```bash
+alembic revision --autogenerate -m "add my_entities table"
+```
+
+This produces a new file under `packages/core/src/chaoscypher_core/database/migrations/versions/`. Migrations auto-apply on startup — see [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md) and the [upgrading guide](../getting-started/upgrading.md).
 
 ## Step 3: Create DTOs
 
@@ -143,7 +155,7 @@ class MyRepository:
 
 :::warning[Performance]
 
-For list operations, use `load_only()` to avoid loading large columns. See the SQLAlchemy Query Performance section in `CLAUDE.md` for details.
+List queries must select only the columns they return via `load_only()` — loading full rows pulls large text/JSON columns and is flagged by lint rule CC003 (`tools/semgrep/rules/cc-003-list-without-load-only.yml`). See [Code Standards](code-standards.md) for the full rule catalog.
 
 :::
 
@@ -277,6 +289,7 @@ could otherwise be captured by another router's `/{id}` pattern (for example
 ## Checklist
 
 - [ ] SQLModel entity defined with `database_name` field
+- [ ] Alembic revision added (required whenever SQLModel metadata changes)
 - [ ] Pydantic DTOs for request/response
 - [ ] Repository accepts `SqliteAdapter`, uses `load_only()` for list operations, and `adapter.transaction()` for writes (CC011)
 - [ ] Service `list_entities` returns canonical paginated envelope `{data, pagination}`

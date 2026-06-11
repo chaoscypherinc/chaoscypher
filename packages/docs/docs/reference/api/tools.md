@@ -20,7 +20,7 @@ GET /api/v1/tools/system
 Returns all system tools with optional filters. The response contains summary data only -- use the detail endpoint for full input/output schemas.
 
 ```bash
-curl http://localhost:8080/api/v1/tools/system?category=extraction&is_active=true
+curl http://localhost/api/v1/tools/system?category=extraction&is_active=true
 ```
 
 | Parameter | Type | Required | Description |
@@ -60,7 +60,7 @@ GET /api/v1/tools/system/{tool_id}
 Returns full details for a specific system tool, including input and output JSON schemas.
 
 ```bash
-curl http://localhost:8080/api/v1/tools/system/extract_entities
+curl http://localhost/api/v1/tools/system/extract_entities
 ```
 
 | Parameter | Type | Required | Description |
@@ -114,7 +114,7 @@ Returns user-configured tool instances with optional filters.
 Returns all tool instances (single-user deployment).
 
 ```bash
-curl http://localhost:8080/api/v1/tools?system_tool_id=extract_entities&is_active=true
+curl http://localhost/api/v1/tools?system_tool_id=extract_entities&is_active=true
 ```
 
 | Parameter | Type | Required | Description |
@@ -194,7 +194,7 @@ Creates a new user tool as a configured instance of a system tool.
 The local operator owns all tools (single-user deployment).
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/tools \
+curl -X POST http://localhost/api/v1/tools \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Deep Extraction",
@@ -231,7 +231,7 @@ Returns a single user tool by ID, including the nested system tool details.
 Returns the tool by ID. Returns `404` if no tool with that ID exists.
 
 ```bash
-curl http://localhost:8080/api/v1/tools/ut_abc123
+curl http://localhost/api/v1/tools/ut_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -253,7 +253,7 @@ Partial update -- only include the fields you want to change.
 The local operator can update any tool (single-user deployment).
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/tools/ut_abc123 \
+curl -X PATCH http://localhost/api/v1/tools/ut_abc123 \
   -H "Content-Type: application/json" \
   -d '{
     "description": "Updated description",
@@ -288,7 +288,7 @@ Permanently deletes a user tool.
 The local operator can delete any tool (single-user deployment).
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/tools/ut_abc123
+curl -X DELETE http://localhost/api/v1/tools/ut_abc123
 ```
 
 | Parameter | Type | Required | Description |
@@ -312,7 +312,7 @@ GET /api/v1/tools/stats/{tool_type}/{tool_id}
 Returns execution statistics for a specific tool.
 
 ```bash
-curl http://localhost:8080/api/v1/tools/stats/system/extract_entities
+curl http://localhost/api/v1/tools/stats/system/extract_entities
 ```
 
 | Parameter | Type | Required | Description |

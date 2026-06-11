@@ -3,7 +3,7 @@
 
 """CitationStorageProtocol for ChaosCypher storage.
 
-Split from the original SourceStorageProtocol god-protocol (Phase 1 Task 12).
+Split from the original SourceStorageProtocol god-protocol.
 Covers SourceCitation and RelationshipCitation table operations, orphan
 detection, and per-source citation statistics.
 Binds to SourceCitationsMixin in the SQLite adapter.

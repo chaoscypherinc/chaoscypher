@@ -173,7 +173,7 @@ Public entry point for getting domain type-normalization rules.
 
 Used by the production finalizer to re-type generic entities
 (`Item` -> `Class`) the same way `extract_entities_from_groups`
-does. Workstream 3, Tasks 3.1+3.2.
+does.
 
 Args:
     domain_name: Name of the domain (e.g., 'technical', 'literary').
@@ -1240,7 +1240,7 @@ Process:
 1. Split text into ALL small chunks (~900 chars, sentence boundaries)
 2. Create ALL hierarchical groups (4 small chunks per group)
 3. Filter based on analysis_depth (quick=5 groups / full=all)
-4. (Phase 5a) Recompute char offsets against `original_text` when
+4. Recompute char offsets against `original_text` when
    provided so citation anchors reference the raw upload, not the
    post-cleaner text.
 
@@ -1258,14 +1258,14 @@ Args:
         Chunks that cannot be located receive NULL offsets and method
         `'none'`.  When `None` the existing offset values computed
         against the cleaned text are kept and tagged `'exact'` (the
-        pre-Phase-5a behaviour — slightly inaccurate but consistent
-        with what was shipped before this phase).
+        legacy behaviour — slightly inaccurate but consistent with
+        earlier releases).
     location_index: Optional per-document location index built by
         the loader. Each boundary maps a char range to a
         `page_number` and/or `section`. Coordinates are in
         the loader-content coordinate system (≈ raw-upload). The
-        lookup runs after Phase 5a so chunk char_start aligns
-        with the index. When None, page_number and section
+        lookup runs after offset recomputation so chunk char_start
+        aligns with the index. When None, page_number and section
         stay None on every chunk.
 
 Returns:
@@ -1385,8 +1385,8 @@ is half-open — `end_char` is exclusive.
 
 Coordinates match the loader's `content` field (pre-normalization),
 which approximates raw-upload coordinates. The chunker's lookup runs
-after Phase 5a (`_recompute_chunk_offsets`) so the coordinate
-systems align when `original_text` is provided.
+after offset recomputation (`_recompute_chunk_offsets`) so the
+coordinate systems align when `original_text` is provided.
 
 **Bases:** `TypedDict`
 
@@ -2323,7 +2323,7 @@ Returns:
 - `embedding_provider`: `EmbeddingProviderProtocol` — Convenience alias for `embedding_service`.
 
 Named to match the `EmbeddingProviderProtocol` port terminology
-used by services migrated in Phase 2. Returns the same instance
+used by services that consume the port. Returns the same instance
 as `embedding_service`.
 - `embedding_service`: `EmbeddingProviderProtocol`
 - `extraction_service`: `ExtractionService` — Entity extraction service for deduplication and template matching.

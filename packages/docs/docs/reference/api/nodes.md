@@ -33,19 +33,19 @@ GET /api/v1/nodes
 ### Example Request
 
 ```bash
-curl 'http://localhost:8080/api/v1/nodes?include_stats=true'
+curl 'http://localhost/api/v1/nodes?include_stats=true'
 ```
 
 Filter by template:
 
 ```bash
-curl 'http://localhost:8080/api/v1/nodes?template_id=tmpl-person-abc123'
+curl 'http://localhost/api/v1/nodes?template_id=tmpl-person-abc123'
 ```
 
 Filter by source documents:
 
 ```bash
-curl 'http://localhost:8080/api/v1/nodes?source_ids=src-001&source_ids=src-002'
+curl 'http://localhost/api/v1/nodes?source_ids=src-001&source_ids=src-002'
 ```
 
 ### Response
@@ -105,7 +105,7 @@ POST /api/v1/nodes
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/nodes \
+curl -X POST http://localhost/api/v1/nodes \
   -H 'Content-Type: application/json' \
   -d '{
     "template_id": "tmpl-person-abc123",
@@ -160,7 +160,7 @@ GET /api/v1/nodes/{node_id}
 ### Example Request
 
 ```bash
-curl http://localhost:8080/api/v1/nodes/node-a1b2c3d4
+curl http://localhost/api/v1/nodes/node-a1b2c3d4
 ```
 
 ### Response
@@ -229,7 +229,7 @@ All fields are optional. Only provided fields are updated.
 ### Example Request
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/nodes/node-a1b2c3d4 \
+curl -X PATCH http://localhost/api/v1/nodes/node-a1b2c3d4 \
   -H 'Content-Type: application/json' \
   -d '{
     "label": "Albert Einstein (1879-1955)",
@@ -279,7 +279,7 @@ PATCH /api/v1/nodes/{node_id}/position
 ### Example Request
 
 ```bash
-curl -X PATCH http://localhost:8080/api/v1/nodes/node-a1b2c3d4/position \
+curl -X PATCH http://localhost/api/v1/nodes/node-a1b2c3d4/position \
   -H 'Content-Type: application/json' \
   -d '{
     "position": {"x": 150.0, "y": 250.0}
@@ -342,7 +342,7 @@ DELETE /api/v1/nodes/{node_id}
 ### Example Request
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/nodes/node-a1b2c3d4
+curl -X DELETE http://localhost/api/v1/nodes/node-a1b2c3d4
 ```
 
 ### Response
@@ -389,7 +389,7 @@ Each operation object:
 ### Example Request
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/nodes/batch \
+curl -X POST http://localhost/api/v1/nodes/batch \
   -H 'Content-Type: application/json' \
   -d '{
     "operations": [
@@ -475,7 +475,7 @@ GET /api/v1/nodes/{node_id}/connections
 ### Example Request
 
 ```bash
-curl 'http://localhost:8080/api/v1/nodes/node-a1b2c3d4/connections?sort_by=edge_count&page=1&page_size=10'
+curl 'http://localhost/api/v1/nodes/node-a1b2c3d4/connections?sort_by=edge_count&page=1&page_size=10'
 ```
 
 ### Response
@@ -561,7 +561,7 @@ GET /api/v1/nodes/{node_id}/citations
 ### Example Request
 
 ```bash
-curl 'http://localhost:8080/api/v1/nodes/node-a1b2c3d4/citations?page=1&page_size=10'
+curl 'http://localhost/api/v1/nodes/node-a1b2c3d4/citations?page=1&page_size=10'
 ```
 
 ### Response

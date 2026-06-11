@@ -6,11 +6,11 @@
 Several mixins — ``SourceExtractionJobsMixin`` itself, plus the
 ``ChunkTasksLifecycleMixin`` and ``ChunkTasksRecoveryMixin`` that need
 to look up a job while processing its child tasks — all need the same
-single-job lookup. Prior to Phase 3 the task mixins relied on Python MRO
-to find ``get_extraction_job`` on a sibling, which the architecture
-review flagged as implicit cross-mixin coupling (exit criterion: "No
-mixin calls a sibling mixin's method unless both inherit a shared base
-defining that method").
+single-job lookup. Previously the task mixins relied on Python MRO
+to find ``get_extraction_job`` on a sibling, which an architecture
+review flagged as implicit cross-mixin coupling (no mixin should call a
+sibling mixin's method unless both inherit a shared base defining that
+method).
 
 This module hosts that shared base. Every participating mixin inherits
 from it so the call is always statically resolvable — no MRO guessing,

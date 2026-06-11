@@ -14,7 +14,7 @@ in `packages/core/src/chaoscypher_core/utils/encoding.py`.
 The helper's job is to decode bytes into Python strings *strictly* —
 no `errors="replace"` until every other option is exhausted — and to
 record which encoding it actually used so the operator can see it on
-the source's [Data Quality tab](../../user-guide/data-quality.md).
+the source's [Pipeline flow & quality counters](../../user-guide/data-quality.md).
 
 ## Why a shared helper
 
@@ -43,11 +43,11 @@ flowchart TD
     A["Read file as bytes"] --> B{"UTF-8 BOM?"}
     B -->|Yes| C["Strip BOM, decode utf-8 strict"]
     B -->|No| D["Decode utf-8 strict"]
-    C --> Done["Return (encoding, text)"]
+    C --> Done["Return (encoding, text, replacement_chars)"]
     D -->|Success| Done
     D -->|Fail| E["Decode cp1252 strict"]
     E -->|Success| Done
-    E -->|Fail| F{"Bytes >= 256?"}
+    E -->|Fail| F{"Bytes >= encoding_chardet_min_input_size<br/>(default 32)?"}
     F -->|Yes| G["charset-normalizer.from_bytes(...)"]
     G -->|Confident match| Done
     G -->|No good match| H["Decode latin-1"]
@@ -62,7 +62,7 @@ flowchart TD
 | 1 | `utf-8-bom` | File starts with a UTF-8 BOM (stripped before decoding) |
 | 2 | `utf-8` | Strict UTF-8 succeeded — the modern default |
 | 3 | `cp1252` | Strict cp1252 succeeded — the most common Windows export (Notepad / Excel save-as / older corporate sites) |
-| 4 | `<charset-normalizer name>` | Library returned a confident match for an unusual encoding (Asian code pages, Cyrillic, etc.). Only consulted for files >= 256 bytes — the library is unreliable on tiny samples. |
+| 4 | `<charset-normalizer name>` | Library returned a confident match for an unusual encoding (Asian code pages, Cyrillic, etc.). Only consulted for files >= `encoding_chardet_min_input_size` bytes (default 32) — the library is unreliable on tiny samples. |
 | 5 | `latin-1-fallback` | Strict Latin-1 (always succeeds because every byte 0x00–0xFF maps to a codepoint). The "fallback" suffix flags this as a defensive last-strict-step. |
 | 6 | `utf-8-replace` | Defensive — UTF-8 with `errors="replace"`. Latin-1 cannot fail in CPython, so this path is unreachable in practice; it exists so the helper never raises. |
 
@@ -99,20 +99,19 @@ unreliable tiny-sample guesses.
 
 ### chardet tiebreaker
 
-When `charset-normalizer` returns a result, the helper now also runs
-`chardet` (if installed) and compares the two guesses. If the two
-libraries disagree but one has high confidence, the
-`LoaderSettings.encoding_chardet_confidence_threshold` (default `0.70`)
-is used to pick a winner:
+When `charset-normalizer`'s coherence is **below**
+`LoaderSettings.encoding_chardet_confidence_threshold` (default `0.70`),
+`chardet` is consulted as a second opinion:
 
-- If `chardet` confidence ≥ threshold **and** it agrees with
-  `charset-normalizer` → use the charset-normalizer label (more
-  readable).
-- If `chardet` confidence ≥ threshold **and** it disagrees →
-  `chardet`'s label wins; this handles edge-cases where
-  `charset-normalizer` mis-identifies Asian code pages.
-- If `chardet` confidence < threshold → fall back to the
-  `charset-normalizer` result as before.
+- If `chardet` reports strictly higher confidence than
+  `charset-normalizer`'s coherence **and** its suggested encoding
+  strict-decodes the bytes → `chardet` wins (label `chardet-<name>`);
+  this handles edge-cases where `charset-normalizer` mis-identifies
+  Asian code pages.
+- Otherwise → the `charset-normalizer` result is used as before.
+
+When coherence is at or above the threshold, `chardet` is never
+consulted.
 
 `chardet` is an optional dependency; when absent the tiebreaker step is
 skipped silently and behaviour is identical to the pre-Phase-4 path.
@@ -126,12 +125,12 @@ The set of labels that can appear in `loader_encoding_used` was expanded:
 | `utf-8` | Strict UTF-8 succeeded |
 | `utf-8-bom` | UTF-8 BOM stripped then decoded |
 | `cp1252` | Strict Windows-1252 succeeded |
-| `charset-normalizer:<name>` | Library returned a confident match (e.g., `charset-normalizer:iso-8859-2`) |
-| `chardet:<name>` | chardet tiebreaker won (e.g., `chardet:euc-jp`) |
+| `charset-normalizer-<name>` | Library returned a confident match (e.g., `charset-normalizer-iso-8859-2`) |
+| `chardet-<name>` | chardet tiebreaker won (e.g., `chardet-euc-jp`) |
 | `latin-1-fallback` | Latin-1 strict (always succeeds) — last strict step |
 | `utf-8-replace` | Defensive UTF-8 with `errors="replace"` (unreachable in CPython practice) |
 
-The `charset-normalizer:` and `chardet:` prefixes make it easy to grep
+The `charset-normalizer-` and `chardet-` prefixes make it easy to grep
 `loader_encoding_used` values and distinguish library-guided guesses from
 the deterministic `utf-8` / `cp1252` / `latin-1-fallback` steps.
 
@@ -145,7 +144,7 @@ could not be decoded cleanly by any strict strategy and the defensive
 `utf-8-replace` fallback was used for those bytes.
 
 Operators seeing a high `loader_replacement_chars_count` should inspect the
-file's encoding — the `loader_encoding_used` field in the Data Quality tab
+file's encoding — the `loader_encoding_used` field in the Pipeline flow section
 will show the label that was ultimately used.
 
 ## How the encoding surfaces
@@ -157,7 +156,7 @@ from `chaoscypher_core.services.quality.counters`:
 from chaoscypher_core.services.quality.counters import set_loader_encoding
 from chaoscypher_core.utils.encoding import detect_encoding
 
-encoding_used, text = detect_encoding(path)
+encoding_used, text, replacement_chars = detect_encoding(path)
 set_loader_encoding(
     adapter=adapter,
     source_id=source_id,
@@ -165,6 +164,10 @@ set_loader_encoding(
     encoding=encoding_used,
 )
 ```
+
+The third element of the returned tuple is the count of U+FFFD
+replacement characters inserted during decoding (0 on every strict-decode
+path); loaders feed it into `LOADER_REPLACEMENT_CHARS_COUNT`.
 
 The label lands on `SourceRow.loader_encoding_used`, surfaced via
 [QualityMetrics](../../reference/api/quality-metrics.md). Operators
@@ -189,5 +192,5 @@ helper because their underlying libraries handle bytes themselves.
 ## See also
 
 - [Loading](loading.md) — full loader reference
-- [Data Quality tab](../../user-guide/data-quality.md) — where `loader_encoding_used` surfaces in the UI
+- [Pipeline flow & quality counters](../../user-guide/data-quality.md) — where `loader_encoding_used` surfaces in the UI
 - [Quality Metrics API](../../reference/api/quality-metrics.md) — field-level reference

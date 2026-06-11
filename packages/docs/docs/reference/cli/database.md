@@ -129,7 +129,7 @@ Current database: my-project
 chaoscypher db create <name>
 ```
 
-Creates a new database with the required directory structure, including `app.db` (SQLite) and `search/` (search indexes). The database is not automatically switched to after creation.
+Creates the database directory containing `app.db` (SQLite), which embeds the FTS5 full-text and sqlite-vec vector indexes. The database is not automatically switched to after creation.
 
 Database names must be alphanumeric (hyphens and underscores allowed). The pattern is `[a-zA-Z0-9_-]+`.
 

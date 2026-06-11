@@ -10,9 +10,6 @@ construction time.
 
 ``TaskType`` lives here because it is part of the port's vocabulary: callers
 pass it as a routing/metrics hint to the port's methods.
-
-Phase 2 will migrate ~15 service files off direct ``chaoscypher_core.adapters.llm``
-imports onto this port.
 """
 
 from __future__ import annotations

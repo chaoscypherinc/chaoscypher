@@ -8,10 +8,17 @@ knowledge graph construction. Supports standalone extraction (no database)
 and full graph engine with persistent storage.
 """
 
-__version__ = "0.1.0"
-
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
+
+
+try:
+    __version__ = version("chaoscypher-core")
+except PackageNotFoundError:
+    # Source-tree run without an installed dist (e.g. a checkout that wasn't
+    # `uv sync`'d). Fall back to a sentinel so imports still succeed.
+    __version__ = "0.0.0+unknown"
 
 # Embedding providers
 from chaoscypher_core.adapters.embedding.factory import create_embedding_provider
@@ -467,7 +474,7 @@ async def add_documents(
 
 
 def extract_sync(
-    source: str | Path,
+    source: str | Path | None = None,
     **kwargs: Any,
 ) -> ExtractionResult:
     """Synchronous wrapper for extract().
@@ -476,15 +483,18 @@ def extract_sync(
     Ideal for scripts, notebooks, and non-async contexts.
 
     Args:
-        source: File path or raw text string.
-        **kwargs: Forwarded to extract() (analysis_depth, etc.).
+        source: File path or raw text string. Mutually exclusive with the
+            ``text`` keyword (forwarded via ``**kwargs``); extract()
+            validates the combination.
+        **kwargs: Forwarded to extract() (text, analysis_depth, etc.).
 
     Returns:
         ExtractionResult with entities, relationships, domain, and confidence.
 
     Example:
         >>> from chaoscypher_core import extract_sync
-        >>> result = extract_sync("paper.pdf")
+        >>> result = extract_sync("paper.pdf")            # file path
+        >>> result = extract_sync(text="Raw content...")  # explicit text
         >>> print(f"{len(result.entities)} entities found")
 
     """
@@ -632,14 +642,16 @@ def add_documents_sync(
 
 
 def chunk_sync(
-    source: str | Path,
+    source: str | Path | None = None,
     **kwargs: Any,
 ) -> ChunksResult:
     """Synchronous wrapper for chunk().
 
     Args:
-        source: File path or raw text string.
-        **kwargs: Forwarded to chunk() (analysis_depth, etc.).
+        source: File path or raw text string. Mutually exclusive with the
+            ``text`` keyword (forwarded via ``**kwargs``); chunk()
+            validates the combination.
+        **kwargs: Forwarded to chunk() (text, analysis_depth, etc.).
 
     Returns:
         ChunksResult with chunk data, totals, and group structure.

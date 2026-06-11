@@ -53,7 +53,7 @@ When an enterprise license is installed:
 #### curl Example
 
 ```bash
-curl -s http://localhost:8080/api/v1/edition
+curl -s http://localhost/api/v1/edition
 ```
 
 ---

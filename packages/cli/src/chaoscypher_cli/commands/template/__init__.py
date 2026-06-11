@@ -14,11 +14,11 @@ Templates define the schema for nodes in the knowledge graph,
 specifying properties, relationships, and constraints.
 
 Example:
-    chaoscypher template list
-    chaoscypher template create --name Person -p name:string:required
-    chaoscypher template get Person
-    chaoscypher template update Person -a email:email
-    chaoscypher template delete Person
+    chaoscypher graph template list
+    chaoscypher graph template create --name Person -p name:string:required
+    chaoscypher graph template get Person
+    chaoscypher graph template update Person -a email:email
+    chaoscypher graph template delete Person
 """
 
 import click

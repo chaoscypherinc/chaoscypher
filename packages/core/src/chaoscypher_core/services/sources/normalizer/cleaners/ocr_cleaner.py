@@ -326,20 +326,19 @@ class OCRCleaner:
     def applies_to(self, metadata: dict | None) -> bool:
         """Whether this cleaner should fire for content with this metadata.
 
-        Workstream 5.5 (2026-05-07): the OCR cleaner is scoped to OCR-style
-        content — PDF text extraction, Tesseract, vision-LLM-derived text,
-        and image OCR. Everything else (plain ``.txt`` / ``.md``, HTML
-        loaders, Office loaders, …) skips this cleaner entirely so short
-        identifiers like ``git`` / ``npm`` / ``K8s`` survive normalization.
+        The OCR cleaner is scoped to OCR-style content — PDF text
+        extraction, Tesseract, vision-LLM-derived text, and image OCR.
+        Everything else (plain ``.txt`` / ``.md``, HTML loaders, Office
+        loaders, …) skips this cleaner entirely so short identifiers
+        like ``git`` / ``npm`` / ``K8s`` survive normalization.
 
-        Phase 7 audit-remediation (2026-05-09): the ``enable_ocr_cleaning``
-        flag is now checked here as the primary gate. When the flag is
-        ``False`` the predicate returns ``False`` immediately so the
-        normalizer service skips this cleaner entirely — the user knob does
-        what its name says. Previously the only flag check lived inside
-        ``clean()``, which is unreachable in normal pipeline operation
-        because the service gates cleaners by ``applies_to`` before calling
-        ``clean()``.
+        The ``enable_ocr_cleaning`` flag is checked here as the primary
+        gate. When the flag is ``False`` the predicate returns ``False``
+        immediately so the normalizer service skips this cleaner entirely
+        — the user knob does what its name says. The check must live here
+        because the service gates cleaners by ``applies_to`` before
+        calling ``clean()``, so a flag check inside ``clean()`` alone
+        would be unreachable in normal pipeline operation.
 
         Args:
             metadata: Per-document metadata supplied by the loader. The

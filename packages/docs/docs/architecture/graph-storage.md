@@ -259,7 +259,7 @@ The design is consciously skewed toward operational simplicity over arbitrary sc
     graph_analysis_edge_limit: 4000000   # default 4M
   ```
 
-  Defined in `packages/core/src/chaoscypher_core/app_config/__init__.py`. Above these limits, analytics return partial results.
+  Defined in `packages/core/src/chaoscypher_core/settings.py` (`BatchingSettings`). Above these limits, analytics return partial results.
 
 - Recursive CTEs are not used. There is no SQL-side multi-hop traversal. If you find yourself wanting one, you have outgrown this design and should add a graph backend behind `GraphRepositoryProtocol`.
 

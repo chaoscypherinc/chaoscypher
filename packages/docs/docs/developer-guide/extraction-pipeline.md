@@ -240,12 +240,12 @@ The `extraction_filtering_mode` setting selects a preset that controls all quali
 |--------|----------|---------|
 | `maximum` | Highest-precision extraction | All filters on, strict evidence, tighter plausibility threshold |
 | `strict` | Factual/structured content | Strict evidence + type constraints, drop on mismatches |
-| `balanced` (default) | General content | All filters active with fall-throughs and orphan protection |
+| `balanced` (default) | General content | All filters active with fall-throughs |
 | `lenient` | Literary/story content | Narrative evidence for pronoun-heavy prose, lower plausibility |
 | `minimal` | Noisy/broad content (news) | Most filters disabled, elevated limits |
 | `unfiltered` | Debugging/downstream filtering | Data integrity only (dedup + index validation) |
 
-Built-in domains map to presets automatically — 9 use `balanced`, 6 use `strict`, 3 use `lenient`, and 1 uses `minimal` (19 total). Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are accepted as aliases.
+Built-in domains map to presets automatically — 9 use `balanced`, 6 use `strict`, 3 use `lenient`, and 1 uses `minimal` (19 total). Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are rejected with a `ValueError` — use one of the six canonical presets.
 
 The mode can be set at three levels (each overriding the previous): global default, domain config (`extraction_filtering_mode` field), or per-source override via the API, CLI, or UI.
 
@@ -280,7 +280,7 @@ Domains can override this behavior independently via `strict_edge_type_constrain
 
 Relationship limits (`max_entity_degree`, `max_same_source_type`, `max_relationship_ratio`) act as safety nets rather than primary quality filters. The defaults vary by filtering mode preset — `balanced` uses generous values (25, 12, 8.0), while `strict` uses tighter values, and `minimal` elevates them further. Primary quality comes from evidence validation, type constraints, and deduplication.
 
-Most presets include **orphan protection**: relationships are kept regardless of caps if either endpoint has fewer than 2 edges, preventing sparsely-connected entities from being disconnected. The `strict` preset disables orphan protection for unconditional cap enforcement.
+The `minimal` and `unfiltered` presets enable **orphan protection**: relationships are kept despite caps when either endpoint has fewer than 2 edges, and orphan entities survive commit. All other presets (`balanced`, `lenient`, `strict`, `maximum`) enforce caps unconditionally and drop orphan entities before commit.
 
 Domains can override specific limits via `extraction_limits` without changing the rest of the preset's behavior.
 
@@ -292,10 +292,14 @@ Documents progress through a defined status lifecycle:
 graph LR
     A[pending] --> B[indexing]
     B --> C[indexed]
-    C --> D[extracting]
+    C --> H[awaiting_confirmation]
+    H --> D[extracting]
+    C --> D
     D --> E[extracted]
     E --> F[committing]
     F --> G[committed]
 ```
+
+When an upload requests domain confirmation (the default), the source parks at `awaiting_confirmation` between `indexed` and `extracting` until a human confirms the detected extraction domain; auto-confirm uploads skip straight to `extracting`. Three side states sit outside the main path: `vision_pending` (image-bearing PDFs paused mid-indexing while per-page vision tasks run), `mcp_extracting` (MCP-driven extraction), and `error` (any failed stage).
 
 Each stage updates the source record's status, enabling the UI to show real-time progress. Failed stages record the error and allow retries.

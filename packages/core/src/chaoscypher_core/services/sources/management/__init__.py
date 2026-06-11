@@ -7,7 +7,7 @@ Provides CRUD operations for source processing files and status management.
 
 Components:
 - SourceProcessingService: File upload, status tracking, and lifecycle management
-- get_original_text_path: Canonical path for per-source raw-upload text (Phase 5a)
+- get_original_text_path: Canonical path for per-source raw-upload text
 
 Example:
     from chaoscypher_core.services.sources.management import SourceProcessingService

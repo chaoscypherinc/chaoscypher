@@ -355,3 +355,121 @@ class TestResumeFromFileId:
         assert result.file_id == file_id
         # Commit should be completed
         assert "commit" in result.stages_completed
+
+
+# ---------------------------------------------------------------------------
+# Cached-stage skips on resume (never re-run, never re-bill)
+# ---------------------------------------------------------------------------
+
+
+class TestCachedStageSkips:
+    """Resumed sources skip already-completed stages instead of re-running them."""
+
+    def _pipeline_with_status(self, status: str) -> tuple[SourcePipeline, MagicMock]:
+        service = MagicMock()
+        service.get_file_status.return_value = {"id": "if_x", "status": status}
+        service.has_llm = True
+        return SourcePipeline(service), service
+
+    def _result(self) -> PipelineResult:
+        return PipelineResult(file_id="if_x", filename="x.txt", success=True, status="ok")
+
+    def test_ui_extract_skips_extracted_source(self) -> None:
+        """An EXTRACTED source must not pay for a second LLM extraction."""
+        from chaoscypher_core.models import SourceStatus
+
+        pipeline, service = self._pipeline_with_status(SourceStatus.EXTRACTED)
+        result = self._result()
+
+        pipeline._ui_extract(1, 3, "if_x", result)
+
+        service.extract_entities.assert_not_called()
+        assert "extract" in result.stages_completed
+
+    def test_quiet_extract_skips_extracted_source(self) -> None:
+        from chaoscypher_core.models import SourceStatus
+
+        pipeline, service = self._pipeline_with_status(SourceStatus.EXTRACTED)
+        result = self._result()
+
+        out = pipeline._run_quiet(
+            file_path=None,
+            file_id="if_x",
+            stages=["extract"],
+            extraction_depth="full",
+            domain=None,
+            skip_embeddings=False,
+            enable_normalization=None,
+            enable_vision=False,
+            content_filtering=True,
+            result=result,
+        )
+
+        service.extract_entities.assert_not_called()
+        assert "extract" in out.stages_completed
+
+    def test_quiet_index_skips_indexed_source(self) -> None:
+        """Quiet resume of an INDEXED source must not crash index_file's guard."""
+        from chaoscypher_core.models import SourceStatus
+
+        pipeline, service = self._pipeline_with_status(SourceStatus.INDEXED)
+        result = self._result()
+
+        out = pipeline._run_quiet(
+            file_path=None,
+            file_id="if_x",
+            stages=["index"],
+            extraction_depth="full",
+            domain=None,
+            skip_embeddings=False,
+            enable_normalization=None,
+            enable_vision=False,
+            content_filtering=True,
+            result=result,
+        )
+
+        service.index_file.assert_not_called()
+        assert "index" in out.stages_completed
+
+
+# ---------------------------------------------------------------------------
+# Quiet mode never prompts at the confirmation gate
+# ---------------------------------------------------------------------------
+
+
+class TestQuietGateParks:
+    """-q parks at the domain gate even when stdin/stderr are a TTY."""
+
+    def test_quiet_gate_parks_even_on_tty(self) -> None:
+        service = MagicMock()
+        service.has_llm = True
+        service.ctx.database_name = "test"
+        service.ctx.storage_adapter.get_file.return_value = {
+            "id": "if_x",
+            "forced_domain": None,
+        }
+        service.detect_domain_for_source.return_value = {
+            "detected_domain": "generic",
+            "confidence": 0.9,
+            "ranking": [{"domain": "generic", "score": 9.0}],
+            "low_confidence": False,
+        }
+        pipeline = SourcePipeline(service)
+        result = PipelineResult(file_id="if_x", filename="x.txt", success=True, status="ok")
+
+        tty = MagicMock()
+        tty.isatty.return_value = True
+        with (
+            patch("sys.stdin", tty),
+            patch("sys.stderr", tty),
+            patch(
+                "chaoscypher_core.operations.importing.confirmation_gate.park_for_confirmation"
+            ) as park,
+            patch.object(pipeline, "_prompt_for_domain") as prompt,
+        ):
+            proceed = pipeline._gate_before_extract("if_x", result, no_confirm=False, quiet=True)
+
+        assert proceed is False
+        prompt.assert_not_called()
+        park.assert_called_once()
+        assert result.parked_for_confirmation is True

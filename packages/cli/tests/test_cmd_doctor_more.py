@@ -186,7 +186,7 @@ class TestDoctorOllamaBranches:
             monkeypatch,
             ollama_result=(False, None, []),
         )
-        assert result.exit_code == 0
+        assert result.exit_code != 0  # issues found → non-zero exit
         assert "Not reachable" in result.output
         assert "issue" in result.output
 
@@ -346,6 +346,7 @@ class TestDoctorHubCortexBranches:
         assert "Not reachable" in result.output
         # Hub unreachable does NOT count as an issue
         assert "All systems healthy." in result.output
+        assert result.exit_code == 0
 
     def test_hub_reachable_with_detail_shows_suffix(self, monkeypatch: pytest.MonkeyPatch) -> None:
         result = _invoke_doctor(
@@ -373,6 +374,7 @@ class TestDoctorConfigFileBranches:
             monkeypatch,
             config_file_result=(True, "/path/to/cli.yaml", "YAML parse error"),
         )
+        assert result.exit_code != 0  # config parse error counts as an issue
         assert "YAML parse error" in result.output
         assert "issue" in result.output
 
@@ -383,6 +385,7 @@ class TestDoctorConfigFileBranches:
         )
         assert "/path/to/cli.yaml" in result.output
         assert "All systems healthy." in result.output
+        assert result.exit_code == 0
 
     def test_config_file_absent_shows_warn(self, monkeypatch: pytest.MonkeyPatch) -> None:
         result = _invoke_doctor(
@@ -413,3 +416,4 @@ class TestDoctorIssuesSummary:
             db_result={"search_error": True, "node_count": 5, "edge_count": 2},
         )
         assert "1 issue found." in result.output
+        assert result.exit_code == 1

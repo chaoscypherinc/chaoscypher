@@ -10,7 +10,7 @@
   "@type": "ExtractionDomain",
   "@id": "domain:reference",
   "name": "reference",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Standards documents (RFC / ISO / IEEE / W3C / ANSI / ECMA), technical specifications, API references, user / administrator / operator manuals, configuration guides, and release notes",
   "author": "ChaosCypher Team",
   "builtin": true,
@@ -444,7 +444,6 @@
             "display_name": "Version",
             "property_type": "text",
             "absorbs_types": [
-              "Version",
               "Spec Version"
             ]
           },
@@ -594,7 +593,6 @@
             "display_name": "Version",
             "property_type": "text",
             "absorbs_types": [
-              "Version",
               "Doc Version"
             ]
           }

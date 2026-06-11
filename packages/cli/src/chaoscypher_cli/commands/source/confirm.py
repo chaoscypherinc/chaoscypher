@@ -42,8 +42,8 @@ from chaoscypher_core.ports.types import FilteringMode
 @click.option(
     "--depth",
     type=click.Choice(["quick", "full"]),
-    default="full",
-    show_default=True,
+    default=None,
+    show_default="the source's stored depth",
     help="Extraction depth.",
 )
 @click.option(
@@ -65,7 +65,7 @@ def confirm_cmd(
     source_id: str | None,
     confirm_all: bool,
     domain: str | None,
-    depth: str,
+    depth: str | None,
     filtering_mode: FilteringMode | None,
     yes: bool,
     database: str,
@@ -134,7 +134,7 @@ def _confirm_one(
     service: Any,
     source_id: str,
     domain: str | None,
-    depth: str,
+    depth: str | None,
     filtering_mode: FilteringMode | None,
     yes: bool,
     quiet: bool,
@@ -218,9 +218,10 @@ def _confirm_one(
         )
 
     if not quiet:
+        effective_depth = depth or source.get("extraction_depth") or "full"
         console.print(
             f"\n[bold]Confirming:[/bold] [cyan]{source.get('filename', source_id)}[/cyan]  "
-            f"[dim](domain: {chosen}, depth: {depth})[/dim]\n"
+            f"[dim](domain: {chosen}, depth: {effective_depth})[/dim]\n"
         )
 
     _run_extraction(

@@ -1611,8 +1611,8 @@ class SourceCommitService:
         """Persist pending search indexing for later retry by the orphan-sweep worker.
 
         Called by the commit pipeline when post-transaction FTS5/vec indexing
-        fails. Rows are drained by the orphan-sweep worker (Task 6.2) at its
-        next cycle. Delegates to the adapter-owned
+        fails. Rows are drained by the orphan-sweep worker at its next
+        cycle. Delegates to the adapter-owned
         ``SearchRetryQueueProtocol`` which uses INSERT OR IGNORE so
         repeated failure-and-retry of the same source produces exactly one
         pending row per item rather than a unique-constraint violation.

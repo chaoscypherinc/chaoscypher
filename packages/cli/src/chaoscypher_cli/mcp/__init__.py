@@ -1,9 +1,10 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""MCP server CLI command."""
+"""MCP server CLI package.
 
-from chaoscypher_cli.mcp.command import mcp
+The ``mcp`` click command lives in ``chaoscypher_cli.mcp.command``; import it
+from there directly.
+"""
 
-
-__all__ = ["mcp"]
+__all__: list[str] = []

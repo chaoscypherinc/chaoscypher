@@ -107,22 +107,29 @@ export function useChatList(): UseChatListReturn {
     }
   }, [deleteChat, navigate]);
 
-  const handleExportChat = useCallback(async (chatId: string) => {
-    try {
-      const data = await chatApi.exportChat(chatId);
-      const blob = new Blob([JSON.stringify(data, null, 2)], {
-        type: 'application/json',
-      });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `chat-${chatId}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      logger.error('Failed to export chat:', err);
-    }
-  }, []);
+  const handleExportChat = useCallback(
+    async (chatId: string, format: 'json' | 'markdown' = 'json') => {
+      try {
+        const blob =
+          format === 'markdown'
+            ? new Blob([await chatApi.exportChatMarkdown(chatId)], {
+                type: 'text/markdown',
+              })
+            : new Blob([JSON.stringify(await chatApi.exportChat(chatId), null, 2)], {
+                type: 'application/json',
+              });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat-${chatId}.${format === 'markdown' ? 'md' : 'json'}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        logger.error('Failed to export chat:', err);
+      }
+    },
+    [],
+  );
 
   const handleClearAllChats = useCallback(async (callbacks: {
     clearPendingScope: () => void;

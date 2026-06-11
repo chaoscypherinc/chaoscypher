@@ -92,6 +92,8 @@ Ports are Python `Protocol` classes that define contracts for data access. They 
 | `ExtractionQueueStorageProtocol` | `ports/storage_extraction_queue.py` | Extraction job queue state |
 | `ExtractionSubmissionStorageProtocol` | `ports/storage_extraction_submissions.py` | Extraction submission tracking |
 | `GraphSnapshotStorageProtocol` | `ports/storage_graph_snapshot.py` | Graph snapshot staleness and breakdown queries |
+| `VisionStorageProtocol` | `ports/storage_vision.py` | Vision/page-image extraction storage |
+| `StageProgressStorageProtocol` | `ports/stage_progress.py` | Pipeline stage progress tracking |
 
 **Infrastructure:**
 
@@ -164,7 +166,7 @@ Everywhere else, use dict access patterns.
 
 ## Framework-agnostic design
 
-The core library has **no dependency** on FastAPI, Valkey, or any web framework. This means:
+The core library has **no web-framework dependency** (no FastAPI). The valkey client library is installed as part of the queue infrastructure, but no running Valkey server is required for standalone library use — graph CRUD, search, and extraction work with SQLite alone. This means:
 
 - It can be used in CLI tools, Jupyter notebooks, or background scripts
 - No async runtime is required for basic operations (graph CRUD, search)
@@ -187,6 +189,8 @@ from chaoscypher_core import EngineSettings
 settings = EngineSettings(current_database="mydb")
 ```
 
+The most commonly tuned groups are:
+
 | Group | Class | What it configures |
 |-------|-------|--------------------|
 | `paths` | `PathSettings` | Data and config directories (XDG-compliant) |
@@ -204,7 +208,9 @@ settings = EngineSettings(current_database="mydb")
 | `archive` | `ArchiveSettings` | Archive extraction limits and format detection |
 | `chat` | `ChatSettings` | Tool-calling iteration limits |
 
-When constructing `EngineSettings` directly, `current_database` is the only required field. However, when using `Engine("./data/databases/mydb")`, the database name is auto-inferred from the directory name, so you don't need to set it explicitly. All other settings groups have sensible defaults.
+Twelve further groups (`analysis`, `migrations`, `graphrag`, `loader`, `mcp`, `export`, `compose`, `cli`, `web`, `backoff`, `retries`, `quality`) exist with sensible defaults — see the [configuration reference](../getting-started/configuration.md).
+
+Every field has a default — `EngineSettings()` alone is valid and targets the `"default"` database. Pass `current_database="mydb"` to target a specific database, or use `Engine("./data/databases/mydb")`, which auto-infers the database name from the directory name.
 
 :::tip[Settings in the full stack]
 

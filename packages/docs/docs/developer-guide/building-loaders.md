@@ -22,7 +22,7 @@ class MyLoader:
 
     @property
     def supported_extensions(self) -> list[str]:
-        """File extensions this loader handles (e.g., ['.xlsx', '.xls'])."""
+        """File extensions this loader handles (e.g., ['.xlsx'])."""
         ...
 
     def __init__(self, settings: Any = None) -> None:
@@ -40,7 +40,7 @@ class MyLoader:
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `supported_extensions` | `property` | List of file extensions including the dot, e.g. `[".xlsx", ".XLS"]`. Both case variants should be listed. |
+| `supported_extensions` | `property` | List of file extensions including the dot, e.g. `[".xlsx"]`. Extension matching is case-insensitive — the registry lowercases extensions at both registration and lookup, so declaring `.xlsx` also covers `.XLSX`. |
 | `__init__(settings)` | method | Constructor. The `LoaderRegistry` passes the engine `settings` object; store it if needed or ignore it. |
 | `load_document(filepath)` | method | Load the file at `filepath` and return a list of dicts. Each dict must have a `"content"` key (str) and a `"metadata"` key (dict). |
 | `supports_ocr()` | method | Return `True` if the loader can handle scanned/image-based documents. Most loaders return `False`. |
@@ -54,7 +54,7 @@ Loaders can optionally define a `metadata` property returning a `PluginMetadata`
 ### Conventions for new loaders
 
 The shipped May 2026 loaders (HTML, RST, DOCX, XLSX, PPTX, EPUB)
-follow three conventions worth borrowing for any new loader:
+follow a handful of conventions worth borrowing for any new loader:
 
 - **Filename ends with `_loader.py`.** This is required for
   auto-discovery — the registry only scans files matching `*_loader.py`.
@@ -77,26 +77,50 @@ follow three conventions worth borrowing for any new loader:
   call `set_loader_encoding()`.** The shared encoding helper produces
   strict UTF-8 / cp1252 / Latin-1 fallbacks (no `errors="replace"`
   silent corruption); the counter helper records which encoding the
-  loader actually used so the user can see it on the [Data Quality tab](../user-guide/data-quality.md).
+  loader actually used so the user can see it on the [Pipeline flow & quality counters](../user-guide/data-quality.md).
 
   ```python
   from chaoscypher_core.services.quality.counters import set_loader_encoding
   from chaoscypher_core.utils.encoding import detect_encoding
 
-  encoding_used, text = detect_encoding(Path(filepath))
+  encoding_used, text, replacement_chars = detect_encoding(Path(filepath))
   # ... pair with set_loader_encoding(...) when an adapter is reachable
   ```
+
+  The third element counts U+FFFD replacement characters — non-zero
+  only on the last-resort `utf-8-replace` path — and should be
+  surfaced via the quality counters.
 
   Text, CSV, JSON, HTML, RST, and EPUB all use this pattern. PDF,
   Office, and binary formats can skip it because their underlying
   libraries handle bytes themselves.
 
-- **Raise specific errors when content is empty post-extraction.** A
-  PDF that produces zero text (scanned image, OCR-only) is a different
-  failure from a corrupt file. The PDF loader raises
-  `"scanned PDF — enable vision to extract content"` so the user has
-  a hint to act on. Do the same for new loaders when the format
-  permits empty-but-valid files.
+- **Treat empty-but-valid content as a distinct case.** A PDF that
+  produces zero text (scanned image) is a different situation from a
+  corrupt file. The shipped PDF loader does not raise on image-only
+  PDFs — it sets `metadata["needs_vision"] = True` and appends a
+  loader warning so the vision pipeline picks the document up. For
+  new loaders, raise a specific, actionable error when empty output
+  signals a distinct failure the user can act on, or flag it via
+  metadata when a downstream pipeline can recover (as the PDF loader
+  does).
+
+- **Call `check_loader_file_size()` before parsing.** The shared
+  guard (exported from `chaoscypher_core.services.sources.loaders.base`)
+  rejects files larger than `settings.loader.max_disk_bytes` with a
+  `LoaderFileTooLargeError` before the heavyweight parser runs,
+  protecting the worker from OOM on multi-GB uploads. The built-in
+  PDF, text, CSV, and DOCX loaders all call it at the top of
+  `load_document()`; custom loaders should do the same. It is a
+  no-op when `settings` is `None` or the cap is disabled.
+
+  ```python
+  from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
+
+  def load_document(self, filepath: str) -> list[dict[str, Any]]:
+      check_loader_file_size(filepath, self.settings)
+      ...
+  ```
 
 ### Return Format
 
@@ -122,16 +146,21 @@ You do **not** need to split the text into small chunks yourself. Loaders return
 
 ## Step-by-Step Example: Building an Excel Loader
 
-This example builds a complete loader for `.xlsx` and `.xls` files using the `openpyxl` library.
+This example builds a complete loader for `.xlsx` files using the `openpyxl` library. (Legacy `.xls` BIFF files cannot be read by openpyxl — supporting them requires a different library such as `xlrd` or pandas.)
 
-:::note[Mirrors the built-in `xlsx_loader.py`]
+:::note[A simplified variant of the built-in `xlsx_loader.py`]
 
-`.xlsx` is now handled by a built-in loader. The example below mirrors
-the shipped `packages/core/src/chaoscypher_core/services/sources/loaders/xlsx_loader.py`
-so you can read the example end-to-end, but you don't need to ship it
-yourself unless you're customizing behaviour. If you want to override
-the built-in for your install, drop your version in `data/plugins/loaders/`
-and the registry will use yours over the built-in.
+`.xlsx` is now handled by a built-in loader. The example below is a
+simplified variant of the shipped
+`packages/core/src/chaoscypher_core/services/sources/loaders/xlsx_loader.py`,
+not a copy — the built-in differs in several ways: it supports
+`.xlsx`/`.xlsm` only, returns one concatenated document for the whole
+workbook (not one per worksheet), wraps parser errors in
+`ValidationError`, and defines a `PluginMetadata` property. You don't
+need to ship the example yourself unless you're customizing behaviour.
+If you want to override the built-in for your install, drop your
+version in `data/plugins/loaders/` and the registry will use yours
+over the built-in.
 
 :::
 
@@ -142,7 +171,7 @@ Create a file named `excel_loader.py`. The filename must end with `_loader.py` f
 ```python
 """Excel Document Loader.
 
-Loads Excel spreadsheets (.xlsx, .xls) using openpyxl.
+Loads Excel spreadsheets (.xlsx) using openpyxl.
 Implements BaseLoader protocol for auto-discovery.
 """
 
@@ -164,8 +193,8 @@ class ExcelLoader:
 
     @property
     def supported_extensions(self) -> list[str]:
-        """File extensions this loader supports."""
-        return [".xlsx", ".XLSX", ".xls", ".XLS"]
+        """File extensions this loader supports (matching is case-insensitive)."""
+        return [".xlsx"]
 
     def __init__(self, settings: Any = None) -> None:
         """Initialize Excel loader.
@@ -257,7 +286,7 @@ make docker-dev   # Restart services
 Your loader will appear in the logs:
 
 ```
-loader_registered  loader_class=ExcelLoader  extensions=['.xlsx', '.XLSX', '.xls', '.XLS']  path_type=user
+loader_registered  loader_class=ExcelLoader  extensions=['.xlsx']  path_type=user
 ```
 
 ## Auto-Discovery Mechanism
@@ -325,7 +354,6 @@ class TestExcelLoader:
         loader = ExcelLoader()
         extensions = loader.supported_extensions
         assert ".xlsx" in extensions
-        assert ".xls" in extensions
 
     def test_load_document_returns_correct_format(self, tmp_path):
         """Verify output format matches BaseLoader contract."""
@@ -381,7 +409,7 @@ class TestExcelLoader:
 
 - **Accept `settings` in `__init__`.** Even if you do not use settings today, accept the parameter to be compatible with the registry's instantiation pattern.
 
-- **List both case variants.** Include both `.pdf` and `.PDF` in `supported_extensions` to handle files with uppercase extensions.
+- **Don't list case variants.** Extension matching is case-insensitive — the registry lowercases extensions at registration and lookup, so declaring `.pdf` also covers `.PDF`. Built-in loaders list case variants purely for documentation; they are deduped to one registry key.
 
 - **Handle empty files.** Return an empty list `[]` rather than raising an exception when a file has no extractable content.
 

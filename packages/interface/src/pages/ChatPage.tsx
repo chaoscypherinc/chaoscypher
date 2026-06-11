@@ -82,6 +82,11 @@ export default function ChatPage() {
     setInput,
     clearError,
     handleSend,
+    handleStop,
+    handleRetry,
+    handleRegenerate,
+    startEditMessage,
+    stopping,
     handleNewChat,
     handleSelectChat,
     handleRenameChat,
@@ -163,6 +168,7 @@ export default function ChatPage() {
         onClearError={clearError}
         messages={messages}
         onRetry={(message) => setInput(message)}
+        onRetryTurn={() => handleRetry()}
       />
 
       {/* Messages */}
@@ -172,6 +178,8 @@ export default function ChatPage() {
         chatStatus={currentChat?.status}
         contextInfo={contextInfo}
         onQuickAction={handleSend}
+        onRegenerate={() => handleRegenerate()}
+        onEditMessage={startEditMessage}
         messagesEndRef={messagesEndRef}
       />
 
@@ -183,6 +191,8 @@ export default function ChatPage() {
         inputRef={inputRef}
         onInputChange={setInput}
         onSend={() => handleSend()}
+        onStop={() => handleStop()}
+        stopping={stopping}
         disabledReason={chatDisabledReason}
       />
 

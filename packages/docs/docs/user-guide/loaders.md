@@ -17,7 +17,7 @@ Document loaders parse different file formats into text for indexing and extract
 | **CSV** | `.csv` | csv | Native dialect sniffer detects commas, semicolons, tabs, and quoting style; one document per row |
 | **JSON** | `.json`, `.jsonl`, `.ndjson` | None | `.json` parsed as a single document; `.jsonl` / `.ndjson` parsed line-by-line with per-line error isolation (one bad row no longer fails the whole file) |
 | **HTML** | `.html`, `.htm`, `.xhtml` | beautifulsoup4 | Strips chrome (`script`, `style`, `nav`, `aside`, `footer`, `header`, `noscript`); captures `<title>` in metadata |
-| **RST** | `.rst` | docutils | reStructuredText with directive handling |
+| **RST** | `.rst`, `.rest` | docutils | reStructuredText with directive handling |
 | **DOCX** | `.docx` | python-docx | Headings, paragraphs, list items, and tables flattened to text |
 | **XLSX** | `.xlsx`, `.xlsm` | openpyxl | One document per worksheet; rows joined with tabs |
 | **PPTX** | `.pptx` | python-pptx | One document per slide with shape text concatenated |

@@ -39,10 +39,10 @@ def update(
     Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME, URL, EMAIL, JSON
 
     Example:
-        chaoscypher template update Person --name "Individual"
-        chaoscypher template update Person --description "A person entity"
-        chaoscypher template update Person -a phone:string -a address:text
-        chaoscypher template update Person -r obsolete_field
+        chaoscypher graph template update Person --name "Individual"
+        chaoscypher graph template update Person --description "A person entity"
+        chaoscypher graph template update Person -a phone:string -a address:text
+        chaoscypher graph template update Person -r obsolete_field
     """
     try:
         ctx = get_context(database_name=database)

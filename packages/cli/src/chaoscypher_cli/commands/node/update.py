@@ -33,9 +33,9 @@ def update(
     NODE_ID is the unique identifier of the node to update.
 
     Example:
-        chaoscypher node update node-123 --label "Updated Name"
-        chaoscypher node update node-123 -s role=CEO -s department=Executive
-        chaoscypher node update node-123 -u obsolete_field
+        chaoscypher graph node update node-123 --label "Updated Name"
+        chaoscypher graph node update node-123 -s role=CEO -s department=Executive
+        chaoscypher graph node update node-123 -u obsolete_field
     """
     try:
         ctx = get_context(database_name=database)

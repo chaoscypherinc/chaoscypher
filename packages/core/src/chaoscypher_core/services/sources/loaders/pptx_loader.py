@@ -3,9 +3,9 @@
 
 """Microsoft PowerPoint (.pptx) loader.
 
-Workstream 7 (2026-05-07): walks each slide's shapes, captures the
-title shape separately so it can be surfaced in metadata, and
-concatenates body text frames in shape order.
+Walks each slide's shapes, captures the title shape separately so it
+can be surfaced in metadata, and concatenates body text frames in
+shape order.
 """
 
 from __future__ import annotations

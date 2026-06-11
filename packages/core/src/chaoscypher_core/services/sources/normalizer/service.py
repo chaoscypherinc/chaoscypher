@@ -181,11 +181,11 @@ class ContentNormalizerService:
 
         Args:
             settings: Either a ``NormalizerSettings`` (legacy) or an
-                ``EngineSettings`` (Workstream 5, 2026-05-07). When an
-                ``EngineSettings`` is supplied here, it is treated as if it
-                had been passed via ``engine_settings``: registry discovery
-                uses its ``paths.data_dir`` and built-in cleaners receive
-                its ``.normalizer``. When a ``NormalizerSettings`` is
+                ``EngineSettings``. When an ``EngineSettings`` is supplied
+                here, it is treated as if it had been passed via
+                ``engine_settings``: registry discovery uses its
+                ``paths.data_dir`` and built-in cleaners receive its
+                ``.normalizer``. When a ``NormalizerSettings`` is
                 supplied (or ``None``), behaviour matches the historical
                 contract.
             cleaners: Custom cleaner list. When provided, overrides registry
@@ -287,8 +287,8 @@ class ContentNormalizerService:
     def plugin_load_failures(self) -> int:
         """Number of user cleaner plugins that failed to load or instantiate.
 
-        Phase 6 (2026-05-08): exposes the ``CleanerRegistry.plugin_load_failures``
-        counter so callers (the indexing handler) can roll the count up to the
+        Exposes the ``CleanerRegistry.plugin_load_failures`` counter so
+        callers (the indexing handler) can roll the count up to the
         source-row quality counter ``CLEANER_PLUGIN_LOAD_FAILURES`` without
         coupling directly to the registry implementation.
 

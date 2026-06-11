@@ -75,13 +75,12 @@ _SNAPSHOT_TO_LLM_KEYS: tuple[str, ...] = (
 def _apply_snapshot_overrides(engine_settings: Any, snapshot: dict[str, Any]) -> Any:
     """Return a copy of ``engine_settings`` with snapshot overrides applied.
 
-    Snapshot version 2 (Workstream 8, 2026-05-07) snapshots
-    extraction-time LLM tuning + loop-detector thresholds at job
-    creation. The chunk handler reads them here so a mid-job edit to
-    ``settings.yaml`` cannot bleed into in-flight chunks. Pre-Workstream-8
-    snapshots (``snapshot_version`` absent or <2) are missing the keys;
-    each ``snapshot.get(key)`` simply returns ``None`` and we keep the
-    live setting as the fallback.
+    Snapshot version 2 snapshots extraction-time LLM tuning +
+    loop-detector thresholds at job creation. The chunk handler reads
+    them here so a mid-job edit to ``settings.yaml`` cannot bleed into
+    in-flight chunks. Older snapshots (``snapshot_version`` absent or
+    <2) are missing the keys; each ``snapshot.get(key)`` simply
+    returns ``None`` and we keep the live setting as the fallback.
 
     Args:
         engine_settings: The live ``EngineSettings`` instance.
@@ -205,7 +204,7 @@ class ChunkExtractionOperationsService:
         Template data (guidance, examples) is read from the job's
         ``extraction_config`` column by the handler, not passed per-chunk.
 
-        Payload discipline (Phase 5 Task D): the chunk text is NOT
+        Payload discipline: the chunk text is NOT
         carried in the queue payload. The handler rehydrates it at
         dispatch time by fetching ``small_chunk_ids`` from the DB via
         ``adapter.get_chunks_by_ids(...)``. A combined hierarchical

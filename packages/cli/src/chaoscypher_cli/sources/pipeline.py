@@ -167,8 +167,14 @@ class _WarningCapture(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         """Capture warning/error log records, deduplicating by event name."""
         msg = record.getMessage()
-        # Extract structlog event name (first bracket-delimited token or raw message)
-        event = msg.split("]")[-1].strip().split()[0] if "]" in msg else msg.split()[0]
+        # Extract structlog event name (first bracket-delimited token or raw
+        # message). Empty messages or ones ending in "]" leave no tokens —
+        # nothing to map to a friendly string, so skip instead of IndexError
+        # noise through the logging machinery.
+        tokens = (msg.split("]")[-1].strip() if "]" in msg else msg).split()
+        if not tokens:
+            return
+        event = tokens[0]
 
         if event in self._seen:
             return
@@ -503,24 +509,26 @@ class SourcePipeline:
             result.error = "No file ID - upload failed or not provided"
             return result
 
-        # Index
+        # Index (cached-skip mirrors _ui_index — resumed sources that are
+        # already INDEXED or beyond would otherwise crash index_file's
+        # status guard)
         if "index" in stages:
-            index_result = self.service.index_file(
+            self._quiet_index(
                 file_id,
                 skip_embeddings=skip_embeddings,
                 enable_normalization=enable_normalization,
                 enable_vision=enable_vision,
+                result=result,
             )
-            result.chunks_count = index_result.get("chunks_count", 0)
-            result.tokens_count = index_result.get("tokens_count", 0)
-            result.failed_embeddings = index_result.get("failed_embeddings", 0)
-            result.stages_completed.append("index")
 
-        # Extract
+        # Extract (cached-skip: see _ui_extract — never re-bill an
+        # already-EXTRACTED source on resume; gate is moot in that case too)
         if "extract" in stages:
-            if not self._gate_before_extract(file_id, result, no_confirm=no_confirm, quiet=True):
+            if self._is_extract_cached(file_id):
+                result.stages_completed.append("extract")
+            elif not self._gate_before_extract(file_id, result, no_confirm=no_confirm, quiet=True):
                 return result
-            if not self.service.has_llm:
+            elif not self.service.has_llm:
                 result.stages_skipped.append("extract")
             else:
                 extract_result, llm_summary = self.service.extract_entities(
@@ -581,6 +589,40 @@ class SourcePipeline:
         time_str = f"  [dim]{elapsed:.1f}s[/dim]" if elapsed is not None else ""
         return f"{prefix} {icon_str} {label}{detail_str}{time_str}"
 
+    def _is_extract_cached(self, file_id: str) -> bool:
+        """True when the source is already EXTRACTED (extract stage is a no-op)."""
+        file_status = self.service.get_file_status(file_id)
+        return bool(file_status and file_status.get("status") == SourceStatus.EXTRACTED)
+
+    def _quiet_index(
+        self,
+        file_id: str,
+        *,
+        skip_embeddings: bool,
+        enable_normalization: bool | None,
+        enable_vision: bool,
+        result: PipelineResult,
+    ) -> None:
+        """Quiet-mode index stage with the same cached-skip as _ui_index."""
+        file_status = self.service.get_file_status(file_id)
+        if file_status and file_status.get("status") in (
+            SourceStatus.INDEXED,
+            SourceStatus.EXTRACTED,
+            SourceStatus.COMMITTED,
+        ):
+            result.stages_completed.append("index")
+            return
+        index_result = self.service.index_file(
+            file_id,
+            skip_embeddings=skip_embeddings,
+            enable_normalization=enable_normalization,
+            enable_vision=enable_vision,
+        )
+        result.chunks_count = index_result.get("chunks_count", 0)
+        result.tokens_count = index_result.get("tokens_count", 0)
+        result.failed_embeddings = index_result.get("failed_embeddings", 0)
+        result.stages_completed.append("index")
+
     def _gate_before_extract(  # noqa: PLR0911 - one return per confirmation-gate early-exit branch
         self,
         file_id: str,
@@ -634,7 +676,7 @@ class SourcePipeline:
         # Non-interactive guard (mirror __main__.py:380). The console is the
         # quiet/UI console; quiet mode and non-TTY both forbid prompting.
         is_tty = sys.stdin.isatty() and sys.stderr.isatty()
-        if not is_tty:
+        if quiet or not is_tty:
             self._park(file_id, rec, result, quiet=quiet)
             return False
 
@@ -786,9 +828,13 @@ class SourcePipeline:
             if result.error:
                 return result
 
-        # Extract stage
+        # Extract stage. An already-EXTRACTED source (resume) skips the
+        # confirmation gate too — its extraction is done; parking or
+        # prompting for a domain at this point would be nonsensical.
         if "extract" in stages:
-            if not self._gate_before_extract(file_id, result, no_confirm=no_confirm):
+            if not self._is_extract_cached(file_id) and not self._gate_before_extract(
+                file_id, result, no_confirm=no_confirm
+            ):
                 return result
             step += 1
             self._ui_extract(step, total, file_id, result, filtering_mode=filtering_mode)
@@ -1067,6 +1113,24 @@ class SourcePipeline:
         filtering_mode: FilteringMode | None = None,
     ) -> None:
         """Run extract stage with UI."""
+        # Cached-skip, mirroring _ui_index: a resumed EXTRACTED source must
+        # not pay for a second LLM extraction on its way to commit (re-runs
+        # are also silently dropped by complete_extraction's commit_complete
+        # guard). Explicit re-extraction goes through `source extract`.
+        if self._is_extract_cached(file_id):
+            self.console.print(
+                self._format_stage_line(
+                    step,
+                    total,
+                    "✓",
+                    "dim",
+                    "Extract",
+                    "cached",
+                )
+            )
+            result.stages_completed.append("extract")
+            return
+
         if not self.service.has_llm:
             self.console.print(
                 self._format_stage_line(

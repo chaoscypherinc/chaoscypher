@@ -1,23 +1,36 @@
 ---
 id: data-quality
-title: Data Quality Tab
-description: How to read the Data Quality tab on a source — the 45 counters that track silent drops at every pipeline stage, when to use them, and how they reset.
+title: Pipeline Flow & Quality Counters
+description: How to read the Pipeline flow section on a source's Overview tab — the 45 counters that track silent drops at every pipeline stage, when to use them, and how they reset.
 ---
 
-# Data Quality tab
+# Pipeline flow & quality counters
 
-When you open a source, the **Data Quality** tab shows forty-five counters
+When you open a source, the collapsible **Pipeline flow** section on its
+**Overview** tab shows forty-five counters
 that record what the pipeline dropped, deduplicated, or merged on its
 way from your file to the knowledge graph. The counters live alongside
 the [Quality Analysis](quality.md) grade — but they answer a different
 question.
 
 - The **quality grade** asks *"how good is the graph this source produced?"*
-- **The Data Quality tab** asks *"what did the pipeline silently drop on the way to the graph?"*
+- **The pipeline counters** ask *"what did the pipeline silently drop on the way to the graph?"*
 
 If the grade looks low, the counters often tell you why.
 
-## What is the Data Quality tab?
+## Where to find the counters
+
+Open a source from the **Sources** page and stay on the **Overview** tab.
+Below the stat tiles sits a collapsible **Pipeline flow** panel:
+
+- **Collapsed** (the default), it shows a muted strip of stat cards
+  summarizing the run.
+- **Expanded**, it reveals the full pipeline funnel with a per-stage stats
+  board — every counter that's non-zero for this source, grouped by the
+  stage that incremented it (loading, normalization, chunking, LLM
+  extraction, post-extraction, commit).
+
+## What do the counters record?
 
 Every stage of the pipeline — loading, cleaning, chunking, the LLM
 extraction, post-processing, and commit — has at least one place where
@@ -33,7 +46,7 @@ exist for visibility, never for control flow.
 
 ## The counters
 
-The table below shows the most frequently-consulted counters. The full set (45 fields spanning every silent-drop site in the pipeline) is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics; the Data Quality tab in the UI renders every counter that's non-zero for the current source, grouped by stage.
+The table below shows the most frequently-consulted counters. The full set (45 fields spanning every silent-drop site in the pipeline) is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics; the Pipeline flow board in the UI renders every counter that's non-zero for the current source, grouped by stage.
 
 | Counter | What it measures | Stage |
 |---------|------------------|-------|
@@ -53,7 +66,7 @@ The table below shows the most frequently-consulted counters. The full set (45 f
 | `relationships_dropped_capped` | Relationships dropped because they exceeded the per-entity degree cap, the same-source-type cap, or the total-ratio cap from the active filtering mode. | Post-extraction |
 | `citations_skipped_no_chunk_index` | Citations skipped at commit because the underlying entity / relationship had no chunk index to point at. | Commit |
 
-In addition to the counters, the tab surfaces three companion
+In addition to the counters, the section surfaces three companion
 fields:
 
 - `loader_encoding_used` — which encoding the loader actually used for

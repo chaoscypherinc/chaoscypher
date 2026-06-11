@@ -28,6 +28,7 @@ from chaoscypher_core.streaming.chat import (
     inject_citations_into_blockquotes,
     normalize_chunk_references,
     strip_duplicated_citation_text,
+    strip_malformed_citations,
 )
 from chaoscypher_core.streaming.chat.citations import (
     _collect_entities_from_data,
@@ -283,6 +284,146 @@ class TestNormalizeChunkReferences:
         content = "see (C0) and [[cite:C0:S1|x]]"
         out = normalize_chunk_references(content)
         assert out == content
+
+
+# ---------------------------------------------------------------------------
+# normalize_chunk_references — mixed-ref salvage
+# (live failure 2026-06-10: model crammed chunk aliases into the sentence
+# list, e.g. [[cite:C1:S15,C17|war_and_peace.txt]] — C17 is a chunk alias,
+# not a sentence — so no pattern matched and raw markers reached the UI)
+# ---------------------------------------------------------------------------
+
+
+def _war_chunks(*aliases: str) -> list[dict]:
+    """Tool results mapping each alias to uuid-<alias-lowercase>."""
+    return _wrap(
+        {
+            "chunks": [
+                _chunk(f"uuid-{a.lower()}", "body", chunk_alias=a, filename="war_and_peace.txt")
+                for a in aliases
+            ]
+        }
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.cortex
+class TestSalvageMixedRefCitations:
+    def test_sentence_then_chunk_alias_split_and_resolved(self):
+        out = normalize_chunk_references(
+            "Son of Vasíli [[cite:C1:S15,C17|war_and_peace.txt]]",
+            _war_chunks("C1", "C17"),
+        )
+        assert "[[cite:uuid-c1:S15|war_and_peace.txt]]" in out
+        assert "[[cite:uuid-c17:S1|war_and_peace.txt]]" in out
+        assert "S15,C17" not in out
+
+    def test_junk_token_dropped(self):
+        out = normalize_chunk_references(
+            "Sibling of Natásha [[cite:C2:S1,O5|war_and_peace.txt]]",
+            _war_chunks("C2"),
+        )
+        assert "[[cite:uuid-c2:S1|war_and_peace.txt]]" in out
+        assert "O5" not in out
+
+    def test_leading_junk_then_chunk_alias(self):
+        out = normalize_chunk_references(
+            "Cousin of Sónya [[cite:C2:O8,C9|war_and_peace.txt]]",
+            _war_chunks("C2", "C9"),
+        )
+        # head chunk had no sentence refs -> defaults to S1
+        assert "[[cite:uuid-c2:S1|war_and_peace.txt]]" in out
+        assert "[[cite:uuid-c9:S1|war_and_peace.txt]]" in out
+        assert "O8" not in out
+
+    def test_multiple_sentences_then_chunk_alias(self):
+        out = normalize_chunk_references(
+            "Courts Sónya [[cite:C2:S10,S11,S12,C5|war_and_peace.txt]]",
+            _war_chunks("C2", "C5"),
+        )
+        assert "[[cite:uuid-c2:S10,S11,S12|war_and_peace.txt]]" in out
+        assert "[[cite:uuid-c5:S1|war_and_peace.txt]]" in out
+
+    def test_unknown_alias_group_dropped(self):
+        out = normalize_chunk_references(
+            "Claim [[cite:C1:S2,C99|war_and_peace.txt]]",
+            _war_chunks("C1"),
+        )
+        assert "[[cite:uuid-c1:S2|war_and_peace.txt]]" in out
+        assert "C99" not in out
+
+    def test_salvage_without_tool_results_keeps_alias_form(self):
+        out = normalize_chunk_references("X [[cite:C1:S15,C17|f.txt]]")
+        assert "[[cite:C1:S15|f.txt]]" in out
+        assert "[[cite:C17:S1|f.txt]]" in out
+
+    def test_wellformed_marker_not_mangled(self):
+        out = normalize_chunk_references(
+            "Fine [[cite:C0:S1,S2|war_and_peace.txt]]",
+            _war_chunks("C0"),
+        )
+        assert "[[cite:uuid-c0:S1,S2|war_and_peace.txt]]" in out
+        assert out.count("[[cite:") == 1
+
+    def test_alias_without_sentence_ref_gets_s1(self):
+        out = normalize_chunk_references(
+            "See [[cite:C1|war_and_peace.txt]] here",
+            _war_chunks("C1"),
+        )
+        assert "[[cite:uuid-c1:S1|war_and_peace.txt]]" in out
+
+    def test_unsalvageable_marker_dropped_without_double_space(self):
+        out = normalize_chunk_references(
+            "before [[cite:war_and_peace.txt]] after",
+            _war_chunks("C1"),
+        )
+        assert "[[cite:" not in out
+        assert "before after" in out
+
+
+# ---------------------------------------------------------------------------
+# strip_malformed_citations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.cortex
+class TestStripMalformedCitations:
+    def test_unresolved_alias_marker_removed(self):
+        # A well-formed marker whose chunk ref is still a C-alias means alias
+        # resolution failed -- it can't be enriched or clicked, so drop it.
+        out = strip_malformed_citations("Located in Bald Hills [[cite:C3:S1|war.txt]].")
+        assert "[[cite:" not in out
+        assert "Located in Bald Hills." in out
+
+    def test_unparseable_marker_removed(self):
+        out = strip_malformed_citations("A [[cite:garbage|f.txt]] B")
+        assert "[[cite:" not in out
+        assert "A B" in out
+
+    def test_valid_uuid_marker_kept(self):
+        content = "Claim [[cite:a1b2c3d4-e5f6:S1,S2|f.txt]] stands."
+        assert strip_malformed_citations(content) == content
+
+    def test_orphaned_space_before_punctuation_cleaned(self):
+        out = strip_malformed_citations("Serves Kutúzov [[cite:C9:S1|war.txt]], indeed.")
+        assert out == "Serves Kutúzov, indeed."
+
+    def test_empty_body_marker_removed(self):
+        out = strip_malformed_citations("x [[cite:]] y")
+        assert "[[cite:" not in out
+        assert "x y" in out
+
+    def test_leading_indentation_preserved(self):
+        # The whitespace tidy must not collapse markdown indentation
+        # (code blocks / nested lists) elsewhere in the message.
+        content = "Claim [[cite:C9:S1|war.txt]] here.\n\n    indented code line"
+        out = strip_malformed_citations(content)
+        assert "[[cite:" not in out
+        assert "\n    indented code line" in out
+
+    def test_no_markers_passthrough(self):
+        assert strip_malformed_citations("plain text") == "plain text"
 
 
 # ---------------------------------------------------------------------------
@@ -655,3 +796,94 @@ class TestEnrichChunkCitations:
         assert enrich_chunk_citations_from_tool_results({}, _wrap({"chunks": []})) == {}
         cites = {"c1:S1": {"chunk_id": "c1", "sentence_refs": "S1", "label": "x"}}
         assert enrich_chunk_citations_from_tool_results(cites, []) == cites
+
+
+# ---------------------------------------------------------------------------
+# Recursion coverage: entity data nested in edge/centrality/community shapes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.cortex
+class TestEnrichmentRecursesAllToolShapes:
+    """Phase 3: chips for entities only mentioned inside get_node_edges /
+    analyze_graph_structure / graphrag_search results showed no hover details
+    because the recursion whitelist missed those container keys.
+    """
+
+    def test_get_node_edges_related_node(self):
+        refs = {"n9": {"id": "n9", "type": "node", "label": "Princess Drubetskaya"}}
+        tool_results = _wrap(
+            {
+                "edges": [
+                    {
+                        "edge_id": "e1",
+                        "label": "MOTHER_OF",
+                        "direction": "outgoing",
+                        "related_node": {
+                            "id": "n9",
+                            "label": "Princess Drubetskaya",
+                            "template_name": "Person",
+                            "description": "impoverished noblewoman",
+                        },
+                    }
+                ]
+            }
+        )
+        out = enrich_entity_references_from_tool_results(refs, tool_results)
+        assert out["n9"]["description"] == "impoverished noblewoman"
+        assert out["n9"]["template_name"] == "Person"
+
+    def test_analyze_graph_structure_communities_and_top_nodes(self):
+        refs = {
+            "n1": {"id": "n1", "type": "node", "label": "Pierre"},
+            "n2": {"id": "n2", "type": "node", "label": "Natasha"},
+        }
+        tool_results = _wrap(
+            {
+                "communities": [
+                    {
+                        "size": 12,
+                        "sample_members": [
+                            {"id": "n1", "label": "Pierre", "description": "a count"}
+                        ],
+                    }
+                ],
+                "top_nodes": [
+                    {"id": "n2", "label": "Natasha", "description": "a Rostov", "pagerank": 0.4}
+                ],
+            }
+        )
+        out = enrich_entity_references_from_tool_results(refs, tool_results)
+        assert out["n1"]["description"] == "a count"
+        assert out["n2"]["description"] == "a Rostov"
+
+    def test_graphrag_graph_context_entities(self):
+        refs = {"n3": {"id": "n3", "type": "node", "label": "Andrei"}}
+        tool_results = _wrap(
+            {
+                "graph_context": {
+                    "seed_entities": [{"id": "n3", "label": "Andrei", "template_name": "Person"}],
+                    "related_entities": [],
+                }
+            }
+        )
+        out = enrich_entity_references_from_tool_results(refs, tool_results)
+        assert out["n3"]["template_name"] == "Person"
+
+    def test_traverse_and_similar_shapes(self):
+        refs = {
+            "n4": {"id": "n4", "type": "node", "label": "Kutuzov"},
+            "n5": {"id": "n5", "type": "node", "label": "Napoleon"},
+        }
+        tool_results = _wrap(
+            {
+                "start_node": {"id": "n4", "label": "Kutuzov", "description": "field marshal"},
+                "similar_nodes": [
+                    {"id": "n5", "label": "Napoleon", "description": "emperor", "similarity": 0.9}
+                ],
+            }
+        )
+        out = enrich_entity_references_from_tool_results(refs, tool_results)
+        assert out["n4"]["description"] == "field marshal"
+        assert out["n5"]["description"] == "emperor"

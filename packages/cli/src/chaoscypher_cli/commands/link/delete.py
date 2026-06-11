@@ -36,9 +36,9 @@ def delete(
     Can delete by LINK_ID or by specifying --source and --target nodes.
 
     Example:
-        chaoscypher link delete link-123
-        chaoscypher link delete --source person-1 --target company-1
-        chaoscypher link delete -s node-1 -t node-2 --type "works_for"
+        chaoscypher graph link delete link-123
+        chaoscypher graph link delete --source person-1 --target company-1
+        chaoscypher graph link delete -s node-1 -t node-2 --type "works_for"
     """
     try:
         ctx = get_context(database_name=database)

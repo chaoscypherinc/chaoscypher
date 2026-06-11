@@ -6,9 +6,9 @@ import {
   TextField,
   IconButton,
   Tooltip,
-  Typography,
 } from '@mui/material';
 import EnterIcon from '@mui/icons-material/KeyboardReturn';
+import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import { ContextInfoButton } from '../../components/chat';
 import { ChatTheme } from '../../theme/chatTheme';
 import type { ContextInfo } from '../../types';
@@ -27,6 +27,13 @@ interface ChatInputProps {
   /** Called when the user submits a message */
   onSend: () => void;
   /**
+   * Called when the user stops the in-flight turn (Stop button / Esc).
+   * While `loading` and this is provided, the Send button morphs into Stop.
+   */
+  onStop?: () => void;
+  /** True between a Stop click and the turn ending (disables re-clicks). */
+  stopping?: boolean;
+  /**
    * When set, the input and send button are disabled and the reason
    * surfaces in the placeholder + tooltip. Used to mirror the
    * server-side ``LLM_NOT_VERIFIED`` gate so the user sees the disabled
@@ -38,7 +45,8 @@ interface ChatInputProps {
 /**
  * Floating glass terminal input for the chat interface.
  *
- * Features frosted glass background, Enter key hint, and context info button.
+ * Features frosted glass background, Enter key hint, context info button,
+ * and a Send button that morphs into Stop while the assistant is generating.
  */
 export default function ChatInput({
   input,
@@ -47,9 +55,12 @@ export default function ChatInput({
   inputRef,
   onInputChange,
   onSend,
+  onStop,
+  stopping = false,
   disabledReason = null,
 }: ChatInputProps) {
   const gated = disabledReason !== null;
+  const showStop = loading && onStop !== undefined;
   return (
     <Box sx={{ px: 2, pb: 2, pt: 1, flexShrink: 0 }}>
       <Box
@@ -81,6 +92,10 @@ export default function ChatInput({
                 e.preventDefault();
                 onSend();
               }
+              if (e.key === 'Escape' && showStop && !stopping) {
+                e.preventDefault();
+                onStop?.();
+              }
             }}
             disabled={gated}
             variant="standard"
@@ -99,40 +114,45 @@ export default function ChatInput({
               },
             }}
           />
-          {loading && input.trim() && (
-            <Typography
-              variant="caption"
-              sx={{
-                position: 'absolute',
-                bottom: -18,
-                left: 0,
-                color: 'text.secondary',
-                fontStyle: 'italic',
-                fontSize: '0.65rem',
-              }}
-            >
-              Message will send after AI responds...
-            </Typography>
-          )}
         </Box>
-        {/* Send */}
-        <Tooltip title={gated ? (disabledReason ?? '') : 'Send (Enter)'}>
-          <span>
-            <IconButton
-              aria-label={gated ? (disabledReason ?? 'Send disabled') : 'Send (Enter)'}
-              onClick={onSend}
-              disabled={!input.trim() || loading || gated}
-              size="small"
-              sx={{
-                flexShrink: 0,
-                color: input.trim() && !loading && !gated ? 'primary.main' : 'text.disabled',
-                transition: 'color 0.15s',
-              }}
-            >
-              <EnterIcon fontSize="small" />
-            </IconButton>
-          </span>
-        </Tooltip>
+        {/* Send — morphs into Stop while the assistant is generating */}
+        {showStop ? (
+          <Tooltip title={stopping ? 'Stopping…' : 'Stop generating (Esc)'}>
+            <span>
+              <IconButton
+                aria-label={stopping ? 'Stopping' : 'Stop generating (Esc)'}
+                onClick={onStop}
+                disabled={stopping}
+                size="small"
+                sx={{
+                  flexShrink: 0,
+                  color: stopping ? 'text.disabled' : 'error.main',
+                  transition: 'color 0.15s',
+                }}
+              >
+                <StopRoundedIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        ) : (
+          <Tooltip title={gated ? (disabledReason ?? '') : 'Send (Enter)'}>
+            <span>
+              <IconButton
+                aria-label={gated ? (disabledReason ?? 'Send disabled') : 'Send (Enter)'}
+                onClick={onSend}
+                disabled={!input.trim() || loading || gated}
+                size="small"
+                sx={{
+                  flexShrink: 0,
+                  color: input.trim() && !loading && !gated ? 'primary.main' : 'text.disabled',
+                  transition: 'color 0.15s',
+                }}
+              >
+                <EnterIcon fontSize="small" />
+              </IconButton>
+            </span>
+          </Tooltip>
+        )}
       </Box>
     </Box>
   );

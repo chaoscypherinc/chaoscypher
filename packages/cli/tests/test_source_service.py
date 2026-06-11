@@ -314,3 +314,80 @@ class TestGetFileStatus:
 
         status = service.get_file_status("if_doesnotexist")
         assert status is None
+
+
+# ---------------------------------------------------------------------------
+# Status-guard regressions: zero-chunk wedge + crash-recovery re-index
+# ---------------------------------------------------------------------------
+
+
+class TestZeroChunkExtraction:
+    """extract_entities on a chunk-less source fails the row instead of wedging it."""
+
+    def test_zero_chunks_fail_extraction_not_wedged(
+        self, mock_cli_context_with_llm: MagicMock
+    ) -> None:
+        ctx = mock_cli_context_with_llm
+        # The fixture's get_file is a stateful fake over adapter._files.
+        ctx.storage_adapter._files["if_zerochunks1"] = {
+            "id": "if_zerochunks1",
+            "status": "indexed",
+            "extraction_depth": "full",
+            "forced_domain": None,
+            "filename": "empty.txt",
+            "metadata": {},
+        }
+        ctx.storage_adapter.get_chunks_for_extraction.return_value = []
+
+        service = CLISourceProcessingService(ctx)
+
+        with patch(
+            "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
+            return_value=MagicMock(),
+        ):
+            results, summary = service.extract_entities("if_zerochunks1")
+
+        assert results == {}
+        assert summary == {}
+        # The row left EXTRACTING via an explicit terminal transition —
+        # without this it could never be indexed, extracted, or committed
+        # again (all three reject EXTRACTING).
+        ctx.storage_adapter.fail_extraction.assert_called_once()
+        assert ctx.storage_adapter.fail_extraction.call_args.args[0] == "if_zerochunks1"
+
+
+class TestIndexCrashRecovery:
+    """index_file accepts a row stuck in INDEXING (previous run crashed)."""
+
+    def test_indexing_status_passes_the_guard(self, mock_cli_context: MagicMock) -> None:
+        ctx = mock_cli_context
+        ctx.storage_adapter._files["if_crashed12345"] = {
+            "id": "if_crashed12345",
+            "status": "indexing",
+            "filename": "doc.txt",
+            "filepath": "/nonexistent/doc.txt",
+        }
+        service = CLISourceProcessingService(ctx)
+
+        # The guard must not raise for 'indexing'; a sentinel further down
+        # the pipeline proves we got past it.
+        with patch(
+            "chaoscypher_core.services.sources.loaders.factory.get_loader_registry",
+            side_effect=RuntimeError("sentinel-past-guard"),
+        ):
+            with pytest.raises(RuntimeError, match="sentinel-past-guard"):
+                service.index_file("if_crashed12345")
+
+    def test_extracting_status_still_rejected(self, mock_cli_context: MagicMock) -> None:
+        """Only INDEXING was opened up — other in-flight states still error."""
+        ctx = mock_cli_context
+        ctx.storage_adapter._files["if_busy12345678"] = {
+            "id": "if_busy12345678",
+            "status": "extracting",
+            "filename": "doc.txt",
+            "filepath": "/nonexistent/doc.txt",
+        }
+        service = CLISourceProcessingService(ctx)
+
+        with pytest.raises(ValueError, match="Cannot index"):
+            service.index_file("if_busy12345678")

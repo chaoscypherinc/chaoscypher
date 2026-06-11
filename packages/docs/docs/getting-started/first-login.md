@@ -62,7 +62,7 @@ The bcrypt hash is irrecoverable. Recovery means deleting `<data-dir>/credential
 
 ## Network exposure
 
-By default, Cortex binds to `0.0.0.0` — see `CHAOSCYPHER_BIND` in [configuration](./configuration.md) and the [self-hosted threat model](../security/self-hosted-threat-model.md). For loopback-only, set `CHAOSCYPHER_BIND=127.0.0.1`.
+By default, Cortex binds to `0.0.0.0` — see `CHAOSCYPHER_BIND` in [configuration](./configuration.md#environment-variables) and the [self-hosted threat model](../security/self-hosted-threat-model.md). For loopback-only, set `CHAOSCYPHER_BIND=127.0.0.1`.
 
 :::warning Security defaults
 

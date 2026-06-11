@@ -100,16 +100,18 @@ Run `chaoscypher source add --help` for the full flag list.
 
 ## Development
 
+From the repo root:
+
 ```bash
 # Run tests
-uv run pytest
+uv run pytest packages/cli/tests --import-mode=importlib
 
 # Format code (ruff replaces black; ruff format is the formatter)
-uv run ruff format chaoscypher_cli/
-uv run ruff check chaoscypher_cli/
+uv run ruff format packages/cli
+uv run ruff check packages/cli
 
 # Type checking
-mypy chaoscypher_cli/
+uv run mypy packages/cli/src
 ```
 
 ## Architecture
@@ -131,6 +133,5 @@ AGPL-3.0 License - see LICENSE file for details.
 
 ## Links
 
-- [ChaosCypher Core Library](https://github.com/chaoscypherinc/chaoscypher)
-- [ChaosCypher Docker App](https://github.com/chaoscypherinc/chaoscypher)
 - [ChaosCypher monorepo](https://github.com/chaoscypherinc/chaoscypher)
+- [Documentation](https://chaoscypher.com)

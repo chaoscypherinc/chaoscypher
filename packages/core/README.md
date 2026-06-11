@@ -2,8 +2,6 @@
 
 **Standalone AI knowledge graph library using Hexagonal Architecture (Ports & Adapters)**
 
-Version: 0.1.0
-
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0.html)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://www.python.org/downloads/)
 
@@ -109,10 +107,10 @@ A reusable, framework-agnostic library providing core AI-powered knowledge graph
                               │
 ┌─────────────────────────────┼───────────────────────────────┐
 │                     ADAPTERS (Implementations)               │
-│  adapters/sqlite/  - SQLite storage (default)                │
-│  adapters/llm/     - LLM providers (Ollama, OpenAI, etc.)    │
-│  repos/graph/      - Graph repository (SQLite-backed)        │
-│  repos/search/     - Search repository (sqlite-vec + FTS5)   │
+│  adapters/sqlite/        - SQLite storage (default)          │
+│  adapters/llm/           - LLM providers (Ollama, OpenAI, …) │
+│  adapters/sqlite/repos/  - Graph, search, and extraction     │
+│                            repositories (sqlite-vec + FTS5)  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -181,11 +179,15 @@ from chaoscypher_core import (
     # Protocols (for custom adapter authors)
     GraphRepositoryProtocol, SearchRepositoryProtocol,
     ChunkingProtocol, IndexingProtocol, EmbeddingProviderProtocol,
-    SourcesProtocol, SourceStorageProtocol,
+    SourceStorageProtocol, CitationStorageProtocol,
 )
 ```
 
-All public APIs are available as top-level imports. Deep imports are only needed for internal/private APIs.
+The primary API, models, services, and the protocols shown above are all
+top-level imports. Some granular storage protocols (workflows, chats, tools,
+triggers, LLM metrics) are not re-exported and require a deep import from
+their `chaoscypher_core.ports.storage_*` module — see the Storage Protocols
+table below.
 
 ## Directory Structure
 
@@ -238,17 +240,16 @@ chaoscypher_core/
 │   ├── sqlite/              # SQLite storage adapter (default)
 │   │   ├── adapter.py       # SqliteAdapter (implements all storage protocols)
 │   │   ├── models.py        # SQLModel entity definitions
-│   │   └── mixins/          # Protocol implementations (14 focused mixins)
+│   │   ├── mixins/          # Protocol implementations (one focused mixin per concern)
+│   │   └── repos/           # Repository implementations
+│   │       ├── graph/       # GraphRepository (SQLite-backed)
+│   │       ├── search.py    # SearchRepository (sqlite-vec + FTS5)
+│   │       └── extraction.py  # ExtractionRepository
 │   ├── llm/                 # LLM provider system
 │   │   ├── factory.py       # ProviderFactory (cached provider creation)
 │   │   ├── provider.py      # LLMProvider (queue-free direct access)
 │   │   └── providers/       # Ollama, OpenAI, Anthropic, Gemini
 │   └── web/                 # Web/HTTP integrations
-│
-├── repos/                   # DATA ACCESS: Repository implementations
-│   ├── graph/               # GraphRepository (SQLite-backed)
-│   ├── search/              # SearchRepository (sqlite-vec + FTS5)
-│   └── extraction/          # ExtractionRepository
 │
 ├── plugins/                 # Plugin system (base classes, discovery, registry)
 ├── utils/                   # Utilities (ID generation, chunking, logging)
@@ -340,23 +341,23 @@ with Engine(database="demo") as engine:
 
 ## Storage Protocols
 
-All storage protocols are defined in `chaoscypher_core.ports` and return `dict[str, Any]`:
+All storage protocols are defined in `chaoscypher_core.ports` and return `dict[str, Any]`. Protocols without an import path below are top-level exports (`from chaoscypher_core import ...`); the rest require a deep import from the listed module:
 
-| Protocol | Purpose |
-|----------|---------|
-| `GraphRepositoryProtocol` | Node, edge, and template CRUD |
-| `SearchRepositoryProtocol` | Keyword, vector, and hybrid search |
-| `ChunkingProtocol` | Hierarchical document chunking |
-| `IndexingProtocol` | Chunk embedding storage and retrieval |
-| `WorkflowStorageProtocol` | Workflow definitions, steps, statistics |
-| `SourceStorageProtocol` | Source document lifecycle |
-| `ChatStorageProtocol` | Chat conversations and messages |
-| `ToolStorageProtocol` | Tool registry |
-| `TriggerStorageProtocol` | Event triggers |
-| `LLMMetricsStorageProtocol` | LLM call metrics and cost tracking |
-| `SourcesProtocol` | Source and citation management |
+| Protocol | Purpose | Import from |
+|----------|---------|-------------|
+| `GraphRepositoryProtocol` | Node, edge, and template CRUD | `chaoscypher_core` |
+| `SearchRepositoryProtocol` | Keyword, vector, and hybrid search | `chaoscypher_core` |
+| `ChunkingProtocol` | Hierarchical document chunking | `chaoscypher_core` |
+| `IndexingProtocol` | Chunk embedding storage and retrieval | `chaoscypher_core` |
+| `SourceStorageProtocol` | Source document lifecycle | `chaoscypher_core` |
+| `CitationStorageProtocol` | Citation management | `chaoscypher_core` |
+| `WorkflowStorageProtocol` | Workflow definitions, steps, statistics | `chaoscypher_core.ports.storage_workflows` |
+| `ChatStorageProtocol` | Chat conversations and messages | `chaoscypher_core.ports.storage_chats` |
+| `ToolStorageProtocol` | Tool registry | `chaoscypher_core.ports.storage_tools` |
+| `TriggerStorageProtocol` | Event triggers | `chaoscypher_core.ports.storage_triggers` |
+| `LLMMetricsStorageProtocol` | LLM call metrics and cost tracking | `chaoscypher_core.ports.storage_llm_metrics` |
 
-The default implementation for all protocols is `SqliteAdapter` (via 14 focused mixins following Interface Segregation Principle).
+The default implementation for all protocols is `SqliteAdapter` (via focused per-concern mixins — one module per storage concern, following the Interface Segregation Principle).
 
 ## Plugin Protocols
 
@@ -370,13 +371,13 @@ In addition to storage protocols, the core library exposes plugin protocols for 
   unpacking still works via `CleanerResult.__iter__` for back-compat. Cleaners may
   optionally implement `applies_to(metadata) -> bool` to gate themselves by document
   metadata (`OCRCleaner` uses this to fire only on OCR-derived content).
-- `ArchiveHandler` (`services/sources/loaders/archive/handlers/base.py`) — extended in PR 1
-  to carry `metadata`, `can_handle() -> int` specificity score, and `find_root()` for
+- `ArchiveHandler` (`services/sources/loaders/archive/handlers/base.py`) — carries
+  `metadata`, a `can_handle() -> int` specificity score, and `find_root()` for
   nested-docs discovery.
 
 ## Testing
 
-Protocol-based design enables clean mocking. All protocols are top-level exports:
+Protocol-based design enables clean mocking. The core protocols are top-level exports (the granular storage protocols import from `chaoscypher_core.ports.storage_*` — see Storage Protocols above):
 
 ```python
 from unittest.mock import Mock
@@ -400,7 +401,7 @@ def test_extraction():
 
 ## Documentation
 
-For complete documentation including tutorials, API reference, and architecture guides, see the docs site or `docs/developer-guide/` in the repository.
+For complete documentation including tutorials, API reference, and architecture guides, see https://chaoscypher.com or `packages/docs/docs/developer-guide/` in the repository.
 
 ## License
 

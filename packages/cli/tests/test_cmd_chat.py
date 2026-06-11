@@ -10,20 +10,26 @@ mocked, so no real I/O happens.
 
 Scenarios covered:
 - No-LLM-configured branch exits 1 with the install hint.
-- A single ``message`` argument runs one Q&A turn and prints the answer.
+- A single ``message`` argument runs one Q&A turn through the REAL shared
+  chat tool loop (fake chunk-dict provider) and prints the answer.
 - Empty / no-response answers print the "No response received" notice.
 - ``--context`` resolves node/file text (found and not-found branches).
 - ``--source`` / ``--tag`` scope resolution and source-name lookup.
-- The streaming consumer handles content, done, and error chunks.
-- Tool calls are executed and looped until a final text response.
+- ``_create_tool_infrastructure`` routes through ``setup_chat_providers``
+  (chat_id="cli", scope forwarding, direct-LLM callback override).
 - Citation + entity-reference transforms in the stream writer.
 - Interactive REPL slash/meta commands: exit, quit, q, clear, /scope,
   help, empty input, plus the clean-exit path and error handling.
 - KeyboardInterrupt and generic-exception handling in the command.
+
+The loop internals (tool iteration, duplicate filtering, recovery) are
+tested in core's test_loop*.py; REPL tests patch the ``_run_chat_turn``
+seam. Console rendering adapters are tested in test_chat_loop_adapter.py.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -34,16 +40,16 @@ from click.testing import CliRunner
 
 import chaoscypher_cli.commands.chat as chat_mod
 from chaoscypher_cli.commands.chat import (
+    ChatTurnError,
     _build_citation_data,
     _build_system_prompt,
-    _chat_with_tools,
-    _consume_stream,
     _create_tool_infrastructure,
     _get_context_text,
     _get_source_names,
     _interactive_chat,
     _resolve_citation_text,
     _resolve_source_scope,
+    _run_chat_turn,
     _send_message,
     _StreamWriter,
     _summarize_args,
@@ -52,19 +58,17 @@ from chaoscypher_cli.commands.chat import (
 )
 
 
+@pytest.fixture
+def chat_loop() -> Any:
+    """A fresh event loop for driving _send_message/_interactive_chat directly."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
 # ---------------------------------------------------------------------------
 # Helpers / fakes
 # ---------------------------------------------------------------------------
-
-
-class _StreamResponse:
-    """Minimal stand-in for a streaming LLMChatResponse."""
-
-    def __init__(self, stream: Any) -> None:
-        self.is_stream = True
-        self.stream = stream
-        self.content = ""
-        self.tool_calls: list[Any] = []
 
 
 class _NonStreamResponse:
@@ -93,13 +97,31 @@ def _text_stream(text: str) -> Any:
     )
 
 
+class _FakeChatProvider:
+    """Streaming chat provider stand-in matching the shared-loop protocol.
+
+    ``chat(**kwargs)`` records the call kwargs and returns the canned chunk
+    streams in order (the last stream is reused if the loop calls again).
+    """
+
+    def __init__(self, streams: list[Any]) -> None:
+        self._streams = list(streams)
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        idx = min(len(self.calls) - 1, len(self._streams) - 1)
+        return self._streams[idx]
+
+
 def _make_llm_provider(responses: list[Any]) -> MagicMock:
     """Build a mock LLM provider whose ``chat`` returns each response in turn."""
     provider = MagicMock()
-    calls: dict[str, Any] = {"messages": None, "count": 0}
+    calls: dict[str, Any] = {"messages": None, "kwargs": None, "count": 0}
 
     async def _chat(**kwargs: Any) -> Any:
         calls["messages"] = kwargs.get("messages")
+        calls["kwargs"] = kwargs
         idx = min(calls["count"], len(responses) - 1)
         calls["count"] += 1
         return responses[idx]
@@ -110,16 +132,29 @@ def _make_llm_provider(responses: list[Any]) -> MagicMock:
 
 
 def _ctx_with_llm(provider: MagicMock | None = None) -> MagicMock:
-    """A CLI context configured with an LLM provider."""
+    """A CLI context configured with an LLM provider.
+
+    The provider only backs the summarize-tool callback now — chat turns go
+    through the chat_provider returned by ``_create_tool_infrastructure``.
+    """
     ctx = MagicMock()
     ctx.has_llm = True
     ctx.database_name = "default"
-    ctx.llm_provider = (
-        provider
-        if provider is not None
-        else _make_llm_provider([_StreamResponse(_text_stream("Hello there."))])
-    )
+    ctx.llm_provider = provider if provider is not None else MagicMock()
+    # No spend caps configured — the loop's spend guard is a no-op so the
+    # real-loop tests don't hit cap comparisons against MagicMock values.
+    ctx.settings.llm.max_tokens_per_source = None
+    ctx.settings.llm.max_tokens_per_day = None
     return ctx
+
+
+def _patch_run_chat_turn(answer: str = "An answer.") -> Any:
+    """Patch the shared-loop seam to a coroutine returning ``answer``."""
+
+    async def _fake(*_args: Any, **_kwargs: Any) -> str:
+        return answer
+
+    return patch.object(chat_mod, "_run_chat_turn", side_effect=_fake)
 
 
 # ===========================================================================
@@ -141,31 +176,41 @@ def test_no_llm_exits_1_with_hint() -> None:
     assert "Ollama" in result.output
 
 
-def test_single_message_prints_answer_and_calls_llm() -> None:
-    """A message argument runs one turn and streams the assistant answer."""
+def test_single_message_prints_answer_and_calls_llm(isolated_settings: Any) -> None:
+    """A message argument runs one turn through the real loop and streams the answer."""
     runner = CliRunner()
-    provider = _make_llm_provider([_StreamResponse(_text_stream("The answer is 42."))])
-    ctx = _ctx_with_llm(provider)
+    ctx = _ctx_with_llm()
+    chat_provider = _FakeChatProvider([_text_stream("The answer is 42.")])
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
-        with patch.object(chat_mod, "_create_tool_infrastructure", return_value=(MagicMock(), [])):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(chat_provider, MagicMock(), []),
+        ):
             result = runner.invoke(chat, ["What is the answer?"])
 
     assert result.exit_code == 0, result.output
     assert "The answer is 42." in result.output
-    # The user's message reached the LLM provider.
-    sent = provider._calls["messages"]
+    # The user's message reached the chat provider through the shared loop.
+    sent = chat_provider.calls[0]["messages"]
     assert any(m.get("content") == "What is the answer?" for m in sent)
 
 
-def test_single_message_empty_response_shows_notice() -> None:
+def test_single_message_empty_response_shows_notice(isolated_settings: Any) -> None:
     """An empty assistant response prints the 'No response received' notice."""
     runner = CliRunner()
-    provider = _make_llm_provider([_NonStreamResponse(content="")])
-    ctx = _ctx_with_llm(provider)
+    ctx = _ctx_with_llm()
+    chat_provider = _FakeChatProvider(
+        [_make_stream([{"type": "done", "content": "", "tool_calls": []}])]
+    )
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
-        with patch.object(chat_mod, "_create_tool_infrastructure", return_value=(MagicMock(), [])):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(chat_provider, MagicMock(), []),
+        ):
             result = runner.invoke(chat, ["Anything?"])
 
     assert result.exit_code == 0, result.output
@@ -175,13 +220,17 @@ def test_single_message_empty_response_shows_notice() -> None:
 def test_context_id_found_prints_using_context() -> None:
     """--context with resolvable text prints the 'Using context' notice."""
     runner = CliRunner()
-    provider = _make_llm_provider([_StreamResponse(_text_stream("ok"))])
-    ctx = _ctx_with_llm(provider)
+    ctx = _ctx_with_llm()
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
-        with patch.object(chat_mod, "_create_tool_infrastructure", return_value=(MagicMock(), [])):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(MagicMock(), MagicMock(), []),
+        ):
             with patch.object(chat_mod, "_get_context_text", return_value="some context"):
-                result = runner.invoke(chat, ["--context", "node-123", "hi"])
+                with _patch_run_chat_turn(answer="ok"):
+                    result = runner.invoke(chat, ["--context", "node-123", "hi"])
 
     assert result.exit_code == 0, result.output
     assert "Using context from: node-123" in result.output
@@ -190,13 +239,17 @@ def test_context_id_found_prints_using_context() -> None:
 def test_context_id_not_found_warns() -> None:
     """--context that resolves to nothing prints a warning but still runs."""
     runner = CliRunner()
-    provider = _make_llm_provider([_StreamResponse(_text_stream("ok"))])
-    ctx = _ctx_with_llm(provider)
+    ctx = _ctx_with_llm()
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
-        with patch.object(chat_mod, "_create_tool_infrastructure", return_value=(MagicMock(), [])):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(MagicMock(), MagicMock(), []),
+        ):
             with patch.object(chat_mod, "_get_context_text", return_value=None):
-                result = runner.invoke(chat, ["--context", "missing-id", "hi"])
+                with _patch_run_chat_turn(answer="ok"):
+                    result = runner.invoke(chat, ["--context", "missing-id", "hi"])
 
     assert result.exit_code == 0, result.output
     assert "Could not find context: missing-id" in result.output
@@ -205,19 +258,19 @@ def test_context_id_not_found_warns() -> None:
 def test_source_scope_prints_count_and_passes_ids() -> None:
     """--source scopes the chat and forwards source IDs to tool infrastructure."""
     runner = CliRunner()
-    provider = _make_llm_provider([_StreamResponse(_text_stream("scoped"))])
-    ctx = _ctx_with_llm(provider)
+    ctx = _ctx_with_llm()
     ctx.storage_adapter.get_source.return_value = {"title": "My Doc"}
 
     captured: dict[str, Any] = {}
 
-    def _fake_infra(c: Any, source_ids: Any = None) -> tuple[Any, list[Any]]:
+    def _fake_infra(c: Any, source_ids: Any = None) -> tuple[Any, Any, list[Any]]:
         captured["source_ids"] = source_ids
-        return MagicMock(), []
+        return MagicMock(), MagicMock(), []
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
         with patch.object(chat_mod, "_create_tool_infrastructure", side_effect=_fake_infra):
-            result = runner.invoke(chat, ["--source", "src-1", "--source", "src-2", "hi"])
+            with _patch_run_chat_turn(answer="scoped"):
+                result = runner.invoke(chat, ["--source", "src-1", "--source", "src-2", "hi"])
 
     assert result.exit_code == 0, result.output
     assert "Scoped to 2 source(s)" in result.output
@@ -267,7 +320,11 @@ def test_no_message_enters_interactive_mode() -> None:
         captured["source_ids"] = kwargs.get("source_ids")
 
     with patch.object(chat_mod, "get_context", return_value=ctx):
-        with patch.object(chat_mod, "_create_tool_infrastructure", return_value=(MagicMock(), [])):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(MagicMock(), MagicMock(), []),
+        ):
             with patch.object(chat_mod, "_interactive_chat", side_effect=_fake_interactive):
                 result = runner.invoke(chat, [])
 
@@ -291,13 +348,60 @@ def test_resolve_source_scope_sources_only() -> None:
     assert set(result) == {"a", "b"}
 
 
-def test_resolve_source_scope_merges_tags() -> None:
+def test_resolve_source_scope_merges_tags_by_name() -> None:
+    """--tag values are names; they resolve to tag IDs before the lookup."""
     ctx = MagicMock()
     ctx.database_name = "default"
+    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "Research"}]
     ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = ["b", "c"]
-    result = _resolve_source_scope(ctx, ("a",), ("tag-1",))
+    result = _resolve_source_scope(ctx, ("a",), ("research",))
     assert set(result) == {"a", "b", "c"}
     ctx.storage_adapter.get_source_ids_by_tag_ids.assert_called_once_with(["tag-1"], "default")
+
+
+def test_resolve_source_scope_accepts_raw_tag_id() -> None:
+    """A value matching no name but a real tag ID is used as-is."""
+    ctx = MagicMock()
+    ctx.database_name = "default"
+    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
+    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = ["b"]
+    result = _resolve_source_scope(ctx, (), ("tag-1",))
+    assert result == ["b"]
+    ctx.storage_adapter.get_source_ids_by_tag_ids.assert_called_once_with(["tag-1"], "default")
+
+
+def test_resolve_source_scope_unknown_tag_exits(capsys: pytest.CaptureFixture[str]) -> None:
+    """An unknown tag aborts instead of silently chatting unscoped."""
+    ctx = MagicMock()
+    ctx.database_name = "default"
+    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_source_scope(ctx, (), ("nope",))
+    assert exc_info.value.code == 1
+    out = capsys.readouterr().out
+    assert "Unknown tag(s): nope" in out
+    assert "research" in out  # available tags listed
+
+
+def test_resolve_source_scope_tag_without_sources_exits() -> None:
+    """Tags that match zero sources abort rather than running unscoped."""
+    ctx = MagicMock()
+    ctx.database_name = "default"
+    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
+    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = []
+    with pytest.raises(SystemExit) as exc_info:
+        _resolve_source_scope(ctx, (), ("research",))
+    assert exc_info.value.code == 1
+
+
+def test_resolve_source_scope_tag_without_sources_keeps_explicit_sources() -> None:
+    """With --source present, an empty tag match warns but keeps the source scope."""
+    ctx = MagicMock()
+    ctx.database_name = "default"
+    ctx.storage_adapter.list_tags.return_value = [{"id": "tag-1", "name": "research"}]
+    ctx.storage_adapter.get_source_ids_by_tag_ids.return_value = []
+    result = _resolve_source_scope(ctx, ("a",), ("research",))
+    assert result == ["a"]
 
 
 # ===========================================================================
@@ -416,271 +520,81 @@ def test_build_system_prompt_truncates_long_context() -> None:
 # ===========================================================================
 
 
-def test_create_tool_infrastructure_builds_executor_and_tools() -> None:
+def test_create_tool_infrastructure_routes_through_setup_chat_providers() -> None:
+    """The CLI builds its chat stack via the shared setup_chat_providers."""
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
 
+    fake_provider = MagicMock()
     fake_executor = MagicMock()
     fake_tools = [{"name": "search_nodes"}]
 
-    with patch.object(chat_mod, "MAX_TOOL_ITERATIONS", 10):
+    with patch("chaoscypher_core.app_config.get_settings", return_value=MagicMock()):
         with patch(
-            "chaoscypher_core.services.workflows.tools.engine.executor.ToolExecutorService",
-            return_value=fake_executor,
-        ) as exec_cls:
-            with patch(
-                "chaoscypher_core.services.workflows.tools.engine.schema_registry.get_essential_tool_schemas",
-                return_value=fake_tools,
-            ):
-                executor, tools = _create_tool_infrastructure(ctx, source_ids=["s1"])
+            "chaoscypher_core.streaming.chat.setup_chat_providers",
+            return_value=(fake_provider, fake_executor, fake_tools),
+        ) as setup:
+            provider, executor, tools = _create_tool_infrastructure(ctx, source_ids=["s1"])
 
+    assert provider is fake_provider
     assert executor is fake_executor
     assert tools == fake_tools
-    # Scope was forwarded to the executor.
-    _, kwargs = exec_cls.call_args
-    assert kwargs["scope"] == {"source_ids": ["s1"]}
+    args, kwargs = setup.call_args
+    assert args[1] is ctx.graph_repository
+    assert args[2] is ctx.search_repository
+    assert kwargs["chat_id"] == "cli"
+    assert kwargs["source_ids"] == ["s1"]
+    assert kwargs["indexing_manager"] is ctx.storage_adapter
+    assert kwargs["source_storage"] is ctx.storage_adapter
+    # An LLM provider is configured, so the direct callback is wired in.
+    assert kwargs["llm_chat_callback_override"] is not None
 
 
-def test_create_tool_infrastructure_no_scope_no_llm() -> None:
+def test_create_tool_infrastructure_no_llm_no_callback_override() -> None:
+    """Without an LLM provider the direct-callback override stays None."""
     ctx = MagicMock()
-    ctx.llm_provider = None  # llm_chat_callback should be None
+    ctx.llm_provider = None
 
-    with patch(
-        "chaoscypher_core.services.workflows.tools.engine.executor.ToolExecutorService",
-        return_value=MagicMock(),
-    ) as exec_cls:
+    with patch("chaoscypher_core.app_config.get_settings", return_value=MagicMock()):
         with patch(
-            "chaoscypher_core.services.workflows.tools.engine.schema_registry.get_essential_tool_schemas",
-            return_value=[],
-        ):
+            "chaoscypher_core.streaming.chat.setup_chat_providers",
+            return_value=(MagicMock(), MagicMock(), []),
+        ) as setup:
             _create_tool_infrastructure(ctx, source_ids=None)
 
-    _, kwargs = exec_cls.call_args
-    assert kwargs["scope"] is None
-    assert kwargs["llm_chat_callback"] is None
+    _, kwargs = setup.call_args
+    assert kwargs["source_ids"] is None
+    assert kwargs["llm_chat_callback_override"] is None
 
 
 @pytest.mark.asyncio
-async def test_tool_infrastructure_callbacks_invoke_provider_and_embedder() -> None:
-    """The wrapped llm_chat and embedding callbacks delegate to the ctx services."""
+async def test_tool_infrastructure_llm_callback_delegates_to_provider() -> None:
+    """The direct llm_chat callback calls the CLI provider non-streaming."""
     ctx = MagicMock()
     provider = _make_llm_provider([_NonStreamResponse(content="cb-content")])
     ctx.llm_provider = provider
 
-    async def _embed(text: str) -> list[float]:
-        return [0.1, 0.2]
-
-    ctx.embedding_service.embed = _embed
-
     captured: dict[str, Any] = {}
 
-    def _capture_executor(**kwargs: Any) -> MagicMock:
+    def _capture_setup(*args: Any, **kwargs: Any) -> tuple[Any, Any, list[Any]]:
         captured.update(kwargs)
-        return MagicMock()
+        return MagicMock(), MagicMock(), []
 
-    with patch(
-        "chaoscypher_core.services.workflows.tools.engine.executor.ToolExecutorService",
-        side_effect=_capture_executor,
-    ):
+    with patch("chaoscypher_core.app_config.get_settings", return_value=MagicMock()):
         with patch(
-            "chaoscypher_core.services.workflows.tools.engine.schema_registry.get_essential_tool_schemas",
-            return_value=[],
+            "chaoscypher_core.streaming.chat.setup_chat_providers",
+            side_effect=_capture_setup,
         ):
             _create_tool_infrastructure(ctx, source_ids=None)
 
-    llm_cb = captured["llm_chat_callback"]
+    llm_cb = captured["llm_chat_callback_override"]
     out = await llm_cb([{"role": "user", "content": "hi"}], temperature=0.5, max_tokens=10)
     assert out == {"content": "cb-content"}
-
-    embed_cb = captured["embedding_callback"]
-    assert await embed_cb("text") == [0.1, 0.2]
-
-
-# ===========================================================================
-# _chat_with_tools / _consume_stream
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_streams_text() -> None:
-    provider = _make_llm_provider([_StreamResponse(_text_stream("Final answer."))])
-    messages: list[dict[str, Any]] = [{"role": "user", "content": "q"}]
-    content = await _chat_with_tools(provider, messages, [], MagicMock())
-    assert content == "Final answer."
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_non_streaming_fallback() -> None:
-    provider = _make_llm_provider([_NonStreamResponse(content="Plain content")])
-    content = await _chat_with_tools(provider, [{"role": "user", "content": "q"}], [], MagicMock())
-    assert content == "Plain content"
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_executes_tool_then_finishes() -> None:
-    """A tool call is executed and the loop continues to a final text answer."""
-    tool_call = {
-        "id": "call-1",
-        "function": {"name": "search_nodes", "arguments": json.dumps({"query": "x"})},
-    }
-    first = _StreamResponse(
-        _make_stream([{"type": "done", "content": "", "tool_calls": [tool_call]}])
-    )
-    second = _StreamResponse(_text_stream("Done after tool."))
-    provider = _make_llm_provider([first, second])
-
-    executor = MagicMock()
-
-    async def _execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        return {"matched": name, "args": args}
-
-    executor.execute_tool = _execute
-
-    messages: list[dict[str, Any]] = [{"role": "user", "content": "q"}]
-    content = await _chat_with_tools(provider, messages, [], executor)
-
-    assert content == "Done after tool."
-    # An assistant tool_calls message and a tool result message were appended.
-    assert any(m.get("role") == "assistant" and m.get("tool_calls") for m in messages)
-    tool_msgs = [m for m in messages if m.get("role") == "tool"]
-    assert tool_msgs and tool_msgs[0]["name"] == "search_nodes"
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_handles_string_and_bad_json_arguments() -> None:
-    """String arguments are JSON-decoded; invalid JSON falls back to ``{}``."""
-    bad_call = {"id": "c", "function": {"name": "search_nodes", "arguments": "{not json"}}
-    first = _StreamResponse(
-        _make_stream([{"type": "done", "content": "", "tool_calls": [bad_call]}])
-    )
-    second = _StreamResponse(_text_stream("ok"))
-    provider = _make_llm_provider([first, second])
-
-    seen_args: dict[str, Any] = {}
-
-    async def _execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        seen_args["args"] = args
-        return {}
-
-    executor = MagicMock()
-    executor.execute_tool = _execute
-
-    await _chat_with_tools(provider, [{"role": "user", "content": "q"}], [], executor)
-    assert seen_args["args"] == {}
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_streamed_text_then_tool_call() -> None:
-    """Text streamed before a tool call triggers the mid-stream newline (line 368)."""
-    tool_call = {"id": "c", "function": {"name": "search_nodes", "arguments": {}}}
-    first = _StreamResponse(
-        _make_stream(
-            [
-                {"type": "content", "delta": "thinking...", "accumulated": "thinking..."},
-                {"type": "done", "content": "thinking...", "tool_calls": [tool_call]},
-            ]
-        )
-    )
-    second = _StreamResponse(_text_stream("Final."))
-    provider = _make_llm_provider([first, second])
-
-    executor = MagicMock()
-
-    async def _execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        return {}
-
-    executor.execute_tool = _execute
-
-    content = await _chat_with_tools(provider, [{"role": "user", "content": "q"}], [], executor)
-    assert content == "Final."
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_iteration_limit_with_streamed_text() -> None:
-    """Streamed text + tool call across the iteration cap (exercises line 368)."""
-    tool_call = {"id": "c", "function": {"name": "search_nodes", "arguments": {}}}
-
-    def _streamed_tool() -> Any:
-        return _StreamResponse(
-            _make_stream(
-                [
-                    {"type": "content", "delta": "partial", "accumulated": "partial"},
-                    {"type": "done", "content": "partial", "tool_calls": [tool_call]},
-                ]
-            )
-        )
-
-    provider = MagicMock()
-
-    async def _chat(**_kwargs: Any) -> Any:
-        return _streamed_tool()
-
-    provider.chat = _chat
-
-    executor = MagicMock()
-
-    async def _execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        return {}
-
-    executor.execute_tool = _execute
-
-    content = await _chat_with_tools(
-        provider, [{"role": "user", "content": "q"}], [], executor, max_iterations=1
-    )
-    assert content == "partial"
-
-
-@pytest.mark.asyncio
-async def test_chat_with_tools_iteration_limit() -> None:
-    """When the LLM keeps requesting tools, the loop stops at max_iterations."""
-    tool_call = {"id": "c", "function": {"name": "search_nodes", "arguments": {}}}
-
-    def _always_tool() -> Any:
-        return _StreamResponse(
-            _make_stream([{"type": "done", "content": "loop", "tool_calls": [tool_call]}])
-        )
-
-    provider = MagicMock()
-
-    async def _chat(**_kwargs: Any) -> Any:
-        return _always_tool()
-
-    provider.chat = _chat
-
-    executor = MagicMock()
-
-    async def _execute(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        return {}
-
-    executor.execute_tool = _execute
-
-    content = await _chat_with_tools(
-        provider, [{"role": "user", "content": "q"}], [], executor, max_iterations=2
-    )
-    assert content == "loop"
-
-
-@pytest.mark.asyncio
-async def test_consume_stream_error_chunk_prints_error() -> None:
-    stream = _make_stream(
-        [
-            {"type": "content", "delta": "partial", "accumulated": "partial"},
-            {"type": "error", "error": "stream blew up"},
-        ]
-    )
-    content, tool_calls, did_stream = await _consume_stream(stream)
-    assert did_stream is True
-    assert tool_calls == []
-
-
-@pytest.mark.asyncio
-async def test_consume_stream_collects_done_tool_calls() -> None:
-    tc = {"id": "c", "function": {"name": "x", "arguments": {}}}
-    stream = _make_stream([{"type": "done", "content": "final", "tool_calls": [tc]}])
-    content, tool_calls, did_stream = await _consume_stream(stream)
-    assert content == "final"
-    assert tool_calls == [tc]
-    assert did_stream is False
+    # The provider was called non-streaming with the tunables forwarded.
+    sent_kwargs = provider._calls["kwargs"]
+    assert sent_kwargs["stream"] is False
+    assert sent_kwargs["temperature"] == 0.5
+    assert sent_kwargs["max_tokens"] == 10
 
 
 # ===========================================================================
@@ -848,6 +762,19 @@ def test_stream_writer_unresolved_citation_shows_label(
     assert "Fallback" in out
 
 
+def test_stream_writer_malformed_citation_hidden(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mixed-ref markers (chunk alias in the sentence list) are hidden, not printed raw."""
+    writer = _StreamWriter(citation_data={})
+    writer.write("Son of Vasíli [[cite:C1:S15,C17|war.txt]] end")
+    writer.close()
+    out = capsys.readouterr().out
+    assert "[[cite:" not in out
+    assert "Son of Vasíli" in out
+    assert "end" in out
+
+
 def test_transform_entity_refs_strips_to_label() -> None:
     # console.is_terminal is False under capture, so refs become plain labels.
     text = "Meet [[node:node_abc123|Pierre]] today"
@@ -933,12 +860,96 @@ def test_summarize_args_truncates_and_limits() -> None:
 
 def test_send_message_prints_no_response_when_empty(
     capsys: pytest.CaptureFixture[str],
+    chat_loop: Any,
 ) -> None:
-    ctx = MagicMock()
-    ctx.llm_provider = _make_llm_provider([_NonStreamResponse(content="")])
-    _send_message(ctx, "hi", "system", [], MagicMock())
+    with _patch_run_chat_turn(answer=""):
+        _send_message(MagicMock(), "hi", "system", MagicMock(), [], MagicMock(), chat_loop)
     out = capsys.readouterr().out
     assert "No response received" in out
+
+
+def test_single_message_turn_error_exits_1() -> None:
+    """A failed turn in single-message mode exits non-zero (scripting contract)."""
+    runner = CliRunner()
+    ctx = _ctx_with_llm()
+
+    async def _raise(*_args: Any, **_kwargs: Any) -> str:
+        raise ChatTurnError("The chat turn failed during initial_stream.")
+
+    with patch.object(chat_mod, "get_context", return_value=ctx):
+        with patch.object(
+            chat_mod,
+            "_create_tool_infrastructure",
+            return_value=(MagicMock(), MagicMock(), []),
+        ):
+            with patch.object(chat_mod, "_run_chat_turn", side_effect=_raise):
+                result = runner.invoke(chat, ["Anything?"])
+
+    assert result.exit_code == 1
+    assert "Error" in result.output
+
+
+# ===========================================================================
+# _run_chat_turn — loop deps wiring (spend guard, error propagation)
+# ===========================================================================
+
+
+def _loop_result(**kwargs: Any) -> Any:
+    from chaoscypher_core.streaming.chat.loop import ChatLoopResult
+
+    return ChatLoopResult(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_wires_spend_guard_and_records(
+    isolated_settings: Any,
+) -> None:
+    """The CLI turn passes a spend guard to the loop and records turn spend."""
+    ctx = _ctx_with_llm()
+    captured: dict[str, Any] = {}
+
+    async def _fake_loop(_messages: Any, deps: Any) -> Any:
+        captured["deps"] = deps
+        return _loop_result(content="fine")
+
+    with patch(
+        "chaoscypher_core.streaming.chat.loop.run_chat_tool_loop",
+        side_effect=_fake_loop,
+    ):
+        with patch.object(chat_mod, "_record_chat_spend") as record:
+            content = await _run_chat_turn(
+                ctx, MagicMock(), MagicMock(), [], [{"role": "user", "content": "hi"}]
+            )
+
+    assert content == "fine"
+    assert captured["deps"].spend_guard is not None
+    # The guard is a no-op when no caps are configured.
+    await captured["deps"].spend_guard()
+    record.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_chat_turn_raises_chat_turn_error_on_loop_error(
+    isolated_settings: Any,
+) -> None:
+    """error_occurred from the shared loop surfaces as ChatTurnError."""
+    ctx = _ctx_with_llm()
+
+    async def _fake_loop(_messages: Any, _deps: Any) -> Any:
+        return _loop_result(content="", error_occurred=True, error_stage="initial_stream")
+
+    with patch(
+        "chaoscypher_core.streaming.chat.loop.run_chat_tool_loop",
+        side_effect=_fake_loop,
+    ):
+        with patch.object(chat_mod, "_record_chat_spend") as record:
+            with pytest.raises(ChatTurnError, match="initial_stream"):
+                await _run_chat_turn(
+                    ctx, MagicMock(), MagicMock(), [], [{"role": "user", "content": "hi"}]
+                )
+
+    # Spend is recorded even for a failed turn — tokens were consumed.
+    record.assert_called_once()
 
 
 # ===========================================================================
@@ -946,121 +957,122 @@ def test_send_message_prints_no_response_when_empty(
 # ===========================================================================
 
 
-def _patch_chat_with_tools(answer: str = "An answer.") -> Any:
-    """Patch _chat_with_tools to a coroutine returning ``answer`` synchronously."""
-
-    async def _fake(*_args: Any, **_kwargs: Any) -> str:
-        return answer
-
-    return patch.object(chat_mod, "_chat_with_tools", side_effect=_fake)
-
-
 def _run_interactive(inputs: list[str], **kwargs: Any) -> str:
     """Drive the interactive REPL with a scripted sequence of user inputs."""
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
     answers = iter(inputs)
+    loop = asyncio.new_event_loop()
 
-    with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
-        with chat_mod.console.capture() as cap:
-            _interactive_chat(ctx, "system", [], MagicMock(), **kwargs)
+    try:
+        with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
+            with chat_mod.console.capture() as cap:
+                _interactive_chat(ctx, "system", MagicMock(), [], MagicMock(), loop, **kwargs)
+    finally:
+        loop.close()
     return cap.get()
 
 
 def test_interactive_exit_command() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["exit"])
     assert "Goodbye!" in out
 
 
 def test_interactive_quit_then_eof() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["quit"])
     assert "Goodbye!" in out
 
 
 def test_interactive_blank_input_then_exit() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["   ", "exit"])
     assert "Goodbye!" in out
 
 
 def test_interactive_clear_resets_conversation() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["clear", "quit"])
     assert "Conversation cleared." in out
 
 
 def test_interactive_help_command() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["help", "q"])
     assert "Commands:" in out
     assert "End the chat" in out
 
 
-def test_interactive_help_with_scope() -> None:
+def test_interactive_help_with_scope(chat_loop: Any) -> None:
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
     ctx.storage_adapter.get_source.return_value = {"title": "Doc A"}
     answers = iter(["help", "q"])
 
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
             with chat_mod.console.capture() as cap:
-                _interactive_chat(ctx, "system", [], MagicMock(), source_ids=["src-1"])
+                _interactive_chat(
+                    ctx, "system", MagicMock(), [], MagicMock(), chat_loop, source_ids=["src-1"]
+                )
     out = cap.get()
     assert "/scope" in out
 
 
-def test_interactive_scope_command_with_sources() -> None:
+def test_interactive_scope_command_with_sources(chat_loop: Any) -> None:
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
     ctx.storage_adapter.get_source.return_value = {"title": "Doc A"}
     answers = iter(["/scope", "exit"])
 
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
             with chat_mod.console.capture() as cap:
-                _interactive_chat(ctx, "system", [], MagicMock(), source_ids=["src-1"])
+                _interactive_chat(
+                    ctx, "system", MagicMock(), [], MagicMock(), chat_loop, source_ids=["src-1"]
+                )
     out = cap.get()
     assert "Current scope" in out
     assert "Doc A" in out
 
 
 def test_interactive_scope_command_no_sources() -> None:
-    with _patch_chat_with_tools():
+    with _patch_run_chat_turn():
         out = _run_interactive(["/scope", "exit"])
     assert "No source scope" in out
 
 
-def test_interactive_normal_turn_runs_and_sends_input() -> None:
+def test_interactive_normal_turn_runs_and_sends_input(chat_loop: Any) -> None:
     """A normal turn prints the Assistant header and forwards the user's text."""
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
     answers = iter(["What is X?", "exit"])
     seen_messages: dict[str, Any] = {}
 
-    async def _fake(_provider: Any, messages: list[dict[str, Any]], *_a: Any, **_k: Any) -> str:
+    async def _fake(
+        _ctx: Any, _provider: Any, _executor: Any, _tools: Any, messages: list[dict[str, Any]]
+    ) -> str:
         seen_messages["messages"] = list(messages)
         return "Here is your answer."
 
-    with patch.object(chat_mod, "_chat_with_tools", side_effect=_fake):
+    with patch.object(chat_mod, "_run_chat_turn", side_effect=_fake):
         with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
             with chat_mod.console.capture() as cap:
-                _interactive_chat(ctx, "system", [], MagicMock())
+                _interactive_chat(ctx, "system", MagicMock(), [], MagicMock(), chat_loop)
     out = cap.get()
     assert "Assistant" in out
-    # The user's message was passed through to the chat engine.
+    # The user's message was passed through to the shared loop.
     assert any(m.get("content") == "What is X?" for m in seen_messages["messages"])
 
 
 def test_interactive_empty_answer_shows_notice() -> None:
-    with _patch_chat_with_tools(answer=""):
+    with _patch_run_chat_turn(answer=""):
         out = _run_interactive(["question", "exit"])
     assert "No response received" in out
 
 
-def test_interactive_keyboard_interrupt_ends() -> None:
+def test_interactive_keyboard_interrupt_ends(chat_loop: Any) -> None:
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
 
@@ -1069,11 +1081,11 @@ def test_interactive_keyboard_interrupt_ends() -> None:
 
     with patch.object(chat_mod.Prompt, "ask", side_effect=_ask):
         with chat_mod.console.capture() as cap:
-            _interactive_chat(ctx, "system", [], MagicMock())
+            _interactive_chat(ctx, "system", MagicMock(), [], MagicMock(), chat_loop)
     assert "Chat ended." in cap.get()
 
 
-def test_interactive_exception_is_caught_and_loop_continues() -> None:
+def test_interactive_exception_is_caught_and_loop_continues(chat_loop: Any) -> None:
     """A turn that raises a generic error prints it and continues to the next turn."""
     ctx = MagicMock()
     ctx.llm_provider = MagicMock()
@@ -1082,10 +1094,10 @@ def test_interactive_exception_is_caught_and_loop_continues() -> None:
     async def _raise(*_a: Any, **_k: Any) -> str:
         raise RuntimeError("turn failed")
 
-    with patch.object(chat_mod, "_chat_with_tools", side_effect=_raise):
+    with patch.object(chat_mod, "_run_chat_turn", side_effect=_raise):
         with patch.object(chat_mod.Prompt, "ask", side_effect=lambda *_a, **_k: next(answers)):
             with chat_mod.console.capture() as cap:
-                _interactive_chat(ctx, "system", [], MagicMock())
+                _interactive_chat(ctx, "system", MagicMock(), [], MagicMock(), chat_loop)
     out = cap.get()
     assert "turn failed" in out
     assert "Goodbye!" in out  # reached the exit turn after the error

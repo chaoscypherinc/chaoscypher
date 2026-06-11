@@ -38,9 +38,8 @@ def validate_database_name(name: str) -> bool:
 def create(name: str) -> None:
     """Create a new database.
 
-    Creates the database directory structure with:
-    - app.db (SQLite database)
-    - search/ (search indices)
+    Creates the database directory containing:
+    - app.db (SQLite database; search indexes — FTS5 + sqlite-vec — live inside it)
 
     Database names must be alphanumeric (hyphens and underscores allowed).
 

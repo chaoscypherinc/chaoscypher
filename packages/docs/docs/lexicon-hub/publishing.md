@@ -72,13 +72,14 @@ Package: my-knowledge.ccx
 │ Uncompressed: 1.2 MB                   │
 ╰────────────────────────────────────────╯
 
-Files: (12 total)
+Files: (7 total)
+  - templates.jsonld
+  - knowledge.jsonld
+  - workflows.jsonld
+  - sources.jsonl
+  - graph_preview.png
   - manifest.json
-  - graph/entities.jsonld
-  - graph/relationships.jsonld
-  - templates/person.json
-  - templates/organization.json
-  ... and 7 more
+  - README.txt
 
 Archive size: 245.3 KB
 ```

@@ -21,7 +21,7 @@ uv run chaoscypher --version
 ```
 
 ```
-chaoscypher, version 0.1.0
+chaoscypher, version 0.2.0
 ```
 
 ## Help Output
@@ -39,23 +39,28 @@ Options:
   --help     Show this message and exit.
 
 Commands:
-  benchmark    Run and inspect the extraction benchmark
-  chat         Chat with AI using your knowledge graph
-  completions  Generate shell completion script (bash, zsh, fish)
-  compose      Multi-package orchestration and composition
-  config       View and manage CLI configuration
-  db           Manage databases (create, list, switch, delete, info, migrate)
-  doctor       Run a comprehensive system diagnostic sweep
-  graph        Build and manage knowledge graphs
-  health       Check system health (LLM, embedding, search, database)
-  lexicon      Lexicon Hub - login, search, manage packages
-  mcp          Start MCP server for AI assistant integration
-  pull         Download a package from Lexicon Hub
-  push         Upload a package to Lexicon Hub
-  serve        Start the local API server
-  setup        Configure LLM provider for extraction and chat
-  source       Add, list, search, and manage document sources
-  upgrade      Apply pending Alembic migrations (alembic upgrade head)
+  benchmark             Run and inspect the extraction benchmark
+  chat                  Chat with AI using your knowledge graph
+  completions           Generate shell completion script (bash, zsh, fish)
+  compose               Multi-package orchestration and composition
+  config                View and manage CLI configuration
+  db                    Manage databases (create, list, switch, delete,
+                        info, migrate)
+  diagnostics           Export diagnostic bundle for bug reports
+  doctor                Run a comprehensive system diagnostic sweep
+  graph                 Build and manage knowledge graphs
+  health                Check system health status
+  lexicon               Lexicon Hub - login, search, manage packages
+  mcp                   Start MCP server over stdio
+  pull                  Download a package from Lexicon Hub
+  push                  Upload a package to Lexicon Hub
+  render-orchestration  Render nginx/supervisord/valkey configs from
+                        current Pydantic settings
+  serve                 Start the local API server
+  setup                 Configure LLM provider for extraction and chat
+  source                Add, list, search, and manage document sources
+  upgrade               Apply pending Alembic migrations (alembic upgrade
+                        head)
 ```
 
 ## First-Time Setup
@@ -231,7 +236,7 @@ Press Ctrl+C to stop
 |--------|-------------|
 | `--port, -p` | API port (default: `8081`) |
 | `--host, -h` | Host to bind to (default: `localhost`) |
-| `--database, -d` | Database to serve (default: `default`) |
+| `--database, -d` | Database to serve (default: the current database) |
 | `--reload` | Auto-reload on file changes (dev mode) |
 
 ```bash
@@ -368,7 +373,24 @@ Most commands additionally support these output options:
 | `--json` | Output as JSON |
 | `--quiet, -q` | Minimal output |
 | `--verbose, -v` | Detailed output |
-| `--database, -d` | Target database (default: `default`) |
+| `--database, -d` | Target database (default: the current database — `CHAOSCYPHER_DATABASE` env var, else the database set by `chaoscypher db switch`, else `default`) |
+
+:::note
+
+`-d default` is treated as no override — use `chaoscypher db switch default` to pin the `default` database when another is active. See [Database selection](#database-selection).
+
+:::
+
+## Database Selection
+
+When a command's `--database`/`-d` flag is omitted, the CLI resolves the database in this order:
+
+1. **`--database`/`-d` flag** — an explicit value other than `default`
+2. **`CHAOSCYPHER_DATABASE`** environment variable
+3. **`current_database`** in `settings.yaml` — set by [`chaoscypher db switch`](database.md#switch-database)
+4. **`default`** — the fallback when none of the above are set
+
+One surprising consequence: passing `-d default` explicitly is treated as *no override* (it is Click's default value, so the CLI cannot tell it apart from an omitted flag). If you have switched to another database and want a single command to hit `default`, set `CHAOSCYPHER_DATABASE=default` for that invocation or run `chaoscypher db switch default` first.
 
 ## Shell Completions
 
@@ -432,5 +454,20 @@ The data directory holding `settings.yaml` is platform-specific:
 | **Docker** | `/data/` |
 
 If you are upgrading from a pre-unification version, the old client-only `cli.yaml` is no longer read at all — it is ignored with a one-line startup notice. Run `chaoscypher setup` once (or set values with `chaoscypher config set`), then delete the stale `cli.yaml`.
+
+### Settings-driven CLI defaults
+
+Several numeric defaults quoted throughout this reference are not fixed literals — they come from the `cli` settings group and can be changed with `chaoscypher config set`:
+
+| Setting | Default | Used by |
+|---------|---------|---------|
+| `cli.list_page_size` | `50` | `--limit` for list commands (`graph node list`, `graph link list`, ...) |
+| `cli.search_default_limit` | `20` | `--limit` for `source search` |
+| `cli.serve_default_page_size` | `50` | Page size of the built-in `serve` `/nodes` and `/edges` endpoints |
+| `cli.api_port` | `8081` | Default port for `chaoscypher serve` |
+
+```bash
+chaoscypher config set cli.search_default_limit 50
+```
 
 See [Configuration](config.md) for full details.

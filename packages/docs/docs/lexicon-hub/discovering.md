@@ -19,7 +19,7 @@ Find and download knowledge packages from the Lexicon Hub community.
 <TabItem value="web-ui" label="Web UI">
 
 
-1. Navigate to **Settings** → **Lexicon Hub**
+1. Navigate to **Lexicon** in the sidebar
 2. Enter a search query — the search covers package names, descriptions, and tags
 3. Use filters to narrow results by type, author, or popularity
 

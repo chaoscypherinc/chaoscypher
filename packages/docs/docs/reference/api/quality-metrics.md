@@ -8,13 +8,13 @@ description: Reference for the 45 source-row quality counters returned in Source
 The `quality_metrics` block on every [SourceResponse](sources.md#sourceresponse)
 records what the pipeline silently dropped, deduplicated, or merged on
 the way to the knowledge graph. There are 45 counters plus the encoding /
-vector-index companion fields. They back the [Data Quality tab](../../user-guide/data-quality.md)
+vector-index companion fields. They back the [Pipeline flow & quality counters](../../user-guide/data-quality.md)
 in the UI and the data the CLI exposes via `chaoscypher source get
 SOURCE_ID`.
 
 Two counters are JSON-shaped (`loader_html_dropped_tags`,
 `loader_pptx_shapes_skipped`) — `dict[str, int]` per-key breakdowns
-rather than scalar totals. The UI's Data Quality tab collapses them to a
+rather than scalar totals. The UI's Pipeline flow section collapses them to a
 sum + top-keys preview line; downstream consumers can drill in by key.
 
 This page is the **field reference**. For the user-facing explanation
@@ -87,9 +87,11 @@ Returns a [SourceResponse](sources.md#sourceresponse). The
 }
 ```
 
-`vector_indexing_status` is also surfaced at the top level of
-`SourceResponse` for convenience, so clients that only need the badge
-state don't have to drill into `quality_metrics`.
+`vector_indexing_status` (and `vector_indexed_at`) are also surfaced flat
+on the source *list* items (`SourceSummaryResponse`, `GET /api/v1/sources`)
+so the list view can render the search-status badge without loading
+quality metrics. On the detail response (`GET /api/v1/sources/{id}`) they
+appear only inside `quality_metrics`.
 
 ## Field reference
 
@@ -192,7 +194,7 @@ Every counter and the two `vector_*` fields **reset to their
 post-upload defaults** when you trigger `force_re_extract`:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/sources/src_abc123/re_extract
+curl -X POST http://localhost/api/v1/sources/src_abc123/re_extract
 ```
 
 Reset values:
@@ -214,6 +216,6 @@ separately — those fields are not in the reset set.
 ## See also
 
 - [Sources API](sources.md) — full source endpoint reference
-- [Data Quality tab (user guide)](../../user-guide/data-quality.md) — when to consult counters vs. the grade
+- [Pipeline flow & quality counters (user guide)](../../user-guide/data-quality.md) — when to consult counters vs. the grade
 - [Search Status (user guide)](../../user-guide/search-status.md) — the four `vector_indexing_status` states
 - [Filtering Modes](../filtering-modes.md) — how the mode you pick changes which counters move

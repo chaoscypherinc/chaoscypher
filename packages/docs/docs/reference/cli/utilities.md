@@ -210,3 +210,21 @@ chaoscypher completions fish --uninstall
 If completions are already installed, `--install` updates the existing block in place rather than appending a duplicate. It is safe to run multiple times.
 
 :::
+
+---
+
+## render-orchestration
+
+An internal command that renders the Docker orchestration configs (nginx,
+supervisord, valkey) from the current settings, so those files always match
+the Python configuration layer. It appears in `chaoscypher --help` but is
+intended for the all-in-one container's entrypoint and for development
+debugging, not for everyday use.
+
+```bash
+# List the known templates
+chaoscypher render-orchestration --list
+
+# Render all configs into a directory
+chaoscypher render-orchestration --output-dir ./rendered
+```

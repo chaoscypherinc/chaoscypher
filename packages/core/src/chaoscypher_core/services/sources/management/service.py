@@ -198,7 +198,7 @@ class SourceProcessingService:
             enable_normalization: Enable content normalization (encoding fixes,
                 whitespace cleanup, OCR cleaning). ``None`` (default) defers to
                 the file-type default; ``True`` / ``False`` is an explicit user
-                override and is persisted on the source row (Workstream 1).
+                override and is persisted on the source row.
             forced_domain: Force a specific extraction domain (e.g., 'technical').
                 If None, domain is auto-detected from content.
             origin_url: Original URL if the source was fetched from the web.
@@ -216,17 +216,17 @@ class SourceProcessingService:
             auto_confirm: When True, bypass the domain-confirmation gate and
                 proceed with the auto-detected domain (confirmation_required=False).
                 When False (default) and no forced_domain is given, the source is
-                parked at AWAITING_CONFIRMATION after indexing (Phase 4, 2026-05-28).
+                parked at AWAITING_CONFIRMATION after indexing.
             filtering_mode: Filtering preset override (e.g., ``"strict"``, ``"balanced"``).
                 None means use the domain default. Passed through to extraction options.
-            enable_direction_correction: Phase 4 (2026-05-08). When not None, persists
-                on the source row; None defers to cascade default.
-            protect_orphans: Phase 4 (2026-05-08). When not None, persists on the source
-                row; True keeps orphan entities, False drops them. None defers to cascade.
-            enable_inverse_relationships: Phase 6 (2026-05-08). When not None, persists
-                on the source row; None uses the global ExtractionSettings default.
-            max_entity_degree_override: Phase 6 (2026-05-08). When a positive int,
-                persists as the per-source degree cap; None uses domain/global default.
+            enable_direction_correction: When not None, persists on the source row;
+                None defers to cascade default.
+            protect_orphans: When not None, persists on the source row; True keeps
+                orphan entities, False drops them. None defers to cascade.
+            enable_inverse_relationships: When not None, persists on the source row;
+                None uses the global ExtractionSettings default.
+            max_entity_degree_override: When a positive int, persists as the
+                per-source degree cap; None uses domain/global default.
             staged_file_path: Pre-written temp file to move to staging (avoids memory).
             content_hash: Pre-computed SHA-256 hash. If omitted with staged_file_path,
                 the hash is computed from disk in a worker thread.
