@@ -459,6 +459,17 @@ max-statements = 60   # Maximum statements in function
     "PIE810", # startswith(tuple) — micro-opt not worth the readability cost
     "PLC0415", # Local imports inside functions — fine in single-use helpers
 ]
+# Internal/company-only operational scripts: same posture as scripts/ above.
+"internal/scripts/**/*.py" = [
+    "T201",   # print() — primary output channel
+    "S603",   # subprocess call — script intent
+    "S607",   # partial executable path — we shell out to "docker", "uv"
+    "PLW1510", # subprocess.run without check= — we inspect returncode manually
+    "D102", "D103", # Per-function docstrings optional in helpers
+    "ERA001", # Commented examples are intentional
+    "PIE810", # startswith(tuple) — micro-opt not worth the readability cost
+    "PLC0415", # Local imports inside functions — fine in single-use helpers
+]
 # Module entry points (`python -m <pkg>`): print() is the intended output channel.
 "**/__main__.py" = ["T201"]
 "**/e2e/**/*.py" = [

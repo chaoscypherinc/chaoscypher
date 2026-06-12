@@ -35,6 +35,35 @@ provider — choose a local model like Ollama to keep everything on-device.
 
 ---
 
+## 📸 See It in Action
+
+**Dashboard** — your knowledge base at a glance: entity and relationship counts,
+quality and density scores, and a live graph preview.
+
+![Dashboard showing entity and relationship counts, quality metrics, and a graph preview](packages/docs/static/img/screenshots/app-dashboard.png)
+
+**Knowledge graph** — every source becomes an explorable, color-coded graph.
+Pan, zoom, search, and filter to see exactly what was extracted.
+
+![Knowledge graph view with color-coded entity clusters around their source documents](packages/docs/static/img/screenshots/app-graph-default.png)
+
+**Entities** — inspect any extracted entity: typed, directional relationships
+ranked by importance, with stats and provenance back to the source document.
+
+![Entity connections view listing typed relationships sorted by importance](packages/docs/static/img/screenshots/app-entity-connections.png)
+
+**Sources** — each document gets a transparent pipeline view: loaded → cleaned →
+chunked → extracted → indexed, plus per-source entity distribution.
+
+![Source overview with pipeline flow stages, extraction counts, and entity distribution](packages/docs/static/img/screenshots/app-source-overview.png)
+
+**Chat** — ask questions in plain language and get GraphRAG answers with inline
+entity citations you can click through to the graph.
+
+![Chat answering a question with a ranked entity list and clickable entity citations](packages/docs/static/img/screenshots/app-chat.png)
+
+---
+
 ## 🚀 Quick Start
 
 **Prerequisites:** Docker (with Compose). That's it for end users — embeddings

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.chaoscypherinc/chaoscypher",
+  "description": "Local-first knowledge graphs from your documents — build, query, search (GraphRAG), and edit an inspectable graph that never leaves your machine. 31 tools over stdio.",
+  "status": "active",
+  "repository": {
+    "url": "https://github.com/chaoscypherinc/chaoscypher",
+    "source": "github"
+  },
+  "version_detail": {
+    "version": "0.2.0"
+  },
+  "packages": [
+    {
+      "registry_name": "pypi",
+      "name": "chaoscypher-cli",
+      "version": "0.2.0",
+      "runtime_hint": "uvx",
+      "package_arguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Start the MCP server over stdio (read-only by default; pass -m write to allow graph edits)"
+        }
+      ]
+    }
+  ]
+}
