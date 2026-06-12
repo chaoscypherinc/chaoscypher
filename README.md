@@ -67,7 +67,7 @@ entity citations you can click through to the graph.
 ## 🚀 Quick Start
 
 **Prerequisites:** Docker (with Compose). That's it for end users — embeddings
-run locally on CPU. You'll also want an LLM provider; [Ollama](https://ollama.com/)
+run locally or in the cloud. You'll also want an LLM provider; [Ollama](https://ollama.com/)
 keeps everything on-device.
 
 ### Run the published container (recommended)
