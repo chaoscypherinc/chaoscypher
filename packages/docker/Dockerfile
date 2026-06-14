@@ -3,7 +3,7 @@
 
 # Stage 1: Produce openapi.json from the FastAPI app so the frontend stage
 # can generate TypeScript types without a host-side `make types` step.
-FROM python:3.14.5-slim AS types-builder
+FROM python:3.15.0b2-slim AS types-builder
 
 # Silence pip's "running as root" warning. The container's filesystem is
 # already the isolation boundary — a venv adds no real benefit here.
@@ -60,7 +60,7 @@ RUN npm run build
 # including torch CPU) into an isolated /install prefix that gets COPY'd into
 # the final stage. This keeps pip / setuptools / build toolchain OUT of the
 # runtime image and replaces the previous `pip install -e` source duplication.
-FROM python:3.14.5-slim AS wheels-builder
+FROM python:3.15.0b2-slim AS wheels-builder
 
 ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -148,7 +148,7 @@ RUN find /install/lib/python3.14/site-packages \
 # Stage 4: Runtime image — pure Python + system services. No pip, no
 # setuptools editable installs, no duplicated workspace source. All Python
 # packages arrive as a prebuilt /install tree COPY'd from wheels-builder.
-FROM python:3.14.5-slim
+FROM python:3.15.0b2-slim
 
 WORKDIR /app
 
