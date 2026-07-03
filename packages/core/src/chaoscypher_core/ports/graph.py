@@ -119,6 +119,97 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
+    def get_node_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict[str, Any] | None:
+        """Look up a node by its stable CCX IRI.
+
+        Returns the ORM-row dict (so the ``ccx_iri`` column survives — the
+        ``Node`` model has no such field) or ``None`` when no row in
+        ``database_name`` carries that IRI. The lookup primitive the CCX 3.0
+        importer uses for upsert-by-IRI.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the node.
+
+        """
+        ...
+
+    def upsert_node_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        node_create: NodeCreate,
+        database_name: str,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Idempotently create or update a node keyed by CCX IRI.
+
+        SELECT by ``(database_name, ccx_iri)``; update the existing row's
+        label / properties / entity_type when found (incoming-wins, no
+        duplicate), else create a new node carrying the given ``ccx_iri``.
+        ``NodeCreate`` has no ``ccx_iri`` field, so the IRI is set on the ORM
+        row directly. Used by the CCX 3.0 importer for idempotent re-import.
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            node_create: Node payload (template_id, label, entity_type, ...).
+            database_name: Database to scope the upsert to.
+            source_id: Optional source id override for the created/updated row.
+
+        Returns:
+            The created or updated node row dict (including ``ccx_iri``).
+        """
+        ...
+
+    def assign_source_to_nodes(
+        self,
+        node_ids: list[str],
+        source_id: str,
+        database_name: str,
+    ) -> int:
+        """Back-fill ``source_id`` on nodes that lack one; return rows changed.
+
+        The CCX importer creates nodes before it knows their source (the
+        node->source link lives in the citation records, imported last), so it
+        stamps ``graph_nodes.source_id`` here once citations resolve. Nodes
+        that already carry a source id are left untouched (first link wins).
+
+        Args:
+            node_ids: Node ids to link.
+            source_id: Source id to assign to those nodes.
+            database_name: Database that owns the nodes.
+        """
+        ...
+
+    def assign_source_to_templates(
+        self,
+        template_ids: list[str],
+        source_id: str,
+        database_name: str,
+    ) -> int:
+        """Back-fill ``source_id`` on templates that lack one; return rows changed.
+
+        Templates are source-owned and cascade-delete with their source. The CCX
+        importer creates templates before the source exists (FK order), so it
+        links them here once the source lands. Templates that already carry a
+        source id are left untouched.
+
+        Args:
+            template_ids: Template ids to link.
+            source_id: Source id to assign.
+            database_name: Database that owns the templates.
+        """
+        ...
+
+    def update_node_embeddings_batch(self, embeddings: dict[str, list[float]]) -> int:
+        """Persist embeddings for many nodes in one transaction; return rows changed.
+
+        Used to re-embed an imported source's nodes without N per-node writes.
+
+        Args:
+            embeddings: Mapping of node id to its embedding vector (list[float]).
+        """
+        ...
+
     def get_nodes_batch(self, node_ids: list[str]) -> list[Node]:
         """Get multiple nodes by ID in a single operation.
 
@@ -246,6 +337,46 @@ class GraphRepositoryProtocol(Protocol):
             )
             created_edge = graph_repo.create_edge(edge_create)
 
+        """
+        ...
+
+    def get_edge_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict[str, Any] | None:
+        """Look up an edge by its stable CCX IRI.
+
+        Returns the ORM-row dict (so ``ccx_iri`` survives — the ``Edge`` model
+        has no such field) or ``None`` when no row in ``database_name`` carries
+        that IRI. Lookup primitive for the CCX 3.0 importer's upsert-by-IRI.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the edge.
+
+        """
+        ...
+
+    def upsert_edge_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        edge_create: EdgeCreate,
+        database_name: str,
+        source_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Idempotently create or update an edge keyed by CCX IRI.
+
+        SELECT by ``(database_name, ccx_iri)``; update the existing row's
+        label / properties / endpoints when found (incoming-wins, no
+        duplicate), else create a new edge carrying the given ``ccx_iri``.
+        ``EdgeCreate`` has no ``ccx_iri`` field, so the IRI is set on the ORM
+        row directly. Used by the CCX 3.0 importer for idempotent re-import.
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            edge_create: Edge payload (template_id, endpoints, label, ...).
+            database_name: Database to scope the upsert to.
+            source_id: Optional source id override for the created/updated row.
+
+        Returns:
+            The created or updated edge row dict (including ``ccx_iri``).
         """
         ...
 
@@ -477,6 +608,28 @@ class GraphRepositoryProtocol(Protocol):
 
         Returns:
             Dict with ``nodes``, ``edges``, ``templates`` lists of model_dump()s.
+        """
+        ...
+
+    def export_graph_records(
+        self,
+        *,
+        source_ids: list[str] | None = None,
+        max_items: int = 100000,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Export graph nodes + edges as dicts carrying the persisted ``ccx_iri``.
+
+        Unlike :meth:`export_graph` (which returns Pydantic-model dumps that
+        drop the ``ccx_iri`` stable-identity column), this projects the ORM
+        rows directly so the CCX 3.0 exporter can key identity on ``ccx_iri``.
+
+        Args:
+            source_ids: When given, restrict to nodes/edges of these sources;
+                edges survive only when BOTH endpoints survive the node filter.
+            max_items: Maximum nodes/edges to export per entity type.
+
+        Returns:
+            ``{"nodes": [node dicts], "edges": [edge dicts]}`` including ``ccx_iri``.
         """
         ...
 

@@ -26,6 +26,8 @@ from chaoscypher_core.constants import (
     OP_IMPORT_CCX,
     OP_IMPORT_COMMIT,
     OP_INDEX_DOCUMENT,
+    OP_INDEX_IMPORTED_NODES,
+    OP_INDEX_IMPORTED_SOURCE,
     QUEUE_LLM,
     QUEUE_OPERATIONS,
 )
@@ -44,6 +46,10 @@ from chaoscypher_core.operations.importing.format_handler import (
     handle_import_ccx,
     handle_lexicon_import,
 )
+from chaoscypher_core.operations.importing.imported_source_handler import (
+    handle_index_imported_nodes,
+    handle_index_imported_source,
+)
 from chaoscypher_core.operations.importing.indexing_handler import (
     handle_index_document,
 )
@@ -52,6 +58,12 @@ from chaoscypher_core.operations.queue_utils import (
 )
 from chaoscypher_core.operations.queue_utils import (
     queue_import_indexing as _queue_import_indexing,
+)
+from chaoscypher_core.operations.queue_utils import (
+    queue_index_imported_nodes as _queue_index_imported_nodes,
+)
+from chaoscypher_core.operations.queue_utils import (
+    queue_index_imported_source as _queue_index_imported_source,
 )
 from chaoscypher_core.queue import queue_client
 from chaoscypher_core.queue.handler_spec import HandlerSpec
@@ -867,6 +879,20 @@ class ImportOperationsService:
                 handler=self._embed_chunks_handler,
                 retry_on_crash=True,
             ),
+            # Make an imported source searchable (re-embed chunks + index node/
+            # chunk vectors). Idempotent (embedded_at checkpoint + id-keyed
+            # vector upserts), so retry_on_crash is safe.
+            OP_INDEX_IMPORTED_SOURCE: HandlerSpec(
+                handler=self._index_imported_source_handler,
+                retry_on_crash=True,
+            ),
+            # Make a knowledge-only import's nodes searchable (re-embed + index
+            # by id list). Idempotent (right-dim vectors skipped, id-keyed
+            # upserts), so retry_on_crash is safe.
+            OP_INDEX_IMPORTED_NODES: HandlerSpec(
+                handler=self._index_imported_nodes_handler,
+                retry_on_crash=True,
+            ),
         }
 
         logger.info("import_operations_service_initialized")
@@ -975,7 +1001,9 @@ class ImportOperationsService:
             Result dictionary with import statistics and errors.
 
         """
-        return await handle_import_ccx(
+        from chaoscypher_core.app_config import get_settings
+
+        result = await handle_import_ccx(
             data=data,
             graph_repository=self.graph_repository,
             source_repository=self.source_repository,
@@ -983,6 +1011,17 @@ class ImportOperationsService:
             metadata=metadata,
             task_id=task_id,
         )
+
+        # Imported sources land unsearchable (the CCX bundle carries no chunk
+        # vectors). Enqueue one re-index per source — embed its chunks + push
+        # node/chunk vectors — on the LLM queue, without blocking this import.
+        database_name = (metadata or {}).get("database_name", "default")
+        priority = get_settings().priorities.background
+        for source_id in result.get("imported_source_ids", []):
+            await _queue_index_imported_source(
+                source_id, database_name=database_name, priority=priority
+            )
+        return result
 
     async def _import_commit_handler(
         self,
@@ -1989,6 +2028,63 @@ class ImportOperationsService:
             task_id=task_id,
         )
 
+    async def _index_imported_source_handler(
+        self,
+        data: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Make an imported source searchable on QUEUE_LLM.
+
+        Re-embeds the source's chunks and pushes its node + chunk vectors into
+        the search index, leaving the source ``committed``.
+
+        Args:
+            data: Task data with ``source_id``.
+            metadata: Task metadata (``database_name``).
+            task_id: Task ID for tracking.
+
+        Returns:
+            Result dictionary with per-stage counts.
+        """
+        return await handle_index_imported_source(
+            data=data,
+            source_repository=self.source_repository,
+            graph_repository=self.graph_repository,
+            indexing_service=self.indexing_service,
+            search_repository=self.search_repository,
+            metadata=metadata,
+            task_id=task_id,
+        )
+
+    async def _index_imported_nodes_handler(
+        self,
+        data: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Make a knowledge-only import's nodes searchable on QUEUE_LLM.
+
+        Re-embeds + indexes the imported nodes by id (no source/chunks).
+
+        Args:
+            data: Task data with ``node_ids``.
+            metadata: Task metadata (``database_name``).
+            task_id: Task ID for tracking.
+
+        Returns:
+            Result dictionary with node counts.
+        """
+        return await handle_index_imported_nodes(
+            data=data,
+            source_repository=self.source_repository,
+            graph_repository=self.graph_repository,
+            indexing_service=self.indexing_service,
+            search_repository=self.search_repository,
+            metadata=metadata,
+            task_id=task_id,
+        )
+
     async def _lexicon_import_handler(
         self,
         data: dict[str, Any],
@@ -2006,9 +2102,23 @@ class ImportOperationsService:
             Result dictionary with import statistics and errors.
 
         """
-        return await handle_lexicon_import(
+        from chaoscypher_core.app_config import get_settings
+
+        result = await handle_lexicon_import(
             data=data,
             graph_repository=self.graph_repository,
             metadata=metadata,
             task_id=task_id,
         )
+
+        # Knowledge-only import: no source, so make the imported nodes searchable
+        # by re-embedding + indexing them off the id list (mirrors the CCX path's
+        # per-source enqueue). Best-effort — never fails the import.
+        node_ids = result.get("imported_node_ids", [])
+        if node_ids:
+            database_name = (metadata or {}).get("database_name", "default")
+            priority = get_settings().priorities.background
+            await _queue_index_imported_nodes(
+                node_ids, database_name=database_name, priority=priority
+            )
+        return result

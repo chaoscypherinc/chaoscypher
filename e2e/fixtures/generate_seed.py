@@ -1,290 +1,286 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Generate seed.ccx fixture for E2E tests.
+"""Generate the ``seed.ccx`` fixture for E2E tests (CCX 3.0).
 
-Run: python e2e/fixtures/generate_seed.py
+Run: ``uv run python e2e/fixtures/generate_seed.py``
 
-Creates a minimal CCX v2.0 package with:
-- 2 node templates (person, organization)
-- 2 edge templates (works_at, relates_to)
-- 4 nodes (2 people, 2 orgs)
-- 3 edges (employment + collaboration)
+Builds the seed the same way a real export is produced: seed a small graph
+through the SQLite adapter, then export it with ``CcxExporter``. This keeps the
+fixture structurally identical to packages users actually produce and lets it
+self-validate via ``ccx-format`` (``ccx.open_package(...).validate().ok``).
 
-Manifest matches ``ExportManifest`` (extra="forbid") in
-``chaoscypher_core.services.export.models.schemas``. If the manifest
-schema evolves, this generator and the canonical model must drift in
-lockstep — re-run after the change and commit the resulting fixture.
+The seed exercises every content type the round-trip test relies on:
+
+* 2 node templates (Person, Organization) + 1 edge template (Works At).
+* nodes: 2 people + 1 organization.
+* a **property-bearing edge** (``works at`` with ``{"since": 2023}``) → a
+  reified ``ccx:Relationship`` in the knowledge graph.
+* a **simple edge** (``collaborates with``, no properties) → a plain triple.
+* a **source with ``full_text`` + 2 chunks** carrying ``char_start`` /
+  ``char_end`` offsets → exercises the offset-selector / full-text-asset path.
+* a **lens node** (``system_lens``) → the ``chaoscypher.lenses`` named graph.
+
+The result is written to ``e2e/fixtures/seed.ccx`` and validated before exit.
 """
 
-import hashlib
-import json
+from __future__ import annotations
+
 import os
-import zipfile
-from datetime import UTC, datetime
+import tempfile
+from pathlib import Path
 
 
-def sha256(data: bytes) -> str:
-    """Compute SHA-256 hash as hex string."""
-    return hashlib.sha256(data).hexdigest()
+# A lens node carries this template id so the exporter routes it to the
+# chaoscypher.lenses named graph (mirrors CcxExporter._LENS_TEMPLATE_ID).
+_LENS_TEMPLATE_ID = "system_lens"
+
+# The full text the source's two chunks index into (offsets reference this).
+_FULL_TEXT = "Alice Smith works at Acme Corporation. Bob Jones collaborates with Alice."
 
 
-def sha512(data: bytes) -> str:
-    """Compute SHA-512 hash as hex string."""
-    return hashlib.sha512(data).hexdigest()
+def _seed_graph(adapter) -> None:
+    """Seed templates, nodes, edges, a full-text source + chunks, and a lens."""
+    from chaoscypher_core.adapters.sqlite.models import (
+        DocumentChunk,
+        GraphEdge,
+        GraphNode,
+        GraphTemplate,
+        SourceRow,
+    )
 
+    assert adapter.session is not None, "adapter must be connected"
+    session = adapter.session
+    db = "default"
 
-def build_templates() -> bytes:
-    """Build templates.jsonld content."""
-    data = {
-        "templates": [
-            {
-                "id": "e2e_person",
-                "name": "Person",
-                "template_type": "node",
-                "description": "A person entity for E2E testing",
-                "properties": [
-                    {
-                        "name": "full_name",
-                        "display_name": "Full Name",
-                        "property_type": "string",
-                        "required": True,
-                        "description": "Person's full name",
-                    },
-                    {
-                        "name": "role",
-                        "display_name": "Role",
-                        "property_type": "string",
-                        "required": False,
-                        "description": "Person's role or title",
-                    },
-                ],
-                "is_system": False,
-                "color": "#4A90D9",
-                "icon": "user",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            },
-            {
-                "id": "e2e_organization",
-                "name": "Organization",
-                "template_type": "node",
-                "description": "An organization entity for E2E testing",
-                "properties": [
-                    {
-                        "name": "name",
-                        "display_name": "Name",
-                        "property_type": "string",
-                        "required": True,
-                        "description": "Organization name",
-                    },
-                    {
-                        "name": "industry",
-                        "display_name": "Industry",
-                        "property_type": "string",
-                        "required": False,
-                        "description": "Industry sector",
-                    },
-                ],
-                "is_system": False,
-                "color": "#7B68EE",
-                "icon": "building",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            },
-            {
-                "id": "e2e_works_at",
-                "name": "Works At",
-                "template_type": "edge",
-                "description": "Employment relationship",
-                "properties": [
-                    {
-                        "name": "since",
-                        "display_name": "Since",
-                        "property_type": "string",
-                        "required": False,
-                        "description": "Start year",
-                    },
-                ],
-                "is_system": False,
-                "color": "#2ECC71",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            },
-            {
-                "id": "e2e_relates_to",
-                "name": "Relates To",
-                "template_type": "edge",
-                "description": "Generic relationship",
-                "properties": [],
-                "is_system": False,
-                "color": "#95A5A6",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            },
-        ]
-    }
-    return json.dumps(data, indent=2).encode("utf-8")
+    # --- Source with full_text (offset selectors + full-text asset) ---
+    session.add(
+        SourceRow(
+            id="e2e_src_doc",
+            database_name=db,
+            filename="seed_doc.txt",
+            filepath="/data/seed_doc.txt",
+            title="E2E Seed Document",
+            source_type="text",
+            status="committed",
+            full_text=_FULL_TEXT,
+        )
+    )
+    session.flush()
 
+    # --- Templates: 2 node, 1 edge ---
+    session.add(
+        GraphTemplate(
+            id="e2e_person",
+            database_name=db,
+            name="Person",
+            template_type="node",
+            color="#4A90D9",
+            icon="user",
+        )
+    )
+    session.add(
+        GraphTemplate(
+            id="e2e_organization",
+            database_name=db,
+            name="Organization",
+            template_type="node",
+            color="#7B68EE",
+            icon="building",
+        )
+    )
+    session.add(
+        GraphTemplate(
+            id="e2e_works_at",
+            database_name=db,
+            name="Works At",
+            template_type="edge",
+            color="#2ECC71",
+        )
+    )
+    session.flush()
 
-def build_knowledge() -> bytes:
-    """Build knowledge.jsonld content."""
-    now = "2026-01-01T00:00:00+00:00"
-    data = {
-        "nodes": [
-            {
-                "id": "e2e_node_alice",
-                "label": "Alice Smith",
-                "template_name": "Person",
-                "properties": {"full_name": "Alice Smith", "role": "Engineer"},
-                "position": {"x": 0, "y": 0},
-                "source_id": None,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": "e2e_node_bob",
-                "label": "Bob Jones",
-                "template_name": "Person",
-                "properties": {"full_name": "Bob Jones", "role": "Designer"},
-                "position": {"x": 200, "y": 0},
-                "source_id": None,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": "e2e_node_acme",
-                "label": "Acme Corporation",
-                "template_name": "Organization",
-                "properties": {
-                    "name": "Acme Corporation",
-                    "industry": "Technology",
-                },
-                "position": {"x": 0, "y": 200},
-                "source_id": None,
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": "e2e_node_techstartup",
-                "label": "TechStartup Inc",
-                "template_name": "Organization",
-                "properties": {
-                    "name": "TechStartup Inc",
-                    "industry": "Software",
-                },
-                "position": {"x": 200, "y": 200},
-                "source_id": None,
-                "created_at": now,
-                "updated_at": now,
-            },
-        ],
-        "edges": [
-            {
-                "id": "e2e_edge_alice_acme",
-                "template_name": "Works At",
-                "source_node_id": "e2e_node_alice",
-                "target_node_id": "e2e_node_acme",
-                "label": "works at",
-                "properties": {"since": "2023"},
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": "e2e_edge_bob_techstartup",
-                "template_name": "Works At",
-                "source_node_id": "e2e_node_bob",
-                "target_node_id": "e2e_node_techstartup",
-                "label": "works at",
-                "properties": {"since": "2024"},
-                "created_at": now,
-                "updated_at": now,
-            },
-            {
-                "id": "e2e_edge_alice_bob",
-                "template_name": "Relates To",
-                "source_node_id": "e2e_node_alice",
-                "target_node_id": "e2e_node_bob",
-                "label": "collaborates with",
-                "properties": {},
-                "created_at": now,
-                "updated_at": now,
-            },
-        ],
-    }
-    return json.dumps(data, indent=2).encode("utf-8")
+    # --- Nodes: 2 people + 1 organization ---
+    session.add(
+        GraphNode(
+            id="e2e_node_alice",
+            database_name=db,
+            graph_name="knowledge",
+            template_id="e2e_person",
+            label="Alice Smith",
+            properties={"role": "Engineer"},
+            source_id="e2e_src_doc",
+        )
+    )
+    session.add(
+        GraphNode(
+            id="e2e_node_bob",
+            database_name=db,
+            graph_name="knowledge",
+            template_id="e2e_person",
+            label="Bob Jones",
+            properties={"role": "Designer"},
+            source_id="e2e_src_doc",
+        )
+    )
+    session.add(
+        GraphNode(
+            id="e2e_node_acme",
+            database_name=db,
+            graph_name="knowledge",
+            template_id="e2e_organization",
+            label="Acme Corporation",
+            properties={"industry": "Technology"},
+            source_id="e2e_src_doc",
+        )
+    )
+    session.flush()
 
+    # --- A property-bearing edge → reified ccx:Relationship ---
+    session.add(
+        GraphEdge(
+            id="e2e_edge_alice_acme",
+            database_name=db,
+            graph_name="knowledge",
+            template_id="e2e_works_at",
+            source_node_id="e2e_node_alice",
+            target_node_id="e2e_node_acme",
+            label="works at",
+            properties={"since": 2023},
+            source_id="e2e_src_doc",
+        )
+    )
+    # --- A simple edge (no properties) → plain triple ---
+    session.add(
+        GraphEdge(
+            id="e2e_edge_bob_alice",
+            database_name=db,
+            graph_name="knowledge",
+            template_id="e2e_works_at",
+            source_node_id="e2e_node_bob",
+            target_node_id="e2e_node_alice",
+            label="collaborates with",
+            properties={},
+            source_id="e2e_src_doc",
+        )
+    )
 
-def build_manifest(contents: list[dict]) -> bytes:
-    """Build manifest.json content (CCX v2.0 schema)."""
-    now = datetime.now(UTC).isoformat()
-    data = {
-        # GraphBreakdown fields (inherited by ExportManifest)
-        "version": 2,
-        "generated_at": now,
-        "database_name": "e2e-seed",
-        "title": "E2E seed fixture",
-        "stats": {
-            "total_nodes": 4,
-            "total_edges": 3,
-            "total_sources": 0,
-        },
-        "sources": [],
-        # ExportManifest fields
-        "ccx_version": "2.0",
-        "package_type": ["knowledge", "templates"],
-        "name": "e2e/seed-fixture",
-        "package_version": "1.0.0",
-        "author": "ChaosCypher E2E Tests",
-        "license": "MIT",
-        "description": "Seed fixture for E2E testing - 4 nodes, 3 edges, 4 templates",
-        "tags": ["e2e", "test", "seed"],
-        "created_at": now,
-        "derived_from": {},
-        "dependencies": {},
-        "contents": contents,
-        "template_stats": {"total": 4, "node_templates": 2, "edge_templates": 2},
-        "knowledge_stats": {"total_nodes": 4, "total_edges": 3},
-        "lens_stats": None,
-        "workflow_stats": None,
-        "source_stats": None,
-        "generator": "ChaosCypher E2E Seed Generator@1.0.0",
-    }
-    return json.dumps(data, indent=2).encode("utf-8")
+    # --- Two chunks with offsets into _FULL_TEXT ---
+    session.add(
+        DocumentChunk(
+            id="e2e_chunk_0",
+            database_name=db,
+            source_id="e2e_src_doc",
+            chunk_index=0,
+            content=_FULL_TEXT[0:38],
+            char_start=0,
+            char_end=38,
+            status="committed",
+        )
+    )
+    session.add(
+        DocumentChunk(
+            id="e2e_chunk_1",
+            database_name=db,
+            source_id="e2e_src_doc",
+            chunk_index=1,
+            content=_FULL_TEXT[39:73],
+            char_start=39,
+            char_end=73,
+            status="committed",
+        )
+    )
+
+    # --- A lens node → chaoscypher.lenses named graph ---
+    session.add(
+        GraphTemplate(
+            id=_LENS_TEMPLATE_ID,
+            database_name=db,
+            name="Lens",
+            template_type="node",
+            color=None,
+        )
+    )
+    session.flush()
+    session.add(
+        GraphNode(
+            id="e2e_node_lens",
+            database_name=db,
+            graph_name="knowledge",
+            template_id=_LENS_TEMPLATE_ID,
+            label="Engineering Lens",
+            properties={"description": "People + orgs"},
+        )
+    )
+
+    session.commit()
 
 
 def main() -> None:
-    """Generate seed.ccx fixture."""
-    output_dir = os.path.dirname(os.path.abspath(__file__))
-    output_path = os.path.join(output_dir, "seed.ccx")
+    """Seed a graph, export it as CCX 3.0, write + validate ``seed.ccx``."""
+    output_path = Path(__file__).resolve().parent / "seed.ccx"
 
-    templates_bytes = build_templates()
-    knowledge_bytes = build_knowledge()
+    # Point the engine at a throwaway data dir so the script never touches a
+    # developer's real config/database. ``ignore_cleanup_errors`` because the
+    # pooled SQLite engine can keep the .db file briefly open on Windows.
+    tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    os.environ["CHAOSCYPHER_DATA_DIR"] = tmp.name
 
-    contents = [
-        {
-            "type": "templates",
-            "path": "templates.jsonld",
-            "media_type": "application/ld+json",
-            "file_size_bytes": len(templates_bytes),
-            "checksum_sha256": sha256(templates_bytes),
-            "checksum_sha512": sha512(templates_bytes),
-        },
-        {
-            "type": "knowledge",
-            "path": "knowledge.jsonld",
-            "media_type": "application/ld+json",
-            "file_size_bytes": len(knowledge_bytes),
-            "checksum_sha256": sha256(knowledge_bytes),
-            "checksum_sha512": sha512(knowledge_bytes),
-        },
-    ]
+    from sqlmodel import SQLModel
 
-    manifest_bytes = build_manifest(contents)
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+    from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+    from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.app_config.engine_factory import build_engine_settings
+    from chaoscypher_core.services.export import CcxExporter
 
-    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("manifest.json", manifest_bytes)
-        zf.writestr("templates.jsonld", templates_bytes)
-        zf.writestr("knowledge.jsonld", knowledge_bytes)
+    db_path = str(Path(tmp.name) / "seed.db")
+    engine = get_engine(db_path)
+    SQLModel.metadata.create_all(engine, checkfirst=True)
 
-    size = os.path.getsize(output_path)
-    print(f"Generated {output_path} ({size} bytes)")
+    adapter = SqliteAdapter(db_path, database_name="default")
+    adapter.connect()
+    try:
+        _seed_graph(adapter)
+
+        assert adapter.session is not None
+        graph_repo = GraphRepository(adapter.session, "default")
+        settings = build_engine_settings(get_settings())
+        exporter = CcxExporter(
+            graph_repository=graph_repo,
+            sources_repository=adapter,
+            settings=settings,
+            workflow_db=None,
+        )
+        data = exporter.export(
+            include_templates=True,
+            include_knowledge=True,
+            include_lenses=True,
+            include_workflows=False,  # no workflow_db in this standalone script
+            include_sources=True,
+            include_embeddings=False,
+            title="E2E seed fixture",
+        )
+    finally:
+        adapter.disconnect()
+        engine.dispose()
+        tmp.cleanup()
+
+    output_path.write_bytes(data)
+
+    # Validate the produced fixture before exiting.
+    import ccx
+
+    report = ccx.open_package(data).validate()
+    if not report.ok:
+        raise SystemExit(f"seed.ccx failed CCX validation: {report.errors}")
+
+    print(f"Generated {output_path} ({len(data)} bytes)")
+    print(f"  validate().ok = {report.ok}")
+    print(f"  classes = {report.classes}")
+    if report.warnings:
+        print(f"  warnings = {report.warnings}")
 
 
 if __name__ == "__main__":

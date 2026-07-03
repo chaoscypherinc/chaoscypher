@@ -24,3 +24,46 @@ describe('ChunkInputView (controlled by tab-level showRemoved prop)', () => {
     expect(screen.getByTestId('chunk-input-diff')).toBeInTheDocument();
   });
 });
+
+describe('ChunkInputView — citation sentence highlight', () => {
+  // "First sentence here." is chars 0–20; "Second sentence here." is 21–42.
+  const CLEANED = 'First sentence here. Second sentence here.';
+  const META = { sentence_offsets: [{ start: 0, end: 20 }, { start: 21, end: 42 }] };
+
+  it('marks the cited sentence when highlightSentRef + offsets are given', () => {
+    const { container } = render(
+      <ChunkInputView
+        cleaned={CLEANED}
+        rawContent={null}
+        showRemoved={false}
+        highlightSentRef="S1"
+        chunkMetadata={META}
+      />,
+    );
+    const marks = container.querySelectorAll('mark');
+    expect(marks.length).toBe(1);
+    expect(marks[0].textContent).toContain('First sentence here.');
+  });
+
+  it('marks the second sentence for S2', () => {
+    const { container } = render(
+      <ChunkInputView
+        cleaned={CLEANED}
+        rawContent={null}
+        showRemoved={false}
+        highlightSentRef="S2"
+        chunkMetadata={META}
+      />,
+    );
+    const marks = container.querySelectorAll('mark');
+    expect(marks.length).toBe(1);
+    expect(marks[0].textContent).toContain('Second sentence here.');
+  });
+
+  it('renders plain (no mark) without a highlightSentRef', () => {
+    const { container } = render(
+      <ChunkInputView cleaned={CLEANED} rawContent={null} showRemoved={false} />,
+    );
+    expect(container.querySelectorAll('mark').length).toBe(0);
+  });
+});

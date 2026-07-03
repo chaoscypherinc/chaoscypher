@@ -30,6 +30,7 @@ from chaoscypher_core.services.lexicon.client import (
     LexiconClient,
     LexiconClientError,
     PackageInfo,
+    UploadResult,
 )
 
 
@@ -571,7 +572,7 @@ class TestSearch:
             sort_by="stars",
             is_public=True,
             owner_id="owner-9",
-            package_type="TEMPLATES",
+            conformance_class="ccx-core",
         )
 
         assert total == 1
@@ -592,7 +593,7 @@ class TestSearch:
         assert sent_params["sort"] == "stars"
         assert sent_params["isPublic"] == "true"
         assert sent_params["ownerId"] == "owner-9"
-        assert sent_params["packageType"] == "TEMPLATES"
+        assert sent_params["conformanceClass"] == "ccx-core"
 
     @pytest.mark.asyncio
     async def test_search_defaults_total_to_hit_count_and_omits_optional_params(self) -> None:
@@ -607,7 +608,7 @@ class TestSearch:
         sent_params = fake.request.call_args.kwargs["params"]
         assert "isPublic" not in sent_params
         assert "ownerId" not in sent_params
-        assert "packageType" not in sent_params
+        assert "conformanceClass" not in sent_params
 
     @pytest.mark.asyncio
     async def test_get_package_info_exact_match(self) -> None:
@@ -713,27 +714,58 @@ class TestUpload:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_upload_success_returns_package_info(self) -> None:
+    async def test_upload_success_returns_job_envelope(self) -> None:
         client = LexiconClient(base_url="http://x", auth=AuthConfig(token="tok"))
         fake = AsyncMock(name="upload-client")
         client._upload_client = fake
+        # CCX 3.0: the hub returns 202 with the standard ``{"data": {...}}``
+        # envelope wrapping the async job descriptor (not PackageInfo).
         fake.post.return_value = make_response(
-            status_code=201,
-            json_data={"id": "new-1", "name": "uploaded", "ownerUsername": "alice"},
+            status_code=202,
+            json_data={
+                "data": {"jobId": "job-1", "status": "queued", "message": "Upload accepted"}
+            },
         )
 
-        pkg = await client.upload(b"archive-bytes", public=False, message="initial")
-        assert isinstance(pkg, PackageInfo)
-        assert pkg.id == "new-1"
-        assert pkg.name == "uploaded"
+        result = await client.upload(b"archive-bytes", public=False, message="initial")
+        assert isinstance(result, UploadResult)
+        assert result.job_id == "job-1"
+        assert result.status == "queued"
+        assert result.message == "Upload accepted"
 
         # multipart fields and the dropped Content-Type header
         kwargs = fake.post.call_args.kwargs
         assert "package" in kwargs["files"]
+        # field stays "package", filename "package.ccx", MIME application/zip
+        package_field = kwargs["files"]["package"]
+        assert package_field[0] == "package.ccx"
+        assert package_field[2] == "application/zip"
         assert kwargs["data"]["public"] == "false"
         assert kwargs["data"]["message"] == "initial"
         assert "Content-Type" not in kwargs["headers"]
         assert kwargs["headers"]["Authorization"] == "Bearer tok"
+
+    @pytest.mark.asyncio
+    async def test_upload_unwraps_bare_envelope_fallback(self) -> None:
+        """A bare ``{jobId, ...}`` body (no ``data`` wrapper) still parses.
+
+        The hub's contract is the wrapped ``{"data": {...}}`` envelope, but the
+        client falls back to the top level so an older/bare response is read
+        resiliently rather than yielding an empty UploadResult.
+        """
+        client = LexiconClient(base_url="http://x", auth=AuthConfig(token="tok"))
+        fake = AsyncMock(name="upload-client")
+        client._upload_client = fake
+        fake.post.return_value = make_response(
+            status_code=202,
+            json_data={"jobId": "job-2", "status": "queued", "message": "ok"},
+        )
+
+        result = await client.upload(b"archive-bytes")
+        assert isinstance(result, UploadResult)
+        assert result.job_id == "job-2"
+        assert result.status == "queued"
+        assert result.message == "ok"
 
     @pytest.mark.asyncio
     async def test_upload_error_response_raises(self) -> None:

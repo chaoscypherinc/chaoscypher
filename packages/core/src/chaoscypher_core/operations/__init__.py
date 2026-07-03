@@ -28,7 +28,7 @@ Example:
     )
 
     # API layer uses specialized services directly
-    service = ExportOperationsService(graph_repository=repo)
+    service = ExportOperationsService()
     task_id = await service.queue_export(include_knowledge=True)
 
 """

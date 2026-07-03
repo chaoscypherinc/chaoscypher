@@ -18,10 +18,8 @@ heavy to mock for property tests. Instead we cover:
    per-document content.
 5. ``_recompute_chunk_offsets`` — exact-match path always anchors to the
    real substring position when the chunk content appears verbatim in
-   the original text.
-6. ``_shift_sentence_offsets`` — delta-shift correctness, key-name
-   contract, and graceful no-op when metadata / sentence_offsets are
-   missing.
+   the original text, and leaves ``sentence_offsets`` untouched (they are
+   chunk-local, relative to ``content``).
 
 The second cluster of tests at the bottom of this file is a 2026-05-19
 mutmut survivor-kill pass: 60 surviving mutants in chunk.py boiled down
@@ -41,7 +39,6 @@ from chaoscypher_core.utils.chunk import (
     ChunkingService,
     LocationBoundary,
     _recompute_chunk_offsets,
-    _shift_sentence_offsets,
     build_pdf_location_index,
     merge_location_indexes,
 )
@@ -500,50 +497,40 @@ def test_recompute_chunk_offsets_handles_chunk_without_content_key() -> None:
     assert chunk["char_end"] == 0
 
 
-def test_recompute_chunk_offsets_uses_canonical_char_start_key() -> None:
-    """``old_start`` is read from the canonical key ``char_start``.
+def test_recompute_chunk_offsets_reanchors_char_start_leaves_offsets_local() -> None:
+    """Recompute re-anchors ``char_start`` to the real substring position
+    while leaving ``sentence_offsets`` untouched.
 
-    Kills mutants:
-      _recompute_chunk_offsets__mutmut_15  (old_start hardcoded to None)
-      _recompute_chunk_offsets__mutmut_16  (chunk.get(None))
-      _recompute_chunk_offsets__mutmut_17  (key renamed to XXchar_startXX)
-      _recompute_chunk_offsets__mutmut_18  (key renamed to CHAR_START)
-      _recompute_chunk_offsets__mutmut_38  (passes None instead of old_start
-                                           to _shift_sentence_offsets)
-
-    Test setup: chunk's pre-call char_start is 100 (placeholder), real
-    substring position is 0, sentence_offsets is non-empty. The shift
-    delta is therefore (0 - 100) = -100; sentence_offsets must reflect
-    that shift. Any mutation that nukes old_start to None makes the
-    shift a no-op and the sentence_offsets stay at their original values.
+    ``sentence_offsets`` are chunk-local (0-based, relative to ``content``)
+    and every consumer slices ``content`` directly, so the recompute must
+    not rewrite them even though it moves ``char_start`` to a different
+    document position. Test setup: chunk's pre-call char_start is a stale
+    placeholder (100); the content is found verbatim at position 0.
     """
     original = "Sentence one. Sentence two."
     chunk_content = original
     chunk: dict[str, Any] = {
         "content": chunk_content,
-        # Old anchor was at position 100 (e.g. cleaned-text coordinates).
+        # Stale anchor (e.g. cleaned-text coordinates) — must be replaced.
         "char_start": 100,
         "char_end": 100 + len(chunk_content),
         "chunk_metadata": {
+            # Chunk-local offsets, exactly as the producer emits them.
             "sentence_offsets": [
-                {"start": 100, "end": 114},
-                {"start": 114, "end": 127},
+                {"start": 0, "end": 13},
+                {"start": 14, "end": 27},
             ],
         },
     }
     _recompute_chunk_offsets([chunk], original)
 
-    # Exact match → new char_start is 0; delta = 0 - 100 = -100.
+    # Exact match → char_start re-anchored to the real position (0).
     assert chunk["char_start"] == 0
     assert chunk["citation_offset_method"] == "exact"
-    shifted = chunk["chunk_metadata"]["sentence_offsets"]
-    assert shifted[0]["start"] == 0, (
-        f"sentence_offsets must shift by delta=-100; got {shifted}. "
-        f"This kills mutations that nuke old_start or the shift call."
-    )
-    assert shifted[0]["end"] == 14
-    assert shifted[1]["start"] == 14
-    assert shifted[1]["end"] == 27
+    # sentence_offsets stay chunk-local and round-trip against content.
+    so = chunk["chunk_metadata"]["sentence_offsets"]
+    assert chunk_content[so[0]["start"] : so[0]["end"]] == "Sentence one."
+    assert chunk_content[so[1]["start"] : so[1]["end"]] == "Sentence two."
 
 
 def test_recompute_chunk_offsets_none_path_for_unfindable_content() -> None:
@@ -566,257 +553,6 @@ def test_recompute_chunk_offsets_none_path_for_unfindable_content() -> None:
     assert chunk["citation_offset_method"] == "none"
     assert chunk["char_start"] is None
     assert chunk["char_end"] is None
-
-
-# ---------------------------------------------------------------------------
-# 8. _shift_sentence_offsets — direct unit coverage
-#
-# Tests the helper in isolation so the mutmut survivors that live inside
-# it (19 mutants spanning early-return guards, key lookups, delta math,
-# and assignment) get killed without needing the surrounding recompute
-# context.
-# ---------------------------------------------------------------------------
-
-
-def _shifted_offsets(chunk: dict[str, Any]) -> list[dict[str, int]]:
-    """Read sentence_offsets back off a chunk after a shift call."""
-    return chunk["chunk_metadata"]["sentence_offsets"]
-
-
-def test_shift_sentence_offsets_applies_positive_delta() -> None:
-    """Delta > 0 shifts every sentence start/end forward by delta.
-
-    Kills mutants:
-      __shift_sentence_offsets__mutmut_1   (old_start None guard inverted)
-      __shift_sentence_offsets__mutmut_12  (delta = None)
-      __shift_sentence_offsets__mutmut_13  (delta uses + instead of -)
-      __shift_sentence_offsets__mutmut_14  (delta == 0 → != 0; early return)
-      __shift_sentence_offsets__mutmut_15  (delta == 0 → == 1; misses delta=0)
-      __shift_sentence_offsets__mutmut_16  (shifted = None → AttributeError)
-      __shift_sentence_offsets__mutmut_17  (meta["sentence_offsets"] = None)
-      __shift_sentence_offsets__mutmut_18/19  (renamed write-back key)
-    """
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {
-            "sentence_offsets": [
-                {"start": 10, "end": 20},
-                {"start": 20, "end": 35},
-            ],
-        }
-    }
-    _shift_sentence_offsets(chunk, old_start=10, new_start=110)
-    out = _shifted_offsets(chunk)
-    # delta = 110 - 10 = 100.
-    assert out == [
-        {"start": 110, "end": 120},
-        {"start": 120, "end": 135},
-    ]
-
-
-def test_shift_sentence_offsets_applies_negative_delta() -> None:
-    """Delta < 0 shifts every sentence start/end backward by |delta|.
-
-    Pins the subtraction direction (mut_13 swaps - for +).
-    """
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {
-            "sentence_offsets": [
-                {"start": 200, "end": 215},
-                {"start": 215, "end": 230},
-            ],
-        }
-    }
-    _shift_sentence_offsets(chunk, old_start=200, new_start=50)
-    out = _shifted_offsets(chunk)
-    # delta = 50 - 200 = -150.
-    assert out == [
-        {"start": 50, "end": 65},
-        {"start": 65, "end": 80},
-    ]
-
-
-def test_shift_sentence_offsets_noop_when_delta_zero() -> None:
-    """Delta == 0 short-circuits and leaves sentence_offsets unchanged.
-
-    Pins the early-return on delta==0 (mut_14 inverts the guard so
-    delta=0 falls through into the rebuild loop, which would still
-    produce the same data — making this a soft kill — but mut_15
-    changes the literal to 1, which keeps the early-return for true
-    zero-deltas (covered) but breaks delta=1 (covered by the positive
-    test above).
-    """
-    original_offsets = [{"start": 5, "end": 10}, {"start": 10, "end": 18}]
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {"sentence_offsets": list(original_offsets)},
-    }
-    _shift_sentence_offsets(chunk, old_start=42, new_start=42)
-    assert _shifted_offsets(chunk) == original_offsets
-
-
-def test_shift_sentence_offsets_noop_when_old_start_is_none() -> None:
-    """``old_start=None`` is the 'no previous anchor' signal — the helper
-    must return immediately without mutating sentence_offsets.
-
-    Kills mutant:
-      __shift_sentence_offsets__mutmut_1  (inverts the None guard so the
-      function early-returns only when old_start IS set, leaving the
-      None case to fall through and attempt ``None - new_start`` which
-      raises TypeError).
-    """
-    original_offsets = [{"start": 5, "end": 10}]
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {"sentence_offsets": list(original_offsets)},
-    }
-    _shift_sentence_offsets(chunk, old_start=None, new_start=42)
-    assert _shifted_offsets(chunk) == original_offsets
-
-
-def test_shift_sentence_offsets_noop_when_chunk_metadata_missing() -> None:
-    """Silent no-op when ``chunk_metadata`` key is missing.
-
-    Kills mutants:
-      __shift_sentence_offsets__mutmut_2   (meta = None)
-      __shift_sentence_offsets__mutmut_3   (chunk.get(None))
-      __shift_sentence_offsets__mutmut_4/5 (renamed key lookup)
-      __shift_sentence_offsets__mutmut_6   (inverted isinstance guard)
-
-    Without the guard chain working, accessing ``meta.get(...)`` on None
-    would raise AttributeError.
-    """
-    chunk: dict[str, Any] = {}  # no chunk_metadata key
-    # Must not raise.
-    _shift_sentence_offsets(chunk, old_start=10, new_start=20)
-    assert chunk == {}
-
-
-def test_shift_sentence_offsets_noop_when_chunk_metadata_not_dict() -> None:
-    """``chunk_metadata`` that isn't a dict → guard returns early.
-
-    Pins the ``isinstance(meta, dict)`` check (mut_6 inverts it; a
-    non-dict meta would then proceed and raise AttributeError on
-    ``.get("sentence_offsets")``).
-    """
-    chunk: dict[str, Any] = {"chunk_metadata": "not a dict"}
-    _shift_sentence_offsets(chunk, old_start=10, new_start=20)
-    assert chunk == {"chunk_metadata": "not a dict"}
-
-
-def test_shift_sentence_offsets_noop_when_sentence_offsets_missing() -> None:
-    """``chunk_metadata`` present but no ``sentence_offsets`` key → no-op.
-
-    Kills mutants:
-      __shift_sentence_offsets__mutmut_7  (sentence_offsets = None)
-      __shift_sentence_offsets__mutmut_8  (meta.get(None))
-      __shift_sentence_offsets__mutmut_9/10  (renamed key lookup)
-      __shift_sentence_offsets__mutmut_11  (inverted isinstance(list) guard)
-    """
-    chunk: dict[str, Any] = {"chunk_metadata": {"other": "value"}}
-    _shift_sentence_offsets(chunk, old_start=10, new_start=20)
-    assert chunk == {"chunk_metadata": {"other": "value"}}
-
-
-def test_shift_sentence_offsets_noop_when_sentence_offsets_not_list() -> None:
-    """``sentence_offsets`` of the wrong type → guard returns early.
-
-    Pins the ``isinstance(sentence_offsets, list)`` check (mut_11
-    inverts it; a non-list would then proceed to ``for so in ...``
-    and either fail or iterate incorrectly).
-    """
-    chunk: dict[str, Any] = {"chunk_metadata": {"sentence_offsets": "not a list"}}
-    _shift_sentence_offsets(chunk, old_start=10, new_start=20)
-    assert chunk == {"chunk_metadata": {"sentence_offsets": "not a list"}}
-
-
-def test_shift_sentence_offsets_writes_back_under_canonical_key() -> None:
-    """The shifted list must land back under the canonical
-    ``sentence_offsets`` key (not a renamed variant).
-
-    Kills mutants:
-      __shift_sentence_offsets__mutmut_18  ("XXsentence_offsetsXX" key)
-      __shift_sentence_offsets__mutmut_19  ("SENTENCE_OFFSETS" key)
-    """
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {
-            "sentence_offsets": [{"start": 0, "end": 5}],
-        }
-    }
-    _shift_sentence_offsets(chunk, old_start=0, new_start=10)
-    meta = chunk["chunk_metadata"]
-    # Original key must still exist, hold the shifted data, and no
-    # alternate-cased variant must have been introduced.
-    assert "sentence_offsets" in meta
-    assert "XXsentence_offsetsXX" not in meta
-    assert "SENTENCE_OFFSETS" not in meta
-    assert meta["sentence_offsets"] == [{"start": 10, "end": 15}]
-
-
-def test_shift_sentence_offsets_preserves_non_dict_entries() -> None:
-    """Non-dict entries in sentence_offsets pass through unchanged.
-
-    This is a contract test for the fall-through branch
-    (``shifted.append(so)``) — it pins that the iteration handles
-    mixed payloads without raising. Pre-mutation: the helper returns
-    a list with non-dict entries in the same positions. Post-mutation
-    (mut_16 sets ``shifted = None``): ``shifted.append(so)`` raises
-    AttributeError.
-    """
-    sentinel = "not-a-dict-just-a-string"
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {
-            "sentence_offsets": [
-                {"start": 0, "end": 5},
-                sentinel,
-                {"start": 5, "end": 10},
-            ],
-        }
-    }
-    _shift_sentence_offsets(chunk, old_start=0, new_start=100)
-    out = _shifted_offsets(chunk)
-    assert out[0] == {"start": 100, "end": 105}
-    assert out[1] == sentinel
-    assert out[2] == {"start": 105, "end": 110}
-
-
-# ---------------------------------------------------------------------------
-# Hypothesis property: arbitrary positive / negative deltas commute with
-# the inverse shift — round-trips back to the original offsets. Covers the
-# delta-math survivors with broad input coverage.
-# ---------------------------------------------------------------------------
-
-
-@given(
-    starts=st.lists(
-        st.integers(min_value=0, max_value=10_000),
-        min_size=1,
-        max_size=10,
-    ),
-    delta=st.integers(min_value=-5_000, max_value=5_000),
-)
-@settings(
-    max_examples=100,
-    suppress_health_check=[HealthCheck.function_scoped_fixture],
-)
-def test_shift_sentence_offsets_round_trips(starts: list[int], delta: int) -> None:
-    """Applying delta then -delta returns the original offsets."""
-    sentence_offsets = [{"start": s, "end": s + 5} for s in starts]
-    chunk: dict[str, Any] = {
-        "chunk_metadata": {"sentence_offsets": list(sentence_offsets)},
-    }
-    # First shift by delta (old_start=0, new_start=delta).
-    _shift_sentence_offsets(chunk, old_start=0, new_start=delta)
-    if delta == 0:
-        # No-op path: list is the same object/values.
-        assert _shifted_offsets(chunk) == sentence_offsets
-        return
-    shifted_once = [dict(d) for d in _shifted_offsets(chunk)]
-    # Now shift back: old_start=delta, new_start=0 → delta_back = -delta.
-    _shift_sentence_offsets(chunk, old_start=delta, new_start=0)
-    after_round_trip = _shifted_offsets(chunk)
-    assert after_round_trip == sentence_offsets
-    # And sanity: the intermediate state really was shifted by delta.
-    for original_so, intermediate in zip(sentence_offsets, shifted_once, strict=True):
-        assert intermediate["start"] == original_so["start"] + delta
-        assert intermediate["end"] == original_so["end"] + delta
 
 
 # ---------------------------------------------------------------------------

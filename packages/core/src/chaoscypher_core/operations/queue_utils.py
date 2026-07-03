@@ -28,6 +28,8 @@ from chaoscypher_core.constants import (
     OP_IMPORT_CCX,
     OP_IMPORT_COMMIT,
     OP_INDEX_DOCUMENT,
+    OP_INDEX_IMPORTED_NODES,
+    OP_INDEX_IMPORTED_SOURCE,
     OP_REBUILD_SEARCH_INDEXES,
     OP_RESET_ALL,
     OP_RESET_KNOWLEDGE_BASE,
@@ -356,6 +358,91 @@ async def queue_embed_chunks(
             operation_type=OP_EMBED_CHUNKS,
             extra_metadata=extra_metadata,
             source_id=source_id,
+        ),
+    )
+
+
+async def queue_index_imported_source(
+    source_id: str,
+    *,
+    database_name: str,
+    priority: int = 50,
+    extra_metadata: dict[str, Any] | None = None,
+) -> str:
+    """Queue search-indexing of a freshly imported source on the LLM queue.
+
+    A CCX import lands the graph + chunks but no chunk vectors, so an imported
+    source is not searchable until its chunks are re-embedded and its node +
+    chunk vectors are pushed into the search index. The worker import handler
+    enqueues one of these per imported source after ``OP_IMPORT_CCX`` finishes.
+
+    The payload is ID-only — the handler fetches the source's chunks and nodes
+    from the database. ``OP_INDEX_IMPORTED_SOURCE`` is idempotent
+    (``DocumentChunk.embedded_at`` is the embedding resume checkpoint, and the
+    vector upserts are by id), so ``retry_on_crash=True`` is safe.
+
+    Args:
+        source_id: The imported source to make searchable.
+        database_name: Target database — required for cancel-by-metadata scoping.
+        priority: Task priority; typically ``settings.priorities.background``.
+        extra_metadata: Extra keys merged into the task metadata.
+
+    Returns:
+        Task ID for tracking.
+
+    Raises:
+        QueueUnavailableError: If the queue server is not connected.
+    """
+    return await queue_client.enqueue_task(
+        queue=QUEUE_LLM,
+        operation=OP_INDEX_IMPORTED_SOURCE,
+        data={"source_id": source_id},
+        priority=priority,
+        metadata=_build_metadata(
+            database_name=database_name,
+            operation_type=OP_INDEX_IMPORTED_SOURCE,
+            extra_metadata=extra_metadata,
+            source_id=source_id,
+        ),
+    )
+
+
+async def queue_index_imported_nodes(
+    node_ids: list[str],
+    *,
+    database_name: str,
+    priority: int = 50,
+    extra_metadata: dict[str, Any] | None = None,
+) -> str:
+    """Queue search-indexing of a knowledge-only import's nodes on the LLM queue.
+
+    Lexicon (and CLI) imports land a knowledge graph with no source and no
+    chunks, so ``OP_INDEX_IMPORTED_SOURCE`` doesn't apply — the imported nodes
+    are re-embedded + indexed directly off this id list. Idempotent (nodes with
+    a right-dimension vector are skipped, vector upserts are by id), so
+    ``retry_on_crash=True`` is safe.
+
+    Args:
+        node_ids: The imported knowledge node ids to make searchable.
+        database_name: Target database — required for cancel-by-metadata scoping.
+        priority: Task priority; typically ``settings.priorities.background``.
+        extra_metadata: Extra keys merged into the task metadata.
+
+    Returns:
+        Task ID for tracking.
+
+    Raises:
+        QueueUnavailableError: If the queue server is not connected.
+    """
+    return await queue_client.enqueue_task(
+        queue=QUEUE_LLM,
+        operation=OP_INDEX_IMPORTED_NODES,
+        data={"node_ids": node_ids},
+        priority=priority,
+        metadata=_build_metadata(
+            database_name=database_name,
+            operation_type=OP_INDEX_IMPORTED_NODES,
+            extra_metadata=extra_metadata,
         ),
     )
 

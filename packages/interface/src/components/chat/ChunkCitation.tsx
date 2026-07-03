@@ -137,6 +137,8 @@ export default function ChunkCitation({ citation }: ChunkCitationProps) {
     if (citation.source_id) {
       const params = new URLSearchParams();
       params.set('highlight', citation.chunk_id);
+      // Carry the sentence ref so the source page marks the exact cited line.
+      if (citation.sentence_refs) params.set('sentence', citation.sentence_refs);
       navigate(`/sources/${citation.source_id}?${params.toString()}`);
     }
   }, [citation.source_id, citation.chunk_id, citation.has_vision_image, imageUrl, navigate]);

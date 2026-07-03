@@ -35,6 +35,19 @@ def _make_settings(tmp_path: Path) -> MagicMock:
     return settings
 
 
+def _make_engine_settings(tmp_path: Path) -> MagicMock:
+    """MagicMock engine_settings with a real data_dir.
+
+    _run_indexing computes ``Path(engine_settings.paths.data_dir)`` (original-
+    text persistence, vision, error-path cleanup); an unpinned MagicMock
+    stringifies into a literal ``<MagicMock name='mock.paths.data_dir' ...>``
+    directory at the repo root (issue #249).
+    """
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+    return engine_settings
+
+
 @pytest.mark.asyncio
 async def test_run_indexing_resume_after_vision_skips_loader_counters(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -128,7 +141,7 @@ async def test_run_indexing_resume_after_vision_skips_loader_counters(
         enable_vision=True,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=_make_engine_settings(tmp_path),
         settings=_make_settings(tmp_path),
         database_name="default",
         resume_after_vision=True,
@@ -245,7 +258,7 @@ async def test_run_indexing_resume_after_vision_calls_splice(
         enable_vision=True,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=_make_engine_settings(tmp_path),
         settings=_make_settings(tmp_path),
         database_name="default",
         resume_after_vision=True,
@@ -319,7 +332,7 @@ async def test_run_indexing_resume_after_vision_skips_start_indexing(
         enable_vision=True,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=_make_engine_settings(tmp_path),
         settings=_make_settings(tmp_path),
         database_name="default",
         resume_after_vision=True,
@@ -390,7 +403,7 @@ async def test_run_indexing_normal_path_still_calls_start_indexing(
         enable_vision=False,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=_make_engine_settings(tmp_path),
         settings=_make_settings(tmp_path),
         database_name="default",
         # Default resume_after_vision=False — the normal path.

@@ -250,3 +250,104 @@ async def test_handle_abandoned_hincrby_called_after_zadd_not_before() -> None:
     assert call_order.index("zadd") < call_order.index("hincrby"), (
         f"hincrby must be called after zadd; actual order: {call_order}"
     )
+
+
+@pytest.mark.asyncio
+async def test_handle_abandoned_leaves_task_in_running_on_zadd_failure() -> None:
+    """If zadd raises, the task must stay in the running set.
+
+    The reconciler only scans ``queue:{queue}:running``. If srem ran before a
+    failed zadd, the task would be in neither the running set nor the pending
+    queue — an undetectable limbo no future reconcile cycle could recover.
+    srem must therefore run only after zadd succeeds, so a transient Valkey
+    error during zadd leaves the task in the running set for the next cycle.
+    """
+    client = _build_mock_client(
+        task_hash={
+            "operation": "OP_INDEX_DOCUMENT",
+            "attempts": "2",
+            "priority": "50",
+            "max_tries": "5",
+        },
+        zadd_raises=ConnectionError("Valkey unavailable"),
+    )
+    stats = ReconcileStats()
+
+    await _handle_abandoned(
+        client=client,
+        queue_name="operations",
+        task_id="test-task-id",
+        max_tries=5,
+        stats=stats,
+    )
+
+    # srem must NOT have run — the task stays in running for the next cycle.
+    client.client.srem.assert_not_awaited()
+
+    # And it is neither recovered nor failed this pass.
+    assert stats.recovered_crashed == 0
+    assert stats.failed_unrecoverable == 0
+
+
+@pytest.mark.asyncio
+async def test_handle_abandoned_srem_called_after_zadd_not_before() -> None:
+    """Removal from running (srem) must run strictly after zadd, never before.
+
+    This is the limbo-prevention ordering invariant: the task must be safely
+    in the pending queue (zadd) before it is removed from the running set
+    (srem), so it is never absent from both sets at once.
+    """
+    call_order: list[str] = []
+
+    client = MagicMock()
+    valkey = MagicMock()
+    client.client = valkey
+
+    task_hash = {
+        "operation": "OP_INDEX_DOCUMENT",
+        "attempts": "1",
+        "priority": "50",
+    }
+
+    async def _hgetall(_key: str) -> dict[bytes, bytes]:
+        return {k.encode(): v.encode() for k, v in task_hash.items()}
+
+    async def _zadd(_key: str, _mapping: dict) -> int:
+        call_order.append("zadd")
+        return 1
+
+    async def _srem(_key: str, _member: str) -> int:
+        call_order.append("srem")
+        return 1
+
+    valkey.hgetall = AsyncMock(side_effect=_hgetall)
+    valkey.srem = AsyncMock(side_effect=_srem)
+    valkey.hset = AsyncMock(return_value=1)
+    valkey.zadd = AsyncMock(side_effect=_zadd)
+    valkey.hincrby = AsyncMock(return_value=2)
+    valkey.persist = AsyncMock(return_value=True)
+    valkey.expire = AsyncMock(return_value=True)
+
+    client.get_retry_policy = MagicMock(return_value=True)
+    client._failed_result_ttl = 14 * 86_400
+
+    async def _mark_failed(task_id: str, fields: dict[str, str]) -> None:
+        await valkey.hset(f"queue:task:{task_id}", mapping=fields)
+        await valkey.expire(f"queue:task:{task_id}", client._failed_result_ttl)
+
+    client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+    stats = ReconcileStats()
+
+    await _handle_abandoned(
+        client=client,
+        queue_name="operations",
+        task_id="order-test-id",
+        max_tries=5,
+        stats=stats,
+    )
+
+    assert "zadd" in call_order, "zadd was not called"
+    assert "srem" in call_order, "srem was not called"
+    assert call_order.index("zadd") < call_order.index("srem"), (
+        f"srem must be called after zadd; actual order: {call_order}"
+    )

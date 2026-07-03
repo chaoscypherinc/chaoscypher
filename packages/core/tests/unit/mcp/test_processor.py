@@ -174,3 +174,39 @@ class TestWaitForCompletion:
         assert completed is not None
         assert completed["status"] == "committed"
         assert processor.get_completed("nonexistent") is None
+
+
+class TestWorkerTaskSupervision:
+    """The background worker task must surface crashes, not swallow them."""
+
+    @pytest.mark.asyncio
+    async def test_worker_task_crash_is_surfaced(self, processor, monkeypatch):
+        """A crash in the worker loop must reach ``log_task_exception``.
+
+        ``_start_worker`` spawns ``_worker_loop`` via ``asyncio.create_task``;
+        without a done-callback an unhandled exception there vanishes with only
+        a bare "Task exception was never retrieved" on stderr. The callback is
+        the canonical surfacing path for every background task.
+        """
+        import chaoscypher_core.mcp.processor as processor_mod
+
+        seen = []
+
+        def _record(task):
+            # Retrieve the exception so it is not reported as un-retrieved.
+            seen.append(task.exception())
+
+        monkeypatch.setattr(processor_mod, "log_task_exception", _record)
+
+        async def _boom():
+            raise RuntimeError("worker loop crashed")
+
+        monkeypatch.setattr(processor, "_worker_loop", _boom)
+
+        processor._start_worker()
+        # Let the task run to completion and its done-callback fire.
+        await asyncio.sleep(0.01)
+
+        assert len(seen) == 1
+        assert isinstance(seen[0], RuntimeError)
+        assert "worker loop crashed" in str(seen[0])

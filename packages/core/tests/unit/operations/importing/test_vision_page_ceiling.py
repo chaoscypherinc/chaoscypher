@@ -13,6 +13,7 @@ mode is unaffected — it already samples down to vision_quick_sample_max_pages.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,10 +34,16 @@ def _documents_with_pages(n: int) -> list[dict[str, Any]]:
     ]
 
 
-def _engine_settings(*, vision_max_pages: int, vision_quick_sample_max_pages: int = 20) -> Any:
+def _engine_settings(
+    tmp_path: Path, *, vision_max_pages: int, vision_quick_sample_max_pages: int = 20
+) -> Any:
     engine_settings = MagicMock()
     engine_settings.loader.vision_max_pages = vision_max_pages
     engine_settings.loader.vision_quick_sample_max_pages = vision_quick_sample_max_pages
+    # Pin the MagicMock's data_dir so any Path(engine_settings.paths.data_dir)
+    # construction lands inside tmp_path instead of stringifying the mock into
+    # a literal "<MagicMock ...>" directory at the repo root (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     return engine_settings
 
 
@@ -50,7 +57,9 @@ def _adapter() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_full_mode_over_page_ceiling_fails_without_vision_job(monkeypatch) -> None:
+async def test_full_mode_over_page_ceiling_fails_without_vision_job(
+    monkeypatch, tmp_path: Path
+) -> None:
     """10 image pages + ceiling=5 (full mode) -> raise, no vision job created."""
     monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
     queue_client = MagicMock()
@@ -65,7 +74,7 @@ async def test_full_mode_over_page_ceiling_fails_without_vision_job(monkeypatch)
             file_id="src-big",
             filepath="/tmp/huge.pdf",
             enable_vision=True,
-            engine_settings=_engine_settings(vision_max_pages=5),
+            engine_settings=_engine_settings(tmp_path, vision_max_pages=5),
             database_name="default",
             data_dir="/tmp",
             adapter=adapter,
@@ -78,7 +87,7 @@ async def test_full_mode_over_page_ceiling_fails_without_vision_job(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_full_mode_at_page_ceiling_proceeds(monkeypatch) -> None:
+async def test_full_mode_at_page_ceiling_proceeds(monkeypatch, tmp_path: Path) -> None:
     """5 image pages + ceiling=5 (boundary) -> proceeds, vision job created."""
     monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
     queue_client = MagicMock()
@@ -92,7 +101,7 @@ async def test_full_mode_at_page_ceiling_proceeds(monkeypatch) -> None:
         file_id="src-ok",
         filepath="/tmp/ok.pdf",
         enable_vision=True,
-        engine_settings=_engine_settings(vision_max_pages=5),
+        engine_settings=_engine_settings(tmp_path, vision_max_pages=5),
         database_name="default",
         data_dir="/tmp",
         adapter=adapter,
@@ -104,7 +113,7 @@ async def test_full_mode_at_page_ceiling_proceeds(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_quick_mode_ignores_page_ceiling(monkeypatch) -> None:
+async def test_quick_mode_ignores_page_ceiling(monkeypatch, tmp_path: Path) -> None:
     """Quick mode samples below the cap regardless of vision_max_pages — the
     ceiling must not trip on a Quick import of a huge PDF.
     """
@@ -121,7 +130,9 @@ async def test_quick_mode_ignores_page_ceiling(monkeypatch) -> None:
         file_id="src-quick",
         filepath="/tmp/book.pdf",
         enable_vision=True,
-        engine_settings=_engine_settings(vision_max_pages=5, vision_quick_sample_max_pages=20),
+        engine_settings=_engine_settings(
+            tmp_path, vision_max_pages=5, vision_quick_sample_max_pages=20
+        ),
         database_name="default",
         data_dir="/tmp",
         adapter=adapter,

@@ -9,8 +9,9 @@ network/filesystem I/O mocked.  The test matrix is:
   - list:   no packages dir / empty dir / table/json/simple formats / --all flag
   - pull:   happy path / file-exists-no-force / not-found error / with extract /
             not-authed warning / hub-unreachable hint
-  - push:   ccx file happy path / directory happy path / not-logged-in / validation error /
-            non-ccx file / no manifest / cancelled confirmation / hub-unreachable hint
+  - push:   ccx file happy path / not-logged-in / non-ccx file / directory rejected /
+            invalid-ccx validation failure / cancelled confirmation / client error /
+            hub-unreachable hint / private flag / message
   - remove: ccx file / directory package / version-not-found / not-found /
             with --force / confirm-cancelled / user-scoped path / remove --all /
             path-traversal rejection
@@ -640,19 +641,39 @@ class TestPullCommand:
 class TestPushCommand:
     """Tests for `chaoscypher lexicon push`.
 
+    The push contract is now: accept a PRE-BUILT CCX 3.0 ``.ccx`` file,
+    validate it via ``ccx.open_package(path).validate()``, read display
+    metadata from ``pkg.manifest`` and upload the file bytes. A directory is
+    no longer a supported input (build the .ccx with
+    ``chaoscypher graph package export`` first).
+
     push.py uses deferred (local) imports inside the function body, so all
     patches must target the SOURCE module, not the push module namespace.
       - get_auth_config / get_lexicon_url  → chaoscypher_cli.commands.lexicon.login
       - LexiconClient / LexiconClientError → chaoscypher_core.services.lexicon.client
-      - format_size / create_archive /
-        validate_package_directory /
-        PackageManifest                    → chaoscypher_core.services.package (re-exports)
+      - format_size                        → chaoscypher_core.services.package (re-export)
+    Validation uses real CCX 3.0 packages built with ``ccx.PackageBuilder``.
     """
 
-    def _make_ccx(self, tmp_path: Path, name: str = "my-pkg.ccx") -> Path:
-        ccx = tmp_path / name
-        ccx.write_bytes(b"FAKE_ARCHIVE_CONTENT")
-        return ccx
+    def _make_ccx(
+        self,
+        tmp_path: Path,
+        filename: str = "my-pkg.ccx",
+        name: str = "my-pkg",
+        version: str = "1.0.0",
+    ) -> Path:
+        """Write a real, valid CCX 3.0 package to ``tmp_path/filename``."""
+        import ccx
+
+        builder = ccx.PackageBuilder(
+            name=name,
+            package_version=version,
+            license="CC-BY-4.0",
+        )
+        builder.add_graph("ccx", "knowledge", {"@graph": []}, role="default")
+        path = tmp_path / filename
+        path.write_bytes(builder.build())
+        return path
 
     def _make_client_mock(self, upload_result=None):
         upload_result = upload_result or _make_upload_result()
@@ -683,7 +704,7 @@ class TestPushCommand:
 
     def test_push_ccx_file_happy_path(self, tmp_path: Path) -> None:
         runner = CliRunner()
-        ccx = self._make_ccx(tmp_path)
+        ccx = self._make_ccx(tmp_path, name="my-pkg", version="1.0.0")
         upload_result = _make_upload_result(name="testuser/my-pkg", version="1.0.0")
         client_mock = self._make_client_mock(upload_result)
 
@@ -700,15 +721,12 @@ class TestPushCommand:
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
             ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
-            ),
         ):
             result = runner.invoke(push, [str(ccx), "--force"])
 
         assert result.exit_code == 0, result.output
         client_mock.upload.assert_called_once()
+        # Metadata comes from the package manifest, not the filename.
         assert "my-pkg" in result.output
         assert "1.0.0" in result.output
 
@@ -732,7 +750,8 @@ class TestPushCommand:
         assert result.exit_code == 1
         assert ".ccx" in result.output
 
-    def test_push_directory_no_manifest_exits_1(self, tmp_path: Path) -> None:
+    def test_push_directory_rejected_with_export_hint(self, tmp_path: Path) -> None:
+        """A directory is no longer pushable: error and point to export."""
         runner = CliRunner()
         pkg_dir = tmp_path / "mypkg"
         pkg_dir.mkdir()
@@ -750,18 +769,14 @@ class TestPushCommand:
             result = runner.invoke(push, [str(pkg_dir)])
 
         assert result.exit_code == 1
-        assert "manifest.json" in result.output
+        assert "directory" in result.output.lower()
+        assert "graph package export" in result.output
 
-    def test_push_directory_validation_failure_exits_1(self, tmp_path: Path) -> None:
+    def test_push_invalid_ccx_validation_failure_exits_1(self, tmp_path: Path) -> None:
+        """A file that is not a valid CCX package fails validation."""
         runner = CliRunner()
-        pkg_dir = tmp_path / "mypkg"
-        pkg_dir.mkdir()
-        manifest = pkg_dir / "manifest.json"
-        manifest.write_text('{"name": "bad-pkg", "version": "0.1.0"}')
-
-        validation_result = MagicMock()
-        validation_result.is_valid = False
-        validation_result.errors = ["Missing required field: description"]
+        bad = tmp_path / "broken.ccx"
+        bad.write_bytes(b"NOT_A_REAL_CCX_ZIP")
 
         with (
             patch(
@@ -772,71 +787,13 @@ class TestPushCommand:
                 "chaoscypher_cli.commands.lexicon.login.get_lexicon_url",
                 return_value="https://lexicon.test",
             ),
-            patch(
-                "chaoscypher_core.services.package.validate_package_directory",
-                return_value=validation_result,
-            ),
         ):
-            result = runner.invoke(push, [str(pkg_dir)])
+            result = runner.invoke(push, [str(bad)])
 
         assert result.exit_code == 1
-        assert "validation failed" in result.output.lower()
-        assert "Missing required field" in result.output
-
-    def test_push_directory_happy_path(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        pkg_dir = tmp_path / "mypkg"
-        pkg_dir.mkdir()
-        manifest = pkg_dir / "manifest.json"
-        manifest.write_text('{"name": "cool-pkg", "version": "2.0.0"}')
-
-        validation_result = MagicMock()
-        validation_result.is_valid = True
-        validation_result.errors = []
-
-        pkg_manifest = MagicMock()
-        pkg_manifest.name = "cool-pkg"
-        pkg_manifest.package_version = "2.0.0"
-
-        upload_result = _make_upload_result(name="testuser/cool-pkg", version="2.0.0")
-        client_mock = self._make_client_mock(upload_result)
-
-        # The archive will be written at tmp_path / "cool-pkg-2.0.0.ccx"
-        fake_archive = tmp_path / "cool-pkg-2.0.0.ccx"
-        fake_archive.write_bytes(b"ARCHIVE_BYTES")
-
-        with (
-            patch(
-                "chaoscypher_cli.commands.lexicon.login.get_auth_config",
-                return_value=MagicMock(token="tok"),
-            ),
-            patch(
-                "chaoscypher_cli.commands.lexicon.login.get_lexicon_url",
-                return_value="https://lexicon.test",
-            ),
-            patch(
-                "chaoscypher_core.services.package.validate_package_directory",
-                return_value=validation_result,
-            ),
-            patch(
-                "chaoscypher_core.services.package.PackageManifest.from_json",
-                return_value=pkg_manifest,
-            ),
-            patch("chaoscypher_core.services.package.create_archive"),
-            patch(
-                "chaoscypher_core.services.lexicon.LexiconClient",
-                return_value=client_mock,
-            ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="8 B",
-            ),
-        ):
-            result = runner.invoke(push, [str(pkg_dir), "--force"])
-
-        assert result.exit_code == 0, result.output
-        client_mock.upload.assert_called_once()
-        assert "cool-pkg" in result.output
+        assert (
+            "Invalid .ccx package" in result.output or "validation failed" in result.output.lower()
+        )
 
     def test_push_confirmation_cancelled(self, tmp_path: Path) -> None:
         runner = CliRunner()
@@ -855,10 +812,6 @@ class TestPushCommand:
             patch(
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
-            ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
             ),
         ):
             result = runner.invoke(push, [str(ccx)], input="n\n")
@@ -892,10 +845,6 @@ class TestPushCommand:
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
             ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
-            ),
         ):
             result = runner.invoke(push, [str(ccx), "--force"])
 
@@ -928,10 +877,6 @@ class TestPushCommand:
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
             ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
-            ),
         ):
             result = runner.invoke(push, [str(ccx), "--force"])
 
@@ -960,10 +905,6 @@ class TestPushCommand:
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
             ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
-            ),
         ):
             result = runner.invoke(push, [str(ccx), "--private", "--force"])
 
@@ -987,10 +928,6 @@ class TestPushCommand:
             patch(
                 "chaoscypher_core.services.lexicon.LexiconClient",
                 return_value=client_mock,
-            ),
-            patch(
-                "chaoscypher_core.services.package.format_size",
-                return_value="20 B",
             ),
         ):
             result = runner.invoke(push, [str(ccx), "--message", "Initial release", "--force"])

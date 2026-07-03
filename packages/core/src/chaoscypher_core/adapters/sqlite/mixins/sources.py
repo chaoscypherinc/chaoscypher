@@ -481,6 +481,88 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             raise ValueError("Source creation failed")
         return self._entity_to_dict(source)
 
+    def get_source_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict[str, Any] | None:
+        """Look up a source by its stable CCX IRI.
+
+        Scoped to ``(database_name, ccx_iri)``; returns the source row dict
+        (including ``ccx_iri`` and ``full_text``) or ``None`` when no row in
+        ``database_name`` carries that IRI.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the source.
+        """
+        self._ensure_connected()
+        statement = select(SourceRow).where(
+            SourceRow.ccx_iri == ccx_iri,
+            SourceRow.database_name == database_name,
+        )
+        row = self.session.exec(statement).first()
+        if row is None:
+            return None
+        return self._entity_to_dict(row)
+
+    def upsert_source_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        source_dict: dict[str, Any],
+        database_name: str,
+    ) -> dict[str, Any]:
+        """Idempotently create or update a source keyed by CCX IRI.
+
+        SELECT by ``(database_name, ccx_iri)``; if a row exists, UPDATE its
+        mutable columns from ``source_dict`` (incoming-wins) and return it (no
+        duplicate); otherwise CREATE a new ``SourceRow`` carrying the given
+        ``ccx_iri``.
+
+        ``source_dict`` is a plain column dict (e.g. ``id``, ``database_name``,
+        ``filename``, ``title``, ``full_text``). On create, ``ccx_iri`` and
+        ``database_name`` are forced to the supplied values regardless of what
+        the dict carries; on update, immutable identity columns (``id``,
+        ``database_name``, ``ccx_iri``, ``created_at``) are never overwritten.
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            source_dict: Source column values.
+            database_name: Database to scope the upsert to.
+
+        Returns:
+            The created or updated source row dict (including ``ccx_iri``).
+        """
+        self._ensure_connected()
+        statement = select(SourceRow).where(
+            SourceRow.ccx_iri == ccx_iri,
+            SourceRow.database_name == database_name,
+        )
+        row = self.session.exec(statement).first()
+
+        immutable = {"id", "database_name", "ccx_iri", "created_at"}
+
+        if row is not None:
+            for key, value in source_dict.items():
+                if key in immutable:
+                    continue
+                if hasattr(row, key):
+                    setattr(row, key, value)
+            row.updated_at = datetime.now(UTC)
+            self.session.add(row)
+            self._maybe_commit()
+            self.session.refresh(row)
+            updated = self._entity_to_dict(row)
+            assert updated is not None  # a non-None row always converts
+            return updated
+
+        row_data = {key: value for key, value in source_dict.items() if key not in {"ccx_iri"}}
+        row_data["database_name"] = database_name
+        row_data["ccx_iri"] = ccx_iri
+        row = SourceRow(**row_data)
+        self.session.add(row)
+        self._maybe_commit()
+        self.session.refresh(row)
+        created = self._entity_to_dict(row)
+        assert created is not None  # a non-None row always converts
+        return created
+
     def update_source(self, source_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """Update source fields.
 
@@ -541,14 +623,25 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         Best-effort: logs a warning and returns on failure. Does not raise.
 
         Args:
-            filepath: Path to the source file. The entire parent directory
-                is removed. No-op if ``filepath`` is None or the directory
-                does not exist.
+            filepath: Absolute path to the source's staged file. The entire
+                parent directory is removed. No-op if ``filepath`` is None,
+                empty, NOT absolute, or the directory does not exist.
 
         """
         if not filepath:
             return
-        file_dir = Path(filepath).parent
+        path = Path(filepath)
+        # Defence-in-depth: a real staged source file is ALWAYS an absolute path
+        # under the data dir, so its parent is that source's own staged
+        # directory. A relative / bare ``filepath`` — e.g. an imported source
+        # whose "filepath" is a display name, not an on-disk file — makes
+        # ``Path(filepath).parent`` resolve to the process working directory, so
+        # ``rmtree`` wipes an unrelated directory (this once deleted the served
+        # frontend at /app/static). Never delete for a non-absolute path.
+        if not path.is_absolute():
+            logger.warning("source_files_delete_skipped_relative", filepath=filepath)
+            return
+        file_dir = path.parent
         if not file_dir.exists():
             return
         try:

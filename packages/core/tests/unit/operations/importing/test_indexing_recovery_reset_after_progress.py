@@ -30,6 +30,7 @@ counter must survive so the exhaustion guard can fire on the next pass.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,9 +43,23 @@ def _make_settings() -> MagicMock:
     return settings
 
 
+def _make_engine_settings(tmp_path: Path) -> MagicMock:
+    """MagicMock engine_settings with a real data_dir.
+
+    _run_indexing computes ``Path(engine_settings.paths.data_dir) / "sources"
+    / <id> / "original.txt"``; an unpinned MagicMock stringifies into a
+    literal ``<MagicMock name='mock.paths.data_dir' ...>`` directory at the
+    repo root (issue #249).
+    """
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+    return engine_settings
+
+
 @pytest.mark.asyncio
 async def test_recovery_counter_not_reset_when_cancelled_before_chunks_persisted(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A timeout cancellation mid-vision must leave recovery_attempts intact.
 
@@ -91,7 +106,7 @@ async def test_recovery_counter_not_reset_when_cancelled_before_chunks_persisted
             enable_vision=True,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_make_engine_settings(tmp_path),
             settings=_make_settings(),
             database_name="default",
         )
@@ -104,6 +119,7 @@ async def test_recovery_counter_not_reset_when_cancelled_before_chunks_persisted
 @pytest.mark.asyncio
 async def test_recovery_counter_reset_only_after_store_chunks_on_happy_path(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """On a successful run, reset must fire AFTER chunks are stored.
 
@@ -168,7 +184,7 @@ async def test_recovery_counter_reset_only_after_store_chunks_on_happy_path(
         enable_vision=False,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=_make_engine_settings(tmp_path),
         settings=_make_settings(),
         database_name="default",
     )

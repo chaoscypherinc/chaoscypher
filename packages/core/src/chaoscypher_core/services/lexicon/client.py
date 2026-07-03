@@ -209,6 +209,11 @@ class DeviceCodeResponse:
 class PackageInfo:
     """Package metadata from lexicon.
 
+    Under the CCX 3.0 hub contract a package is no longer typed by a fixed
+    ``package_type`` taxonomy; conformance is described instead by the set of
+    CCX conformance classes the package satisfies (populated by
+    ``get_package_info``, not by ``upload``).
+
     Attributes:
         id: Unique repository ID.
         name: Repository/package name.
@@ -217,13 +222,16 @@ class PackageInfo:
         owner_name: Owner's display name.
         owner_id: Owner's user ID.
         is_public: Public visibility.
-        package_type: FULL, TEMPLATES, KNOWLEDGE, LENSES, WORKFLOWS, MIXED.
         star_count: Number of stars.
         version_count: Number of published versions.
         download_count: Total downloads.
         created_at: Unix timestamp (ms).
         updated_at: Unix timestamp (ms).
         version: Package version (set when downloading specific version).
+        conformance_classes: CCX conformance classes the package satisfies
+            (None when the hub did not report them).
+        is_signed: Whether the package is cryptographically signed
+            (None when the hub did not report it).
     """
 
     id: str
@@ -233,13 +241,14 @@ class PackageInfo:
     owner_name: str = ""
     owner_id: str = ""
     is_public: bool = True
-    package_type: str = "FULL"
     star_count: int = 0
     version_count: int = 0
     download_count: int = 0
     created_at: int = 0
     updated_at: int = 0
     version: str = ""
+    conformance_classes: list[str] | None = None
+    is_signed: bool | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PackageInfo:
@@ -252,19 +261,50 @@ class PackageInfo:
             owner_name=data.get("ownerName", ""),
             owner_id=data.get("ownerId", ""),
             is_public=data.get("isPublic", True),
-            package_type=data.get("packageType", "FULL"),
             star_count=data.get("starCount", 0),
             version_count=data.get("versionCount", 0),
             download_count=data.get("downloadCount", 0),
             created_at=data.get("createdAt", 0),
             updated_at=data.get("updatedAt", 0),
             version=data.get("version", ""),
+            conformance_classes=data.get("conformanceClasses"),
+            is_signed=data.get("isSigned"),
         )
 
     @property
     def full_name(self) -> str:
         """Get full package name (owner/name)."""
         return f"{self.owner_username}/{self.name}"
+
+
+@dataclass
+class UploadResult:
+    """Async job envelope returned by the CCX 3.0 hub upload endpoint.
+
+    The hub processes uploaded packages asynchronously: the upload POST
+    enqueues a job and returns ``202`` with the standard envelope
+    ``{"data": {jobId, status, message}}`` (unwrapped by ``upload()`` before
+    ``from_dict``), NOT the final ``PackageInfo``. Callers poll the hub job
+    endpoint (out of band) for completion.
+
+    Attributes:
+        job_id: Identifier for the queued processing job.
+        status: Job status reported by the hub (e.g. ``queued``).
+        message: Human-readable status message from the hub.
+    """
+
+    job_id: str
+    status: str
+    message: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> UploadResult:
+        """Create from the hub job-envelope response dictionary."""
+        return cls(
+            job_id=data.get("jobId", ""),
+            status=data.get("status", ""),
+            message=data.get("message", ""),
+        )
 
 
 class LexiconClient:
@@ -762,7 +802,7 @@ class LexiconClient:
         sort_by: str = "relevance",
         is_public: bool | None = None,
         owner_id: str | None = None,
-        package_type: str | None = None,
+        conformance_class: str | None = None,
     ) -> tuple[list[PackageInfo], int]:
         """Search for packages on lexicon.
 
@@ -773,7 +813,7 @@ class LexiconClient:
             sort_by: Sort order (relevance, stars, downloads, newest, updated, name).
             is_public: Filter by visibility.
             owner_id: Filter by owner ID.
-            package_type: Filter by package type.
+            conformance_class: Filter by CCX conformance class (CCX 3.0).
 
         Returns:
             Tuple of (list of matching packages, total count).
@@ -789,8 +829,8 @@ class LexiconClient:
             params["isPublic"] = str(is_public).lower()
         if owner_id:
             params["ownerId"] = owner_id
-        if package_type:
-            params["packageType"] = package_type
+        if conformance_class:
+            params["conformanceClass"] = conformance_class
 
         response = await self.get("/search", params=params)
         data = response.get("data", {})
@@ -894,8 +934,16 @@ class LexiconClient:
         *,
         public: bool = True,
         message: str | None = None,
-    ) -> PackageInfo:
-        """Upload package archive to lexicon.
+    ) -> UploadResult:
+        """Upload a CCX 3.0 package archive to the Lexicon hub.
+
+        Under the CCX 3.0 upload contract the hub accepts the multipart
+        ``package`` field (Content-Type ``application/zip`` or
+        ``application/vnd.ccx+zip``) and processes the package
+        asynchronously, returning ``202`` with the standard data envelope
+        ``{"data": {jobId, status, message}}`` rather than the final
+        ``PackageInfo``. Callers poll the hub job endpoint for completion and
+        then fetch package metadata via :meth:`get_package_info`.
 
         Args:
             archive_data: Archive bytes (.ccx content).
@@ -903,7 +951,8 @@ class LexiconClient:
             message: Optional upload/commit message.
 
         Returns:
-            Uploaded package info.
+            The queued upload job envelope (``job_id`` / ``status`` /
+            ``message``).
 
         Raises:
             LexiconClientError: On upload failure or validation error.
@@ -919,11 +968,21 @@ class LexiconClient:
         del headers["Content-Type"]  # Let httpx set multipart boundary
 
         upload_client = self._get_upload_client()
+        # Content-Type application/zip is accepted by the CCX 3.0 hub
+        # (application/vnd.ccx+zip is also accepted). Field name "package"
+        # and filename "package.ccx" are pinned by the upload contract.
         files = {"package": ("package.ccx", archive_data, "application/zip")}
         data: dict[str, str] = {"public": str(public).lower()}
         if message:
             data["message"] = message
 
+        # NOTE(lexicon-ccx-3.0): the pinned hub contract is the repo-scoped
+        # endpoint POST /repositories/{repoId}/package. This client does not
+        # currently carry a repoId (push is by archive only), so we keep the
+        # existing flat /packages path until the hub exposes a repo-resolution
+        # step. Field name, MIME, filename and the async job-envelope response
+        # are already aligned to CCX 3.0. Tracked in internal/TODO.md
+        # (§ CCX 3.0 migration P2, Lexicon hub upload-contract pairing).
         response = await upload_client.post(
             f"{self.base_url}/packages",
             files=files,
@@ -934,19 +993,26 @@ class LexiconClient:
         if response.status_code >= 400:
             try:
                 error_data = response.json()
-                message = error_data.get("message", "Upload failed")
+                err_message = error_data.get("message", "Upload failed")
                 details = error_data.get("details", {})
             except Exception:
-                message = "Upload failed"
+                err_message = "Upload failed"
                 details = {}
 
             raise LexiconClientError(
                 status_code=response.status_code,
-                message=message,
+                message=err_message,
                 details=details,
             )
 
-        return PackageInfo.from_dict(response.json())
+        # CCX 3.0: the hub returns 202 with the standard envelope
+        # ``{"data": {jobId, status, message}}`` — unwrap ``data``. Fall back
+        # to the top level so an older/bare ``{jobId, ...}`` body still parses.
+        body = response.json()
+        envelope = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(envelope, dict):
+            envelope = body
+        return UploadResult.from_dict(envelope)
 
 
 __all__ = [
@@ -954,4 +1020,5 @@ __all__ = [
     "LexiconClient",
     "LexiconClientError",
     "PackageInfo",
+    "UploadResult",
 ]

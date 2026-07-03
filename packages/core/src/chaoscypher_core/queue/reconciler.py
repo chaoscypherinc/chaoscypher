@@ -251,12 +251,17 @@ async def _handle_abandoned(
     retry_allowed = client.get_retry_policy(queue_name, operation)
 
     if retry_allowed and attempts < max_tries:
-        # Requeue: remove from running, reset status, then re-add to pending.
-        # IMPORTANT: zadd runs first; attempts increments only on success so
-        # that a transient Valkey error does not silently consume the retry
-        # budget — on failure we log and return, leaving attempts unchanged
-        # for the next reconcile cycle.
-        await client.client.srem(running_key, task_id)
+        # Requeue: reset status, re-add to pending, THEN remove from running.
+        # IMPORTANT: zadd must run before srem so the task is never absent
+        # from BOTH the running set and the pending queue at the same time.
+        # The reconciler only scans queue:{queue}:running, so a task srem'd
+        # out of running before a failed zadd would sit in neither set and be
+        # invisible to every future reconcile cycle — an undetectable limbo.
+        # Adding to pending first and removing from running only on zadd
+        # success means a transient Valkey error during zadd leaves the task
+        # in the running set for the next cycle to retry. attempts increments
+        # only after a successful requeue so that same transient error never
+        # silently consumes the retry budget.
         await client.client.hset(
             task_key,
             mapping={
@@ -279,8 +284,9 @@ async def _handle_abandoned(
                 queue=queue_name,
                 attempts=attempts,
             )
-            return  # leave attempts unchanged; next reconcile retries
+            return  # task left in the running set; next reconcile retries
 
+        await client.client.srem(running_key, task_id)
         await client.client.hincrby(task_key, "attempts", 1)
         stats.recovered_crashed += 1
         logger.warning(

@@ -102,6 +102,7 @@ def finalize_chat_content(
         inject_citations_for_uncited_paragraphs,
         inject_citations_into_blockquotes,
         normalize_chunk_references,
+        relocate_grouped_citations,
         strip_duplicated_citation_text,
         strip_malformed_citations,
         strip_thinking_tags,
@@ -124,6 +125,10 @@ def finalize_chat_content(
     if tool_results and clean_content:
         clean_content = normalize_chunk_references(clean_content, tool_results)
         clean_content = correct_mismatched_citations(clean_content, tool_results)
+        # Move citations the model grouped at the end (or orphaned on their own
+        # line) to the paragraph whose quoted phrase they support, so each lands
+        # after its quoted section instead of floating at the bottom.
+        clean_content = relocate_grouped_citations(clean_content, tool_results)
         clean_content = inject_citations_into_blockquotes(clean_content, tool_results)
         # Fallback: when the LLM forgot the [[cite:...]] marker but quoted
         # chunk text inline, append a marker so the UI can render the

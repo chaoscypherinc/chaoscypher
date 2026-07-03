@@ -9,12 +9,13 @@ Part of the unified SourceStorageProtocol implementation.
 """
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import structlog
 from sqlalchemy import func
 from sqlalchemy.orm import load_only
-from sqlmodel import delete, select, update
+from sqlmodel import col, delete, select, update
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import DocumentChunk
@@ -186,6 +187,8 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
                     DocumentChunk.source_id,
                     DocumentChunk.chunk_index,
                     DocumentChunk.content,
+                    DocumentChunk.char_start,
+                    DocumentChunk.char_end,
                     DocumentChunk.page_number,
                     DocumentChunk.section,
                     DocumentChunk.group_index,
@@ -213,6 +216,38 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
 
         chunks = self.session.exec(query).all()
         return self._entities_to_dicts(chunks), total
+
+    def iter_chunk_embeddings(self, source_id: str, *, page_size: int) -> Iterator[tuple[str, Any]]:
+        """Yield ``(chunk_id, embedding)`` for a source's embedded chunks.
+
+        Pushing chunk vectors into the search index needs only the id + the
+        persisted embedding; loading the (large) content column for every chunk
+        just to index — as ``get_chunks_by_source(include_embeddings=True)``
+        would — is wasted I/O. This selects the two columns only, paginated.
+        """
+        self._ensure_connected()
+        offset = 0
+        while True:
+            query = (
+                select(DocumentChunk.id, DocumentChunk.embedding)
+                .where(
+                    DocumentChunk.source_id == source_id,
+                    DocumentChunk.database_name == self.database_name,
+                    col(DocumentChunk.embedding).is_not(None),
+                )
+                .order_by(col(DocumentChunk.chunk_index))
+                .offset(offset)
+                .limit(page_size)
+            )
+            rows = self.session.exec(query).all()
+            if not rows:
+                return
+            for chunk_id, embedding in rows:
+                if embedding:
+                    yield chunk_id, embedding
+            if len(rows) < page_size:
+                return
+            offset += page_size
 
     _CHUNK_SKIP_FIELDS = frozenset({"id", "database_name", "created_at", "source_id"})
 

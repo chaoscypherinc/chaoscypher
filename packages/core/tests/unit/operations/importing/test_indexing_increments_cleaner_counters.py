@@ -346,6 +346,13 @@ async def test_run_indexing_skips_counter_increments_when_no_removals(
     settings.priorities.background = 50
     settings.data_dir = str(tmp_path)
 
+    # Pin the MagicMock's data_dir to tmp_path: _run_indexing computes
+    # Path(engine_settings.paths.data_dir) / "sources" / <id> / "original.txt",
+    # and an unpinned MagicMock stringifies into a literal
+    # "<MagicMock name='mock.paths.data_dir' ...>" directory at the repo root.
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+
     await indexing_handler._run_indexing(
         file_id=prepared_source_id,
         file_info={"filename": "clean.txt", "filepath": str(tmp_path / "clean.txt")},
@@ -355,7 +362,7 @@ async def test_run_indexing_skips_counter_increments_when_no_removals(
         enable_vision=False,
         adapter=sqlite_adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=engine_settings,
         settings=settings,
         database_name="default",
     )

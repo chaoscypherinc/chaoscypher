@@ -94,7 +94,9 @@ class ExportService:
         Args:
             file_content: CCX file content
             filename: Original filename
-            merge: Whether to merge (True) or replace (False)
+            merge: Template handling only — reuse local templates by name (True)
+                or create fresh ones (False). Import is always additive
+                (upsert-by-IRI); existing data is never cleared.
 
         Returns:
             ImportResponse with task_id for tracking

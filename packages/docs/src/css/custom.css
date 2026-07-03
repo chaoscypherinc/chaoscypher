@@ -926,6 +926,20 @@ html[data-theme="dark"] .feature-card.feature-hero:hover {
 .showcase-arrow--l { left: -6px; } .showcase-arrow--r { right: -6px; }
 @media (max-width: 600px) { .showcase-arrow { display: none; } }  /* swipe on touch */
 
+/* ---- Demo video — the lead of the "See it in action" tour ---- */
+.demo-video { margin: 0.25rem 0 2rem; text-align: center; }
+.demo-video-frame {
+  max-width: 880px;
+  margin: 0 auto;
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--cc-bg-surface);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.demo-video-frame video { display: block; width: 100%; height: auto; }
+.demo-video-cap { margin: 0.65rem 0 0; color: var(--cc-text-muted); font-size: 0.9rem; }
+
 /* ---- "See it in action" guided tour (area-grouped flows) ---- */
 .tour { margin: 1.25rem 0 0; }
 .tour-group { margin-bottom: 1.75rem; }

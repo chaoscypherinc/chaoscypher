@@ -30,6 +30,7 @@ from chaoscypher_core.streaming.chat.citations import (
     inject_citations_for_uncited_paragraphs,
     inject_citations_into_blockquotes,
     normalize_chunk_references,
+    relocate_grouped_citations,
     strip_duplicated_citation_text,
     strip_malformed_citations,
 )
@@ -160,6 +161,7 @@ __all__ = [
     "log_messages_debug",
     "normalize_chunk_references",
     "parse_tool_arguments",
+    "relocate_grouped_citations",
     "run_chat_tool_loop",
     "setup_chat_providers",
     "strip_duplicated_citation_text",

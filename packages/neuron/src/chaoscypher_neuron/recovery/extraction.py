@@ -151,6 +151,17 @@ async def recover_orphaned_extraction_tasks(
             )
             with contextlib.suppress(Exception):
                 adapter.fail_chunk_task(task_id, f"Recovery failed: {e}", "recovery_error")
+            # Mirror the max-retries branch above: a chunk task that can no
+            # longer be requeued is terminal, so its job-completion counter
+            # must advance or the parent job never reaches its terminal check
+            # and stays "running" forever with all chunk tasks exhausted.
+            # Independent suppress so a fail_chunk_task error cannot skip it.
+            with contextlib.suppress(Exception):
+                adapter.increment_job_completed_and_check(
+                    job_id=job_id,
+                    database_name=task.get("database_name") or "default",
+                    outcome="failed",
+                )
 
     return {"recovered": recovered, "skipped": skipped, "failed": failed}
 

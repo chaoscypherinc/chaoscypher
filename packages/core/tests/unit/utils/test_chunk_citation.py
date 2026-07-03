@@ -23,7 +23,6 @@ from chaoscypher_core.settings import ChunkingSettings, EngineSettings
 from chaoscypher_core.utils.chunk import (
     ChunkingService,
     _recompute_chunk_offsets,
-    _shift_sentence_offsets,
 )
 
 
@@ -144,22 +143,41 @@ class TestRecomputeChunkOffsets:
         assert chunks[0]["citation_offset_method"] == "exact"
         assert chunks[1]["citation_offset_method"] == "none"
 
-    def test_sentence_offsets_shifted(self) -> None:
-        """Sentence offsets are shifted by delta when exact match moves char_start."""
-        original = "Prefix text. The actual sentence. And more."
-        content = "The actual sentence."
-        actual_start = original.index(content)
+    def test_sentence_offsets_stay_chunk_local_after_recompute(self) -> None:
+        """sentence_offsets are chunk-local (relative to ``content``) and the
+        recompute must leave them untouched, even when it re-anchors
+        ``char_start`` to a different document position.
 
-        sentence_offsets = [{"start": 0, "end": 20}]
-        chunk = _make_chunk(content, char_start=0, sentence_offsets=sentence_offsets)
+        The producer (``split_into_sentences_with_offsets``) emits 0-based
+        offsets into the chunk's own ``content``, and every consumer
+        (``_resolve_sentence_text`` with ``original_content=content``, the CLI
+        citation resolver, and the frontend ``renderChunkWithHighlights``)
+        slices that same ``content``. The LLM is shown ``[S{n}]`` numbering
+        derived from splitting ``content`` too. So the offsets must remain
+        chunk-local — shifting them to document-absolute coordinates (the old
+        ``_shift_sentence_offsets`` behaviour) silently broke every consumer
+        for all but the first chunk of a document (the only one whose
+        pre-recompute ``char_start`` was 0).
+        """
+        original = "AAAA BBBB. The first sentence. The second sentence. CCCC."
+        content = "The first sentence. The second sentence."
+        # Chunk-local 0-based offsets, exactly as the producer emits them.
+        sentence_offsets = [{"start": 0, "end": 19}, {"start": 20, "end": 40}]
+        # old_start is the chunker's cleaned-text accumulator: non-zero AND
+        # different from the true document position, so the buggy delta-shift
+        # would move the offsets off ``content`` entirely.
+        chunk = _make_chunk(content, char_start=500, sentence_offsets=sentence_offsets)
         _recompute_chunk_offsets([chunk], original)
 
         assert chunk["citation_offset_method"] == "exact"
+        # char_start IS re-anchored to the real document position.
+        assert chunk["char_start"] == original.index(content)
+        # ...but sentence_offsets stay chunk-local and round-trip against content.
         so = chunk["chunk_metadata"]["sentence_offsets"]
-        assert so[0]["start"] == actual_start
-        assert so[0]["end"] == actual_start + 20
+        assert content[so[0]["start"] : so[0]["end"]] == "The first sentence."
+        assert content[so[1]["start"] : so[1]["end"]] == "The second sentence."
 
-    def test_sentence_offsets_not_shifted_when_none_method(self) -> None:
+    def test_sentence_offsets_unchanged_when_none_method(self) -> None:
         """Sentence offsets not touched when method is 'none'."""
         original = "Some text."
         sentence_offsets = [{"start": 5, "end": 15}]
@@ -328,41 +346,6 @@ class TestRecomputeChunkOffsetsRawSpan:
         raw_span = original[chunk["char_start"] : chunk["char_end"]]
         assert raw_span.startswith("Heading Goes Here")
         assert raw_span.endswith("body text.")
-
-
-# ---------------------------------------------------------------------------
-# Unit tests for _shift_sentence_offsets
-# ---------------------------------------------------------------------------
-
-
-class TestShiftSentenceOffsets:
-    """Direct unit tests for the sentence-offset shift helper."""
-
-    def test_shifts_by_positive_delta(self) -> None:
-        chunk = _make_chunk("x", char_start=0, sentence_offsets=[{"start": 0, "end": 5}])
-        _shift_sentence_offsets(chunk, old_start=0, new_start=10)
-        assert chunk["chunk_metadata"]["sentence_offsets"][0]["start"] == 10
-        assert chunk["chunk_metadata"]["sentence_offsets"][0]["end"] == 15
-
-    def test_no_op_when_old_start_is_none(self) -> None:
-        chunk = _make_chunk("x", char_start=0, sentence_offsets=[{"start": 0, "end": 5}])
-        _shift_sentence_offsets(chunk, old_start=None, new_start=10)
-        assert chunk["chunk_metadata"]["sentence_offsets"][0]["start"] == 0
-
-    def test_no_op_when_delta_is_zero(self) -> None:
-        chunk = _make_chunk("x", char_start=5, sentence_offsets=[{"start": 5, "end": 10}])
-        _shift_sentence_offsets(chunk, old_start=5, new_start=5)
-        assert chunk["chunk_metadata"]["sentence_offsets"][0]["start"] == 5
-
-    def test_no_op_when_no_metadata(self) -> None:
-        chunk = {"content": "x", "char_start": 0}
-        _shift_sentence_offsets(chunk, old_start=0, new_start=5)
-        # No crash — chunk has no chunk_metadata key
-
-    def test_no_op_when_sentence_offsets_empty(self) -> None:
-        chunk = _make_chunk("x", char_start=0, sentence_offsets=[])
-        _shift_sentence_offsets(chunk, old_start=0, new_start=10)
-        assert chunk["chunk_metadata"]["sentence_offsets"] == []
 
 
 # ---------------------------------------------------------------------------

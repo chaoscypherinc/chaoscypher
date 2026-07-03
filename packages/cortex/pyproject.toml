@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-cortex"
-version = "0.2.0"
+version = "0.3.0"
 description = "Chaos Cypher Cortex - Full-featured knowledge graph platform (processing center)"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -21,11 +21,14 @@ classifiers = [
 requires-python = ">=3.14"
 dependencies = [
     "chaoscypher-core>=0.1.0",
-    "fastapi>=0.135.0,<1",
+    # Pinned <0.137: 0.137.0's APIRouter-instance-tree refactor (fastapi/fastapi#15745)
+    # breaks empty-path routes (@router.get("")) under nested includes — the openapi
+    # schema build raises "Prefix and path cannot be both empty". See internal/TODO.md.
+    "fastapi>=0.135.0,<0.137",
     "uvicorn>=0.44.0,<1",
     "sqlmodel>=0.0.38,<0.1",
     "pydantic>=2.12.0,<3",
-    "pydantic-settings>=2.13.0,<3",
+    "pydantic-settings>=2.14.2,<3",   # floor lifted for GHSA-4xgf-cpjx-pc3j
     "email-validator>=2.3.0,<3",
     "python-dotenv>=1.2.0,<2",
     "dynaconf>=3.2.13,<4",

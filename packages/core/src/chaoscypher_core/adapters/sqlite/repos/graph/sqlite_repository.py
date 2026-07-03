@@ -24,6 +24,7 @@ from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphT
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_edge_ops import EdgeOperationsMixin
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_node_ops import NodeOperationsMixin
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_template_ops import TemplateOperationsMixin
+from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
 from chaoscypher_core.utils import generate_id
 
 
@@ -543,6 +544,59 @@ class GraphRepository(
             "nodes": nodes_data,
             "edges": edges_data,
             "templates": templates_data,
+        }
+
+    def export_graph_records(
+        self,
+        *,
+        source_ids: list[str] | None = None,
+        max_items: int = 100000,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Export graph nodes + edges as dicts carrying ``ccx_iri``.
+
+        The Pydantic ``Node`` / ``Edge`` domain models returned by the
+        public engine methods (``list_nodes`` / ``export_graph``) do NOT
+        carry the persisted ``ccx_iri`` stable-identity column. The CCX 3.0
+        exporter keys identity on that IRI, so it reads through this method,
+        which projects the ORM rows straight to dicts (via ``entity_to_dict``)
+        and therefore preserves ``ccx_iri`` (and every other column).
+
+        Args:
+            source_ids: When given, restrict nodes/edges to those whose
+                ``source_id`` is in the set (source-scoped à-la-carte export).
+                Edges are kept only when BOTH endpoints survive the node
+                filter, so the knowledge graph stays internally consistent.
+            max_items: Safety cap on rows fetched per entity type.
+
+        Returns:
+            ``{"nodes": [node dicts], "edges": [edge dicts]}`` where each dict
+            includes ``ccx_iri`` (possibly ``None`` for not-yet-exported rows).
+        """
+        node_stmt = select(GraphNode).where(GraphNode.database_name == self.database_name)
+        if source_ids is not None:
+            node_stmt = node_stmt.where(col(GraphNode.source_id).in_(source_ids))
+        node_stmt = node_stmt.order_by(GraphNode.id).limit(max_items)
+        node_rows = self.session.exec(node_stmt).all()
+        nodes = [entity_to_dict(row) for row in node_rows]
+
+        edge_stmt = select(GraphEdge).where(GraphEdge.database_name == self.database_name)
+        edge_stmt = edge_stmt.order_by(GraphEdge.id).limit(max_items)
+        edge_rows = self.session.exec(edge_stmt).all()
+        edges = [entity_to_dict(row) for row in edge_rows]
+
+        if source_ids is not None:
+            node_id_set = {node["id"] for node in nodes if node is not None}
+            edges = [
+                edge
+                for edge in edges
+                if edge is not None
+                and edge.get("source_node_id") in node_id_set
+                and edge.get("target_node_id") in node_id_set
+            ]
+
+        return {
+            "nodes": [node for node in nodes if node is not None],
+            "edges": [edge for edge in edges if edge is not None],
         }
 
     # ========================================================================

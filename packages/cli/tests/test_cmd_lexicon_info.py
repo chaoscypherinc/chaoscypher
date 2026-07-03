@@ -48,13 +48,14 @@ def _make_package_info(
         name=name,
         owner_username=owner,
         description=description,
-        package_type="FULL",
         star_count=5,
         version_count=3,
         download_count=100,
         created_at=1700000000000,
         updated_at=1700100000000,
         version=version,
+        conformance_classes=["ccx-core"],
+        is_signed=True,
     )
 
 

@@ -40,6 +40,49 @@ def test_render_template_substitutes_settings_values() -> None:
     # so we don't assert its presence here. We check it in the proxy-common test.
 
 
+def test_spa_location_intercepts_upstream_errors_but_api_does_not() -> None:
+    """SPA routes show the styled error.html for an upstream 5xx; /api stays JSON.
+
+    ``proxy_intercept_errors`` must be ON only for the HTML SPA ``location /``
+    (so an upstream 500 substitutes the ``error_page`` error.html instead of
+    leaking the raw upstream body) and OFF for ``location /api/`` — API errors
+    must keep returning the JSON envelope the frontend parses, not an HTML page.
+    """
+    settings = Settings()
+    for template_name in ("nginx-http.conf", "nginx-https.conf"):
+        out = render_template(template_name, settings)
+        # Exactly one intercept directive — it lives in the SPA block, which is
+        # rendered after every /api/ location.
+        assert out.count("proxy_intercept_errors on;") == 1, template_name
+        assert "error_page" in out and "/error.html" in out, template_name
+
+
+def test_ccx_import_endpoint_gets_upload_body_limit() -> None:
+    """The CCX import endpoint must allow large bodies, not the 1m API default.
+
+    An embeddings-included ``.ccx`` is many MB / GB, so without a dedicated cap
+    the import inherits ``location /api/``'s 1m server default and nginx 413s the
+    upload at the edge before it reaches Cortex. It gets the same configurable
+    ``max_upload_bytes`` cap the source-upload routes do.
+    """
+    settings = Settings()
+    settings.batching.max_upload_bytes = 5 * 1024 * 1024 * 1024  # 5 GB -> "5g"
+    for template_name in ("nginx-http.conf", "nginx-https.conf"):
+        out = render_template(template_name, settings)
+        # The server default stays small; only uploads + import lift the cap.
+        assert "client_max_body_size 1m;" in out, template_name
+        # A dedicated import location carries the upload-size cap.
+        idx = out.find("location = /api/v1/exports/import")
+        assert idx != -1, template_name
+        block = out[idx : idx + 400]
+        assert "client_max_body_size 5g;" in block, template_name
+        if "location /api/" in out:
+            assert out.index("proxy_intercept_errors on;") > out.rindex("location /api/"), (
+                f"{template_name}: proxy_intercept_errors must be scoped to the SPA "
+                "block, not /api/"
+            )
+
+
 def test_render_all_writes_every_template(tmp_path: Path) -> None:
     settings = Settings()
     written = render_all(settings, tmp_path)

@@ -285,44 +285,10 @@ class SettingsService:
             )
 
     async def notify_workers_llm_settings_changed(self) -> None:
-        """Publish settings change notification to Valkey for worker hot-reload.
+        """Publish a settings-change notification to Valkey for worker hot-reload."""
+        from chaoscypher_cortex.shared.worker_notify import publish_settings_change
 
-        Uses a direct Valkey connection to ensure notification is sent regardless
-        of queue_client state.
-        """
-        try:
-            import valkey.asyncio as valkey
-
-            from chaoscypher_core.app_config import get_settings
-
-            settings = get_settings()
-            password_part = (
-                f":{settings.queue.queue_password.get_secret_value()}@"
-                if settings.queue.queue_password
-                else ""
-            )
-            valkey_url = f"valkey://{password_part}{settings.queue.queue_host}:{settings.queue.queue_port}/{settings.queue.queue_database}"
-
-            # Create temporary connection for publish
-            client = valkey.from_url(valkey_url)
-            try:
-                version = await client.incr("chaoscypher:settings:version")
-                await client.publish(
-                    "chaoscypher:settings:changed",
-                    "v1:llm_settings_updated",
-                )
-                logger.info(
-                    "settings_change_notification_published",
-                    version=version,
-                )
-            finally:
-                await client.aclose()
-        except Exception as e:
-            logger.warning(
-                "settings_notification_failed",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+        await publish_settings_change("v1:llm_settings_updated")
 
     async def verify_ollama_url(self, url: str, timeout: int) -> dict[str, Any]:  # noqa: PLR0911
         """Verify that an Ollama instance is running at the given URL.

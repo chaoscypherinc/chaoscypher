@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import structlog
 from sqlalchemy import text
+from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from chaoscypher_core.adapters.sqlite.models import (
@@ -97,7 +98,24 @@ def _reindex_chunks_for_source(
     if session is None:  # pragma: no cover - caller passes a connected adapter
         msg = "SqliteAdapter must be connected before sweeping search indexes"
         raise RuntimeError(msg)
-    stmt = select(DocumentChunk).where(DocumentChunk.source_id == source_id)
+    # Only id/embedding/content are read below; defer the rest (notably the
+    # ~5 KB base64 embedding's sibling columns and chunk_metadata JSON) so we
+    # don't transfer columns this reindex never touches.
+    stmt = (
+        select(DocumentChunk)
+        .where(DocumentChunk.source_id == source_id)
+        .options(
+            # SQLModel class attrs are typed as their Python types (str/bytes),
+            # not Mapped[] descriptors, so load_only() trips mypy arg-type — the
+            # known false positive documented in pyproject's [tool.mypy] SQLModel
+            # override block.
+            load_only(
+                DocumentChunk.id,  # type: ignore[arg-type]
+                DocumentChunk.embedding,  # type: ignore[arg-type]
+                DocumentChunk.content,  # type: ignore[arg-type]
+            )
+        )
+    )
     chunks = list(session.exec(stmt))
     if not chunks:
         return

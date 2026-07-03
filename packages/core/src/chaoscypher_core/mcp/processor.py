@@ -18,6 +18,7 @@ import structlog
 
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.utils.id import generate_id
+from chaoscypher_core.utils.task_callbacks import log_task_exception
 
 
 logger = structlog.get_logger(__name__)
@@ -317,6 +318,11 @@ class DocumentProcessor:
         """Start the background worker loop."""
         self._running = True
         self._worker_task = asyncio.create_task(self._worker_loop())
+        # Surface a crash in the worker loop instead of letting it vanish with
+        # only a bare "Task exception was never retrieved" on stderr — the
+        # canonical done-callback for every background task (see
+        # ``chaoscypher_core.utils.task_callbacks``).
+        self._worker_task.add_done_callback(log_task_exception)
 
     async def _worker_loop(self) -> None:
         """Process queued files one at a time."""

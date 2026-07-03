@@ -256,8 +256,9 @@ async def setup_operations_handlers(ctx: WorkerContext) -> None:  # noqa: PLR091
         settings=settings,
     )
 
+    # No graph_repository: each export handler builds its own repositories
+    # scoped to the task's target database (see ExportOperationsService).
     export_operations_service = ExportOperationsService(
-        graph_repository=graph_repository,
         workflow_db=None,
     )
 

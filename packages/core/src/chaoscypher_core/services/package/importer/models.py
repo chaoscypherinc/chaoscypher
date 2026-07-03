@@ -3,18 +3,16 @@
 
 """Import Models - Data models for CCX package import operations.
 
-Defines import options, statistics, and ID mapping for the import service.
+Defines import options and statistics for the CCX 3.0 import service.
 
 Example:
     from chaoscypher_core.services.package.importer.models import (
         ImportOptions,
         ImportStats,
-        IdMapper,
     )
 
-    options = ImportOptions(verify_checksums=True)
+    options = ImportOptions(database_name="default")
     stats = ImportStats()
-    mapper = IdMapper()
 """
 
 from __future__ import annotations
@@ -63,7 +61,14 @@ class ImportStats:
         sources_imported: Number of sources imported.
         chunks_imported: Number of document chunks imported.
         citations_imported: Number of citations imported.
-        checksum_verified: Whether checksums were verified.
+        checksum_verified: Whether package integrity was verified. For CCX
+            3.0 this is set from ``ccx-format``'s fail-closed
+            ``validate().ok`` rather than per-file SHA checks.
+        conformance_classes: The CCX conformance classes the package
+            declared (e.g. ``("core", "sources")``), recorded from the
+            validation report.
+        package_version: The imported package's ``package_version`` (from
+            the CCX manifest), for conflict-policy provenance.
         embeddings_need_regeneration: Whether imported items need re-embedding.
         embedding_mismatch_reason: Reason embeddings need regeneration.
         warnings: List of warning messages.
@@ -81,10 +86,24 @@ class ImportStats:
     chunks_imported: int = 0
     citations_imported: int = 0
     checksum_verified: bool = False
+    conformance_classes: list[str] = field(default_factory=list)
+    package_version: str | None = None
     embeddings_need_regeneration: bool = False
     embedding_mismatch_reason: str | None = None
+    # Count of node + chunk vectors restored from the package's embedding sidecar
+    # (model matched the import side, so the index op skips re-embedding).
+    embeddings_restored: int = 0
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Local ids of the sources created/updated this import. The worker import
+    # handler enqueues one OP_INDEX_IMPORTED_SOURCE per id to re-embed chunks
+    # and push node/chunk vectors (imported sources arrive unsearchable).
+    imported_source_ids: list[str] = field(default_factory=list)
+    # Local ids of the KNOWLEDGE nodes created/updated this import (lens
+    # app-graph nodes excluded). Source-bearing imports index these via their
+    # source; knowledge-only imports (lexicon, CLI) have no source, so the index
+    # step works off this explicit id list. See OP_INDEX_IMPORTED_NODES.
+    imported_node_ids: list[str] = field(default_factory=list)
 
     @property
     def is_success(self) -> bool:
@@ -120,115 +139,21 @@ class ImportStats:
             "chunks_imported": self.chunks_imported,
             "citations_imported": self.citations_imported,
             "checksum_verified": self.checksum_verified,
+            "conformance_classes": self.conformance_classes,
+            "package_version": self.package_version,
             "embeddings_need_regeneration": self.embeddings_need_regeneration,
             "embedding_mismatch_reason": self.embedding_mismatch_reason,
+            "embeddings_restored": self.embeddings_restored,
             "warnings": self.warnings,
             "errors": self.errors,
+            "imported_source_ids": self.imported_source_ids,
+            "imported_node_ids": self.imported_node_ids,
             "is_success": self.is_success,
             "total_items": self.total_items,
         }
 
 
-@dataclass
-class IdMapper:
-    """Tracks original→new ID mappings during import.
-
-    When importing, we generate new IDs for all entities. This mapper
-    tracks the original ID from the export to the new generated ID,
-    allowing edges to be remapped to reference the correct nodes.
-
-    Attributes:
-        template_map: Maps template name → new template ID.
-        node_map: Maps original node ID → new node ID.
-        source_map: Maps original source ID → new source ID.
-        chunk_map: Maps original chunk ID → new chunk ID.
-    """
-
-    template_map: dict[str, str] = field(default_factory=dict)
-    node_map: dict[str, str] = field(default_factory=dict)
-    source_map: dict[str, str] = field(default_factory=dict)
-    chunk_map: dict[str, str] = field(default_factory=dict)
-
-    def map_template(self, name: str, new_id: str) -> None:
-        """Register a template mapping."""
-        self.template_map[name] = new_id
-
-    def map_node(self, original_id: str, new_id: str) -> None:
-        """Register a node mapping."""
-        self.node_map[original_id] = new_id
-
-    def map_source(self, original_id: str, new_id: str) -> None:
-        """Register a source mapping."""
-        self.source_map[original_id] = new_id
-
-    def map_chunk(self, original_id: str, new_id: str) -> None:
-        """Register a chunk mapping."""
-        self.chunk_map[original_id] = new_id
-
-    def get_template_id(self, name: str) -> str | None:
-        """Get the new ID for a template by name."""
-        return self.template_map.get(name)
-
-    def get_node_id(self, original_id: str) -> str | None:
-        """Get the new ID for a node."""
-        return self.node_map.get(original_id)
-
-    def get_source_id(self, original_id: str) -> str | None:
-        """Get the new ID for a source."""
-        return self.source_map.get(original_id)
-
-    def get_chunk_id(self, original_id: str) -> str | None:
-        """Get the new ID for a chunk."""
-        return self.chunk_map.get(original_id)
-
-    def remap_edge(self, edge_data: dict[str, Any]) -> dict[str, Any]:
-        """Remap edge source and target node IDs.
-
-        Args:
-            edge_data: Edge data dictionary with source_node_id and target_node_id.
-
-        Returns:
-            Edge data with remapped IDs.
-
-        Raises:
-            KeyError: If source or target node ID not found in mapping.
-        """
-        source_id = edge_data.get("source_node_id")
-        target_id = edge_data.get("target_node_id")
-
-        if source_id and source_id not in self.node_map:
-            msg = f"Source node not found in mapping: {source_id}"
-            raise KeyError(msg)
-
-        if target_id and target_id not in self.node_map:
-            msg = f"Target node not found in mapping: {target_id}"
-            raise KeyError(msg)
-
-        return {
-            **edge_data,
-            "source_node_id": self.node_map.get(source_id) if source_id else None,
-            "target_node_id": self.node_map.get(target_id) if target_id else None,
-        }
-
-    def remap_citation(self, citation_data: dict[str, Any]) -> dict[str, Any]:
-        """Remap citation chunk_id reference.
-
-        Args:
-            citation_data: Citation data dictionary with chunk_id.
-
-        Returns:
-            Citation data with remapped chunk_id.
-        """
-        chunk_id = citation_data.get("chunk_id")
-
-        return {
-            **citation_data,
-            "chunk_id": self.chunk_map.get(chunk_id) if chunk_id else None,
-        }
-
-
 __all__ = [
-    "IdMapper",
     "ImportOptions",
     "ImportStats",
 ]

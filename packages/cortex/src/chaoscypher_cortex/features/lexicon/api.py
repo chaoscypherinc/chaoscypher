@@ -43,6 +43,7 @@ from chaoscypher_core.services.lexicon import (
     LexiconService,
     LexiconTokenRequest,
     LexiconUploadRequest,
+    LexiconUploadResponse,
 )
 from chaoscypher_core.utils.url_safety import validate_url_safety
 from chaoscypher_cortex.shared.api.dependencies import (
@@ -388,7 +389,7 @@ async def search_packages(
     sort_by: str = Query("downloads", description="Sort by field"),
     is_public: bool | None = Query(None, description="Filter by visibility"),
     owner_id: str | None = Query(None, description="Filter by owner ID"),
-    package_type: str | None = Query(None, description="Filter by package type"),
+    conformance_class: str | None = Query(None, description="Filter by CCX conformance class"),
 ) -> LexiconSearchResponse:
     """Search for packages on lexicon.
 
@@ -399,7 +400,7 @@ async def search_packages(
         sort_by: Sort results (relevance, stars, downloads, newest, updated, name).
         is_public: Filter by visibility.
         owner_id: Filter by owner ID.
-        package_type: Filter by package type.
+        conformance_class: Filter by CCX conformance class.
         service: Lexicon service instance.
 
     Returns:
@@ -413,7 +414,7 @@ async def search_packages(
             sort_by=sort_by,
             is_public=is_public,
             owner_id=owner_id,
-            package_type=package_type,
+            conformance_class=conformance_class,
         )
         return await service.search(request)
     except LexiconClientError as e:
@@ -530,8 +531,8 @@ async def import_package(
 
 @router.post(
     "/upload",
-    response_model=LexiconPackageInfo,
-    status_code=status.HTTP_201_CREATED,
+    response_model=LexiconUploadResponse,
+    status_code=status.HTTP_202_ACCEPTED,
     responses={
         **COMMON_ERROR_RESPONSES,
         **AUTH_ERROR_RESPONSES,
@@ -548,10 +549,14 @@ async def upload_package(
     file: UploadFile = File(..., description="Package archive (.ccx)"),
     public: bool = Query(True, description="Make package publicly visible"),
     message: str | None = Query(None, description="Upload message"),
-) -> LexiconPackageInfo:
+) -> LexiconUploadResponse:
     """Upload package archive to lexicon.
 
     Requires authentication. The archive must be a valid .ccx file.
+
+    Under the CCX 3.0 hub contract the upload is processed asynchronously,
+    so this returns the queued job envelope (job id + status), not the
+    finished package metadata.
 
     Args:
         file: Package archive file.
@@ -561,7 +566,7 @@ async def upload_package(
         settings: Application settings.
 
     Returns:
-        Uploaded package info.
+        The queued upload job envelope.
     """
     max_upload_bytes = settings.batching.max_upload_bytes
     try:

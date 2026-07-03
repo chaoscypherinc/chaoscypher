@@ -375,7 +375,7 @@ class TestSearchPackages:
             sort_by="downloads",
             is_public=True,
             owner_id=None,
-            package_type=None,
+            conformance_class=None,
         )
 
         mock_service.search.assert_awaited_once()
@@ -387,8 +387,8 @@ class TestSearchPackages:
         assert call_args.is_public is True
 
     @pytest.mark.asyncio
-    async def test_passes_owner_id_and_package_type(self) -> None:
-        """Handler forwards owner_id and package_type to the search request."""
+    async def test_passes_owner_id_and_conformance_class(self) -> None:
+        """Handler forwards owner_id and conformance_class to the search request."""
         mock_service = AsyncMock()
         mock_service.search.return_value = MagicMock()
 
@@ -401,12 +401,12 @@ class TestSearchPackages:
             sort_by="newest",
             is_public=None,
             owner_id="alice-id",
-            package_type="domain",
+            conformance_class="ccx-core",
         )
 
         call_args = mock_service.search.call_args[0][0]
         assert call_args.owner_id == "alice-id"
-        assert call_args.package_type == "domain"
+        assert call_args.conformance_class == "ccx-core"
         assert call_args.page == 2
 
     @pytest.mark.asyncio
@@ -425,7 +425,7 @@ class TestSearchPackages:
                 sort_by="downloads",
                 is_public=None,
                 owner_id=None,
-                package_type=None,
+                conformance_class=None,
             )
 
         assert exc_info.value.status_code == 503
@@ -446,7 +446,7 @@ class TestSearchPackages:
                 sort_by="downloads",
                 is_public=None,
                 owner_id=None,
-                package_type=None,
+                conformance_class=None,
             )
 
         assert exc_info.value.status_code == 404

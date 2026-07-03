@@ -43,7 +43,7 @@ from chaoscypher_core.services.events.health.pause_evaluator import HealthPauseE
 from chaoscypher_core.services.events.health.registry import HealthRegistry
 
 # Export
-from chaoscypher_core.services.export.management.service import ExportRepository
+from chaoscypher_core.services.export.management.service import CcxExporter
 from chaoscypher_core.services.graph.engine.analytics import GraphAnalyticsService
 from chaoscypher_core.services.graph.engine.stats import CountsService
 from chaoscypher_core.services.graph.management.edge import EdgeService
@@ -64,16 +64,10 @@ from chaoscypher_core.services.lexicon import (
 # Package management
 from chaoscypher_core.services.package import (
     ArchiveInfo,
-    ArchiveOptions,
     ArchiveSecurityError,
-    PackageManifest,
-    PackageValidationError,
-    PackageValidationResult,
-    create_archive,
     extract_archive,
     format_size,
     get_archive_info,
-    validate_package_directory,
 )
 
 # Quality scoring
@@ -114,10 +108,10 @@ from chaoscypher_core.services.workflows.triggers.management.service import Trig
 
 __all__ = [
     "ArchiveInfo",
-    "ArchiveOptions",
     "ArchiveSecurityError",
     "AuthConfig",
     "BackupService",
+    "CcxExporter",
     "ChatExecutor",
     "ChatService",
     "ComposeConfig",
@@ -129,7 +123,6 @@ __all__ = [
     "EdgeService",
     "EntityProcessor",
     "EntityQualityScore",
-    "ExportRepository",
     "ExtractionService",
     "GraphAnalyticsService",
     "HealthPauseEvaluator",
@@ -142,11 +135,8 @@ __all__ = [
     "NamespaceMerger",
     "NodeService",
     "PackageInfo",
-    "PackageManifest",
     "PackageResolver",
     "PackageSpec",
-    "PackageValidationError",
-    "PackageValidationResult",
     "QualityScorer",
     "RelationshipQualityScore",
     "ResearchAgent",
@@ -171,11 +161,9 @@ __all__ = [
     "calculate_entity_score",
     "calculate_relationship_score",
     "calculate_source_score",
-    "create_archive",
     "event_bus",
     "extract_archive",
     "format_size",
     "get_archive_info",
     "reconcile_stuck_chats",
-    "validate_package_directory",
 ]

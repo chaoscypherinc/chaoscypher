@@ -22,6 +22,7 @@ silently revert to full-page-queue behaviour.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -183,6 +184,7 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
 
     def _build_engine_settings(
         self,
+        tmp_path: Path,
         *,
         vision_quick_sample_max_pages: int = 20,
         vision_max_pages: int = 100_000,
@@ -191,9 +193,12 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
 
         ``vision_max_pages`` defaults high so the full-mode fan-out ceiling
         never trips in these sampling-focused tests; the dedicated ceiling
-        tests live in ``test_vision_page_ceiling.py``.
+        tests live in ``test_vision_page_ceiling.py``. ``paths.data_dir`` is
+        pinned to a real path — an unpinned MagicMock stringifies into a
+        literal ``<MagicMock ...>`` directory at the repo root (issue #249).
         """
         engine_settings = MagicMock()
+        engine_settings.paths.data_dir = str(tmp_path)
         engine_settings.loader.vision_quick_sample_max_pages = vision_quick_sample_max_pages
         engine_settings.loader.vision_max_pages = vision_max_pages
         return engine_settings
@@ -209,12 +214,12 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
         return adapter
 
     @pytest.mark.asyncio
-    async def test_quick_depth_narrows_work_queue(self, monkeypatch) -> None:
+    async def test_quick_depth_narrows_work_queue(self, monkeypatch, tmp_path: Path) -> None:
         """``extraction_depth='quick'`` -> queue has cap pages, not all 400."""
         monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
 
         documents = self._build_documents_with_pages(400)
-        engine_settings = self._build_engine_settings(vision_quick_sample_max_pages=20)
+        engine_settings = self._build_engine_settings(tmp_path, vision_quick_sample_max_pages=20)
         adapter = self._build_adapter()
 
         # Patch out the queue client — we only care about
@@ -244,12 +249,12 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
         assert len(kwargs["pages"]) == 20
 
     @pytest.mark.asyncio
-    async def test_full_depth_processes_every_page(self, monkeypatch) -> None:
+    async def test_full_depth_processes_every_page(self, monkeypatch, tmp_path: Path) -> None:
         """``extraction_depth='full'`` -> every image page goes to the queue."""
         monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
 
         documents = self._build_documents_with_pages(400)
-        engine_settings = self._build_engine_settings(vision_quick_sample_max_pages=20)
+        engine_settings = self._build_engine_settings(tmp_path, vision_quick_sample_max_pages=20)
         adapter = self._build_adapter()
 
         queue_client = MagicMock()
@@ -277,12 +282,14 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
             assert call.kwargs.get("column") != QualityCounter.VISION_PAGES_SAMPLED_QUICK_MODE.value
 
     @pytest.mark.asyncio
-    async def test_quick_depth_increments_skipped_counter(self, monkeypatch) -> None:
+    async def test_quick_depth_increments_skipped_counter(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
         """The skipped count (total - sampled) must reach the QualityCounter."""
         monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
 
         documents = self._build_documents_with_pages(400)
-        engine_settings = self._build_engine_settings(vision_quick_sample_max_pages=20)
+        engine_settings = self._build_engine_settings(tmp_path, vision_quick_sample_max_pages=20)
         adapter = self._build_adapter()
 
         queue_client = MagicMock()
@@ -311,14 +318,16 @@ class TestApplyVisionProcessingHonorsExtractionDepth:
         assert sampled_quick_calls[0].kwargs["n"] == 380
 
     @pytest.mark.asyncio
-    async def test_quick_depth_under_cap_no_counter_increment(self, monkeypatch) -> None:
+    async def test_quick_depth_under_cap_no_counter_increment(
+        self, monkeypatch, tmp_path: Path
+    ) -> None:
         """When the PDF has fewer images than the cap, no skip happens
         and the counter stays at zero — sampling has nothing to remove.
         """
         monkeypatch.setattr(indexing_handler, "_get_active_vision_model", lambda s: "fake-vision")
 
         documents = self._build_documents_with_pages(10)
-        engine_settings = self._build_engine_settings(vision_quick_sample_max_pages=20)
+        engine_settings = self._build_engine_settings(tmp_path, vision_quick_sample_max_pages=20)
         adapter = self._build_adapter()
 
         queue_client = MagicMock()

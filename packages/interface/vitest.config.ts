@@ -9,6 +9,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    // MUI's ESM build (@mui/material/internal/Transition.mjs from v9.1.1) does a
+    // bare directory import of react-transition-group/TransitionGroupContext that
+    // Node's native ESM resolver rejects under vitest. Inlining both packages
+    // routes them through vite's transform so the import resolves. See PR #212.
+    server: { deps: { inline: ['@mui/material', 'react-transition-group'] } },
     coverage: {
       // v8 provider: faster than istanbul, no babel transform required.
       // Run via `npm run test:coverage` or `make test-cov-interface`.

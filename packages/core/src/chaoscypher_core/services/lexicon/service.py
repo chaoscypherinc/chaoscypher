@@ -33,7 +33,12 @@ from typing import TYPE_CHECKING
 import structlog
 from pydantic import SecretStr
 
-from chaoscypher_core.services.lexicon.client import AuthConfig, LexiconClient, PackageInfo
+from chaoscypher_core.services.lexicon.client import (
+    AuthConfig,
+    LexiconClient,
+    PackageInfo,
+    UploadResult,
+)
 from chaoscypher_core.services.lexicon.models import (
     LexiconAuthConfig,
     LexiconAuthResponse,
@@ -48,6 +53,7 @@ from chaoscypher_core.services.lexicon.models import (
     LexiconSearchResponse,
     LexiconTokenRequest,
     LexiconUploadRequest,
+    LexiconUploadResponse,
 )
 
 
@@ -108,12 +114,29 @@ def _package_info_to_pydantic(info: PackageInfo) -> LexiconPackageInfo:
         owner_name=info.owner_name,
         owner_id=info.owner_id,
         is_public=info.is_public,
-        package_type=info.package_type,
         star_count=info.star_count,
         version_count=info.version_count,
         download_count=info.download_count,
         created_at=info.created_at,
         updated_at=info.updated_at,
+        conformance_classes=info.conformance_classes,
+        is_signed=info.is_signed,
+    )
+
+
+def _upload_result_to_pydantic(result: UploadResult) -> LexiconUploadResponse:
+    """Convert dataclass UploadResult to Pydantic LexiconUploadResponse.
+
+    Args:
+        result: Dataclass upload job envelope.
+
+    Returns:
+        Pydantic upload job envelope.
+    """
+    return LexiconUploadResponse(
+        job_id=result.job_id,
+        status=result.status,
+        message=result.message,
     )
 
 
@@ -451,7 +474,7 @@ class LexiconService:
                 sort_by=request.sort_by,
                 is_public=request.is_public,
                 owner_id=request.owner_id,
-                package_type=request.package_type,
+                conformance_class=request.conformance_class,
             )
 
         return LexiconSearchResponse(
@@ -511,35 +534,39 @@ class LexiconService:
 
     async def upload(
         self, archive_data: bytes, request: LexiconUploadRequest
-    ) -> LexiconPackageInfo:
+    ) -> LexiconUploadResponse:
         """Upload package archive.
+
+        Under the CCX 3.0 hub contract the upload is processed
+        asynchronously, so this returns the queued job envelope (job id +
+        status), not the final package metadata.
 
         Args:
             archive_data: Archive bytes (.ccx content).
             request: Upload request with metadata.
 
         Returns:
-            Uploaded package info.
+            The queued upload job envelope.
 
         Raises:
             LexiconClientError: On upload failure or validation error.
         """
         client = self._get_client()
         async with client:
-            info = await client.upload(
+            result = await client.upload(
                 archive_data=archive_data,
                 public=request.public,
                 message=request.message,
             )
 
         logger.info(
-            "package_uploaded",
-            package=info.name,
-            version=info.version,
+            "package_upload_queued",
+            job_id=result.job_id,
+            status=result.status,
             public=request.public,
         )
 
-        return _package_info_to_pydantic(info)
+        return _upload_result_to_pydantic(result)
 
 
 __all__ = ["LexiconService"]

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import base64
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
 
@@ -14,10 +14,6 @@ from chaoscypher_core.constants import QUEUE_OPERATIONS
 from chaoscypher_core.queue import queue_client
 from chaoscypher_core.queue.handler_spec import HandlerSpec
 from chaoscypher_core.services.events import event_bus
-
-
-if TYPE_CHECKING:
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 
 
 logger = structlog.get_logger(__name__)
@@ -32,17 +28,14 @@ class ExportOperationsService:
 
     def __init__(
         self,
-        graph_repository: GraphRepository | None = None,
         workflow_db: Any = None,
     ) -> None:
         """Initialize export operations service.
 
         Args:
-            graph_repository: GraphRepository for graph operations
             workflow_db: WorkflowDatabase for workflow data
 
         """
-        self.graph_repository = graph_repository
         self.workflow_db = workflow_db
 
         # Export handlers are pure reads (no database writes, no side
@@ -127,6 +120,79 @@ class ExportOperationsService:
         )
 
     # ------------------------------------------------------------------
+    # Export context
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _build_export_context(
+        metadata: dict[str, Any] | None,
+    ) -> tuple[Any, Any, Any, str]:
+        """Build the engine settings + repositories scoped to the target database.
+
+        Returns ``(engine_settings, adapter, graph_repository, database_name)``.
+        The target database is the one captured in the task metadata at ENQUEUE
+        time (cortex's ``current_database`` then), NOT the worker's live global.
+        The worker is a separate process whose graph repository is bound to the
+        database it booted / last hot-reloaded on, so reading ``current_database``
+        here would export whatever the worker happens to be bound to rather than
+        the database the user selected in the UI. Mirrors ``handle_import_ccx``,
+        which likewise reads ``database_name`` from the task metadata. Both the
+        graph repository and the source adapter are (re)built against this
+        database so node/edge/template AND source reads stay in the same scope.
+        """
+        from chaoscypher_core.app_config import get_settings
+        from chaoscypher_core.app_config.engine_factory import build_engine_settings
+        from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+        from chaoscypher_core.repo_factories import get_graph_repository
+
+        engine_settings = build_engine_settings(get_settings())
+        database_name = (metadata or {}).get("database_name") or engine_settings.current_database
+        if database_name != engine_settings.current_database:
+            engine_settings = engine_settings.model_copy(update={"current_database": database_name})
+        adapter = get_sqlite_adapter(database_name)
+        graph_repository = get_graph_repository(adapter.session, database_name)
+        return engine_settings, adapter, graph_repository, database_name
+
+    # ------------------------------------------------------------------
+    # Preview rendering
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _render_preview_png(
+        adapter: Any,
+        *,
+        database_name: str,
+        title: str | None,
+        source_ids: list[str] | None = None,
+    ) -> bytes | None:
+        """Render the graph-snapshot preview PNG bytes for an export.
+
+        Mirrors the v2.0 exporter's preview path: build a ``GraphBreakdown``
+        from the connected adapter and render it to PNG. Returns ``None``
+        (preview omitted) if rendering fails for any reason so a preview
+        failure never blocks the export.
+        """
+        import tempfile
+        from pathlib import Path
+
+        from chaoscypher_core.services.graph.snapshot.build_service import (
+            BuildGraphSnapshotService,
+        )
+        from chaoscypher_core.services.graph.snapshot.renderer import SnapshotRenderer
+
+        try:
+            breakdown = BuildGraphSnapshotService.from_adapter(adapter).build(
+                database_name=database_name,
+                source_ids=source_ids,
+                title=title,
+            )
+            with tempfile.TemporaryDirectory() as tmpdir:
+                preview_path = Path(tmpdir) / "graph_preview.png"
+                SnapshotRenderer().render_png(breakdown, preview_path)
+                return preview_path.read_bytes()
+        except Exception:
+            logger.warning("ccx_export_preview_render_failed", exc_info=True)
+            return None
+
+    # ------------------------------------------------------------------
     # Operation handlers
     # ------------------------------------------------------------------
     async def _export_graph_handler(
@@ -146,10 +212,7 @@ class ExportOperationsService:
             Result dictionary with filename, base64 content, and size
 
         """
-        from chaoscypher_core.app_config import get_settings
-        from chaoscypher_core.app_config.engine_factory import build_engine_settings
-        from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
-        from chaoscypher_core.services.export import ExportRepository
+        from chaoscypher_core.services.export import CcxExporter
 
         include_templates = data.get("include_templates", True)
         include_knowledge = data.get("include_knowledge", True)
@@ -160,8 +223,15 @@ class ExportOperationsService:
         lens_id = data.get("lens_id")
         title = data.get("title")
 
+        # Scope every read to the task's target database (see _build_export_context)
+        # rather than the worker's ambient current_database.
+        engine_settings, adapter, graph_repository, database_name = self._build_export_context(
+            metadata
+        )
+
         logger.info(
             "export_graph_operation_executing",
+            database=database_name,
             lens_id=lens_id,
             include_templates=include_templates,
             include_knowledge=include_knowledge,
@@ -171,24 +241,22 @@ class ExportOperationsService:
             include_embeddings=include_embeddings,
         )
 
-        # Build the EngineSettings view at the operation boundary.
-        # ExportRepository is typed against EngineSettings; threading the
-        # engine view here (rather than the app Settings singleton) keeps the
-        # engine free of the backend Settings type post-Tier-2 unification.
-        engine_settings = build_engine_settings(get_settings())
-
-        # Use singleton adapter (already connected, no disconnect needed)
-        adapter = get_sqlite_adapter(engine_settings.current_database)
-
-        export_repository = ExportRepository(
-            graph_repository=self.graph_repository,
+        exporter = CcxExporter(
+            graph_repository=graph_repository,
             settings=engine_settings,
             workflow_db=self.workflow_db,
             sources_repository=adapter,  # Implements SourceStorageProtocol
-            adapter=adapter,
         )
 
-        zip_buffer = export_repository.export_graph(
+        # Render the graph-snapshot preview PNG from the connected adapter and
+        # supply it to the exporter (CCX 3.0 ``assets/graph_preview.png``).
+        preview_png = self._render_preview_png(
+            adapter,
+            database_name=database_name,
+            title=title,
+        )
+
+        ccx_bytes = exporter.export(
             include_templates=include_templates,
             include_knowledge=include_knowledge,
             include_lenses=include_lenses,
@@ -197,20 +265,20 @@ class ExportOperationsService:
             include_embeddings=include_embeddings,
             lens_id=lens_id,
             title=title,
+            preview_png=preview_png,
         )
 
-        zip_buffer.seek(0)
-        zip_content = zip_buffer.read()
+        zip_content = ccx_bytes
         encoded_content = base64.b64encode(zip_content).decode("utf-8")
 
-        filename = export_repository.get_export_filename()
+        filename = exporter.get_export_filename()
 
         event_bus.emit(
             "task_completed",
             action="Graph export complete",
             source="worker",
             details={"filename": filename, "size_bytes": len(zip_content)},
-            database_name=engine_settings.current_database,
+            database_name=database_name,
         )
 
         return {
@@ -284,50 +352,57 @@ class ExportOperationsService:
             Result dictionary with filename, base64 content, and size
 
         """
-        from chaoscypher_core.app_config import get_settings
-        from chaoscypher_core.app_config.engine_factory import build_engine_settings
-        from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
-        from chaoscypher_core.services.export import ExportRepository
+        from chaoscypher_core.services.export import CcxExporter
 
         source_ids = data.get("source_ids", [])
         include_templates = data.get("include_templates", True)
         include_embeddings = data.get("include_embeddings", False)
         title = data.get("title")
 
+        # Scope every read to the task's target database (see _build_export_context)
+        # rather than the worker's ambient current_database.
+        engine_settings, adapter, graph_repository, database_name = self._build_export_context(
+            metadata
+        )
+
         logger.info(
             "export_by_sources_operation_executing",
+            database=database_name,
             source_count=len(source_ids),
             include_templates=include_templates,
             include_embeddings=include_embeddings,
         )
 
-        # Build the EngineSettings view at the operation boundary (see the
-        # graph-export handler above for the rationale).
-        engine_settings = build_engine_settings(get_settings())
-
-        # Use singleton adapter (already connected, no disconnect needed)
-        adapter = get_sqlite_adapter(engine_settings.current_database)
-
-        export_repository = ExportRepository(
-            graph_repository=self.graph_repository,
+        exporter = CcxExporter(
+            graph_repository=graph_repository,
             settings=engine_settings,
             workflow_db=self.workflow_db,
             sources_repository=adapter,  # Implements SourceStorageProtocol
-            adapter=adapter,
         )
 
-        zip_buffer = export_repository.export_by_sources(
+        preview_png = self._render_preview_png(
+            adapter,
+            database_name=database_name,
+            title=title,
+            source_ids=source_ids,
+        )
+
+        ccx_bytes = exporter.export(
             source_ids=source_ids,
             include_templates=include_templates,
+            include_sources=True,
             include_embeddings=include_embeddings,
+            # Source-scoped export: lenses/workflows are not source-owned.
+            include_lenses=False,
+            include_workflows=False,
             title=title,
+            preview_png=preview_png,
         )
 
-        zip_buffer.seek(0)
-        zip_content = zip_buffer.read()
+        zip_content = ccx_bytes
         encoded_content = base64.b64encode(zip_content).decode("utf-8")
 
-        filename = f"sources_export_{len(source_ids)}_{export_repository.get_export_filename()}"
+        filename = f"sources_export_{len(source_ids)}_{exporter.get_export_filename()}"
 
         event_bus.emit(
             "task_completed",
@@ -338,7 +413,7 @@ class ExportOperationsService:
                 "source_count": len(source_ids),
                 "size_bytes": len(zip_content),
             },
-            database_name=engine_settings.current_database,
+            database_name=database_name,
         )
 
         return {

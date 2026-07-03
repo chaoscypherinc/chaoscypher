@@ -161,6 +161,10 @@ interface MemberChunkRowProps {
   showDivider: boolean;
   /** Tab-level "Show removed text" switch state (applies to all chunks). */
   showRemoved: boolean;
+  /** The citation deep-link's target chunk id (null when none). */
+  highlightChunkId?: string | null;
+  /** Sentence ref(s) to highlight — only applied to the highlighted chunk. */
+  highlightSentRef?: string | null;
   imageUrl: string | null;
   expectedImage: boolean;
   pageIsVisionFailed: boolean;
@@ -182,6 +186,8 @@ function MemberChunkRow({
   chunk,
   showDivider,
   showRemoved,
+  highlightChunkId,
+  highlightSentRef,
   imageUrl,
   expectedImage,
   pageIsVisionFailed,
@@ -191,6 +197,10 @@ function MemberChunkRow({
   const { data: detail } = useChunkDetail(sourceId, chunk.id);
   const rawContent =
     (detail as { raw_content?: string | null } | undefined)?.raw_content ?? null;
+  const chunkMetadata =
+    (detail as { chunk_metadata?: Record<string, unknown> | null } | undefined)?.chunk_metadata ??
+    null;
+  const isHighlighted = !!highlightChunkId && chunk.id === highlightChunkId;
 
   return (
     <Box>
@@ -216,7 +226,13 @@ function MemberChunkRow({
               </Typography>
             )}
           </Box>
-          <ChunkInputView cleaned={chunk.content} rawContent={rawContent} showRemoved={showRemoved} />
+          <ChunkInputView
+            cleaned={chunk.content}
+            rawContent={rawContent}
+            showRemoved={showRemoved}
+            highlightSentRef={isHighlighted ? highlightSentRef : null}
+            chunkMetadata={isHighlighted ? chunkMetadata : null}
+          />
         </Box>
         {/* Thumbnail column (renders nothing when the source has no per-page images). */}
         <ChunkPageThumbnail
@@ -239,6 +255,8 @@ interface GroupExtractionBodyProps {
   relationships: InferredRelationship[];
   tasks: ExtractionTask[];
   showRemoved: boolean;
+  highlightChunkId?: string | null;
+  highlightSentRef?: string | null;
   visionEnabled?: boolean;
   hasAnyImages: boolean;
   pageToImageUrl: Map<number, string>;
@@ -264,6 +282,8 @@ function GroupExtractionBody({
   relationships,
   tasks,
   showRemoved,
+  highlightChunkId,
+  highlightSentRef,
   visionEnabled,
   hasAnyImages,
   pageToImageUrl,
@@ -351,6 +371,8 @@ function GroupExtractionBody({
             chunk={chunk}
             showDivider={chunkIdx > 0}
             showRemoved={showRemoved}
+            highlightChunkId={highlightChunkId}
+            highlightSentRef={highlightSentRef}
             imageUrl={imageUrl}
             expectedImage={expectedImage}
             pageIsVisionFailed={pageIsVisionFailed}
@@ -392,6 +414,8 @@ export function ChunksTab({ source, highlightChunkId }: ChunksTabProps) {
   // local state.
   const [searchParams] = useSearchParams();
   const highlightChunkIndexParam = searchParams.get('highlight_chunk_index');
+  // Citation deep-links append ?sentence=Sn so the cited sentence is marked.
+  const highlightSentRef = searchParams.get('sentence');
   const highlightChunkIndex = useMemo(() => {
     if (highlightChunkIndexParam == null) return null;
     const parsed = Number.parseInt(highlightChunkIndexParam, 10);
@@ -834,6 +858,8 @@ export function ChunksTab({ source, highlightChunkId }: ChunksTabProps) {
                       relationships={relationships}
                       tasks={extractionTasks}
                       showRemoved={showRemoved}
+                      highlightChunkId={effectiveHighlightChunkId}
+                      highlightSentRef={highlightSentRef}
                       visionEnabled={visionEnabled}
                       hasAnyImages={hasAnyImages}
                       pageToImageUrl={pageToImageUrl}

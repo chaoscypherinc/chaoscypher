@@ -104,6 +104,14 @@ export interface ConstellationLayoutOptions {
    * single-source layout (no inter-source forces). Default 1.
    */
   clusterSpread?: number;
+  /**
+   * Resolve a node's colour from its `template_id` so the constellation matches
+   * another surface's template palette (e.g. the Overview distribution charts,
+   * which colour each type by its template's real colour). Return a falsy value
+   * to fall back to the built-in `colorFromId` hash for that node. The dashboard
+   * omits this and keeps the hash palette. Default: hash only.
+   */
+  resolveColor?: (templateId: string) => string | null | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -578,7 +586,11 @@ function saveCachedLayout(
 // ---------------------------------------------------------------------------
 
 /** Convert positioned sim nodes to GraphNode format (size/opacity by count). */
-function buildGraphNodes(simNodes: SimNode[], nodeCount: number): GraphNode[] {
+function buildGraphNodes(
+  simNodes: SimNode[],
+  nodeCount: number,
+  resolveColor?: (templateId: string) => string | null | undefined,
+): GraphNode[] {
   const baseRadius =
     nodeCount <= 50 ? 5 : nodeCount <= 100 ? 3.5 : nodeCount <= 200 ? 2.8 : 2.2;
   const baseOpacity =
@@ -595,7 +607,7 @@ function buildGraphNodes(simNodes: SimNode[], nodeCount: number): GraphNode[] {
       x: nx,
       y: ny,
       radius: baseRadius * variation,
-      color: colorFromId(n.templateId),
+      color: resolveColor?.(n.templateId) || colorFromId(n.templateId),
       opacity: baseOpacity * (0.6 + variation * 0.4),
       ...(n.z !== undefined ? { z: n.z } : {}),
     };
@@ -624,6 +636,7 @@ export function computeConstellationLayout(
     organicRelax = false,
     assignDepth = false,
     clusterSpread = 1,
+    resolveColor,
   } = opts;
 
   if (rawNodes.length === 0) return { nodes: [], edges: [] };
@@ -691,7 +704,7 @@ export function computeConstellationLayout(
   }
 
   const nodeCount = simNodes.length;
-  const graphNodes = buildGraphNodes(simNodes, nodeCount);
+  const graphNodes = buildGraphNodes(simNodes, nodeCount, resolveColor);
   const nodeMap = new Map(graphNodes.map((n) => [n.id, n]));
 
   // Convert to GraphEdge format — fade opacity by length.

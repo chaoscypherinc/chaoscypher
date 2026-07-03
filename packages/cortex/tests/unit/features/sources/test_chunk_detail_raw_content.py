@@ -214,3 +214,67 @@ async def test_chunk_response_model_declares_raw_content() -> None:
     field = fields["raw_content"]
     # str | None means the field annotation accepts None
     assert field.default is None, "raw_content default must be None to handle pre-0040 legacy rows"
+
+
+# ---------------------------------------------------------------------------
+# Detail endpoint surfaces chunk_metadata (sentence_offsets) for highlighting
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_chunk_detail_includes_chunk_metadata() -> None:
+    """Detail endpoint surfaces chunk_metadata so the source page can highlight
+    the exact cited sentence on a citation deep-link.
+
+    ``get_chunk`` loads the full DocumentChunk (no ``load_only``), so its dict
+    carries ``chunk_metadata`` (which holds ``sentence_offsets``). The endpoint
+    declares ``response_model=ChunkResponse``, which silently drops any field
+    the model doesn't declare — so the model must declare ``chunk_metadata``.
+    """
+    from chaoscypher_cortex.features.sources.models import ChunkResponse
+
+    meta = {"sentence_offsets": [{"start": 0, "end": 15}, {"start": 16, "end": 32}]}
+    row = _chunk_row()
+    row["chunk_metadata"] = meta
+    service = _make_service(chunk_detail=row)
+
+    result = await get_chunk(
+        _=MagicMock(),
+        source_id="src-1",
+        chunk_id="chk-1",
+        service=service,  # type: ignore[arg-type]
+    )
+
+    serialized = ChunkResponse.model_validate(result).model_dump()
+    assert serialized.get("chunk_metadata") == meta
+
+
+@pytest.mark.asyncio
+async def test_chunk_list_omits_chunk_metadata() -> None:
+    """List path must NOT project chunk_metadata (JSON, payload-size concern)."""
+    service = _make_service(list_rows=[_list_row()])
+    await get_source_chunks(
+        _=MagicMock(),
+        source_id="src-1",
+        service=service,  # type: ignore[arg-type]
+        pagination=(1, 50),
+        status=None,
+    )
+    list_dict = service.get_chunks.return_value["chunks"][0]
+    assert "chunk_metadata" not in list_dict, (
+        "list service must not project chunk_metadata — load_only() in "
+        "get_chunks_by_source excludes the JSON column for payload size"
+    )
+
+
+@pytest.mark.asyncio
+async def test_chunk_response_model_declares_chunk_metadata() -> None:
+    """ChunkResponse must declare chunk_metadata as an optional dict."""
+    from chaoscypher_cortex.features.sources.models import ChunkResponse
+
+    fields = ChunkResponse.model_fields
+    assert "chunk_metadata" in fields, (
+        "ChunkResponse must declare chunk_metadata so the detail endpoint can "
+        "surface sentence_offsets for citation sentence-highlighting"
+    )
+    assert fields["chunk_metadata"].default is None

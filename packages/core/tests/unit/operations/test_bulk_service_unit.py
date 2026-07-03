@@ -252,11 +252,7 @@ class TestExecuteBatchDelete:
     def test_success(self) -> None:
         service = _make_service()
         repo = MagicMock()
-        repo.delete_nodes_batch.return_value = {
-            "nodes_deleted": 1,
-            "not_found": [],
-            "errors": [],
-        }
+        repo.delete_nodes_batch.return_value = 1  # row count — the keyword-only int API
         results, errors = service._execute_batch_delete(
             delete_ids=["a"],
             delete_idx_map={"a": 0},
@@ -264,7 +260,32 @@ class TestExecuteBatchDelete:
             batch_method="delete_nodes_batch",
             graph_repo=repo,
         )
+        # Must be called by the entity's id-list keyword, NOT positionally. The
+        # real GraphRepository.delete_*_batch are keyword-only, so a positional
+        # call raised "takes 1 positional argument but 2 were given".
+        repo.delete_nodes_batch.assert_called_once_with(node_ids=["a"])
         assert results == [{"operation": "delete", "id": "a"}]
+        assert errors == []
+
+    def test_template_batch_delete_uses_keyword_api(self) -> None:
+        """Regression: deleting leftover templates hit the keyword-only API.
+
+        ``GraphRepository.delete_templates_batch(*, template_ids)`` is keyword
+        only and returns a count; the bulk path used to call it positionally
+        (``method(delete_ids)``) and expect a dict, raising a TypeError.
+        """
+        service = _make_service()
+        repo = MagicMock()
+        repo.delete_templates_batch.return_value = 2
+        results, errors = service._execute_batch_delete(
+            delete_ids=["t1", "t2"],
+            delete_idx_map={"t1": 0, "t2": 1},
+            entity_type="template",
+            batch_method="delete_templates_batch",
+            graph_repo=repo,
+        )
+        repo.delete_templates_batch.assert_called_once_with(template_ids=["t1", "t2"])
+        assert {r["id"] for r in results} == {"t1", "t2"}
         assert errors == []
 
     def test_exception_marks_all_failed(self) -> None:
@@ -281,6 +302,32 @@ class TestExecuteBatchDelete:
         assert results == []
         assert len(errors) == 2
         assert all(e["error"] == "Batch delete failed" for e in errors)
+
+    def test_foreign_key_error_reports_in_use(self) -> None:
+        """A FK RESTRICT violation surfaces as 'in use', not a generic failure.
+
+        Deleting a template still referenced by a node raises the store's
+        ``IntegrityError``; the user should be told it is in use (so they detach
+        it first), not see an opaque "Batch delete failed".
+        """
+        service = _make_service()
+        repo = MagicMock()
+
+        class IntegrityError(Exception):  # mirrors SQLAlchemy's exception type name
+            pass
+
+        repo.delete_templates_batch.side_effect = IntegrityError("FOREIGN KEY constraint failed")
+        results, errors = service._execute_batch_delete(
+            delete_ids=["t1"],
+            delete_idx_map={"t1": 0},
+            entity_type="template",
+            batch_method="delete_templates_batch",
+            graph_repo=repo,
+        )
+        assert results == []
+        assert len(errors) == 1
+        assert "still in use" in errors[0]["error"]
+        assert "template" in errors[0]["error"]
 
 
 # ---------------------------------------------------------------------------

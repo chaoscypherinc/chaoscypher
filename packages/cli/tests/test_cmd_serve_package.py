@@ -6,14 +6,13 @@
 Covers:
 - commands/runtime/serve.py — happy path (cortex available + fallback), error paths
 - mcp/command.py — wiring, happy path with asyncio.run mocked, mode/flags
-- commands/package/load.py — happy path, merge mode, .cxl rejection, error path, display
+- commands/package/load.py — happy path, merge mode, error path, display (CcxImporter)
 - commands/package/export.py — happy path, auto-filename, .ccx extension fix, empty guard,
-  _display_export_results helper
+  _display_export_results helper (CcxExporter; export() returns raw bytes)
 """
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -688,13 +687,14 @@ class TestMcpHappyPath:
 class TestPackageLoadHappyPath:
     """load imports archive, calls service, exits 0 on success.
 
-    ImportService and ImportOptions are imported LAZILY inside the load()
+    CcxImporter and ImportOptions are imported LAZILY inside the load()
     function body with ``from chaoscypher_core.services.package.importer
-    import ...``, so we patch them at their source module paths.
+    import ...``; these tests patch ``asyncio.run`` so the importer is never
+    actually invoked.
     """
 
     def test_load_calls_import_service(self, tmp_path: Path) -> None:
-        """Load instantiates ImportService and calls asyncio.run on exit 0."""
+        """Load instantiates CcxImporter and calls asyncio.run on exit 0."""
         runner = CliRunner()
         ccx_file = tmp_path / "test.ccx"
         ccx_file.write_bytes(b"FAKE_CCX_DATA")
@@ -787,10 +787,9 @@ class TestPackageLoadHappyPath:
         mock_ctx = _make_mock_ctx()
         stats = _make_import_stats()
 
-        # Capture the ImportOptions call by patching at the importer __init__.
         # The load() command does: from chaoscypher_core.services.package.importer
-        #   import ImportOptions, ImportService
-        # so we intercept via the package's __init__ re-export.
+        #   import CcxImporter, ImportOptions
+        # asyncio.run is patched so the importer is never invoked.
         with (
             patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
             patch(
@@ -828,23 +827,7 @@ class TestPackageLoadHappyPath:
 
 
 class TestPackageLoadErrors:
-    """load exits 1 on .cxl files and import failures."""
-
-    def test_load_rejects_cxl_extension(self, tmp_path: Path) -> None:
-        runner = CliRunner()
-        cxl_file = tmp_path / "old.cxl"
-        cxl_file.write_bytes(b"OLD_FORMAT")
-
-        mock_ctx = _make_mock_ctx()
-
-        with (
-            patch("chaoscypher_cli.commands.package.load.get_context", return_value=mock_ctx),
-            patch("chaoscypher_cli.commands.package.load.sys.exit") as mock_exit,
-        ):
-            result = runner.invoke(load, [str(cxl_file)])
-
-        mock_exit.assert_any_call(1)
-        assert ".cxl" in result.output or "replaced" in result.output.lower()
+    """load exits 1 on import failures."""
 
     def test_load_exits_1_on_import_error_stats(self, tmp_path: Path) -> None:
         runner = CliRunner()
@@ -957,48 +940,55 @@ class TestPackageLoadErrors:
 
 
 class TestPackageExportHappyPath:
-    """export writes a .ccx file to disk and exits 0."""
+    """export writes a .ccx file to disk and exits 0.
 
-    def test_export_calls_export_graph_and_writes_file(self, tmp_path: Path) -> None:
+    The export() command lazily imports CcxExporter via
+    ``from chaoscypher_core.services.export import CcxExporter`` inside the
+    function body, then calls ``service.export(...) -> bytes`` and writes
+    those bytes to the .ccx path. These tests patch the CcxExporter class at
+    its source module and stub ``export()`` to return raw bytes (no BytesIO —
+    the CCX 3.0 exporter returns ``bytes`` directly).
+    """
+
+    def test_export_calls_exporter_and_writes_file(self, tmp_path: Path) -> None:
         runner = CliRunner()
         output_file = tmp_path / "my-export.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"PK\x03\x04FAKE_ZIP_DATA")
+        ccx_bytes = b"PK\x03\x04FAKE_CCX_DATA"
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = ccx_bytes
         mock_service.get_export_filename.return_value = "chaoscypher-export.ccx"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file)])
 
         assert result.exit_code == 0, result.output
-        mock_service.export_graph.assert_called_once()
+        mock_service.export.assert_called_once()
         assert output_file.exists()
-        assert output_file.read_bytes() == b"PK\x03\x04FAKE_ZIP_DATA"
+        assert output_file.read_bytes() == ccx_bytes
 
     def test_export_output_contains_success_message(self, tmp_path: Path) -> None:
         runner = CliRunner()
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
         mock_service.get_export_filename.return_value = "default.ccx"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
@@ -1011,16 +1001,15 @@ class TestPackageExportHappyPath:
         runner = CliRunner()
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
         mock_service.get_export_filename.return_value = "chaoscypher-20260531.ccx"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
@@ -1036,16 +1025,15 @@ class TestPackageExportHappyPath:
         output_no_ext = tmp_path / "my-export"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
         mock_service.get_export_filename.return_value = "default.ccx"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
@@ -1059,22 +1047,21 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file)])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["include_embeddings"] is False
 
     def test_export_embeddings_flag(self, tmp_path: Path) -> None:
@@ -1082,22 +1069,21 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file), "--embeddings"])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["include_embeddings"] is True
 
     def test_export_lens_id_forwarded(self, tmp_path: Path) -> None:
@@ -1105,15 +1091,14 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
@@ -1122,7 +1107,7 @@ class TestPackageExportHappyPath:
             )
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["lens_id"] == "lens_abc123"
 
     def test_export_title_forwarded(self, tmp_path: Path) -> None:
@@ -1130,22 +1115,21 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file), "--title", "My Research"])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["title"] == "My Research"
 
     def test_export_no_workflows_flag(self, tmp_path: Path) -> None:
@@ -1153,22 +1137,21 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file), "--no-workflows"])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["include_workflows"] is False
 
     def test_export_shows_file_size_in_output(self, tmp_path: Path) -> None:
@@ -1176,15 +1159,14 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"X" * 2048)
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"X" * 2048
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
@@ -1199,22 +1181,21 @@ class TestPackageExportHappyPath:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx()
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):
             result = runner.invoke(export, ["--output", str(output_file)])
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_service.export_graph.call_args[1]
+        call_kwargs = mock_service.export.call_args[1]
         assert call_kwargs["include_sources"] is False
 
 
@@ -1230,7 +1211,7 @@ class TestPackageExportErrors:
         with (
             patch("chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx),
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 side_effect=RuntimeError("Graph DB error"),
             ),
             patch("chaoscypher_cli.commands.package.export.sys.exit") as mock_exit,
@@ -1267,17 +1248,16 @@ class TestPackageExportErrors:
         output_file = tmp_path / "out.ccx"
 
         mock_ctx = _make_mock_ctx("analytics")
-        fake_zip = io.BytesIO(b"ZIP")
 
         mock_service = MagicMock()
-        mock_service.export_graph.return_value = fake_zip
+        mock_service.export.return_value = b"CCX"
 
         with (
             patch(
                 "chaoscypher_cli.commands.package.export.get_context", return_value=mock_ctx
             ) as mock_gc,
             patch(
-                "chaoscypher_core.services.export.ExportRepository",
+                "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
             ),
         ):

@@ -995,6 +995,111 @@ def _append_marker_before_trailing_punct(paragraph: str, marker: str) -> str:
     return f"{stripped}{marker}{trailing}"
 
 
+# Quoted spans used only for citation RELOCATION matching. The floor is lower
+# (6 chars) than _QUOTED_SPAN_RE because relocation matches a paragraph quote
+# against the SPECIFIC chunk a citation already points at — confirming "does
+# this chunk contain this paragraph's quote" rather than searching the whole
+# corpus — so short distinctive quotes (e.g. "Antichrist") are safe here.
+_RELOCATE_QUOTE_RE = re.compile(r"""(?:"|“|«)([^"”»\n]{6,}?)(?:"|”|»)""")
+
+
+def _relocate_quoted_spans(text: str) -> list[str]:
+    """Quoted phrases inside a paragraph, used to find a citation's home."""
+    return [m.group(1).strip() for m in _RELOCATE_QUOTE_RE.finditer(text)]
+
+
+def _is_marker_only_para(text: str) -> bool:
+    """True when a paragraph is nothing but citation markers (whitespace aside)."""
+    return bool(text.strip()) and not _LOOSE_CITE_PATTERN.sub("", text).strip()
+
+
+def _relocate_home_index(
+    chunk_id: str,
+    paras: list[str],
+    chunk_data_map: dict[str, dict[str, Any]],
+) -> int | None:
+    """Earliest prose paragraph quoting a phrase that appears in the cited chunk.
+
+    Returns the paragraph index, or ``None`` when no paragraph quotes a
+    phrase found in the chunk's text. The model often keeps the sentence's
+    own punctuation inside the quotes (e.g. ``"...run over."``) while the
+    chunk stores it without, so match on punctuation-trimmed candidates.
+    """
+    original = (chunk_data_map.get(chunk_id) or {}).get("original_content") or ""
+    if not original:
+        return None
+    lowered = original.lower()
+    for idx, para in enumerate(paras):
+        if _is_marker_only_para(para):
+            continue
+        for span in _relocate_quoted_spans(para):
+            for cand in _quote_match_candidates(span):
+                if len(cand) >= 6 and cand.lower() in lowered:
+                    return idx
+    return None
+
+
+def relocate_grouped_citations(
+    content: str,
+    tool_results: list[dict[str, Any]],
+) -> str:
+    """Move citations the model dumped at the end to the paragraph they support.
+
+    LLMs sometimes group every ``[[cite:...]]`` marker at the end of the answer
+    (one trailing the last paragraph, the rest orphaned on their own lines)
+    instead of placing each after the claim it supports. That leaves the quoted
+    paragraphs above looking unsourced and renders lone floating chips.
+
+    For each citation marker this finds its *home* paragraph — the earliest
+    prose paragraph that quotes a phrase appearing in the cited chunk's text —
+    and moves the marker to the end of that paragraph. A marker already in its
+    home paragraph is left untouched; a marker with no identifiable home stays
+    where it is. Paragraphs left holding only markers are dissolved.
+
+    Runs AFTER ``normalize_chunk_references`` (markers carry real UUIDs) and
+    BEFORE the blockquote / paragraph injectors.
+
+    Args:
+        content: LLM response with UUID-resolved citations.
+        tool_results: Tool result messages containing chunk data.
+
+    Returns:
+        Content with grouped / orphaned citations relocated to their home
+        paragraphs.
+
+    """
+    if not tool_results:
+        return content
+    chunk_data_map = _collect_chunk_data_from_tool_results(tool_results)
+    if not chunk_data_map:
+        return content
+
+    paras = re.split(r"\n\s*\n", content)
+    new_paras = list(paras)
+    appends: dict[int, list[str]] = {}
+    changed = False
+
+    for cur_idx, para in enumerate(paras):
+        for match in CHUNK_CITATION_PATTERN.finditer(para):
+            marker = match.group(0)
+            home = _relocate_home_index(match.group(1), paras, chunk_data_map)
+            if home is None or home == cur_idx:
+                continue
+            new_paras[cur_idx] = new_paras[cur_idx].replace(marker, "", 1)
+            appends.setdefault(home, []).append(marker)
+            changed = True
+
+    if not changed:
+        return content
+
+    for idx, markers in appends.items():
+        body = new_paras[idx].rstrip()
+        new_paras[idx] = _append_marker_before_trailing_punct(body, " " + " ".join(markers))
+
+    result = "\n\n".join(para for para in new_paras if para.strip())
+    return _tidy_removal_whitespace(result)
+
+
 def _strip_blockquotes_before_citations(content: str) -> str:
     """Remove blockquote text preceding or containing citation markers.
 
@@ -1336,6 +1441,7 @@ __all__ = [
     "inject_citations_for_uncited_paragraphs",
     "inject_citations_into_blockquotes",
     "normalize_chunk_references",
+    "relocate_grouped_citations",
     "strip_duplicated_citation_text",
     "strip_malformed_citations",
 ]

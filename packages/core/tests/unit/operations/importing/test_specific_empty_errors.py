@@ -65,6 +65,9 @@ async def test_scanned_pdf_with_vision_off_says_enable_vision(
     adapter = MagicMock()
     chunking_service = MagicMock()
     engine_settings = MagicMock()
+    # Pin data_dir so _run_indexing's Path(engine_settings.paths.data_dir)
+    # writes land inside tmp_path, not a "<MagicMock ...>" dir (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings = MagicMock()
 
     _patch_pipeline_internals(
@@ -110,6 +113,9 @@ async def test_scanned_pdf_with_vision_on_blames_vision_model(
     adapter = MagicMock()
     chunking_service = MagicMock()
     engine_settings = MagicMock()
+    # Pin data_dir so _run_indexing's Path(engine_settings.paths.data_dir)
+    # writes land inside tmp_path, not a "<MagicMock ...>" dir (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings = MagicMock()
 
     _patch_pipeline_internals(
@@ -153,6 +159,9 @@ async def test_image_upload_with_vision_off_says_enable_vision(
     adapter = MagicMock()
     chunking_service = MagicMock()
     engine_settings = MagicMock()
+    # Pin data_dir so _run_indexing's Path(engine_settings.paths.data_dir)
+    # writes land inside tmp_path, not a "<MagicMock ...>" dir (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings = MagicMock()
 
     _patch_pipeline_internals(
@@ -188,6 +197,9 @@ async def test_generic_empty_content_mentions_normalization(
     adapter = MagicMock()
     chunking_service = MagicMock()
     engine_settings = MagicMock()
+    # Pin data_dir so _run_indexing's Path(engine_settings.paths.data_dir)
+    # writes land inside tmp_path, not a "<MagicMock ...>" dir (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings = MagicMock()
 
     _patch_pipeline_internals(

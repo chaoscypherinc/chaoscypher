@@ -13,14 +13,10 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, File, Query, UploadFile, status
-from sqlmodel import Session
 
 from chaoscypher_core.app_config import Settings, get_settings
 from chaoscypher_core.operations.export_operations_service import (
     ExportOperationsService,
-)
-from chaoscypher_core.repo_factories import (
-    get_graph_repository,
 )
 from chaoscypher_core.utils.disk import check_disk_space
 from chaoscypher_cortex.features.export.models import ExportResponse, ImportResponse
@@ -31,25 +27,21 @@ from chaoscypher_cortex.shared.api.responses import (
     SERVICE_UNAVAILABLE_RESPONSE,
 )
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
-from chaoscypher_cortex.shared.database import get_current_session
 
 
 router = APIRouter()
 
 
 def get_export_service(
-    session: Annotated[Session, Depends(get_current_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ExportService:
     """Get ExportService instance (VSA pattern).
 
     Creates service with operations manager from shared infrastructure.
     """
-    graph_repo = get_graph_repository(session, settings.current_database)
-
-    export_service = ExportOperationsService(
-        graph_repository=graph_repo,
-    )
+    # ExportOperationsService only enqueues here; the worker builds its own
+    # task-database-scoped repositories when the export actually runs.
+    export_service = ExportOperationsService()
 
     return ExportService(export_service, settings)
 
@@ -79,7 +71,7 @@ async def create_export(
 ) -> ExportResponse:
     """Queue a knowledge graph export as a .ccx file.
 
-    **Creates a compressed package (CCX v2.0 format)** containing selected graph components.
+    **Creates a compressed package (CCX 3.0 format)** containing selected graph components.
 
     **Query Parameters:**
     - `include_templates`: Include user-created templates
@@ -128,19 +120,31 @@ async def create_import(
     file: UploadFile = File(
         ..., description="CCX package file"
     ),  # FastAPI File() is safe as default
-    merge: bool = Query(False, description="Merge with existing data (True) or replace (False)"),
+    merge: bool = Query(
+        False,
+        description=(
+            "Template handling only: reuse a local template that shares a name "
+            "(True) or always create fresh, self-contained templates (False). "
+            "Import is ALWAYS additive — entities upsert by IRI; existing data "
+            "is never cleared."
+        ),
+    ),
 ) -> ImportResponse:
     """Queue a knowledge graph package import.
 
-    **Uploads and processes a .ccx file (CCX v2.0 format)** containing graph data.
+    **Uploads and processes a .ccx file (CCX 3.0 format)** containing graph data.
+
+    **Import is additive (upsert-by-IRI):**
+    Imported templates, entities, edges, and sources are merged into the current
+    database, matched by their stable CCX IRI — re-importing the same package
+    updates rows rather than duplicating them, and existing data is never
+    cleared. Import package after package to accumulate them.
 
     **Request:**
     - `file`: .ccx package file to import
-    - `merge`: Whether to merge (True) or replace (False) existing data
-
-    **Merge vs Replace:**
-    - **Merge (True)**: Adds imported data to existing graph
-    - **Replace (False)**: Clears existing data before importing
+    - `merge`: Template-handling policy only (import is additive regardless):
+      - **True**: reuse a local template that shares a name with a package template
+      - **False** (default): always create fresh, self-contained templates
 
     **Returns:**
     - 202 Accepted: Task queued with task_id for status tracking

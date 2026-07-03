@@ -13,6 +13,7 @@ from sqlmodel import col, delete, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
 from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
+from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
 from chaoscypher_core.models import Node, NodeCreate, NodePosition, NodeUpdate
 
 
@@ -94,6 +95,178 @@ class NodeOperationsMixin(GraphMixinBase):
 
         # Convert to Pydantic model
         return self._db_node_to_model(db_node)
+
+    def get_node_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict | None:
+        """Look up a node by its stable CCX IRI.
+
+        Returns the ORM-row dict (via ``entity_to_dict``) rather than a
+        ``Node`` Pydantic model so the ``ccx_iri`` column survives — the
+        domain ``Node`` model has no ``ccx_iri`` field. Scoped to
+        ``(database_name, ccx_iri)`` for multi-database isolation.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the node.
+
+        Returns:
+            The node row dict (including ``ccx_iri``), or ``None`` if no row
+            in ``database_name`` carries that IRI.
+        """
+        statement = select(GraphNode).where(
+            GraphNode.ccx_iri == ccx_iri,
+            GraphNode.database_name == database_name,
+        )
+        db_node = self.session.exec(statement).first()
+        if db_node is None:
+            return None
+        return entity_to_dict(db_node)
+
+    def upsert_node_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        node_create: NodeCreate,
+        database_name: str,
+        source_id: str | None = None,
+    ) -> dict:
+        """Idempotently create or update a node keyed by CCX IRI.
+
+        The upsert primitive the CCX 3.0 importer relies on: SELECT by
+        ``(database_name, ccx_iri)``; if a row exists, UPDATE its
+        ``label`` / ``properties`` / ``entity_type`` (incoming-wins) and
+        return it (no duplicate); otherwise CREATE a new node with the
+        ``ccx_iri`` column set to the given value.
+
+        ``NodeCreate`` forbids extra fields and has no ``ccx_iri`` field, so
+        the IRI is written directly onto the ORM row here rather than passed
+        through the DTO. An explicit ``source_id`` overrides
+        ``node_create.source_id`` when given (the importer resolves the
+        source row separately from the node payload).
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            node_create: Node payload (template_id, label, entity_type,
+                properties, ...).
+            database_name: Database to scope the upsert to.
+            source_id: Optional source id override for the created/updated row.
+
+        Returns:
+            The created or updated node row dict (including ``ccx_iri``).
+        """
+        statement = select(GraphNode).where(
+            GraphNode.ccx_iri == ccx_iri,
+            GraphNode.database_name == database_name,
+        )
+        db_node = self.session.exec(statement).first()
+        resolved_source_id = source_id if source_id is not None else node_create.source_id
+
+        if db_node is not None:
+            db_node.label = node_create.label
+            db_node.properties = node_create.properties or {}
+            db_node.entity_type = node_create.entity_type
+            if resolved_source_id is not None:
+                db_node.source_id = resolved_source_id
+            db_node.updated_at = datetime.now(UTC)
+            self.session.add(db_node)
+            self.session.maybe_commit()
+            self.session.refresh(db_node)
+            result = entity_to_dict(db_node)
+            assert result is not None  # a non-None row always converts
+            return result
+
+        db_node = GraphNode(
+            id=self._generate_id("node"),
+            database_name=database_name,
+            graph_name=self._get_graph_name_for_template(node_create.template_id),
+            template_id=node_create.template_id,
+            label=node_create.label,
+            entity_type=node_create.entity_type,
+            properties=node_create.properties or {},
+            position_x=node_create.position.x if node_create.position else None,
+            position_y=node_create.position.y if node_create.position else None,
+            embedding=node_create.embedding,
+            source_id=resolved_source_id,
+            ccx_iri=ccx_iri,
+        )
+        self.session.add(db_node)
+        self.session.maybe_commit()
+        self.session.refresh(db_node)
+        created = entity_to_dict(db_node)
+        assert created is not None  # a non-None row always converts
+        return created
+
+    def assign_source_to_nodes(
+        self,
+        node_ids: list[str],
+        source_id: str,
+        database_name: str,
+    ) -> int:
+        """Back-fill ``source_id`` on a batch of nodes that lack one.
+
+        The CCX importer creates nodes before it knows which source cites
+        them (the node->source link lives in the citation records, which are
+        imported last), so it stamps ``graph_nodes.source_id`` here once
+        citations resolve. Restoring the link keeps source-scoped node
+        queries correct and lets ``ON DELETE CASCADE`` remove an imported
+        source's nodes on re-import. Nodes that already carry a source id are
+        left untouched (first link wins), so this is safe to call per source.
+
+        It also re-points each node's denormalized ``source_document_id``
+        property to ``source_id``. An imported node's bundle property holds the
+        ORIGINAL export-machine source id — stale, pointing at no local source —
+        so syncing it to the local source id makes imported nodes consistent
+        with extracted ones for any consumer that reads the property.
+
+        Returns the number of node rows updated.
+        """
+        if not node_ids:
+            return 0
+        statement = select(GraphNode).where(
+            col(GraphNode.id).in_(node_ids),
+            GraphNode.database_name == database_name,
+            col(GraphNode.source_id).is_(None),
+        )
+        changed = 0
+        now = datetime.now(UTC)
+        for node in self.session.exec(statement).all():
+            node.source_id = source_id
+            props = dict(node.properties) if node.properties else {}
+            props["source_document_id"] = source_id
+            node.properties = props
+            node.updated_at = now
+            self.session.add(node)
+            changed += 1
+        if changed:
+            self.session.maybe_commit()
+        return changed
+
+    def update_node_embeddings_batch(self, embeddings: dict[str, list[float]]) -> int:
+        """Persist embeddings for many nodes in one transaction; rows updated.
+
+        Re-embedding an imported source touches every node, so calling
+        ``update_node`` per node (a SELECT + UPDATE + commit each) is N
+        round-trips. This loads the batch and commits once. ``graph_nodes.
+        embedding`` is a JSON ``list[float]`` column (NOT base64), so the vector
+        is written as-is.
+        """
+        if not embeddings:
+            return 0
+        statement = select(GraphNode).where(
+            col(GraphNode.id).in_(list(embeddings)),
+            GraphNode.database_name == self.database_name,
+        )
+        changed = 0
+        now = datetime.now(UTC)
+        for node in self.session.exec(statement).all():
+            vector = embeddings.get(node.id)
+            if vector is None:
+                continue
+            node.embedding = vector
+            node.updated_at = now
+            self.session.add(node)
+            changed += 1
+        if changed:
+            self.session.maybe_commit()
+        return changed
 
     def get_node(self, node_id: str) -> Node | None:
         """Get a node by ID."""

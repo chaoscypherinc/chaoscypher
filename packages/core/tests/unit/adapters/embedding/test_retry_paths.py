@@ -135,3 +135,34 @@ async def test_auth_error_code_raises_immediately_without_retry() -> None:
             )
 
     assert request_fn.await_count == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [httpx.ConnectError("conn refused"), httpx.TimeoutException("read timeout")],
+)
+async def test_connect_and_timeout_backoff_is_jittered(error: httpx.HTTPError) -> None:
+    """ConnectError / TimeoutException backoff applies 50-150% jitter, not a
+    bare exponential — so a wave of simultaneous failures doesn't retry in
+    lockstep. With ``random.random()`` pinned to 0.0 the factor is exactly 0.5,
+    so the first sleep is ``initial_backoff * 0.5``, never the un-jittered value.
+    """
+    request_fn = AsyncMock(side_effect=[error, _ok_response()])
+    sleep_mock = AsyncMock()
+
+    with (
+        patch("chaoscypher_core.adapters.embedding._retry.asyncio.sleep", new=sleep_mock),
+        patch("chaoscypher_core.adapters.embedding._retry.random.random", return_value=0.0),
+    ):
+        result = await request_with_retry(
+            request_fn=request_fn,
+            provider="ollama",
+            initial_backoff=4.0,
+            exponential_multiplier=3.0,
+            max_backoff=100.0,
+        )
+
+    assert result.status_code == 200
+    # base = min(4.0 * 3**0, 100) = 4.0; jitter factor = 0.5 + 0.0 = 0.5.
+    sleep_mock.assert_awaited_once_with(2.0)

@@ -32,7 +32,8 @@ async def test_zero_chunk_after_non_empty_input_raises(
     settings = MagicMock()
     # Pin data_dir to tmp_path so the incidental persist_original_text
     # write lands inside the pytest-managed tmp tree rather than
-    # stringifying the MagicMock into a CWD directory.
+    # stringifying the MagicMock into a CWD directory (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings.data_dir = str(tmp_path)
 
     import chaoscypher_core.operations.importing.indexing_handler as mod

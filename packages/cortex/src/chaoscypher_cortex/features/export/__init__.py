@@ -12,30 +12,23 @@ Supports selective export by template type and merge strategies for import.
 Enables knowledge base portability across Chaos Cypher instances.
 
 Components:
-- ExportService: CCX export/import orchestration and format conversion
-- ExportRepository: Graph data extraction and CCX format serialization
+- ExportService: CCX 3.0 export/import orchestration via Core operations.
 
 Architecture:
-VSA pattern with engine repository handling CCX format operations and backend
-service orchestrating export/import workflows. Repository extracts graph data
-and serializes to CCX JSON. Service handles file I/O, validation, and merge
-logic. Factory function provides dependency injection.
+VSA pattern: the feature service orchestrates export/import workflows by
+queuing Core operations (which build CCX 3.0 packages via ccx-format).
 
 Example:
     from chaoscypher_cortex.features.export import ExportService
 
-    # Export and import knowledge graph
-    service = ExportService(export_repo, graph_repo)
-    export_path = service.export_graph(templates=["Person", "Organization"])
-    service.import_graph(export_path, merge_strategy="update")
+    service = ExportService(export_operations)
+    task_id = await service.queue_export_by_sources(source_ids=[...])
 
 """
 
-from chaoscypher_core.services.export.management import ExportRepository
 from chaoscypher_cortex.features.export.service import ExportService
 
 
 __all__ = [
-    "ExportRepository",
     "ExportService",
 ]

@@ -12,7 +12,7 @@ import structlog
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import or_
 from sqlalchemy.orm import load_only
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate, SourceRow
 from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
@@ -87,6 +87,42 @@ class TemplateOperationsMixin(GraphMixinBase):
         self.session.refresh(db_template)
 
         return self._db_template_to_model(db_template)
+
+    def assign_source_to_templates(
+        self,
+        template_ids: list[str],
+        source_id: str,
+        database_name: str,
+    ) -> int:
+        """Back-fill ``source_id`` on templates that lack one; return rows changed.
+
+        Templates are source-owned (the per-source-templates model): a source's
+        templates cascade-delete with it via the ``graph_templates.source_id``
+        FK (ON DELETE CASCADE). The CCX importer creates templates before it
+        knows the source id (FK order is templates -> nodes -> sources), so it
+        links them here once the source lands — otherwise imported templates
+        keep ``source_id = NULL`` and survive a source delete (unlike extracted
+        ones, which set the owner). Templates that already carry a source id are
+        left untouched (a shared / another source's template), so re-import is
+        safe.
+        """
+        if not template_ids:
+            return 0
+        statement = select(GraphTemplate).where(
+            col(GraphTemplate.id).in_(template_ids),
+            GraphTemplate.database_name == database_name,
+            col(GraphTemplate.source_id).is_(None),
+        )
+        changed = 0
+        now = datetime.now(UTC)
+        for template in self.session.exec(statement).all():
+            template.source_id = source_id
+            template.updated_at = now
+            self.session.add(template)
+            changed += 1
+        if changed:
+            self.session.maybe_commit()
+        return changed
 
     async def create_templates_batch(
         self, templates_to_create: list[TemplateCreate]

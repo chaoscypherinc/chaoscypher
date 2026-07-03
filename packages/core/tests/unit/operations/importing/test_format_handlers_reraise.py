@@ -16,10 +16,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_handle_import_ccx_reraises_on_arbitrary_exception() -> None:
-    # As of 20a1b28be (2026-05-22) the handler delegates to
-    # ``ImportService.import_from_bytes`` rather than calling the
-    # (never-existed) ``graph_repository.import_graph_from_ccx`` method,
-    # so the failure must be injected at the new call site.
+    # The handler delegates to ``CcxImporter.import_from_bytes`` (CCX 3.0
+    # upsert-by-IRI), so the failure must be injected at that call site.
     from unittest.mock import AsyncMock, patch
 
     from chaoscypher_core.operations.importing.format_handler import handle_import_ccx
@@ -28,7 +26,7 @@ async def test_handle_import_ccx_reraises_on_arbitrary_exception() -> None:
     data = {"file_content": "AAAA", "merge": False}
 
     with patch(
-        "chaoscypher_core.services.package.importer.service.ImportService.import_from_bytes",
+        "chaoscypher_core.services.package.importer.service.CcxImporter.import_from_bytes",
         new=AsyncMock(side_effect=RuntimeError("disk full")),
     ):
         with pytest.raises(RuntimeError, match="disk full"):
@@ -85,7 +83,7 @@ async def test_handle_import_ccx_logs_before_raising(caplog) -> None:
     graph_repository = MagicMock()
 
     with patch(
-        "chaoscypher_core.services.package.importer.service.ImportService.import_from_bytes",
+        "chaoscypher_core.services.package.importer.service.CcxImporter.import_from_bytes",
         new=AsyncMock(side_effect=RuntimeError("oops")),
     ):
         with structlog.testing.capture_logs() as cap:

@@ -368,6 +368,16 @@ class SourceRow(SQLModel, table=True):
     source_type: str | None = None  # "pdf", "text", "csv", "webpage", etc.
     origin_url: str | None = None  # Original location (URL, file path, etc.)
 
+    # CCX 3.0 stable identity: the IRI anchoring this source to its identity in
+    # an exported CCX package, so re-imports upsert by IRI. Added by migration
+    # 0003. Nullable: legacy rows and not-yet-exported sources stay NULL.
+    ccx_iri: str | None = Field(default=None, index=True)
+
+    # CCX 3.0 full-text store: the extracted plain text of the source, so an
+    # exported CCX package can carry it without re-deriving from chunks. Added
+    # by migration 0004. Nullable: not yet populated for legacy rows.
+    full_text: str | None = Field(default=None, sa_column=Column(Text))
+
     # Versioning (for future re-import support)
     version: int = Field(default=1)
     parent_id: str | None = Field(foreign_key="sources.id", default=None)
@@ -1472,6 +1482,11 @@ class GraphNode(SQLModel, table=True):
         default=None,
     )
 
+    # CCX 3.0 stable identity: the IRI anchoring this node to its identity in
+    # an exported CCX package, so re-imports upsert by IRI. Added by migration
+    # 0003. Nullable: legacy rows and not-yet-exported nodes stay NULL.
+    ccx_iri: str | None = Field(default=None, index=True)
+
 
 class GraphEdge(SQLModel, table=True):
     """Knowledge graph edges table.
@@ -1517,6 +1532,11 @@ class GraphEdge(SQLModel, table=True):
         sa_column=Column(String, ForeignKey("sources.id", ondelete="CASCADE"), index=True),
         default=None,
     )
+
+    # CCX 3.0 stable identity: the IRI anchoring this edge to its identity in
+    # an exported CCX package, so re-imports upsert by IRI. Added by migration
+    # 0003. Nullable: legacy rows and not-yet-exported edges stay NULL.
+    ccx_iri: str | None = Field(default=None, index=True)
 
 
 class GraphTemplate(SQLModel, table=True):

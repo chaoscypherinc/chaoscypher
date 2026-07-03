@@ -11,6 +11,7 @@ Gemini embedding providers. Handles 5xx, 429 rate limits (with optional
 from __future__ import annotations
 
 import asyncio
+import random
 from collections.abc import Awaitable, Callable
 
 import httpx
@@ -48,6 +49,20 @@ def _get_max_backoff() -> float:
     from chaoscypher_core.settings import BackoffSettings
 
     return float(BackoffSettings().max_seconds)
+
+
+def _jittered_backoff(
+    attempt: int, initial_backoff: float, multiplier: float, max_backoff: float
+) -> float:
+    """Exponential backoff for ``attempt`` (0-based), clamped to ``max_backoff``.
+
+    Applies 50-150% random jitter so multiple embedding requests that fail at the
+    same time (e.g. a wave of parallel batches in ``services/search/engine/index``
+    all hitting a provider outage) don't retry in lockstep and re-stampede the
+    provider. Mirrors the queue worker's retry jitter (``queue/worker.py``).
+    """
+    base = min(initial_backoff * (multiplier**attempt), max_backoff)
+    return base * (0.5 + random.random())  # noqa: S311 — non-crypto jitter
 
 
 def _resolve_retry_wait(retry_after: str | None, fallback: float, max_backoff: float) -> float:
@@ -157,7 +172,9 @@ async def request_with_retry(
                 attempt=attempt + 1,
                 error=str(e),
             )
-            await asyncio.sleep(initial_backoff * (backoff_multiplier**attempt))
+            await asyncio.sleep(
+                _jittered_backoff(attempt, initial_backoff, backoff_multiplier, max_backoff)
+            )
 
         except httpx.TimeoutException as e:
             last_error = e
@@ -167,7 +184,9 @@ async def request_with_retry(
                 attempt=attempt + 1,
                 error=str(e),
             )
-            await asyncio.sleep(initial_backoff * (backoff_multiplier**attempt))
+            await asyncio.sleep(
+                _jittered_backoff(attempt, initial_backoff, backoff_multiplier, max_backoff)
+            )
 
         except LLMError:
             raise

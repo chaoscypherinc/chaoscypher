@@ -3,35 +3,18 @@
 
 """Export Models.
 
-Data structures for CCX (Chaos Cypher eXchange) format.
-
-Structure:
-- schemas.py: External schemas for export/import (ExportManifest, ImportResult, statistics)
+Data structures for CCX (Chaos Cypher eXchange) export. CCX 3.0 manifest
+assembly is owned by ``ccx-format``; the only models retained app-side are
+the statistics DTOs routed into the ``chaoscypher.statistics`` named graph.
 
 Example:
-    from chaoscypher_core.services.export.models.schemas import ExportManifest, ImportResult
-
-    manifest = ExportManifest(
-        ccx_version="2.0",
-        package_type=["knowledge", "templates"],
-        name="my-package",
-        package_version="v1.0.0",
-        generator="chaoscypher@0.1.0",
-        database_name="my_db",
-        stats=GraphStats(total_nodes=0, total_edges=0, total_sources=0),
-    )
-
+    from chaoscypher_core.services.export.models.stats import KnowledgeStats
 """
 
-from chaoscypher_core.services.export.models.schemas import (
-    # Statistics Models
+from chaoscypher_core.services.export.models.stats import (
     ChunkingConfig,
-    # Export/Import Models
-    ContentFile,
     DateRange,
     EmbeddingStats,
-    ExportManifest,
-    ImportResult,
     KnowledgeStats,
     LensStats,
     SourceStats,
@@ -41,14 +24,9 @@ from chaoscypher_core.services.export.models.schemas import (
 
 
 __all__ = [
-    # Statistics
     "ChunkingConfig",
-    # Export/Import
-    "ContentFile",
     "DateRange",
     "EmbeddingStats",
-    "ExportManifest",
-    "ImportResult",
     "KnowledgeStats",
     "LensStats",
     "SourceStats",

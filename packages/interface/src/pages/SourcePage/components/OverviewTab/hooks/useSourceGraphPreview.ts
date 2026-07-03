@@ -17,11 +17,13 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { graphApi } from '../../../../../services/api/graph';
+import { getColorForTemplate } from '../../../../../utils/colorUtils';
 import {
   computeConstellationLayout,
   type GraphNode,
   type GraphEdge,
 } from '../../../../../components/graphConstellation';
+import { useOverviewData } from './useOverviewData';
 
 /** Above this, a connected BFS sample keeps the preview smooth. */
 const MAX_PREVIEW_NODES = 200;
@@ -59,6 +61,19 @@ export function useSourceGraphPreview(
   const failed = query.isError;
   const data = query.data;
 
+  // Colour nodes by their template's real colour so the map matches the
+  // Overview distribution charts (which use the same source). Mirrors the
+  // chart's `tpl.color || getColorForTemplate(tpl.id)` rule; unknown template
+  // ids still resolve to a stable themed swatch. Shares the templates query
+  // with the charts' `useOverviewData`, so this adds no extra fetch.
+  const { templateList } = useOverviewData(sourceId);
+  const resolveColor = useMemo(() => {
+    const byId = new Map(
+      templateList.map((t) => [t.id, t.color || getColorForTemplate(t.id)]),
+    );
+    return (templateId: string) => byId.get(templateId) ?? getColorForTemplate(templateId);
+  }, [templateList]);
+
   return useMemo<SourceGraphPreviewData>(() => {
     if (!enabled || loading) {
       return { ...EMPTY, loading, isEmpty: false };
@@ -88,6 +103,7 @@ export function useSourceGraphPreview(
       maxRenderNodes: MAX_PREVIEW_NODES,
       cacheKey: `source_graph_layout_${sourceId}_v1`,
       dropOrphans: false,
+      resolveColor,
     });
 
     return {
@@ -98,5 +114,5 @@ export function useSourceGraphPreview(
       loading: false,
       isEmpty: nodes.length === 0,
     };
-  }, [enabled, loading, failed, data, sourceId]);
+  }, [enabled, loading, failed, data, sourceId, resolveColor]);
 }

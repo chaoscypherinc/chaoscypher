@@ -90,39 +90,6 @@ class LoggingService:
             level: The new log level string (e.g. "DEBUG", "WARNING").
 
         """
-        try:
-            import valkey.asyncio as aio_valkey
+        from chaoscypher_cortex.shared.worker_notify import publish_settings_change
 
-            from chaoscypher_core.app_config import get_settings
-
-            settings = get_settings()
-            password_part = (
-                f":{settings.queue.queue_password.get_secret_value()}@"
-                if settings.queue.queue_password
-                else ""
-            )
-            valkey_url = (
-                f"valkey://{password_part}{settings.queue.queue_host}"
-                f":{settings.queue.queue_port}/{settings.queue.queue_database}"
-            )
-
-            client = aio_valkey.from_url(valkey_url)
-            try:
-                version = await client.incr("chaoscypher:settings:version")
-                await client.publish(
-                    "chaoscypher:settings:changed",
-                    f"v1:logging_level:{level}",
-                )
-                logger.info(
-                    "logging_level_notification_published",
-                    level=level,
-                    version=version,
-                )
-            finally:
-                await client.aclose()
-        except Exception as e:
-            logger.warning(
-                "logging_level_notification_failed",
-                error=str(e),
-                error_type=type(e).__name__,
-            )
+        await publish_settings_change(f"v1:logging_level:{level}")

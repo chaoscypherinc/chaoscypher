@@ -131,7 +131,14 @@ class TestRecoverOrphanedExtractionTasks:
     @patch("chaoscypher_neuron.recovery.extraction.requeue_extraction_task", new_callable=AsyncMock)
     async def test_handles_requeue_failure(self, mock_requeue, mock_adapter, mock_settings) -> None:
         mock_adapter.list_orphaned_chunk_tasks.return_value = [
-            {"id": "t1", "queue_task_id": None, "job_id": "j1", "retry_count": 0, "max_retries": 3},
+            {
+                "id": "t1",
+                "queue_task_id": None,
+                "job_id": "j1",
+                "retry_count": 0,
+                "max_retries": 3,
+                "database_name": "db1",
+            },
         ]
         mock_adapter.get_extraction_job.return_value = {"status": "running"}
         mock_requeue.side_effect = Exception("queue unavailable")
@@ -143,6 +150,38 @@ class TestRecoverOrphanedExtractionTasks:
         assert result["failed"] == 1
         # Should attempt to mark task as failed
         mock_adapter.fail_chunk_task.assert_called_once()
+        # And must advance the job-completion counter — mirroring the
+        # max-retries branch — so a job whose last chunk task fails to requeue
+        # still reaches its terminal check instead of hanging in "running".
+        mock_adapter.increment_job_completed_and_check.assert_called_once_with(
+            job_id="j1", database_name="db1", outcome="failed"
+        )
+
+    @pytest.mark.asyncio
+    @patch("chaoscypher_neuron.recovery.extraction.requeue_extraction_task", new_callable=AsyncMock)
+    async def test_requeue_failure_increments_even_if_fail_chunk_task_raises(
+        self, mock_requeue, mock_adapter, mock_settings
+    ) -> None:
+        """A fail_chunk_task error must not suppress the job-counter increment.
+
+        The increment is what unsticks the parent job, so it lives in its own
+        best-effort block independent of fail_chunk_task's outcome.
+        """
+        mock_adapter.list_orphaned_chunk_tasks.return_value = [
+            {"id": "t1", "queue_task_id": None, "job_id": "j1", "retry_count": 0, "max_retries": 3},
+        ]
+        mock_adapter.get_extraction_job.return_value = {"status": "running"}
+        mock_requeue.side_effect = Exception("queue unavailable")
+        mock_adapter.fail_chunk_task.side_effect = Exception("db write failed")
+
+        with patch("chaoscypher_neuron.recovery.extraction.queue_client") as mock_qc:
+            mock_qc.client = None
+            result = await recover_orphaned_extraction_tasks(mock_adapter, "test_db", mock_settings)
+
+        assert result["failed"] == 1
+        mock_adapter.increment_job_completed_and_check.assert_called_once_with(
+            job_id="j1", database_name="default", outcome="failed"
+        )
 
     @pytest.mark.asyncio
     @patch("chaoscypher_neuron.recovery.extraction.requeue_extraction_task", new_callable=AsyncMock)

@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from chaoscypher_core.settings import EngineSettings
 
 from chaoscypher_core.models import SourceStatus
-from chaoscypher_core.services.export.models.schemas import (
+from chaoscypher_core.services.export.models.stats import (
     ChunkingConfig,
     DateRange,
     EmbeddingStats,
@@ -563,6 +563,13 @@ def calculate_source_stats(
         source_type = source.get("source_type", "unknown")
         source_types[source_type] += 1
 
+    # Count by extraction domain (skip sources with no domain) so the hub can
+    # show a package category straight from the stats graph.
+    domains: dict[str, int] = defaultdict(int)
+    for source in sources:
+        if domain := source.get("extraction_domain"):
+            domains[domain] += 1
+
     # Calculate content length
     total_content_length = sum(s.get("total_content_length", 0) for s in sources)
 
@@ -598,6 +605,7 @@ def calculate_source_stats(
         total_chunks=total_chunks,
         total_citations=total_citations,
         source_types=dict(source_types),
+        domains=dict(domains),
         avg_chunks_per_source=round(avg_chunks, 2),
         total_content_length=total_content_length,
         date_range=date_range,

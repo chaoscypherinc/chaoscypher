@@ -1,61 +1,50 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Import Service - CCX package import functionality.
+"""Import Service - CCX 3.0 package import functionality.
 
-Provides the ImportService class and related models for importing
-CCX packages into ChaosCypher knowledge graphs. Supports importing
-templates, nodes, edges, sources, chunks, and citations.
+Provides the ``CcxImporter`` service and its option/stats models for
+importing CCX 3.0 packages into Chaos Cypher knowledge graphs. The importer
+consumes ``ccx-format`` (``ccx.open_package``) and persists every entity by
+its stable CCX IRI (upsert-by-IRI), so re-importing the same bytes is
+idempotent.
 
 Submodules:
-    - service: Main ImportService orchestrator
-    - models: ImportOptions, ImportStats, IdMapper
-    - loaders: Content-type specific loaders
+    - service: The ``CcxImporter`` orchestrator.
+    - models: ``ImportOptions`` / ``ImportStats``.
+    - ccx_import_mapping: Pure CCX-dict → domain-DTO mapping.
 
 Example:
     from chaoscypher_core.services.package.importer import (
-        ImportService,
+        CcxImporter,
         ImportOptions,
         ImportStats,
     )
 
-    # Create service with dependencies
-    service = ImportService(
+    importer = CcxImporter(
         graph_repository=graph_repo,
         sources_repository=sources_repo,
     )
-
-    # Import from bytes (e.g., downloaded from Lexicon)
-    stats = await service.import_from_bytes(
-        archive_data,
-        options=ImportOptions(
-            verify_checksums=True,
-            import_sources=True,
-        ),
+    stats = await importer.import_from_bytes(
+        data,
+        options=ImportOptions(database_name="default"),
     )
-
-    # Check results
-    if stats.is_success:
-        print(f"Imported {stats.total_items} items")
-    else:
+    if stats.errors:
         for error in stats.errors:
             print(f"Error: {error}")
+    else:
+        print(f"Imported {stats.total_items} items")
 """
 
-# Models
 from chaoscypher_core.services.package.importer.models import (
-    IdMapper,
     ImportOptions,
     ImportStats,
 )
-
-# Service
-from chaoscypher_core.services.package.importer.service import ImportService
+from chaoscypher_core.services.package.importer.service import CcxImporter
 
 
 __all__ = [
-    "IdMapper",
+    "CcxImporter",
     "ImportOptions",
-    "ImportService",
     "ImportStats",
 ]

@@ -42,6 +42,7 @@ from chaoscypher_core.services.lexicon.client import (
     LexiconClient,
     LexiconClientError,
     PackageInfo,
+    UploadResult,
 )
 
 # Models (Pydantic)
@@ -59,6 +60,7 @@ from chaoscypher_core.services.lexicon.models import (
     LexiconSearchResponse,
     LexiconTokenRequest,
     LexiconUploadRequest,
+    LexiconUploadResponse,
 )
 
 # Service
@@ -98,5 +100,7 @@ __all__ = [
     "LexiconService",
     "LexiconTokenRequest",
     "LexiconUploadRequest",
+    "LexiconUploadResponse",
     "PackageInfo",
+    "UploadResult",
 ]

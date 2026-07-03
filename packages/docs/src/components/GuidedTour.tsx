@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useMemo, useState } from "react";
 import { FeatureGallery, type Shot } from "./FeatureGallery";
+import DemoVideo from "./DemoVideo";
 
 const SHOT = "/img/screenshots";
 
@@ -80,6 +81,7 @@ export default function GuidedTour(): JSX.Element {
   return (
     <section className="tour">
       <p className="showcase-label">See it in action</p>
+      <DemoVideo />
       {GROUPS.map((g, gi) => (
         <div className="tour-group" key={g.label}>
           <p className="tour-group-label">

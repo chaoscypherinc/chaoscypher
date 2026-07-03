@@ -34,34 +34,34 @@ async def handle_import_ccx(
     metadata: dict[str, Any] | None = None,
     task_id: str | None = None,
 ) -> dict[str, Any]:
-    """Execute CCX import operation.
+    """Execute a CCX 3.0 import operation.
 
-    Delegates to ``ImportService`` — the same path the CLI uses for
-    ``chaoscypher graph package load``. Before this fix the handler
-    called a nonexistent ``graph_repository.import_graph_from_ccx``
-    method (broken since the ``.cxl → .ccx`` rename in 2db50eade);
-    every API-driven import failed with AttributeError.
+    Decodes the base64 package bytes and delegates to ``CcxImporter`` — the
+    same upsert-by-IRI path the CLI uses for ``chaoscypher graph package
+    load``. ``ccx-format`` validates the package fail-closed, so an invalid
+    package raises (and the queue can decide retryability) rather than
+    returning a partial result.
 
     Args:
-        data: Task data with ``file_content`` (base64 zip bytes) and
+        data: Task data with ``file_content`` (base64 package bytes) and
             ``merge`` flag.
         graph_repository: GraphRepository for graph operations.
-        source_repository: Optional source repository (for sources.jsonl
+        source_repository: Optional source repository (for ``sources.jsonl``
             payloads). May be ``None`` for template/knowledge-only packages.
-        engine_settings: Optional engine settings (drives archive size /
-            file-count caps in ``ImportService``).
+        engine_settings: Accepted for call-site compatibility; ``CcxImporter``
+            derives caps/validation from ``ccx-format`` and does not need it.
         metadata: Task metadata. ``database_name`` is read from here.
         task_id: Task ID for tracking.
 
     Returns:
-        Result dictionary with import statistics and errors.
+        Result dictionary with import statistics, conformance classes, and
+        any warnings.
 
     Raises:
         ValidationError: If ``file_content`` is missing from the task data.
 
     """
-    from chaoscypher_core.services.package.importer.models import ImportOptions
-    from chaoscypher_core.services.package.importer.service import ImportService
+    from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
 
     encoded_content = data.get("file_content")
     merge = data.get("merge", False)
@@ -75,28 +75,32 @@ async def handle_import_ccx(
 
     try:
         file_content = base64.b64decode(encoded_content)
-        service = ImportService(
+        importer = CcxImporter(
             graph_repository=graph_repository,
             sources_repository=source_repository,
-            engine_settings=engine_settings,
         )
-        # ``merge=True`` from the API maps to "reuse existing templates by
-        # name rather than minting fresh ones" — the closest semantic
-        # match in ``ImportOptions``.
+        # ``merge`` is retained on the API contract; CCX 3.0 import is
+        # idempotent upsert-by-IRI, so re-import never duplicates regardless.
         options = ImportOptions(
             skip_existing_templates=merge,
             database_name=database_name,
         )
-        stats = await service.import_from_bytes(file_content, options=options)
+        stats = await importer.import_from_bytes(file_content, options=options)
         return {
             "success": not stats.errors,
             "nodes_imported": stats.nodes_imported,
             "edges_imported": stats.edges_imported,
             "templates_imported": stats.templates_imported,
             "templates_skipped": stats.templates_skipped,
+            "sources_imported": stats.sources_imported,
+            "chunks_imported": stats.chunks_imported,
+            "conformance_classes": stats.conformance_classes,
             "checksum_verified": stats.checksum_verified,
             "errors": stats.errors,
             "warnings": stats.warnings,
+            # Drives the post-import search-indexing enqueue in
+            # ImportOperationsService._import_ccx_handler.
+            "imported_source_ids": stats.imported_source_ids,
         }
     except Exception:
         logger.exception("import_ccx_operation_failed")
@@ -129,7 +133,7 @@ async def handle_lexicon_import(
         LexiconDownloadRequest,
         LexiconService,
     )
-    from chaoscypher_core.services.package import ImportOptions, ImportService
+    from chaoscypher_core.services.package import CcxImporter, ImportOptions
 
     owner_username = data["owner_username"]
     repo_name = data["repo_name"]
@@ -171,15 +175,14 @@ async def handle_lexicon_import(
             size=len(archive_data),
         )
 
-        # 2. Import using ImportService
-        import_service = ImportService(
+        # 2. Import using CcxImporter (CCX 3.0 upsert-by-IRI).
+        importer = CcxImporter(
             graph_repository=graph_repository,
             sources_repository=None,
             workflow_db=None,
         )
 
         import_options = ImportOptions(
-            verify_checksums=True,
             skip_existing_templates=False,
             import_templates=True,
             import_knowledge=True,
@@ -188,7 +191,7 @@ async def handle_lexicon_import(
             database_name=database_name,
         )
 
-        stats = await import_service.import_from_bytes(archive_data, import_options)
+        stats = await importer.import_from_bytes(archive_data, import_options)
 
         logger.info(
             "lexicon_import_completed",
@@ -197,7 +200,7 @@ async def handle_lexicon_import(
             edges=stats.edges_imported,
             templates=stats.templates_imported,
             templates_skipped=stats.templates_skipped,
-            workflows=stats.workflows_imported,
+            conformance_classes=stats.conformance_classes,
             checksum_verified=stats.checksum_verified,
             errors=len(stats.errors),
             warnings=len(stats.warnings),
@@ -211,12 +214,13 @@ async def handle_lexicon_import(
             "edges_imported": stats.edges_imported,
             "templates_imported": stats.templates_imported,
             "templates_skipped": stats.templates_skipped,
-            "workflows_imported": stats.workflows_imported,
-            "workflow_edges_imported": stats.workflow_edges_imported,
-            "triggers_imported": stats.triggers_imported,
+            "conformance_classes": stats.conformance_classes,
             "checksum_verified": stats.checksum_verified,
             "warnings": stats.warnings,
             "errors": stats.errors,
+            # Knowledge-only import has no source — the worker enqueues
+            # OP_INDEX_IMPORTED_NODES off this list to make the nodes searchable.
+            "imported_node_ids": stats.imported_node_ids,
         }
 
     except Exception:

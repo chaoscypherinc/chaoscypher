@@ -877,6 +877,16 @@ class ChunkResponse(BaseModel):
             "column); only returned by the single-chunk detail endpoint."
         ),
     )
+    chunk_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Chunk-level metadata, notably ``sentence_offsets`` (per-sentence "
+            "char ranges) used to highlight the exact cited sentence when the "
+            "source page is opened from a citation. Like raw_content it is "
+            "omitted from list responses (load_only() excludes the JSON column) "
+            "and only returned by the single-chunk detail endpoint."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

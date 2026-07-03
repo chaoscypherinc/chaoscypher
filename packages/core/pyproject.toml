@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.2.0"
+version = "0.3.0"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -40,6 +40,7 @@ dependencies = [
     "pydantic>=2.12.0,<3",
     "platformdirs>=4.9.0,<5",
     "mcp>=1.27.0,<2",
+    "ccx-format[embeddings]>=0.1.0,<0.2",
 
     # Search & indexing
     "sqlite-vec>=0.1.9,<0.2",
@@ -55,7 +56,7 @@ dependencies = [
     # Note: google-generativeai version controlled by langchain-google-genai
 
     # Document processing
-    "pypdf>=6.9.0,<7",
+    "pypdf>=6.13.3,<7",            # floor lifted for GHSA-jm82-fx9c-mx94 (stream-length DoS)
     "pypdfium2>=5.7.0,<6",
     "beautifulsoup4>=4.12,<5",      # MIT; HTML/EPUB loaders + archive Sphinx handler
     "docutils>=0.20,<1",            # BSD; RST loader (parse validation)
@@ -82,7 +83,7 @@ dependencies = [
     # test password that bcrypt 4.1+ rejects (72-byte limit enforced).
     "bcrypt>=4.0.1,<4.1",
     "PyJWT[crypto]>=2.13.0,<3",
-    "cryptography>=46.0.6,<47",
+    "cryptography>=48.0.1,<49",  # >=48.0.1: GHSA-537c-gmf6-5ccf
 
     # High-performance compiled extensions
     "rustworkx>=0.17.0,<0.18",     # Apache-2.0; Rust-compiled graph algorithms
@@ -95,7 +96,7 @@ dependencies = [
     "regex>=2025.0.0,<2027",       # Sandboxed regex with timeout support for user patterns
 
     # Runtime infrastructure (folded from chaoscypher-runtime 2026-04-20)
-    "pydantic-settings>=2.13.0,<3",
+    "pydantic-settings>=2.14.2,<3",   # floor lifted for GHSA-4xgf-cpjx-pc3j
     "valkey>=6.1.0,<7",
     "dynaconf>=3.2.13,<4",
     "python-dotenv>=1.2.0,<2",

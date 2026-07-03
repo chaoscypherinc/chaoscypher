@@ -13,6 +13,7 @@ from sqlmodel import col, delete, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
 from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
+from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
 from chaoscypher_core.models import Edge, EdgeCreate, EdgeUpdate, EdgeWithNodes
 
 
@@ -83,6 +84,100 @@ class EdgeOperationsMixin(GraphMixinBase):
         self.session.refresh(db_edge)
 
         return self._db_edge_to_model(db_edge)
+
+    def get_edge_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict | None:
+        """Look up an edge by its stable CCX IRI.
+
+        Returns the ORM-row dict (via ``entity_to_dict``) rather than an
+        ``Edge`` Pydantic model so the ``ccx_iri`` column survives — the
+        domain ``Edge`` model has no ``ccx_iri`` field. Scoped to
+        ``(database_name, ccx_iri)``.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the edge.
+
+        Returns:
+            The edge row dict (including ``ccx_iri``), or ``None`` if absent.
+        """
+        statement = select(GraphEdge).where(
+            GraphEdge.ccx_iri == ccx_iri,
+            GraphEdge.database_name == database_name,
+        )
+        db_edge = self.session.exec(statement).first()
+        if db_edge is None:
+            return None
+        return entity_to_dict(db_edge)
+
+    def upsert_edge_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        edge_create: EdgeCreate,
+        database_name: str,
+        source_id: str | None = None,
+    ) -> dict:
+        """Idempotently create or update an edge keyed by CCX IRI.
+
+        Mirror of ``upsert_node_by_ccx_iri``: SELECT by
+        ``(database_name, ccx_iri)``; if a row exists, UPDATE its
+        ``label`` / ``properties`` (and endpoints, in case the importer
+        re-resolved them) incoming-wins and return it (no duplicate);
+        otherwise CREATE with the ``ccx_iri`` column set.
+
+        ``EdgeCreate`` forbids extra fields and has no ``ccx_iri`` field, so
+        the IRI is set directly on the ORM row. An explicit ``source_id``
+        overrides ``edge_create.source_id`` when given.
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            edge_create: Edge payload (template_id, endpoints, label,
+                properties, ...).
+            database_name: Database to scope the upsert to.
+            source_id: Optional source id override for the created/updated row.
+
+        Returns:
+            The created or updated edge row dict (including ``ccx_iri``).
+        """
+        statement = select(GraphEdge).where(
+            GraphEdge.ccx_iri == ccx_iri,
+            GraphEdge.database_name == database_name,
+        )
+        db_edge = self.session.exec(statement).first()
+        resolved_source_id = source_id if source_id is not None else edge_create.source_id
+
+        if db_edge is not None:
+            db_edge.label = edge_create.label
+            db_edge.properties = edge_create.properties or {}
+            db_edge.source_node_id = edge_create.source_node_id
+            db_edge.target_node_id = edge_create.target_node_id
+            if resolved_source_id is not None:
+                db_edge.source_id = resolved_source_id
+            db_edge.updated_at = datetime.now(UTC)
+            self.session.add(db_edge)
+            self.session.maybe_commit()
+            self.session.refresh(db_edge)
+            updated = entity_to_dict(db_edge)
+            assert updated is not None  # a non-None row always converts
+            return updated
+
+        db_edge = GraphEdge(
+            id=self._generate_id("edge"),
+            database_name=database_name,
+            graph_name="knowledge",
+            template_id=edge_create.template_id,
+            source_node_id=edge_create.source_node_id,
+            target_node_id=edge_create.target_node_id,
+            label=edge_create.label,
+            properties=edge_create.properties or {},
+            source_id=resolved_source_id,
+            ccx_iri=ccx_iri,
+        )
+        self.session.add(db_edge)
+        self.session.maybe_commit()
+        self.session.refresh(db_edge)
+        created = entity_to_dict(db_edge)
+        assert created is not None  # a non-None row always converts
+        return created
 
     def get_edge(self, edge_id: str) -> Edge | None:
         """Get an edge by ID."""

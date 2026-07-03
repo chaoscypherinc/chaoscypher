@@ -50,6 +50,19 @@ def _settings() -> MagicMock:
     return s
 
 
+def _engine_settings(tmp_path: Path) -> MagicMock:
+    """MagicMock engine_settings with a real data_dir.
+
+    _run_indexing computes ``Path(engine_settings.paths.data_dir)`` (original-
+    text persistence, vision, error-path cleanup); an unpinned MagicMock
+    stringifies into a literal ``<MagicMock name='mock.paths.data_dir' ...>``
+    directory at the repo root (issue #249).
+    """
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+    return engine_settings
+
+
 def _image_only_pdf_doc() -> dict[str, Any]:
     """A scanned/image-only PDF doc as the loader emits it pre-vision.
 
@@ -128,7 +141,7 @@ async def test_image_only_gate_eligible_writes_no_text_proposal_and_routes_to_vi
             enable_vision=None,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -192,7 +205,7 @@ async def test_image_only_forced_domain_routes_to_vision_without_proposal(
             enable_vision=None,
             adapter=adapter,
             chunking_service=MagicMock(),
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -236,7 +249,7 @@ async def test_image_only_confirmation_not_required_routes_to_vision_without_pro
             enable_vision=None,
             adapter=adapter,
             chunking_service=MagicMock(),
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -296,7 +309,7 @@ async def test_image_bearing_but_text_rich_does_not_write_no_text_proposal(
             enable_vision=None,
             adapter=adapter,
             chunking_service=MagicMock(),
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -359,7 +372,7 @@ async def test_empty_non_image_doc_still_raises(monkeypatch, tmp_path: Path) -> 
             enable_vision=False,
             adapter=adapter,
             chunking_service=MagicMock(),
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -462,7 +475,7 @@ async def test_normal_text_doc_writes_no_no_text_proposal(monkeypatch, tmp_path:
             enable_vision=False,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )

@@ -28,6 +28,7 @@ from chaoscypher_cortex.features.databases.models import (
 )
 from chaoscypher_cortex.features.databases.service import DatabasesService
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
+from chaoscypher_cortex.shared.worker_notify import publish_settings_change
 
 
 router = APIRouter()
@@ -102,7 +103,13 @@ async def switch_database(
     **Note:**
     - Frontend should refresh after switching to load new database context
     """
-    return databases_service.switch_database(request.name)
+    result = databases_service.switch_database(request.name)
+    # Notify the worker so it re-points its DB-file-bound repositories to the new
+    # active database. Without this the worker keeps writing imports / indexing /
+    # extraction into the PREVIOUS database's app.db file (stamped with the new
+    # name but stranded in the wrong file). Best-effort; the switch has persisted.
+    await publish_settings_change("v1:database_switched")
+    return result
 
 
 @router.get("/{name}", response_model=DatabaseResponse)

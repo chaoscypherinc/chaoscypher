@@ -27,6 +27,7 @@ from chaoscypher_core.streaming.chat import (
     inject_citations_for_uncited_paragraphs,
     inject_citations_into_blockquotes,
     normalize_chunk_references,
+    relocate_grouped_citations,
     strip_duplicated_citation_text,
     strip_malformed_citations,
 )
@@ -887,3 +888,59 @@ class TestEnrichmentRecursesAllToolShapes:
         out = enrich_entity_references_from_tool_results(refs, tool_results)
         assert out["n4"]["description"] == "field marshal"
         assert out["n5"]["description"] == "emperor"
+
+
+# ---------------------------------------------------------------------------
+# relocate_grouped_citations
+# (live failure 2026-06-19: qwen3:30b-instruct dumped both citations at the
+# end — one trailing the last paragraph, one orphaned on its own line — so the
+# quoted section above them rendered unsourced and a lone chip floated. This
+# pass moves each citation to the paragraph whose quoted phrase it supports.)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+@pytest.mark.cortex
+class TestRelocateGroupedCitations:
+    def test_relocates_misplaced_and_orphaned_to_supporting_paragraphs(self):
+        # Chunk A carries the para-1 quote; chunk B carries the para-2 quote.
+        chunk_a = _chunk("A", 'He called Napoleon the "Antichrist" before them all.', chunk_index=0)
+        chunk_b = _chunk(
+            "B",
+            'She feared "the last drop that will make the glass run over" most of all.',
+            chunk_index=1,
+        )
+        tool_results = _wrap({"chunks": [chunk_a, chunk_b]})
+        content = (
+            'She calls him the "Antichrist" and condemns his rise.\n\n'
+            'She fears "the last drop that will make the glass run over." '
+            "[[cite:A:S1|w.txt]]\n\n"
+            "[[cite:B:S1|w.txt]]"
+        )
+        out = relocate_grouped_citations(content, tool_results)
+        lines = [ln for ln in out.split("\n") if ln.strip()]
+        # A moves up to the "Antichrist" paragraph it actually supports.
+        assert any("Antichrist" in ln and "[[cite:A:S1|w.txt]]" in ln for ln in lines)
+        # B moves to the "last drop" paragraph.
+        assert any("last drop" in ln and "[[cite:B:S1|w.txt]]" in ln for ln in lines)
+        # The orphaned standalone marker line is gone.
+        assert not any(ln.strip() == "[[cite:B:S1|w.txt]]" for ln in lines)
+        assert out.count("[[cite:") == 2
+
+    def test_correctly_placed_citation_unchanged(self):
+        chunk_a = _chunk("A", 'He called him the "Antichrist" loudly that night.', chunk_index=0)
+        tool_results = _wrap({"chunks": [chunk_a]})
+        content = 'She calls him the "Antichrist" right here. [[cite:A:S1|w.txt]]'
+        # Already sitting in the paragraph it supports -> untouched.
+        assert relocate_grouped_citations(content, tool_results) == content
+
+    def test_no_home_paragraph_left_in_place(self):
+        # The cited chunk's text matches no paragraph quote -> marker stays put.
+        chunk_a = _chunk("A", "completely unrelated chunk body text here", chunk_index=0)
+        tool_results = _wrap({"chunks": [chunk_a]})
+        content = 'A paragraph with a "quoted phrase here" inside. [[cite:A:S1|w.txt]]'
+        assert relocate_grouped_citations(content, tool_results) == content
+
+    def test_no_tool_results_passthrough(self):
+        content = 'q "Antichrist phrase" [[cite:A:S1|w]]'
+        assert relocate_grouped_citations(content, []) == content

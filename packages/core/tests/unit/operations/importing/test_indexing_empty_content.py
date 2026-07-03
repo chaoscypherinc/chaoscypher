@@ -21,6 +21,10 @@ async def test_empty_content_raises_validation_error(
     adapter = MagicMock()
     chunking_service = MagicMock()
     engine_settings = MagicMock()
+    # Pin the MagicMock's data_dir so _run_indexing's
+    # Path(engine_settings.paths.data_dir) writes land inside tmp_path instead
+    # of a literal "<MagicMock ...>" directory at the repo root (issue #249).
+    engine_settings.paths.data_dir = str(tmp_path)
     settings = MagicMock()
 
     import chaoscypher_core.operations.importing.indexing_handler as mod

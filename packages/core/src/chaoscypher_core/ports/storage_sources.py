@@ -101,6 +101,45 @@ class SourceStorageProtocol(Protocol):
         """
         ...
 
+    def get_source_by_ccx_iri(self, ccx_iri: str, database_name: str) -> dict[str, Any] | None:
+        """Look up a source by its stable CCX IRI.
+
+        The lookup primitive the CCX 3.0 importer uses for upsert-by-IRI.
+        Scoped to ``(database_name, ccx_iri)``.
+
+        Args:
+            ccx_iri: The CCX 3.0 stable IRI to match.
+            database_name: Database that owns the source.
+
+        Returns:
+            The source row dict (including ``ccx_iri`` and ``full_text``), or
+            ``None`` if no row in ``database_name`` carries that IRI.
+        """
+        ...
+
+    def upsert_source_by_ccx_iri(
+        self,
+        ccx_iri: str,
+        source_dict: dict[str, Any],
+        database_name: str,
+    ) -> dict[str, Any]:
+        """Idempotently create or update a source keyed by CCX IRI.
+
+        SELECT by ``(database_name, ccx_iri)``; update the existing row's
+        mutable columns when found (incoming-wins, no duplicate), else create a
+        new source carrying the given ``ccx_iri``. Used by the CCX 3.0 importer
+        so re-importing the same package does not duplicate sources.
+
+        Args:
+            ccx_iri: Stable CCX IRI used as the merge key.
+            source_dict: Source column values.
+            database_name: Database to scope the upsert to.
+
+        Returns:
+            The created or updated source row dict (including ``ccx_iri``).
+        """
+        ...
+
     def update_source(self, source_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         """Update an existing source.
 

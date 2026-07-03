@@ -25,7 +25,9 @@ import asyncio
 import json
 import tempfile
 from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -35,14 +37,30 @@ from chaoscypher_core.services.compose.models import (
     ResolvedPackage,
 )
 from chaoscypher_core.services.lexicon import AuthConfig, LexiconClient, LexiconClientError
-from chaoscypher_core.services.package import (
-    PackageManifest,
-    extract_archive,
-    validate_package_directory,
-)
+from chaoscypher_core.services.package import extract_archive
 
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class _ResolvedManifest:
+    """Light CCX 3.0 manifest view consumed by ``ResolvedPackage`` construction.
+
+    Carries only the fields the resolver/merger need (``name``,
+    ``package_version``, ``dependencies``) plus ``raw`` for ``to_dict()``. The
+    CCX 3.0 ``manifest.json`` is the source of truth; ``dependencies`` is a
+    dict (package_name -> version) or empty when the manifest omits it.
+    """
+
+    name: str
+    package_version: str
+    dependencies: dict[str, str] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the raw manifest dict for ``ResolvedPackage.manifest``."""
+        return dict(self.raw)
 
 
 class ResolverError(ChaosCypherException):
@@ -266,7 +284,9 @@ class PackageResolver:
     ) -> ResolvedPackage:
         """Resolve a .ccx archive file.
 
-        Extracts the archive to cache and loads manifest.
+        Validates the package with ``ccx-format``, reads its manifest, then
+        extracts it to cache using the generic ``extract_archive`` so the
+        downstream composer can read the extracted directory.
 
         Args:
             spec: Package specification.
@@ -275,7 +295,10 @@ class PackageResolver:
         Returns:
             Resolved package.
         """
-        # Extract to cache directory
+        # Validate + read the CCX 3.0 manifest from the package bytes.
+        manifest = self._open_and_validate(archive_path, spec.raw)
+
+        # Extract to cache directory (downstream composition reads the dir).
         extract_dir = self.cache_dir / "extracted" / archive_path.stem
         extract_dir.mkdir(parents=True, exist_ok=True)
 
@@ -287,9 +310,6 @@ class PackageResolver:
                 msg,
                 package=spec.raw,
             ) from e
-
-        # Load manifest
-        manifest = self._load_manifest(extract_dir, spec.raw)
 
         return ResolvedPackage(
             spec=spec,
@@ -316,17 +336,8 @@ class PackageResolver:
         Returns:
             Resolved package.
         """
-        # Validate package structure
-        result = validate_package_directory(dir_path)
-        if not result.is_valid:
-            msg = f"Invalid package structure: {'; '.join(result.errors)}"
-            raise ResolverError(
-                msg,
-                package=spec.raw,
-                details={"errors": result.errors, "warnings": result.warnings},
-            )
-
-        # Load manifest
+        # Light structure check: the CCX 3.0 manifest.json must exist + parse.
+        # ``_load_manifest`` raises ResolverError on a missing/invalid manifest.
         manifest = self._load_manifest(dir_path, spec.raw)
 
         return ResolvedPackage(
@@ -383,7 +394,10 @@ class PackageResolver:
 
                 archive_bytes = await client.download(spec.name, actual_version)
 
-                # Write to temp file and extract
+                # Validate + read the CCX 3.0 manifest from the downloaded
+                # bytes, then extract to cache for downstream composition.
+                manifest = self._open_and_validate(archive_bytes, spec.raw)
+
                 version_dir.mkdir(parents=True, exist_ok=True)
 
                 with tempfile.NamedTemporaryFile(suffix=".ccx", delete=False) as tmp:
@@ -394,8 +408,6 @@ class PackageResolver:
                     extract_archive(tmp_path, version_dir)
                 finally:
                     await asyncio.to_thread(tmp_path.unlink, True)
-
-                manifest = self._load_manifest(version_dir, spec.raw)
 
                 logger.info(
                     "resolver_downloaded",
@@ -421,15 +433,56 @@ class PackageResolver:
                 details={"status_code": e.status_code, "details": e.details},
             ) from e
 
-    def _load_manifest(self, path: Path, package_ref: str) -> PackageManifest:
-        """Load manifest from package directory.
+    def _open_and_validate(
+        self,
+        source: Path | bytes,
+        package_ref: str,
+    ) -> _ResolvedManifest:
+        """Validate a .ccx package (file path or bytes) via ``ccx-format``.
+
+        Opens the package with ``ccx.open_package``, runs ``validate()`` and
+        raises ``ResolverError`` when the report is not OK, then returns the
+        CCX 3.0 manifest fields the resolver needs.
 
         Args:
-            path: Package directory path.
+            source: A ``.ccx`` file path or its raw bytes.
             package_ref: Package reference for error messages.
 
         Returns:
-            Loaded PackageManifest.
+            The package's resolved manifest view.
+
+        Raises:
+            ResolverError: If the package is unreadable or fails validation.
+        """
+        import ccx
+
+        try:
+            pkg = ccx.open_package(source)
+            report = pkg.validate()
+        except Exception as e:
+            msg = f"Invalid .ccx package: {e}"
+            raise ResolverError(msg, package=package_ref) from e
+
+        if not report.ok:
+            errors = "; ".join(report.errors) or "unknown error"
+            msg = f"Invalid .ccx package: {errors}"
+            raise ResolverError(
+                msg,
+                package=package_ref,
+                details={"errors": list(report.errors), "warnings": list(report.warnings)},
+            )
+
+        return self._manifest_view(pkg.manifest)
+
+    def _load_manifest(self, path: Path, package_ref: str) -> _ResolvedManifest:
+        """Read the CCX 3.0 manifest.json from an extracted package directory.
+
+        Args:
+            path: Package directory path (must contain ``manifest.json``).
+            package_ref: Package reference for error messages.
+
+        Returns:
+            The resolved manifest view (name, package_version, dependencies).
 
         Raises:
             ResolverError: If manifest is missing or invalid.
@@ -444,7 +497,8 @@ class PackageResolver:
             )
 
         try:
-            return PackageManifest.from_json(manifest_path)
+            with manifest_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
         except json.JSONDecodeError as e:
             msg = f"Invalid manifest JSON: {e}"
             raise ResolverError(
@@ -457,6 +511,38 @@ class PackageResolver:
                 msg,
                 package=package_ref,
             ) from e
+
+        return self._manifest_view(data)
+
+    @staticmethod
+    def _manifest_view(manifest: Any) -> _ResolvedManifest:
+        """Build the resolved-manifest view from a CCX manifest dict or object.
+
+        Accepts either a ``ccx`` ``Manifest`` (``.name`` / ``.package_version``
+        / ``.raw``) or a raw ``manifest.json`` dict. ``dependencies`` is a dict
+        (package_name -> version) or empty when absent.
+        """
+        if isinstance(manifest, dict):
+            raw: dict[str, Any] = dict(manifest)
+            name = raw.get("name", "")
+            package_version = raw.get("package_version", "")
+        else:
+            raw = dict(getattr(manifest, "raw", {}) or {})
+            name = getattr(manifest, "name", "") or raw.get("name", "")
+            package_version = getattr(manifest, "package_version", "") or raw.get(
+                "package_version", ""
+            )
+
+        dependencies = raw.get("dependencies") or {}
+        if not isinstance(dependencies, dict):
+            dependencies = {}
+
+        return _ResolvedManifest(
+            name=name,
+            package_version=package_version,
+            dependencies=dependencies,
+            raw=raw,
+        )
 
     def _get_cache_key(self, spec: PackageSpec) -> str:
         """Get cache key for a package specification.

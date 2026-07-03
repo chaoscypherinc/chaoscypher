@@ -14,18 +14,34 @@ the handlers are patched at their source paths.
 from __future__ import annotations
 
 import base64
-import io
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import ccx
 import pytest
 
 from chaoscypher_core.operations.export_operations_service import ExportOperationsService
 
 
+def _real_ccx_bytes() -> bytes:
+    """Build a minimal but valid CCX 3.0 package for contract assertions."""
+    builder = ccx.PackageBuilder(
+        name="chaoscypher/test",
+        package_version="1.0.0",
+        license="CC-BY-4.0",
+        base_iri="urn:ccx:chaoscypher:",
+    )
+    builder.add_graph(
+        "ccx",
+        "knowledge",
+        {"@graph": [{"@id": "urn:ccx:chaoscypher:node/n1", "@type": "Person", "name": "Alice"}]},
+        role="default",
+    )
+    return builder.build()
+
+
 def _make_service() -> ExportOperationsService:
     return ExportOperationsService(
-        graph_repository=MagicMock(),
         workflow_db=MagicMock(),
     )
 
@@ -145,34 +161,33 @@ class TestQueueExportBySources:
 
 def _patch_handler_deps(
     *,
-    export_method: str,
-    zip_bytes: bytes,
+    ccx_bytes: bytes,
     filename: str,
 ) -> Any:
     """Build the patch context for a handler's lazy imports.
 
-    Returns a tuple of (context_managers list, mock_event_bus, mock_repo).
+    Returns a tuple of (context_managers list, mock_event_bus, mock_exporter).
+    The mocked CcxExporter.export() returns ``ccx_bytes`` for both handlers.
     """
     settings = MagicMock()
     settings.current_database = "current-db"
 
     # The export handlers build the EngineSettings view at the operation
-    # boundary and hand THAT (not the app singleton) to ExportRepository, so we
+    # boundary and hand THAT (not the app singleton) to CcxExporter, so we
     # patch ``build_engine_settings`` to return a real EngineSettings carrying
     # the same current_database the adapter is scoped by.
     from chaoscypher_core.settings import EngineSettings
 
     engine_settings = EngineSettings(current_database="current-db")
 
-    repo = MagicMock()
-    buf = io.BytesIO(zip_bytes)
-    getattr(repo, export_method).return_value = buf
-    repo.get_export_filename.return_value = filename
+    exporter = MagicMock()
+    exporter.export.return_value = ccx_bytes
+    exporter.get_export_filename.return_value = filename
 
     mock_get_settings = MagicMock(return_value=settings)
     mock_build_engine = MagicMock(return_value=engine_settings)
     mock_get_adapter = MagicMock(return_value=MagicMock())
-    mock_export_repo_cls = MagicMock(return_value=repo)
+    mock_exporter_cls = MagicMock(return_value=exporter)
     mock_event_bus = MagicMock()
 
     cms = [
@@ -189,15 +204,19 @@ def _patch_handler_deps(
             mock_get_adapter,
         ),
         patch(
-            "chaoscypher_core.services.export.ExportRepository",
-            mock_export_repo_cls,
+            "chaoscypher_core.repo_factories.get_graph_repository",
+            MagicMock(),
+        ),
+        patch(
+            "chaoscypher_core.services.export.CcxExporter",
+            mock_exporter_cls,
         ),
         patch(
             "chaoscypher_core.operations.export_operations_service.event_bus",
             mock_event_bus,
         ),
     ]
-    return cms, mock_event_bus, repo
+    return cms, mock_event_bus, exporter
 
 
 class TestExportGraphHandler:
@@ -206,10 +225,9 @@ class TestExportGraphHandler:
     @pytest.mark.asyncio
     async def test_returns_encoded_content_and_emits(self) -> None:
         service = _make_service()
-        zip_bytes = b"PK\x03\x04fake-zip-content"
-        cms, mock_event_bus, repo = _patch_handler_deps(
-            export_method="export_graph",
-            zip_bytes=zip_bytes,
+        ccx_bytes = _real_ccx_bytes()
+        cms, mock_event_bus, exporter = _patch_handler_deps(
+            ccx_bytes=ccx_bytes,
             filename="graph_export.ccx",
         )
         from contextlib import ExitStack
@@ -224,11 +242,14 @@ class TestExportGraphHandler:
             )
 
         assert result["filename"] == "graph_export.ccx"
-        assert result["size_bytes"] == len(zip_bytes)
-        assert base64.b64decode(result["content"]) == zip_bytes
+        assert result["size_bytes"] == len(ccx_bytes)
+        # The base64 payload decodes to bytes that open + validate as CCX 3.0.
+        decoded = base64.b64decode(result["content"])
+        assert decoded == ccx_bytes
+        assert ccx.open_package(decoded).validate().ok
 
-        # ExportRepository.export_graph called with config from data.
-        _, kwargs = repo.export_graph.call_args
+        # CcxExporter.export called with config from data.
+        _, kwargs = exporter.export.call_args
         assert kwargs["include_knowledge"] is True
         assert kwargs["lens_id"] == "L1"
         assert kwargs["title"] == "T"
@@ -243,9 +264,8 @@ class TestExportGraphHandler:
     @pytest.mark.asyncio
     async def test_defaults_when_data_empty(self) -> None:
         service = _make_service()
-        cms, _bus, repo = _patch_handler_deps(
-            export_method="export_graph",
-            zip_bytes=b"x",
+        cms, _bus, exporter = _patch_handler_deps(
+            ccx_bytes=_real_ccx_bytes(),
             filename="f.ccx",
         )
         from contextlib import ExitStack
@@ -255,7 +275,7 @@ class TestExportGraphHandler:
                 stack.enter_context(cm)
             await service._export_graph_handler(data={})
 
-        _, kwargs = repo.export_graph.call_args
+        _, kwargs = exporter.export.call_args
         assert kwargs["include_templates"] is True
         assert kwargs["include_embeddings"] is False
         assert kwargs["lens_id"] is None
@@ -267,10 +287,9 @@ class TestExportBySourcesHandler:
     @pytest.mark.asyncio
     async def test_returns_encoded_content_with_prefixed_filename(self) -> None:
         service = _make_service()
-        zip_bytes = b"sources-zip-bytes"
-        cms, mock_event_bus, repo = _patch_handler_deps(
-            export_method="export_by_sources",
-            zip_bytes=zip_bytes,
+        ccx_bytes = _real_ccx_bytes()
+        cms, mock_event_bus, exporter = _patch_handler_deps(
+            ccx_bytes=ccx_bytes,
             filename="base.ccx",
         )
         from contextlib import ExitStack
@@ -286,10 +305,12 @@ class TestExportBySourcesHandler:
 
         # Filename is prefixed with sources_export_<count>_.
         assert result["filename"] == "sources_export_2_base.ccx"
-        assert result["size_bytes"] == len(zip_bytes)
-        assert base64.b64decode(result["content"]) == zip_bytes
+        assert result["size_bytes"] == len(ccx_bytes)
+        decoded = base64.b64decode(result["content"])
+        assert decoded == ccx_bytes
+        assert ccx.open_package(decoded).validate().ok
 
-        _, kwargs = repo.export_by_sources.call_args
+        _, kwargs = exporter.export.call_args
         assert kwargs["source_ids"] == ["a", "b"]
         assert kwargs["include_templates"] is False
 
@@ -300,9 +321,8 @@ class TestExportBySourcesHandler:
     @pytest.mark.asyncio
     async def test_empty_source_ids_default(self) -> None:
         service = _make_service()
-        cms, _bus, repo = _patch_handler_deps(
-            export_method="export_by_sources",
-            zip_bytes=b"z",
+        cms, _bus, exporter = _patch_handler_deps(
+            ccx_bytes=_real_ccx_bytes(),
             filename="b.ccx",
         )
         from contextlib import ExitStack
@@ -313,5 +333,5 @@ class TestExportBySourcesHandler:
             result = await service._export_by_sources_handler(data={})
 
         assert result["filename"] == "sources_export_0_b.ccx"
-        _, kwargs = repo.export_by_sources.call_args
+        _, kwargs = exporter.export.call_args
         assert kwargs["source_ids"] == []

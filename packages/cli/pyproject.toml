@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "Command-line tools for Chaos Cypher knowledge graph library"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -43,7 +43,9 @@ dependencies = [
 [project.optional-dependencies]
 server = [
     "uvicorn>=0.44.0,<1",
-    "fastapi>=0.135.0,<1",
+    # Pinned <0.137 to match cortex: 0.137.0's router-tree refactor (fastapi/fastapi#15745)
+    # breaks empty-path routes under nested includes. See internal/TODO.md.
+    "fastapi>=0.135.0,<0.137",
 ]
 dev = [
     "pytest>=9.0.0,<10",

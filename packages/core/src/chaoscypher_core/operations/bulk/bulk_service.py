@@ -35,6 +35,16 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+def _is_foreign_key_error(exc: Exception) -> bool:
+    """True if ``exc`` is a foreign-key / integrity violation from the store.
+
+    Detected by exception type name + message so this stays in Core's operations
+    layer without importing the SQL driver (the adapter raises SQLAlchemy's
+    ``IntegrityError``; SQLite's message is ``FOREIGN KEY constraint failed``).
+    """
+    return type(exc).__name__ == "IntegrityError" or "foreign key" in str(exc).lower()
+
+
 class BulkOperationsService:
     """Service for queuing bulk graph operations.
 
@@ -405,7 +415,19 @@ class BulkOperationsService:
                 delete_count=len(delete_ids),
                 delete_ids=delete_ids,
             )
-            batch_result = getattr(graph_repo, batch_method)(delete_ids)
+            # GraphRepository's batch-delete methods are keyword-only and return
+            # a row count (one ``DELETE ... WHERE id IN (...)``), not per-id
+            # detail. Call by the entity's id-list keyword (node_ids / edge_ids /
+            # template_ids) and synthesize the result shape
+            # _process_batch_delete_results consumes. A delete is idempotent — an
+            # id that isn't present is simply a no-op — so every requested id is
+            # reported deleted (a raised FK/IntegrityError is handled below).
+            deleted_count = getattr(graph_repo, batch_method)(**{f"{entity_type}_ids": delete_ids})
+            batch_result = {
+                "not_found": [],
+                "errors": [],
+                f"{entity_type}s_deleted": deleted_count,
+            }
 
             # Process batch results
             batch_results, batch_errors = self._process_batch_delete_results(
@@ -414,7 +436,6 @@ class BulkOperationsService:
             results.extend(batch_results)
             errors.extend(batch_errors)
 
-            deleted_count = batch_result.get(f"{entity_type}s_deleted", 0)
             logger.info(
                 "bulk_operation_batch_deleted",
                 entity_type=entity_type,
@@ -428,13 +449,23 @@ class BulkOperationsService:
                 error_type=type(e).__name__,
                 error_message=str(e),
             )
-            # Mark all deletes as failed
+            # A FK RESTRICT violation (e.g. deleting a template still referenced
+            # by nodes) raises an IntegrityError for the whole batch. Surface
+            # that as "in use" rather than a generic failure so the user knows
+            # why — and that the items must be detached/deleted first. (The batch
+            # is one statement, so it is all-or-nothing; per-id resilience is
+            # deliberately not attempted for a cleanup operation.)
+            message = (
+                f"Cannot delete: one or more {entity_type}s are still in use by other entities"
+                if _is_foreign_key_error(e)
+                else "Batch delete failed"
+            )
             for entity_id in delete_ids:
                 idx = delete_idx_map[entity_id]
                 errors.append(
                     {
                         "operation_index": idx,
-                        "error": "Batch delete failed",
+                        "error": message,
                     }
                 )
 

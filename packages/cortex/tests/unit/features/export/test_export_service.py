@@ -3,11 +3,23 @@
 
 """Unit tests for ExportService."""
 
+from __future__ import annotations
+
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
+import ccx
 import pytest
+from sqlmodel import SQLModel
 
+from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+from chaoscypher_core.adapters.sqlite.engine import get_engine
+from chaoscypher_core.adapters.sqlite.models import GraphNode, GraphTemplate
+from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.app_config.engine_factory import build_engine_settings
 from chaoscypher_core.exceptions import ExternalServiceError, ValidationError
+from chaoscypher_core.services.export import CcxExporter
 from chaoscypher_cortex.features.export.models import ExportResponse, ImportResponse
 from chaoscypher_cortex.features.export.service import ExportService
 
@@ -276,3 +288,91 @@ class TestExportService:
         call_kwargs = export_ops.queue_export_by_sources.call_args.kwargs
         assert call_kwargs["include_templates"] is True
         assert call_kwargs["include_embeddings"] is False
+
+
+def _build_real_ccx_package(db_path: Path) -> bytes:
+    """Build a genuine CCX 3.0 package via CcxExporter from a seeded graph.
+
+    Used to prove the cortex import path consumes *real* CCX 3.0 bytes (not
+    just an opaque blob): a tiny graph is seeded through the real SQLite
+    adapter and exported with ``CcxExporter(...).export()``.
+    """
+    engine = get_engine(db_path)
+    SQLModel.metadata.create_all(engine, checkfirst=True)
+    adapter = SqliteAdapter(str(db_path), database_name="default")
+    adapter.connect()
+    try:
+        assert adapter.session is not None
+        session = adapter.session
+        session.add(
+            GraphTemplate(
+                id="tpl_person",
+                database_name="default",
+                name="Person",
+                template_type="node",
+                color="#00ff00",
+            )
+        )
+        session.flush()
+        session.add(
+            GraphNode(
+                id="node_ada",
+                database_name="default",
+                graph_name="knowledge",
+                template_id="tpl_person",
+                label="Ada",
+            )
+        )
+        session.commit()
+
+        graph_repo = GraphRepository(session, "default")
+        settings = build_engine_settings(get_settings())
+        settings.current_database = "default"
+        exporter = CcxExporter(
+            graph_repository=graph_repo,
+            sources_repository=None,
+            settings=settings,
+            workflow_db=None,
+        )
+        return exporter.export(
+            include_sources=False,
+            include_workflows=False,
+            include_embeddings=False,
+        )
+    finally:
+        adapter.disconnect()
+
+
+@pytest.mark.unit
+class TestExportServiceCcx30:
+    """The cortex import path consumes real CCX 3.0 package bytes."""
+
+    @pytest.mark.asyncio
+    async def test_queue_import_accepts_real_ccx_30_package(self, tmp_path: Path):
+        """A package built by CcxExporter validates as 3.0 and is accepted for import."""
+        data = _build_real_ccx_package(tmp_path / "export.db")
+
+        # Sanity: the bytes really are a conformant CCX 3.0 package.
+        report = ccx.open_package(data).validate()
+        assert report.ok, report.errors
+        assert "core" in report.classes
+
+        export_ops = AsyncMock()
+        settings = Mock()
+        settings.priorities = Mock()
+        settings.priorities.background = 50
+        settings.current_database = "default"
+        svc = ExportService(export_operations=export_ops, settings=settings)
+
+        with pytest.MonkeyPatch.context() as mp:
+            queue_fn = AsyncMock(return_value="import-ccx30")
+            mp.setattr(
+                "chaoscypher_cortex.features.export.service.queue_import_ccx",
+                queue_fn,
+            )
+            result = await svc.queue_import(file_content=data, filename="export.ccx")
+
+        assert isinstance(result, ImportResponse)
+        assert result.task_id == "import-ccx30"
+        # The genuine 3.0 bytes are forwarded verbatim to the queue.
+        assert queue_fn.call_args.kwargs["file_content"] == data

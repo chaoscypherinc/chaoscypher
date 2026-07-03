@@ -3,96 +3,64 @@
 
 """Package Service - ChaosCypher Package Management.
 
-Provides framework-agnostic utilities for creating, validating,
-importing, and distributing ChaosCypher (.ccx) packages. This module is used
-by CLI, Cortex, and other tools that need package management capabilities.
+Provides framework-agnostic utilities for importing and distributing
+ChaosCypher (.ccx) packages, plus the generic ZIP archive helpers the upload
+pipeline and source loaders depend on. This module is used by CLI, Cortex,
+and other tools that need package management capabilities.
 
 Submodules:
-    - models: Package manifest and metadata models (JSON format)
-    - archive: ZIP archive creation, extraction, and inspection
-    - validation: Package structure and manifest validation
-    - import: Package import service and loaders
+    - archive: generic ZIP extraction (``extract_archive``) and inspection
+      (``get_archive_info`` / ``format_size`` / ``ArchiveInfo``). Used by the
+      source loaders, the compose resolver, ``db/list``, and ``package/export``.
+    - importer: CCX 3.0 package import service (``CcxImporter``).
+
+CCX 3.0 packages are built by ``ccx-format`` (``ccx.PackageBuilder`` via the
+``CcxExporter``) and read/validated with ``ccx.open_package(...)``; the
+``CcxImporter`` here upserts a package's contents by stable CCX IRI.
 
 For Lexicon interactions (authentication, package registry), see:
     chaoscypher_core.services.lexicon
 
 Example:
     from chaoscypher_core.services.package import (
-        # Models
-        PackageManifest,
-        PackageValidationError,
-        # Archive operations
-        create_archive,
+        # Generic archive utilities
         extract_archive,
         get_archive_info,
-        ArchiveOptions,
-        ArchiveInfo,
-        # Validation
-        validate_package_directory,
-        PackageValidationResult,
-        # Import
-        ImportService,
+        # CCX 3.0 import
+        CcxImporter,
         ImportOptions,
         ImportStats,
     )
 
-    # Validate a package
-    result = validate_package_directory(Path("./my-package"))
-    if result.is_valid:
-        # Build the archive
-        create_archive(Path("./my-package"), Path("my-package-0.1.0.ccx"))
-
-    # Import a package
-    service = ImportService(graph_repository, sources_repository)
-    stats = await service.import_from_bytes(archive_bytes)
+    # Import a CCX 3.0 package
+    importer = CcxImporter(graph_repository, sources_repository)
+    stats = await importer.import_from_bytes(package_bytes)
 """
 
-# Archive operations
+# Archive operations (generic ZIP extraction + inspection)
 from chaoscypher_core.services.package.archive import (
     ArchiveInfo,
-    ArchiveOptions,
     ArchiveSecurityError,
-    create_archive,
     extract_archive,
     format_size,
     get_archive_info,
 )
 
-# Import service
+# CCX 3.0 import service
 from chaoscypher_core.services.package.importer.models import (
-    IdMapper,
     ImportOptions,
     ImportStats,
 )
-from chaoscypher_core.services.package.importer.service import ImportService
-
-# Models
-from chaoscypher_core.services.package.models import (
-    PackageManifest,
-    PackageValidationError,
-)
-
-# Validation
-from chaoscypher_core.services.package.validation import (
-    PackageValidationResult,
-    validate_package_directory,
-)
+from chaoscypher_core.services.package.importer.service import CcxImporter
 
 
 __all__ = [
     "ArchiveInfo",
-    "ArchiveOptions",
     "ArchiveSecurityError",
-    "IdMapper",
+    "CcxImporter",
     "ImportOptions",
-    "ImportService",
     "ImportStats",
-    "PackageManifest",
-    "PackageValidationError",
-    "PackageValidationResult",
-    "create_archive",
     "extract_archive",
     "format_size",
     "get_archive_info",
-    "validate_package_directory",
 ]

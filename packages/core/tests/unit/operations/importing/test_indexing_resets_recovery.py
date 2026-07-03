@@ -11,7 +11,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_indexing_handler_resets_recovery_attempts(monkeypatch) -> None:
+async def test_indexing_handler_resets_recovery_attempts(monkeypatch, tmp_path) -> None:
     from chaoscypher_core.operations.importing import indexing_handler
 
     adapter = MagicMock()
@@ -63,6 +63,12 @@ async def test_indexing_handler_resets_recovery_attempts(monkeypatch) -> None:
     settings.priorities.background = 50
     settings.data_dir = "/tmp"
 
+    # Pin the MagicMock's data_dir so _run_indexing's
+    # Path(engine_settings.paths.data_dir) writes land inside tmp_path instead
+    # of a literal "<MagicMock ...>" directory at the repo root (issue #249).
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+
     await indexing_handler._run_indexing(
         file_id="src_x",
         file_info={"filename": "x.txt"},
@@ -72,7 +78,7 @@ async def test_indexing_handler_resets_recovery_attempts(monkeypatch) -> None:
         enable_vision=False,
         adapter=adapter,
         chunking_service=chunking_service,
-        engine_settings=MagicMock(),
+        engine_settings=engine_settings,
         settings=settings,
         database_name="default",
     )

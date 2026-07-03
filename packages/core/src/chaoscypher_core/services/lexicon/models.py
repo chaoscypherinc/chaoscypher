@@ -219,7 +219,7 @@ class LexiconSearchRequest(BaseModel):
         sort_by: Sort order (relevance, stars, downloads, newest, updated, name).
         is_public: Filter by visibility.
         owner_id: Filter by owner ID.
-        package_type: Filter by package type.
+        conformance_class: Filter by CCX conformance class.
     """
 
     query: str = Field(default="", description="Search query string (empty returns all)")
@@ -231,7 +231,9 @@ class LexiconSearchRequest(BaseModel):
     )
     is_public: bool | None = Field(default=None, description="Filter by visibility")
     owner_id: str | None = Field(default=None, description="Filter by owner ID")
-    package_type: str | None = Field(default=None, description="Filter by package type")
+    conformance_class: str | None = Field(
+        default=None, description="Filter by CCX conformance class"
+    )
 
 
 class LexiconPackageInfo(BaseModel):
@@ -247,12 +249,13 @@ class LexiconPackageInfo(BaseModel):
         owner_name: Owner's display name.
         owner_id: Owner's user ID.
         is_public: Public visibility.
-        package_type: FULL, TEMPLATES, KNOWLEDGE, LENSES, WORKFLOWS, MIXED.
         star_count: Number of stars.
         version_count: Number of published versions.
         download_count: Total downloads across all versions.
         created_at: Unix timestamp (ms).
         updated_at: Unix timestamp (ms).
+        conformance_classes: CCX conformance classes the package satisfies.
+        is_signed: Whether the package is cryptographically signed.
     """
 
     id: str = Field(description="Unique repository ID")
@@ -262,12 +265,17 @@ class LexiconPackageInfo(BaseModel):
     owner_name: str = Field(default="", description="Owner's display name")
     owner_id: str = Field(default="", description="Owner's user ID")
     is_public: bool = Field(default=True, description="Public visibility")
-    package_type: str = Field(default="FULL", description="Package type")
     star_count: int = Field(default=0, description="Number of stars")
     version_count: int = Field(default=0, description="Number of published versions")
     download_count: int = Field(default=0, description="Total downloads")
     created_at: int = Field(default=0, description="Unix timestamp (ms)")
     updated_at: int = Field(default=0, description="Unix timestamp (ms)")
+    conformance_classes: list[str] | None = Field(
+        default=None, description="CCX conformance classes the package satisfies"
+    )
+    is_signed: bool | None = Field(
+        default=None, description="Whether the package is cryptographically signed"
+    )
 
     @property
     def full_name(self) -> str:
@@ -319,6 +327,23 @@ class LexiconUploadRequest(BaseModel):
     message: str | None = Field(default=None, description="Optional upload message")
 
 
+class LexiconUploadResponse(BaseModel):
+    """Async job envelope returned by the CCX 3.0 hub upload endpoint.
+
+    The hub processes uploads asynchronously: the upload returns a job id
+    and a queued status, not the final package metadata.
+
+    Attributes:
+        job_id: Identifier for the queued processing job.
+        status: Job status reported by the hub (e.g. ``queued``).
+        message: Human-readable status message from the hub.
+    """
+
+    job_id: str = Field(description="Identifier for the queued processing job")
+    status: str = Field(description="Job status reported by the hub")
+    message: str = Field(default="", description="Human-readable status message")
+
+
 __all__ = [
     # Auth models
     "LexiconAuthConfig",
@@ -335,4 +360,5 @@ __all__ = [
     "LexiconSearchResponse",
     "LexiconTokenRequest",
     "LexiconUploadRequest",
+    "LexiconUploadResponse",
 ]

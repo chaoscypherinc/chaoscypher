@@ -21,6 +21,16 @@ OP_IMPORT_COMMIT = "import_commit"
 OP_IMPORT_CCX = "import_ccx"
 OP_INDEX_DOCUMENT = "index_document"
 OP_EMBED_CHUNKS = "embed_chunks"
+# Make an already-committed IMPORTED source searchable: re-embed its chunks
+# (CCX bundles carry no chunk vectors) and push node + chunk vectors into the
+# search index — without re-running extraction or regressing its committed
+# status (the reason OP_EMBED_CHUNKS can't be reused here). LLM-bound (embeds).
+OP_INDEX_IMPORTED_SOURCE = "index_imported_source"
+# Make a KNOWLEDGE-ONLY import's nodes searchable: re-embed + index the imported
+# nodes directly off an id list. Knowledge-only imports (lexicon, CLI) land a
+# graph with no source/chunks, so OP_INDEX_IMPORTED_SOURCE doesn't apply. Same
+# LLM queue (re-embeds node text).
+OP_INDEX_IMPORTED_NODES = "index_imported_nodes"
 # URL imports moved to the queue 2026-04-28: the /sources/url route used to
 # block its connection on a synchronous WebScraper fetch. Now the route
 # enqueues OP_FETCH_URL and returns 202 immediately; the worker fetches and
@@ -64,6 +74,8 @@ OPERATION_QUEUE_ROUTING: dict[str, str] = {
     OP_FINALIZE_EXTRACTION: QUEUE_LLM,
     OP_VISION_PAGE: QUEUE_LLM,
     OP_EMBED_CHUNKS: QUEUE_LLM,
+    OP_INDEX_IMPORTED_SOURCE: QUEUE_LLM,
+    OP_INDEX_IMPORTED_NODES: QUEUE_LLM,
     "chat_background": QUEUE_LLM,
     "regenerate_template_embeddings": QUEUE_LLM,
     # QUEUE_OPERATIONS — I/O-bound work, 8 concurrent workers, parallel.

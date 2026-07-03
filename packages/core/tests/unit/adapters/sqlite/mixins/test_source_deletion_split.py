@@ -409,3 +409,45 @@ def test_delete_source_db_rolls_back_on_partial_failure(
     assert post == pre, (
         f"partial-failure rollback did not restore pre-state.\n  before: {pre}\n  after:  {post}"
     )
+
+
+# ---------------------------------------------------------------------------
+# 7. delete_source_files must never rmtree a non-absolute path (CWD-wipe guard)
+# ---------------------------------------------------------------------------
+
+
+def test_delete_source_files_ignores_relative_path(
+    adapter: SqliteAdapter,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A bare/relative filepath must be a no-op, NOT an rmtree of the CWD.
+
+    Regression: an imported source's ``filepath`` was a display name, not an
+    on-disk path. ``Path("war_and_peace.txt").parent`` is ``.`` (the process
+    working directory), so the old code ``rmtree``'d the CWD — which wiped the
+    served frontend at ``/app/static`` when an imported source was deleted.
+    """
+    canary = tmp_path / "do_not_delete"
+    canary.mkdir()
+    (canary / "keep.txt").write_text("keep me")
+    monkeypatch.chdir(tmp_path)  # so a bare name's parent "." resolves here
+
+    adapter.delete_source_files("war_and_peace.txt")
+
+    assert canary.exists(), "a relative filepath must not delete the working dir"
+    assert (canary / "keep.txt").exists()
+
+
+def test_delete_source_files_removes_absolute_staged_dir(
+    adapter: SqliteAdapter,
+    tmp_path: Path,
+) -> None:
+    """An absolute staged-file path still removes its parent directory."""
+    staged_dir = tmp_path / "sources" / "src_abc"
+    staged_dir.mkdir(parents=True)
+    (staged_dir / "doc.txt").write_text("staged content")
+
+    adapter.delete_source_files(str(staged_dir / "doc.txt"))
+
+    assert not staged_dir.exists(), "an absolute staged dir should be removed"

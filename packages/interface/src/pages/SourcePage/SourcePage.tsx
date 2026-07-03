@@ -23,6 +23,7 @@ import PauseIcon from '@mui/icons-material/Pause';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
 import ViewListIcon from '@mui/icons-material/ViewList';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import MoveToInboxIcon from '@mui/icons-material/MoveToInbox';
 import { isSourceProcessing, isSourceIndexed, isSourceExtracted } from '../../types';
 import { useRecoveryThresholds } from '../../config/recoveryThresholds';
 import { useSourcePause } from '../../hooks/useSourcePause';
@@ -160,8 +161,13 @@ export default function SourcePage() {
   }
 
   // Determine which tabs are available
+  const isImported = source.source_type === 'imported';
   const showChunksTab = isSourceIndexed(source);
-  const showExtractionTab = isSourceExtracted(source);
+  // Imported sources have no local extraction pipeline — the Extraction tab
+  // reads source_entities, which is always empty for an import (the entities
+  // came pre-formed in the CCX package and live in the graph). Cut the
+  // confusing empty tab; the imported banner below points to the Graph view.
+  const showExtractionTab = isSourceExtracted(source) && !isImported;
 
   return (
     <Box>
@@ -259,6 +265,30 @@ export default function SourcePage() {
           sx={{ ...ghostErrorAlertSx, mb: 2 }}
         >
           {actionError || loadError}
+        </Alert>
+      )}
+      {/* Imported-source banner: an import has no local extraction pipeline,
+          so the Overview's pipeline stages and the (hidden) Extraction tab
+          don't apply. Set expectations + point at the Graph view where the
+          imported entities actually live. */}
+      {isImported && (
+        <Alert
+          severity="info"
+          icon={<MoveToInboxIcon />}
+          sx={{ mb: 2 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => navigate(`/graph?source_ids=${source.id}`)}
+            >
+              View in graph
+            </Button>
+          }
+        >
+          <strong>Imported source.</strong> This graph came from a CCX package, not a local
+          extraction run, so there are no per-chunk extraction artifacts to show. Its entities and
+          relationships live in the knowledge graph — open the Graph view to explore them.
         </Alert>
       )}
       {/* Tabs */}

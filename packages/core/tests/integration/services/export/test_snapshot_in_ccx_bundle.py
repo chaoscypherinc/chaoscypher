@@ -1,22 +1,31 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Integration tests: graph snapshot + PNG preview packed into .ccx bundle.
+"""Integration tests: a seeded graph exports to a conformant CCX 3.0 bundle.
 
-Full flow: seed graph → run export_graph → open .ccx → assert:
-  - manifest.json present and carries the GraphBreakdown shape
-  - graph_preview.png present and is a valid PNG
-  - manifest.contents[] references graph_preview.png with correct checksums
+Full flow: seed graph → CcxExporter.export() → ccx.open_package(bytes) → assert:
+  - the package self-validates (Core conformance) via ccx-format
+  - the manifest reports ccx_version 3.0
+  - the on-disk bundle shape is CCX 3.0: ``manifest.json`` + ``context.jsonld``
+    + ``knowledge.jsonld`` present, NO ``README.txt`` (CCX has no README; the
+    v2.0 manifest-dict + README bundle shape is gone)
+  - the knowledge default graph + the chaoscypher.statistics graph are present
+  - a title flows through to the manifest
+  - the optional ``graph_preview.png`` is emitted as a content-addressed asset
+    only when preview bytes are supplied (the v2.0 preview functionality, now a
+    CCX 3.0 asset).
 """
 
 from __future__ import annotations
 
-import json
-import zipfile
 from typing import TYPE_CHECKING
 
+import ccx
+
 from chaoscypher_core.adapters.sqlite.repos import GraphRepository
-from chaoscypher_core.services.export.management.service import ExportRepository
+from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.app_config.engine_factory import build_engine_settings
+from chaoscypher_core.services.export import CcxExporter
 
 from ....fixtures.seed_graph import seed_two_sources_three_templates
 
@@ -25,141 +34,108 @@ if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 
 
-# PNG magic bytes: first 8 bytes of any valid PNG file.
-_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+# A 1x1 transparent PNG (valid header + minimal IDAT) used as preview bytes.
+_PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000a49444154789c6360000002000154a24f9c0000000049454e44ae42"
+    "6082"
+)
+
+_PREVIEW_ASSET_PATH = "assets/graph_preview.png"
 
 
-# ---------------------------------------------------------------------------
-# Test 1: bundle contains manifest.json + graph_preview.png
-# ---------------------------------------------------------------------------
+def _exporter(adapter: SqliteAdapter) -> CcxExporter:
+    assert adapter.session is not None
+    graph_repo = GraphRepository(adapter.session, "default")
+    settings = build_engine_settings(get_settings())
+    return CcxExporter(
+        graph_repository=graph_repo,
+        sources_repository=adapter,
+        settings=settings,
+    )
 
 
-def test_export_bundle_contains_manifest_and_preview(
+def test_export_produces_conformant_ccx_package(
     integration_adapter: SqliteAdapter,
 ) -> None:
-    """Seed graph → export_graph → .ccx must contain manifest.json + graph_preview.png."""
+    """Seed graph → export → bytes validate as CCX 3.0 with the core class."""
     seed = seed_two_sources_three_templates(integration_adapter)
 
-    assert integration_adapter.session is not None
-    graph_repo = GraphRepository(integration_adapter.session, "default")
+    data = _exporter(integration_adapter).export()
 
-    from chaoscypher_core.app_config import get_settings
+    pkg = ccx.open_package(data)
+    report = pkg.validate()
+    assert report.ok, report.errors
+    assert "core" in report.classes
+    assert pkg.manifest.ccx_version == "3.0"
 
-    settings = get_settings()
+    # The knowledge default graph is present and carries the seeded nodes.
+    know = next(g for g in pkg.graph_documents() if g.role == "default")
+    knowledge_node_iris = {
+        obj["@id"] for obj in know.doc["@graph"] if obj.get("@type") != "ccx:Relationship"
+    }
+    assert len(knowledge_node_iris) == seed.total_nodes
 
-    repo = ExportRepository(
-        graph_repository=graph_repo,
-        settings=settings,
-        adapter=integration_adapter,
+    # The chaoscypher.statistics named graph is present.
+    statistics = next(
+        g for g in pkg.graph_documents() if (g.namespace, g.name) == ("chaoscypher", "statistics")
     )
-
-    zip_buffer = repo.export_graph()
-    zip_buffer.seek(0)
-
-    with zipfile.ZipFile(zip_buffer, "r") as zf:
-        names = set(zf.namelist())
-
-        assert "manifest.json" in names, "manifest.json must be present in bundle"
-        assert "graph_preview.png" in names, "graph_preview.png must be present in bundle"
-
-        # --- Validate manifest carries GraphBreakdown shape ---
-        manifest_data = json.loads(zf.read("manifest.json"))
-
-        assert manifest_data.get("ccx_version") == "2.0"
-        assert "stats" in manifest_data, "manifest must carry stats from GraphBreakdown"
-        assert "sources" in manifest_data, "manifest must carry sources from GraphBreakdown"
-
-        assert manifest_data["stats"]["total_nodes"] == seed.total_nodes
-        assert manifest_data["stats"]["total_sources"] == 2
-        assert len(manifest_data["sources"]) == 2
-
-        # --- Preview PNG is a valid PNG file ---
-        preview = zf.read("graph_preview.png")
-        assert preview[:8] == _PNG_MAGIC, "graph_preview.png must start with PNG magic bytes"
-        assert len(preview) > 1024, "graph_preview.png must be a non-trivial PNG (>1 KB)"
-
-        # --- manifest.contents[] references graph_preview ---
-        contents = manifest_data.get("contents", [])
-        preview_entry = next((c for c in contents if c.get("type") == "graph_preview"), None)
-        assert preview_entry is not None, "manifest.contents[] must include a graph_preview entry"
-        assert preview_entry["path"] == "graph_preview.png"
-        assert preview_entry["media_type"] == "image/png"
-        assert preview_entry["file_size_bytes"] == len(preview)
-
-        # --- graph_preview appears in package_type list ---
-        assert "graph_preview" in manifest_data.get("package_type", [])
+    assert statistics.doc["@graph"]
 
 
-# ---------------------------------------------------------------------------
-# Test 2: bundle with no adapter falls back gracefully (no PNG)
-# ---------------------------------------------------------------------------
-
-
-def test_export_bundle_without_adapter_omits_preview(
+def test_export_bundle_shape_is_ccx_3_0(
     integration_adapter: SqliteAdapter,
 ) -> None:
-    """When no adapter is provided, graph_preview.png is absent from the bundle."""
+    """The on-disk bundle is CCX 3.0: manifest/context/knowledge present, no README."""
     seed_two_sources_three_templates(integration_adapter)
 
-    assert integration_adapter.session is not None
-    graph_repo = GraphRepository(integration_adapter.session, "default")
+    data = _exporter(integration_adapter).export()
 
-    from chaoscypher_core.app_config import get_settings
-
-    settings = get_settings()
-
-    # No adapter — snapshot/preview skipped
-    repo = ExportRepository(
-        graph_repository=graph_repo,
-        settings=settings,
-        adapter=None,
-    )
-
-    zip_buffer = repo.export_graph()
-    zip_buffer.seek(0)
-
-    with zipfile.ZipFile(zip_buffer, "r") as zf:
-        names = set(zf.namelist())
-        assert "manifest.json" in names
-        assert "graph_preview.png" not in names, (
-            "graph_preview.png must be absent when adapter is None"
-        )
-
-        manifest_data = json.loads(zf.read("manifest.json"))
-        contents = manifest_data.get("contents", [])
-        preview_entry = next((c for c in contents if c.get("type") == "graph_preview"), None)
-        assert preview_entry is None, (
-            "manifest.contents[] must not include graph_preview when adapter is None"
-        )
+    pkg = ccx.open_package(data)
+    names = set(pkg.container.names())
+    assert "manifest.json" in names
+    assert "context.jsonld" in names
+    assert "knowledge.jsonld" in names
+    # CCX has no README.txt (the v2.0 README was dropped; ``ccx inspect`` covers it).
+    assert "README.txt" not in names
 
 
-# ---------------------------------------------------------------------------
-# Test 3: title flows through to manifest
-# ---------------------------------------------------------------------------
-
-
-def test_export_bundle_title_flows_to_manifest(
+def test_export_title_flows_to_manifest(
     integration_adapter: SqliteAdapter,
 ) -> None:
-    """title= parameter reaches manifest.title via GraphBreakdown."""
+    """title= parameter reaches the CCX manifest title."""
     seed_two_sources_three_templates(integration_adapter)
 
-    assert integration_adapter.session is not None
-    graph_repo = GraphRepository(integration_adapter.session, "default")
+    data = _exporter(integration_adapter).export(title="My Export Title")
 
-    from chaoscypher_core.app_config import get_settings
+    pkg = ccx.open_package(data)
+    assert pkg.validate().ok
+    assert pkg.manifest.title == "My Export Title"
 
-    settings = get_settings()
 
-    repo = ExportRepository(
-        graph_repository=graph_repo,
-        settings=settings,
-        adapter=integration_adapter,
-    )
+def test_export_emits_graph_preview_asset_when_supplied(
+    integration_adapter: SqliteAdapter,
+) -> None:
+    """preview_png bytes → graph_preview.png asset present; package still validates."""
+    seed_two_sources_three_templates(integration_adapter)
 
-    zip_buffer = repo.export_graph(title="My Export Title")
-    zip_buffer.seek(0)
+    data = _exporter(integration_adapter).export(preview_png=_PNG_BYTES)
 
-    with zipfile.ZipFile(zip_buffer, "r") as zf:
-        manifest_data = json.loads(zf.read("manifest.json"))
-        assert manifest_data.get("title") == "My Export Title"
+    pkg = ccx.open_package(data)
+    assert pkg.validate().ok, pkg.validate().errors
+    asset_paths = {a.path for a in pkg.manifest.assets}
+    assert _PREVIEW_ASSET_PATH in asset_paths
+    assert pkg.asset_bytes(_PREVIEW_ASSET_PATH) == _PNG_BYTES
+
+
+def test_export_omits_graph_preview_asset_by_default(
+    integration_adapter: SqliteAdapter,
+) -> None:
+    """No preview_png → no graph_preview asset."""
+    seed_two_sources_three_templates(integration_adapter)
+
+    data = _exporter(integration_adapter).export()
+
+    pkg = ccx.open_package(data)
+    asset_paths = {a.path for a in pkg.manifest.assets}
+    assert _PREVIEW_ASSET_PATH not in asset_paths

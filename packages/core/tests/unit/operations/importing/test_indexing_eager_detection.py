@@ -23,6 +23,7 @@ module (``orchestration.detect_extraction_domain``,
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -69,13 +70,28 @@ def _settings() -> MagicMock:
     return s
 
 
+def _engine_settings(tmp_path: Path) -> MagicMock:
+    """MagicMock engine_settings with a real data_dir.
+
+    _run_indexing computes ``Path(engine_settings.paths.data_dir)`` (original-
+    text persistence, vision, error-path cleanup); an unpinned MagicMock
+    stringifies into a literal ``<MagicMock name='mock.paths.data_dir' ...>``
+    directory at the repo root (issue #249).
+    """
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+    return engine_settings
+
+
 # ---------------------------------------------------------------------------
 # Part 1: Eager detection in _run_indexing
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_eager_detection_written_for_gate_eligible_source(monkeypatch) -> None:
+async def test_eager_detection_written_for_gate_eligible_source(
+    monkeypatch, tmp_path: Path
+) -> None:
     """Gate-eligible source gets detection_proposal written after store_chunks.
 
     Invariants:
@@ -152,7 +168,7 @@ async def test_eager_detection_written_for_gate_eligible_source(monkeypatch) -> 
             enable_vision=False,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -174,7 +190,7 @@ async def test_eager_detection_written_for_gate_eligible_source(monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_eager_detection_skipped_for_forced_domain(monkeypatch) -> None:
+async def test_eager_detection_skipped_for_forced_domain(monkeypatch, tmp_path: Path) -> None:
     """No eager proposal written when source has forced_domain set."""
     from chaoscypher_core.operations.importing import indexing_handler
 
@@ -232,7 +248,7 @@ async def test_eager_detection_skipped_for_forced_domain(monkeypatch) -> None:
             enable_vision=False,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )
@@ -241,7 +257,9 @@ async def test_eager_detection_skipped_for_forced_domain(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_eager_detection_skipped_when_confirmation_not_required(monkeypatch) -> None:
+async def test_eager_detection_skipped_when_confirmation_not_required(
+    monkeypatch, tmp_path: Path
+) -> None:
     """No eager proposal written when confirmation_required=False."""
     from chaoscypher_core.operations.importing import indexing_handler
 
@@ -299,7 +317,7 @@ async def test_eager_detection_skipped_when_confirmation_not_required(monkeypatc
             enable_vision=False,
             adapter=adapter,
             chunking_service=chunking_service,
-            engine_settings=MagicMock(),
+            engine_settings=_engine_settings(tmp_path),
             settings=_settings(),
             database_name="default",
         )

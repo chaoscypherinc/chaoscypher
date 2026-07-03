@@ -194,7 +194,17 @@ class SearchService:
         nodes = self.graph_repository.get_nodes_batch(node_ids)
         for node in nodes:
             if enabled_source_ids is not None:
-                source_id = node.properties.get("source_document_id") if node.properties else None
+                # Filter by the canonical ``source_id`` COLUMN (a real FK), not
+                # the ``source_document_id`` property. An IMPORTED node's
+                # property holds the ORIGINAL export-machine source id (stale —
+                # never a local source), while its source_id column is re-pointed
+                # to the local imported source. Filtering on the property wrongly
+                # dropped every imported node from search even though its source
+                # is enabled. Fall back to the property only for legacy nodes
+                # that predate a populated source_id column.
+                source_id = node.source_id or (
+                    node.properties.get("source_document_id") if node.properties else None
+                )
                 if source_id is not None and source_id not in enabled_source_ids:
                     logger.debug(
                         "node_filtered_disabled_source",

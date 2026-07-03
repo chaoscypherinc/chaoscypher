@@ -1262,8 +1262,17 @@ def _recompute_chunk_offsets(
     Mutates each chunk dict in-place to set:
     - ``char_start`` / ``char_end``: character offsets into *original_text*.
     - ``citation_offset_method``: one of ``'exact'``, ``'fuzzy'``, ``'none'``.
-    - ``chunk_metadata["sentence_offsets"]``: if present, each sentence's
-      ``start`` / ``end`` are also shifted to match the original-text anchor.
+
+    ``chunk_metadata["sentence_offsets"]`` is intentionally left untouched:
+    those offsets are chunk-local (0-based relative to ``chunk.content``, as
+    emitted by ``split_into_sentences_with_offsets``). Every consumer slices
+    the chunk's own ``content`` — ``_resolve_sentence_text`` (chat citation
+    text), the CLI citation resolver, and the frontend
+    ``renderChunkWithHighlights`` — and the LLM is shown ``[S{n}]`` numbering
+    derived from splitting that same ``content``. ``char_start``/``char_end``
+    re-anchor to *original_text* purely so the raw-content diff view can slice
+    the pre-cleanup upload; the sentence offsets must stay relative to
+    ``content`` regardless.
 
     Four-level cascade per chunk:
 
@@ -1294,10 +1303,6 @@ def _recompute_chunk_offsets(
     whole-document search, which keeps repeated boilerplate from re-anchoring
     a later chunk to an earlier occurrence.
 
-    Sentence offsets are adjusted by the delta between the old and new
-    ``char_start`` when a match is found, so they remain relative to
-    *original_text* rather than the cleaned text.
-
     Args:
         chunks: Small-chunk dicts from :meth:`ChunkingService._create_small_chunks`.
         original_text: Raw loader output before normalization.
@@ -1315,18 +1320,13 @@ def _recompute_chunk_offsets(
     # previous chunk's START, not its end.
     cursor = 0
 
-    def _apply_collapsed_match(
-        chunk: dict[str, Any], old_start: int | None, first: int, last: int
-    ) -> None:
-        new_start = collapsed_starts[first]
-        chunk["char_start"] = new_start
+    def _apply_collapsed_match(chunk: dict[str, Any], first: int, last: int) -> None:
+        chunk["char_start"] = collapsed_starts[first]
         chunk["char_end"] = collapsed_ends[last] + 1
         chunk["citation_offset_method"] = "fuzzy"
-        _shift_sentence_offsets(chunk, old_start, new_start)
 
     for chunk in chunks:
         content: str = chunk.get("content", "")
-        old_start: int | None = chunk.get("char_start")
 
         # --- Level 1: exact substring match ---
         idx = original_text.find(content)
@@ -1334,7 +1334,6 @@ def _recompute_chunk_offsets(
             chunk["char_start"] = idx
             chunk["char_end"] = idx + len(content)
             chunk["citation_offset_method"] = "exact"
-            _shift_sentence_offsets(chunk, old_start, idx)
             exact_count += 1
             continue
 
@@ -1346,7 +1345,7 @@ def _recompute_chunk_offsets(
             if pos == -1:
                 pos = collapsed_text.find(needle)
             if pos != -1:
-                _apply_collapsed_match(chunk, old_start, pos, pos + len(needle) - 1)
+                _apply_collapsed_match(chunk, pos, pos + len(needle) - 1)
                 fuzzy_count += 1
                 cursor = max(cursor, pos)
                 continue
@@ -1356,7 +1355,7 @@ def _recompute_chunk_offsets(
                 span = _find_anchored_span(collapsed_text, needle, cursor)
                 if span is not None:
                     first, last = span
-                    _apply_collapsed_match(chunk, old_start, first, last)
+                    _apply_collapsed_match(chunk, first, last)
                     fuzzy_count += 1
                     cursor = max(cursor, first)
                     continue
@@ -1374,7 +1373,6 @@ def _recompute_chunk_offsets(
                     chunk["char_start"] = alignment.dest_start
                     chunk["char_end"] = alignment.dest_end
                     chunk["citation_offset_method"] = "fuzzy"
-                    _shift_sentence_offsets(chunk, old_start, alignment.dest_start)
                     fuzzy_count += 1
                     continue
 
@@ -1391,49 +1389,3 @@ def _recompute_chunk_offsets(
         fuzzy=fuzzy_count,
         none=none_count,
     )
-
-
-def _shift_sentence_offsets(
-    chunk: dict[str, Any],
-    old_start: int | None,
-    new_start: int,
-) -> None:
-    """Shift sentence offsets by (new_start - old_start).
-
-    No-op when:
-    - ``chunk_metadata`` is absent.
-    - ``sentence_offsets`` is absent or empty.
-    - ``old_start`` is ``None`` (no previous anchor to delta from).
-
-    Args:
-        chunk: Chunk dict with optional ``chunk_metadata.sentence_offsets``.
-        old_start: Previous ``char_start`` value (pre-recompute).
-        new_start: New ``char_start`` anchored into original_text.
-
-    """
-    if old_start is None:
-        return
-    meta = chunk.get("chunk_metadata")
-    if not isinstance(meta, dict):
-        return
-    sentence_offsets = meta.get("sentence_offsets")
-    if not isinstance(sentence_offsets, list):
-        return
-
-    delta = new_start - old_start
-    if delta == 0:
-        return
-
-    shifted: list[dict[str, Any]] = []
-    for so in sentence_offsets:
-        if isinstance(so, dict):
-            shifted.append(
-                {
-                    **so,
-                    "start": so.get("start", 0) + delta,
-                    "end": so.get("end", 0) + delta,
-                }
-            )
-        else:
-            shifted.append(so)
-    meta["sentence_offsets"] = shifted

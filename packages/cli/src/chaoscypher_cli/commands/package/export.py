@@ -48,7 +48,7 @@ console = Console()
     "--title",
     "-t",
     default=None,
-    help="Display title for the export (shown on the graph preview image)",
+    help="Display title for the export (stored in the package manifest)",
 )
 def export(
     output: str | None,
@@ -82,10 +82,10 @@ def export(
     try:
         ctx = get_context(database_name=database)
 
-        from chaoscypher_core.services.export import ExportRepository
+        from chaoscypher_core.services.export import CcxExporter
 
         # Create export service
-        service = ExportRepository(
+        service = CcxExporter(
             graph_repository=ctx.graph_repository,
             settings=ctx.settings,
             workflow_db=None,  # CLI doesn't have workflow DB for triggers
@@ -108,7 +108,7 @@ def export(
         ) as progress:
             progress.add_task("Exporting knowledge graph...", total=None)
 
-            zip_buffer = service.export_graph(
+            data = service.export(
                 include_templates=templates,
                 include_knowledge=knowledge,
                 include_lenses=lenses,
@@ -121,7 +121,7 @@ def export(
 
         # Write to file
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(zip_buffer.getvalue())
+        output_path.write_bytes(data)
 
         # Display results
         file_size = output_path.stat().st_size

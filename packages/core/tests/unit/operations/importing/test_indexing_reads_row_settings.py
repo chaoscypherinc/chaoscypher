@@ -18,7 +18,7 @@ import pytest
 
 
 @pytest.mark.asyncio
-async def test_indexing_uses_row_settings_when_payload_omits(monkeypatch) -> None:
+async def test_indexing_uses_row_settings_when_payload_omits(monkeypatch, tmp_path) -> None:
     """Recovery scenario: queue payload missing settings → row values used.
 
     The handler builds its working config from ``adapter.get_source(...)``
@@ -65,6 +65,12 @@ async def test_indexing_uses_row_settings_when_payload_omits(monkeypatch) -> Non
         lambda: settings,
     )
 
+    # Pin the MagicMock's data_dir so any Path(engine_settings.paths.data_dir)
+    # construction lands inside tmp_path instead of stringifying the mock into
+    # a literal "<MagicMock ...>" directory at the repo root (issue #249).
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+
     # Adapter returns a row whose values diverge from any payload defaults
     # so we can prove the handler actually read from the row.
     adapter = MagicMock()
@@ -93,7 +99,7 @@ async def test_indexing_uses_row_settings_when_payload_omits(monkeypatch) -> Non
         data=payload,
         source_repository=adapter,
         chunking_service=MagicMock(),
-        engine_settings=MagicMock(),
+        engine_settings=engine_settings,
     )
 
     adapter.get_source.assert_called_once_with("src_recovered", "default")

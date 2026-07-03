@@ -53,7 +53,12 @@ def _make_search_service(**kwargs: Any) -> SearchService:
     )
 
 
-def _node(node_id: str, *, source_document_id: str | None = None) -> SimpleNamespace:
+def _node(
+    node_id: str,
+    *,
+    source_id: str | None = None,
+    source_document_id: str | None = None,
+) -> SimpleNamespace:
     """Build a lightweight node stand-in matching the attributes search.py reads."""
     props: dict[str, Any] = {}
     if source_document_id is not None:
@@ -63,6 +68,7 @@ def _node(node_id: str, *, source_document_id: str | None = None) -> SimpleNames
         template_id="tmpl",
         label=f"label-{node_id}",
         properties=props,
+        source_id=source_id,
         position=None,
         embedding=None,
         created_at="2026-01-01T00:00:00",
@@ -145,6 +151,24 @@ class TestHydrateNodes:
         svc.graph_repository.get_nodes_batch.return_value = [_node("n1")]
         result = svc._hydrate_nodes(["n1"], {"enabled"})
         assert "n1" in result
+
+    def test_imported_node_filters_by_source_id_column_not_property(self) -> None:
+        """Imported nodes filter by the canonical source_id column, not the property.
+
+        An imported node's ``properties.source_document_id`` holds the ORIGINAL
+        export-machine source id (stale); its ``source_id`` column is re-pointed
+        to the local imported source. The filter must use the column, or every
+        imported node is wrongly dropped from search even when its source is on.
+        """
+        svc = _make_search_service()
+        svc.graph_repository.get_nodes_batch.return_value = [
+            # column → enabled local source; property → stale original id.
+            _node("n1", source_id="local-enabled", source_document_id="stale-original"),
+            # column → a NOT-enabled local source: still correctly filtered.
+            _node("n2", source_id="local-disabled", source_document_id="stale-original"),
+        ]
+        result = svc._hydrate_nodes(["n1", "n2"], {"local-enabled"})
+        assert set(result.keys()) == {"n1"}
 
 
 # ---------------------------------------------------------------------------

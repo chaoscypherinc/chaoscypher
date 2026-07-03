@@ -19,7 +19,6 @@ from chaoscypher_core.services.compose.resolver import ResolverError
 from chaoscypher_core.services.compose.service import ComposeError
 from chaoscypher_core.services.lexicon.client import LexiconClientError
 from chaoscypher_core.services.package.archive.extract import ArchiveSecurityError
-from chaoscypher_core.services.package.models.manifest import PackageValidationError
 from chaoscypher_core.services.sources.loaders.archive.exceptions import ArchiveLoaderError
 
 
@@ -31,7 +30,6 @@ from chaoscypher_core.services.sources.loaders.archive.exceptions import Archive
         (ResolverError, ChaosCypherException),
         (ComposeError, ChaosCypherException),
         (LexiconClientError, ExternalServiceError),
-        (PackageValidationError, ValidationError),
         (ArchiveSecurityError, ValidationError),
     ],
 )

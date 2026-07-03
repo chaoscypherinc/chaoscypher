@@ -986,6 +986,29 @@ async def _run_indexing(
 
         chunking_service.store_chunks(chunking_result, database_name=database_name)
 
+        # CCX 3.0 Task 1.3 (2026-06): persist the original pre-chunking text to
+        # ``sources.full_text`` in the same flow as the chunk writes. This is
+        # the SAME in-memory string handed to ``create_chunks(original_text=...)``
+        # above — the text the chunks' ``char_start`` / ``char_end`` were
+        # recomputed against (Phase 5a). The CCX exporter slices this canonical
+        # text with those offsets to emit offset-selector chunks, so the column
+        # must hold the verbatim raw upload, not the cleaned / chunked content.
+        # ``original_text_for_citations`` is ``None`` when the
+        # ``preserve_original_text_for_citations`` toggle is off or the raw
+        # capture found no content — skip the write in that case. Best-effort:
+        # a failure persisting the (potentially large) text must not abort an
+        # otherwise-successful index, mirroring the on-disk write above.
+        if original_text_for_citations:
+            try:
+                adapter.update_source(file_id, {"full_text": original_text_for_citations})
+            except Exception as exc:
+                logger.warning(
+                    "indexing_full_text_persist_failed",
+                    file_id=file_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+
         # Wizard §3.1 (2026-05-29): eager domain detection for gate-eligible
         # sources. Runs immediately after chunks are durably persisted and
         # BEFORE queue_embed_chunks so the wizard's poll-until-proposal

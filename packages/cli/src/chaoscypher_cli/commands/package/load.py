@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.console import Console
@@ -69,10 +69,10 @@ def load(
     try:
         ctx = get_context(database_name=database)
 
-        from chaoscypher_core.services.package.importer import ImportOptions, ImportService
+        from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
 
-        # Create import service
-        service = ImportService(
+        # Create the CCX 3.0 importer (upsert-by-IRI; re-import is idempotent).
+        importer = CcxImporter(
             graph_repository=ctx.graph_repository,
             sources_repository=None,  # CLI doesn't have sources repo
             workflow_db=None,  # CLI doesn't have workflow DB for triggers
@@ -80,8 +80,7 @@ def load(
 
         # Build options
         options = ImportOptions(
-            verify_checksums=True,
-            skip_existing_templates=merge,  # If merge, skip existing templates
+            skip_existing_templates=merge,  # If merge, reuse local templates by name
             import_templates=templates,
             import_knowledge=knowledge,
             import_workflows=workflows,
@@ -92,11 +91,6 @@ def load(
         )
 
         archive_path = Path(package)
-
-        if archive_path.suffix.lower() == ".cxl":
-            raise ValueError(
-                "The .cxl bundle format has been replaced by .ccx. Re-export the bundle."
-            )
 
         console.print(f"[cyan]Importing:[/cyan] {archive_path.name}")
         if merge:
@@ -110,7 +104,12 @@ def load(
             console=console,
         ) as progress:
             progress.add_task(f"Importing {archive_path.name}...", total=None)
-            stats = asyncio.run(service.import_from_path(archive_path, options))
+            stats = asyncio.run(importer.import_from_path(archive_path, options))
+
+        # Make the imported knowledge nodes searchable (re-embed + index). The
+        # CLI has no queue, so unlike the worker import paths this runs inline —
+        # matching what OP_INDEX_IMPORTED_NODES does for lexicon imports.
+        _index_imported_nodes(ctx, stats)
 
         # Display results
         _display_import_results(stats)
@@ -121,6 +120,45 @@ def load(
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
+
+
+def _index_imported_nodes(ctx: Any, stats: ImportStats) -> None:
+    """Re-embed + index the imported knowledge nodes so they are searchable.
+
+    The CLI has no worker/queue, so it runs the same node-indexing the worker
+    enqueues (``OP_INDEX_IMPORTED_NODES``) synchronously. Best-effort: an import
+    is still a success even if the local embedding model is unavailable (the
+    nodes are still keyword-searchable via FTS).
+    """
+    if not stats.imported_node_ids:
+        return
+    from types import SimpleNamespace
+
+    from chaoscypher_core.operations.importing.imported_source_handler import (
+        handle_index_imported_nodes,
+    )
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            progress.add_task("Indexing nodes for search...", total=None)
+            result = asyncio.run(
+                handle_index_imported_nodes(
+                    data={"node_ids": stats.imported_node_ids},
+                    source_repository=ctx.storage_adapter,
+                    graph_repository=ctx.graph_repository,
+                    # The node path only needs the embedding provider off this.
+                    indexing_service=SimpleNamespace(embedding_service=ctx.embedding_service),
+                    search_repository=ctx.search_repository,
+                    metadata={"database_name": ctx.database_name},
+                )
+            )
+        console.print(f"[green]✓ Indexed {result.get('nodes_indexed', 0)} nodes for search[/green]")
+    except Exception as e:
+        console.print(f"[yellow]⚠ Search indexing skipped: {e}[/yellow]")
 
 
 def _display_import_results(stats: ImportStats) -> None:

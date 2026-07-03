@@ -8,7 +8,7 @@
  * database contents as .ccx files, with export options and import warnings.
  */
 
-import { RefObject, useState, useEffect } from 'react';
+import { RefObject, useState } from 'react';
 import {
   Box,
   Typography,
@@ -87,17 +87,6 @@ export default function ImportExportSection({
   setExportOptions,
 }: ImportExportSectionProps) {
   const [showExportOptions, setShowExportOptions] = useState(false);
-  const [showImportWarning, setShowImportWarning] = useState(false);
-
-  // Reset import warning when import completes or errors. Intentional
-  // setState-in-effect: dismissing the warning is a side effect of the
-  // import status flipping.
-  useEffect(() => {
-    if (importSuccess || importError) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setShowImportWarning(false);
-    }
-  }, [importSuccess, importError]);
 
   return (
     <Accordion sx={accentAccordionSx('file')}>
@@ -146,14 +135,9 @@ export default function ImportExportSection({
               startIcon={importing ? <CircularProgress size={14} /> : <UploadIcon />}
               onClick={(e) => {
                 e.stopPropagation();
-                if (!showImportWarning) {
-                  setShowImportWarning(true);
-                } else {
-                  fileInputRef.current?.click();
-                }
+                fileInputRef.current?.click();
               }}
               disabled={exporting || importing}
-              color={showImportWarning ? 'error' : 'primary'}
               sx={accordionBtnSx}
             >
               Import
@@ -163,8 +147,10 @@ export default function ImportExportSection({
       </AccordionSummary>
       <AccordionDetails>
         <Alert severity="info" sx={{ mb: 2, ...ghostInfoAlertSx }}>
-          Export your database to a <code>.ccx</code> file or import from a previous export.
-          Imports will merge with existing data.
+          Export your database to a <code>.ccx</code> file, or import one. Imports{' '}
+          <strong>merge into the current database</strong> — entities are matched by identity,
+          so re-importing the same package updates rather than duplicates, and existing data is
+          kept.
         </Alert>
 
         {importSuccess && (
@@ -284,40 +270,6 @@ export default function ImportExportSection({
                 variant="outlined"
                 size="small"
                 onClick={() => setShowExportOptions(false)}
-                sx={ghostCancelBtnSx}
-              >
-                Cancel
-              </Button>
-            </Box>
-          </Paper>
-        )}
-
-        {/* Import Warning - Show when Import is clicked */}
-        {showImportWarning && (
-          <Paper variant="outlined" sx={{ p: 2, mb: 2, ...accentPaperSx('warning') }}>
-            <Typography variant="subtitle2" gutterBottom sx={{
-              color: "warning.main"
-            }}>
-              Warning: Destructive Operation
-            </Typography>
-            <Typography variant="body2" sx={{ mb: 1 }}>
-              Importing will <strong>replace all existing data</strong> in the current database. This action cannot be undone.
-            </Typography>
-            <Box sx={{ display: 'flex', gap: 1 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                startIcon={importing ? <CircularProgress size={14} sx={{ color: 'error.main' }} /> : <UploadIcon />}
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importing}
-                sx={ghostButtonSx(ChaosCypherPalette.error)}
-              >
-                Confirm Import
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => setShowImportWarning(false)}
                 sx={ghostCancelBtnSx}
               >
                 Cancel

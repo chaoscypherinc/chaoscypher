@@ -194,6 +194,64 @@ describe('computeConstellationLayout', () => {
   });
 });
 
+describe('resolveColor (template-palette opt-in)', () => {
+  const opts = { maxRenderNodes: 200, cacheKey: 'resolve_base_v1' };
+
+  it('colours nodes via resolveColor when provided', () => {
+    const nodes: RawNode[] = [
+      { id: 'a', template_id: 't1', source_id: 's1' },
+      { id: 'b', template_id: 't2', source_id: 's1' },
+    ];
+    const edges: RawEdge[] = [{ source_node_id: 'a', target_node_id: 'b' }];
+    const resolveColor = (tid: string) => (tid === 't1' ? '#ff6f61' : '#123456');
+
+    const { nodes: out } = computeConstellationLayout(nodes, edges, {
+      ...opts,
+      cacheKey: 'resolve_nodes_v1',
+      resolveColor,
+    });
+    const byId = new Map(out.map((n) => [n.id, n]));
+    expect(byId.get('a')!.color).toBe('#ff6f61');
+    expect(byId.get('b')!.color).toBe('#123456');
+  });
+
+  it('falls back to the hash palette when resolveColor returns nullish', () => {
+    const nodes: RawNode[] = [
+      { id: 'a', template_id: 't1', source_id: 's1' },
+      { id: 'b', template_id: 't2', source_id: 's1' },
+    ];
+    const edges: RawEdge[] = [{ source_node_id: 'a', target_node_id: 'b' }];
+    const resolveColor = (tid: string) => (tid === 't1' ? '#ff6f61' : null);
+
+    const { nodes: out } = computeConstellationLayout(nodes, edges, {
+      ...opts,
+      cacheKey: 'resolve_fallback_v1',
+      resolveColor,
+    });
+    const byId = new Map(out.map((n) => [n.id, n]));
+    expect(byId.get('a')!.color).toBe('#ff6f61');
+    expect(byId.get('b')!.color).toBe(colorFromId('t2'));
+    expect(PALETTE).toContain(byId.get('b')!.color);
+  });
+
+  it('propagates resolved colours onto edges', () => {
+    const nodes: RawNode[] = [
+      { id: 'a', template_id: 't1', source_id: 's1' },
+      { id: 'b', template_id: 't1', source_id: 's1' },
+    ];
+    const edges: RawEdge[] = [{ source_node_id: 'a', target_node_id: 'b' }];
+    const resolveColor = () => '#abcdef';
+
+    const { edges: out } = computeConstellationLayout(nodes, edges, {
+      ...opts,
+      cacheKey: 'resolve_edges_v1',
+      resolveColor,
+    });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out.every((e) => e.color === '#abcdef')).toBe(true);
+  });
+});
+
 describe('organicRelax / assignDepth (dashboard opt-ins)', () => {
   const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
     Math.hypot(a.x - b.x, a.y - b.y);

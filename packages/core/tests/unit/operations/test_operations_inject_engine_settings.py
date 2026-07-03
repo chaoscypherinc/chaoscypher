@@ -13,7 +13,6 @@ the app singleton — those are asserted to keep working, not removed.
 
 from __future__ import annotations
 
-import io
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -32,30 +31,30 @@ def _export_service() -> Any:
         ExportOperationsService,
     )
 
-    return ExportOperationsService(graph_repository=MagicMock(), workflow_db=MagicMock())
+    return ExportOperationsService(workflow_db=MagicMock())
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("handler_name", "export_method", "data"),
+    ("handler_name", "data"),
     [
-        ("_export_graph_handler", "export_graph", {}),
-        ("_export_by_sources_handler", "export_by_sources", {"source_ids": ["a"]}),
+        ("_export_graph_handler", {}),
+        ("_export_by_sources_handler", {"source_ids": ["a"]}),
     ],
 )
-async def test_export_handler_hands_engine_settings_to_repository(
-    handler_name: str, export_method: str, data: dict[str, Any]
+async def test_export_handler_hands_engine_settings_to_exporter(
+    handler_name: str, data: dict[str, Any]
 ) -> None:
-    """ExportRepository (typed EngineSettings) gets the engine view, not the app singleton."""
+    """CcxExporter (typed EngineSettings) gets the engine view, not the app singleton."""
     service = _export_service()
 
     app_settings = MagicMock(name="app_settings")
     engine_settings = EngineSettings(current_database="engine-db")
 
-    repo = MagicMock()
-    getattr(repo, export_method).return_value = io.BytesIO(b"PK\x03\x04zip")
-    repo.get_export_filename.return_value = "f.ccx"
-    export_repo_cls = MagicMock(return_value=repo)
+    exporter = MagicMock()
+    exporter.export.return_value = b"ccx-bytes"
+    exporter.get_export_filename.return_value = "f.ccx"
+    exporter_cls = MagicMock(return_value=exporter)
     get_adapter = MagicMock(return_value=MagicMock())
     build_engine = MagicMock(return_value=engine_settings)
 
@@ -72,7 +71,11 @@ async def test_export_handler_hands_engine_settings_to_repository(
             "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
             get_adapter,
         ),
-        patch("chaoscypher_core.services.export.ExportRepository", export_repo_cls),
+        patch(
+            "chaoscypher_core.repo_factories.get_graph_repository",
+            MagicMock(),
+        ),
+        patch("chaoscypher_core.services.export.CcxExporter", exporter_cls),
         patch(
             "chaoscypher_core.operations.export_operations_service.event_bus",
             MagicMock(),
@@ -83,10 +86,10 @@ async def test_export_handler_hands_engine_settings_to_repository(
     # The boundary build runs, converting the app singleton to the engine view.
     build_engine.assert_called_once_with(app_settings)
 
-    # ExportRepository must receive the engine view, never the raw app singleton.
-    _, repo_kwargs = export_repo_cls.call_args
-    assert repo_kwargs["settings"] is engine_settings
-    assert repo_kwargs["settings"] is not app_settings
+    # CcxExporter must receive the engine view, never the raw app singleton.
+    _, exporter_kwargs = exporter_cls.call_args
+    assert exporter_kwargs["settings"] is engine_settings
+    assert exporter_kwargs["settings"] is not app_settings
 
     # The adapter is scoped by the engine settings' current_database.
     get_adapter.assert_called_once_with("engine-db")

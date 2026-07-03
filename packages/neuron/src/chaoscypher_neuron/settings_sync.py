@@ -10,7 +10,7 @@ and load balancer without restarting the worker.
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from valkey.asyncio import Valkey
 
@@ -214,6 +214,52 @@ async def listen_for_settings_changes(ctx: WorkerContext) -> None:
         )
 
 
+def _refresh_database_context(ctx: WorkerContext, settings: Settings) -> Any:
+    """Re-point DB-bound worker resources on a settings reload; return the search repo.
+
+    Two independent reactions to a reload:
+
+    - If the ACTIVE database changed, rebuild the storage adapter + graph +
+      search repositories against the new db file (see
+      :func:`rebuild_database_bound_context`). Without this a UI database switch
+      leaves every worker write — import, index, extraction — landing in the OLD
+      db's ``app.db`` file while stamped with the new db's name, invisible to the
+      target db.
+    - Otherwise, recreate the search repository only if the vector dimension
+      changed (a migration/model change), reusing the existing one when not.
+    """
+    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
+    from chaoscypher_core.database.engine import get_engine
+
+    from .setup.shared import rebuild_database_bound_context
+
+    if settings.current_database != ctx.get("current_database"):
+        logger.info(
+            "worker_active_database_switched",
+            old_database=ctx.get("current_database"),
+            new_database=settings.current_database,
+        )
+        rebuild_database_bound_context(ctx, settings)
+        return ctx.get("search_repository")
+
+    new_vector_dim = settings.search.vector_dimensions
+    current_search_repo: SearchRepository | None = ctx.get("search_repository")
+    if current_search_repo and current_search_repo.vector_dim != new_vector_dim:
+        logger.info(
+            "search_repository_recreating",
+            old_dimensions=current_search_repo.vector_dim,
+            new_dimensions=new_vector_dim,
+        )
+        search_repository = SearchRepository(
+            engine=get_engine(settings.current_database),
+            vector_dim=new_vector_dim,
+            embedding_model=settings.embedding.model,
+        )
+        ctx["search_repository"] = search_repository
+        return search_repository
+    return current_search_repo
+
+
 async def reload_llm_provider(ctx: WorkerContext) -> None:
     """Reload the LLM provider with fresh settings.
 
@@ -270,26 +316,9 @@ async def reload_llm_provider(ctx: WorkerContext) -> None:
                 extraction_model=settings.llm.ollama_extraction_model,
             )
 
-            # Recreate SearchRepository if vector dimensions changed
-            from chaoscypher_core.adapters.sqlite.repos import SearchRepository
-            from chaoscypher_core.database.engine import get_engine
-
-            new_vector_dim = settings.search.vector_dimensions
-            current_search_repo: SearchRepository | None = ctx.get("search_repository")
-            if current_search_repo and current_search_repo.vector_dim != new_vector_dim:
-                logger.info(
-                    "search_repository_recreating",
-                    old_dimensions=current_search_repo.vector_dim,
-                    new_dimensions=new_vector_dim,
-                )
-                search_repository = SearchRepository(
-                    engine=get_engine(settings.current_database),
-                    vector_dim=new_vector_dim,
-                    embedding_model=settings.embedding.model,
-                )
-                ctx["search_repository"] = search_repository
-            else:
-                search_repository = current_search_repo  # type: ignore[assignment]
+            # Re-point DB-bound repos on a database switch + recreate the search
+            # repository if the vector dimension changed.
+            search_repository = _refresh_database_context(ctx, settings)
 
             # Recreate LLM provider with new settings
             engine_settings = build_engine_settings(settings)

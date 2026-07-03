@@ -54,6 +54,8 @@ from chaoscypher_core.constants import (
     OP_IMPORT_COMMIT,
     OP_IMPORT_INDEXING,
     OP_INDEX_DOCUMENT,
+    OP_INDEX_IMPORTED_NODES,
+    OP_INDEX_IMPORTED_SOURCE,
     OP_REBUILD_SEARCH_INDEXES,
     OP_RESET_ALL,
     OP_RESET_KNOWLEDGE_BASE,
@@ -83,6 +85,10 @@ OPERATION_RECOVERY_CATEGORY: dict[str, OperationCategory] = {
     OP_IMPORT_COMMIT: "source_bound",
     OP_INDEX_DOCUMENT: "source_bound",
     OP_EMBED_CHUNKS: "source_bound",
+    # Re-index an imported source (re-embed chunks + push vectors); carries
+    # data["source_id"], so recovery marks that source for retry like any other
+    # source-indexing op.
+    OP_INDEX_IMPORTED_SOURCE: "source_bound",
     # ---------- chat_bound: data["chat_id"] required ----------
     OP_CHAT_BACKGROUND: "chat_bound",
     "chat_completion": "chat_bound",
@@ -93,6 +99,10 @@ OPERATION_RECOVERY_CATEGORY: dict[str, OperationCategory] = {
     OP_FETCH_URL: "drop_and_log",
     # CCX backup imports create many sources; recovery would be ambiguous.
     OP_IMPORT_CCX: "drop_and_log",
+    # Knowledge-only import indexing has no owning source (works off node_ids);
+    # the nodes are already persisted and the ANN index is rebuildable, so an
+    # interrupted run just needs a search rebuild, not a per-source retry.
+    OP_INDEX_IMPORTED_NODES: "drop_and_log",
     # System / cross-cutting ops are idempotent or trigger-on-next-action.
     OP_REBUILD_SEARCH_INDEXES: "drop_and_log",
     OP_RESET_KNOWLEDGE_BASE: "drop_and_log",

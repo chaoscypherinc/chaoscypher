@@ -81,14 +81,10 @@ class OperationsRepository:
         resolved_db = database_name
         if resolved_db is None and self.settings is not None:
             resolved_db = self.settings.current_database
-        metadata: dict[str, Any] = {
-            "task_id": task_id,
-            "operation_type": operation_type,
-        }
-        if resolved_db is not None:
-            metadata["database_name"] = resolved_db
-        if extra_metadata:
-            metadata.update(extra_metadata)
+        # Start from the caller's extras, then stamp the canonical fields last
+        # so they always win — a caller can never override task_id /
+        # operation_type / database_name via extra_metadata.
+        metadata: dict[str, Any] = dict(extra_metadata) if extra_metadata else {}
         metadata["task_id"] = task_id
         metadata["operation_type"] = operation_type
         if resolved_db is not None:

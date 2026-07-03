@@ -8,13 +8,16 @@ packages (cache-hit + download), the BFS dependency-resolution loop in
 ``resolve_all``, cache-key generation, manifest loading error branches, and
 the ``ResolverError`` payload.
 
-Collaborators are mocked at the resolver-module / instance level:
-- ``LexiconClient`` (async context manager) — controls hub responses.
-- ``extract_archive`` / ``validate_package_directory`` — control package
-  loading without real archives.
-- ``PackageResolver._load_manifest`` — patched per-instance to return a fake
-  manifest (the real method requires a manifest.json on disk, which the mocked
-  extract step never writes).
+The resolver now reads + validates packages via ``ccx-format``:
+- ``.ccx`` files / downloaded bytes are validated with
+  ``ccx.open_package(...).validate()`` and the CCX 3.0 ``manifest.json`` drives
+  ``ResolvedPackage`` construction, then the generic ``extract_archive``
+  unpacks the bytes to the cache dir for downstream composition.
+- A local directory is resolved by reading its CCX 3.0 ``manifest.json``.
+
+Real CCX 3.0 packages are built with ``ccx.PackageBuilder`` for fixtures.
+``extract_archive`` is mocked where the test only cares about manifest reading
+(the real extraction of a valid package is exercised elsewhere).
 
 Local ``PackageSpec`` objects are built explicitly with ``is_local=True``
 because ``PackageSpec.parse`` only treats ``./`` ``../`` ``/`` prefixes as
@@ -29,6 +32,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import ccx
 import pytest
 
 from chaoscypher_core.services.compose import resolver as resolver_mod
@@ -53,25 +57,58 @@ def _local_spec(path: Path) -> PackageSpec:
     )
 
 
-def _make_manifest(
+def _ccx_bytes(
     name: str = "pkg",
     version: str = "1.0.0",
     dependencies: dict[str, str] | None = None,
-) -> MagicMock:
-    """Build a fake PackageManifest-like object."""
-    manifest = MagicMock()
-    manifest.name = name
-    manifest.package_version = version
-    manifest.dependencies = dependencies or {}
-    manifest.to_dict.return_value = {"name": name, "version": version}
+) -> bytes:
+    """Build a minimal, valid CCX 3.0 package via the reference writer."""
+    builder = ccx.PackageBuilder(
+        name=name,
+        package_version=version,
+        license="CC-BY-4.0",
+        dependencies=dependencies or None,
+    )
+    builder.add_graph("ccx", "knowledge", {"@graph": []}, role="default")
+    data: bytes = builder.build()
+    return data
+
+
+def _manifest_dict(
+    name: str = "pkg",
+    version: str = "1.0.0",
+    dependencies: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Build the CCX 3.0 manifest.json dict the resolver reads from a dir."""
+    manifest: dict[str, Any] = {
+        "ccx_version": "3.0",
+        "name": name,
+        "package_version": version,
+    }
+    if dependencies:
+        manifest["dependencies"] = dependencies
     return manifest
 
 
-def _fake_lexicon_client(info_version: str = "1.0.0", archive: bytes = b"ccx") -> MagicMock:
+def _write_manifest(
+    target_dir: Path,
+    name: str = "pkg",
+    version: str = "1.0.0",
+    dependencies: dict[str, str] | None = None,
+) -> None:
+    """Write a CCX 3.0 manifest.json into ``target_dir``."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / "manifest.json").write_text(
+        json.dumps(_manifest_dict(name, version, dependencies)),
+        encoding="utf-8",
+    )
+
+
+def _fake_lexicon_client(info_version: str = "1.0.0", archive: bytes | None = None) -> MagicMock:
     """Build a LexiconClient stub with async get_package_info/download."""
     client = MagicMock()
     client.get_package_info = AsyncMock(return_value=SimpleNamespace(version=info_version))
-    client.download = AsyncMock(return_value=archive)
+    client.download = AsyncMock(return_value=archive if archive is not None else _ccx_bytes())
     return client
 
 
@@ -173,19 +210,19 @@ class TestResolveLocalErrors:
 @pytest.mark.unit
 class TestResolveArchive:
     @pytest.mark.asyncio
-    async def test_extracts_and_loads_manifest(self, tmp_path: Path) -> None:
+    async def test_validates_and_loads_manifest(self, tmp_path: Path) -> None:
         archive = tmp_path / "thing.ccx"
-        archive.write_bytes(b"fake-archive")
+        archive.write_bytes(
+            _ccx_bytes(name="thing", version="2.0.0", dependencies={"dep-a": "1.0"})
+        )
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = _local_spec(archive)
 
-        manifest = _make_manifest(name="thing", version="2.0.0", dependencies={"dep-a": "1.0"})
-        with (
-            patch.object(resolver_mod, "extract_archive") as extract,
-            patch.object(resolver, "_load_manifest", return_value=manifest),
-        ):
+        with patch.object(resolver_mod, "extract_archive") as extract:
             resolved = await resolver._resolve_local(spec)
 
+        # ccx-format validated the bytes; the manifest drove construction; the
+        # generic extract_archive still unpacked to the cache dir.
         extract.assert_called_once()
         assert resolved.name == "thing"
         assert resolved.version == "2.0.0"
@@ -194,9 +231,19 @@ class TestResolveArchive:
         assert resolved.path.parent.name == "extracted"
 
     @pytest.mark.asyncio
+    async def test_invalid_ccx_raises(self, tmp_path: Path) -> None:
+        archive = tmp_path / "thing.ccx"
+        archive.write_bytes(b"not a real zip")
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        spec = _local_spec(archive)
+
+        with pytest.raises(ResolverError, match="Invalid .ccx package"):
+            await resolver._resolve_local(spec)
+
+    @pytest.mark.asyncio
     async def test_extract_failure_wrapped(self, tmp_path: Path) -> None:
         archive = tmp_path / "thing.ccx"
-        archive.write_bytes(b"fake")
+        archive.write_bytes(_ccx_bytes(name="thing"))
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = _local_spec(archive)
 
@@ -207,15 +254,11 @@ class TestResolveArchive:
     @pytest.mark.asyncio
     async def test_ccx_suffix_case_insensitive(self, tmp_path: Path) -> None:
         archive = tmp_path / "thing.CCX"
-        archive.write_bytes(b"fake")
+        archive.write_bytes(_ccx_bytes(name="thing", version="1.0.0"))
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = _local_spec(archive)
 
-        manifest = _make_manifest(name="thing", version="1.0.0")
-        with (
-            patch.object(resolver_mod, "extract_archive"),
-            patch.object(resolver, "_load_manifest", return_value=manifest),
-        ):
+        with patch.object(resolver_mod, "extract_archive"):
             resolved = await resolver._resolve_local(spec)
         assert resolved.name == "thing"
 
@@ -230,17 +273,11 @@ class TestResolveDirectory:
     @pytest.mark.asyncio
     async def test_valid_directory(self, tmp_path: Path) -> None:
         pkg_dir = tmp_path / "mypkg"
-        pkg_dir.mkdir()
+        _write_manifest(pkg_dir, name="mypkg", version="3.1.0")
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = _local_spec(pkg_dir)
 
-        manifest = _make_manifest(name="mypkg", version="3.1.0")
-        valid_result = SimpleNamespace(is_valid=True, errors=[], warnings=[])
-        with (
-            patch.object(resolver_mod, "validate_package_directory", return_value=valid_result),
-            patch.object(resolver, "_load_manifest", return_value=manifest),
-        ):
-            resolved = await resolver._resolve_local(spec)
+        resolved = await resolver._resolve_local(spec)
 
         assert resolved.name == "mypkg"
         assert resolved.version == "3.1.0"
@@ -248,23 +285,25 @@ class TestResolveDirectory:
         assert resolved.dependencies == []
 
     @pytest.mark.asyncio
-    async def test_invalid_directory_raises_with_details(self, tmp_path: Path) -> None:
+    async def test_directory_with_dependencies(self, tmp_path: Path) -> None:
+        pkg_dir = tmp_path / "mypkg"
+        _write_manifest(pkg_dir, name="mypkg", version="1.0.0", dependencies={"dep-a": "1.0"})
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        spec = _local_spec(pkg_dir)
+
+        resolved = await resolver._resolve_local(spec)
+
+        assert resolved.dependencies == ["dep-a"]
+
+    @pytest.mark.asyncio
+    async def test_missing_manifest_raises(self, tmp_path: Path) -> None:
         pkg_dir = tmp_path / "broken"
         pkg_dir.mkdir()
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = _local_spec(pkg_dir)
 
-        invalid = SimpleNamespace(
-            is_valid=False, errors=["no manifest", "no data"], warnings=["w1"]
-        )
-        with patch.object(resolver_mod, "validate_package_directory", return_value=invalid):
-            with pytest.raises(ResolverError) as exc_info:
-                await resolver._resolve_local(spec)
-
-        err = exc_info.value
-        assert "Invalid package structure" in err.message
-        assert err.details["errors"] == ["no manifest", "no data"]
-        assert err.details["warnings"] == ["w1"]
+        with pytest.raises(ResolverError, match="Missing manifest.json"):
+            await resolver._resolve_local(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -279,15 +318,12 @@ class TestResolveHub:
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = PackageSpec.parse("hubpkg:1.0.0")
 
-        # Pre-seed the cache version dir with a manifest.json so cache-hit fires.
+        # Pre-seed the cache version dir with a CCX 3.0 manifest.json.
         version_dir = resolver.cache_dir / "packages" / "hubpkg" / "1.0.0"
-        version_dir.mkdir(parents=True, exist_ok=True)
-        (version_dir / "manifest.json").write_text("{}")
+        _write_manifest(version_dir, name="hubpkg", version="1.0.0", dependencies={"d": "1"})
 
         client = _fake_lexicon_client(info_version="1.0.0")
-        manifest = _make_manifest(name="hubpkg", version="1.0.0", dependencies={"d": "1"})
-        with patch.object(resolver, "_load_manifest", return_value=manifest):
-            resolved = await resolver._resolve_hub(spec, client)
+        resolved = await resolver._resolve_hub(spec, client)
 
         client.get_package_info.assert_awaited_once()
         client.download.assert_not_awaited()
@@ -296,23 +332,30 @@ class TestResolveHub:
         assert resolved.dependencies == ["d"]
 
     @pytest.mark.asyncio
-    async def test_download_and_extract(self, tmp_path: Path) -> None:
+    async def test_download_validates_and_extracts(self, tmp_path: Path) -> None:
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = PackageSpec.parse("hubpkg")  # no version -> "latest"
 
-        client = _fake_lexicon_client(info_version="9.9.9", archive=b"ZIPDATA")
-        manifest = _make_manifest(name="hubpkg", version="9.9.9")
-        with (
-            patch.object(resolver_mod, "extract_archive") as extract,
-            patch.object(resolver, "_load_manifest", return_value=manifest),
-        ):
+        archive = _ccx_bytes(name="hubpkg", version="9.9.9")
+        client = _fake_lexicon_client(info_version="9.9.9", archive=archive)
+        with patch.object(resolver_mod, "extract_archive") as extract:
             resolved = await resolver._resolve_hub(spec, client)
 
         client.download.assert_awaited_once_with("hubpkg", "9.9.9")
         extract.assert_called_once()
+        assert resolved.name == "hubpkg"
         assert resolved.version == "9.9.9"
         # version_dir is cache/packages/hubpkg/9.9.9
         assert resolved.path.name == "9.9.9"
+
+    @pytest.mark.asyncio
+    async def test_download_invalid_ccx_raises(self, tmp_path: Path) -> None:
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        spec = PackageSpec.parse("hubpkg:1.0.0")
+
+        client = _fake_lexicon_client(info_version="1.0.0", archive=b"garbage")
+        with pytest.raises(ResolverError, match="Invalid .ccx package"):
+            await resolver._resolve_hub(spec, client)
 
     @pytest.mark.asyncio
     async def test_lexicon_error_wrapped(self, tmp_path: Path) -> None:
@@ -349,24 +392,14 @@ class TestLoadManifest:
         with pytest.raises(ResolverError, match="Invalid manifest JSON"):
             resolver._load_manifest(tmp_path, "pkg-ref")
 
-    def test_from_json_other_error_wrapped(self, tmp_path: Path) -> None:
-        (tmp_path / "manifest.json").write_text(json.dumps({"name": "x"}))
+    def test_success_returns_manifest_view(self, tmp_path: Path) -> None:
+        _write_manifest(tmp_path, name="x", version="4.5.6", dependencies={"d": "1"})
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
-        pm = MagicMock()
-        pm.from_json.side_effect = ValueError("schema boom")
-        with patch.object(resolver_mod, "PackageManifest", pm):
-            with pytest.raises(ResolverError, match="Failed to load manifest"):
-                resolver._load_manifest(tmp_path, "pkg-ref")
-
-    def test_success_returns_manifest(self, tmp_path: Path) -> None:
-        (tmp_path / "manifest.json").write_text(json.dumps({"name": "x"}))
-        resolver = PackageResolver(cache_dir=tmp_path / "cache")
-        manifest = _make_manifest()
-        pm = MagicMock()
-        pm.from_json.return_value = manifest
-        with patch.object(resolver_mod, "PackageManifest", pm):
-            out = resolver._load_manifest(tmp_path, "pkg-ref")
-        assert out is manifest
+        out = resolver._load_manifest(tmp_path, "pkg-ref")
+        assert out.name == "x"
+        assert out.package_version == "4.5.6"
+        assert out.dependencies == {"d": "1"}
+        assert out.to_dict()["name"] == "x"
 
 
 # ---------------------------------------------------------------------------
@@ -381,12 +414,12 @@ class TestResolveAll:
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = PackageSpec.parse("alpha:1.0.0")
 
-        client = _fake_lexicon_client(info_version="1.0.0")
-        manifest = _make_manifest(name="alpha", version="1.0.0")
+        client = _fake_lexicon_client(
+            info_version="1.0.0", archive=_ccx_bytes(name="alpha", version="1.0.0")
+        )
         with (
             _patch_lexicon(client),
             patch.object(resolver_mod, "extract_archive"),
-            patch.object(resolver, "_load_manifest", return_value=manifest),
         ):
             result = await resolver.resolve_all([spec])
 
@@ -397,27 +430,21 @@ class TestResolveAll:
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         root_spec = PackageSpec.parse("root:1.0.0")
 
-        client = _fake_lexicon_client()
-
         # root depends on "child"; child has no deps.
-        manifests = {
-            "root": _make_manifest(name="root", version="1.0.0", dependencies={"child": "1"}),
-            "child": _make_manifest(name="child", version="1.0.0"),
+        archives = {
+            "root": _ccx_bytes(name="root", version="1.0.0", dependencies={"child": "1"}),
+            "child": _ccx_bytes(name="child", version="1.0.0"),
         }
 
+        client = MagicMock()
         client.get_package_info = AsyncMock(
             side_effect=lambda name, version: SimpleNamespace(version="1.0.0")
         )
-
-        def load_manifest_side_effect(path: Path, _ref: str) -> MagicMock:
-            # path = cache/packages/<name>/<ver>
-            name = path.parent.name
-            return manifests[name]
+        client.download = AsyncMock(side_effect=lambda name, version: archives[name])
 
         with (
             _patch_lexicon(client),
             patch.object(resolver_mod, "extract_archive"),
-            patch.object(resolver, "_load_manifest", side_effect=load_manifest_side_effect),
         ):
             result = await resolver.resolve_all([root_spec], include_dependencies=True)
 
@@ -429,12 +456,13 @@ class TestResolveAll:
         resolver = PackageResolver(cache_dir=tmp_path / "cache")
         spec = PackageSpec.parse("root:1.0.0")
 
-        client = _fake_lexicon_client()
-        manifest = _make_manifest(name="root", version="1.0.0", dependencies={"child": "1"})
+        client = _fake_lexicon_client(
+            info_version="1.0.0",
+            archive=_ccx_bytes(name="root", version="1.0.0", dependencies={"child": "1"}),
+        )
         with (
             _patch_lexicon(client),
             patch.object(resolver_mod, "extract_archive"),
-            patch.object(resolver, "_load_manifest", return_value=manifest),
         ):
             result = await resolver.resolve_all([spec], include_dependencies=False)
 
@@ -446,12 +474,12 @@ class TestResolveAll:
         spec_a = PackageSpec.parse("dup:1.0.0")
         spec_b = PackageSpec.parse("dup:1.0.0")
 
-        client = _fake_lexicon_client()
-        manifest = _make_manifest(name="dup", version="1.0.0")
+        client = _fake_lexicon_client(
+            info_version="1.0.0", archive=_ccx_bytes(name="dup", version="1.0.0")
+        )
         with (
             _patch_lexicon(client),
             patch.object(resolver_mod, "extract_archive"),
-            patch.object(resolver, "_load_manifest", return_value=manifest),
         ):
             result = await resolver.resolve_all([spec_a, spec_b])
 

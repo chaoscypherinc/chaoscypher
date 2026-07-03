@@ -92,3 +92,36 @@ class TestSourceStatsVectorsIncluded:
         """Empty sources return vectors_included=False."""
         stats = calculate_source_stats(sources=[], include_embeddings=True)
         assert stats.vectors_included is False
+
+
+class TestSourceStatsDomains:
+    """The extraction-domain breakdown (drives the hub's package category)."""
+
+    def test_domains_counted_skipping_none(self):
+        """Sources are counted by extraction_domain; domainless sources are skipped."""
+        sources = [
+            {
+                "id": "s1",
+                "chunks": [],
+                "citations": [],
+                "tags": [],
+                "extraction_domain": "literary",
+            },
+            {
+                "id": "s2",
+                "chunks": [],
+                "citations": [],
+                "tags": [],
+                "extraction_domain": "literary",
+            },
+            {
+                "id": "s3",
+                "chunks": [],
+                "citations": [],
+                "tags": [],
+                "extraction_domain": "scientific",
+            },
+            {"id": "s4", "chunks": [], "citations": [], "tags": [], "extraction_domain": None},
+        ]
+        stats = calculate_source_stats(sources=sources)
+        assert stats.domains == {"literary": 2, "scientific": 1}

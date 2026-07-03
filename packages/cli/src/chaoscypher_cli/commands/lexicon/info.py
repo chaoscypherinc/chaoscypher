@@ -145,7 +145,10 @@ def _show_hub_info(package: str, version: str | None, console: Console) -> None:
 
         # Show metadata
         console.print("\n[cyan]Details:[/cyan]")
-        console.print(f"  Package Type: {pkg_info.package_type}")
+        if pkg_info.conformance_classes:
+            console.print(f"  Conformance: {', '.join(pkg_info.conformance_classes)}")
+        if pkg_info.is_signed is not None:
+            console.print(f"  Signed: {'yes' if pkg_info.is_signed else 'no'}")
         console.print(f"  Downloads: {pkg_info.download_count:,}")
         console.print(f"  Stars: {pkg_info.star_count:,}")
         console.print(f"  Versions: {pkg_info.version_count}")

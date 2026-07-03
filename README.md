@@ -2,11 +2,13 @@
 
 **Turn your documents into a knowledge graph you can inspect, search, chat with, and take with you — all running on your own machine.**
 
-Chaos Cypher is a local-first GraphRAG platform. Point it at your sources (files,
-pasted text, web pages), and it extracts entities and relationships into a
-**knowledge graph you can actually see and explore** — not a black-box vector
-blob. Search it, chat with it, refine it, and export the result as a portable
-**knowledge package** you can back up, share, or load into another instance.
+Chaos Cypher is a local-first GraphRAG platform — knowledge you can **see,
+trust, and own**. Point it at your sources (documents, audio, video, images,
+pasted text, web pages — 30+ formats, auto-detected), and it extracts entities
+and relationships into a **knowledge graph you can actually see and explore** —
+not a black-box vector blob. Search it, chat with it, refine it, and export the
+result as a portable **Lexicon knowledge package** (`.ccx`) you can back up,
+share, or load into another instance.
 
 ### Why Chaos Cypher
 
@@ -18,8 +20,45 @@ blob. Search it, chat with it, refine it, and export the result as a portable
   them.
 - **Portable knowledge packages** — import and export your graph as a
   self-contained package. Your knowledge is yours to move, version, and keep.
+- **MCP server built in** — plug Claude Desktop, Cursor, or any
+  [MCP](https://modelcontextprotocol.io/) client straight into your graph:
+  [31 tools](https://chaoscypher.com/docs/user-guide/mcp) for search,
+  traversal, and graph building.
 - **Self-hosted control** — you choose where data lives and which models touch
   it. The all-in-one container runs the whole stack on hardware you control.
+
+### Feature highlights
+
+**Core intelligence**
+
+- **[Knowledge graph canvas](https://chaoscypher.com/docs/user-guide/knowledge-graph)** —
+  typed, filterable, zoomable from corpus overview down to a single entity and
+  its sources
+- **[GraphRAG search](https://chaoscypher.com/docs/user-guide/search)** — graph
+  traversal fused with vector search (Personalized PageRank + Reciprocal Rank
+  Fusion), plus keyword, semantic, and hybrid modes
+- **[AI chat with citations](https://chaoscypher.com/docs/user-guide/chat)** —
+  answers grounded in your content, traceable back to the sources that produced
+  them
+
+**Data foundation**
+
+- **[Quality analysis](https://chaoscypher.com/docs/user-guide/quality)** —
+  score graph richness on a 0–100 scale, with breakdowns that flag weak sources
+- **[30+ source formats](https://chaoscypher.com/docs/user-guide/sources)** —
+  PDF, DOCX, Markdown, HTML, EPUB, audio (MP3/WAV/FLAC), video (MP4/MKV/MOV),
+  images, ZIP archives, and more
+- **[Mix-and-match LLMs](https://chaoscypher.com/docs/getting-started/configuration)** —
+  Ollama, OpenAI, Anthropic, or Gemini, configurable per operation
+
+**Automation & integration**
+
+- **[Automations](https://chaoscypher.com/docs/user-guide/automations)** —
+  visual workflow builder with triggers and conditional logic
+- **[MCP server](https://chaoscypher.com/docs/user-guide/mcp)** — 31 tools for
+  Claude Desktop, Cursor, ChatGPT, and other MCP clients
+- **[Plugin system](https://chaoscypher.com/docs/user-guide/domains)** —
+  drop-in Python document loaders, extraction domains, and workflow tools
 
 ### What data leaves your machine?
 
@@ -36,6 +75,14 @@ provider — choose a local model like Ollama to keep everything on-device.
 ---
 
 ## 📸 See It in Action
+
+A quick tour — from dropping in a document to asking a question and tracing the
+answer back to the exact highlighted sentence in your source:
+
+![Animated walkthrough: upload a document, watch entities extract, explore the knowledge graph, ask a question, and trace the cited answer to the highlighted source sentence](packages/docs/static/img/demo.gif)
+
+> ▶️ Watch the full tour (with audio-free narration captions) on
+> [chaoscypher.com](https://chaoscypher.com).
 
 **Dashboard** — your knowledge base at a glance: entity and relationship counts,
 quality and density scores, and a live graph preview.
@@ -67,12 +114,12 @@ entity citations you can click through to the graph.
 ## 🚀 Quick Start
 
 **Prerequisites:** Docker (with Compose). That's it for end users — embeddings
-run locally or in the cloud. You'll also want an LLM provider; [Ollama](https://ollama.com/)
+run locally on CPU. You'll also want an LLM provider; [Ollama](https://ollama.com/)
 keeps everything on-device.
 
 ### Run the published container (recommended)
 
-The launch install path is the all-in-one image published to the GitHub
+The recommended install path is the all-in-one image published to the GitHub
 Container Registry:
 
 ```bash
@@ -103,11 +150,25 @@ volumes:
   chaoscypher-data:
 ```
 
-> The image is built and pushed by
+> The image is built and pushed on every `vX.Y.Z` release by
 > [`.github/workflows/publish-ghcr.yml`](.github/workflows/publish-ghcr.yml).
-> It is the launch install path — if `ghcr.io/chaoscypherinc/chaoscypher` does
-> not pull yet, the publish workflow has not been run; build from source with
-> the steps below in the meantime.
+
+### Install the CLI from PyPI
+
+Terminal-first? The standalone CLI installs with
+[pipx](https://pipx.pypa.io/) (or plain pip):
+
+```bash
+pipx install chaoscypher-cli
+chaoscypher setup                 # wizard: pick an LLM provider
+chaoscypher source add paper.pdf
+```
+
+All four Python packages (`chaoscypher-core`, `-cortex`, `-neuron`,
+`-cli`) are published to [PyPI](https://pypi.org/project/chaoscypher-core/) on
+every release — `chaoscypher-core` gives you the same extraction and search
+engine as an embeddable library. See the
+[developer quickstart](https://chaoscypher.com/docs/developer-guide/quickstart).
 
 ### Build from source (alternative / development)
 
@@ -120,7 +181,12 @@ make docker-up      # builds + starts the all-in-one container
 # Open http://localhost
 ```
 
-### Try it in ~30 minutes
+### Try it in about 5 minutes
+
+The [quickstart](https://chaoscypher.com/docs/getting-started/quickstart)
+covers this in detail — import and search work within about 5 minutes;
+extraction and chat come online once your LLM provider is set up (for Ollama,
+after a one-time model download).
 
 1. **Start the app** with one of the paths above and open <http://localhost>.
 2. **Create your single-user login** on the first-run setup page.
@@ -350,6 +416,7 @@ under the project [CLA](CLA.md).
 ## 🔗 Links
 
 - [Published Docs Site](https://chaoscypher.com)
+- [Blog](https://chaoscypher.com/blog)
 - [Documentation source](./packages/docs/)
 - [Issue Tracker](https://github.com/chaoscypherinc/chaoscypher/issues)
 - [Contributor Guide](./CONTRIBUTING.md)

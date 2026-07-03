@@ -751,6 +751,8 @@ module = [
     "chardet.*",   # Charset tiebreaker sub-modules
     "docx",        # python-docx DOCX loader; no py.typed marker upstream
     "docx.*",      # python-docx sub-modules
+    "ccx",         # ccx-format reference lib; no py.typed marker upstream
+    "ccx.*",       # ccx-format sub-modules
 ]
 ignore_missing_imports = true
 
