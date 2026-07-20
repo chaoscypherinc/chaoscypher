@@ -76,7 +76,8 @@ class DatabasesService:
             Switch response with success status
 
         Raises:
-            HTTPException: If database not found
+            NotFoundError: If the database does not exist (mapped to 404 at
+                the Cortex error boundary).
 
         """
         # Verify database exists
@@ -125,7 +126,8 @@ class DatabasesService:
             Created database info
 
         Raises:
-            HTTPException: If name invalid or database already exists
+            ValidationError: If the name is invalid or the database already
+                exists (mapped to 422 at the Cortex error boundary).
 
         """
         try:
@@ -141,7 +143,9 @@ class DatabasesService:
             name: Database name to delete
 
         Raises:
-            HTTPException: If trying to delete current database or database doesn't exist
+            ValidationError: If deleting the currently active database, or if
+                the database does not exist (mapped to 422 at the Cortex error
+                boundary).
 
         """
         # Safety check - cannot delete current database

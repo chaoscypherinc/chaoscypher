@@ -6,7 +6,6 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from sqlmodel import Session
 
 from chaoscypher_core.app_config import Settings, get_settings
 from chaoscypher_cortex.features.sources.models import (
@@ -22,7 +21,6 @@ from chaoscypher_cortex.shared.api.responses import (
     NOT_FOUND_RESPONSE,
 )
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
-from chaoscypher_cortex.shared.database import get_current_session
 
 
 router = APIRouter()
@@ -34,10 +32,14 @@ router = APIRouter()
 
 
 def get_tag_service(
-    session: Annotated[Session, Depends(get_current_session)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> TagService:
-    """Create TagService with dependencies."""
+    """Create TagService with dependencies.
+
+    Builds its own adapter from ``settings.current_database``; no request
+    session is needed (the prior ``get_current_session`` dependency opened a
+    DB session per request that this factory never used).
+    """
     from chaoscypher_core.app_config.engine_factory import (
         build_engine_settings,
     )

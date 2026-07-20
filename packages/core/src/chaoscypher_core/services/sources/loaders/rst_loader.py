@@ -76,7 +76,10 @@ class RSTLoader:
         Returns:
             A single-item list with raw RST text content and metadata.
         """
+        from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
         from chaoscypher_core.utils.encoding import detect_encoding
+
+        check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
         encoding_used, raw, replacement_chars_count = detect_encoding(path)

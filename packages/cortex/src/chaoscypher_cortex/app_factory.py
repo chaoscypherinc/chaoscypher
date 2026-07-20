@@ -32,6 +32,18 @@ from chaoscypher_cortex.middleware import (
 logger = structlog.get_logger(__name__)
 
 
+def _is_within_static_root(resolved: Path, static_root: Path) -> bool:
+    """Return True only when ``resolved`` is genuinely inside ``static_root``.
+
+    Uses ``Path.is_relative_to`` (true ancestor containment) rather than a
+    string ``startswith`` prefix check: a sibling directory whose name merely
+    shares the root's prefix (e.g. ``/app/static`` vs ``/app/static_uploads``)
+    must NOT be treated as contained, or a crafted traversal could escape the
+    static directory.
+    """
+    return resolved.is_relative_to(static_root)
+
+
 def _load_or_create_session_secret(secret_path: Path) -> bytes:
     """Read the session HMAC secret; auto-generate on first run if missing.
 
@@ -287,7 +299,11 @@ def create_app(*, schema_only: bool = False) -> FastAPI:  # noqa: PLR0915 — ap
                 # Serve actual static files (logo.png, favicon.ico, etc.)
                 resolved = Path(static_dir, full_path).resolve()
                 static_real = Path(static_dir).resolve()
-                if full_path and str(resolved).startswith(str(static_real)) and resolved.is_file():
+                if (
+                    full_path
+                    and _is_within_static_root(resolved, static_real)
+                    and resolved.is_file()
+                ):
                     return FileResponse(resolved)
 
                 return FileResponse(f"{static_dir}/index.html")

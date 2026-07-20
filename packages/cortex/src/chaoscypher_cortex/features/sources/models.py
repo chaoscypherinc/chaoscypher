@@ -1097,7 +1097,7 @@ class RecoveryEventResponse(BaseModel):
 
 
 class RecoveryEventListResponse(BaseModel):
-    """Response from GET /api/v1/sources/{source_id}/recovery-events."""
+    """Response from GET /api/v1/sources/{source_id}/recovery_events."""
 
     events: list[RecoveryEventResponse] = Field(
         default_factory=list,
@@ -1106,7 +1106,7 @@ class RecoveryEventListResponse(BaseModel):
 
 
 class OrphanTaskCleanupResponse(BaseModel):
-    """Response from POST /api/v1/sources/cleanup/orphan-tasks.
+    """Response from POST /api/v1/sources/cleanup/orphan_tasks.
 
     Reports how many orphaned chunk tasks were deleted. Orphaned tasks
     are created by BE-7's cascade update when an ExtractionJob fails

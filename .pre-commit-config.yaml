@@ -74,11 +74,13 @@ repos:
         args: [--maxkb=1000]
         # Demo-video media exceed 1 MB by nature (see refresh-demo-video.md).
         # The mp4 master stays private (internal/); the gif + webm ship public.
+        # The internal path segment is a wildcard because this file ships and
+        # the no-internal-refs guard forbids naming private subdirs here.
         exclude: >-
           (?x)^(
             packages/docs/static/img/demo\.gif|
             packages/docs/static/video/demo\.webm|
-            internal/marketing/assets/demo/demo\.mp4
+            internal/[^/]+/assets/demo/demo\.mp4
           )$
       - id: check-merge-conflict
         name: check for merge conflicts

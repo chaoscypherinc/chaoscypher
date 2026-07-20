@@ -101,7 +101,10 @@ def calculate_pagerank(
             - ``pagerank_scores``: Mapping of node ID to final score.
             - ``top_nodes``: List of up to 20 highest-scoring node dicts,
               each containing ``id``, ``label``, and ``pagerank``.
-            - ``iterations``: Number of power-iteration steps taken.
+            - ``iterations``: The configured ``max_iterations`` value.
+              rustworkx does not expose the actual number of power-iteration
+              steps taken before convergence, so this reports the cap, not
+              the realized step count.
 
     """
     if not nodes:
@@ -169,7 +172,7 @@ def calculate_betweenness_centrality(nodes: list[Any], edges: list[Any]) -> dict
 
     """
     if not nodes:
-        return {"betweenness": {}}
+        return {"betweenness_scores": {}, "top_nodes": []}
 
     graph, _id_to_idx, idx_to_id = build_graph(nodes, edges)
 

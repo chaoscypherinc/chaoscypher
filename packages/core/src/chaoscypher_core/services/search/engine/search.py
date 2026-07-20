@@ -652,10 +652,11 @@ class SearchService:
 
             embeddings_to_index: list[tuple[str, list[float]]] = []
             text_lookup: dict[str, str] = {}
+            source_skipped = 0
             for chunk in chunks:
                 raw_embedding = chunk.get("embedding")
                 if not raw_embedding:
-                    total_skipped += 1
+                    source_skipped += 1
                     continue
 
                 try:
@@ -673,7 +674,7 @@ class SearchService:
                         "rebuild_chunk_embedding_decode_failed",
                         chunk_id=chunk.get("id"),
                     )
-                    total_skipped += 1
+                    source_skipped += 1
 
             if embeddings_to_index:
                 count = self.search_repository.index_embeddings_batch(
@@ -683,12 +684,17 @@ class SearchService:
                 )
                 total_indexed += count
 
+            total_skipped += source_skipped
             logger.info(
                 "rebuild_chunks_source_indexed",
                 source_id=source_id,
                 filename=source.get("filename"),
                 chunks_indexed=len(embeddings_to_index),
-                chunks_skipped=total_skipped,
+                # Per-source skip count — ``total_skipped`` is the run-wide
+                # accumulator and belongs only on the completion log below;
+                # emitting it here misattributed earlier sources' skips to
+                # whichever source happened to log next.
+                chunks_skipped=source_skipped,
             )
 
         logger.info(

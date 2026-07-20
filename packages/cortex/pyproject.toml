@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-cortex"
-version = "0.3.0"
+version = "0.3.1"
 description = "Chaos Cypher Cortex - Full-featured knowledge graph platform (processing center)"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -36,7 +36,7 @@ dependencies = [
     "python-multipart>=0.0.24,<0.1",
     "sse-starlette>=3.3.0,<4",
     "structlog>=25.5.0,<26",
-    "mcp>=1.27.0,<2",
+    "mcp>=1.28.1,<2",
     "zxcvbn>=4.5.0,<5",
 ]
 

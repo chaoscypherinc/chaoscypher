@@ -481,7 +481,10 @@ class TestListFilesCommand:
         ctx.storage_adapter.list_files.return_value = [
             _make_file("if_a", status="indexed"),
             _make_file("if_b", status="committed"),
-            _make_file("if_c", status="failed"),
+            # Real errored status is "error" (SourceStatus.ERROR); the previous
+            # fixture used a non-existent "failed" that the old buggy filter
+            # matched only because it compared against the same wrong literal.
+            _make_file("if_c", status="error"),
         ]
 
         with patch("chaoscypher_cli.commands.source.list.get_context", return_value=ctx):
@@ -489,7 +492,7 @@ class TestListFilesCommand:
 
         assert result.exit_code == 0, result.output
         assert "if_a" in result.output
-        # committed and failed should not appear
+        # committed and errored should not appear
         assert "if_b" not in result.output
         assert "if_c" not in result.output
 

@@ -80,3 +80,32 @@ def test_payload_exposes_expires_at() -> None:
     payload = decode_session(cookie, secret=SECRET)
     now = int(time.time())
     assert now <= payload.expires_at <= now + 60
+
+
+def _sign(payload: dict[str, object]) -> str:
+    """Build a signature-valid cookie for an arbitrary (possibly malformed) payload."""
+    import hmac
+    import json
+    from hashlib import sha256
+
+    from chaoscypher_core.services.local_auth.session import _b64
+
+    body = _b64(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    sig = _b64(hmac.new(SECRET, body.encode("ascii"), sha256).digest())
+    return f"{body}.{sig}"
+
+
+def test_signed_payload_missing_username_raises_invalid_cookie() -> None:
+    """A signed but structurally-invalid payload must raise InvalidSessionCookie, not KeyError."""
+    future = int(time.time()) + 60
+    cookie = _sign({"e": 1, "x": future})  # missing "u"
+    with pytest.raises(InvalidSessionCookie, match="payload"):
+        decode_session(cookie, secret=SECRET)
+
+
+def test_signed_payload_non_int_epoch_raises_invalid_cookie() -> None:
+    """A signed payload with a non-int session_epoch must raise InvalidSessionCookie, not ValueError."""
+    future = int(time.time()) + 60
+    cookie = _sign({"u": "admin", "e": "not-an-int", "x": future})
+    with pytest.raises(InvalidSessionCookie, match="payload"):
+        decode_session(cookie, secret=SECRET)

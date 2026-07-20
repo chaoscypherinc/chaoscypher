@@ -77,7 +77,7 @@ class CountsService:
                 - sources: int
 
         Example:
-            >>> service = CountsService(graph_repo, sources_repo)
+            >>> service = CountsService(graph_repo, sources_repo, "default")
             >>> counts = service.get_counts(['system_workflow', 'system_lens'])
             >>> counts
             {

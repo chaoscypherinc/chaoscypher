@@ -1,5 +1,11 @@
 # Chaos Cypher Knowledge Engine
 
+[![License: AGPL-3.0](https://img.shields.io/github/license/chaoscypherinc/chaoscypher?color=blue)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/chaoscypherinc/chaoscypher)](https://github.com/chaoscypherinc/chaoscypher/releases)
+[![PyPI](https://img.shields.io/pypi/v/chaoscypher-cli?label=PyPI)](https://pypi.org/project/chaoscypher-cli/)
+[![Docs](https://img.shields.io/badge/docs-chaoscypher.com-7b2ff7)](https://chaoscypher.com)
+[![Discussions](https://img.shields.io/github/discussions/chaoscypherinc/chaoscypher)](https://github.com/chaoscypherinc/chaoscypher/discussions)
+
 **Turn your documents into a knowledge graph you can inspect, search, chat with, and take with you — all running on your own machine.**
 
 Chaos Cypher is a local-first GraphRAG platform — knowledge you can **see,
@@ -404,6 +410,17 @@ git push
 
 ---
 
+## 💬 Community & Support
+
+- **Questions, ideas, show-and-tell** → [GitHub Discussions](https://github.com/chaoscypherinc/chaoscypher/discussions)
+- **Bugs and feature requests** → [Issue Tracker](https://github.com/chaoscypherinc/chaoscypher/issues)
+- **What's shipping** → [Blog](https://chaoscypher.com/blog) · [Changelog](https://chaoscypher.com/docs/about/changelog) · [Roadmap](https://chaoscypher.com/docs/about/roadmap)
+
+If Chaos Cypher is useful to you, a ⭐ on the repo genuinely helps other
+self-hosters find it.
+
+---
+
 ## 📄 License
 
 Chaos Cypher is licensed under the **GNU Affero General Public License v3.0 only
@@ -418,6 +435,7 @@ under the project [CLA](CLA.md).
 - [Published Docs Site](https://chaoscypher.com)
 - [Blog](https://chaoscypher.com/blog)
 - [Documentation source](./packages/docs/)
+- [GitHub Discussions](https://github.com/chaoscypherinc/chaoscypher/discussions)
 - [Issue Tracker](https://github.com/chaoscypherinc/chaoscypher/issues)
 - [Contributor Guide](./CONTRIBUTING.md)
 - [AI Contributor Guide](./CLAUDE.md)

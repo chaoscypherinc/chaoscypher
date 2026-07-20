@@ -417,8 +417,19 @@ class LoaderRegistry(BaseRegistry["BaseLoader"]):
             >>> loader = registry.get_loader('/path/to/file.pdf')
             >>> chunks = loader.load_document('/path/to/file.pdf')
         """
-        file_ext = Path(filepath).suffix.lower()
-        return self.get(file_ext)
+        path = Path(filepath)
+        # Match compound extensions (".tar.gz") before the single suffix.
+        # ``Path.suffix`` is only the last component (".gz" for "x.tar.gz"),
+        # so a loader registered under ".tar.gz" would otherwise be
+        # unreachable. Try progressively shorter suffix runs, longest first,
+        # so the most specific registered extension wins.
+        suffixes = path.suffixes
+        for start in range(len(suffixes)):
+            compound = "".join(suffixes[start:]).lower()
+            loader = self.get(compound)
+            if loader is not None:
+                return loader
+        return self.get(path.suffix.lower())
 
     def load_document(self, filepath: str) -> list[dict[str, Any]]:
         """Load a document via the registered loader for its extension.

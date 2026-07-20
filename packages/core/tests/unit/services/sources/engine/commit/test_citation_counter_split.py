@@ -216,13 +216,21 @@ class TestRelationshipCitationCounterSplit:
     """
 
     def _make_edge(
-        self, source_node_id: str, target_node_id: str, label: str = "relates_to"
+        self,
+        source_node_id: str,
+        target_node_id: str,
+        label: str = "relates_to",
+        properties: dict[str, Any] | None = None,
     ) -> Any:
         edge = MagicMock()
         edge.source_node_id = source_node_id
         edge.target_node_id = target_node_id
         edge.label = label
         edge.template_id = label
+        # Real EdgeCreate.properties is always a dict; model it faithfully so
+        # ``edge.properties.get("inverse_of")`` behaves like production (a bare
+        # MagicMock attribute would be truthy and mis-classify every edge).
+        edge.properties = properties if properties is not None else {}
         return edge
 
     def _make_node(self, node_id: str, label: str) -> Any:
@@ -304,3 +312,46 @@ class TestRelationshipCitationCounterSplit:
 
         assert _counter_total(bumped, QualityCounter.CITATIONS_SKIPPED_INDEX_NOT_MAPPED) == 1
         assert _counter_total(bumped, QualityCounter.CITATIONS_SKIPPED_NO_CHUNK_INDEX) == 0
+
+    @pytest.mark.asyncio
+    async def test_inverse_edge_is_not_counted_as_citation_skip(self) -> None:
+        """Synthetic inverse edges must not inflate the skipped counter.
+
+        Inverse edges (tagged ``inverse_of``) mirror a forward relationship and
+        carry no independent chunk provenance. Their reversed (src, tgt) pair is
+        never present in ``node_pair_to_rel``, so the old loop counted every
+        inverse edge as CITATIONS_SKIPPED_NO_CHUNK_INDEX — one phantom skip per
+        inverse edge on the Data Quality tab. They are now skipped outright.
+        """
+        svc, bumped = _make_service()
+
+        src_node = self._make_node("node-a", "Alpha")
+        tgt_node = self._make_node("node-b", "Beta")
+
+        # A forward edge with a valid chunk_index (earns a real citation) plus
+        # its synthetic inverse (swapped nodes, tagged inverse_of).
+        forward = self._make_edge("node-a", "node-b")
+        inverse = self._make_edge("node-b", "node-a", properties={"inverse_of": "relates_to"})
+        created_edges = ["edge-fwd", "edge-inv"]
+        edges_to_create = [forward, inverse]
+
+        relationships = [
+            {"source": 0, "target": 1, "type": "relates_to", "chunk_index": 0},
+        ]
+        entity_index_to_node = {0: src_node, 1: tgt_node}
+        chunk_index_to_id = {0: "chunk-id-0"}
+
+        await svc._create_relationship_citations(
+            file_id="src-006",
+            source_id="src-006",
+            created_edges=created_edges,
+            edges_to_create=edges_to_create,
+            relationships=relationships,
+            entity_index_to_node=entity_index_to_node,
+            chunk_index_to_id=chunk_index_to_id,
+        )
+
+        # The inverse edge is skipped silently — neither counter fires for it,
+        # and the forward edge earned a real citation (also no skip).
+        assert _counter_total(bumped, QualityCounter.CITATIONS_SKIPPED_NO_CHUNK_INDEX) == 0
+        assert _counter_total(bumped, QualityCounter.CITATIONS_SKIPPED_INDEX_NOT_MAPPED) == 0

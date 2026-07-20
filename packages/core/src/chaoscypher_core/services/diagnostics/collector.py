@@ -143,26 +143,28 @@ class DiagnosticCollector:
         try:
             import sqlite3
 
-            conn = sqlite3.connect(str(self._db_path))
-            cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-            known_tables = {row[0] for row in cursor.fetchall()}
-            for table_name in known_tables:
-                try:
-                    # table_name comes from sqlite_master (trusted), but we
-                    # validate against the known set for defense-in-depth.
-                    # sqlite3 doesn't support parameterized table names, so
-                    # we quote the identifier after allowlist validation.
-                    safe_name = table_name.replace('"', '""')
-                    if not _VALID_TABLE_NAME.fullmatch(safe_name):
-                        logger.warning("diagnostics_skipped_unsafe_table_name", name=safe_name)
-                        continue
-                    row = conn.execute(f'SELECT COUNT(*) FROM "{safe_name}"').fetchone()
-                    table_counts[table_name] = row[0] if row else 0
-                except Exception:
-                    table_counts[table_name] = -1
-            conn.close()
+            # ``contextlib.closing`` guarantees the connection is closed even if
+            # the schema query or a COUNT raises — a bare ``conn.close()`` at the
+            # end of the try only runs on the success path and leaks otherwise.
+            with contextlib.closing(sqlite3.connect(str(self._db_path))) as conn:
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+                known_tables = {row[0] for row in cursor.fetchall()}
+                for table_name in known_tables:
+                    try:
+                        # table_name comes from sqlite_master (trusted), but we
+                        # validate against the known set for defense-in-depth.
+                        # sqlite3 doesn't support parameterized table names, so
+                        # we quote the identifier after allowlist validation.
+                        safe_name = table_name.replace('"', '""')
+                        if not _VALID_TABLE_NAME.fullmatch(safe_name):
+                            logger.warning("diagnostics_skipped_unsafe_table_name", name=safe_name)
+                            continue
+                        row = conn.execute(f'SELECT COUNT(*) FROM "{safe_name}"').fetchone()
+                        table_counts[table_name] = row[0] if row else 0
+                    except Exception:
+                        table_counts[table_name] = -1
         except Exception:
             logger.warning("database_stats_failed", db_path=str(self._db_path))
 

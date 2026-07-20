@@ -15,10 +15,10 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@docusaurus/core": "^3.10.1",
-    "@docusaurus/plugin-client-redirects": "3.10.1",
-    "@docusaurus/preset-classic": "^3.10.1",
-    "@docusaurus/theme-mermaid": "^3.10.1",
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/plugin-client-redirects": "3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
+    "@docusaurus/theme-mermaid": "^3.10.2",
     "@easyops-cn/docusaurus-search-local": "^0.55.2",
     "@mdx-js/react": "^3.0.0",
     "clsx": "^2.1.0",
@@ -30,8 +30,8 @@
     "@docusaurus/module-type-aliases": "^3.7.0",
     "@docusaurus/types": "^3.7.0",
     "typescript": "~5.9.3",
-    "vitest": "^3.2.4",
-    "wrangler": "^4.106.0"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.112.0"
   },
   "browserslist": {
     "production": [

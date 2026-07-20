@@ -391,3 +391,29 @@ class TestStatsAndClear:
         stats = search_repo.get_index_stats()
         assert stats["fulltext"]["document_count"] == 0
         assert stats["vector"]["vector_count"] == 0
+
+
+class TestReindexAllNodes:
+    def test_reindex_clears_stale_then_indexes_every_node(self, search_repo: SearchRepository):
+        """reindex_all_nodes must drop prior index state and index the full set.
+
+        Locks the behavior after the N+1 ``index_node`` loop was replaced with a
+        single ``index_nodes_batch`` call: same FTS + vector coverage, stale rows
+        gone.
+        """
+        # Stale prior state that must not survive the reindex.
+        search_repo.index_node(_node("stale", "old", "obsolete", embedding=_vec(0.5)))
+
+        nodes = [
+            _node("n1", "quantum", "quantum computing", embedding=_vec(0.1)),
+            _node("n2", "graph", "graph theory", embedding=_vec(0.2)),
+            _node("n3", "vector", "vector search", embedding=_vec(0.3)),
+        ]
+        search_repo.reindex_all_nodes(nodes)
+
+        stats = search_repo.get_index_stats()
+        assert stats["fulltext"]["document_count"] == 3
+        assert stats["vector"]["by_type"]["node"] == 3
+        # Fresh nodes are searchable; the stale node is gone.
+        assert {node_id for node_id, _ in search_repo.keyword_search("quantum")} == {"n1"}
+        assert search_repo.keyword_search("obsolete") == []

@@ -783,11 +783,16 @@ class ChunkExtractionOperationsService:
             # Checkpoint last_activity_at so the source-reconciler can
             # distinguish real progress from a stall. This runs on the
             # per-chunk hot path so the checkpoint is fine-grained.
-            adapter.update_source_last_activity(
-                source_id=source_id,
-                database_name=database_name,
-                at_time=datetime.now(UTC),
-            )
+            # Guard source_id like every other source-scoped call in this
+            # handler (heartbeat / spend tracker / progress) — job.get(
+            # "source_id") may be None, and an UPDATE against a null id is a
+            # silent no-op at best.
+            if isinstance(source_id, str):
+                adapter.update_source_last_activity(
+                    source_id=source_id,
+                    database_name=database_name,
+                    at_time=datetime.now(UTC),
+                )
 
             return {
                 "success": True,

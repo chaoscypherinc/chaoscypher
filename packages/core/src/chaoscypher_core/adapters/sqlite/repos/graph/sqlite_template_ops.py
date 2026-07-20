@@ -316,9 +316,30 @@ class TemplateOperationsMixin(GraphMixinBase):
 
     def get_template(self, template_id: str) -> Template | None:
         """Get a template by ID."""
-        statement = select(GraphTemplate).where(
-            GraphTemplate.id == template_id,
-            GraphTemplate.database_name == self.database_name,
+        statement = (
+            select(GraphTemplate)
+            .options(
+                load_only(
+                    GraphTemplate.id,
+                    GraphTemplate.database_name,
+                    GraphTemplate.name,
+                    GraphTemplate.template_type,
+                    GraphTemplate.description,
+                    GraphTemplate.is_system,
+                    GraphTemplate.icon,
+                    GraphTemplate.color,
+                    GraphTemplate.properties,
+                    GraphTemplate.created_at,
+                    GraphTemplate.updated_at,
+                    GraphTemplate.source_id,
+                    # Excluded: embedding (BLOB), embedding_model, embedding_dimensions
+                    # (_db_template_to_model never reads them). Mirrors list_templates().
+                )
+            )
+            .where(
+                GraphTemplate.id == template_id,
+                GraphTemplate.database_name == self.database_name,
+            )
         )
         db_template = self.session.exec(statement).first()
 

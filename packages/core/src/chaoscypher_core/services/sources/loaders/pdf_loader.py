@@ -284,21 +284,26 @@ class PdfLoader:
                 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
                 pdf_doc = pdfium.PdfDocument(filepath)
-                for page_idx in range(len(pdf_doc)):
-                    pdf_page = pdf_doc[page_idx]
-                    image_count = 0
-                    for obj in pdf_page.get_objects():
-                        if obj.type == pdfium.raw.FPDF_PAGEOBJ_IMAGE:
-                            image_count += 1
+                try:
+                    for page_idx in range(len(pdf_doc)):
+                        pdf_page = pdf_doc[page_idx]
+                        image_count = 0
+                        for obj in pdf_page.get_objects():
+                            if obj.type == pdfium.raw.FPDF_PAGEOBJ_IMAGE:
+                                image_count += 1
 
-                    page_infos.append(
-                        {
-                            "page_number": page_idx + 1,
-                            "has_images": image_count > 0,
-                            "image_count": image_count,
-                        }
-                    )
-                pdf_doc.close()
+                        page_infos.append(
+                            {
+                                "page_number": page_idx + 1,
+                                "has_images": image_count > 0,
+                                "image_count": image_count,
+                            }
+                        )
+                finally:
+                    # Always release the native pdfium handle, even if object
+                    # enumeration raises partway through — otherwise the file
+                    # descriptor leaks on every failed image-detection pass.
+                    pdf_doc.close()
             except ImportError:
                 logger.warning("pypdfium2_not_installed", msg="Image detection unavailable")
             except Exception:

@@ -108,6 +108,24 @@ def backup_database(
     )
 
 
+def _backup_sort_key(path: Path) -> tuple[int, float]:
+    """Sort key ranking backups by their embedded ISO-8601-UTC timestamp.
+
+    Backup filenames are ``<label>-<YYYYmmddTHHMMSSZ>.db``. The timestamp is
+    the token after the final ``-`` (the timestamp itself contains no ``-``),
+    so ``rsplit`` isolates it even when the label contains hyphens
+    (e.g. ``pre-0005``). Well-formed timestamps rank above non-conforming
+    names, which fall back to filesystem mtime so a stray ``.db`` file never
+    crashes the sort.
+    """
+    ts_token = path.stem.rsplit("-", 1)[-1]
+    try:
+        parsed = datetime.strptime(ts_token, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+    except ValueError:
+        return (0, path.stat().st_mtime)
+    return (1, parsed.timestamp())
+
+
 def latest_backup(
     source_path: Path,
     *,
@@ -116,10 +134,14 @@ def latest_backup(
     """Return the most recent backup for ``source_path``, or None.
 
     Resolves the same ``<db_parent>/backups/`` directory that
-    ``backup_database()`` writes to and returns the lexicographically
-    largest ``*.db`` file. Filenames carry a sortable ISO-8601-UTC
-    timestamp (``YYYYmmddTHHMMSSZ``), so lexical order equals
-    chronological order.
+    ``backup_database()`` writes to and returns the newest ``*.db`` file,
+    ranked by the ISO-8601-UTC timestamp (``YYYYmmddTHHMMSSZ``) embedded at
+    the end of each filename. Ranking by the whole filename would be wrong:
+    the name is ``<label>-<timestamp>.db`` and the varying label prefix
+    dominates a lexical sort, so a lexically-largest name is not necessarily
+    the chronologically-latest backup (e.g. a ``pre-...`` backup sorts after a
+    ``manual-...`` one regardless of time). Files whose name does not carry a
+    parseable timestamp fall back to their modification time.
 
     Args:
         source_path: The original database path whose backups we want.
@@ -132,7 +154,7 @@ def latest_backup(
     target_dir = backup_dir if backup_dir is not None else Path(source_path).parent / "backups"
     if not target_dir.is_dir():
         return None
-    candidates = sorted(target_dir.glob("*.db"))
+    candidates = sorted(target_dir.glob("*.db"), key=_backup_sort_key)
     return candidates[-1] if candidates else None
 
 

@@ -24,9 +24,12 @@ class SearchNodeHit(BaseModel):
     ``packages/interface/src/components/Omnibar/modes/SearchMode.tsx``):
 
     * ``id``, ``label`` — always read by the UI, always populated by the engine.
-    * ``template_id`` — read by the UI when building navigation targets; engine
-      populates it from the node's template. Optional because nodes without a
-      template can still surface in results.
+    * ``template_id`` — part of the node projection contract; the engine
+      populates it from the node's template so API consumers can resolve a
+      hit's type without a second fetch. Optional because nodes without a
+      template can still surface in results. (The Omnibar navigates by
+      ``node.id`` today and does not read this field — see
+      ``SearchMode.tsx`` — but it stays in the contract for other clients.)
 
     Fields that the frontend appears to read on ``sr.node`` but which the
     search engine never populates (``title``, ``type``) are intentionally

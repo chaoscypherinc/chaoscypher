@@ -88,7 +88,7 @@ async def export_diagnostics(
     queue status, and service status into a single downloadable ZIP.
 
     Args:
-        admin_user: Authenticated admin user (injected by FastAPI).
+        _: Authenticated username (injected by FastAPI; gates the endpoint).
         service: DiagnosticsService instance.
 
     Returns:

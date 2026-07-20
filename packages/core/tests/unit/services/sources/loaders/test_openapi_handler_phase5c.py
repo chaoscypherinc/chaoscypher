@@ -898,3 +898,73 @@ class TestExpandSchemaUnresolvedRef:
         settings = _make_settings(tmp_path)
         docs = handler.process(tmp_path, settings)
         assert any("ping" in (d.get("content") or "").lower() for d in docs)
+
+
+# ---------------------------------------------------------------------------
+# Security — external $ref resolution is blocked (SSRF / local-file-read)
+# ---------------------------------------------------------------------------
+
+
+class TestExternalRefRejected:
+    """_resolve_refs must not dereference out-of-document ``$ref`` targets.
+
+    jsonref's default loader fetches ``http(s)://`` (via requests) and reads
+    ``file://`` / other URIs (via urlopen), with none of the codebase's SSRF
+    defenses applied. A hostile spec extracted from an uploaded archive could
+    otherwise read ``file:///data/secrets/*`` or probe LAN/metadata hosts and
+    inline the response into indexed document text.
+    """
+
+    def test_file_uri_ref_raises_operation_error(self, tmp_path: Path) -> None:
+        """A ``file://`` $ref must be refused, not read off disk."""
+        secret = tmp_path / "secret.json"
+        secret.write_text('{"leaked": "TOP_SECRET"}', encoding="utf-8")
+        spec: dict[str, Any] = {
+            "openapi": "3.1.0",
+            "info": {"title": "Evil", "version": "1"},
+            "paths": {"/x": {"get": {"responses": {"200": {"schema": {"$ref": secret.as_uri()}}}}}},
+        }
+
+        handler = OpenAPIHandler()
+        with pytest.raises(OperationError, match="external OpenAPI \\$ref"):
+            handler._resolve_refs(spec)
+
+    def test_http_uri_ref_raises_operation_error(self) -> None:
+        """An ``http://`` $ref must be refused, not fetched (SSRF guard)."""
+        spec: dict[str, Any] = {
+            "openapi": "3.1.0",
+            "info": {"title": "Evil", "version": "1"},
+            "paths": {
+                "/y": {
+                    "get": {
+                        "responses": {
+                            "200": {"schema": {"$ref": "http://169.254.169.254/latest/meta-data/"}}
+                        }
+                    }
+                }
+            },
+        }
+
+        handler = OpenAPIHandler()
+        with pytest.raises(OperationError, match="external OpenAPI \\$ref"):
+            handler._resolve_refs(spec)
+
+    def test_internal_ref_still_resolves(self) -> None:
+        """In-document ``#/...`` refs resolve without touching the loader."""
+        spec: dict[str, Any] = {
+            "openapi": "3.1.0",
+            "info": {"title": "Good", "version": "1"},
+            "paths": {
+                "/z": {
+                    "get": {"responses": {"200": {"schema": {"$ref": "#/components/schemas/Pet"}}}}
+                }
+            },
+            "components": {
+                "schemas": {"Pet": {"type": "object", "properties": {"id": {"type": "string"}}}}
+            },
+        }
+
+        handler = OpenAPIHandler()
+        resolved = handler._resolve_refs(spec)
+        schema = resolved["paths"]["/z"]["get"]["responses"]["200"]["schema"]
+        assert schema == {"type": "object", "properties": {"id": {"type": "string"}}}

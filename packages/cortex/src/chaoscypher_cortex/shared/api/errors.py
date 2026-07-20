@@ -189,7 +189,7 @@ async def chaoscypher_exception_handler(
     This handler converts ChaosCypherException and its subclasses into
     appropriate HTTP responses with correct status codes and error formats.
 
-    Registered in main.py:
+    Registered in app_factory.py:
         app.add_exception_handler(ChaosCypherException, chaoscypher_exception_handler)
 
     Args:

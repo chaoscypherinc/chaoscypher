@@ -59,9 +59,10 @@ _DRIFT_IGNORE_TABLES: frozenset[str] = frozenset(
 
 # Prefixes that match virtual tables + their automatic shadow tables.
 _DRIFT_IGNORE_TABLE_PREFIXES: tuple[str, ...] = (
-    # sqlite-vec virtual tables (migration 0043: vec_search_chunks /
-    # vec_search_nodes / vec_search_templates) plus the auto-created shadows
-    # (`*_chunks`, `*_rowids`, `*_vector_chunks00`, `*_auxiliary`, `*_info`).
+    # sqlite-vec virtual tables (`vec_search_chunks` / `vec_search_nodes` /
+    # `vec_search_templates`, created at runtime by the search repo) plus their
+    # auto-created shadows (`*_chunks`, `*_rowids`, `*_vector_chunks00`,
+    # `*_auxiliary`, `*_info`).
     "vec_search_",
     # FTS5 virtual table (`fulltext_index`) plus its automatic shadows
     # (`fulltext_index_data`, `fulltext_index_idx`, `fulltext_index_docsize`,

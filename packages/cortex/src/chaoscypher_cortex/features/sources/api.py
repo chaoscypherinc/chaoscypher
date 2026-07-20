@@ -878,7 +878,7 @@ async def reextract_source(
 
     Rejected:
 
-    - ``pending`` / ``indexing`` → 422; the source has not produced any
+    - ``pending`` / ``indexing`` → 400; the source has not produced any
       extraction artifact yet, so a re-extract is not meaningful — wait
       for indexing to complete (or use the regular extraction trigger).
     """

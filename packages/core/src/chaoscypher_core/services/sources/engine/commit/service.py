@@ -1418,6 +1418,16 @@ class SourceCommitService:
 
             edge = edges_to_create[edge_idx]
 
+            # Synthetic inverse edges (created for bidirectional traversal and
+            # tagged with ``inverse_of``) mirror a forward relationship that
+            # already gets its own citation. Their (source, target) pair is the
+            # reversed key, never present in ``node_pair_to_rel``, so they would
+            # otherwise be miscounted as "skipped — no chunk index" and inflate
+            # that quality counter by one phantom skip per inverse edge. They
+            # carry no independent chunk provenance, so skip them outright.
+            if edge.properties.get("inverse_of"):
+                continue
+
             # O(1) lookup for matching relationship by node pair
             matching_rel = node_pair_to_rel.get((edge.source_node_id, edge.target_node_id))
             chunk_index = matching_rel.get("chunk_index") if matching_rel else None

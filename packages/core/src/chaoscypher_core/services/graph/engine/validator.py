@@ -70,9 +70,6 @@ class PropertyValidator:
             PropertyValidationError: If validation fails
 
         """
-        # Create a dict of property definitions by name for easy lookup
-        {pd.name: pd for pd in property_defs}
-
         # Start with a copy of the provided properties
         validated = dict(properties)
 

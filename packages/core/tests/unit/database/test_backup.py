@@ -93,3 +93,30 @@ def test_latest_backup_returns_none_when_no_backups(tmp_path: Path) -> None:
     src = tmp_path / "app.db"
     _seed_db(src)
     assert latest_backup(src) is None
+
+
+def test_latest_backup_ranks_by_timestamp_not_label(tmp_path: Path) -> None:
+    """Regression: the label prefix must not dominate recency ordering.
+
+    Filenames are ``<label>-<timestamp>.db``. A lexical sort of the whole
+    filename lets a high-sorting label mask a chronologically-newer backup
+    that happens to carry a low-sorting label — so ``latest_backup`` must rank
+    by the embedded timestamp, not the full name.
+    """
+    src = tmp_path / "app.db"
+    _seed_db(src)
+
+    older = backup_database(src, label="zzz")
+    # Seconds-granularity timestamps live in the filename; a >1s gap makes the
+    # two backups' timestamps differ.
+    time.sleep(1.1)
+    newer = backup_database(src, label="aaa")
+
+    # Precondition that makes this a real regression test: the OLDER backup's
+    # filename sorts lexically AFTER the newer one, so a naive full-name sort
+    # (the old behavior) would wrongly return the older backup.
+    assert older.backup_path.name > newer.backup_path.name
+
+    found = latest_backup(src)
+    assert found == newer.backup_path
+    assert found != older.backup_path

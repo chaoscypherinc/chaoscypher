@@ -261,6 +261,70 @@ async def test_handler_exception_sets_error_publishes_and_reraises(
     assert "Retry" in args[2]["error_details"]["suggested_action"]
 
 
+@pytest.mark.asyncio
+async def test_handler_exception_original_survives_status_update_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the error-arm side effects raise, the ORIGINAL exception still propagates.
+
+    Regression: ``update_chat_status`` (sync) is called before the bare
+    ``raise`` in the except arm. If it raises (e.g. a DB lock under
+    concurrency), that new exception must NOT replace the active one — otherwise
+    ``_execute_handler`` classifies the status-update error instead of the real
+    failure, turning a retryable LLM error into a permanent one.
+    """
+    handler, _storage = _register_and_capture_handler()
+
+    class _FakeService:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def update_chat_status(self, chat_id: str, status: str) -> None:
+            # Only the error-arm status write blows up; "processing" succeeds.
+            if status == "error":
+                raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(
+        "chaoscypher_core.services.chat.management.service.ChatService", _FakeService
+    )
+    monkeypatch.setattr(
+        cc, "_run_chat_completion", AsyncMock(side_effect=ValueError("original LLM failure"))
+    )
+    monkeypatch.setattr(cc, "publish_chat_event", AsyncMock())
+
+    # The original ValueError, not the RuntimeError from update_chat_status.
+    with pytest.raises(ValueError, match="original LLM failure"):
+        await handler({"chat_id": "c1"}, None, "task-1")
+
+
+@pytest.mark.asyncio
+async def test_handler_exception_original_survives_publish_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``publish_chat_event`` in the error arm also does not mask the original."""
+    handler, _storage = _register_and_capture_handler()
+
+    class _FakeService:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def update_chat_status(self, chat_id: str, status: str) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "chaoscypher_core.services.chat.management.service.ChatService", _FakeService
+    )
+    monkeypatch.setattr(
+        cc, "_run_chat_completion", AsyncMock(side_effect=ValueError("original LLM failure"))
+    )
+    monkeypatch.setattr(
+        cc, "publish_chat_event", AsyncMock(side_effect=RuntimeError("valkey down"))
+    )
+
+    with pytest.raises(ValueError, match="original LLM failure"):
+        await handler({"chat_id": "c1"}, None, "task-1")
+
+
 # ===========================================================================
 # _run_chat_completion: chat-not-found, source scope, early error bail-outs
 # ===========================================================================

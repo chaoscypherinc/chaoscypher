@@ -362,6 +362,38 @@ def test_min_content_length_preserves_untouched_short_chunk():
     assert stats.excluded_chunks == 0
 
 
+def test_min_content_length_preserves_short_chunk_with_surrounding_whitespace():
+    """A short chunk only trimmed of surrounding whitespace must be kept.
+
+    Regression: ``strip_chunk_content`` always ``.strip()``s its output, so a
+    short but legitimate chunk wrapped in blank lines/spaces looked
+    "stripped" (``len(cleaned) < original_len``) even though no matcher fired,
+    and was wrongly excluded. ``was_stripped`` now compares against the
+    *stripped* original, so whitespace-only trimming no longer counts as a
+    strip.
+    """
+    from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+        filter_and_strip_chunks,
+    )
+
+    short_definition = "  \n\n  REST: a web architecture style.  \n\n  "
+    assert len(short_definition.strip()) < 100
+    assert len(short_definition) > len(short_definition.strip())  # has real whitespace
+    matchers = [CONTENT_CATEGORIES["legal"]]  # won't match
+
+    kept, stats = filter_and_strip_chunks(
+        [_make_chunk(short_definition)],
+        matchers,
+        min_content_length=100,
+    )
+
+    assert len(kept) == 1, (
+        f"Whitespace-wrapped short chunk should be preserved, got {len(kept)} kept, stats={stats}"
+    )
+    assert kept[0]["content"] == "REST: a web architecture style."
+    assert stats.excluded_chunks == 0
+
+
 def test_min_content_length_discards_stripped_chunk_below_threshold():
     """Stripped-to-short chunks still get discarded.
 

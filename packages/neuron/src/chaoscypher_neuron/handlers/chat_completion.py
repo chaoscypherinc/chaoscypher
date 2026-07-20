@@ -116,22 +116,32 @@ def register_chat_completion_handler(
         except Exception:
             logger.exception("chat_completion_failed", chat_id=chat_id)
 
-            # Always update chat state so the user sees the error in the UI
-            chat_service.update_chat_status(chat_id, "error")
-            await publish_chat_event(
-                chat_id,
-                "error",
-                {
-                    "error": "An unexpected error occurred during chat completion",
-                    "error_code": "WORKER_ERROR",
-                    # A failed run persisted nothing (buffered-flush
-                    # idempotency), so re-running the turn is always safe.
-                    "error_details": {
-                        "is_retryable": True,
-                        "suggested_action": "Click Retry to run this turn again.",
+            # Always update chat state so the user sees the error in the UI.
+            # These side effects are best-effort: if either raises (e.g. a DB
+            # lock on update_chat_status under concurrency), it must NOT
+            # replace the active exception, or the bare `raise` below would
+            # re-raise the side-effect error and _execute_handler would
+            # classify THAT instead of the real failure — turning a retryable
+            # LLM error into a permanent one. Swallow-and-log so the original
+            # exception always propagates.
+            try:
+                chat_service.update_chat_status(chat_id, "error")
+                await publish_chat_event(
+                    chat_id,
+                    "error",
+                    {
+                        "error": "An unexpected error occurred during chat completion",
+                        "error_code": "WORKER_ERROR",
+                        # A failed run persisted nothing (buffered-flush
+                        # idempotency), so re-running the turn is always safe.
+                        "error_details": {
+                            "is_retryable": True,
+                            "suggested_action": "Click Retry to run this turn again.",
+                        },
                     },
-                },
-            )
+                )
+            except Exception:
+                logger.exception("chat_completion_error_side_effect_failed", chat_id=chat_id)
 
             # Re-raise so _execute_handler can classify the error and
             # retry transient failures (LLM timeouts, network errors).

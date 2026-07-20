@@ -7,7 +7,7 @@ Create and manipulate nodes, links, templates, workflows, and packages.
 
 Example:
     chaoscypher graph node list
-    chaoscypher graph link create node1 node2 --label "knows"
+    chaoscypher graph link create node1 node2 --type "knows"
     chaoscypher graph template list
 """
 

@@ -66,11 +66,17 @@ def decode_session(cookie: str, secret: bytes) -> SessionPayload:
         raise InvalidSessionCookie("payload") from exc
     if payload.get("x", 0) <= int(time.time()):
         raise InvalidSessionCookie("expired")
-    return SessionPayload(
-        username=str(payload["u"]),
-        session_epoch=int(payload["e"]),
-        expires_at=int(payload["x"]),
-    )
+    try:
+        return SessionPayload(
+            username=str(payload["u"]),
+            session_epoch=int(payload["e"]),
+            expires_at=int(payload["x"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        # A signature-valid cookie whose payload is missing "u"/"e" or carries a
+        # non-int "e" must still raise InvalidSessionCookie, per this function's
+        # documented contract — never leak a raw KeyError/ValueError.
+        raise InvalidSessionCookie("payload") from exc
 
 
 def _b64(data: bytes) -> str:

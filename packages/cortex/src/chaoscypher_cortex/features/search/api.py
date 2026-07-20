@@ -80,7 +80,7 @@ async def search(
 
     **Query Parameters:**
     - `q`: Search query string (required)
-    - `type`: Search type - keyword (full-text), semantic (vector), or hybrid (semantic with fallback)
+    - `search_type`: Search type - keyword (full-text), semantic (vector), or hybrid (semantic with fallback)
     - `limit`: Maximum results
 
     **Search Types:**

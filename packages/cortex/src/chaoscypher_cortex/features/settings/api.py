@@ -18,6 +18,7 @@ DELETE /api/v1/settings/embedding/local/models/{model_id} - Delete a local model
 GET    /api/v1/settings/cloudmodels - Get all cloud LLM models
 GET    /api/v1/settings/cloudmodels/{provider} - Get models for a provider
 POST   /api/v1/settings/ollama/verify - Verify Ollama URL connectivity
+POST   /api/v1/settings/llm/verify - Verify a cloud LLM provider's API key
 GET    /api/v1/settings/llm/health - Snapshot of LLM verified state (drives import/chat gates)
 POST   /api/v1/settings/reset/workflows - Reset workflow system
 POST   /api/v1/settings/reset/chats - Reset chats
@@ -741,10 +742,10 @@ async def verify_llm_provider(
 ) -> LLMVerifyResponse:
     """Verify a cloud LLM provider's API key against its public endpoint.
 
-    Backs the wizard's "Test connection" affordance and the action-gating
-    model: a successful response here records into the in-memory verify
-    tracker so subsequent import / chat actions can proceed for this
-    provider.
+    Backs the wizard's "Test connection" affordance. This probe has no side
+    effects: as of 2026-05-22 the action-gating model reads ``/llm/health`` in
+    real time (an API-key format check for cloud providers), so this endpoint
+    only returns the probe result and records nothing.
 
     **Request Body:**
     - ``provider``: ``"openai"`` | ``"anthropic"`` | ``"gemini"``

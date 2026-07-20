@@ -204,8 +204,10 @@ const config: Config = {
               href: "https://github.com/chaoscypherinc/chaoscypher/discussions",
             },
             {
+              // Hub service isn't live yet — link the docs page (which carries
+              // the preview banner) until lexicon.chaoscypher.com resolves.
               label: "Lexicon Hub",
-              href: "https://lexicon.chaoscypher.com",
+              to: "/docs/lexicon-hub",
             },
           ],
         },

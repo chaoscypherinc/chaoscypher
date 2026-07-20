@@ -355,8 +355,40 @@ class OpenAPIHandler:
                 operation="archive_load",
             )
 
+    @staticmethod
+    def _reject_external_ref(uri: str, **_kwargs: Any) -> Any:
+        """Refuse every out-of-document ``$ref`` target (jsonref loader).
+
+        ``jsonref`` only invokes the loader for references whose URI part is
+        non-empty — i.e. references pointing *outside* the current document
+        (``http(s)://…``, ``file://…``, or a sibling path). In-document
+        references (``#/components/schemas/…``) are served from jsonref's
+        document store and never reach the loader. Refusing external targets
+        here closes the SSRF / local-file-read hole that jsonref's default
+        loader (``requests.get`` for http(s), ``urlopen`` for everything
+        including ``file://``) would otherwise open on an attacker-supplied
+        spec extracted from an uploaded archive — none of the codebase's
+        usual outbound-fetch defenses (``validate_url_safety``) guard this
+        path. External refs never resolved correctly here anyway: the spec is
+        handed to jsonref with an empty ``base_uri``, so any relative
+        sibling-file ref would resolve against the process CWD, not the
+        archive directory.
+        """
+        msg = (
+            f"Refusing to resolve external OpenAPI $ref target {uri!r}: only "
+            "in-document references are permitted (SSRF / local-file-read guard)."
+        )
+        raise OperationError(msg, operation="archive_load")
+
     def _resolve_refs(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Resolve $ref references in spec using jsonref.
+
+        Only in-document references (``#/...``) are resolved; external
+        references (``http(s)://``, ``file://``, sibling paths) are rejected
+        by :meth:`_reject_external_ref` to prevent SSRF / local-file reads
+        from attacker-supplied specs. Resolution is eager (``lazy_load=False``)
+        so any rejected ref surfaces here and is wrapped as ``OperationError``,
+        rather than firing later when a lazy proxy is dereferenced.
 
         Args:
             spec: Raw spec dictionary.
@@ -365,9 +397,9 @@ class OpenAPIHandler:
             Spec with resolved references.
 
         Raises:
-            OperationError: If jsonref is not installed or ref resolution fails,
-                since unresolved ``$ref`` placeholders corrupt all downstream
-                chunk text.
+            OperationError: If jsonref is not installed or ref resolution fails
+                (including any external ``$ref``), since unresolved ``$ref``
+                placeholders corrupt all downstream chunk text.
         """
         from typing import cast
 
@@ -381,7 +413,15 @@ class OpenAPIHandler:
 
         try:
             # Convert to JSON string and back to handle $ref resolution.
-            return cast("dict[str, Any]", jsonref.loads(json.dumps(spec)))
+            # A restricted loader + eager resolution blocks external refs.
+            return cast(
+                "dict[str, Any]",
+                jsonref.loads(
+                    json.dumps(spec),
+                    loader=self._reject_external_ref,
+                    lazy_load=False,
+                ),
+            )
         except Exception as exc:
             msg = f"Failed to resolve $ref references in OpenAPI spec: {exc}"
             raise OperationError(msg, operation="archive_load") from exc

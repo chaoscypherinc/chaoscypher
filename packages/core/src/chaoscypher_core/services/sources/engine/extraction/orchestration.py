@@ -494,7 +494,12 @@ def filter_and_strip_chunks(
         # Apply min_content_length only when a filter actually touched this
         # chunk. A short chunk that no filter stripped is legitimate content
         # (pithy definitions, short captions) and must not be discarded.
-        was_stripped = bool(categories) or len(cleaned) < original_len
+        # Compare against the *stripped* original: strip_chunk_content always
+        # trims surrounding whitespace, so a chunk that no matcher touched but
+        # merely had leading/trailing whitespace would otherwise look
+        # "stripped" — and a short-but-legitimate chunk (definition, caption)
+        # would then be wrongly excluded despite the documented intent above.
+        was_stripped = bool(categories) or len(cleaned) < len(original_content.strip())
         if was_stripped and len(cleaned) < min_content_length:
             stats.excluded_chunks += 1
             continue

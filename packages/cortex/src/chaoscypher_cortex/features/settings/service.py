@@ -198,6 +198,11 @@ class SettingsService:
                 search_repo = get_search_repository(database_name=self.database_name)
                 vector_count = search_repo.vector.get_vector_count()  # type: ignore[attr-defined]
             except Exception:
+                # A transient search-repo outage must not silently masquerade as
+                # "no embeddings exist" — that would suppress the dimension-change
+                # data-loss warning below. Log it so the missing warning is
+                # traceable; defaulting to 0 keeps validation non-blocking.
+                logger.warning("vector_dimension_warning_count_failed", exc_info=True)
                 vector_count = 0
 
             if vector_count > 0:

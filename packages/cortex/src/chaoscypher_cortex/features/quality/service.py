@@ -565,11 +565,19 @@ class QualityService:
             if entity_count == 0:
                 continue
 
-            # Score the source
+            # Score the source. Prefer the cached scores already carried on the
+            # source dict (from the single list_files() call above) to avoid a
+            # guaranteed extra get_file() round trip per source — mirrors the
+            # short-circuit analyze_sources() uses.
             source_id_for_score = source.get("id")
             if source_id_for_score is None:
                 continue
-            score = self.score_source(source_id_for_score, include_details=False)
+            if self._has_valid_cached_scores(source):
+                score: dict[str, Any] | None = self._build_result_from_cache(
+                    source, include_details=False
+                )
+            else:
+                score = self.score_source(source_id_for_score, include_details=False)
             if not score:
                 continue
 

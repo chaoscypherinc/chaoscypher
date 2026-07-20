@@ -67,8 +67,7 @@ class DatabaseResetService:
             / self.database_name
         )
 
-        # Delete app.db and SQLite WAL files
-        db_path = get_db_path(self.database_name)
+        # Delete app.db and SQLite WAL files (db_path already resolved above)
         if db_path.exists():
             db_path.unlink()
             logger.info("database_file_deleted", db_path=str(db_path))

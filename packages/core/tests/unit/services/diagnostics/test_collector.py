@@ -248,3 +248,58 @@ class TestExportBundle:
         assert "***" in body
         # Safe content must be preserved
         assert "worker_started" in body
+
+
+class TestCollectDatabaseStats:
+    """Tests for database-stats collection."""
+
+    def test_returns_counts_for_real_db(self, tmp_path: Path) -> None:
+        """A real DB yields table counts without error."""
+        import sqlite3
+
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        db_dir = tmp_path / "default"
+        db_dir.mkdir()
+        db_path = db_dir / "app.db"
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY)")
+        conn.execute("INSERT INTO widgets (id) VALUES (1), (2)")
+        conn.commit()
+        conn.close()
+
+        stats = DiagnosticCollector(db_path=db_path).collect_database_stats()
+        assert stats.table_counts == {"widgets": 2}
+
+    def test_closes_connection_when_query_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regression: the sqlite connection must be closed even when a query
+        raises — the old code only closed it on the success path and leaked
+        the connection on any failure.
+        """
+        import sqlite3
+
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        db_dir = tmp_path / "default"
+        db_dir.mkdir()
+        db_path = db_dir / "app.db"
+        db_path.write_bytes(b"")  # must exist so stats collection is attempted
+
+        closed = {"count": 0}
+
+        class _FakeConn:
+            def execute(self, *_args: object) -> object:
+                raise sqlite3.OperationalError("boom")
+
+            def close(self) -> None:
+                closed["count"] += 1
+
+        monkeypatch.setattr(sqlite3, "connect", lambda *_a, **_kw: _FakeConn())
+
+        # Failure is swallowed into a warning; the return is still well-formed.
+        stats = DiagnosticCollector(db_path=db_path).collect_database_stats()
+        assert stats.table_counts == {}
+        # The connection must have been closed exactly once despite the error.
+        assert closed["count"] == 1

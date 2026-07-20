@@ -12,6 +12,22 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 
 ### July 2026
 
+#### v0.3.1 (2026-07-20)
+
+- **Security: OpenAPI archive loader no longer resolves external `$ref`s** — an uploaded OpenAPI spec could reference `file:///...` or `http(s)://...` in a `$ref` and have the loader read local files or internal-network resources into indexed text. Resolution is now restricted to in-document `#/...` references only; anything else is rejected with a clear error. If you ingest OpenAPI specs from sources you don't fully trust, this is the headline reason to upgrade.
+- **Security: static file serving hardened** — SPA path containment now uses a real path-prefix check (`Path.is_relative_to`) instead of a string comparison, closing a sibling-directory edge case.
+- **Security: CLI `config set` no longer echoes secret values** — setting a known secret path prints a masked confirmation instead of the plaintext value.
+- **Security & dependencies** — every advisory flagged since v0.3.0 is patched: pillow 12.3.0 (5 PYSEC advisories), lxml 6.1.1 / lxml-html-clean 0.4.5 / soupsieve 2.8.4 (3 CVEs), setuptools 83.0.0 (PYSEC-2026-3447, unblocked by the torch 2.11 → 2.13 upgrade below), mcp 1.28.1 (3 CVEs), websocket-driver 0.7.5, and a frontend minor/patch dependency sweep. `pip-audit` and `npm audit` both report clean.
+- **torch 2.11 → 2.13 (CPU)** — the local-embedding stack's torch is upgraded; embedding output is verified bit-identical across the upgrade, so existing vector indexes are unaffected and nothing needs re-embedding.
+- **Queue: unrecoverable filesystem errors fail fast** — a missing file or bad mount during processing is now classified permanent and fails the task immediately with the real error, instead of burning ~4.5 minutes in a transient-retry loop before failing anyway. Genuinely transient conditions (`EINTR`, `EAGAIN`) still retry.
+- **Chat: worker errors surface correctly** — if updating a chat's status to `error` itself failed, that secondary failure used to mask the original error and derail retry classification; the original error now always propagates.
+- **Export: scoped graph exports no longer miss edges on large graphs** — edge scoping is applied in SQL before the row cap, so a scoped export of a busy database can no longer come back with zero in-scope edges.
+- **Ingestion fixes** — compound-suffix archives (`.tar.gz`) route to the right loader; all six file loaders enforce the same size guard; a PDF page-handle leak is closed; whitespace-only chunks are dropped correctly; inverse relationships no longer inflate citation counts; chunk-attempt lookups work for committed sources; CLI `source list --pending`/`--status` use the real status values.
+- **Platform fixes** — malformed session cookies raise a proper auth error instead of a 500; the latest-backup pick is timestamp-based (a lexical sort could restore the wrong backup around month boundaries); a diagnostics database-connection leak is closed; full-node reindexing batches its writes instead of issuing one query per node.
+- **Graph & search fixes** — empty-graph betweenness returns the canonical empty shape; CLI `node get --include-links` paginates connected edges instead of truncating; the node detail page keeps your edit form open if a save fails; vector-index rebuilds report skipped chunks per source in quality metrics.
+- **Migrations** — none. No schema changes in this release.
+- **Upgrade advisory** — no queue payload schemas changed, but the standing guidance applies: drain the queue before swapping the image (stop new submissions, wait for `/api/v1/queue/stats` to report 0 pending on all queues), since payload-version negotiation is not yet implemented.
+
 #### v0.3.0 (2026-07-03)
 
 - **Breaking: CCX 3.0 replaces the 2.0 package format** — export and import are rebuilt on the open [`ccx-format`](https://pypi.org/project/ccx-format/) spec: IRI-based identity on nodes, edges, and sources; upsert-by-IRI on import (re-importing a package updates in place instead of duplicating); JSON-LD named graphs; and a `chaoscypher.statistics` graph carrying source/lens/workflow stats. All v2.0 writers and loaders are removed — **`.ccx` bundles exported by v0.2.x will not load in v0.3.0**. Re-export from a v0.3.0 instance (the upgrade preserves your data; only previously exported bundle files are affected). A full semantic round-trip plus idempotency is pinned by the E2E suite.

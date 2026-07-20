@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.3.0"
+version = "0.3.1"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -39,7 +39,7 @@ dependencies = [
     "structlog>=25.5.0,<26",
     "pydantic>=2.12.0,<3",
     "platformdirs>=4.9.0,<5",
-    "mcp>=1.27.0,<2",
+    "mcp>=1.28.1,<2",
     "ccx-format[embeddings]>=0.1.0,<0.2",
 
     # Search & indexing
@@ -48,7 +48,7 @@ dependencies = [
     # torch is a transitive dep of sentence-transformers; lifted to a direct
     # dep so the [tool.uv.sources] override in the root pyproject.toml routes
     # it to the PyTorch CPU index (avoids ~4GB of CUDA libs on Linux).
-    "torch>=2.10.0,<3",
+    "torch>=2.13.0,<3",
 
     # LLM providers (for embeddings and chat)
     "anthropic>=0.92.0,<2",

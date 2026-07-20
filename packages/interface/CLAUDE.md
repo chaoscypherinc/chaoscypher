@@ -110,7 +110,7 @@ Developer guidance for the React/TypeScript frontend (`packages/interface/`). Ro
 ## Tech debt (from Plan A)
 
 - TanStack Query migration COMPLETE (2026-05-25 campaign): all pages are on TanStack Query — no remaining raw `fetch + useState` server-state pages. The legacy `services/api.ts` re-export barrel was retired in favor of direct `./api/*` module imports.
-- Three files in `eslint.config.js:14-16` have lint ignores for gradual strict migration — `SettingsPage.tsx`, `ImportDetailPage.tsx`, `LLMQueueMonitor.tsx`.
+- Two files in `eslint.config.js:17-18` have lint ignores for gradual strict migration — `SettingsPage.tsx`, `ImportDetailPage.tsx`.
 
 ## Source detail page anatomy
 

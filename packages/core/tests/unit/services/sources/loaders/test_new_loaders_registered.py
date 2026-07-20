@@ -69,3 +69,38 @@ def test_epub_loader_registered(loader_registry: LoaderRegistry) -> None:
     loader = loader_registry.get_loader("/tmp/book.epub")
     assert loader is not None
     assert loader.metadata.plugin_id == "epub"
+
+
+def test_tgz_archive_routes_to_archive_loader(loader_registry: LoaderRegistry) -> None:
+    from chaoscypher_core.services.sources.loaders.archive_loader import ArchiveLoader
+
+    loader = loader_registry.get_loader("/tmp/bundle.tgz")
+    assert isinstance(loader, ArchiveLoader)
+
+
+def test_targz_compound_extension_routes_to_archive_loader(
+    loader_registry: LoaderRegistry,
+) -> None:
+    """A ``.tar.gz`` upload resolves to the archive loader.
+
+    Regression: ``get_loader`` matched on ``Path(...).suffix`` which is only
+    ``.gz`` for ``bundle.tar.gz`` — never a registered key — so ``.tar.gz``
+    archives 404'd with "No loader available for file type: .gz" even though
+    ArchiveLoader advertises ``.tar.gz``. The registry now matches the
+    compound suffix.
+    """
+    from chaoscypher_core.services.sources.loaders.archive_loader import ArchiveLoader
+
+    loader = loader_registry.get_loader("/tmp/bundle.tar.gz")
+    assert isinstance(loader, ArchiveLoader)
+    # Resolves to the same loader class the ``.tgz`` alias does.
+    assert type(loader) is type(loader_registry.get_loader("/tmp/other.tgz"))
+
+
+def test_plain_gz_without_tar_is_unsupported(loader_registry: LoaderRegistry) -> None:
+    """A bare ``.gz`` (not ``.tar.gz``) has no registered loader.
+
+    Documents the scope of the compound-suffix fix: only the advertised
+    ``.tar.gz`` / ``.tgz`` archive extensions resolve, not arbitrary gzip.
+    """
+    assert loader_registry.get_loader("/tmp/single.gz") is None

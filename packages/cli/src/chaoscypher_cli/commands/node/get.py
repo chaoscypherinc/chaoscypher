@@ -11,6 +11,7 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from chaoscypher_cli.commands.node._edges import list_connected_edges
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_json
 from chaoscypher_core.app_config import get_settings
@@ -55,17 +56,22 @@ def get(node_id: str, output_format: str, include_links: bool, database: str) ->
         edges = []
         if include_links:
             edge_batch = get_settings().cli.edge_batch_size
-            # Get outgoing edges (where this node is the source)
-            outgoing_result = ctx.edge_service.list_edges(
-                source_node_id=node_id, page_size=edge_batch
+            # Get outgoing edges (where this node is the source). Paginate so
+            # high-degree nodes are not silently truncated to the first page.
+            outgoing = list_connected_edges(
+                ctx.edge_service,
+                node_id=node_id,
+                page_size=edge_batch,
+                edge_filter="source_node_id",
             )
-            outgoing = outgoing_result.get("data", [])
 
             # Get incoming edges (where this node is the target)
-            incoming_result = ctx.edge_service.list_edges(
-                target_node_id=node_id, page_size=edge_batch
+            incoming = list_connected_edges(
+                ctx.edge_service,
+                node_id=node_id,
+                page_size=edge_batch,
+                edge_filter="target_node_id",
             )
-            incoming = incoming_result.get("data", [])
 
             edges = outgoing + incoming
 

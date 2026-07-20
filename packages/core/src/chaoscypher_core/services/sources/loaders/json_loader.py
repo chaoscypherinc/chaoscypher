@@ -79,7 +79,10 @@ class JSONLoader:
             ValidationError: When the file is JSON and unparseable, or
                 when every JSONL line fails to parse.
         """
+        from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
         from chaoscypher_core.utils.encoding import detect_encoding
+
+        check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
         encoding_used, text, replacement_chars_count = detect_encoding(path)

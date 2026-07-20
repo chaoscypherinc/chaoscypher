@@ -22,13 +22,15 @@ console = Console()
 
 @click.command("list")
 @click.option(
-    "--status", "-s", help="Filter by status (uploaded, indexed, extracted, committed, failed)"
+    "--status",
+    "-s",
+    help="Filter by status (pending, indexing, indexed, extracted, committed, error)",
 )
 @click.option(
     "--pending",
     "-p",
     is_flag=True,
-    help="Show only files not yet committed (excludes committed and failed)",
+    help="Show only files not yet committed (excludes committed and errored)",
 )
 @click.option(
     "--awaiting",
@@ -55,7 +57,7 @@ def list_files(
     Example:
         chaoscypher source list
         chaoscypher source list --pending            # Show resumable files
-        chaoscypher source list --status uploaded
+        chaoscypher source list --status indexed
         chaoscypher source list --format json
     """
     try:
@@ -72,9 +74,16 @@ def list_files(
             database_name=ctx.database_name, status=effective_status
         )
 
-        # Apply pending filter (excludes committed and failed)
+        # Apply pending filter (excludes committed and errored). Use the real
+        # enum value ``SourceStatus.ERROR`` ("error"): there is no "failed"
+        # status, so the old literal never matched and errored sources leaked
+        # into --pending.
         if pending:
-            files = [f for f in files if f.get("status") not in (SourceStatus.COMMITTED, "failed")]
+            files = [
+                f
+                for f in files
+                if f.get("status") not in (SourceStatus.COMMITTED, SourceStatus.ERROR)
+            ]
 
         if output_format == "json":
             print_json(json.dumps(files, indent=2, default=str))

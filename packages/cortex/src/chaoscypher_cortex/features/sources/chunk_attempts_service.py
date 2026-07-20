@@ -41,21 +41,24 @@ class ChunkAttemptsService:
     def _resolve_chunk_task_id(self, source_id: str, chunk_index: int) -> str:
         """Resolve ``(source_id, chunk_index)`` to a chunk_task id.
 
-        Raises ``NotFoundError`` if the source, its current extraction job, or
-        the chunk slot does not exist.
+        Raises ``NotFoundError`` if the source or the chunk slot does not exist.
         """
         source = self._adapter.get_source(source_id, self._database_name)
         if source is None:
             raise NotFoundError("source", source_id)
-        job_id = source.get("current_extraction_job_id")
-        if not job_id:
-            raise NotFoundError("extraction_job", f"source {source_id} has no extraction job")
-        task = self._adapter.get_chunk_task_by_job_and_index(
-            job_id=job_id,
+        # Look up by (source_id, chunk_index) via the job join rather than the
+        # source's active-job pointer: ``current_extraction_job_id`` is cleared
+        # at extraction-complete time, so it is None on every committed source
+        # and the old ``get_chunk_task_by_job_and_index`` path 404'd on exactly
+        # the case this history view exists to serve. The chunk_task rows
+        # persist past commit, so the join still finds them (mirrors
+        # ``chunk_rerun_service.rerun_chunk``).
+        task = self._adapter.get_chunk_task_by_source_and_index(
+            source_id=source_id,
             chunk_index=chunk_index,
             database_name=self._database_name,
         )
         if task is None:
-            raise NotFoundError("chunk_task", f"chunk_index={chunk_index} in job {job_id}")
+            raise NotFoundError("chunk_task", f"chunk_index={chunk_index} on source {source_id}")
         task_id: str = task["id"]
         return task_id

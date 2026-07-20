@@ -210,8 +210,9 @@ def set_value(key: str, value: str) -> None:
     from chaoscypher_core.app_config import get_config_manager
     from chaoscypher_core.exceptions import ConfigError
 
+    parsed = _parse_value(value)
     nested: dict[str, Any] = {}
-    _set_nested_value(nested, key, _parse_value(value))
+    _set_nested_value(nested, key, parsed)
 
     try:
         get_config_manager().update_settings(nested)
@@ -219,7 +220,10 @@ def set_value(key: str, value: str) -> None:
         message = f"Invalid setting '{key}':\n{exc}"
         raise click.ClickException(message) from exc
 
-    console.print(f"[green]Set {key} = {_parse_value(value)}[/green]")
+    # Never echo a secret back to the terminal/scrollback/CI logs — `config get`
+    # masks these same paths, so the write path must not defeat that masking.
+    shown = "configured" if _is_known_secret_path(key) else parsed
+    console.print(f"[green]Set {key} = {shown}[/green]")
     console.print(f"[dim]Saved to: {engine_config.settings_yaml_path()}[/dim]")
 
 

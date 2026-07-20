@@ -129,6 +129,49 @@ def test_docx_loader_raises_before_parse_when_over_cap(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Parity: the remaining full-file loaders (JSON, HTML, RST, EPUB, XLSX, PPTX)
+# enforce the same guard. These read the whole file into RAM (detect_encoding
+# / zipfile / openpyxl) but historically skipped the pre-parse size check, so
+# a multi-GB upload of one of these formats could still OOM the worker.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("loader_module", "loader_cls", "suffix", "payload"),
+    [
+        ("json_loader", "JSONLoader", ".json", b"X" * 4096),
+        ("html_loader", "HTMLLoader", ".html", b"X" * 4096),
+        ("rst_loader", "RSTLoader", ".rst", b"X" * 4096),
+        ("epub_loader", "EPUBLoader", ".epub", b"X" * 4096),
+        ("xlsx_loader", "XLSXLoader", ".xlsx", b"X" * 4096),
+        ("pptx_loader", "PPTXLoader", ".pptx", b"X" * 4096),
+    ],
+)
+def test_remaining_loaders_raise_before_parse_when_over_cap(
+    tmp_path: Path,
+    loader_module: str,
+    loader_cls: str,
+    suffix: str,
+    payload: bytes,
+) -> None:
+    """Each full-file loader rejects oversized input before its parser runs.
+
+    Garbage bytes over the cap: if the guard didn't fire first, the parser
+    would raise a format error (or materialise the bytes into RAM) instead of
+    ``LoaderFileTooLargeError``.
+    """
+    import importlib
+
+    module = importlib.import_module(f"chaoscypher_core.services.sources.loaders.{loader_module}")
+    cls = getattr(module, loader_cls)
+    f = tmp_path / f"huge{suffix}"
+    f.write_bytes(payload)
+    loader = cls(settings=_make_settings(max_disk_bytes=1024))
+    with pytest.raises(LoaderFileTooLargeError):
+        loader.load_document(str(f))
+
+
+# ---------------------------------------------------------------------------
 # Error message carries enough detail to be operator-actionable
 # ---------------------------------------------------------------------------
 

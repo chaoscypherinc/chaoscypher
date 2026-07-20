@@ -4,46 +4,17 @@
 """Delete node command - Remove a node from the knowledge graph."""
 
 import sys
-from typing import Any
 
 import click
 from rich.console import Console
 from rich.prompt import Confirm
 
+from chaoscypher_cli.commands.node._edges import list_connected_edges
 from chaoscypher_cli.context import get_context
 from chaoscypher_core.app_config import get_settings
 
 
 console = Console()
-
-
-def _list_connected_edges(
-    edge_service: Any,
-    *,
-    node_id: str,
-    page_size: int,
-    edge_filter: str,
-) -> list[dict[str, Any]]:
-    """Return every edge connected to a node for one direction."""
-    page = 1
-    edges: list[dict[str, Any]] = []
-
-    while True:
-        kwargs: dict[str, Any] = {
-            edge_filter: node_id,
-            "page": page,
-            "page_size": page_size,
-        }
-        result = edge_service.list_edges(**kwargs)
-        edges.extend(result.get("data", []))
-
-        pagination = result.get("pagination", {})
-        total_pages = int(pagination.get("total_pages") or page)
-        if not pagination.get("has_next", page < total_pages):
-            break
-        page += 1
-
-    return edges
 
 
 @click.command()
@@ -78,7 +49,7 @@ def delete(node_id: str, force: bool, cascade: bool, database: str) -> None:
 
         # Check for connected edges
         edge_batch = get_settings().cli.edge_batch_size
-        outgoing = _list_connected_edges(
+        outgoing = list_connected_edges(
             ctx.edge_service,
             node_id=node_id,
             page_size=edge_batch,
@@ -86,7 +57,7 @@ def delete(node_id: str, force: bool, cascade: bool, database: str) -> None:
         )
 
         # Get incoming edges (where this node is the target)
-        incoming = _list_connected_edges(
+        incoming = list_connected_edges(
             ctx.edge_service,
             node_id=node_id,
             page_size=edge_batch,

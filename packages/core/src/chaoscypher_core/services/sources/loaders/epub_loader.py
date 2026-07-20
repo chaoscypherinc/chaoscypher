@@ -116,7 +116,10 @@ class EPUBLoader:
                 zip container, missing required ``META-INF/container.xml``
                 rootfile, etc.).
         """
+        from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
         from chaoscypher_core.utils.encoding import detect_encoding
+
+        check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
         try:

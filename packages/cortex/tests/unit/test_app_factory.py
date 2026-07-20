@@ -59,6 +59,30 @@ def test_no_dev_mode_needs_no_ack(monkeypatch):
     create_app()  # should not raise
 
 
+def test_is_within_static_root_rejects_prefix_sibling(tmp_path):
+    """A sibling dir sharing the root's name prefix must not count as contained.
+
+    Regression: the SPA static handler previously used ``str.startswith`` for
+    containment, so ``/app/static_uploads/secret`` passed the check against a
+    ``/app/static`` root. ``is_relative_to`` requires true ancestry.
+    """
+    from pathlib import Path
+
+    from chaoscypher_cortex.app_factory import _is_within_static_root
+
+    static_root = tmp_path / "static"
+    static_root.mkdir()
+    sibling = tmp_path / "static_uploads"
+    sibling.mkdir()
+    escaped = Path(static_root, "..", "static_uploads", "secret.txt").resolve()
+
+    # Sibling with shared prefix is NOT contained (the startswith bug).
+    assert _is_within_static_root(escaped, static_root.resolve()) is False
+    # A genuine file inside the root IS contained.
+    inside = Path(static_root, "assets", "app.js").resolve()
+    assert _is_within_static_root(inside, static_root.resolve()) is True
+
+
 def test_spa_fallback_returns_404_envelope_for_missing_api_path(monkeypatch, tmp_path):
     """Unknown ``/api/*`` paths must produce a real 404 with the unified envelope.
 

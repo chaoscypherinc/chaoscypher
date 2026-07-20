@@ -142,6 +142,26 @@ describe('NodeDetailPage', () => {
     expect(await screen.findByText('Failed to load entity')).toBeTruthy();
   });
 
+  it('keeps the detail page (not the full-page error) when a save fails', async () => {
+    mockHappyPath();
+    mockedApiClient.patch.mockRejectedValue(new Error('save boom'));
+    renderPage();
+
+    await screen.findByText('Ada Lovelace');
+
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    const labelInput = screen.getByLabelText('Label') as HTMLInputElement;
+    fireEvent.change(labelInput, { target: { value: 'Grace Hopper' } });
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+
+    // The action error surfaces inline...
+    expect(await screen.findByText('Failed to save entity')).toBeTruthy();
+    // ...but the page is NOT ejected to the "Back to Entities" error screen,
+    // so the edit form and its unsaved value survive.
+    expect(screen.queryByRole('button', { name: /back to entities/i })).toBeNull();
+    expect((screen.getByLabelText('Label') as HTMLInputElement).value).toBe('Grace Hopper');
+  });
+
   it('saves an edited label via PATCH', async () => {
     mockHappyPath();
     mockedApiClient.patch.mockResolvedValue({ data: { ...NODE, label: 'Grace Hopper' } });

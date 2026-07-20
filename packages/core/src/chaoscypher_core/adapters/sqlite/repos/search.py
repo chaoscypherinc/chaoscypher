@@ -1276,7 +1276,7 @@ class SearchRepository:
     ) -> None:
         """Reindex all nodes (useful after bulk import or index corruption).
 
-        Delegates to :meth:`clear_all_indices` and :meth:`index_node`;
+        Delegates to :meth:`clear_all_indices` and :meth:`index_nodes_batch`;
         the ``session`` kwarg flows through unchanged.
 
         Args:
@@ -1288,8 +1288,7 @@ class SearchRepository:
 
         self.clear_all_indices(session=session)
 
-        for node in nodes:
-            self.index_node(node, session=session)
+        self.index_nodes_batch(nodes, session=session)
 
         logger.info("Reindexing complete")
 

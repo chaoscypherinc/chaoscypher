@@ -57,14 +57,19 @@ def _detail_row() -> dict:
 @pytest.fixture
 def mock_adapter() -> MagicMock:
     adapter = MagicMock()
+    # Model a COMMITTED source: current_extraction_job_id is cleared at
+    # extraction-complete time, so it is None post-commit. The attempts-history
+    # view must still resolve the chunk task (the whole point of the fix), so
+    # the resolver goes through the (source_id, chunk_index) join, not the
+    # now-null active-job pointer.
     adapter.get_source = MagicMock(
         return_value={
             "id": "src-1",
             "database_name": "test",
-            "current_extraction_job_id": "job-1",
+            "current_extraction_job_id": None,
         }
     )
-    adapter.get_chunk_task_by_job_and_index = MagicMock(return_value={"id": "tsk-1"})
+    adapter.get_chunk_task_by_source_and_index = MagicMock(return_value={"id": "tsk-1"})
     adapter.list_chunk_attempts = MagicMock(return_value=[_summary_row()])
     adapter.get_chunk_attempt = MagicMock(return_value=_detail_row())
     return adapter
@@ -106,7 +111,7 @@ async def test_list_attempts_404_missing_source(
 async def test_list_attempts_404_missing_chunk(
     service: ChunkAttemptsService, mock_adapter: MagicMock
 ) -> None:
-    mock_adapter.get_chunk_task_by_job_and_index.return_value = None
+    mock_adapter.get_chunk_task_by_source_and_index.return_value = None
     with pytest.raises(NotFoundError):
         await list_chunk_attempts_endpoint(
             source_id="src-1",
@@ -114,6 +119,34 @@ async def test_list_attempts_404_missing_chunk(
             _="user",
             service=service,
         )
+
+
+@pytest.mark.asyncio
+async def test_list_attempts_resolves_on_committed_source_without_job_pointer(
+    service: ChunkAttemptsService, mock_adapter: MagicMock
+) -> None:
+    """Attempts resolve on a committed source (current_extraction_job_id=None).
+
+    Regression: the resolver used to look the chunk task up via the source's
+    active-job pointer, which is cleared at extraction-complete time — so
+    every committed source 404'd, exactly the case (reviewing rerun history
+    after commit) this view exists to serve. The resolver must not touch the
+    job pointer.
+    """
+    # Fixture already sets current_extraction_job_id=None; assert the resolver
+    # never consulted the (removed) job-pointer lookup and drove the source
+    # join instead.
+    resp = await list_chunk_attempts_endpoint(
+        source_id="src-1",
+        chunk_index=0,
+        _="user",
+        service=service,
+    )
+    assert len(resp.data) == 1
+    mock_adapter.get_chunk_task_by_source_and_index.assert_called_once_with(
+        source_id="src-1", chunk_index=0, database_name="test"
+    )
+    assert not mock_adapter.get_chunk_task_by_job_and_index.called
 
 
 @pytest.mark.asyncio

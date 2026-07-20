@@ -580,6 +580,23 @@ class GraphRepository(
         nodes = [entity_to_dict(row) for row in node_rows]
 
         edge_stmt = select(GraphEdge).where(GraphEdge.database_name == self.database_name)
+        if source_ids is not None:
+            # Prune edges at the SQL level to those touching an in-scope node,
+            # instead of fetching up to max_items edges for the whole database
+            # and discarding most in Python. Uses a subquery (not a
+            # materialized id list) so it neither hits SQLite's bound-variable
+            # limit nor risks returning zero edges when the first max_items
+            # edges of the DB all belong to other sources. Both-endpoints
+            # consistency is still enforced against the fetched node set below.
+            in_scope_node_ids = (
+                select(GraphNode.id)
+                .where(GraphNode.database_name == self.database_name)
+                .where(col(GraphNode.source_id).in_(source_ids))
+            )
+            edge_stmt = edge_stmt.where(
+                col(GraphEdge.source_node_id).in_(in_scope_node_ids)
+                | col(GraphEdge.target_node_id).in_(in_scope_node_ids)
+            )
         edge_stmt = edge_stmt.order_by(GraphEdge.id).limit(max_items)
         edge_rows = self.session.exec(edge_stmt).all()
         edges = [entity_to_dict(row) for row in edge_rows]

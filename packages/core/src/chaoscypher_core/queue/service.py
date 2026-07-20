@@ -82,6 +82,20 @@ async def _maybe_session_scope() -> AsyncIterator[None]:
 # Error Classification
 # ============================================================================
 
+# Permanent OSError subclasses that will NOT resolve on retry. These must be
+# checked BEFORE ``TRANSIENT_ERROR_TYPES`` below, because that tuple contains
+# bare ``OSError`` (for network-related OS errors) and every type here is an
+# ``OSError`` subclass — without this pre-check a missing file or a bad mount
+# would be retried through the full backoff schedule before terminal-failing.
+# ``InterruptedError`` (EINTR) and ``BlockingIOError`` (EAGAIN) are deliberately
+# excluded: those genuinely are retryable.
+PERMANENT_OS_ERROR_TYPES = (
+    FileNotFoundError,
+    PermissionError,
+    IsADirectoryError,
+    NotADirectoryError,
+)
+
 # Transient errors that should be retried (connection issues, timeouts)
 TRANSIENT_ERROR_TYPES = (
     ConnectionError,
@@ -114,7 +128,7 @@ except ImportError:
     pass
 
 
-def classify_error(exc: Exception) -> str:
+def classify_error(exc: Exception) -> str:  # noqa: PLR0911 — linear classification cascade, each return is a distinct outcome
     """Classify an error as transient or permanent.
 
     Transient errors are connection/timeout issues that may resolve on retry.
@@ -153,6 +167,12 @@ def classify_error(exc: Exception) -> str:
             suggested_action=exc.suggested_action,
             will_retry=False,
         )
+        return "permanent"
+
+    # Filesystem errors that will not resolve on retry (missing file, bad
+    # permissions, wrong node type). Checked before the transient tuple because
+    # these all subclass OSError, which is itself in TRANSIENT_ERROR_TYPES.
+    if isinstance(exc, PERMANENT_OS_ERROR_TYPES):
         return "permanent"
 
     # Check for transient error types

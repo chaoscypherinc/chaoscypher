@@ -123,6 +123,24 @@ def test_set_out_of_range_value_fails(isolated_settings) -> None:
     assert result.exit_code != 0
 
 
+def test_set_masks_secret_in_echo(isolated_settings) -> None:
+    """Setting a secret path must not echo the plaintext value.
+
+    `get` masks it, so `set` must not defeat that masking via its confirmation line.
+    """
+    result = CliRunner().invoke(config, ["set", "lexicon.token", "super-secret-token"])
+    assert result.exit_code == 0, result.output
+    assert "super-secret-token" not in result.output
+    assert "configured" in result.output
+
+
+def test_set_echoes_non_secret_value(isolated_settings) -> None:
+    """A non-secret value is still shown back for confirmation."""
+    result = CliRunner().invoke(config, ["set", "lexicon.timeout", "77"])
+    assert result.exit_code == 0, result.output
+    assert "77" in result.output
+
+
 # ---------------------------------------------------------------------------
 # path
 # ---------------------------------------------------------------------------

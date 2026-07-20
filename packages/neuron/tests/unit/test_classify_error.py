@@ -59,3 +59,36 @@ def test_classify_error_llm_error_non_retryable_is_permanent() -> None:
     """
     exc = LLMError("quota exceeded", is_retryable=False)
     assert classify_error(exc) == "permanent"
+
+
+def test_classify_error_filesystem_errors_are_permanent() -> None:
+    """OSError subclasses for missing/inaccessible files are permanent.
+
+    FileNotFoundError, PermissionError, IsADirectoryError and
+    NotADirectoryError are all OSError subclasses. Since bare OSError is in
+    TRANSIENT_ERROR_TYPES, without a dedicated pre-check these would be
+    classified transient and retried through the full backoff schedule even
+    though re-running the same load can never succeed (the file is gone / the
+    mount is unreadable). They must classify permanent so the task fails fast
+    with an actionable error.
+    """
+    assert classify_error(FileNotFoundError("no such file: /data/x")) == "permanent"
+    assert classify_error(PermissionError("permission denied: /data/x")) == "permanent"
+    assert classify_error(IsADirectoryError("is a directory: /data")) == "permanent"
+    assert classify_error(NotADirectoryError("not a directory: /data/x/y")) == "permanent"
+
+
+def test_classify_error_retryable_os_errors_stay_transient() -> None:
+    """EINTR/EAGAIN OSError subclasses remain transient.
+
+    InterruptedError (EINTR) and BlockingIOError (EAGAIN) are genuinely
+    retryable, so they must NOT be swept into the permanent bucket alongside
+    the filesystem errors — they fall through to the OSError transient branch.
+    """
+    assert classify_error(InterruptedError("interrupted syscall")) == "transient"
+    assert classify_error(BlockingIOError("resource temporarily unavailable")) == "transient"
+
+
+def test_classify_error_plain_oserror_stays_transient() -> None:
+    """A bare OSError (network-related) is still classified transient."""
+    assert classify_error(OSError("network is unreachable")) == "transient"

@@ -17,7 +17,7 @@ Example:
     chaoscypher graph link list
     chaoscypher graph link create node-1 node-2 --type "works_for"
     chaoscypher graph link get edge-123
-    chaoscypher graph link update edge-123 --type "reports_to"
+    chaoscypher graph link update edge-123 --label "reports_to"
     chaoscypher graph link delete edge-123
 """
 

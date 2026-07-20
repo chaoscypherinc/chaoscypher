@@ -74,6 +74,10 @@ class PPTXLoader:
             ValidationError: If the file is not a valid PPTX (corrupt
                 OPC package, missing zip central directory, etc.).
         """
+        from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
+
+        check_loader_file_size(filepath, self.settings)
+
         path = Path(filepath)
         try:
             pres = Presentation(str(path))

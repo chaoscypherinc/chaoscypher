@@ -76,6 +76,10 @@ class XLSXLoader:
             ValidationError: If the file is not a valid XLSX/XLSM
                 workbook (corrupt zip container, invalid OOXML, etc.).
         """
+        from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
+
+        check_loader_file_size(filepath, self.settings)
+
         path = Path(filepath)
         try:
             wb = load_workbook(str(path), data_only=True, read_only=True)

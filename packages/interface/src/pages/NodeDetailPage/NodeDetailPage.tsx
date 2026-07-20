@@ -40,7 +40,11 @@ export default function NodeDetailPage() {
     return <LoadingState message="Loading entity..." fullPage />;
   }
 
-  if (state.error || !state.entity) {
+  // Only a genuine load failure (no entity to show) ejects to the full-page
+  // error view. Action errors (failed save/delete) keep `state.entity`
+  // populated and surface via the inline alert below, so the edit form and
+  // its unsaved changes survive.
+  if (!state.entity) {
     return (
       <Box>
         <Alert severity="error" sx={{ mb: 2, ...ghostErrorAlertSx }}>

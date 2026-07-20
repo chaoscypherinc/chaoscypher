@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+import structlog
 
 from chaoscypher_core import EngineSettings
 from chaoscypher_core.models import SourceStatus
@@ -413,6 +414,41 @@ class TestRebuildChunkVectorIndex:
         total = svc._rebuild_chunk_vector_index()
         assert total == 0
         svc.search_repository.index_embeddings_batch.assert_not_called()
+
+    def test_per_source_skip_count_is_not_cumulative(self) -> None:
+        """Each source's ``rebuild_chunks_source_indexed`` log reports only
+        its own skips — not the run-wide accumulator.
+
+        Regression guard for the section-audit finding where the per-source
+        log emitted the cumulative ``total_skipped``, so a later source with
+        zero skips still reported the earlier source's skip count.
+        """
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = (
+            [{"id": "src-1", "filename": "a.pdf"}, {"id": "src-2", "filename": "b.pdf"}],
+            2,
+        )
+        # src-1 has one un-embedded chunk (skipped); src-2 is fully embedded.
+        src1_chunks = [{"id": "c1", "content": "t", "embedding": None}]
+        src2_chunks = [
+            {"id": "c2", "content": "clean", "embedding": _b64_embedding([0.1, 0.2, 0.3])},
+        ]
+        svc.indexing_repository.get_chunks_by_source.side_effect = [
+            (src1_chunks, 1),
+            (src2_chunks, 1),
+        ]
+        svc.search_repository.index_embeddings_batch.return_value = 1
+
+        with structlog.testing.capture_logs() as captured:
+            total = svc._rebuild_chunk_vector_index()
+
+        assert total == 1
+        per_source = [e for e in captured if e["event"] == "rebuild_chunks_source_indexed"]
+        by_source = {e["source_id"]: e["chunks_skipped"] for e in per_source}
+        assert by_source == {"src-1": 1, "src-2": 0}
+        # The completion log keeps the run-wide accumulator.
+        completed = next(e for e in captured if e["event"] == "rebuild_chunks_completed")
+        assert completed["total_skipped"] == 1
 
 
 # ---------------------------------------------------------------------------
