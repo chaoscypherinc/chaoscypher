@@ -421,6 +421,7 @@ class TestMessageHandlers:
     async def test_get_chat_messages_delegates(self) -> None:
         """get_chat_messages returns the service's message list."""
         service = MagicMock()
+        service.get_chat.return_value = _chat_dict("chat-1")
         service.get_chat_messages.return_value = [{"id": "m1"}, {"id": "m2"}]
 
         result = await get_chat_messages(
@@ -431,6 +432,27 @@ class TestMessageHandlers:
 
         service.get_chat_messages.assert_called_once_with("chat-1")
         assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_chat_messages_missing_chat_404(self) -> None:
+        """GET messages 404s for a nonexistent chat instead of returning [].
+
+        Regression: the endpoint returned ``200 []`` for a missing chat while
+        POST on the same path 404s, so clients couldn't distinguish "empty
+        chat" from "no chat" (2026-07-27 audit).
+        """
+        service = MagicMock()
+        service.get_chat.return_value = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_chat_messages(
+                chat_id="missing",
+                chat_service=service,
+                _="test-user",
+            )
+
+        assert exc_info.value.status_code == 404
+        service.get_chat_messages.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +544,42 @@ class TestSendMessageHandler:
                 )
 
         assert exc_info.value.status_code == 404
+        mock_enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_edit_resend_raises_409_while_processing(self) -> None:
+        """replace_from_message_id 409s while a turn is in progress.
+
+        The truncate is destructive: without the guard an in-flight worker
+        turn later flushes its buffered messages against the edited history
+        (2026-07-27 audit; mirrors the /retry and /regenerate guards).
+        """
+        service = MagicMock()
+        service.get_chat.return_value = _chat_dict("chat-1", status="processing")
+        settings = _settings()
+        body = ChatSendRequest(content="edited", replace_from_message_id="m1")
+
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(),
+            ) as mock_enqueue,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await send_message(
+                    chat_id="chat-1",
+                    message=body,
+                    chat_service=service,
+                    settings=settings,
+                    _="test-user",
+                )
+
+        assert exc_info.value.status_code == 409
+        service.truncate_from_message.assert_not_called()
         mock_enqueue.assert_not_called()
 
     @pytest.mark.asyncio
@@ -729,9 +787,24 @@ class TestExportChatHandler:
     def _chat_with_marked_history() -> dict[str, Any]:
         chat = _chat_dict("chat-1")
         chat["title"] = "War & Peace Q&A"
+        # Internal storage columns the API surface must not leak.
+        chat["database_name"] = "default"
+        chat["user_id"] = "local"
         chat["messages"] = [
-            {"id": "m1", "role": "user", "content": "Who is Pierre?"},
-            {"id": "m2", "role": "tool", "content": "{}"},
+            {
+                "id": "m1",
+                "role": "user",
+                "content": "Who is Pierre?",
+                "timestamp": _NOW,
+                "extra_metadata": None,
+            },
+            {
+                "id": "m2",
+                "role": "tool",
+                "content": "{}",
+                "timestamp": _NOW,
+                "extra_metadata": None,
+            },
             {
                 "id": "m3",
                 "role": "assistant",
@@ -739,6 +812,7 @@ class TestExportChatHandler:
                     "Pierre is [[node:node_abc|Pierre Bezukhov]]. "
                     "He inherits a fortune [[cite:C0:S1|war.txt]]."
                 ),
+                "timestamp": _NOW,
                 "extra_metadata": {
                     "chunk_citations": {
                         "C0:S1": {
@@ -767,6 +841,10 @@ class TestExportChatHandler:
         body = _json.loads(result.body)
         assert body["data"]["id"] == "chat-1"
         assert len(body["data"]["messages"]) == 3
+        # The export rides the ChatResponse surface: raw storage columns
+        # (database_name, user_id) must not leak (2026-07-27 audit).
+        assert "database_name" not in body["data"]
+        assert "user_id" not in body["data"]
 
     @pytest.mark.asyncio
     async def test_markdown_export_renders_footnotes_and_strips_markers(self) -> None:

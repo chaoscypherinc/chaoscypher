@@ -87,6 +87,18 @@ class RSTLoader:
         # Validate parseability via the null writer. ``report_level=5`` /
         # ``halt_level=5`` push docutils' tolerance to its maximum so
         # unknown Sphinx directives don't raise.
+        #
+        # ``file_insertion_enabled`` / ``raw_enabled`` MUST stay False: both
+        # default to True in docutils, and uploaded ``.rst`` is untrusted
+        # content. With them on, a ``.. include:: <path>`` or
+        # ``.. raw:: html\n   :file: <path>`` directive makes docutils open and
+        # read that path as a side effect of this validation pass -- a
+        # local-file-read primitive, even though the null writer means the
+        # bytes never reach our return value. ``.. include:: /dev/zero`` also
+        # hangs ``publish_string`` forever, and this runs inside a bare
+        # ``asyncio.to_thread`` with no timeout, so the pool slot stays wedged
+        # even if the awaiting coroutine is cancelled. Docutils' own docs name
+        # this exact pair as what to disable before parsing untrusted input.
         parsed_ok = True
         try:
             publish_string(
@@ -95,6 +107,8 @@ class RSTLoader:
                 settings_overrides={
                     "report_level": 5,
                     "halt_level": 5,
+                    "file_insertion_enabled": False,
+                    "raw_enabled": False,
                 },
             )
         except Exception:

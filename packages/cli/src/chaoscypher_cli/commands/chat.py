@@ -10,8 +10,10 @@
 """Chat command - Interactive LLM conversation with knowledge graph tool calling.
 
 Provides a conversational interface using a local or remote LLM with
-tool calling support to query the knowledge graph — matching the
-capabilities of the web UI chat.
+tool calling support to query the knowledge graph. Runs the same shared
+chat tool loop as the web UI; session-level features (persistence, titles,
+stop/cancel, retry, regenerate, edit-resend, export, chat search) are
+web-only.
 
 Example:
     chaoscypher chat "What nodes are in the graph?"
@@ -508,9 +510,11 @@ _ENTITY_REF_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches [[cite:ALIAS_OR_ID:Sn|label]] chunk citations
+# Matches [[cite:ALIAS_OR_ID:Sn|label]] chunk citations. The ID group
+# mirrors core CHUNK_CITATION_PATTERN: hex UUIDs, C-aliases, and prefixed
+# lexicon-import ids (chunk_<hex>) — never arbitrary letter junk.
 _CITE_RE = re.compile(
-    r"\[\[cite:([A-Za-z0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]",
+    r"\[\[cite:((?:[a-z]+_)?[a-f0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]",
     re.IGNORECASE,
 )
 
@@ -555,13 +559,19 @@ def _build_citation_data(
                     continue
                 alias = chunk["chunk_alias"].upper()
                 meta = chunk.get("chunk_metadata") or {}
-                citation_data[alias] = {
+                entry = {
                     "original_content": chunk.get("original_content", ""),
                     "sentence_offsets": meta.get("sentence_offsets", [])
                     if isinstance(meta, dict)
                     else [],
                     "filename": chunk.get("filename", "source"),
                 }
+                citation_data[alias] = entry
+                # Also key by the real chunk id so markers that already carry
+                # a uuid / prefixed id (rather than a C-alias) resolve too.
+                chunk_id = chunk.get("chunk_id")
+                if chunk_id:
+                    citation_data[chunk_id] = entry
     return citation_data
 
 
@@ -580,7 +590,9 @@ def _resolve_citation_text(
     Returns:
         Tuple of (sentence_text or None, filename).
     """
-    chunk = citation_data.get(alias.upper())
+    # Aliases are stored uppercased (C0, C1, …); real chunk ids (uuid or
+    # prefixed chunk_<hex>) are stored verbatim — try both spellings.
+    chunk = citation_data.get(alias.upper()) or citation_data.get(alias)
     if not chunk:
         return None, "source"
 
@@ -590,7 +602,7 @@ def _resolve_citation_text(
     if not (offsets and original):
         return None, filename
 
-    indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs)]
+    indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs, re.IGNORECASE)]
     sentences = [
         original[offsets[idx]["start"] : offsets[idx]["end"]]
         for idx in indices

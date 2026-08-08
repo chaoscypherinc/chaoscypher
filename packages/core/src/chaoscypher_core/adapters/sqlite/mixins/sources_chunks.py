@@ -13,7 +13,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import structlog
-from sqlalchemy import func
+from sqlalchemy import bindparam, func
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select, update
 
@@ -309,6 +309,60 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
 
         self.session.add(chunk)
         self._maybe_commit()
+
+    def update_chunk_embeddings_batch(
+        self,
+        embeddings_by_chunk: dict[str, str],
+        *,
+        embedding_model: str,
+        embedding_dimensions: int,
+        status: str,
+    ) -> list[str]:
+        """Batch form of update_chunk_embedding — one UPDATE, one commit.
+
+        An embedding wave is up to ``batching.embedding_wave_size`` (default
+        2,000) chunks; the single-row method costs one full-row SELECT (the
+        content Text + previous embedding BLOB included) plus one real COMMIT
+        per chunk. Missing ids are returned rather than raised so a wave
+        with deleted chunks keeps the per-chunk skip accounting.
+
+        Returns:
+            The subset of chunk ids that do not exist.
+        """
+        if not embeddings_by_chunk:
+            return []
+        self._ensure_connected()
+        ids = list(embeddings_by_chunk)
+        existing = set(
+            self.session.exec(select(DocumentChunk.id).where(col(DocumentChunk.id).in_(ids))).all()
+        )
+        params = [
+            {
+                "b_id": chunk_id,
+                "b_embedding": emb.encode("utf-8") if isinstance(emb, str) else emb,
+            }
+            for chunk_id, emb in embeddings_by_chunk.items()
+            if chunk_id in existing
+        ]
+        if params:
+            # Core-level statement (the table, not the mapped class): the ORM
+            # intercepts executemany UPDATE on mapped classes as "bulk update
+            # by primary key", which forbids a custom WHERE. Identity-map
+            # staleness is acceptable here exactly as in mark_chunks_embedded.
+            chunk_table = DocumentChunk.__table__
+            statement = (
+                update(chunk_table)
+                .where(chunk_table.c.id == bindparam("b_id"))
+                .values(
+                    embedding=bindparam("b_embedding"),
+                    embedding_model=embedding_model,
+                    embedding_dimensions=embedding_dimensions,
+                    status=status,
+                )
+            )
+            self.session.execute(statement, params)
+        self._maybe_commit()
+        return [chunk_id for chunk_id in ids if chunk_id not in existing]
 
     def list_unembedded_chunks(
         self,

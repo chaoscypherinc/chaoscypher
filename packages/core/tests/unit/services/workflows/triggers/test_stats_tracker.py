@@ -39,6 +39,18 @@ def _record(tracker, trigger_id="t1", success=True, execution_time=1.0, error=No
 class TestRecordExecution:
     """Tests for TriggerStatsTracker.record_execution."""
 
+    def test_execution_times_bounded_by_history_limit(self, tracker):
+        """Regression: execution_times must not grow without bound in the
+        long-lived executor process — it is capped like trigger_history.
+        """
+        for i in range(20):
+            _record(tracker, execution_time=float(i))
+
+        times = tracker.execution_times["t1"]
+        assert len(times) == 5  # history_limit
+        # Average reflects the retained window (15..19), not all 20 records.
+        assert tracker.trigger_stats["t1"].avg_execution_time == pytest.approx(17.0)
+
     def test_increments_total_on_success(self, tracker) -> None:
         _record(tracker, success=True)
         stats = tracker.trigger_stats["t1"]

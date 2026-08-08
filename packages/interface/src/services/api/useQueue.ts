@@ -16,7 +16,7 @@
  *
  * Mutations:
  *   - `useCancelTask` — DELETE /queue/tasks/{id}
- *   - `useCancelTasks` — POST /queue/tasks/cancel { task_ids }
+ *   - `useCancelAllTasks` — DELETE /queue/tasks (server-side cancel-all)
  *   - `useClearTaskHistory` — DELETE /queue/tasks/history
  * All invalidate the tasks + stats keys on success so the UI re-syncs.
  */
@@ -31,22 +31,22 @@ export interface QueueTask {
   task_id: string;
   queue: string;
   operation: string;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'retried';
   priority: number;
-  timeout: number;
-  max_attempts: number;
   attempts: number;
-  created_at: number;
-  started_at?: number;
-  completed_at?: number;
+  /** ISO-8601 UTC timestamps — the backend stores and returns strings. */
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
   error?: string;
+  error_type?: string;
+  data?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 
 export interface QueueStatsEntry {
   queue: string;
   queued: number;
-  max_depth: number;
   running: number;
   completed_recent: number;
   failed_recent: number;
@@ -121,19 +121,21 @@ export function useCancelTask() {
   });
 }
 
-interface CancelTasksResponse {
-  cancelled_count: number;
-  requested_count: number;
+interface CancelAllTasksResponse {
+  cancelled: number;
+  queue: string | null;
 }
 
-export function useCancelTasks() {
+/**
+ * Cancel ALL active tasks server-side via `DELETE /queue/tasks` —
+ * not limited to the task IDs the caller happens to have on the
+ * current page (the bug the old per-ID batch call had).
+ */
+export function useCancelAllTasks() {
   const qc = useQueryClient();
-  return useMutation<CancelTasksResponse, Error, string[]>({
-    mutationFn: async (taskIds) => {
-      const response = await apiClient.post<CancelTasksResponse>(
-        '/queue/tasks/cancel',
-        { task_ids: taskIds },
-      );
+  return useMutation<CancelAllTasksResponse, Error, void>({
+    mutationFn: async () => {
+      const response = await apiClient.delete<CancelAllTasksResponse>('/queue/tasks');
       return response.data;
     },
     onSuccess: () => invalidateQueue(qc),

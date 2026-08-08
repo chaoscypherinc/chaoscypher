@@ -150,48 +150,44 @@ class TestSeedTemplates:
 
 @pytest.mark.unit
 class TestDeleteImportFiles:
+    @staticmethod
+    def _settings(tmp_path) -> MagicMock:
+        settings = MagicMock()
+        settings.paths.data_dir = str(tmp_path)
+        settings.paths.databases_subdir = "databases"
+        settings.paths.imports_subdir = "imports"
+        return settings
+
     @pytest.mark.asyncio
     async def test_deletes_existing_imports_dir(self, tmp_path) -> None:
-        imports_dir = tmp_path / "imports"
-        imports_dir.mkdir()
+        imports_dir = tmp_path / "databases" / "testdb" / "imports"
+        imports_dir.mkdir(parents=True)
         (imports_dir / "file.txt").write_text("payload")
-
-        settings = MagicMock()
-        settings.database_dir = tmp_path
-        settings.paths.imports_subdir = "imports"
 
         stats: dict[str, object] = {}
         # Real rmtree runs via the default executor — keep it real but on tmp.
-        await _delete_import_files(settings, stats)
+        await _delete_import_files(self._settings(tmp_path), "testdb", stats)
 
         assert stats["imports_directory_deleted"] is True
         assert not imports_dir.exists()
 
     @pytest.mark.asyncio
     async def test_absent_imports_dir_records_false(self, tmp_path) -> None:
-        settings = MagicMock()
-        settings.database_dir = tmp_path
-        settings.paths.imports_subdir = "imports"  # never created
-
         stats: dict[str, object] = {}
-        await _delete_import_files(settings, stats)
+        await _delete_import_files(self._settings(tmp_path), "testdb", stats)
 
         assert stats["imports_directory_deleted"] is False
 
     @pytest.mark.asyncio
     async def test_rmtree_failure_propagates(self, tmp_path) -> None:
-        imports_dir = tmp_path / "imports"
-        imports_dir.mkdir()
-
-        settings = MagicMock()
-        settings.database_dir = tmp_path
-        settings.paths.imports_subdir = "imports"
+        imports_dir = tmp_path / "databases" / "testdb" / "imports"
+        imports_dir.mkdir(parents=True)
 
         stats: dict[str, object] = {}
         # Patch shutil.rmtree at source so run_in_executor surfaces the error.
         with patch("shutil.rmtree", side_effect=OSError("permission denied")):
             with pytest.raises(OSError, match="permission denied"):
-                await _delete_import_files(settings, stats)
+                await _delete_import_files(self._settings(tmp_path), "testdb", stats)
 
 
 # ---------------------------------------------------------------------------

@@ -16,11 +16,7 @@ from chaoscypher_core.database.migrations.upgrade import (
     RollbackResponse,
     UpgradeService,
 )
-from chaoscypher_cortex.shared.api.errors import (
-    operation_error,
-    resource_not_found_error,
-    validation_error,
-)
+from chaoscypher_cortex.shared.api.errors import operation_error
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
 
 
@@ -64,10 +60,10 @@ async def rollback_upgrade(
     _: CurrentUsername,
     service: Annotated[UpgradeService, Depends(get_upgrade_service)],
 ) -> RollbackResponse:
-    """Restore the DB from the pre-upgrade backup."""
-    try:
-        return service.rollback()
-    except FileNotFoundError as exc:
-        raise resource_not_found_error("backup", "pre-upgrade") from exc
-    except RuntimeError as exc:
-        raise validation_error("rollback_upgrade", exc) from exc
+    """Restore the DB from the pre-upgrade backup.
+
+    Core UpgradeService raises ValidationError (no backup recorded) and
+    NotFoundError (backup file missing); the global domain handler maps
+    them to 400/404 — same statuses as the previous builtin catches.
+    """
+    return service.rollback()

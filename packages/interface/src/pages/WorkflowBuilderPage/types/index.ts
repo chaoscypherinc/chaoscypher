@@ -93,6 +93,8 @@ export type EventTriggerNodeData = {
  * Data for a conditional node (if/else branching)
  */
 export type ConditionalNodeData = {
+  /** Unique step identifier (maps to WorkflowStep.id) */
+  stepId?: string;
   /** Display name */
   name: string;
   /** Condition expression */
@@ -213,4 +215,3 @@ export interface StepTemplate {
   configuration: Record<string, unknown>;
   createdAt: string;
 }
-

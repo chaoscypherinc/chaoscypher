@@ -132,7 +132,7 @@ export function QueueStatsCards({
                   </Typography>
                 </Tooltip>
               </Box>
-              <Tooltip title={`Queued: ${queue.queued} / ${queue.max_depth} max`} arrow>
+              <Tooltip title={`Queued: ${queue.queued}`} arrow>
                 <Typography
                   variant="caption"
                   sx={{ color: 'text.secondary', fontSize: '0.7rem', cursor: 'help' }}

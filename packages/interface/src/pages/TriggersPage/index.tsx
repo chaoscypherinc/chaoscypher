@@ -8,7 +8,7 @@
  * Users can enable/disable triggers directly from this page.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Box, Alert, Typography } from '@mui/material';
 import {
@@ -26,13 +26,14 @@ import {
 } from '../../services/api/useTriggers';
 import { useWorkflows } from '../../services/api/useWorkflows';
 import type { Trigger } from '../../services/api/triggers';
+import { EVENT_SOURCE_INFO } from '../WorkflowBuilderPage/constants/eventSchemas';
 
-const EVENT_SOURCES = [
-  'node.created', 'node.updated', 'node.deleted',
-  'edge.created', 'edge.updated', 'edge.deleted',
-  'import.completed', 'import.failed',
-  'workflow.completed', 'workflow.failed',
-];
+// Filter options derived from the canonical event-source catalog (matching
+// the backend EventSource enum) so the filter matches real trigger values.
+const EVENT_SOURCE_OPTIONS = Object.values(EVENT_SOURCE_INFO).map((info) => ({
+  value: info.id,
+  label: info.label,
+}));
 
 const TriggersPage: React.FC = () => {
   const navigate = useNavigate();
@@ -45,15 +46,28 @@ const TriggersPage: React.FC = () => {
   const [statsDialogOpen, setStatsDialogOpen] = useState(false);
   const [selectedTrigger, setSelectedTrigger] = useState<Trigger | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  // Message the user has dismissed via the Alert's close button. Needed
+  // because query-sourced errors re-render after onClose clears only the
+  // local error state.
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
 
   const triggers = triggersQuery.data ?? [];
   const workflows = workflowsQuery.data ?? [];
   const triggerStatsQuery = useTriggerStats(selectedTrigger?.id ?? null);
 
   const queryError = triggersQuery.error;
+  const queryErrorMessage =
+    queryError instanceof Error ? queryError.message : null;
+  const surfacedError = localError ?? queryErrorMessage;
   const error =
-    localError ??
-    (queryError instanceof Error ? queryError.message : null);
+    surfacedError && surfacedError !== dismissedError ? surfacedError : null;
+
+  // A successful refetch clears the dismissal so a future error re-surfaces.
+  useEffect(() => {
+    if (!queryErrorMessage) {
+      setDismissedError(null);
+    }
+  }, [queryErrorMessage]);
 
   const getWorkflowName = (workflowId: string): string => {
     const workflow = workflows.find((w) => w.id === workflowId);
@@ -121,7 +135,14 @@ const TriggersPage: React.FC = () => {
         </Box>
       </Box>
       {error && (
-        <Alert severity="error" sx={{ mb: 2, ...ghostErrorAlertSx }} onClose={() => setLocalError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2, ...ghostErrorAlertSx }}
+          onClose={() => {
+            setLocalError(null);
+            setDismissedError(error);
+          }}
+        >
           {error}
         </Alert>
       )}
@@ -135,7 +156,7 @@ const TriggersPage: React.FC = () => {
           value: selectedEventSource,
           options: [
             { value: 'all', label: 'All Events' },
-            ...EVENT_SOURCES.map(source => ({ value: source, label: source })),
+            ...EVENT_SOURCE_OPTIONS,
           ],
           onChange: setSelectedEventSource,
           minWidth: 200,

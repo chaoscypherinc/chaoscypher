@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.exceptions import NotFoundError
+
 
 if TYPE_CHECKING:
     from chaoscypher_cortex.features.pause.repository import PauseRepository
@@ -65,12 +67,20 @@ class PauseService:
         database_name: str,
         reason: str | None,
     ) -> None:
-        """Pause a single source. No recovery side-effects."""
-        self.repository.pause_source(
+        """Pause a single source. No recovery side-effects.
+
+        Raises:
+            NotFoundError: When no source row matches ``source_id`` in
+                ``database_name`` — previously this returned success for
+                nonexistent sources.
+        """
+        updated = self.repository.pause_source(
             source_id=source_id,
             database_name=database_name,
             reason=reason,
         )
+        if updated == 0:
+            raise NotFoundError("Source", source_id)
         logger.info(
             "source_paused",
             source_id=source_id,
@@ -84,8 +94,15 @@ class PauseService:
         source_id: str,
         database_name: str,
     ) -> None:
-        """Resume a single source and kick off immediate recovery."""
-        self.repository.resume_source(source_id=source_id, database_name=database_name)
+        """Resume a single source and kick off immediate recovery.
+
+        Raises:
+            NotFoundError: When no source row matches ``source_id`` in
+                ``database_name``.
+        """
+        updated = self.repository.resume_source(source_id=source_id, database_name=database_name)
+        if updated == 0:
+            raise NotFoundError("Source", source_id)
         await self.source_recovery.recover_source(source_id=source_id, database_name=database_name)
         logger.info(
             "source_resumed",
@@ -159,6 +176,21 @@ class PauseService:
         """
         self.repository.resume_system()
         logger.info("system_resumed", scope="system")
+
+    async def list_events(
+        self,
+        *,
+        event_type: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """List recent system events through the repository layer."""
+        return self.repository.list_system_events(event_type=event_type, limit=limit)
+
+    async def clear_events(self) -> int:
+        """Delete all system events. Returns the number deleted."""
+        deleted = self.repository.clear_system_events()
+        logger.info("system_events_cleared", deleted=deleted)
+        return deleted
 
     async def get_system_status(self) -> dict[str, Any]:
         """Read the singleton SystemState and return the API shape."""

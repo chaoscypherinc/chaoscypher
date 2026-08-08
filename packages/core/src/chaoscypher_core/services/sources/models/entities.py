@@ -63,16 +63,3 @@ class SuggestedTemplate(BaseModel):
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return self.model_dump()
-
-
-class EdgeTemplate(BaseModel):
-    """Represents a suggested edge template."""
-
-    name: str
-    description: str
-    relationship_count: int = 0
-    reason: str = ""
-
-    def to_dict(self) -> dict:
-        """Convert to dictionary."""
-        return self.model_dump()

@@ -18,6 +18,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import update as sqla_update
+from sqlalchemy.orm import load_only
 from sqlmodel import select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
@@ -126,10 +127,16 @@ class VisionPagesMixin(SqliteMixinBase):
         source_id: str,
         *,
         statuses: Sequence[VisionPageStatus] | None = None,
+        include_content: bool = True,
     ) -> list[dict[str, Any]]:
         """Return all rows for a source, optionally filtered by status.
 
-        Ordered by (page_number, region_index).
+        Ordered by (page_number, region_index). Pass
+        ``include_content=False`` when only the light columns are needed
+        (e.g. recovery counting statuses) — the ``description`` and
+        ``error_message`` Text columns are then excluded from the query
+        and returned as ``None`` (mirrors the ``list_chunks``
+        ``include_content`` pattern).
         """
         self._ensure_connected()
 
@@ -141,12 +148,53 @@ class VisionPagesMixin(SqliteMixinBase):
                 VisionPageDescription.region_index,  # type: ignore[arg-type]
             )
         )
+        if not include_content:
+            stmt = stmt.options(
+                load_only(
+                    VisionPageDescription.id,
+                    VisionPageDescription.source_id,
+                    VisionPageDescription.vision_job_id,
+                    VisionPageDescription.page_number,
+                    VisionPageDescription.region_index,
+                    VisionPageDescription.kind,
+                    VisionPageDescription.status,
+                    VisionPageDescription.image_path,
+                    VisionPageDescription.finish_reason,
+                    VisionPageDescription.attempts,
+                    VisionPageDescription.created_at,
+                    VisionPageDescription.updated_at,
+                    # EXCLUDE: description, error_message (Text columns)
+                )
+            )
         if statuses:
             status_values = [s.value for s in statuses]
             stmt = stmt.where(VisionPageDescription.status.in_(status_values))  # type: ignore[attr-defined]
 
         rows = self.session.scalars(stmt).all()
+        if not include_content:
+            return [
+                {**self._vision_page_to_dict_light(r), "description": None, "error_message": None}
+                for r in rows
+            ]
         return [self._vision_page_to_dict(r) for r in rows]
+
+    @staticmethod
+    def _vision_page_to_dict_light(row: VisionPageDescription) -> dict[str, Any]:
+        """Dict shape minus the Text columns; see include_content=False."""
+        return {
+            "id": row.id,
+            "source_id": row.source_id,
+            "vision_job_id": row.vision_job_id,
+            "page_number": row.page_number,
+            "region_index": row.region_index,
+            "kind": row.kind,
+            "status": row.status,
+            "image_path": row.image_path,
+            "finish_reason": row.finish_reason,
+            "attempts": row.attempts,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+        }
 
     @staticmethod
     def _vision_page_to_dict(row: VisionPageDescription) -> dict[str, Any]:

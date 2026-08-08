@@ -283,7 +283,7 @@ class TestStepExecutorUnknownSystemTool:
         executor = _make_step_executor()
 
         with patch(
-            "chaoscypher_core.services.workflows.engine.step_executor.ToolRegistry"
+            "chaoscypher_core.services.workflows.engine.step_executor.get_tool_discovery"
         ) as mock_registry:
             instance = mock_registry.return_value
             instance.get.return_value = None  # tool not found in registry
@@ -302,7 +302,7 @@ class TestStepExecutorUnknownSystemTool:
         executor = _make_step_executor()
 
         with patch(
-            "chaoscypher_core.services.workflows.engine.step_executor.ToolRegistry"
+            "chaoscypher_core.services.workflows.engine.step_executor.get_tool_discovery"
         ) as mock_registry:
             instance = mock_registry.return_value
             instance.get.return_value = None
@@ -336,7 +336,7 @@ class TestStepExecutorInvalidToolInputs:
 
         with (
             patch(
-                "chaoscypher_core.services.workflows.engine.step_executor.ToolRegistry"
+                "chaoscypher_core.services.workflows.engine.step_executor.get_tool_discovery"
             ) as mock_registry,
             patch(
                 "chaoscypher_core.services.workflows.engine.step_executor.validate_inputs",
@@ -369,7 +369,7 @@ class TestStepExecutorInvalidToolInputs:
 
         with (
             patch(
-                "chaoscypher_core.services.workflows.engine.step_executor.ToolRegistry"
+                "chaoscypher_core.services.workflows.engine.step_executor.get_tool_discovery"
             ) as mock_registry,
             patch(
                 "chaoscypher_core.services.workflows.engine.step_executor.validate_inputs",

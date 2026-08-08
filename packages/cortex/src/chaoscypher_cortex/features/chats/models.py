@@ -5,7 +5,7 @@
 
 Pydantic DTOs for chat API requests/responses.
 
-SQLModel table definitions are in chaoscypher.adapters.sqlite.models
+SQLModel table definitions are in chaoscypher_core.adapters.sqlite.models
 """
 
 from datetime import datetime

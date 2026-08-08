@@ -796,9 +796,13 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
             # extraction instead of extracting immediately (the gate bypass
             # this path previously had). The wait=True handler re-reads the
             # SourceRow and surfaces the awaiting payload.
+            # ``extraction_depth`` maps onto the engine's ``analysis_depth``;
+            # clamp to the schema's enum so an unexpected value degrades to
+            # the default rather than reaching the engine.
             result = await engine.add_document(
                 filepath=file_path,
                 source_id=file_id,
+                analysis_depth="quick" if extraction_depth == "quick" else "full",
                 auto_confirm=auto_confirm,
                 forced_domain=forced_domain,
             )

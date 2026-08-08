@@ -40,6 +40,11 @@ logger = structlog.get_logger(__name__)
 DEFAULT_MAX_RECOVERY_ATTEMPTS: int = 10
 DEFAULT_RECOVERY_WARN_THRESHOLD: int = 5
 
+# Default staleness window for abandoned MCP extractions. Duplicated in
+# ``SourceRecoverySettings.mcp_extracting_stale_after_hours`` (same
+# rationale as the guard defaults above).
+DEFAULT_MCP_EXTRACTING_STALE_AFTER_HOURS: int = 6
+
 # Queue + operation identifiers. Kept as module constants for historical
 # reasons — pre-fold, these could not be imported from the runtime layer.
 # Post-fold, they could be routed through chaoscypher_core.constants; left
@@ -83,6 +88,7 @@ class RecoveryStats:
     skipped_paused: int = 0
     skipped_healthy: int = 0
     skipped_exhausted: int = 0
+    marked_failed: int = 0
     total_scanned: int = 0
 
     def to_dict(self) -> dict[str, int]:
@@ -92,6 +98,7 @@ class RecoveryStats:
             "skipped_paused": self.skipped_paused,
             "skipped_healthy": self.skipped_healthy,
             "skipped_exhausted": self.skipped_exhausted,
+            "marked_failed": self.marked_failed,
             "total_scanned": self.total_scanned,
         }
 
@@ -116,6 +123,7 @@ class SourceRecovery:
         "indexing",
         "indexed",
         "extracting",
+        "mcp_extracting",
         "extracted",
         "committing",
         "vision_pending",
@@ -140,6 +148,7 @@ class SourceRecovery:
         stalled_threshold_seconds: int | None = None,
         max_recovery_attempts: int | None = None,
         recovery_warn_threshold: int | None = None,
+        mcp_extracting_stale_after_hours: int | None = None,
     ) -> None:
         """Initialize the reconciler.
 
@@ -175,6 +184,12 @@ class SourceRecovery:
                 ``recovery_attempts`` first reaches this value, giving
                 operators early signal before exhaustion. Defaults to
                 ``DEFAULT_RECOVERY_WARN_THRESHOLD``.
+            mcp_extracting_stale_after_hours: Hours without activity
+                (``last_activity_at``) after which an ``mcp_extracting``
+                source is considered abandoned by its MCP client and
+                marked failed. Defaults to
+                ``DEFAULT_MCP_EXTRACTING_STALE_AFTER_HOURS``. Wire from
+                ``SourceRecoverySettings.mcp_extracting_stale_after_hours``.
         """
         self.adapter = adapter
         self.queue_client = queue_client
@@ -192,6 +207,11 @@ class SourceRecovery:
             recovery_warn_threshold
             if recovery_warn_threshold is not None
             else DEFAULT_RECOVERY_WARN_THRESHOLD
+        )
+        self.mcp_extracting_stale_after_hours = (
+            mcp_extracting_stale_after_hours
+            if mcp_extracting_stale_after_hours is not None
+            else DEFAULT_MCP_EXTRACTING_STALE_AFTER_HOURS
         )
 
     async def reconcile_database(self, database_name: str) -> RecoveryStats:
@@ -408,6 +428,53 @@ class SourceRecovery:
             stats.skipped_healthy += 1
             return
 
+        if action.get("dispatch_kind") == "mark_failed":
+            # No queue interaction and no recovery-counter bump — this is
+            # a terminal transition (abandoned MCP extraction), not a
+            # re-dispatch attempt. Mirrors the exhaustion guard above:
+            # mark, count, surface to the operator, stop.
+            reason = str(action.get("reason") or "abandoned")
+            self.adapter.mark_source_exhausted(
+                source_id=source["id"],
+                database_name=database_name,
+                error_message=reason,
+            )
+            stats.marked_failed += 1
+            record_event = getattr(self.adapter, "record_recovery_event", None)
+            if record_event is not None:
+                try:
+                    record_event(
+                        source_id=source["id"],
+                        database_name=database_name,
+                        from_status=source_status or "unknown",
+                        action_taken="mark_failed",
+                        reason=reason,
+                        enqueued_count=0,
+                    )
+                except Exception as exc:  # audit is best-effort — do not bubble
+                    logger.warning(
+                        "record_recovery_event_failed_in_recover_one",
+                        source_id=source["id"],
+                        database_name=database_name,
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+            event_bus.emit(
+                "recovery",
+                action=f"Source in '{source_status}' marked failed: {reason}",
+                source="reconciler",
+                reason="mark_failed",
+                database_name=database_name,
+            )
+            logger.warning(
+                "source_marked_failed_by_recovery",
+                source_id=source["id"],
+                database_name=database_name,
+                status=source_status,
+                reason=reason,
+            )
+            return
+
         # Bump the recovery counter on the source row BEFORE dispatch so the
         # counter reflects the attempt regardless of whether dispatch lands.
         # If dispatch fails, the source stays in ERROR (it never moved
@@ -490,7 +557,7 @@ class SourceRecovery:
 
         Returns None if the source is healthy (no action needed) or
         a dict describing the dispatch operation otherwise. The
-        action dict has one of three shapes:
+        action dict has one of four shapes:
 
         Single:
             ``{"queue": str, "operation": str, "data": dict,
@@ -504,6 +571,10 @@ class SourceRecovery:
             ``{"dispatch_kind": "commit", "operation": str,
                "commit_data": dict}``
 
+        Mark-failed (no queue interaction — ``_recover_one`` transitions
+        the source to ``error`` with the given reason):
+            ``{"dispatch_kind": "mark_failed", "reason": str}``
+
         _classify NEVER dispatches directly. It is ``_recover_one``'s
         responsibility to increment the counter and then call the
         appropriate dispatcher based on the returned descriptor.
@@ -512,6 +583,8 @@ class SourceRecovery:
         - ``pending`` and ``indexing`` → dispatch index_document
         - ``indexed`` and ``extracted`` → dispatch next stage
         - ``extracting`` → three sub-cases (no job, partial, stalled)
+        - ``mcp_extracting`` → no-op while fresh; mark failed once the
+          MCP client has been inactive past the staleness window
         - ``committing`` → dispatch import_commit
         - vision_pending → compound dispatch OP_VISION_PAGE for each
           stalled PENDING vision_page_descriptions row; or dispatch
@@ -553,6 +626,12 @@ class SourceRecovery:
             )
         if status == "vision_pending":
             return await self._classify_vision_pending(
+                source=source,
+                source_id=source_id,
+                database_name=database_name,
+            )
+        if status == "mcp_extracting":
+            return self._classify_mcp_extracting(
                 source=source,
                 source_id=source_id,
                 database_name=database_name,
@@ -882,6 +961,79 @@ class SourceRecovery:
             ],
         }
 
+    def _classify_mcp_extracting(
+        self,
+        *,
+        source: dict[str, Any],
+        source_id: str,
+        database_name: str,
+    ) -> dict[str, Any] | None:
+        """Classify a source in ``mcp_extracting`` status.
+
+        EXPLICIT NO-OP while fresh — DO NOT auto-dispatch. An MCP
+        extraction is driven by an external MCP client submitting chunk
+        results; there is no queue task the reconciler could re-dispatch,
+        so recovery cannot move it forward (mirrors the
+        ``awaiting_confirmation`` no-op below). This branch exists so a
+        future scan-widening can't silently turn the implicit
+        fall-through into auto-proceeding.
+
+        BUT a client that disconnects mid-extraction leaves the source
+        stalled forever with no operator-visible reason. Once the source
+        has had no activity for ``mcp_extracting_stale_after_hours``
+        (settings-driven; ``last_activity_at`` with an
+        ``extraction_started_at`` fallback), return a ``mark_failed``
+        descriptor so ``_recover_one`` transitions it to ``error`` with a
+        clear abandonment reason. Manual retry / re-extract can then run
+        the extraction again.
+        """
+        age_seconds = self._mcp_activity_age_seconds(source)
+        stale_after_seconds = self.mcp_extracting_stale_after_hours * 3600
+        if age_seconds is not None and age_seconds < stale_after_seconds:
+            logger.debug(
+                "recovery_skip_mcp_extracting_fresh",
+                source_id=source_id,
+                database_name=database_name,
+                age_seconds=int(age_seconds),
+                stale_after_seconds=stale_after_seconds,
+            )
+            return None
+        # Stale (or no parsable timestamp at all — nothing ever touched
+        # the row, so the extraction is definitively not progressing).
+        return {
+            "dispatch_kind": "mark_failed",
+            "reason": (
+                "MCP extraction abandoned — no client activity for "
+                f"{self.mcp_extracting_stale_after_hours} hours. The MCP "
+                "client likely disconnected mid-extraction; retry or "
+                "re-extract to run the extraction again."
+            ),
+        }
+
+    @staticmethod
+    def _mcp_activity_age_seconds(source: dict[str, Any]) -> float | None:
+        """Age in seconds of the source's last activity, or None if unknown.
+
+        Reads ``last_activity_at`` and falls back to
+        ``extraction_started_at`` (the MCP start path stamps the latter
+        but not the former). Tolerates ISO-8601 strings and naive
+        datetimes the same way ``_is_recently_active`` does. ``None``
+        means neither field holds a parsable timestamp.
+        """
+        for field in ("last_activity_at", "extraction_started_at"):
+            ts = source.get(field)
+            if ts is None:
+                continue
+            if isinstance(ts, str):
+                try:
+                    ts = datetime.fromisoformat(ts)
+                except ValueError:
+                    continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=UTC)
+            return (datetime.now(UTC) - ts).total_seconds()
+        return None
+
     async def _classify_extracted(
         self,
         *,
@@ -1020,7 +1172,7 @@ class SourceRecovery:
         # rows say terminal but the counter does not, dispatch
         # OP_VISION_FINALIZE just like the counter-terminal branch.
         if total > 0 and not counter_terminal:
-            rows = self.adapter.list_vision_page_descriptions(source_id)
+            rows = self.adapter.list_vision_page_descriptions(source_id, include_content=False)
             actual_completed = sum(
                 1
                 for r in rows
@@ -1057,7 +1209,7 @@ class SourceRecovery:
 
         # Mid-flight: re-enqueue PENDING page rows as a compound dispatch.
         pending_pages = self.adapter.list_vision_page_descriptions(
-            source_id, statuses=[VisionPageStatus.PENDING]
+            source_id, statuses=[VisionPageStatus.PENDING], include_content=False
         )
         if not pending_pages:
             # No pending rows but counters haven't reached terminal —

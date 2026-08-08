@@ -868,7 +868,40 @@ class TestGetNode:
         assert result["success"] is True
         assert result["node"]["id"] == "n1"
         assert result["search_query"] == "Alice"
-        search_repo.keyword_search.assert_called_once_with("Alice", limit=1)
+        search_repo.keyword_search.assert_called_once_with("Alice", limit=5)
+
+    @pytest.mark.asyncio
+    async def test_get_by_query_skips_chunk_hits(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+    ) -> None:
+        """A chunk ID outranking the node match is skipped, not resolved."""
+        node = make_node("n1", "Alice")
+        search_repo.keyword_search.return_value = [("chunk:abc", 6.0), ("n1", 5.0)]
+        graph_repo.get_node.return_value = node
+
+        handler = _make_handler(graph_repo, search_repo)
+        result = await handler.get_node(query="Alice")
+
+        assert result["success"] is True
+        assert result["node"]["id"] == "n1"
+        graph_repo.get_node.assert_called_once_with("n1")
+
+    @pytest.mark.asyncio
+    async def test_get_by_query_only_chunk_hits(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+    ) -> None:
+        """All-chunk search results are reported as no nodes found."""
+        search_repo.keyword_search.return_value = [("chunk:abc", 6.0), ("chunk:def", 5.0)]
+
+        handler = _make_handler(graph_repo, search_repo)
+        result = await handler.get_node(query="Alice")
+
+        assert result["success"] is False
+        assert "No nodes found" in result["error"]
 
     @pytest.mark.asyncio
     async def test_get_by_query_no_results(

@@ -62,6 +62,13 @@ class StageProgress:
 
     Best-effort: storage write failures log a warning and return.
     The underlying work never blocks on progress reporting.
+
+    Completion contract: ``complete_stage`` is stamped only on a clean
+    exit (``exc_type is None``). When the body raises, the partial
+    processed/total ticks persist but the stage is NOT recorded as
+    cleanly completed — a failed stage that reads "complete" lies to
+    the UI and to recovery heuristics. The exception always propagates
+    either way.
     """
 
     def __init__(
@@ -99,6 +106,11 @@ class StageProgress:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        if exc_type is not None:
+            # Body raised — do NOT stamp complete_stage (a failed stage
+            # must not read as cleanly completed). Partial tick state
+            # persists; the exception propagates.
+            return
         await self._safe(
             self._storage.complete_stage(
                 parent_id=self._parent_id,

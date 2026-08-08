@@ -378,6 +378,11 @@ class OllamaProvider(BaseLLMProvider):
             )
             return result
 
+        except LLMError:
+            # Re-raise our own errors as-is (e.g. ToolCallingNotSupportedError
+            # from the thinking fallback) so downstream fatal/no-retry
+            # classification keeps working — matches the other providers.
+            raise
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e) if str(e) else repr(e)

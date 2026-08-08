@@ -448,10 +448,25 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/extraction \
 | `source_id` | string (path) | **Yes** | -- | Source ID |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
 | `domain` | string | No | `null` | Force extraction domain. Auto-detected if omitted. |
-| `filtering_mode` | string | No | persisted | Override the source's persisted `filtering_mode` for this run only. |
+| `filtering_mode` | string | No | persisted | Override the source's persisted `filtering_mode` **for this run only**. |
 | `force` | bool | No | `false` | Re-extract even if extraction results already exist |
 
-The endpoint reuses the source's persisted upload settings (`filtering_mode`, `enable_vision`, `content_filtering`) by default. Pass them in the body to override per-call without changing the row.
+The endpoint reuses the source's persisted upload settings (`filtering_mode`, `enable_vision`, `content_filtering`) unless you override them per call.
+
+:::info Per-call overrides are not persisted
+
+An explicit `filtering_mode` applies to **this extraction run only** — the
+source row is not modified, so the next run without an override goes back to
+the persisted value. Omit the field to use the persisted mode.
+
+Fixed 2026-08-04: this override previously had no effect. The worker resolved
+filtering mode from the source row before the request payload, and since the
+column is non-nullable with `default="balanced"` the row value was never empty
+— so the payload branch was unreachable for every real source and callers paid
+for a full re-extraction under the old mode. The cascade now prefers an
+explicit per-call value.
+
+:::
 
 **Response** `202 Accepted`
 
@@ -1024,7 +1039,22 @@ Returns the updated source record after the re-extraction job has been queued.
 
 :::info[Persisted settings carry over]
 
-Re-extract reuses the source's persisted upload settings (`auto_analyze`, `enable_normalization`, `enable_vision`, `content_filtering`, `filtering_mode`) by default — what you uploaded with is what you re-extract with. Clients can override any of these per call by passing them in the request body.
+Re-extract reuses the source's persisted upload settings (`auto_analyze`, `enable_normalization`, `enable_vision`, `content_filtering`, `filtering_mode`) — what you uploaded with is what you re-extract with.
+
+**Optional body.** Send any subset of those five fields to override them **for
+this run only**; the source row is not modified. Omitted fields fall through to
+the persisted values, so sending no body behaves exactly as before:
+
+```bash
+curl -X POST http://localhost/api/v1/sources/src_abc123/re_extract \
+  -H "Content-Type: application/json" \
+  -d '{"filtering_mode": "strict"}'
+```
+
+Fixed 2026-08-04: the handler previously declared no body model, so FastAPI
+discarded any JSON silently and returned `202` for a full, token-costing
+re-extraction under the *old* settings, with nothing signalling that the
+override had been dropped.
 
 `force_re_extract` also resets every quality counter on the source row back to zero and clears `vector_indexing_status` to `pending`, so the new run starts with a clean counter set.
 
@@ -1046,17 +1076,22 @@ GET /api/v1/sources/{source_id}/recovery_events
 Returns the recovery audit trail for a source — every automatic recovery attempt, what was dispatched, and when. Backs the source detail page's recovery panel so operators can diagnose repeated failures without grepping container logs. Events are returned newest first.
 
 ```bash
-curl "http://localhost/api/v1/sources/src_abc123/recovery_events?limit=20"
+curl "http://localhost/api/v1/sources/src_abc123/recovery_events?page=1&page_size=20"
 ```
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `source_id` | string (path) | **Yes** | -- | Source ID |
-| `limit` | int (query) | No | `50` | Maximum events to return (1--200) |
+| `page` | int | No | `1` | Page number (1-indexed) |
+| `page_size` | int | No | Server default (50) | Items per page (capped at `max_page_size`) |
 
-:::note
+:::caution Changed in v0.4.0
 
-Recovery events use a `?limit=` cap (max 200) rather than the standard `?page=&page_size=` pagination model — events are an audit trail, not a paged resource collection.
+This endpoint previously used a `?limit=` cap (1--200) and returned
+`{"events": [...]}`. It now uses the standard `?page=&page_size=` pagination
+model and the house `{data, pagination}` envelope, matching every other list
+endpoint. **`?limit=` is no longer read, and the `events` key is gone** — update
+external API consumers accordingly. The web UI ships already migrated.
 
 :::
 
@@ -1064,7 +1099,7 @@ Recovery events use a `?limit=` cap (max 200) rather than the standard `?page=&p
 
 ```json
 {
-  "events": [
+  "data": [
     {
       "id": "rev_001",
       "source_id": "src_abc123",
@@ -1073,7 +1108,15 @@ Recovery events use a `?limit=` cap (max 200) rather than the standard `?page=&p
       "reason": "Stalled extraction detected",
       "dispatched_operation": "OP_EXTRACT_SOURCE"
     }
-  ]
+  ],
+  "pagination": {
+    "total": 1,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
+  }
 }
 ```
 

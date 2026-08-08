@@ -341,7 +341,8 @@ class TestResolveHub:
         with patch.object(resolver_mod, "extract_archive") as extract:
             resolved = await resolver._resolve_hub(spec, client)
 
-        client.download.assert_awaited_once_with("hubpkg", "9.9.9")
+        # Bare spec name -> empty owner, name-only match on the hub side.
+        client.download.assert_awaited_once_with("", "hubpkg", "9.9.9")
         extract.assert_called_once()
         assert resolved.name == "hubpkg"
         assert resolved.version == "9.9.9"
@@ -372,6 +373,60 @@ class TestResolveHub:
         err = exc_info.value
         assert "Hub error" in err.message
         assert err.details["status_code"] == 404
+
+    @pytest.mark.asyncio
+    async def test_owner_qualified_spec_splits_owner_and_repo(self, tmp_path: Path) -> None:
+        """Client calls are (owner, repo, version) — not (name, version).
+
+        Regression: the resolver passed ``spec.name`` ("owner/name") as
+        ``owner_username`` and the version string as ``repo_name``, so hub
+        resolution could never match a package.
+        """
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        spec = PackageSpec.parse("john/hubpkg:1.2.0")
+
+        archive = _ccx_bytes(name="hubpkg", version="1.2.0")
+        client = _fake_lexicon_client(info_version="1.2.0", archive=archive)
+        with patch.object(resolver_mod, "extract_archive"):
+            await resolver._resolve_hub(spec, client)
+
+        client.get_package_info.assert_awaited_once_with("john", "hubpkg", "1.2.0")
+        client.download.assert_awaited_once_with("john", "hubpkg", "1.2.0")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "hostile_version",
+        [
+            "../../../../root/.config/chaoscypher/plugins/tools",
+            "/etc/chaoscypher",
+            "..",
+            "",
+            ".hidden",
+            "1.0/extra",
+        ],
+    )
+    async def test_hub_supplied_version_cannot_choose_extraction_path(
+        self, tmp_path: Path, hostile_version: str
+    ) -> None:
+        """A hostile hub ``version`` must be rejected before any filesystem use.
+
+        The version string becomes the extraction destination
+        (``cache/packages/<name>/<version>``); ``extract_archive`` validates
+        member names relative to ``dest_dir`` but never ``dest_dir`` itself,
+        so an unvalidated version is an arbitrary-write primitive.
+        """
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        spec = PackageSpec.parse("hubpkg")
+
+        client = _fake_lexicon_client(info_version=hostile_version)
+        with pytest.raises(ResolverError, match="unsafe version"):
+            await resolver._resolve_hub(spec, client)
+
+        # Rejected before download, mkdir, or extraction.
+        client.download.assert_not_awaited()
+        escape_target = (tmp_path / "cache" / "packages" / "hubpkg" / hostile_version).resolve()
+        if not escape_target.is_relative_to((tmp_path / "cache").resolve()):
+            assert not escape_target.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -438,9 +493,9 @@ class TestResolveAll:
 
         client = MagicMock()
         client.get_package_info = AsyncMock(
-            side_effect=lambda name, version: SimpleNamespace(version="1.0.0")
+            side_effect=lambda owner, repo, version: SimpleNamespace(version="1.0.0")
         )
-        client.download = AsyncMock(side_effect=lambda name, version: archives[name])
+        client.download = AsyncMock(side_effect=lambda owner, repo, version: archives[repo])
 
         with (
             _patch_lexicon(client),

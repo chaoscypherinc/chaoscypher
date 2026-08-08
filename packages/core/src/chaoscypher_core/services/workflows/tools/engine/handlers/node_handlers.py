@@ -88,7 +88,7 @@ class NodeToolHandlers:
         """
         return self.embedding_callback
 
-    def _get_ranker(self) -> Any | None:
+    async def _get_ranker(self) -> Any | None:
         """Get or create the CrossEncoder instance (lazy singleton).
 
         Returns:
@@ -98,12 +98,16 @@ class NodeToolHandlers:
         if self._ranker is not None:
             return self._ranker
         try:
+            import asyncio
+
             from sentence_transformers import CrossEncoder
 
             model_name = "Alibaba-NLP/gte-reranker-modernbert-base"
             if self.search_settings:
                 model_name = self.search_settings.rerank_model_name
-            self._ranker = CrossEncoder(model_name)
+            # Model load can download weights / read from disk for seconds to
+            # minutes — offload so the event loop is not blocked
+            self._ranker = await asyncio.to_thread(CrossEncoder, model_name)
             logger.info("cross_encoder_ranker_initialized", model=model_name)
             return self._ranker
         except Exception:
@@ -122,7 +126,7 @@ class NodeToolHandlers:
             Re-ordered (and trimmed) chunk list, or original on failure.
 
         """
-        ranker = self._get_ranker()
+        ranker = await self._get_ranker()
         if not ranker or len(chunks) <= 1:
             return chunks[:limit]
 
@@ -465,12 +469,15 @@ class NodeToolHandlers:
         # If query is provided, search for the node first
         if query and not node_id:
             logger.info("finding_node_via_query", query=query)
-            search_results = self.search.keyword_search(query, limit=1)
+            search_results = self.search.keyword_search(query, limit=5)
 
-            if not search_results:
+            # Filter out chunk hits (mirrors resolve_node) — the top result can
+            # be a chunk ID, which get_node can never resolve
+            node_hits = [rid for rid, _score in search_results if not rid.startswith("chunk:")]
+            if not node_hits:
                 return {"success": False, "error": f"No nodes found matching query: {query}"}
 
-            node_id = search_results[0][0]  # (node_id, score)
+            node_id = node_hits[0]
             logger.info("node_found_via_query", node_id=node_id, query=query)
 
         # At this point, node_id must be set (either passed in or from search)

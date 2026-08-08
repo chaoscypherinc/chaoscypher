@@ -13,12 +13,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_cortex.features.pause.service import PauseService
 
 
 @pytest.mark.asyncio
 async def test_pause_source_delegates() -> None:
     repo = MagicMock()
+    repo.pause_source = MagicMock(return_value=1)
     recovery = AsyncMock()
 
     service = PauseService(repository=repo, source_recovery=recovery)
@@ -29,9 +31,22 @@ async def test_pause_source_delegates() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pause_source_missing_raises_not_found() -> None:
+    """Pausing a nonexistent source 404s instead of reporting success."""
+    repo = MagicMock()
+    repo.pause_source = MagicMock(return_value=0)
+    recovery = AsyncMock()
+
+    service = PauseService(repository=repo, source_recovery=recovery)
+    with pytest.raises(NotFoundError):
+        await service.pause_source(source_id="nope", database_name="default", reason=None)
+
+
+@pytest.mark.asyncio
 async def test_resume_source_triggers_recovery() -> None:
     """Resuming calls recover_source so the user gets instant feedback."""
     repo = MagicMock()
+    repo.resume_source = MagicMock(return_value=1)
     recovery = AsyncMock()
     recovery.recover_source = AsyncMock(return_value=True)
 
@@ -40,6 +55,19 @@ async def test_resume_source_triggers_recovery() -> None:
 
     repo.resume_source.assert_called_once_with(source_id="s-1", database_name="default")
     recovery.recover_source.assert_awaited_once_with(source_id="s-1", database_name="default")
+
+
+@pytest.mark.asyncio
+async def test_resume_source_missing_raises_not_found_without_recovery() -> None:
+    """Resuming a nonexistent source 404s and does NOT fire recovery."""
+    repo = MagicMock()
+    repo.resume_source = MagicMock(return_value=0)
+    recovery = AsyncMock()
+
+    service = PauseService(repository=repo, source_recovery=recovery)
+    with pytest.raises(NotFoundError):
+        await service.resume_source(source_id="nope", database_name="default")
+    recovery.recover_source.assert_not_awaited()
 
 
 @pytest.mark.asyncio

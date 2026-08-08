@@ -145,12 +145,13 @@ def test_stage_name_enum_values() -> None:
 
 
 @pytest.mark.asyncio
-async def test_complete_stage_called_even_on_body_exception() -> None:
-    """When the body raises, complete_stage still fires in __aexit__.
+async def test_body_exception_skips_complete_stage() -> None:
+    """When the body raises, __aexit__ must NOT stamp complete_stage.
 
-    StageProgressStorageProtocol has no fail_stage method; the design
-    choice is to mark the stage complete unconditionally rather than
-    leave it in-progress forever in the UI. This test documents that.
+    A failed stage recorded as cleanly completed lies to every consumer
+    (UI progress, recovery heuristics). The 2026-07-23 decision: guard
+    on ``exc_type is None`` — partial processed/total ticks persist, but
+    the completed_at stamp only lands on a clean exit.
     """
     storage = _fake_storage()
     with pytest.raises(ValueError, match="body failed"):
@@ -161,5 +162,29 @@ async def test_complete_stage_called_even_on_body_exception() -> None:
             total=5,
         ) as _progress:
             raise ValueError("body failed")
-    storage.complete_stage.assert_called_once()
+    storage.complete_stage.assert_not_called()
     storage.start_stage.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_partial_ticks_persist_when_body_raises() -> None:
+    """Ticks before the failure still reach storage — only completion is skipped."""
+    storage = _fake_storage()
+
+    async def _work_that_dies_mid_stage() -> None:
+        async with StageProgress(
+            storage=storage,
+            parent_id="src-1",
+            stage=StageName.VISION,
+            total=5,
+        ) as progress:
+            await progress.tick(duration_ms=100)
+            await progress.tick(duration_ms=100)
+            raise RuntimeError("LLM died")
+
+    with pytest.raises(RuntimeError, match="LLM died"):
+        await _work_that_dies_mid_stage()
+
+    assert storage.tick_stage.call_count == 2
+    assert storage.tick_stage.call_args_list[1].kwargs["processed"] == 2
+    storage.complete_stage.assert_not_called()

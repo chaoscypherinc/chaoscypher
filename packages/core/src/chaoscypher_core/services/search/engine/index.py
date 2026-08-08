@@ -325,46 +325,44 @@ class IndexingService:
             )
             return 0
 
-        skipped_count = 0
         # strict=True is belt-and-braces: the explicit length check above
         # already rejects mismatches with a richer error, but this guards
         # against future refactors that might bypass _validate_embeddings.
+        embeddings_by_chunk: dict[str, str] = {}
         for chunk, embedding in zip(chunks, embeddings, strict=True):
             # Convert embedding to base64 for storage
             embedding_array = np.array(embedding, dtype=np.float32)
-            embedding_bytes = base64.b64encode(embedding_array.tobytes()).decode("utf-8")
+            embeddings_by_chunk[chunk["id"]] = base64.b64encode(embedding_array.tobytes()).decode(
+                "utf-8"
+            )
 
-            try:
-                self.repository.update_chunk_embedding(
-                    chunk_id=chunk["id"],
-                    embedding=embedding_bytes,
-                    embedding_model=embedding_model,
-                    embedding_dimensions=resolved_expected_dimensions,
-                    status="indexed",
-                )
-            except Exception as chunk_err:
-                from chaoscypher_core.exceptions import NotFoundError
-
-                if isinstance(chunk_err, NotFoundError):
-                    # Phase 7 audit-remediation (2026-05-09): P1 #6 — per-chunk
-                    # failure counter so operators see "23 of 25 succeeded"
-                    # granularity rather than a binary indexing-failed signal.
-                    await increment_quality_counter(
-                        adapter=self.repository,
-                        source_id=source_id,
-                        database_name=database_name,
-                        counter=QualityCounter.EMBEDDING_CHUNK_FAILURES,
-                    )
-                    skipped_count += 1
-                    logger.warning(
-                        "embed_chunks_not_found_skipped",
-                        source_id=source_id,
-                        chunk_id=chunk["id"],
-                        error_type=type(chunk_err).__name__,
-                        error=str(chunk_err),
-                    )
-                else:
-                    raise
+        # One bulk UPDATE + one commit for the wave (up to
+        # batching.embedding_wave_size chunks) instead of a full-row SELECT
+        # plus a real COMMIT per chunk.
+        missing_ids = self.repository.update_chunk_embeddings_batch(
+            embeddings_by_chunk,
+            embedding_model=embedding_model,
+            embedding_dimensions=resolved_expected_dimensions,
+            status="indexed",
+        )
+        skipped_count = 0
+        for chunk_id in missing_ids:
+            # Phase 7 audit-remediation (2026-05-09): P1 #6 — per-chunk
+            # failure counter so operators see "23 of 25 succeeded"
+            # granularity rather than a binary indexing-failed signal.
+            await increment_quality_counter(
+                adapter=self.repository,
+                source_id=source_id,
+                database_name=database_name,
+                counter=QualityCounter.EMBEDDING_CHUNK_FAILURES,
+            )
+            skipped_count += 1
+            logger.warning(
+                "embed_chunks_not_found_skipped",
+                source_id=source_id,
+                chunk_id=chunk_id,
+                error_type="NotFoundError",
+            )
 
         indexed_count = len(chunks) - skipped_count
         if skipped_count > 0:

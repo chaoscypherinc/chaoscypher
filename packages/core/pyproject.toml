@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.3.1"
+version = "0.4.0"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -83,7 +83,7 @@ dependencies = [
     # test password that bcrypt 4.1+ rejects (72-byte limit enforced).
     "bcrypt>=4.0.1,<4.1",
     "PyJWT[crypto]>=2.13.0,<3",
-    "cryptography>=48.0.1,<49",  # >=48.0.1: GHSA-537c-gmf6-5ccf
+    "cryptography>=50.0.0,<51",  # >=50.0.0: CVE-2026-69247/69248/69249
 
     # High-performance compiled extensions
     "rustworkx>=0.17.0,<0.18",     # Apache-2.0; Rust-compiled graph algorithms

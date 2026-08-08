@@ -355,7 +355,7 @@ async def export_workflow(
     - GET /export is correct for read-only export operation
     - No side effects, just returns workflow data
 
-    **Auth:** Optional (grounding_api_key or no auth)
+    **Auth:** Required (nginx auth gate, `CurrentUsername`)
 
     **Returns:**
     - Export data in WorkflowExportFormat structure
@@ -396,7 +396,7 @@ async def import_workflow(
 ) -> WorkflowImportResponse:
     """Import a workflow from exported JSON format.
 
-    **Auth:** Optional (grounding_api_key or no auth)
+    **Auth:** Required (nginx auth gate, `CurrentUsername`)
 
     **Request Body:**
     - `workflow_data`: Exported workflow JSON (from export endpoint)
@@ -491,7 +491,7 @@ async def create_workflow_step(
     **Request Body:**
     - step_number: Optional - auto-increments if not provided
     - name: Step name (required)
-    - tool_type: "system" or "user" (required)
+    - tool_type: "system_tool" | "user_tool" | "workflow" (required)
     - tool_id: ID of tool to execute (required)
     - configuration: Parameter mappings (required)
     - ... (see WorkflowStepCreate model)

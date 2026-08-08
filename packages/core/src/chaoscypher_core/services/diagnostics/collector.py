@@ -262,17 +262,6 @@ class DiagnosticCollector:
             for name, content in report.logs.items():
                 zf.writestr(f"logs/{name}.log", content)
 
-            if report.queue:
-                zf.writestr(
-                    "queue_stats.json",
-                    json.dumps(report.queue, indent=2, default=str),
-                )
-            if report.services:
-                zf.writestr(
-                    "services.json",
-                    json.dumps(report.services, indent=2, default=str),
-                )
-
         logger.info("diagnostic_bundle_exported", path=str(output_path))
         return output_path
 

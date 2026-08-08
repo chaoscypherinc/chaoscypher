@@ -246,9 +246,7 @@ export const WorkflowCanvas: React.FC<WorkflowCanvasProps> = ({
                 Start Building Your Workflow
               </Typography>
               <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-                Drag tools from the left panel onto the canvas,
-                <br />
-                or click a tool to add it.
+                Drag tools from the left panel onto the canvas to add steps.
               </Typography>
             </Box>
           </Panel>

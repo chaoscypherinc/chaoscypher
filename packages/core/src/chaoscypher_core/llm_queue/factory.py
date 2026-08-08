@@ -11,7 +11,7 @@ This module ensures we reuse the same ProviderFactory instance across
 all requests instead of creating new factories per request.
 
 Architecture:
-- chaoscypher.adapters.llm.factory.ProviderFactory: Has built-in provider caching
+- chaoscypher_core.adapters.llm.factory.ProviderFactory: Has built-in provider caching
 - This module: Provides singleton ProviderFactory instance for backend
 - CLI/Workers: Can create their own ProviderFactory instances
 

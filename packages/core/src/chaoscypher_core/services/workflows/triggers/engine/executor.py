@@ -193,8 +193,11 @@ class TriggerExecutor:
 
         logger.debug("trigger_handling_event", event_source=event_source)
 
-        # Get all enabled triggers for this event source
-        triggers = self.trigger_service.list_triggers(event_source=event_source, enabled=True)
+        # Get all enabled triggers for this event source (offloaded — sync
+        # storage reads must not stall the event-dispatch loop under bursts)
+        triggers = await asyncio.to_thread(
+            self.trigger_service.list_triggers, event_source=event_source, enabled=True
+        )
 
         if not triggers:
             logger.debug("trigger_no_triggers_found", event_source=event_source)
@@ -355,7 +358,9 @@ class TriggerExecutor:
         # A validation failure MUST NOT raise — it would break the dispatch
         # loop for sibling triggers. We log, record a failed stats row, and
         # skip this one trigger.
-        workflow = self.workflow_service.get_workflow(trigger["workflow_id"])
+        workflow = await asyncio.to_thread(
+            self.workflow_service.get_workflow, trigger["workflow_id"]
+        )
         input_schema = workflow.get("input_schema") if workflow else None
         if input_schema:
             try:
@@ -499,7 +504,9 @@ class TriggerExecutor:
             execution_time = time.time() - start_time
 
             # Get workflow name
-            workflow = self.workflow_service.get_workflow(trigger["workflow_id"])
+            workflow = await asyncio.to_thread(
+                self.workflow_service.get_workflow, trigger["workflow_id"]
+            )
             workflow_name = workflow["name"] if workflow else trigger["workflow_id"]
 
             # Record successful execution
@@ -524,7 +531,9 @@ class TriggerExecutor:
             execution_time = time.time() - start_time
 
             # Get workflow name for error logging
-            workflow = self.workflow_service.get_workflow(trigger["workflow_id"])
+            workflow = await asyncio.to_thread(
+                self.workflow_service.get_workflow, trigger["workflow_id"]
+            )
             workflow_name = workflow["name"] if workflow else trigger["workflow_id"]
 
             # Record failed execution

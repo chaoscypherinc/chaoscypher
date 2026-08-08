@@ -62,14 +62,21 @@ export default function SearchFilterBar({
         onChange={(e) => onSearchChange(e.target.value)}
         sx={{ flexGrow: 1, ...ghostInputSx }}
       />
-      {filters?.map((filter) => (
+      {filters?.map((filter) => {
+        // Associate the label with the Select. Without an id/labelId pair MUI
+        // renders the trigger as a role="combobox" with no accessible name, so
+        // it is unreachable by label for screen readers and for tests.
+        const filterId = `filter-${filter.label.replace(/\s+/g, '-').toLowerCase()}`;
+        return (
         <FormControl
           key={filter.label}
           size="small"
           sx={{ minWidth: filter.minWidth ?? 150, ...ghostInputSx }}
         >
-          <InputLabel>{filter.label}</InputLabel>
+          <InputLabel id={`${filterId}-label`}>{filter.label}</InputLabel>
           <Select
+            labelId={`${filterId}-label`}
+            id={filterId}
             value={filter.value}
             label={filter.label}
             onChange={(e) => filter.onChange(e.target.value)}
@@ -81,7 +88,8 @@ export default function SearchFilterBar({
             ))}
           </Select>
         </FormControl>
-      ))}
+        );
+      })}
       {children}
     </Box>
   );

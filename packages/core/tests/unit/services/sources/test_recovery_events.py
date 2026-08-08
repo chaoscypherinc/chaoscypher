@@ -61,7 +61,7 @@ def test_record_recovery_event_persists_row(in_memory_adapter) -> None:
     )
 
     events = in_memory_adapter.list_recovery_events(
-        source_id="src-1", database_name="default", limit=50
+        source_id="src-1", database_name="default", page_size=50
     )
     assert len(events) == 1
     e = events[0]
@@ -108,7 +108,7 @@ def test_list_recovery_events_returns_newest_first(in_memory_adapter) -> None:
     )
 
     events = in_memory_adapter.list_recovery_events(
-        source_id="src-2", database_name="default", limit=50
+        source_id="src-2", database_name="default", page_size=50
     )
     assert len(events) == 2
     # Newest first.
@@ -116,7 +116,7 @@ def test_list_recovery_events_returns_newest_first(in_memory_adapter) -> None:
     assert events[1]["from_status"] == "indexing"
 
 
-def test_list_recovery_events_limit_is_honored(in_memory_adapter) -> None:
+def test_list_recovery_events_page_size_is_honored(in_memory_adapter) -> None:
     in_memory_adapter.create_source(
         {
             "id": "src-3",
@@ -140,9 +140,83 @@ def test_list_recovery_events_limit_is_honored(in_memory_adapter) -> None:
         )
 
     events = in_memory_adapter.list_recovery_events(
-        source_id="src-3", database_name="default", limit=2
+        source_id="src-3", database_name="default", page_size=2
     )
     assert len(events) == 2
+
+
+def test_list_recovery_events_pages_are_disjoint_and_cover_all(in_memory_adapter) -> None:
+    """?page=&page_size= slicing: pages don't overlap and cover every event."""
+    in_memory_adapter.create_source(
+        {
+            "id": "src-pages",
+            "database_name": in_memory_adapter.database_name,
+            "filename": "p.pdf",
+            "filepath": "/tmp/p.pdf",
+            "file_type": "pdf",
+            "file_size": 100,
+            "content_hash": "hp",
+            "status": "extracting",
+        }
+    )
+    for i in range(5):
+        in_memory_adapter.record_recovery_event(
+            source_id="src-pages",
+            database_name="default",
+            from_status="extracting",
+            action_taken="extract_chunk",
+            reason="stalled",
+            enqueued_count=i,
+        )
+
+    seen: list[str] = []
+    for page in (1, 2, 3):
+        rows = in_memory_adapter.list_recovery_events(
+            source_id="src-pages", database_name="default", page=page, page_size=2
+        )
+        seen.extend(r["id"] for r in rows)
+
+    assert len(seen) == 5
+    assert len(set(seen)) == 5, "pages must not overlap"
+    # A page past the end is empty.
+    assert (
+        in_memory_adapter.list_recovery_events(
+            source_id="src-pages", database_name="default", page=4, page_size=2
+        )
+        == []
+    )
+
+
+def test_count_recovery_events(in_memory_adapter) -> None:
+    """count_recovery_events returns the exact per-source total."""
+    in_memory_adapter.create_source(
+        {
+            "id": "src-count",
+            "database_name": in_memory_adapter.database_name,
+            "filename": "c.pdf",
+            "filepath": "/tmp/c.pdf",
+            "file_type": "pdf",
+            "file_size": 100,
+            "content_hash": "hc",
+            "status": "extracting",
+        }
+    )
+    for i in range(3):
+        in_memory_adapter.record_recovery_event(
+            source_id="src-count",
+            database_name="default",
+            from_status="extracting",
+            action_taken="extract_chunk",
+            reason="stalled",
+            enqueued_count=i,
+        )
+
+    assert (
+        in_memory_adapter.count_recovery_events(source_id="src-count", database_name="default") == 3
+    )
+    assert (
+        in_memory_adapter.count_recovery_events(source_id="src-none", database_name="default") == 0
+    )
 
 
 def test_list_recovery_events_scoped_per_source(in_memory_adapter) -> None:
@@ -189,7 +263,7 @@ def test_list_recovery_events_scoped_per_source(in_memory_adapter) -> None:
     )
 
     a_events = in_memory_adapter.list_recovery_events(
-        source_id="src-A", database_name="default", limit=10
+        source_id="src-A", database_name="default", page_size=10
     )
     assert len(a_events) == 1
     assert a_events[0]["enqueued_count"] == 1
@@ -221,7 +295,7 @@ async def test_recovery_service_records_event_on_real_dispatch(
     await recovery.reconcile_database(database_name="default")
 
     events = in_memory_adapter.list_recovery_events(
-        source_id="src-event", database_name="default", limit=10
+        source_id="src-event", database_name="default", page_size=10
     )
     assert len(events) == 1
     assert events[0]["from_status"] == "extracting"
@@ -253,7 +327,7 @@ async def test_recovery_service_skips_event_on_no_op(in_memory_adapter) -> None:
     await recovery.reconcile_database(database_name="default")
 
     events = in_memory_adapter.list_recovery_events(
-        source_id="src-noop-event", database_name="default", limit=10
+        source_id="src-noop-event", database_name="default", page_size=10
     )
     assert events == [], "no-op recovery must not record an event"
 

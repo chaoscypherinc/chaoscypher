@@ -18,12 +18,20 @@ from typing import TYPE_CHECKING
 import structlog
 
 from chaoscypher_core.queue.utils import iso_now as _iso_now
+from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.queue.client import QueueClient
 
 logger = structlog.get_logger(__name__)
+
+# Owner-checked pass-lock release: only the holder that SET the token may
+# DEL the key, so a pass that overran its TTL cannot release a successor's
+# lock.
+_UNLOCK_IF_OWNER = (
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0"
+)
 
 
 @dataclass
@@ -125,89 +133,111 @@ async def reconcile_queue(
         logger.warning("reconcile_skipped_no_client", queue=queue_name)
         return stats
 
-    # Pre-compute the cutoff once for the whole pass so all tasks in the
-    # same reconciliation cycle share a consistent reference point.
-    cutoff: datetime | None = None
-    if timeout_seconds is not None:
-        cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+    # Cross-invocation pass lock (SET NX). reconcile_queue runs from three
+    # unsynchronized callers (worker startup, worker periodic loop, Cortex
+    # lifespan safety net); two overlapping passes double-consume retry
+    # budgets via the attempts increment and can requeue a task another
+    # worker just re-claimed. The TTL bounds one pass so a crashed holder
+    # cannot block reconciliation forever; a caller that loses the lock
+    # simply skips its pass — the winner covers the same running set.
+    lock_key = f"queue:{queue_name}:reconcile_lock"
+    lock_token = generate_id()
+    acquired = await client.client.set(
+        lock_key,
+        lock_token,
+        nx=True,
+        ex=client._reconcile_lock_ttl,  # noqa: SLF001 - reconciler composes the client's private config surface
+    )
+    if not acquired:
+        logger.debug("reconcile_pass_already_running", queue=queue_name)
+        return stats
 
-    running_key = f"queue:{queue_name}:running"
-    task_ids = await client.client.smembers(running_key)
+    try:
+        # Pre-compute the cutoff once for the whole pass so all tasks in the
+        # same reconciliation cycle share a consistent reference point.
+        cutoff: datetime | None = None
+        if timeout_seconds is not None:
+            cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
 
-    for raw_id in task_ids:
-        task_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
+        running_key = f"queue:{queue_name}:running"
+        task_ids = await client.client.smembers(running_key)
 
-        hash_exists = bool(await client.client.exists(f"queue:task:{task_id}"))
-        heartbeat_exists = bool(await client.client.exists(f"queue:task:{task_id}:heartbeat"))
+        for raw_id in task_ids:
+            task_id = raw_id.decode() if isinstance(raw_id, bytes) else raw_id
 
-        if not hash_exists and not heartbeat_exists:
-            # Orphan: ID with no backing data
-            await client.client.srem(running_key, task_id)
-            stats.recovered_orphans += 1
-            logger.warning(
-                "task_recovered",
-                task_id=task_id,
-                queue=queue_name,
-                reason="orphan",
-                action="removed",
-            )
-            continue
+            hash_exists = bool(await client.client.exists(f"queue:task:{task_id}"))
+            heartbeat_exists = bool(await client.client.exists(f"queue:task:{task_id}:heartbeat"))
 
-        # Absolute timeout check: fetch the hash to read started_at.
-        # This runs regardless of heartbeat status so that event-loop hangs
-        # that keep the heartbeat alive are still caught.
-        if hash_exists and cutoff is not None:
-            raw_hash = await client.client.hgetall(f"queue:task:{task_id}")
-            task_hash: dict[str, str] = {
-                (k.decode() if isinstance(k, bytes) else k): (
-                    v.decode() if isinstance(v, bytes) else v
+            if not hash_exists and not heartbeat_exists:
+                # Orphan: ID with no backing data
+                await client.client.srem(running_key, task_id)
+                stats.recovered_orphans += 1
+                logger.warning(
+                    "task_recovered",
+                    task_id=task_id,
+                    queue=queue_name,
+                    reason="orphan",
+                    action="removed",
                 )
-                for k, v in raw_hash.items()
-            }
-            started_at_str = task_hash.get("started_at", "")
-            if started_at_str:
-                try:
-                    started_at = datetime.fromisoformat(started_at_str)
-                except ValueError:
-                    started_at = None
-                if started_at is not None and started_at < cutoff:
-                    logger.warning(
-                        "task_abandoned_timeout",
-                        task_id=task_id,
-                        queue=queue_name,
-                        started_at=started_at_str,
-                        timeout_seconds=timeout_seconds,
+                continue
+
+            # Absolute timeout check: fetch the hash to read started_at.
+            # This runs regardless of heartbeat status so that event-loop hangs
+            # that keep the heartbeat alive are still caught.
+            if hash_exists and cutoff is not None:
+                raw_hash = await client.client.hgetall(f"queue:task:{task_id}")
+                task_hash: dict[str, str] = {
+                    (k.decode() if isinstance(k, bytes) else k): (
+                        v.decode() if isinstance(v, bytes) else v
                     )
-                    await _handle_abandoned(
-                        client=client,
-                        queue_name=queue_name,
-                        task_id=task_id,
-                        max_tries=max_tries,
-                        stats=stats,
-                    )
-                    continue
+                    for k, v in raw_hash.items()
+                }
+                started_at_str = task_hash.get("started_at", "")
+                if started_at_str:
+                    try:
+                        started_at = datetime.fromisoformat(started_at_str)
+                    except ValueError:
+                        started_at = None
+                    if started_at is not None and started_at < cutoff:
+                        logger.warning(
+                            "task_abandoned_timeout",
+                            task_id=task_id,
+                            queue=queue_name,
+                            started_at=started_at_str,
+                            timeout_seconds=timeout_seconds,
+                        )
+                        await _handle_abandoned(
+                            client=client,
+                            queue_name=queue_name,
+                            task_id=task_id,
+                            max_tries=max_tries,
+                            stats=stats,
+                        )
+                        continue
 
-        if hash_exists and heartbeat_exists:
-            # Healthy: hash present, heartbeat alive, not timed out
-            continue
+            if hash_exists and heartbeat_exists:
+                # Healthy: hash present, heartbeat alive, not timed out
+                continue
 
-        # Remaining case — hash_exists AND NOT heartbeat_exists — is
-        # the "abandoned" classification: worker crashed or handler hung
-        # long enough for the heartbeat key's TTL to expire.
-        if hash_exists and not heartbeat_exists:
-            await _handle_abandoned(
-                client=client,
-                queue_name=queue_name,
-                task_id=task_id,
-                max_tries=max_tries,
-                stats=stats,
-            )
+            # Remaining case — hash_exists AND NOT heartbeat_exists — is
+            # the "abandoned" classification: worker crashed or handler hung
+            # long enough for the heartbeat key's TTL to expire.
+            if hash_exists and not heartbeat_exists:
+                await _handle_abandoned(
+                    client=client,
+                    queue_name=queue_name,
+                    task_id=task_id,
+                    max_tries=max_tries,
+                    stats=stats,
+                )
 
-    # Persist counters so every reconciler call site (startup, periodic,
-    # Cortex safety net, admin API) contributes to the long-term trend.
-    await _persist_counters(client, queue_name, stats)
+        # Persist counters so every reconciler call site (startup, periodic,
+        # Cortex safety net, admin API) contributes to the long-term trend.
+        await _persist_counters(client, queue_name, stats)
 
-    return stats
+        return stats
+    finally:
+        await client.client.eval(_UNLOCK_IF_OWNER, 1, lock_key, lock_token)
 
 
 async def _handle_abandoned(
@@ -251,32 +281,18 @@ async def _handle_abandoned(
     retry_allowed = client.get_retry_policy(queue_name, operation)
 
     if retry_allowed and attempts < max_tries:
-        # Requeue: reset status, re-add to pending, THEN remove from running.
-        # IMPORTANT: zadd must run before srem so the task is never absent
-        # from BOTH the running set and the pending queue at the same time.
-        # The reconciler only scans queue:{queue}:running, so a task srem'd
-        # out of running before a failed zadd would sit in neither set and be
-        # invisible to every future reconcile cycle — an undetectable limbo.
-        # Adding to pending first and removing from running only on zadd
-        # success means a transient Valkey error during zadd leaves the task
-        # in the running set for the next cycle to retry. attempts increments
-        # only after a successful requeue so that same transient error never
-        # silently consumes the retry budget.
-        await client.client.hset(
-            task_key,
-            mapping={
-                "status": "queued",
-                "error": "",
-                "error_type": "",
-            },
-        )
-        # Defensive: clear any dead-letter retention TTL a prior terminal-
-        # fail write may have left behind. Pairs with the matching PERSIST
-        # in ``QueueWorker._retry_task`` so a re-queue never auto-deletes a
-        # healthy task hash.
-        await client.client.persist(task_key)
+        # Requeue as ONE atomic Lua move (reset hash + PERSIST + ZADD
+        # pending + SREM running + attempts bump). The old zadd-then-srem
+        # sequence left a window where a transient srem failure stranded
+        # the task in BOTH sets — a worker could pull it from pending
+        # while the next cycle requeued it again (duplicate execution).
+        # A transient error during the move leaves the task in the running
+        # set for the next cycle; attempts increments only inside a
+        # successful move so the budget is never silently consumed. The
+        # script refuses if the task finished while being classified —
+        # then the stale running-set entry is simply dropped.
         try:
-            await client.client.zadd(f"queue:{queue_name}:pending", {task_id: priority})
+            outcome = await client.requeue_task_atomic(queue_name, task_id, priority)
         except Exception:
             logger.exception(
                 "reconciler_requeue_failed",
@@ -286,26 +302,38 @@ async def _handle_abandoned(
             )
             return  # task left in the running set; next reconcile retries
 
-        await client.client.srem(running_key, task_id)
-        await client.client.hincrby(task_key, "attempts", 1)
-        stats.recovered_crashed += 1
-        logger.warning(
-            "task_recovered",
-            task_id=task_id,
-            queue=queue_name,
-            reason="worker_crashed",
-            action="requeued",
-            attempts=attempts,
-        )
+        if outcome == "__ok__":
+            stats.recovered_crashed += 1
+            logger.warning(
+                "task_recovered",
+                task_id=task_id,
+                queue=queue_name,
+                reason="worker_crashed",
+                action="requeued",
+                attempts=attempts,
+            )
+        else:
+            # "__missing__" or a terminal status — nothing to requeue;
+            # clear the dangling running-set entry.
+            await client.client.srem(running_key, task_id)
+            logger.info(
+                "reconciler_requeue_skipped",
+                task_id=task_id,
+                queue=queue_name,
+                outcome=outcome,
+            )
     else:
-        # Fail permanently — terminal status, apply dead-letter retention
-        # TTL so the post-mortem hash stays around for operator review
-        # (default 14 days; configurable via TimeoutSettings.failed_result_ttl).
-        await client.client.srem(running_key, task_id)
-        await client.mark_task_failed_terminal(
+        # Fail permanently — mark-failed + SREM + dead-letter retention TTL
+        # in one guarded write (default 14 days retention; configurable via
+        # TimeoutSettings.failed_result_ttl). Guarded so a task that
+        # completed while being classified keeps its status (the old
+        # srem-before-write ordering could leak a half-written hash when
+        # the terminal write failed after the srem — 2026-06-14 finding).
+        outcome = await client.guarded_status_write(
             task_id,
-            {
-                "status": "failed",
+            new_status="failed",
+            allowed_from=("running", "queued", "failed"),
+            extra_fields={
                 "error": (
                     "Worker crashed or handler hung — recovery policy denies retry"
                     if not retry_allowed
@@ -314,14 +342,28 @@ async def _handle_abandoned(
                 "error_type": "worker_crashed",
                 "completed_at": _iso_now(),
             },
+            remove_from=running_key,
+            removal="srem",
+            expire_seconds=client.failed_result_ttl,
         )
-        stats.failed_unrecoverable += 1
-        logger.warning(
-            "task_recovered",
-            task_id=task_id,
-            queue=queue_name,
-            reason="worker_crashed",
-            action="failed",
-            attempts=attempts,
-            retry_allowed=retry_allowed,
-        )
+        if outcome == "__ok__":
+            stats.failed_unrecoverable += 1
+            logger.warning(
+                "task_recovered",
+                task_id=task_id,
+                queue=queue_name,
+                reason="worker_crashed",
+                action="failed",
+                attempts=attempts,
+                retry_allowed=retry_allowed,
+            )
+        else:
+            # Completed/cancelled (or vanished) in the window — drop the
+            # stale running-set entry and leave the terminal state alone.
+            await client.client.srem(running_key, task_id)
+            logger.info(
+                "reconciler_terminal_fail_skipped",
+                task_id=task_id,
+                queue=queue_name,
+                outcome=outcome,
+            )

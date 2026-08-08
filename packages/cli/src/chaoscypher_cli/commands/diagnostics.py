@@ -9,6 +9,7 @@ sanitized settings, and any available logs.
 Example:
     chaoscypher diagnostics
     chaoscypher diagnostics --output /tmp/debug.zip
+    chaoscypher diagnostics --database my-project
 """
 
 from pathlib import Path
@@ -28,15 +29,24 @@ console = Console()
     default=None,
     help="Output path for the ZIP file (default: current directory)",
 )
-def diagnostics(output: str | None) -> None:
+@click.option(
+    "--database",
+    "-d",
+    default=None,
+    help="Database to collect (default: the active database)",
+)
+def diagnostics(output: str | None, database: str | None) -> None:
     """Export diagnostic bundle for bug reports.
 
     Generates a ZIP file containing system info, database stats,
-    sanitized settings, and log files (if available).
+    sanitized settings, and log files (if available). Collects the
+    active database (as selected by ``chaoscypher db switch`` or
+    ``CHAOSCYPHER_DATABASE``) unless ``--database`` names another one.
 
     Example:
         chaoscypher diagnostics
         chaoscypher diagnostics -o /tmp/debug.zip
+        chaoscypher diagnostics --database my-project
     """
     from datetime import UTC, datetime
 
@@ -50,16 +60,21 @@ def diagnostics(output: str | None) -> None:
     log_dir = None
 
     try:
-        from chaoscypher_core.app_config import get_settings
+        # Resolve like every db/* command: engine_config.data_dir() is the
+        # CLI's single path-resolution authority, and get_database_name()
+        # honors --database > CHAOSCYPHER_DATABASE > settings.yaml
+        # current_database > "default".
+        from chaoscypher_cli.context import get_database_name
+        from chaoscypher_cli.engine_config import data_dir as resolve_data_dir
 
-        settings = get_settings()
-        data_dir = Path(settings.paths.data_dir)
+        db_name = get_database_name(database)
+        data_dir = resolve_data_dir()
 
-        db_dir = data_dir / "databases" / "default"
+        db_dir = data_dir / "databases" / db_name
         db_file = db_dir / "app.db"
         if db_file.exists():
             db_path = db_file
-            console.print(f"  [green]\u2713[/green] Database found: {db_file}")
+            console.print(f"  [green]✓[/green] Database found: {db_file}")
         else:
             console.print("  [yellow]![/yellow] No database found")
 
@@ -67,7 +82,7 @@ def diagnostics(output: str | None) -> None:
         if log_path.exists():
             log_dir = log_path
             log_count = len(list(log_path.glob("*.log")))
-            console.print(f"  [green]\u2713[/green] Log directory: {log_count} log files")
+            console.print(f"  [green]✓[/green] Log directory: {log_count} log files")
         else:
             console.print("  [yellow]![/yellow] No log directory found")
     except Exception:
@@ -85,7 +100,7 @@ def diagnostics(output: str | None) -> None:
     result = collector.export_bundle(output_path)
 
     size_kb = result.stat().st_size / 1024
-    console.print(f"  [green]\u2713[/green] Bundle saved: {result} ({size_kb:.0f} KB)")
+    console.print(f"  [green]✓[/green] Bundle saved: {result} ({size_kb:.0f} KB)")
     console.print()
     console.print("  Attach this file to your bug report.")
     console.print()

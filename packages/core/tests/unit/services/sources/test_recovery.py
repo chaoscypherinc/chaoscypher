@@ -35,6 +35,7 @@ def test_recovery_stats_to_dict() -> None:
         skipped_paused=2,
         skipped_healthy=5,
         skipped_exhausted=1,
+        marked_failed=4,
         total_scanned=10,
     )
     assert stats.to_dict() == {
@@ -42,6 +43,7 @@ def test_recovery_stats_to_dict() -> None:
         "skipped_paused": 2,
         "skipped_healthy": 5,
         "skipped_exhausted": 1,
+        "marked_failed": 4,
         "total_scanned": 10,
     }
 

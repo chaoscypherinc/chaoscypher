@@ -108,7 +108,6 @@ class LoopPlugin:
 
         """
         collection = inputs["collection"]
-        inputs.get("iterator_name", "item")
         max_iterations = inputs.get("max_iterations", len(collection))
 
         return {

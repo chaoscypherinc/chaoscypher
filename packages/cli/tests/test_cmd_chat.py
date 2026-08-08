@@ -689,6 +689,24 @@ def test_resolve_citation_text_unknown_alias() -> None:
     assert filename == "source"
 
 
+def test_resolve_citation_text_lowercase_refs() -> None:
+    r"""Lowercase s1 parses case-insensitively and must also resolve.
+
+    Regression: the marker pattern is IGNORECASE so ``s1`` parses, but
+    resolution used a case-sensitive ``S(\d+)`` findall (2026-07-27 audit).
+    """
+    citation_data = {
+        "C0": {
+            "original_content": "First sentence. Second sentence.",
+            "sentence_offsets": [{"start": 0, "end": 15}, {"start": 16, "end": 32}],
+            "filename": "doc.txt",
+        }
+    }
+    text, filename = _resolve_citation_text("C0", "s1", citation_data)
+    assert text == "First sentence."
+    assert filename == "doc.txt"
+
+
 def test_resolve_citation_text_missing_offsets() -> None:
     citation_data = {"C0": {"original_content": "", "sentence_offsets": [], "filename": "f"}}
     text, filename = _resolve_citation_text("C0", "S1", citation_data)
@@ -756,10 +774,40 @@ def test_stream_writer_unresolved_citation_shows_label(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     writer = _StreamWriter(citation_data={})
-    writer.write("ref [[cite:ZZ:S1|Fallback]] end")
+    writer.write("ref [[cite:dead-beef:S1|Fallback]] end")
     writer.close()
     out = capsys.readouterr().out
     assert "Fallback" in out
+
+
+def test_stream_writer_prefixed_chunk_id_citation_renders(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Prefixed lexicon-import ids (chunk_<hex>) parse as valid citations."""
+    citation_data = {
+        "chunk_a1b2c3d4e5f6": {
+            "original_content": "Imported sentence.",
+            "sentence_offsets": [{"start": 0, "end": 18}],
+            "filename": "pack.ccx",
+        }
+    }
+    writer = _StreamWriter(citation_data=citation_data)
+    writer.write("Fact [[cite:chunk_a1b2c3d4e5f6:S1|pack.ccx]].")
+    writer.close()
+    out = capsys.readouterr().out
+    assert "Imported sentence." in out
+    assert "[[cite:" not in out
+
+
+def test_stream_writer_junk_id_citation_hidden(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Non-hex letter junk ids (e.g. O5) are not valid citations — hidden."""
+    writer = _StreamWriter(citation_data={})
+    writer.write("Claim [[cite:O5:S1|f.txt]] end")
+    writer.close()
+    out = capsys.readouterr().out
+    assert "[[cite:" not in out
 
 
 def test_stream_writer_malformed_citation_hidden(
@@ -827,7 +875,7 @@ def test_stream_writer_unresolved_citation_in_terminal() -> None:
     fake = _terminal_console()
     with patch.object(chat_mod, "console", fake):
         writer = _StreamWriter(citation_data={})
-        writer.write("ref [[cite:ZZ:S1|Fallback]] end")
+        writer.write("ref [[cite:dead-beef:S1|Fallback]] end")
         writer.close()
     out = "".join(fake._buf)
     assert "Fallback" in out

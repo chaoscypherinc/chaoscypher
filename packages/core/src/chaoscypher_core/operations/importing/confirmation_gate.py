@@ -30,6 +30,35 @@ from chaoscypher_core.operations.queue_utils import queue_import_analysis
 logger = structlog.get_logger(__name__)
 
 
+def _claim_pre_gate_confirmation(adapter: Any, file_id: str) -> bool:
+    """Atomically claim the write-once pre-gate confirmation timestamp.
+
+    A rowcount-checked ``UPDATE … WHERE extraction_confirmed_at IS NULL``
+    — the SQL-level CAS for the pre-gate bucket. The old guard was
+    check-then-write on the ORM row, so two concurrent confirms carrying
+    different domains (cortex + MCP, separate sessions) could both
+    observe NULL and both write — a silent lost update of the first
+    caller's choice. With the claim, exactly one caller's UPDATE matches
+    the NULL predicate; the loser falls through to the already-confirmed
+    conflict. This is the timestamp-column analogue of
+    ``transition_source_status`` (which can only CAS the status column).
+
+    Returns:
+        True when this caller claimed the timestamp; False when a rival
+        already had (or the row vanished).
+    """
+    from sqlalchemy import update
+
+    result = adapter.session.execute(
+        update(SourceRow)
+        .where(SourceRow.id == file_id)  # type: ignore[arg-type]
+        .where(SourceRow.extraction_confirmed_at.is_(None))  # type: ignore[union-attr]
+        .values(extraction_confirmed_at=datetime.now(UTC))
+    )
+    adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
+    return getattr(result, "rowcount", 0) == 1
+
+
 def proposal_from_detection(result: dict[str, Any]) -> dict[str, Any]:
     """Build the persisted detection_proposal blob from a detect_extraction_domain result."""
     return {
@@ -346,19 +375,30 @@ async def confirm_extraction(
 
     # --- Bucket 2: pre-gate — record decision, no status change, no re-queue. ---
     # The analysis stage runs on its own; gate_decision then PROCEEDS because the
-    # forced/confirmed fields are set. Guard write-once: a source confirmed once
-    # (timestamp set) is no longer eligible for a domain change.
+    # forced/confirmed fields are set. Write-once is enforced by an atomic SQL
+    # claim on the timestamp column (see _claim_pre_gate_confirmation) — the ORM
+    # row in hand may be a stale read when two confirms race, so it must never
+    # be the guard. A lost claim falls through to bucket 3 (already confirmed).
     if status in _PRE_GATE and row.extraction_confirmed_at is None:
-        forced = _apply_decision(row, chosen_domain, overrides)
-        adapter.session.add(row)
-        adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
-        logger.info(
-            "source_confirmed_pre_gate",
-            source_id=file_id,
-            status=status,
-            forced_domain=forced,
-        )
-        return True
+        if _claim_pre_gate_confirmation(adapter, file_id):
+            # Re-read so the claimed timestamp is on the row and
+            # _apply_decision's write-once check cannot re-stamp it.
+            adapter.session.expire_all()
+            row = adapter.session.exec(select(SourceRow).where(SourceRow.id == file_id)).first()
+            if row is None:  # pragma: no cover — the claim just matched this row
+                logger.warning("confirm_extraction_row_vanished", source_id=file_id)
+                return False
+            forced = _apply_decision(row, chosen_domain, overrides)
+            adapter.session.add(row)
+            adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
+            logger.info(
+                "source_confirmed_pre_gate",
+                source_id=file_id,
+                status=status,
+                forced_domain=forced,
+            )
+            return True
+        logger.info("confirm_extraction_lost_pre_gate_claim", source_id=file_id)
 
     # --- Bucket 3: past the gate / already confirmed / errored — too late. ---
     logger.info(

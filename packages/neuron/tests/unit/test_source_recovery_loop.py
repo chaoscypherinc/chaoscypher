@@ -24,9 +24,14 @@ from chaoscypher_neuron.worker import _source_recovery_loop
 async def test_source_recovery_loop_calls_reconcile_repeatedly() -> None:
     """The loop fires reconcile_database repeatedly until cancelled."""
     recovery = MagicMock()
-    recovery.reconcile_database = AsyncMock(
-        return_value=MagicMock(recovered=0, skipped_paused=0),
-    )
+    second_call = asyncio.Event()
+
+    async def _record_call(*args: object, **kwargs: object) -> MagicMock:
+        if recovery.reconcile_database.call_count >= 2:
+            second_call.set()
+        return MagicMock(recovered=0, skipped_paused=0)
+
+    recovery.reconcile_database = AsyncMock(side_effect=_record_call)
 
     task = asyncio.create_task(
         _source_recovery_loop(
@@ -38,8 +43,11 @@ async def test_source_recovery_loop_calls_reconcile_repeatedly() -> None:
         )
     )
 
-    # Let the loop run ~3 iterations.
-    await asyncio.sleep(0.08)
+    # Wait deterministically for the second iteration instead of sleeping a
+    # fixed wall-clock window — the fixed 0.08s sleep flaked under loaded
+    # xdist workers (1 call observed, 2026-07-26 CI run). The 5s ceiling only
+    # bites if the loop is genuinely broken.
+    await asyncio.wait_for(second_call.wait(), timeout=5.0)
     task.cancel()
     try:
         await task

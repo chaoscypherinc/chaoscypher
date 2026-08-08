@@ -166,6 +166,7 @@ class SourceRecoveryPorts(Protocol):
         source_id: str,
         *,
         statuses: Sequence[VisionPageStatus] | None = None,
+        include_content: bool = True,
     ) -> list[dict[str, Any]]:
         """Return all vision_page_descriptions rows for a source, filtered by status."""
         ...

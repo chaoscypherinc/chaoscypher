@@ -327,9 +327,18 @@ class LLMProvider:
                 stream=stream,
             )
 
-            # Execute chat via provider
+            # Execute chat via provider. Forward the tuning kwargs the
+            # BaseLLMProvider contract accepts — dropping them here silently
+            # disabled per-call temperature/max_tokens overrides (e.g. the
+            # vision output-token cap).
             response = await chat_provider.chat(
-                messages=messages, tools=tools, stream=stream, enable_thinking=enable_thinking
+                messages=messages,
+                tools=tools,
+                stream=stream,
+                enable_thinking=enable_thinking,
+                high_priority=kwargs.get("high_priority", False),
+                temperature=kwargs.get("temperature"),
+                max_tokens=kwargs.get("max_tokens"),
             )
 
             # Handle streaming response
@@ -415,6 +424,8 @@ class LLMProvider:
                     stream=False,  # Explicitly disable streaming
                     enable_thinking=enable_thinking,
                     high_priority=high_priority,  # Pass through for provider semaphore
+                    temperature=kwargs.get("temperature"),
+                    max_tokens=kwargs.get("max_tokens"),
                 )
 
                 # Build normalized response

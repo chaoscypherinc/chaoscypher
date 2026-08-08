@@ -524,6 +524,9 @@ async def _setup_source_recovery(ctx: WorkerContext) -> asyncio.Task[None] | Non
         stalled_threshold_seconds=ctx["settings"].source_recovery.stalled_threshold_seconds,
         max_recovery_attempts=ctx["settings"].source_recovery.max_recovery_attempts,
         recovery_warn_threshold=ctx["settings"].source_recovery.recovery_warn_threshold,
+        mcp_extracting_stale_after_hours=(
+            ctx["settings"].source_recovery.mcp_extracting_stale_after_hours
+        ),
     )
     timeout_s = ctx["settings"].source_recovery.reconcile_timeout_seconds
     try:

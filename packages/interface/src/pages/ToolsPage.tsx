@@ -4,7 +4,7 @@
 /**
  * ToolsPage: Browse system tools and manage user tool configurations.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -46,6 +46,10 @@ const ToolsPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Message the user has dismissed via the Alert's close button. Needed
+  // because query-sourced errors re-render after onClose clears only the
+  // local error state.
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -206,8 +210,18 @@ const ToolsPage: React.FC = () => {
 
   const queryError =
     systemToolsQuery.error ?? userToolsQuery.error ?? null;
+  const queryErrorMessage =
+    queryError instanceof Error ? queryError.message : null;
+  const rawError = error ?? queryErrorMessage;
   const surfacedError =
-    error ?? (queryError instanceof Error ? queryError.message : null);
+    rawError && rawError !== dismissedError ? rawError : null;
+
+  // A successful refetch clears the dismissal so a future error re-surfaces.
+  useEffect(() => {
+    if (!queryErrorMessage) {
+      setDismissedError(null);
+    }
+  }, [queryErrorMessage]);
 
   return (
     <Box sx={{ maxWidth: 'xl', mx: 'auto', mt: { xs: 2, md: 4 }, mb: { xs: 2, md: 4 }, px: { xs: 1, md: 3 } }}>
@@ -244,7 +258,14 @@ const ToolsPage: React.FC = () => {
         )}
       </Box>
       {surfacedError && (
-        <Alert severity="error" sx={{ mb: 2, ...ghostErrorAlertSx }} onClose={() => setError(null)}>
+        <Alert
+          severity="error"
+          sx={{ mb: 2, ...ghostErrorAlertSx }}
+          onClose={() => {
+            setError(null);
+            setDismissedError(surfacedError);
+          }}
+        >
           {surfacedError}
         </Alert>
       )}

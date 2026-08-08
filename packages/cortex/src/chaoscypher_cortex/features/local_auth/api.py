@@ -22,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from chaoscypher_core.services.local_auth import (
     ApiKeyNotFound,
+    CredentialsAlreadyInitialized,
     CredentialsNotInitialized,
     InvalidPassword,
     InvalidSessionCookie,
@@ -156,7 +157,7 @@ def build_router(  # noqa: C901, PLR0915
             cookie = await asyncio.to_thread(
                 service.setup, req.username, req.password.get_secret_value()
             )
-        except FileExistsError as exc:
+        except CredentialsAlreadyInitialized as exc:
             raise HTTPException(status_code=409, detail="already initialized") from exc
         _set_cookie(response, cookie)
         return UserResponse(username=req.username)

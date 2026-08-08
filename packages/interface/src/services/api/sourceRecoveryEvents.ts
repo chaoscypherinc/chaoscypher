@@ -17,26 +17,37 @@ interface RecoveryEvent {
   enqueued_count: number;
 }
 
+interface PaginationMetadata {
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
 interface RecoveryEventListResponse {
-  events: RecoveryEvent[];
+  data: RecoveryEvent[];
+  pagination: PaginationMetadata;
 }
 
 const SOURCE_RECOVERY_EVENTS_QUERY_KEY = (sourceId: string) =>
   ['sources', sourceId, 'recovery_events'] as const;
 
 /**
- * Fetch the recovery audit trail for a source.
+ * Fetch the recovery audit trail for a source (house `{data, pagination}`
+ * envelope, `?page=&page_size=`).
  *
  * Backs the source detail page's recovery panel so operators can see
  * exactly which recoveries fired and why — instead of grepping logs.
  */
 async function getSourceRecoveryEvents(
   sourceId: string,
-  limit = DEFAULT_PUBLIC_SETTINGS.pagination_default_page_size,
+  pageSize = DEFAULT_PUBLIC_SETTINGS.pagination_default_page_size,
 ): Promise<RecoveryEventListResponse> {
   const response = await apiClient.get<RecoveryEventListResponse>(
     `/sources/${sourceId}/recovery_events`,
-    { params: { limit } },
+    { params: { page: 1, page_size: pageSize } },
   );
   return response.data;
 }

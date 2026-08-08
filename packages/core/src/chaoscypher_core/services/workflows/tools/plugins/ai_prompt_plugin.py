@@ -235,16 +235,31 @@ class PromptPlugin:
         system_prompt = inputs.get("system_prompt", "")
         input_context = inputs.get("context", "")
         output_format = inputs.get("output_format", "text")
-        temperature: float = inputs.get("temperature") or (
-            context.settings.llm.ai_temperature if context.settings is not None else 0.7
+        # `is None` checks (not `or`): 0.0 temperature and 0 chunk_overlap are
+        # valid explicit inputs and must not fall back to defaults
+        raw_temperature = inputs.get("temperature")
+        temperature: float = (
+            float(raw_temperature)
+            if raw_temperature is not None
+            else (context.settings.llm.ai_temperature if context.settings is not None else 0.7)
         )
-        max_tokens: int = inputs.get("max_tokens") or (
-            context.settings.llm.ai_max_tokens if context.settings is not None else 2048
+        raw_max_tokens = inputs.get("max_tokens")
+        max_tokens: int = (
+            int(raw_max_tokens)
+            if raw_max_tokens is not None
+            else (context.settings.llm.ai_max_tokens if context.settings is not None else 2048)
         )
         tool_thinking_mode = inputs.get("thinking_mode", context.thinking_mode)
         chunk_strategy = inputs.get("chunk_strategy")
-        chunk_overlap: int = inputs.get("chunk_overlap") or (
-            context.settings.chunking.small_chunk_overlap if context.settings is not None else 50
+        raw_chunk_overlap = inputs.get("chunk_overlap")
+        chunk_overlap: int = (
+            int(raw_chunk_overlap)
+            if raw_chunk_overlap is not None
+            else (
+                context.settings.chunking.small_chunk_overlap
+                if context.settings is not None
+                else 50
+            )
         )
 
         # Build full prompt
@@ -635,16 +650,19 @@ class PromptPlugin:
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # Try extracting from markdown code blocks
+            # Try extracting from markdown code blocks; malformed JSON inside a
+            # fence falls through to returning the raw text (an except clause on
+            # the outer try cannot catch errors raised in this handler)
             for delimiter in ("```json", "```"):
                 if delimiter in text:
                     parts = text.split(delimiter, maxsplit=1)
                     if len(parts) > 1:
                         inner = parts[1].split("```", maxsplit=1)[0].strip()
                         if inner:
-                            return json.loads(inner)
-        except Exception:
-            logger.debug("json_code_block_extraction_failed")
+                            try:
+                                return json.loads(inner)
+                            except json.JSONDecodeError:
+                                logger.debug("json_code_block_extraction_failed")
         return text
 
 

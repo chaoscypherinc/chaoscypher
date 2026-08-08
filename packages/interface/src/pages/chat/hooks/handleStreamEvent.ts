@@ -98,7 +98,7 @@ export interface EventDispatchers {
  * Callbacks for post-done lifecycle actions (title generation, list refresh).
  */
 export interface DoneCallbacks {
-  onDone: (chatId: string, wasNewChat: boolean) => Promise<void>;
+  onDone: (chatId: string, wasNewChat: boolean, hadContent: boolean) => Promise<void>;
 }
 
 /** Create a fresh accumulator for a new stream session. */
@@ -351,9 +351,9 @@ export function handleStreamEvent(
     case 'done':
       if (!acc.isDone) {
         acc.isDone = true;
-        handleDoneEvent(data, acc, setMessages, setLoading, setIsStreamingActive);
+        const hadContent = handleDoneEvent(data, acc, setMessages, setLoading, setIsStreamingActive);
         // Fire-and-forget lifecycle actions (title generation, list refresh)
-        doneCallbacks.onDone(chatId, wasNewChat);
+        doneCallbacks.onDone(chatId, wasNewChat, hadContent);
       }
       return 0;
 
@@ -394,7 +394,7 @@ function handleDoneEvent(
   setMessages: MessagesUpdater,
   setLoading: React.Dispatch<React.SetStateAction<boolean>>,
   setIsStreamingActive: React.Dispatch<React.SetStateAction<boolean>>,
-): void {
+): boolean {
   const finalPreviousContent = acc.iterationContents.join('\n\n---\n\n');
   const finalFullContent = finalPreviousContent
     ? (acc.currentPhaseContent
@@ -460,12 +460,19 @@ function handleDoneEvent(
   ));
 
   // Contentless done = we subscribed after the worker finished (the events
-  // bridge synthesizes done without content). The persisted answer arrives
-  // via the next poll — do NOT overwrite the bubble with a fake apology.
-  if ((!finalFullContent || finalFullContent.trim() === '') && !normalizedContent) {
-    logger.warn('done_without_content_waiting_for_poll');
+  // bridge synthesizes done without content). The persisted answer must be
+  // refetched — do NOT overwrite the bubble with a fake apology. The caller
+  // uses the returned flag to invalidate the chat detail query, because
+  // onDone patches status to 'active' which stops the processing-keyed
+  // poller that used to deliver the answer.
+  const hadContent = Boolean(
+    (finalFullContent && finalFullContent.trim() !== '') || normalizedContent,
+  );
+  if (!hadContent) {
+    logger.warn('done_without_content_refetching_chat');
   }
 
   setLoading(false);
   setIsStreamingActive(false);
+  return hadContent;
 }

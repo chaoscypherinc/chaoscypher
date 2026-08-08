@@ -43,6 +43,11 @@ def _make_ctx(**overrides: Any) -> MagicMock:
     """Build a minimal mock CLIContext for tests."""
     ctx = MagicMock()
     ctx.database_name = "default"
+    # The list command's truncation footer compares the fetched row count
+    # against the real DB total; a bare MagicMock compares truthy and
+    # would flip every test into the "Showing first N of M" branch.
+    ctx.storage_adapter.count_sources.return_value = 0
+    ctx.storage_adapter.count_sources_by_statuses.return_value = 0
     for k, v in overrides.items():
         setattr(ctx, k, v)
     return ctx

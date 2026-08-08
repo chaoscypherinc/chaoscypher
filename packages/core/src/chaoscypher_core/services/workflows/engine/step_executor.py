@@ -22,9 +22,10 @@ import structlog
 
 from chaoscypher_core.exceptions import OperationError, ValidationError
 from chaoscypher_core.models import StepToolType
+from chaoscypher_core.services.workflows.engine.interpolator import ParameterInterpolator
 from chaoscypher_core.services.workflows.tools.engine import (
     ToolExecutionContext,
-    ToolRegistry,
+    get_tool_discovery,
     validate_inputs,
 )
 
@@ -66,7 +67,7 @@ class StepExecutor:
         search_repository: Any,
         llm_service: Any,
         tool_service: Any,
-        parameter_resolver: Any,
+        parameter_resolver: Any = None,
         workflow_executor: Any | None = None,
         discovery_service: Any = None,
     ):
@@ -77,7 +78,8 @@ class StepExecutor:
             search_repository: Repository for search operations.
             llm_service: Service for LLM operations.
             tool_service: Service for user tool lookups.
-            parameter_resolver: Resolver for parameter interpolation.
+            parameter_resolver: Resolver for parameter interpolation
+                (defaults to ``ParameterInterpolator``).
             workflow_executor: Executor for nested workflows.
             discovery_service: Service for discovery operations (optional, removed).
 
@@ -87,7 +89,7 @@ class StepExecutor:
         self.llm_service = llm_service
         self.tool_service = tool_service
         self.discovery_service = discovery_service
-        self.parameter_resolver = parameter_resolver
+        self.parameter_resolver = parameter_resolver or ParameterInterpolator()
         self.workflow_executor = workflow_executor  # For nested workflows
 
     async def execute_step(
@@ -95,6 +97,7 @@ class StepExecutor:
         step_config: dict[str, Any],
         step_inputs: dict[str, Any],
         workflow_context: dict[str, Any] | None = None,
+        workflow_executor: Any | None = None,
     ) -> dict[str, Any]:
         """Execute a single workflow step independently.
 
@@ -113,6 +116,8 @@ class StepExecutor:
                 - thinking_mode: Optional thinking mode for AI tools
             step_inputs: Parameters to pass to the tool
             workflow_context: Optional workflow context (for accessing previous step outputs)
+            workflow_executor: Optional executor for nested workflows; overrides
+                the instance-level one for this call when provided
 
         Returns:
             Step output dictionary with:
@@ -145,6 +150,9 @@ class StepExecutor:
         """
         tool_type = step_config.get("tool_type")
         tool_id = step_config.get("tool_id")
+
+        if workflow_executor is not None:
+            self.workflow_executor = workflow_executor
 
         logger.info(
             "step_execution_started",
@@ -205,8 +213,9 @@ class StepExecutor:
                 the provided inputs fail the tool's schema validation.
 
         """
-        # Get plugin from registry
-        registry = ToolRegistry()
+        # Get plugin from the cached singleton registry (avoids re-scanning
+        # the plugins directory on every step execution)
+        registry = get_tool_discovery()
         plugin = registry.get(tool_id)
 
         if not plugin:

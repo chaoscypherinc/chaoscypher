@@ -359,6 +359,9 @@ security:
 	@echo "=== Frontend Dependency Audit ==="
 	cd packages/interface && npm audit --audit-level=high
 	@echo ""
+	@echo "=== Docs Dependency Audit ==="
+	cd packages/docs && npm audit --audit-level=high
+	@echo ""
 	@echo "Security scan complete"
 
 # ==========================================================================

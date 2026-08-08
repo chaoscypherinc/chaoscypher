@@ -58,8 +58,11 @@ class LLMSpendTracker:
     The daily total is read/written through the storage adapter
     (``llm_daily_spend``), so it is authoritative and survives worker restarts.
 
-    The lock serialises the in-memory per-source map so two concurrent handlers
-    cannot race past the per-source cap by interleaving check + record steps.
+    The lock serialises reads and writes of the in-memory per-source map, so
+    the map itself stays consistent under concurrent handlers. It does NOT
+    make check + record one critical section: two handlers can both observe
+    headroom and both record, overshooting a cap by up to one call each —
+    acceptable for a best-effort backstop.
     """
 
     def __init__(self) -> None:
@@ -203,15 +206,21 @@ class LLMSpendTracker:
             )
 
 
-# Process-wide singleton — workers see one tracker per process.
+# Process-wide singleton — workers see one tracker per process. Callers run
+# this from worker threads (asyncio.to_thread), so init is lock-guarded to
+# stop a first-use race from creating two trackers and dropping one side's
+# per-source counts.
 _TRACKER: LLMSpendTracker | None = None
+_TRACKER_INIT_LOCK = Lock()
 
 
 def get_llm_spend_tracker() -> LLMSpendTracker:
     """Return the process-wide :class:`LLMSpendTracker` singleton."""
     global _TRACKER
     if _TRACKER is None:
-        _TRACKER = LLMSpendTracker()
+        with _TRACKER_INIT_LOCK:
+            if _TRACKER is None:
+                _TRACKER = LLMSpendTracker()
     return _TRACKER
 
 

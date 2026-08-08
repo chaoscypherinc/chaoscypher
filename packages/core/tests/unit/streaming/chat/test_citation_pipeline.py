@@ -261,21 +261,39 @@ class TestNormalizeChunkReferences:
         out = normalize_chunk_references("[[cite:C0:S1|book.txt]]", tool_results)
         assert "[[cite:uuid-1:S1|book.txt]]" in out
 
+    def test_malformed_chunk_missing_chunk_id_does_not_raise(self):
+        """A tool-result chunk with an alias but no chunk_id is skipped.
+
+        Regression: the alias-map builder indexed ``chunk["chunk_id"]``
+        unguarded, so one malformed tool result KeyError'd through
+        ``finalize_chat_content`` and failed the turn (2026-07-27 audit).
+        """
+        tool_results = _wrap(
+            {
+                "chunks": [
+                    {"chunk_alias": "C0", "original_content": "no id here"},
+                    _chunk("uuid-1", "body", chunk_alias="C1", filename="book.txt"),
+                ]
+            }
+        )
+        out = normalize_chunk_references("[[cite:C1:S1|book.txt]]", tool_results)
+        assert "[[cite:uuid-1:S1|book.txt]]" in out
+
     def test_bare_alias_paren_all_known(self):
         tool_results = _wrap(
             {
                 "chunks": [
-                    _chunk("u-a", "a", chunk_alias="C0", filename="f1.txt"),
-                    _chunk("u-b", "b", chunk_alias="C1", filename="f2.txt"),
+                    _chunk("aa-1", "a", chunk_alias="C0", filename="f1.txt"),
+                    _chunk("bb-2", "b", chunk_alias="C1", filename="f2.txt"),
                 ]
             }
         )
         out = normalize_chunk_references("see (C0, C1)", tool_results)
-        assert "[[cite:u-a:S1|f1.txt]]" in out
-        assert "[[cite:u-b:S1|f2.txt]]" in out
+        assert "[[cite:aa-1:S1|f1.txt]]" in out
+        assert "[[cite:bb-2:S1|f2.txt]]" in out
 
     def test_bare_alias_paren_partial_unknown_left_intact(self):
-        tool_results = _wrap({"chunks": [_chunk("u-a", "a", chunk_alias="C0", filename="f1.txt")]})
+        tool_results = _wrap({"chunks": [_chunk("aa-1", "a", chunk_alias="C0", filename="f1.txt")]})
         out = normalize_chunk_references("see (C0, C9)", tool_results)
         # C9 unknown -> whole bare-paren left untouched
         assert "(C0, C9)" in out
@@ -426,6 +444,21 @@ class TestStripMalformedCitations:
     def test_no_markers_passthrough(self):
         assert strip_malformed_citations("plain text") == "plain text"
 
+    def test_prefixed_lexicon_import_id_kept(self):
+        # The lexicon importer mints ids like chunk_<hex> (importer
+        # `_chunk_id_from_iri`); citations to imported chunks must survive
+        # the scrub, not be destroyed as malformed (2026-07-27 audit).
+        content = "Imported fact [[cite:chunk_a1b2c3d4e5f6:S1|pack.ccx]] holds."
+        assert strip_malformed_citations(content) == content
+
+    def test_non_hex_letter_junk_id_removed(self):
+        # Arbitrary letter junk (e.g. O5) must be rejected — the interface
+        # strict pattern never matched it, so keeping it here produced an
+        # unenrichable marker the web UI silently deleted (layer divergence).
+        out = strip_malformed_citations("Claim [[cite:O5:S1|f.txt]] end.")
+        assert "[[cite:" not in out
+        assert "Claim end." in out
+
 
 # ---------------------------------------------------------------------------
 # correct_mismatched_citations
@@ -436,23 +469,23 @@ class TestStripMalformedCitations:
 @pytest.mark.cortex
 class TestCorrectMismatchedCitations:
     def test_wrong_chunk_rewritten(self):
-        right = _chunk("right-id", LONG_QUOTE + " in the document.", chunk_index=0)
-        wrong = _chunk("wrong-id", "Totally unrelated content sitting elsewhere.", chunk_index=5)
+        right = _chunk("fac1-1d", LONG_QUOTE + " in the document.", chunk_index=0)
+        wrong = _chunk("bad0-1d", "Totally unrelated content sitting elsewhere.", chunk_index=5)
         tool_results = _wrap({"chunks": [wrong, right]})
-        content = f'> "{LONG_QUOTE}" [[cite:wrong-id:S1|source.txt]]'
+        content = f'> "{LONG_QUOTE}" [[cite:bad0-1d:S1|source.txt]]'
         out = correct_mismatched_citations(content, tool_results)
-        assert "[[cite:right-id:S1|source.txt]]" in out
-        assert "wrong-id" not in out
+        assert "[[cite:fac1-1d:S1|source.txt]]" in out
+        assert "bad0-1d" not in out
 
     def test_correct_chunk_passthrough(self):
-        right = _chunk("right-id", LONG_QUOTE + " in the document.", chunk_index=0)
+        right = _chunk("fac1-1d", LONG_QUOTE + " in the document.", chunk_index=0)
         tool_results = _wrap({"chunks": [right]})
-        content = f'> "{LONG_QUOTE}" [[cite:right-id:S1|source.txt]]'
+        content = f'> "{LONG_QUOTE}" [[cite:fac1-1d:S1|source.txt]]'
         out = correct_mismatched_citations(content, tool_results)
-        assert "[[cite:right-id:S1|source.txt]]" in out
+        assert "[[cite:fac1-1d:S1|source.txt]]" in out
 
     def test_too_short_quote_skipped(self):
-        right = _chunk("right-id", "short body text", chunk_index=0)
+        right = _chunk("fac1-1d", "short body text", chunk_index=0)
         tool_results = _wrap({"chunks": [right]})
         content = '> "tiny" [[cite:other-id:S1|source.txt]]'
         out = correct_mismatched_citations(content, tool_results)
@@ -464,7 +497,7 @@ class TestCorrectMismatchedCitations:
         assert correct_mismatched_citations(content, []) == content
 
     def test_blockquote_without_citation_passthrough(self):
-        right = _chunk("right-id", LONG_QUOTE, chunk_index=0)
+        right = _chunk("fac1-1d", LONG_QUOTE, chunk_index=0)
         tool_results = _wrap({"chunks": [right]})
         content = f'> "{LONG_QUOTE}"'
         out = correct_mismatched_citations(content, tool_results)

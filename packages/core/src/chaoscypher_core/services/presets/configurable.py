@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.plugins import PluginMetadata, metadata_from_dict
+from chaoscypher_core.plugins import PluginMetadata
 
 
 if TYPE_CHECKING:
@@ -118,19 +118,21 @@ class ConfigurableVRAMPreset:
     def metadata(self) -> PluginMetadata:
         """Get plugin metadata from JSON config.
 
+        Constructed directly rather than via ``metadata_from_dict``, whose
+        key precedence resolves ``plugin_id`` from ``name`` — which silently
+        made every preset's ``plugin_id`` its display name.
+
         Returns:
             PluginMetadata instance generated from config.
         """
-        return metadata_from_dict(
-            {
-                "plugin_id": self.name,
-                "name": self.display_name,
-                "description": self.description,
-                "version": self.config.get("version", "1.0.0"),
-                "author": self.config.get("author", ""),
-                "category": "preset",
-                "builtin": self.config.get("builtin", False),
-            }
+        return PluginMetadata(
+            plugin_id=self.name,
+            name=self.display_name,
+            description=self.description,
+            version=self.config.get("version", "1.0.0"),
+            author=self.config.get("author", ""),
+            category="preset",
+            builtin=self.config.get("builtin", False),
         )
 
     def get_ollama_settings(self) -> dict[str, Any]:

@@ -34,6 +34,17 @@ class BackupService:
         self._backup_dir = self._data_dir / backup_subdir
 
     @staticmethod
+    def _dispose_engines(when: str) -> None:
+        """Invalidate cached SQLAlchemy engines so new connections re-open clean."""
+        try:
+            from chaoscypher_core.adapters.sqlite.engine import dispose_all_engines
+
+            dispose_all_engines()
+            logger.info("engines_invalidated", when=when)
+        except Exception:
+            logger.warning("engine_invalidation_skipped", when=when)
+
+    @staticmethod
     def _validate_database_name(database_name: str) -> None:
         """Validate database name contains only safe characters.
 
@@ -175,11 +186,28 @@ class BackupService:
 
         db_path = self._data_dir / "databases" / database_name / "app.db"
 
-        # Safety backup of current state
+        # Safety backup of current state — WAL-aware. A plain file copy of
+        # app.db misses every transaction still sitting in the -wal sidecar
+        # (which is deleted just below), so snapshot through a live
+        # connection with VACUUM INTO, the same primitive create_backup uses.
         if db_path.exists():
             safety = db_path.with_suffix(".db.pre_restore")
-            shutil.copy2(str(db_path), str(safety))
+            if safety.exists():
+                safety.unlink()  # VACUUM INTO refuses to overwrite
+            conn = sqlite3.connect(str(db_path))
+            try:
+                quoted = str(safety).replace("'", "''")
+                conn.execute(f"VACUUM INTO '{quoted}'")
+            finally:
+                conn.close()
             logger.info("safety_backup_created", path=str(safety))
+
+        # Dispose cached engines BEFORE touching the files: the running
+        # process holds pooled WAL-mode connections on this exact inode, and
+        # overwriting it under them (or deleting the sidecars they have open)
+        # is the SQLite restore-corruption case. Mirrors
+        # UpgradeService._reset_database_files (dispose -> unlink -> copy).
+        self._dispose_engines("before_overwrite")
 
         # Clean up WAL journal files to prevent corruption after overwrite
         for suffix in (".db-wal", ".db-shm"):
@@ -191,14 +219,9 @@ class BackupService:
         # Replace current database
         shutil.copy2(str(backup_path), str(db_path))
 
-        # Invalidate cached SQLAlchemy engines so new connections use the restored DB
-        try:
-            from chaoscypher_core.adapters.sqlite.engine import dispose_all_engines
-
-            dispose_all_engines()
-            logger.info("engines_invalidated_after_restore")
-        except Exception:
-            logger.debug("engine_invalidation_skipped")
+        # Dispose again so subsequent connections re-open the restored file
+        # rather than reusing anything created mid-restore.
+        self._dispose_engines("after_restore")
 
         logger.info(
             "backup_restored",

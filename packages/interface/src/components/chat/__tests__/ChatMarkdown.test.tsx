@@ -488,14 +488,73 @@ describe('ChatMarkdown', () => {
       expect(container.textContent).toContain('Incomplete');
     });
 
+    it('strips a citation marker whose id has non-hex letters (junk id)', () => {
+      // The grammar must reject arbitrary letter junk like O5 — same rule as
+      // the core/CLI parsers (four-layer sync, SECTION_MAP § chat).
+      const { container } = renderMarkdown('Claim [[cite:O5:S1|src.txt]] end.');
+      expect(container.textContent).not.toContain('[[cite:');
+      expect(screen.queryByTestId('chunk-citation')).not.toBeInTheDocument();
+    });
+
+    it('renders a citation chip for a prefixed lexicon-import chunk id', () => {
+      // The lexicon importer mints ids like chunk_<hex> — citations to
+      // imported chunks must render, not be stripped as malformed.
+      renderMarkdown('Imported fact [[cite:chunk_a1b2c3d4e5f6a1b2c3d4e5f6:S1|pack.ccx]].');
+      const chip = screen.getByTestId('chunk-citation');
+      expect(chip).toHaveAttribute('data-chunk-id', 'chunk_a1b2c3d4e5f6a1b2c3d4e5f6');
+    });
+  });
+
+  describe('markers inside code regions', () => {
+    it('keeps a citation marker literal inside a fenced code block', () => {
+      // Code is verbatim: a marker in a fence must neither leak a %%CITE_n%%
+      // placeholder nor be stripped (2026-07-27 audit; same bug class as the
+      // fixed 2026-06-10 heading placeholder leak).
+      const { container } = renderMarkdown(
+        `Syntax example:\n\n\`\`\`\n[[cite:${CHUNK_ID_A}:S1|src.txt]]\n\`\`\`\n`,
+      );
+      expect(container.textContent).not.toContain('%%CITE');
+      expect(container.querySelector('pre')?.textContent).toContain(
+        `[[cite:${CHUNK_ID_A}:S1|src.txt]]`,
+      );
+      expect(screen.queryByTestId('chunk-citation')).not.toBeInTheDocument();
+    });
+
+    it('keeps a malformed citation marker literal inside a fenced code block', () => {
+      const { container } = renderMarkdown(
+        'Broken form:\n\n```\n[[cite:C1:S15,C17|f]]\n```\n',
+      );
+      expect(container.querySelector('pre')?.textContent).toContain('[[cite:C1:S15,C17|f]]');
+    });
+
+    it('keeps a citation marker literal inside an inline code span', () => {
+      const { container } = renderMarkdown(
+        `Use \`[[cite:${CHUNK_ID_A}:S1|src.txt]]\` to cite.`,
+      );
+      expect(container.textContent).not.toContain('%%CITE');
+      expect(container.querySelector('code')?.textContent).toBe(
+        `[[cite:${CHUNK_ID_A}:S1|src.txt]]`,
+      );
+      expect(screen.queryByTestId('chunk-citation')).not.toBeInTheDocument();
+    });
+
+    it('keeps an entity marker literal inside code while rendering one outside', () => {
+      const { container } = renderMarkdown(
+        `See [[node:${ENTITY_ID_1}|Pierre]] and \`[[node:${ENTITY_ID_2}|Andrei]]\`.`,
+      );
+      expect(container.textContent).not.toContain('%%ENTITY');
+      expect(screen.getAllByTestId('entity-ref')).toHaveLength(1);
+      expect(container.querySelector('code')?.textContent).toBe(`[[node:${ENTITY_ID_2}|Andrei]]`);
+    });
+
     it('renders content that looks like an entity but has wrong chars in ID', () => {
       // 'xyz-qrs' has 'q', 'r', 's' after the hyphen which don't match [a-f0-9]
-      // so the full token won't be replaced — rendered as-is
+      // so the full token won't be replaced — rendered as literal text
       const { container } = renderMarkdown('Test [[node:xyz-qrs|Bad]] end');
-      // Should be rendered without an entity ref component
-      // (qrs are not hex: q, r, s are not in a-f)
-      // Since it won't match, it appears as literal text
-      expect(container).toBeTruthy();
+      expect(screen.queryByTestId('entity-ref')).not.toBeInTheDocument();
+      expect(container.textContent).toContain('Test');
+      expect(container.textContent).toContain('end');
+      expect(container.textContent).toContain('[[node:xyz-qrs|Bad]]');
     });
   });
 

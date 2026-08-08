@@ -109,7 +109,7 @@ class WorkflowPortabilityService:
         # Return export format
         return {
             "version": "1.0",
-            "exported_at": datetime.now(UTC).isoformat() + "Z",
+            "exported_at": datetime.now(UTC).isoformat(),
             "workflow": workflow_data,
             "steps": steps_data,
         }

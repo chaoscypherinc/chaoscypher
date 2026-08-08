@@ -8,21 +8,25 @@ QUEUE_OPERATIONS is configured concurrency=8 (parallel up to limit).
 
 The two config tests call load_worker_config with the canonical worker-type
 keys ("llm_worker" / "operations_worker") and patch the path-settings so no
-real /data/workers.yaml is needed.  The five semaphore tests use
-asyncio.Semaphore directly — the same primitive QueueWorker uses — to pin the
-behavioral contract the worker depends on.
+real /data/workers.yaml is needed.  The five dispatch tests drive the real
+``QueueWorker._poll_queue`` loop over a stateful fake Valkey client, so the
+concurrency invariants are pinned against the worker's own semaphore wiring
+(``config["concurrency"]`` → acquire-before-pop → release-in-finally), not
+against a bare ``asyncio.Semaphore`` reconstruction of it.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
+import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import chaoscypher_neuron.worker  # noqa: F401 — configures structlog at import time
+from chaoscypher_core.queue.worker import QueueWorker
 from chaoscypher_neuron.config import load_worker_config
 
 
@@ -55,11 +59,6 @@ def _mock_path_settings(data_dir: str) -> MagicMock:
     return mock_ps
 
 
-# ---------------------------------------------------------------------------
-# Task 3: LLM queue serialization — 3 tests
-# ---------------------------------------------------------------------------
-
-
 def test_llm_queue_config_concurrency_is_one(tmp_path: Path) -> None:
     """load_worker_config('llm_worker') returns max_concurrent == 1."""
     defaults = _make_defaults()
@@ -88,123 +87,252 @@ def test_operations_queue_config_concurrency_is_eight(tmp_path: Path) -> None:
     assert cfg["max_concurrent"] == 8
 
 
-@pytest.mark.asyncio
-async def test_semaphore_with_concurrency_one_serializes_two_handlers() -> None:
-    """A semaphore(1) bound around handlers makes them run serially.
+# ---------------------------------------------------------------------------
+# QueueWorker dispatch harness (fake-Valkey pattern from
+# core/tests/unit/queue/test_worker_process_loop_coverage.py, made stateful:
+# zpopmax pops preloaded task IDs and hgetall serves a per-task hash)
+# ---------------------------------------------------------------------------
 
-    This pins the behavioral contract that QueueWorker enforces; the
-    QueueWorker uses asyncio.Semaphore(max_concurrent) internally and any
-    test that simulates dispatch with this same primitive proves the
-    serialization invariant.
-    """
-    semaphore = asyncio.Semaphore(1)
-    timeline: list[tuple[str, float]] = []
-    start = time.perf_counter()
+_QUEUE = "operations"
 
-    async def slow_handler(name: str) -> None:
-        async with semaphore:
-            timeline.append((name + ":start", time.perf_counter() - start))
-            await asyncio.sleep(0.1)
-            timeline.append((name + ":end", time.perf_counter() - start))
 
-    await asyncio.gather(slow_handler("a"), slow_handler("b"))
+def _task_hash(operation: str) -> dict[bytes, bytes]:
+    return {
+        b"operation": operation.encode(),
+        b"data": json.dumps({}).encode(),
+        b"metadata": b"{}",
+        b"result_ttl": b"3600",
+        b"attempts": b"0",
+        b"payload_version": b"1",
+        b"priority": b"50",
+    }
 
-    # With concurrency=1, b cannot start until a ends.
-    a_end = next(t for n, t in timeline if n == "a:end")
-    b_start = next(t for n, t in timeline if n == "b:start")
-    assert b_start >= a_end - 0.05, (
-        f"Expected b to start after a ended (concurrency=1); "
-        f"a ended at {a_end:.3f}, b started at {b_start:.3f}"
+
+def _make_stateful_valkey(tasks: dict[str, str]) -> MagicMock:
+    """Fake Valkey preloaded with ``{task_id: operation}`` pending tasks."""
+    pending = list(tasks)
+    valkey = MagicMock()
+
+    async def zpopmax(key: str, count: int = 1) -> list[tuple[bytes, float]]:
+        if pending:
+            return [(pending.pop(0).encode(), 50.0)]
+        return []
+
+    async def hgetall(key: str) -> dict[bytes, bytes]:
+        task_id = key.rsplit(":", 1)[-1]
+        return _task_hash(tasks[task_id])
+
+    valkey.zpopmax = zpopmax
+    valkey.hgetall = hgetall
+    valkey.hget = AsyncMock(return_value=None)  # no retry_after backoff
+    valkey.hset = AsyncMock(return_value=1)
+    valkey.hincrby = AsyncMock(return_value=1)
+    valkey.zadd = AsyncMock(return_value=1)
+    valkey.setex = AsyncMock(return_value=True)
+    valkey.persist = AsyncMock(return_value=True)
+    valkey.sadd = AsyncMock(return_value=1)
+    valkey.srem = AsyncMock(return_value=1)
+    valkey.expire = AsyncMock(return_value=True)
+    valkey.delete = AsyncMock(return_value=1)
+    return valkey
+
+
+def _make_worker(
+    tasks: dict[str, str],
+    handlers: dict[str, Any],
+    *,
+    concurrency: int,
+) -> QueueWorker:
+    return QueueWorker(
+        client=_make_stateful_valkey(tasks),
+        queues_config={_QUEUE: {"concurrency": concurrency, "max_tries": 1, "timeout": 30}},
+        handlers={_QUEUE: handlers},
+        poll_interval=0.0,
+        semaphore_acquire_timeout=0.01,
+        poller_error_delay=0.0,
     )
 
 
-# ---------------------------------------------------------------------------
-# Task 4: Operations queue parallelism — 4 tests
-# ---------------------------------------------------------------------------
+async def _run_until(worker: QueueWorker, done: asyncio.Event, timeout: float = 10.0) -> None:
+    """Drive the real _poll_queue loop until ``done`` fires, then drain."""
+    worker._running = True
+    poller = asyncio.create_task(worker._poll_queue(_QUEUE, worker.queues_config[_QUEUE]))
+    try:
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+    finally:
+        worker._running = False
+        await asyncio.wait_for(poller, timeout=timeout)
+        await worker._drain_active_tasks(timeout=timeout)
+
+
+class _ConcurrencyProbe:
+    """Handler that records in-flight overlap across dispatched tasks."""
+
+    def __init__(self, total: int) -> None:
+        self.total = total
+        self.in_flight = 0
+        self.max_in_flight = 0
+        self.completed: list[str] = []
+        self.all_done = asyncio.Event()
+
+    async def __call__(self, data: dict, *, metadata: dict, task_id: str) -> str:
+        self.in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self.in_flight)
+        # Yield repeatedly so the poller has every chance to dispatch
+        # another task while this one is mid-flight.
+        for _ in range(5):
+            await asyncio.sleep(0.01)
+        self.in_flight -= 1
+        self.completed.append(task_id)
+        if len(self.completed) == self.total:
+            self.all_done.set()
+        return "ok"
 
 
 @pytest.mark.asyncio
-async def test_semaphore_with_concurrency_eight_allows_eight_parallel() -> None:
-    """asyncio.Semaphore(8) with 8 tasks shows all 8 in-flight simultaneously."""
-    semaphore = asyncio.Semaphore(8)
-    in_flight = 0
-    max_in_flight = 0
-    lock = asyncio.Lock()
+async def test_worker_concurrency_one_serializes_two_handlers() -> None:
+    """With config concurrency=1 the worker never overlaps two handlers."""
+    probe = _ConcurrencyProbe(total=2)
+    worker = _make_worker(
+        {"t-a": "op", "t-b": "op"},
+        {"op": probe},
+        concurrency=1,
+    )
 
-    async def slow_handler() -> None:
-        nonlocal in_flight, max_in_flight
-        async with semaphore:
-            async with lock:
-                in_flight += 1
-                max_in_flight = max(max_in_flight, in_flight)
-            await asyncio.sleep(0.05)
-            async with lock:
-                in_flight -= 1
+    await _run_until(worker, probe.all_done)
 
-    await asyncio.gather(*(slow_handler() for _ in range(8)))
-    assert max_in_flight == 8
+    assert probe.completed == ["t-a", "t-b"]
+    assert probe.max_in_flight == 1, (
+        f"concurrency=1 must serialize dispatch; observed {probe.max_in_flight} in flight"
+    )
 
 
 @pytest.mark.asyncio
-async def test_semaphore_with_concurrency_eight_caps_ninth_task() -> None:
-    """asyncio.Semaphore(8) with 16 tasks never lets more than 8 run at once."""
-    semaphore = asyncio.Semaphore(8)
-    in_flight = 0
-    max_in_flight = 0
-    lock = asyncio.Lock()
+async def test_worker_concurrency_eight_allows_eight_parallel() -> None:
+    """With config concurrency=8 the worker gets all 8 tasks in flight at once.
 
-    async def slow_handler() -> None:
-        nonlocal in_flight, max_in_flight
-        async with semaphore:
-            async with lock:
-                in_flight += 1
-                max_in_flight = max(max_in_flight, in_flight)
-            await asyncio.sleep(0.05)
-            async with lock:
-                in_flight -= 1
-
-    await asyncio.gather(*(slow_handler() for _ in range(16)))
-    assert max_in_flight == 8, f"Concurrency cap broken: peak {max_in_flight}"
-
-
-@pytest.mark.asyncio
-async def test_semaphore_no_starvation_when_one_task_fails() -> None:
-    """A failing handler frees its semaphore slot for the next task."""
-    semaphore = asyncio.Semaphore(2)
+    Each handler blocks until all 8 have started: if the worker's semaphore
+    were narrower than the configured concurrency, the last task could never
+    start and the test would time out.
+    """
+    started = 0
+    all_started = asyncio.Event()
+    all_done = asyncio.Event()
     completed: list[str] = []
 
-    async def good() -> None:
-        async with semaphore:
-            await asyncio.sleep(0.01)
-            completed.append("good")
+    async def handler(data: dict, *, metadata: dict, task_id: str) -> str:
+        nonlocal started
+        started += 1
+        if started == 8:
+            all_started.set()
+        await all_started.wait()
+        completed.append(task_id)
+        if len(completed) == 8:
+            all_done.set()
+        return "ok"
 
-    async def bad() -> None:
-        async with semaphore:
-            await asyncio.sleep(0.01)
-            raise RuntimeError("intentional")
+    worker = _make_worker(
+        {f"t-{i}": "op" for i in range(8)},
+        {"op": handler},
+        concurrency=8,
+    )
 
-    # Schedule 4 tasks (2 of each); bad raises, good completes.
-    results = await asyncio.gather(good(), bad(), good(), bad(), return_exceptions=True)
+    await _run_until(worker, all_done)
 
-    # 2 good completions, 2 bad raises — semaphore did not deadlock.
-    assert completed.count("good") == 2
-    assert sum(isinstance(r, RuntimeError) for r in results) == 2
+    assert started == 8
+    assert len(completed) == 8
 
 
 @pytest.mark.asyncio
-async def test_semaphore_fairness_across_many_enqueues() -> None:
-    """asyncio.Semaphore is FIFO-ordered — enqueued tasks complete in order.
+async def test_worker_concurrency_eight_caps_ninth_task() -> None:
+    """With 16 pending tasks and concurrency=8, the worker holds at 8 in flight."""
+    started = 0
+    eight_started = asyncio.Event()
+    release = asyncio.Event()
+    all_done = asyncio.Event()
+    completed: list[str] = []
 
-    Pins the QueueWorker fairness assumption: no enqueue is permanently
-    starved by later arrivals even at high concurrency.
+    async def handler(data: dict, *, metadata: dict, task_id: str) -> str:
+        nonlocal started
+        started += 1
+        if started == 8:
+            eight_started.set()
+        await release.wait()
+        completed.append(task_id)
+        if len(completed) == 16:
+            all_done.set()
+        return "ok"
+
+    worker = _make_worker(
+        {f"t-{i}": "op" for i in range(16)},
+        {"op": handler},
+        concurrency=8,
+    )
+
+    worker._running = True
+    poller = asyncio.create_task(worker._poll_queue(_QUEUE, worker.queues_config[_QUEUE]))
+    try:
+        await asyncio.wait_for(eight_started.wait(), timeout=10.0)
+        # Give the poller ample loop iterations to (incorrectly) dispatch a
+        # ninth task; every slot is held, so the count must stay at 8.
+        await asyncio.sleep(0.1)
+        assert started == 8, f"Concurrency cap broken: {started} tasks started"
+        release.set()
+        await asyncio.wait_for(all_done.wait(), timeout=10.0)
+    finally:
+        worker._running = False
+        await asyncio.wait_for(poller, timeout=10.0)
+        await worker._drain_active_tasks(timeout=10.0)
+
+    assert len(completed) == 16
+
+
+@pytest.mark.asyncio
+async def test_worker_failing_handler_frees_slot_for_next_task() -> None:
+    """A handler that raises releases its slot; queued tasks still dispatch.
+
+    concurrency=1 makes the invariant sharp: if the failing task leaked its
+    slot, nothing after it could ever start.
     """
-    semaphore = asyncio.Semaphore(4)
-    order: list[int] = []
+    good_done = asyncio.Event()
+    completed: list[str] = []
+    failed: list[str] = []
 
-    async def numbered(i: int) -> None:
-        async with semaphore:
-            await asyncio.sleep(0.001 * i)  # different durations to surface ordering issues
-            order.append(i)
+    async def bad(data: dict, *, metadata: dict, task_id: str) -> str:
+        failed.append(task_id)
+        raise RuntimeError("intentional")
 
-    await asyncio.gather(*(numbered(i) for i in range(20)))
-    assert sorted(order) == list(range(20)), "Tasks completed out of order or some were starved"
+    async def good(data: dict, *, metadata: dict, task_id: str) -> str:
+        completed.append(task_id)
+        if len(completed) == 2:
+            good_done.set()
+        return "ok"
+
+    worker = _make_worker(
+        {"t-bad-1": "bad_op", "t-bad-2": "bad_op", "t-good-1": "good_op", "t-good-2": "good_op"},
+        {"bad_op": bad, "good_op": good},
+        concurrency=1,
+    )
+
+    await _run_until(worker, good_done)
+
+    assert failed == ["t-bad-1", "t-bad-2"]
+    assert completed == ["t-good-1", "t-good-2"]
+
+
+@pytest.mark.asyncio
+async def test_worker_dispatches_in_pop_order_without_starvation() -> None:
+    """Tasks complete in queue-pop order under serial dispatch — none starved."""
+    probe = _ConcurrencyProbe(total=12)
+    task_ids = [f"t-{i:02d}" for i in range(12)]
+    worker = _make_worker(
+        dict.fromkeys(task_ids, "op"),
+        {"op": probe},
+        concurrency=1,
+    )
+
+    await _run_until(worker, probe.all_done)
+
+    assert probe.completed == task_ids, (
+        f"Serial dispatch must preserve queue-pop order; got {probe.completed}"
+    )

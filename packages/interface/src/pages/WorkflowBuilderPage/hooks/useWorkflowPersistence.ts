@@ -133,7 +133,28 @@ export function useWorkflowPersistence(
   const [confirmLeaveOpen, setConfirmLeaveOpen] = useState(false);
 
   // -- Serialization (kept local: ReactFlow <-> API mapping) ---------------
-  const { saveWorkflow: serializeSaveWorkflow, loadWorkflow } = useWorkflowSerialization();
+  // Write server-assigned step ids back onto the canvas nodes after a save,
+  // so subsequent saves update steps in place instead of delete+recreate.
+  const handleStepIdsAssigned = useCallback(
+    (assignments: Array<{ nodeId: string; stepId: string }>) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          const assignment = assignments.find((a) => a.nodeId === n.id);
+          return assignment
+            ? { ...n, data: { ...n.data, stepId: assignment.stepId } }
+            : n;
+        }),
+      );
+    },
+    [setNodes],
+  );
+
+  const { saveWorkflow: serializeSaveWorkflow, loadWorkflow } = useWorkflowSerialization({
+    // Surface validation/API failures from the serialization save — without
+    // this, saveWorkflow returns null silently and the user sees nothing.
+    onError: setError,
+    onStepIdsAssigned: handleStepIdsAssigned,
+  });
 
   const { saveTemplate } = useStepTemplates();
 

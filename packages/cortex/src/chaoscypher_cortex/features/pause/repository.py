@@ -30,10 +30,18 @@ class PauseRepository:
         source_id: str,
         database_name: str,
         reason: str | None,
-    ) -> None:
-        """Flip is_paused=True on a single source."""
-        self.adapter.set_source_paused(
-            source_id=source_id,
+    ) -> int:
+        """Flip is_paused=True on a single source.
+
+        Returns the number of rows updated (0 when the source does not
+        exist) so the service can 404 instead of reporting success for a
+        deleted or mistyped source_id. Delegates to the bulk adapter
+        method because it is the one that reports rowcount;
+        ``set_source_paused`` writes the identical values but returns
+        nothing.
+        """
+        return self.adapter.bulk_set_sources_paused(
+            source_ids=[source_id],
             database_name=database_name,
             is_paused=True,
             reason=reason,
@@ -44,10 +52,14 @@ class PauseRepository:
         *,
         source_id: str,
         database_name: str,
-    ) -> None:
-        """Flip is_paused=False and clear metadata on a single source."""
-        self.adapter.set_source_paused(
-            source_id=source_id,
+    ) -> int:
+        """Flip is_paused=False and clear metadata on a single source.
+
+        Returns the number of rows updated (0 when the source does not
+        exist) — see ``pause_source`` for the rationale.
+        """
+        return self.adapter.bulk_set_sources_paused(
+            source_ids=[source_id],
             database_name=database_name,
             is_paused=False,
             reason=None,
@@ -98,3 +110,16 @@ class PauseRepository:
     def get_system_state(self) -> dict[str, Any]:
         """Read the singleton SystemState row (lazily created)."""
         return self.adapter.get_system_state()
+
+    def list_system_events(
+        self,
+        *,
+        event_type: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """List recent system events (audit trail), newest first."""
+        return self.adapter.list_system_events(event_type=event_type, limit=limit)
+
+    def clear_system_events(self) -> int:
+        """Delete all system events. Returns the number deleted."""
+        return self.adapter.clear_system_events()

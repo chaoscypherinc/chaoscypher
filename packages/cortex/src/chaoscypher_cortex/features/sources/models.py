@@ -54,6 +54,30 @@ class StageProgressRecord(BaseModel):
 # ================================
 
 
+class ReExtractRequest(BaseModel):
+    """Optional per-call setting overrides for ``POST /sources/{id}/re_extract``.
+
+    Every field is optional. **Only fields actually supplied override** — an
+    omitted field falls through to the source's persisted upload-time value, so
+    the default behaviour (send no body at all) is unchanged.
+
+    Overrides apply to **this run only** and are not written back to the source
+    row, which is what the API documents and what makes a one-off re-extract
+    under a different mode safe.
+
+    Added 2026-08-04. The endpoint previously declared no body model, so FastAPI
+    silently discarded any JSON: a client sending ``{"filtering_mode": "strict"}``
+    got ``202`` and a full, token-costing re-extraction under the *old* settings
+    with nothing signalling the override was dropped.
+    """
+
+    auto_analyze: bool | None = None
+    enable_normalization: bool | None = None
+    enable_vision: bool | None = None
+    content_filtering: bool | None = None
+    filtering_mode: FilteringMode | None = None
+
+
 class UrlImportRequest(BaseModel):
     """Request model for importing a source from a URL.
 
@@ -161,6 +185,9 @@ class QualityMetrics(BaseModel):
     loader_docx_paragraphs_skipped: int = 0
     loader_xlsx_rows_skipped: int = 0
     loader_csv_rows_truncated: int = 0
+    # 2026-07-23: EPUB chapters the spine promised but the loader could not
+    # deliver (manifest-less idref or file missing from the zip).
+    loader_epub_chapters_skipped: int = 0
     # Phase 7 audit-remediation (2026-05-09): JSON-shaped per-key breakdowns
     # — dict[tag/shape -> count], or None if the loader never ran.  Rendered
     # in the Data Quality tab as a one-line summary of the top keys.
@@ -505,6 +532,7 @@ class SourceResponse(BaseModel):
     loader_docx_paragraphs_skipped: int = Field(default=0, exclude=True)
     loader_xlsx_rows_skipped: int = Field(default=0, exclude=True)
     loader_csv_rows_truncated: int = Field(default=0, exclude=True)
+    loader_epub_chapters_skipped: int = Field(default=0, exclude=True)
     loader_html_dropped_tags: dict[str, int] | None = Field(default=None, exclude=True)
     loader_pptx_shapes_skipped: dict[str, int] | None = Field(default=None, exclude=True)
     cleaner_lines_removed: int = Field(default=0, exclude=True)
@@ -601,6 +629,7 @@ class SourceResponse(BaseModel):
                 loader_docx_paragraphs_skipped=self.loader_docx_paragraphs_skipped,
                 loader_xlsx_rows_skipped=self.loader_xlsx_rows_skipped,
                 loader_csv_rows_truncated=self.loader_csv_rows_truncated,
+                loader_epub_chapters_skipped=self.loader_epub_chapters_skipped,
                 loader_html_dropped_tags=self.loader_html_dropped_tags,
                 loader_pptx_shapes_skipped=self.loader_pptx_shapes_skipped,
                 cleaner_lines_removed=self.cleaner_lines_removed,
@@ -1097,11 +1126,19 @@ class RecoveryEventResponse(BaseModel):
 
 
 class RecoveryEventListResponse(BaseModel):
-    """Response from GET /api/v1/sources/{source_id}/recovery_events."""
+    """Response from GET /api/v1/sources/{source_id}/recovery_events.
 
-    events: list[RecoveryEventResponse] = Field(
+    House ``{data, pagination}`` envelope (API_DESIGN.md) — the feed is
+    not intrinsically bounded, since events accumulate per recovery
+    dispatch and the attempt counter resets on stage transitions.
+    """
+
+    data: list[RecoveryEventResponse] = Field(
         default_factory=list,
         description="Events ordered newest first.",
+    )
+    pagination: PaginationMetadata = Field(
+        description="Standard pagination envelope with the exact total.",
     )
 
 

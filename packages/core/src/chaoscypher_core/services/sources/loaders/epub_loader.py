@@ -117,7 +117,6 @@ class EPUBLoader:
                 rootfile, etc.).
         """
         from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
-        from chaoscypher_core.utils.encoding import detect_encoding
 
         check_loader_file_size(filepath, self.settings)
 
@@ -135,45 +134,13 @@ class EPUBLoader:
                 if opf_dir == ".":
                     opf_dir = ""
 
-                chapters: list[str] = []
-                chapter_titles: list[str] = []
-                chapter_replacement_total: int = 0
-                chapter_encoding_seen: list[str] = []
-
-                for item_id in spine_ids:
-                    href = manifest.get(item_id)
-                    if not href:
-                        continue
-                    chapter_path = (f"{opf_dir}/{href}" if opf_dir else href).lstrip("/")
-                    try:
-                        raw_bytes = zf.read(chapter_path)
-                    except KeyError:
-                        logger.warning(
-                            "epub_chapter_missing",
-                            chapter_path=chapter_path,
-                            idref=item_id,
-                        )
-                        continue
-                    # Route through the canonical detect_encoding helper so
-                    # cp1252 / Latin-1 EPUB chapters decode strictly (no
-                    # silent U+FFFD substitution) and the replacement-char
-                    # counter is populated for the data-quality rollup.
-                    # detect_encoding reads from a Path, so we write the
-                    # chapter bytes to a temporary file — same pattern used
-                    # by the web adapter for in-memory bytes.
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".xhtml") as _tmp:
-                        _tmp.write(raw_bytes)
-                        _tmp_path = Path(_tmp.name)
-                    try:
-                        encoding_used, raw, replacement_count = detect_encoding(_tmp_path)
-                    finally:
-                        _tmp_path.unlink(missing_ok=True)
-                    chapter_replacement_total += replacement_count
-                    chapter_encoding_seen.append(encoding_used)
-                    ch_text, ch_title = self._extract_chapter_text(raw)
-                    if ch_text.strip():
-                        chapters.append(ch_text)
-                        chapter_titles.append(ch_title)
+                (
+                    chapters,
+                    chapter_titles,
+                    chapter_replacement_total,
+                    chapter_encoding_seen,
+                    chapters_skipped,
+                ) = self._load_chapters(zf, spine_ids=spine_ids, manifest=manifest, opf_dir=opf_dir)
         except ValidationError:
             # Already a structured error from ``_find_opf_path`` etc.;
             # don't double-wrap.
@@ -211,6 +178,7 @@ class EPUBLoader:
             title=title,
             author=author,
             chapter_count=len(chapters),
+            chapters_skipped=chapters_skipped,
             character_count=len(content),
             encoding_used=encoding_used,
             replacement_chars_count=chapter_replacement_total,
@@ -229,10 +197,81 @@ class EPUBLoader:
                     "content_type": "application/epub+zip",
                     "encoding_used": encoding_used,
                     "replacement_chars_count": chapter_replacement_total,
+                    # Rolled up into QualityCounter.LOADER_EPUB_CHAPTERS_SKIPPED
+                    # by the indexing handler (same pattern as DOCX/XLSX/CSV).
+                    "loader_epub_chapters_skipped": chapters_skipped,
                     "location_index": location_index,
                 },
             }
         ]
+
+    def _load_chapters(
+        self,
+        zf: zipfile.ZipFile,
+        *,
+        spine_ids: list[str],
+        manifest: dict[str, str],
+        opf_dir: str,
+    ) -> tuple[list[str], list[str], int, list[str], int]:
+        """Walk the spine and extract each chapter's visible text.
+
+        Returns ``(chapters, chapter_titles, replacement_total,
+        encodings_seen, chapters_skipped)``. ``chapters_skipped`` counts
+        the two skip sites — spine idrefs with no manifest entry and
+        manifest chapters missing from the zip — and is surfaced via
+        document metadata so the indexing handler rolls it up into
+        ``QualityCounter.LOADER_EPUB_CHAPTERS_SKIPPED``.
+        """
+        from chaoscypher_core.utils.encoding import detect_encoding
+
+        chapters: list[str] = []
+        chapter_titles: list[str] = []
+        replacement_total = 0
+        encodings_seen: list[str] = []
+        chapters_skipped = 0
+
+        for item_id in spine_ids:
+            href = manifest.get(item_id)
+            if not href:
+                chapters_skipped += 1
+                logger.warning(
+                    "epub_spine_idref_missing_from_manifest",
+                    idref=item_id,
+                )
+                continue
+            chapter_path = (f"{opf_dir}/{href}" if opf_dir else href).lstrip("/")
+            try:
+                raw_bytes = zf.read(chapter_path)
+            except KeyError:
+                chapters_skipped += 1
+                logger.warning(
+                    "epub_chapter_missing",
+                    chapter_path=chapter_path,
+                    idref=item_id,
+                )
+                continue
+            # Route through the canonical detect_encoding helper so
+            # cp1252 / Latin-1 EPUB chapters decode strictly (no
+            # silent U+FFFD substitution) and the replacement-char
+            # counter is populated for the data-quality rollup.
+            # detect_encoding reads from a Path, so we write the
+            # chapter bytes to a temporary file — same pattern used
+            # by the web adapter for in-memory bytes.
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xhtml") as _tmp:
+                _tmp.write(raw_bytes)
+                _tmp_path = Path(_tmp.name)
+            try:
+                encoding_used, raw, replacement_count = detect_encoding(_tmp_path)
+            finally:
+                _tmp_path.unlink(missing_ok=True)
+            replacement_total += replacement_count
+            encodings_seen.append(encoding_used)
+            ch_text, ch_title = self._extract_chapter_text(raw)
+            if ch_text.strip():
+                chapters.append(ch_text)
+                chapter_titles.append(ch_title)
+
+        return chapters, chapter_titles, replacement_total, encodings_seen, chapters_skipped
 
     def supports_ocr(self) -> bool:
         """EPUB files don't need OCR."""

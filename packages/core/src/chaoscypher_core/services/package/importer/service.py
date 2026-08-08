@@ -1114,9 +1114,17 @@ class CcxImporter:
         if chunk_updates and self.sources is not None:
             model = descriptor["model"]
             dims = int(descriptor["dimensions"])
-            for chunk_id, vector in chunk_updates.items():
-                b64 = base64.b64encode(np.array(vector, dtype=np.float32).tobytes()).decode("utf-8")
-                self.sources.update_chunk_embedding(chunk_id, b64, model, dims, "indexed")
+            self.sources.update_chunk_embeddings_batch(
+                {
+                    chunk_id: base64.b64encode(np.array(vector, dtype=np.float32).tobytes()).decode(
+                        "utf-8"
+                    )
+                    for chunk_id, vector in chunk_updates.items()
+                },
+                embedding_model=model,
+                embedding_dimensions=dims,
+                status="indexed",
+            )
             # Stamp embedded_at so the index op's list_unembedded_chunks gate
             # excludes them — otherwise it re-embeds despite the restored vector.
             self.sources.mark_chunks_embedded(

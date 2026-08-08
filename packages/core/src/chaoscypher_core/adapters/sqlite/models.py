@@ -768,6 +768,9 @@ class SourceRow(SQLModel, table=True):
         description="Per-shape-type count of skipped shapes in PPTXLoader.",
     )
     loader_csv_rows_truncated: int = Field(default=0)
+    # 2026-07-23: EPUB chapter-skip counter (migration 0006) — spine idrefs
+    # with no manifest entry + manifest chapters missing from the zip.
+    loader_epub_chapters_skipped: int = Field(default=0)
     cleaner_plugin_load_failures: int = Field(default=0)
     # Phase 7 audit-remediation (2026-05-09): new embedding counters.
     embedding_chunk_failures: int = Field(default=0)

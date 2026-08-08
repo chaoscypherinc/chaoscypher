@@ -279,13 +279,13 @@ def test_build_messages_basic_system_and_history():
 
 
 def test_build_messages_filters_fallback_errors():
-    """Messages starting with the fallback-apology string are filtered out."""
+    """Messages starting with the finalize apology string are filtered out."""
     chat = {
         "messages": [
             {"role": "user", "content": "Hi"},
             {
                 "role": "assistant",
-                "content": "I apologize, but I didn't generate a response. Try again.",
+                "content": "I apologize, but I was unable to generate a response. Please try again.",
             },
             {"role": "assistant", "content": "Real answer"},
         ]
@@ -293,9 +293,43 @@ def test_build_messages_filters_fallback_errors():
     result = build_messages_for_llm(chat, "chat-2")
     contents = [m["content"] for m in result.messages_for_llm[1:]]
     assert "Real answer" in contents
-    assert all(not c.startswith("I apologize, but I didn't generate") for c in contents)
+    assert all(not c.startswith("I apologize, but I was unable") for c in contents)
     # Only 2 of the 3 messages survive filtering.
     assert result.context_info.total_messages == 2
+
+
+def test_build_messages_filter_matches_finalize_apology_string():
+    """The filter prefix must match the apology finalize_chat_content produces.
+
+    Regression: the filter previously matched a retired fallback string
+    ("…I didn't generate a response") so persisted apologies from the live
+    pipeline leaked into every later turn's LLM context.
+    """
+    from chaoscypher_core.streaming.chat.finalize import finalize_chat_content
+
+    apology = finalize_chat_content("", None, []).content
+    chat = {
+        "messages": [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": apology},
+        ]
+    }
+    result = build_messages_for_llm(chat, "chat-2b")
+    contents = [m["content"] for m in result.messages_for_llm[1:]]
+    assert apology not in contents
+    assert result.context_info.total_messages == 1
+
+
+def test_build_messages_tolerates_none_content():
+    """A persisted row with content=None must not crash the history filter."""
+    chat = {
+        "messages": [
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": None, "extra_metadata": {}},
+        ]
+    }
+    result = build_messages_for_llm(chat, "chat-2c")
+    assert result.messages_for_llm[0]["role"] == "system"
 
 
 def test_build_messages_with_source_scope_augments_system_prompt():

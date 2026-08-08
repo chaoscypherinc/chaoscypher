@@ -62,10 +62,12 @@ def create(name: str) -> None:
         console.print(f"[red]Database already exists:[/red] {name}")
         sys.exit(1)
 
-    # Create by getting context (auto-creates directory structure)
+    # Create by getting context (auto-creates directory structure). The
+    # name is an explicit user argument — pin it, so `db create default`
+    # targets the actual default database even while another is active.
     try:
         console.print(f"Creating database '{name}'...")
-        ctx = get_context(database_name=name, auto_connect=True)
+        ctx = get_context(database_name=name, auto_connect=True, explicit_database=True)
 
         console.print(f"\n[green]Created database '{name}'[/green]")
         print_unwrapped(f"  [dim]Location:[/dim] {ctx.database_dir}")

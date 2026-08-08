@@ -7,8 +7,10 @@ Combines core DiagnosticCollector with container-specific data
 to produce a comprehensive diagnostic ZIP bundle.
 """
 
+import asyncio
 import json
 import os
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -81,12 +83,42 @@ class DiagnosticsService:
         queue_stats = await self._collect_queue_stats()
         service_status = self._collect_service_status()
 
-        # Write base bundle
+        # Write the bundle off the event loop — export_bundle walks the DB,
+        # reads logs, and writes a ZIP (all blocking disk I/O). On failure,
+        # remove the temp dir here: the API's BackgroundTask cleanup only
+        # runs after a successful FileResponse.
         tmp_dir = tempfile.mkdtemp(prefix="chaoscypher-diag-")
         output_path = Path(tmp_dir) / "chaoscypher-diagnostics.zip"
+        try:
+            await asyncio.to_thread(
+                self._write_bundle, collector, output_path, queue_stats, service_status
+            )
+        except BaseException:
+            await asyncio.to_thread(shutil.rmtree, tmp_dir, ignore_errors=True)
+            raise
+
+        logger.info("diagnostic_bundle_created", path=str(output_path))
+        return output_path
+
+    def _write_bundle(
+        self,
+        collector: DiagnosticCollector,
+        output_path: Path,
+        queue_stats: dict[str, Any] | None,
+        service_status: list[dict[str, Any]] | None,
+    ) -> None:
+        """Write the base bundle and append container-specific entries.
+
+        Synchronous by design — callers run this via ``asyncio.to_thread``.
+
+        Args:
+            collector: Configured DiagnosticCollector.
+            output_path: Destination ZIP path.
+            queue_stats: Optional queue stats to append as queue_stats.json.
+            service_status: Optional service statuses to append as services.json.
+        """
         collector.export_bundle(output_path, settings=self._settings_dict)
 
-        # Append enriched data to existing ZIP
         if queue_stats or service_status:
             with zipfile.ZipFile(output_path, "a") as zf:
                 if queue_stats:
@@ -99,9 +131,6 @@ class DiagnosticsService:
                         "services.json",
                         json.dumps(service_status, indent=2, default=str),
                     )
-
-        logger.info("diagnostic_bundle_created", path=str(output_path))
-        return output_path
 
     async def _collect_queue_stats(self) -> dict[str, Any] | None:
         """Gather queue statistics from Valkey.

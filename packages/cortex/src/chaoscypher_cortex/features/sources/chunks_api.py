@@ -165,6 +165,7 @@ async def get_chunk(
     response_model=SourceCitationListResponse,
     responses={
         **COMMON_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
     },
 )
 async def get_source_citations(
@@ -173,7 +174,12 @@ async def get_source_citations(
     service: Annotated[SourceService, Depends(get_source_service)],
     pagination: PageParams,
 ) -> dict[str, Any]:
-    """Get all citations (entity attributions) for a source."""
+    """Get all citations (entity attributions) for a source.
+
+    **Errors:**
+    - 404: Source not found
+    """
+    raise_if_not_found(service.get_source(source_id), "Source not found")
     page, page_size = pagination
     return service.get_citations(
         source_id=source_id,

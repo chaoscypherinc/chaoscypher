@@ -41,6 +41,7 @@ import structlog
 from sqlmodel import select
 from valkey.asyncio import Valkey
 from valkey.exceptions import ConnectionError as ValkeyConnectionError
+from valkey.exceptions import NoScriptError
 
 from chaoscypher_core.adapters.sqlite.models import ChunkExtractionTask
 from chaoscypher_core.constants import QUEUE_OPERATIONS
@@ -112,6 +113,32 @@ _ATOMIC_COMPLETE_SCRIPT = (Path(__file__).parent / "scripts" / "atomic_complete.
     encoding="utf-8"
 )
 
+_GUARDED_STATUS_WRITE_SCRIPT = (
+    Path(__file__).parent / "scripts" / "guarded_status_write.lua"
+).read_text(encoding="utf-8")
+
+_GUARDED_DELETE_SCRIPT = (Path(__file__).parent / "scripts" / "guarded_delete.lua").read_text(
+    encoding="utf-8"
+)
+
+_REQUEUE_ATOMIC_SCRIPT = (Path(__file__).parent / "scripts" / "requeue_atomic.lua").read_text(
+    encoding="utf-8"
+)
+
+# Plain string compare-and-swap (approval broker et al.). Small enough to
+# inline; ``streaming/chat/approval_broker.py`` duplicates it for raw-client
+# callers — keep the two in sync.
+_STRING_CAS_SCRIPT = (
+    "local v = redis.call('GET', KEYS[1]) "
+    "if v == ARGV[1] then redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL') return 1 end "
+    "return 0"
+)
+
+# Return-contract sentinels shared by the guarded Lua scripts. Any other
+# return value is the task's current status (the caller lost the race).
+GUARDED_OK = "__ok__"
+GUARDED_MISSING = "__missing__"
+
 
 class TaskHandler(Protocol):
     """Protocol for task handler functions."""
@@ -166,10 +193,17 @@ class QueueClient:
         self._failed_result_ttl: int = 14 * 86_400
         self._max_pending_queue_depth: int = 10000
         self._atomic_complete_sha: str | None = None
+        self._guarded_status_write_sha: str | None = None
+        self._guarded_delete_sha: str | None = None
+        self._requeue_atomic_sha: str | None = None
+        self._string_cas_sha: str | None = None
         # TTL for the Valkey cancel flag.  Set to llm_worker_default + 300 so
         # the fast-path check outlives the longest possible handler lifetime.
         # Defaults to 300 (legacy value) until overridden by connect().
         self._cancel_ttl: int = 300
+        # Reconciler pass-lock TTL; mirrors TimeoutSettings.reconcile_lock_ttl
+        # and is overridden from settings on connect().
+        self._reconcile_lock_ttl: int = 120
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -178,6 +212,13 @@ class QueueClient:
         """Initialise a queue server connection if queueing is enabled."""
         self.client = None
         self._connected = False
+        # Cached script SHAs are server-side state: a fresh connection may
+        # point at a server whose script cache no longer holds them.
+        self._atomic_complete_sha = None
+        self._guarded_status_write_sha = None
+        self._guarded_delete_sha = None
+        self._requeue_atomic_sha = None
+        self._string_cas_sha = None
 
         if not settings.llm.enable_llm_queueing:
             self._enabled = False
@@ -238,6 +279,7 @@ class QueueClient:
             # so a long-running LLM call (up to llm_worker_default seconds) can
             # still check the flag at its last poll without the key having expired.
             self._cancel_ttl = settings.timeouts.llm_worker_default + 300
+            self._reconcile_lock_ttl = settings.timeouts.reconcile_lock_ttl
 
         # Store queue depth limit from config
         if hasattr(settings, "queue"):
@@ -346,17 +388,24 @@ class QueueClient:
         """
         # Validate the whole batch BEFORE mutating registry state so a bad
         # handler never half-registers a sibling.
-        normalized: list[tuple[str, HandlerSpec]] = []
+        normalized: list[tuple[str, HandlerSpec, TaskHandler]] = []
         for op, h in handlers.items():
             spec = normalize_handler(h)
-            validate_handler_signature(spec.handler, queue=queue, operation=op)
-            normalized.append((op, spec))
+            handler_fn = spec.handler
+            if handler_fn is None:
+                msg = (
+                    f"Cannot register unbound HandlerSpec (handler=None) for "
+                    f"{queue}:{op} — unbound specs carry recovery flags only"
+                )
+                raise TypeError(msg)
+            validate_handler_signature(handler_fn, queue=queue, operation=op)
+            normalized.append((op, spec, handler_fn))
 
         self._handlers.setdefault(queue, {})
         self._retry_policy.setdefault(queue, {})
         self._transient_retry_policy.setdefault(queue, {})
-        for op, spec in normalized:
-            self._handlers[queue][op] = spec.handler
+        for op, spec, handler_fn in normalized:
+            self._handlers[queue][op] = handler_fn
             self._retry_policy[queue][op] = spec.retry_on_crash
             self._transient_retry_policy[queue][op] = spec.retry_on_transient
         self._queues.add(queue)
@@ -472,17 +521,166 @@ class QueueClient:
             queue: Queue name.
             task_id: Task identifier.
         """
-        if self.client is None:
-            raise QueueUnavailableError("Queue server is not connected")
-        if self._atomic_complete_sha is None:
-            self._atomic_complete_sha = await self.client.script_load(_ATOMIC_COMPLETE_SCRIPT)
-        await self.client.evalsha(
-            self._atomic_complete_sha,
+        await self._eval_cached_script(
+            "_atomic_complete_sha",
+            _ATOMIC_COMPLETE_SCRIPT,
             2,  # numkeys
             f"queue:{queue}:running",
             self._heartbeat_key(task_id),
             task_id,
         )
+
+    # ------------------------------------------------------------------
+    # Guarded-write / atomic-move primitives (CAS family, 2026-07-23)
+    # ------------------------------------------------------------------
+
+    async def _eval_cached_script(self, sha_attr: str, script: str, *args: Any) -> Any:
+        """EVALSHA a lazily-cached Lua script, reloading once on NOSCRIPT.
+
+        A Valkey server restart clears its script cache while this process's
+        cached SHAs live on, so every guarded write would fail with NOSCRIPT
+        until the worker itself restarted. Raw ``evalsha`` has no auto-reload
+        (unlike the ``register_script`` wrapper) — recover here by re-running
+        ``SCRIPT LOAD`` and retrying the call once.
+        """
+        if self.client is None:
+            raise QueueUnavailableError("Queue server is not connected")
+        sha = getattr(self, sha_attr)
+        if sha is None:
+            sha = await self.client.script_load(script)
+            setattr(self, sha_attr, sha)
+        try:
+            return await self.client.evalsha(sha, *args)
+        except NoScriptError:
+            logger.warning("queue_script_cache_lost_reloading", script=sha_attr)
+            sha = await self.client.script_load(script)
+            setattr(self, sha_attr, sha)
+            return await self.client.evalsha(sha, *args)
+
+    @staticmethod
+    def _decode_script_result(raw: Any) -> str:
+        """Decode a Lua string return to str (evalsha yields bytes)."""
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+    async def guarded_status_write(
+        self,
+        task_id: str,
+        *,
+        new_status: str,
+        allowed_from: tuple[str, ...],
+        extra_fields: dict[str, str] | None = None,
+        remove_from: str | None = None,
+        removal: str = "none",
+        expire_seconds: int | None = None,
+    ) -> str:
+        """Atomically write a task status only while it is still transitionable.
+
+        The single-round-trip replacement for every read-then-write status
+        transition (cancel paths, retry claim, reconciler terminal-fail).
+        Optionally removes the task from a pending zset / running set and
+        applies a TTL in the same atomic step.
+
+        Args:
+            task_id: Task identifier.
+            new_status: Status to write.
+            allowed_from: Current statuses the transition is valid from —
+                any other observed status refuses the whole write.
+            extra_fields: Additional hash fields written with the status.
+            remove_from: Full set/zset key to remove ``task_id`` from.
+            removal: ``"srem"`` | ``"zrem"`` | ``"none"``.
+            expire_seconds: Optional TTL applied to the task hash (dead-letter
+                retention on terminal failures).
+
+        Returns:
+            ``GUARDED_OK`` on success, ``GUARDED_MISSING`` when the hash does
+            not exist, otherwise the task's current status (caller lost).
+        """
+        fields = {"status": new_status, **(extra_fields or {})}
+        field_args: list[str] = []
+        for key, value in fields.items():
+            field_args.extend((key, value))
+        raw = await self._eval_cached_script(
+            "_guarded_status_write_sha",
+            _GUARDED_STATUS_WRITE_SCRIPT,
+            2,  # numkeys
+            f"queue:task:{task_id}",
+            remove_from or "",
+            task_id,
+            ",".join(allowed_from),
+            removal,
+            str(expire_seconds) if expire_seconds is not None else "",
+            *field_args,
+        )
+        return self._decode_script_result(raw)
+
+    async def guarded_delete(
+        self,
+        task_id: str,
+        *,
+        allowed_from: tuple[str, ...],
+        remove_from: str | None = None,
+        removal: str = "none",
+    ) -> str:
+        """Atomically delete a task hash only while its status allows it.
+
+        ``cancel_by_metadata``'s queued-task cleanup: a task that raced to
+        running keeps its live hash (the caller falls back to a guarded
+        cancel instead of destroying an executing task's record).
+
+        Returns:
+            ``GUARDED_OK`` on success, ``GUARDED_MISSING`` when the hash does
+            not exist, otherwise the task's current status (caller lost).
+        """
+        raw = await self._eval_cached_script(
+            "_guarded_delete_sha",
+            _GUARDED_DELETE_SCRIPT,
+            2,  # numkeys
+            f"queue:task:{task_id}",
+            remove_from or "",
+            task_id,
+            ",".join(allowed_from),
+            removal,
+        )
+        return self._decode_script_result(raw)
+
+    async def requeue_task_atomic(self, queue: str, task_id: str, priority: float) -> str:
+        """Atomically requeue an abandoned task (reset + pending + un-run).
+
+        One Lua move for the reconciler's requeue branch: HSET queued-state,
+        PERSIST (clear dead-letter TTL), ZADD pending, SREM running, HINCRBY
+        attempts. Refuses when the task finished while being classified.
+
+        Returns:
+            ``GUARDED_OK`` on success, ``GUARDED_MISSING`` when the hash does
+            not exist, otherwise the terminal status that blocked the move.
+        """
+        raw = await self._eval_cached_script(
+            "_requeue_atomic_sha",
+            _REQUEUE_ATOMIC_SCRIPT,
+            3,  # numkeys
+            f"queue:task:{task_id}",
+            f"queue:{queue}:pending",
+            f"queue:{queue}:running",
+            task_id,
+            str(priority),
+        )
+        return self._decode_script_result(raw)
+
+    async def compare_and_swap_string(self, key: str, *, expected: str, new: str) -> bool:
+        """Swap a plain string key's value only if it still equals ``expected``.
+
+        Keeps the key's TTL (``SET ... KEEPTTL``). Returns True when the swap
+        happened, False when another writer got there first.
+        """
+        raw = await self._eval_cached_script(
+            "_string_cas_sha",
+            _STRING_CAS_SCRIPT,
+            1,  # numkeys
+            key,
+            expected,
+            new,
+        )
+        return bool(int(raw or 0))
 
     @property
     def failed_result_ttl(self) -> int:
@@ -524,6 +722,13 @@ class QueueClient:
     # ------------------------------------------------------------------
     async def _check_queue_depth(self, queue: str) -> None:
         """Raise QueueFullError if the pending set exceeds the configured limit.
+
+        ADVISORY backpressure by decision (2026-07-23): the check is a
+        read-then-compare, so concurrent enqueuers can each pass the same
+        ZCARD snapshot and collectively overshoot the cap. That is
+        accepted — the cap exists to shed load loudly under sustained
+        pressure, not as a hard safety invariant; a hard cap would need
+        an atomic check-and-push (Lua) and is deliberately not built.
 
         Args:
             queue: Queue name whose pending sorted set is checked.
@@ -853,7 +1058,7 @@ class QueueClient:
             return None
         return json.loads(payload)
 
-    async def cancel_task(self, task_id: str) -> bool:
+    async def cancel_task(self, task_id: str) -> bool:  # noqa: PLR0911 — linear guard-return flow; each return is a distinct race outcome
         """Cancel a queued or running task.
 
         For queued tasks: removes from pending sorted set and marks cancelled.
@@ -880,70 +1085,56 @@ class QueueClient:
             return True
 
         task_queue = task.get("queue", "")
+        if self.client is None:
+            raise QueueUnavailableError("Queue server is not connected")
 
         if task_status == "queued":
-            # Remove from pending queue and mark cancelled
-            if self.client is None:
-                raise QueueUnavailableError("Queue server is not connected")
-            pipeline = self.client.pipeline()
-            pipeline.zrem(f"queue:{task_queue}:pending", task_id)
-            pipeline.hset(
-                f"queue:task:{task_id}",
-                mapping={"status": "cancelled", "completed_at": _iso_now()},
+            outcome = await self.guarded_status_write(
+                task_id,
+                new_status="cancelled",
+                allowed_from=("queued",),
+                extra_fields={"completed_at": _iso_now()},
+                remove_from=f"queue:{task_queue}:pending",
+                removal="zrem",
             )
-            await pipeline.execute()
-            logger.info("task_cancelled", task_id=task_id, was_queued=True)
-            return True
+            if outcome == GUARDED_OK:
+                logger.info("task_cancelled", task_id=task_id, was_queued=True)
+                return True
+            if outcome == GUARDED_MISSING:
+                return False
+            if outcome in {"completed", "failed", "cancelled"}:
+                return True
+            task_status = outcome  # raced queued -> running: fall through
 
         if task_status == "running":
-            # Check if the task is actually in the running set
-            if self.client is None:
-                raise QueueUnavailableError("Queue server is not connected")
-            sismember_result = self.client.sismember(f"queue:{task_queue}:running", task_id)
-            is_running = (
-                await sismember_result
-                if not isinstance(sismember_result, (bool, int))
-                else sismember_result
-            )
-            if not is_running:
-                # Orphaned running status — just mark cancelled
-                hset_result = self.client.hset(
-                    f"queue:task:{task_id}",
-                    mapping={"status": "cancelled", "completed_at": _iso_now()},
-                )
-                if not isinstance(hset_result, int):
-                    await hset_result
-                logger.info("task_cancelled", task_id=task_id, was_orphaned=True)
-                return True
-
-            # Set cancellation flag for the running task — handlers check this
-            # between processing batches and raise CancelledError if set.
-            # TTL covers the full worst-case handler lifetime so the flag
-            # remains live until at least the next handler poll.
+            # Cooperative flag + durable SQLite persist are safe regardless of
+            # the race — handlers poll the flag between batches, and the
+            # SQLite row lets is_task_cancelled outlive the Valkey key TTL.
+            # The status write itself is guarded: a task that completed in
+            # the window keeps status=completed and its result reachable
+            # (cancel-vs-complete precedence: cancel loses; decided
+            # 2026-07-23). The old orphaned-running SISMEMBER branch is
+            # subsumed — SREM of a non-member is a no-op inside the script.
             await self.client.set(
                 f"queue:cancel:{task_id}",
                 "1",
                 ex=self._cancel_ttl,
             )
-            # Persist cancellation durably to SQLite so that is_task_cancelled
-            # can still detect it after the Valkey key expires (TTL fallback).
             self._persist_cancellation_to_db(task_id, task)
-            # Remove from running set and mark cancelled immediately so UI updates
-            srem_result = self.client.srem(f"queue:{task_queue}:running", task_id)
-            if not isinstance(srem_result, int):
-                await srem_result
-            hset_result = self.client.hset(
-                f"queue:task:{task_id}",
-                mapping={"status": "cancelled", "completed_at": _iso_now()},
+            outcome = await self.guarded_status_write(
+                task_id,
+                new_status="cancelled",
+                allowed_from=("queued", "running"),
+                extra_fields={"completed_at": _iso_now()},
+                remove_from=f"queue:{task_queue}:running",
+                removal="srem",
             )
-            if not isinstance(hset_result, int):
-                await hset_result
-            logger.info("task_cancel_flag_set", task_id=task_id)
+            if outcome == GUARDED_MISSING:
+                return False
+            logger.info("task_cancel_flag_set", task_id=task_id, status_write=outcome)
             return True
 
         # Unknown status — try to mark cancelled anyway
-        if self.client is None:
-            raise QueueUnavailableError("Queue server is not connected")
         hset_result = self.client.hset(
             f"queue:task:{task_id}",
             mapping={"status": "cancelled", "completed_at": _iso_now()},
@@ -1000,10 +1191,11 @@ class QueueClient:
             )
 
     async def cancel_tasks_batch(self, task_ids: list[str]) -> dict[str, Any]:
-        """Cancel multiple tasks by ID using fast batch operations.
+        """Cancel multiple tasks by ID.
 
-        The Valkey cancellation is issued via a single pipeline for efficiency.
-        After the pipeline commits, each task is also persisted to SQLite via
+        Each task's cancellation is a per-task guarded (CAS) status write —
+        not a single pipeline — so a task that completes mid-batch is not
+        clobbered. After the guarded writes, each task is also persisted to SQLite via
         ``_persist_cancellation_to_db`` so that ``is_task_cancelled`` can
         detect the cancellation even after the Valkey key expires (TTL
         fallback).  DB write failures are caught and logged per-task — they
@@ -1038,27 +1230,52 @@ class QueueClient:
 
         if self.client is None:
             raise QueueUnavailableError("Queue server is not connected")
-        pipeline = self.client.pipeline()
         completed_at = _iso_now()
+        cancelled = 0
 
+        # Per-task guarded writes instead of one pipeline: batch sizes here
+        # are UI multi-selects, and the unguarded pipeline HSET could clobber
+        # a task that completed (or raced queued->running) mid-batch. Same
+        # semantics as cancel_task, including the cooperative cancel flag
+        # for running tasks (previously never set on this path).
         for task in tasks_to_cancel:
             task_id = task["task_id"]
             task_queue = task["queue"]
+            task_status = task.get("status")
 
-            pipeline.hset(
-                f"queue:task:{task_id}",
-                mapping={"status": "cancelled", "completed_at": completed_at},
+            if task_status == "queued":
+                outcome = await self.guarded_status_write(
+                    task_id,
+                    new_status="cancelled",
+                    allowed_from=("queued",),
+                    extra_fields={"completed_at": completed_at},
+                    remove_from=f"queue:{task_queue}:pending",
+                    removal="zrem",
+                )
+                if outcome == GUARDED_OK:
+                    cancelled += 1
+                    continue
+                if outcome != "running":
+                    failed.append({"task_id": task_id, "reason": f"status is {outcome}"})
+                    continue
+                # raced queued -> running: fall through to the running cancel
+
+            await self.client.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
+            self._persist_cancellation_to_db(task_id, task)
+            outcome = await self.guarded_status_write(
+                task_id,
+                new_status="cancelled",
+                allowed_from=("queued", "running"),
+                extra_fields={"completed_at": completed_at},
+                remove_from=f"queue:{task_queue}:running",
+                removal="srem",
             )
-            pipeline.zrem(f"queue:{task_queue}:pending", task_id)
+            if outcome == GUARDED_OK:
+                cancelled += 1
+            else:
+                failed.append({"task_id": task_id, "reason": f"status is {outcome}"})
 
-        await pipeline.execute()
-
-        # Persist cancellations to SQLite so is_task_cancelled remains
-        # accurate past the Valkey key TTL (parity with cancel_task).
-        for task in tasks_to_cancel:
-            self._persist_cancellation_to_db(task["task_id"], task)
-
-        return {"cancelled": len(tasks_to_cancel), "failed": failed}
+        return {"cancelled": cancelled, "failed": failed}
 
     async def retry_task(self, task_id: str) -> str | None:
         """Retry a failed task by re-enqueueing it with the same parameters.
@@ -1084,16 +1301,45 @@ class QueueClient:
             msg = f"Cannot retry task {task_id}: status is '{task.get('status')}', must be 'failed'"
             raise ValueError(msg)
 
-        new_task_id = await self.enqueue_task(
-            queue=task["queue"],
-            operation=task["operation"],
-            data=task.get("data", {}),
-            priority=task["priority"],
-            metadata={
-                **task.get("metadata", {}),
-                "retried_from": task_id,
-            },
+        # Claim the original atomically BEFORE enqueueing: the old
+        # check-then-enqueue let two concurrent retries (double-click) both
+        # pass the status check and enqueue duplicate work (duplicate LLM
+        # cost). Only the caller whose failed->retried CAS wins proceeds;
+        # the loser returns None. The pre-read above is for the enqueue
+        # parameters and the fast ValueError — the CAS is the gate.
+        outcome = await self.guarded_status_write(
+            task_id,
+            new_status="retried",
+            allowed_from=("failed",),
+            extra_fields={"retried_at": _iso_now()},
         )
+        if outcome != GUARDED_OK:
+            logger.info("task_retry_skipped", task_id=task_id, status=outcome)
+            return None
+
+        try:
+            new_task_id = await self.enqueue_task(
+                queue=task["queue"],
+                operation=task["operation"],
+                data=task.get("data", {}),
+                priority=task["priority"],
+                metadata={
+                    **task.get("metadata", {}),
+                    "retried_from": task_id,
+                },
+            )
+        except Exception:
+            # Best-effort revert so the original stays retryable after a
+            # transient enqueue failure.
+            await self.guarded_status_write(task_id, new_status="failed", allowed_from=("retried",))
+            raise
+
+        if self.client is not None:
+            hset_result = self.client.hset(
+                f"queue:task:{task_id}", mapping={"retried_to": new_task_id}
+            )
+            if not isinstance(hset_result, int):
+                await hset_result
 
         logger.info(
             "task_retried",
@@ -1107,7 +1353,9 @@ class QueueClient:
     async def cancel_by_metadata(self, metadata: dict[str, Any], queue: str | None = None) -> int:
         """Cancel all tasks matching the given metadata.
 
-        Uses fast batch deletion instead of sequential abort.
+        Queued matches are removed via guarded (CAS) delete; running matches
+        get the cooperative cancel flag plus a guarded status write — the
+        same per-task primitives as ``cancel_task``/``cancel_tasks_batch``.
         """
         self._require_connection()
 
@@ -1145,35 +1393,50 @@ class QueueClient:
             )
             return 0
 
-        pipeline = self.client.pipeline()
+        cancelled = 0
 
+        # Per-task guarded operations instead of one pipeline: the old
+        # pipeline.delete could destroy the live hash of a task that went
+        # queued->running between scan_iter and execute, leaving a bare
+        # partial record after complete_task_atomic. The guarded delete
+        # refuses in that case and the task gets the running-path cancel
+        # (cooperative flag + guarded status write) instead.
         for task in tasks_to_cancel:
             task_id = task["task_id"]
             task_queue = task["queue"]
             task_status = task.get("status")
 
-            # Remove from pending queue
-            pipeline.zrem(f"queue:{task_queue}:pending", task_id)
-
-            if task_status == "running":
-                # Set cancellation flag — worker checks this between batches.
-                # Use the same extended TTL as cancel_task() so the flag
-                # outlives the handler's worst-case run time.
-                pipeline.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
-                # Mark as cancelled and remove from running set
-                pipeline.hset(
-                    f"queue:task:{task_id}",
-                    mapping={"status": "cancelled", "completed_at": _iso_now()},
+            if task_status == "queued":
+                outcome = await self.guarded_delete(
+                    task_id,
+                    allowed_from=("queued",),
+                    remove_from=f"queue:{task_queue}:pending",
+                    removal="zrem",
                 )
-                pipeline.srem(f"queue:{task_queue}:running", task_id)
-                logger.info("task_cancel_flag_set", task_id=task_id)
-            else:
-                # Queued: delete the task record entirely
-                pipeline.delete(f"queue:task:{task_id}")
+                if outcome == GUARDED_OK:
+                    cancelled += 1
+                    continue
+                if outcome != "running":
+                    # Finished or vanished in the window — nothing to cancel.
+                    continue
+                # raced queued -> running: fall through to the running cancel
 
-        await pipeline.execute()
-
-        cancelled = len(tasks_to_cancel)
+            # Set cancellation flag — worker checks this between batches.
+            # Use the same extended TTL as cancel_task() so the flag
+            # outlives the handler's worst-case run time. The status write
+            # is guarded: completion in the window wins (cancel loses).
+            await self.client.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
+            outcome = await self.guarded_status_write(
+                task_id,
+                new_status="cancelled",
+                allowed_from=("queued", "running"),
+                extra_fields={"completed_at": _iso_now()},
+                remove_from=f"queue:{task_queue}:running",
+                removal="srem",
+            )
+            if outcome == GUARDED_OK:
+                cancelled += 1
+            logger.info("task_cancel_flag_set", task_id=task_id)
         logger.info(
             "cancel_by_metadata_completed",
             tasks_checked=checked,
@@ -1322,10 +1585,20 @@ class QueueClient:
         return False
 
     async def cancel_all_tasks(self, queue: str | None = None) -> int:
-        """Cancel all tasks in specified queue or all queues."""
+        """Cancel all tasks in specified queue or all queues.
+
+        Delegates to :meth:`cancel_tasks_batch` so running tasks get the
+        same cooperative treatment as every other cancel path: the
+        ``queue:cancel:{task_id}`` flag is set (so handlers polling
+        ``is_task_cancelled`` actually stop), the DB fallback is persisted,
+        and the status write is CAS-guarded — the previous unguarded
+        pipeline HSET never set the flag, so a running handler finished
+        unaware and its success path silently overwrote ``cancelled``
+        with ``completed``.
+        """
         self._require_connection()
 
-        tasks_to_cancel = []
+        task_ids: list[str] = []
         if self.client is None:
             raise QueueUnavailableError("Queue server is not connected")
         async for key in self.client.scan_iter(match="queue:task:*"):
@@ -1338,36 +1611,23 @@ class QueueClient:
                 continue
             if task.get("status") in {"completed", "failed", "cancelled"}:
                 continue
-            tasks_to_cancel.append(task)
+            task_ids.append(task_id)
 
-        if not tasks_to_cancel:
+        if not task_ids:
             return 0
 
         logger.info(
             "bulk_cancel_started",
-            task_count=len(tasks_to_cancel),
+            task_count=len(task_ids),
             queue=queue,
         )
 
-        pipeline = self.client.pipeline()
-        completed_at = _iso_now()
-
-        for task in tasks_to_cancel:
-            task_id = task["task_id"]
-            task_queue = task["queue"]
-
-            pipeline.hset(
-                f"queue:task:{task_id}",
-                mapping={"status": "cancelled", "completed_at": completed_at},
-            )
-            pipeline.zrem(f"queue:{task_queue}:pending", task_id)
-
-        await pipeline.execute()
-
-        cancelled = len(tasks_to_cancel)
+        result = await self.cancel_tasks_batch(task_ids)
+        cancelled = int(result["cancelled"])
         logger.info(
             "bulk_cancel_completed",
             total_cancelled=cancelled,
+            failed_count=len(result["failed"]),
             queue=queue,
         )
         return cancelled

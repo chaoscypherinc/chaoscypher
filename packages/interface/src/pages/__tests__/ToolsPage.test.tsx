@@ -113,4 +113,41 @@ describe('ToolsPage', () => {
       expect(mockedApiClient.delete).toHaveBeenCalledWith('/tools/ut1');
     });
   });
+
+  it('keeps a dismissed query-sourced error dismissed on re-render', async () => {
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/tools/system') {
+        return Promise.reject(new Error('tool list boom'));
+      }
+      if (url === '/tools') {
+        return Promise.resolve({ data: { data: [] } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <Routes>
+        <Route path="/tools" element={<ToolsPage />} />
+      </Routes>,
+      { wrapper: makeWrapper({ initialEntries: ['/tools'] }) },
+    );
+
+    // Query error surfaces in the closable alert.
+    await screen.findByText(/tool list boom/i);
+
+    // Dismiss it — it must not immediately re-render (regression: onClose
+    // only cleared local error state, so the query error reappeared).
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/tool list boom/i)).toBeNull();
+    });
+
+    // Force a re-render via unrelated state (typing in the search box) and
+    // confirm the dismissed error stays gone.
+    fireEvent.change(screen.getByLabelText(/search tools/i), {
+      target: { value: 'abc' },
+    });
+    expect(screen.queryByText(/tool list boom/i)).toBeNull();
+  });
 });

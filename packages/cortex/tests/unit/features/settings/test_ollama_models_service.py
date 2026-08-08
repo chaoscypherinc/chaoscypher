@@ -104,7 +104,11 @@ class TestRemoveModel:
             result = await service.remove_model("qwen3:30b", instance_id="default")
 
         assert result["success"] is True
-        mock_client.request.assert_called_once()
+        mock_client.request.assert_called_once_with(
+            "DELETE",
+            "http://localhost:11434/api/delete",
+            json={"name": "qwen3:30b"},
+        )
 
     @pytest.mark.asyncio
     async def test_remove_model_nonexistent_instance_raises(
@@ -113,6 +117,37 @@ class TestRemoveModel:
         """Remove model raises ValueError for unknown instance."""
         with pytest.raises(ValueError, match="Instance 'nonexistent' not found"):
             await service.remove_model("qwen3:30b", instance_id="nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_remove_model_logs_and_reports_instance_error(
+        self, service: OllamaModelsService
+    ) -> None:
+        """A per-instance removal failure is reported AND logged with traceback.
+
+        Parity with list_models/pull_model: the except branch previously
+        returned success=False with zero logging, leaving an operator with
+        nothing to diagnose a broken instance from.
+        """
+        from chaoscypher_cortex.features.settings import ollama_models_service as svc_module
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client.request = AsyncMock(side_effect=httpx.ConnectError("refused"))
+            mock_client_cls.return_value = mock_client
+
+            with patch.object(svc_module, "logger") as mock_logger:
+                result = await service.remove_model("qwen3:30b", instance_id="default")
+
+        assert result["success"] is False
+        assert result["results"][0] == {
+            "instance_id": "default",
+            "success": False,
+            "error": "Model removal failed",
+        }
+        mock_logger.exception.assert_called_once()
+        assert mock_logger.exception.call_args.args[0] == "ollama_model_remove_error"
 
 
 class TestShowModel:

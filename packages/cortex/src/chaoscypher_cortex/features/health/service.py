@@ -11,7 +11,7 @@ ProbeResults to HealthCheckItems for backwards-compatible API responses.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import structlog
 
@@ -50,7 +50,19 @@ class HealthService:
     Creates a HealthRegistry and registers probes based on the current
     provider configuration. Probes are framework-agnostic classes from
     core that accept plain callables for their dependencies.
+
+    The response cache is class-level: ``get_health_service`` builds a
+    fresh instance per request, so an instance attribute would never
+    survive between requests — minimal health would always report the
+    empty-cache placeholder and the full-health TTL would never hit.
     """
+
+    _cache: ClassVar[tuple[float, HealthCheckResponse | None]] = (0.0, None)
+
+    @classmethod
+    def reset_cache(cls) -> None:
+        """Clear the shared response cache (test-isolation hook)."""
+        cls._cache = (0.0, None)
 
     def __init__(
         self,
@@ -73,7 +85,6 @@ class HealthService:
                 Results are folded into the response alongside inline probes.
         """
         self._settings = settings
-        self._cache: tuple[float, HealthCheckResponse | None] = (0.0, None)
         self._registry = HealthRegistry()
         self._probes: list[HealthProbe] = probes or []
 
@@ -351,7 +362,7 @@ class HealthService:
         Returns:
             HealthCheckResponse with ``checks=None``.
         """
-        _cached_time, cached_response = self._cache
+        _cached_time, cached_response = HealthService._cache
         # No cache yet — fall back to a conservative healthy=True placeholder.
         # The full check will populate the cache on the next authed call.
         healthy = cached_response.healthy if cached_response is not None else True
@@ -366,7 +377,7 @@ class HealthService:
             HealthCheckResponse with all check results.
         """
         now = time.monotonic()
-        cached_time, cached_response = self._cache
+        cached_time, cached_response = HealthService._cache
         if cached_response and (now - cached_time) < _CACHE_TTL_SECONDS:
             return cached_response
 
@@ -434,7 +445,7 @@ class HealthService:
 
         status = "ok" if healthy else "degraded"
         response = HealthCheckResponse(healthy=healthy, status=status, checks=checks)
-        self._cache = (now, response)
+        HealthService._cache = (now, response)
         return response
 
     async def _run_injected_probe(self, probe: HealthProbe) -> tuple[str, HealthCheckItem]:

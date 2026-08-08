@@ -1072,7 +1072,7 @@ describe('handleStreamEvent — done', () => {
       true,
       doneCallbacks,
     );
-    expect(doneCallbacks.onDone).toHaveBeenCalledWith('chat-42', true);
+    expect(doneCallbacks.onDone).toHaveBeenCalledWith('chat-42', true, false);
   });
 
   it('returns 0', () => {
@@ -1186,7 +1186,7 @@ describe('handleStreamEvent — done', () => {
       false,
       doneCallbacks,
     );
-    expect(logger.warn).toHaveBeenCalledWith('done_without_content_waiting_for_poll');
+    expect(logger.warn).toHaveBeenCalledWith('done_without_content_refetching_chat');
     const mock = dispatchers.setMessages as ReturnType<typeof vi.fn>;
     for (const call of mock.mock.calls) {
       const updater = call[0];
@@ -1301,7 +1301,7 @@ describe('handleStreamEvent — multi-event sequence', () => {
       doneCallbacks,
     );
     expect(acc.isDone).toBe(true);
-    expect(doneCallbacks.onDone).toHaveBeenCalledWith('chat-final', false);
+    expect(doneCallbacks.onDone).toHaveBeenCalledWith('chat-final', false, true);
     expect(dispatchers.setLoading).toHaveBeenCalledWith(false);
   });
 });
@@ -1373,6 +1373,6 @@ describe('done event cleanup (phase 0)', () => {
       const content = (msgs[0] as { content?: string })?.content ?? '';
       expect(content).not.toContain('I apologize');
     }
-    expect(logger.warn).toHaveBeenCalledWith('done_without_content_waiting_for_poll');
+    expect(logger.warn).toHaveBeenCalledWith('done_without_content_refetching_chat');
   });
 });

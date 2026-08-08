@@ -435,18 +435,27 @@ class TestExtractionTaskQueries:
 class TestThinDelegations:
     """Thin pass-through delegations to the adapter / engine service."""
 
-    def test_list_recovery_events_forwards_limit(self) -> None:
-        """list_recovery_events forwards source_id, db name, and limit."""
+    def test_list_recovery_events_forwards_pagination(self) -> None:
+        """list_recovery_events forwards page/page_size and returns the envelope."""
         adapter = MagicMock()
         adapter.list_recovery_events.return_value = [{"id": "ev-1"}]
+        adapter.count_recovery_events.return_value = 7
         service = _make_service(storage_adapter=adapter)
 
-        result = service.list_recovery_events("s1", limit=10)
+        result = service.list_recovery_events("s1", page=2, page_size=10)
 
         adapter.list_recovery_events.assert_called_once_with(
-            source_id="s1", database_name="default", limit=10
+            source_id="s1", database_name="default", page=2, page_size=10
         )
-        assert result == [{"id": "ev-1"}]
+        adapter.count_recovery_events.assert_called_once_with(
+            source_id="s1", database_name="default"
+        )
+        assert result == {
+            "events": [{"id": "ev-1"}],
+            "total": 7,
+            "page": 2,
+            "page_size": 10,
+        }
 
     def test_get_extraction_tasks_for_charts_delegates(self) -> None:
         """get_extraction_tasks_for_charts forwards to the adapter."""

@@ -208,11 +208,10 @@ export function OllamaModelSelector({ settings, setSettings, showAdvanced, curre
                 },
               });
             }}
-            contextMin={2048}
+            contextMin={8192}
             contextMax={131072}
             contextStep={2048}
             contextMarks={[
-              { value: 2048, label: '2K' },
               { value: 8192, label: '8K' },
               { value: 32768, label: '32K' },
               { value: 65536, label: '64K' },

@@ -55,6 +55,8 @@ def _make_valkey() -> MagicMock:
     valkey.srem = AsyncMock(return_value=1)
     valkey.persist = AsyncMock(return_value=True)
     valkey.zadd = AsyncMock(return_value=1)
+    valkey.set = AsyncMock(return_value=True)  # pass lock acquired
+    valkey.eval = AsyncMock(return_value=1)  # pass lock released
     return valkey
 
 
@@ -64,6 +66,10 @@ def _make_client(*, retry_policy: bool = True) -> MagicMock:
     client.client = _make_valkey()
     client.get_retry_policy = MagicMock(return_value=retry_policy)
     client.mark_task_failed_terminal = AsyncMock(return_value=None)
+    client.requeue_task_atomic = AsyncMock(return_value="__ok__")
+    client.guarded_status_write = AsyncMock(return_value="__ok__")
+    client._reconcile_lock_ttl = 120
+    client.failed_result_ttl = 14 * 86_400
     return client
 
 
@@ -170,9 +176,12 @@ async def test_reconcile_abandoned_heartbeat_gone_requeues() -> None:
     stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=3)
 
     assert stats.recovered_crashed == 1
-    client.client.srem.assert_any_await(f"queue:{QUEUE_OPERATIONS}:running", "task-1")
-    client.client.zadd.assert_awaited()  # re-added to pending
-    client.client.hincrby.assert_any_await("queue:task:task-1", "attempts", 1)
+    # One atomic Lua move — no bare hset/persist/zadd/srem/hincrby sequence.
+    client.requeue_task_atomic.assert_awaited_once_with(QUEUE_OPERATIONS, "task-1", 50.0)
+    client.client.zadd.assert_not_called()
+    client.client.hincrby.assert_any_await(
+        _recovery_counters_key(QUEUE_OPERATIONS), "recovered_crashed", 1
+    )
 
 
 @pytest.mark.asyncio
@@ -188,11 +197,16 @@ async def test_reconcile_abandoned_requeue_denied_fails() -> None:
     stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=3)
 
     assert stats.failed_unrecoverable == 1
-    client.mark_task_failed_terminal.assert_awaited_once()
-    # Error message reflects the denied policy.
-    _tid, fields = client.mark_task_failed_terminal.call_args.args
-    assert "denies retry" in fields["error"]
-    assert fields["error_type"] == "worker_crashed"
+    # One guarded write: mark-failed + SREM + dead-letter TTL atomically —
+    # the old srem-before-write ordering (2026-06-14 finding) is gone.
+    client.guarded_status_write.assert_awaited_once()
+    kwargs = client.guarded_status_write.await_args.kwargs
+    assert kwargs["new_status"] == "failed"
+    assert kwargs["removal"] == "srem"
+    assert kwargs["remove_from"] == f"queue:{QUEUE_OPERATIONS}:running"
+    assert kwargs["expire_seconds"] == client.failed_result_ttl
+    assert "denies retry" in kwargs["extra_fields"]["error"]
+    assert kwargs["extra_fields"]["error_type"] == "worker_crashed"
 
 
 @pytest.mark.asyncio
@@ -208,26 +222,96 @@ async def test_reconcile_abandoned_attempts_exhausted_fails() -> None:
     stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=5)
 
     assert stats.failed_unrecoverable == 1
-    _tid, fields = client.mark_task_failed_terminal.call_args.args
-    assert "after 5 attempts" in fields["error"]
+    kwargs = client.guarded_status_write.await_args.kwargs
+    assert "after 5 attempts" in kwargs["extra_fields"]["error"]
 
 
 @pytest.mark.asyncio
 async def test_reconcile_requeue_zadd_failure_preserves_attempts() -> None:
-    """A zadd failure during requeue logs and leaves attempts unchanged."""
+    """A transient failure during the atomic requeue leaves attempts unchanged.
+
+    The task stays in the running set for the next cycle to retry — the
+    Lua move either fully happens or not at all.
+    """
     client = _make_client(retry_policy=True)
     client.client.smembers = AsyncMock(return_value={b"task-z"})
     client.client.exists = AsyncMock(side_effect=[1, 0])
     client.client.hgetall = AsyncMock(
         return_value={b"operation": b"op", b"attempts": b"1", b"priority": b"50"}
     )
-    client.client.zadd = AsyncMock(side_effect=RuntimeError("valkey down"))
+    client.requeue_task_atomic = AsyncMock(side_effect=RuntimeError("valkey down"))
 
     stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=3)
 
-    # Requeue aborted before incrementing attempts.
+    # Requeue aborted; attempts untouched, task left in the running set.
     assert stats.recovered_crashed == 0
     client.client.hincrby.assert_not_called()
+    client.client.srem.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_requeue_refused_when_completed() -> None:
+    """A task that completed while being classified is just dropped from running."""
+    client = _make_client(retry_policy=True)
+    client.client.smembers = AsyncMock(return_value={b"task-c"})
+    client.client.exists = AsyncMock(side_effect=[1, 0])
+    client.client.hgetall = AsyncMock(
+        return_value={b"operation": b"op", b"attempts": b"0", b"priority": b"50"}
+    )
+    client.requeue_task_atomic = AsyncMock(return_value="completed")
+
+    stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=3)
+
+    assert stats.total() == 0
+    client.client.srem.assert_any_await(f"queue:{QUEUE_OPERATIONS}:running", "task-c")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_terminal_refused_when_completed() -> None:
+    """A guarded terminal-fail that observes completion drops the running entry only."""
+    client = _make_client(retry_policy=False)
+    client.client.smembers = AsyncMock(return_value={b"task-c2"})
+    client.client.exists = AsyncMock(side_effect=[1, 0])
+    client.client.hgetall = AsyncMock(
+        return_value={b"operation": b"op", b"attempts": b"0", b"priority": b"50"}
+    )
+    client.guarded_status_write = AsyncMock(return_value="completed")
+
+    stats = await reconcile_queue(client, QUEUE_OPERATIONS, max_tries=3)
+
+    assert stats.failed_unrecoverable == 0
+    client.client.srem.assert_any_await(f"queue:{QUEUE_OPERATIONS}:running", "task-c2")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pass_lock_skips_overlap() -> None:
+    """A second overlapping pass returns immediately when SET NX fails."""
+    client = _make_client()
+    client.client.set = AsyncMock(return_value=None)  # lock not acquired
+
+    stats = await reconcile_queue(client, QUEUE_OPERATIONS)
+
+    assert stats.total() == 0
+    client.client.smembers.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_pass_lock_acquired_and_released() -> None:
+    """A completed pass acquires the NX lock and releases it (owner-checked)."""
+    client = _make_client()
+    client.client.smembers = AsyncMock(return_value=set())
+
+    await reconcile_queue(client, QUEUE_OPERATIONS)
+
+    set_kwargs = client.client.set.await_args.kwargs
+    assert set_kwargs["nx"] is True
+    assert set_kwargs["ex"] == 120
+    lock_key = client.client.set.await_args.args[0]
+    assert lock_key == f"queue:{QUEUE_OPERATIONS}:reconcile_lock"
+    client.client.eval.assert_awaited_once()
+    eval_args = client.client.eval.await_args.args
+    assert eval_args[2] == lock_key  # KEYS[1]
+    assert eval_args[3] == client.client.set.await_args.args[1]  # owner token
 
 
 @pytest.mark.asyncio

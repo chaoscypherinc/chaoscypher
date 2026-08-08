@@ -62,6 +62,9 @@ __pycache__/
 # ============================================================================
 /logs/
 *.log
+# Guardrail-14 heartbeat logs are repo data on routine/heartbeat, not local
+# logs — without this carve-out `git add` silently no-ops on them (issue #325).
+!internal/metrics/heartbeats/*.log
 
 # ============================================================================
 # LOCAL DATABASES (fixtures must be explicitly allow-listed)

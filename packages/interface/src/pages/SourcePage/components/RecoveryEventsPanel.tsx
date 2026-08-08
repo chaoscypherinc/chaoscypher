@@ -48,7 +48,7 @@ export function RecoveryEventsPanel({
     return null;
   }
 
-  const events = data?.events ?? [];
+  const events = data?.data ?? [];
 
   return (
     <Accordion

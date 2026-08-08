@@ -640,6 +640,49 @@ class TestSearch:
             await client.get_package_info("alice", "ghost")
         assert exc_info.value.status_code == 404
 
+    @pytest.mark.asyncio
+    async def test_get_package_info_bare_name_matches_unique_owner(self) -> None:
+        """Empty owner (bare package reference) matches by name alone."""
+        client = LexiconClient(base_url="http://x")
+        fake = install_fake_client(client)
+        fake.request.return_value = make_response(
+            json_data={
+                "data": {
+                    "hits": [
+                        {"id": "1", "name": "other", "ownerUsername": "alice"},
+                        {"id": "2", "name": "medical", "ownerUsername": "bob"},
+                    ],
+                    "total": 2,
+                }
+            }
+        )
+
+        pkg = await client.get_package_info("", "medical")
+        assert pkg.id == "2"
+        assert pkg.full_name == "bob/medical"
+
+    @pytest.mark.asyncio
+    async def test_get_package_info_bare_name_ambiguous_raises(self) -> None:
+        """Two owners publishing the same name must not resolve silently."""
+        client = LexiconClient(base_url="http://x")
+        fake = install_fake_client(client)
+        fake.request.return_value = make_response(
+            json_data={
+                "data": {
+                    "hits": [
+                        {"id": "1", "name": "medical", "ownerUsername": "alice"},
+                        {"id": "2", "name": "medical", "ownerUsername": "bob"},
+                    ],
+                    "total": 2,
+                }
+            }
+        )
+
+        with pytest.raises(LexiconClientError) as exc_info:
+            await client.get_package_info("", "medical")
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.details["owners"] == ["alice", "bob"]
+
 
 # ---------------------------------------------------------------------------
 # download
@@ -663,6 +706,18 @@ class TestDownload:
         # Auth header attached when authenticated
         sent_headers = fake.get.call_args.kwargs["headers"]
         assert sent_headers["Authorization"] == "Bearer tok"
+
+    @pytest.mark.asyncio
+    async def test_download_url_encodes_path_segments(self) -> None:
+        """Hostile owner/repo/version values must not rewrite the URL path."""
+        client = LexiconClient(base_url="http://x", auth=AuthConfig())
+        fake = AsyncMock(name="download-client")
+        client._download_client = fake
+        fake.get.return_value = make_response(status_code=200, content=b"CCXARCHIVE")
+
+        await client.download("a/../b", "repo?x=1", "../../etc")
+        called_url = fake.get.call_args.args[0]
+        assert called_url == ("http://x/api/v1/packages/a%2F..%2Fb/repo%3Fx%3D1/..%2F..%2Fetc")
 
     @pytest.mark.asyncio
     async def test_download_unauthenticated_omits_auth_header(self) -> None:

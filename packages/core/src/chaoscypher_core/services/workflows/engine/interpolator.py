@@ -46,26 +46,21 @@ class ParameterInterpolator:
         result = {}
 
         for key, value in parameters.items():
-            if isinstance(value, str):
-                # Interpolate string values
-                result[key] = ParameterInterpolator._interpolate_string(value, context)
-            elif isinstance(value, dict):
-                # Recursively interpolate nested dicts
-                result[key] = ParameterInterpolator.interpolate_parameters(value, context)
-            elif isinstance(value, list):
-                # Interpolate list items
-                result[key] = [
-                    (
-                        ParameterInterpolator._interpolate_string(item, context)
-                        if isinstance(item, str)
-                        else item
-                    )
-                    for item in value
-                ]
-            else:
-                result[key] = value
+            result[key] = ParameterInterpolator._interpolate_value(value, context)
 
         return result
+
+    @staticmethod
+    def _interpolate_value(value: Any, context: dict[str, Any]) -> Any:
+        """Interpolate a single value of any shape (str, dict, list, scalar)."""
+        if isinstance(value, str):
+            return ParameterInterpolator._interpolate_string(value, context)
+        if isinstance(value, dict):
+            return ParameterInterpolator.interpolate_parameters(value, context)
+        if isinstance(value, list):
+            # Recurse so dicts and lists nested inside lists are interpolated too
+            return [ParameterInterpolator._interpolate_value(item, context) for item in value]
+        return value
 
     @staticmethod
     def _interpolate_string(value: str, context: dict[str, Any]) -> Any:

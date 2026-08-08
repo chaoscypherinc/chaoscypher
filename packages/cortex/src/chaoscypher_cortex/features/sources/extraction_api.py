@@ -429,12 +429,21 @@ async def get_extraction_tasks(
 )
 async def get_extraction_task(
     _: CurrentUsername,
+    source_id: str,
     task_id: str,
     service: Annotated[SourceService, Depends(get_source_service)],
 ) -> dict[str, Any]:
-    """Get a single extraction task with full details including content."""
-    task = service.get_extraction_task(task_id)
-    return raise_if_not_found(task, "Extraction task not found")
+    """Get a single extraction task with full details including content.
+
+    The task must belong to ``source_id`` (mirrors the sibling
+    ``get_chunk`` guard) — a task fetched through another source's path
+    returns 404.
+
+    **Errors:**
+    - 404: Extraction task not found for this source
+    """
+    task = service.get_extraction_task(task_id, source_id=source_id)
+    return raise_if_not_found(task, "Extraction task not found for this source")
 
 
 @router.get(

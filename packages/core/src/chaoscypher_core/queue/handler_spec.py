@@ -27,7 +27,7 @@ import structlog
 
 
 if TYPE_CHECKING:
-    from chaoscypher_core.queue.types import TaskHandler
+    from chaoscypher_core.queue.client import TaskHandler
 
 
 _logger = structlog.get_logger(__name__)
@@ -38,7 +38,10 @@ class HandlerSpec:
     """Handler registration with recovery policy.
 
     Attributes:
-        handler: The async callable that processes tasks.
+        handler: The async callable that processes tasks. ``None`` marks
+            an UNBOUND spec — a recovery-flag carrier (used by the
+            rehydrate/recovery registries and tests) that must never be
+            passed to ``register_handlers``, which rejects it.
         retry_on_crash: If True, the reconciler requeues tasks this
             handler was running when a worker crashed (provided attempts
             < max_tries). If False, abandoned tasks are failed with
@@ -49,7 +52,7 @@ class HandlerSpec:
             themselves. Default True preserves existing queue behavior.
     """
 
-    handler: TaskHandler
+    handler: TaskHandler | None
     retry_on_crash: bool = False
     retry_on_transient: bool = True
 

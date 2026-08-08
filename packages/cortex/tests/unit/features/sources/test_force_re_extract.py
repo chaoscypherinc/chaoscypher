@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaoscypher_core.exceptions import ExternalServiceError
 from chaoscypher_cortex.features.sources.service import SourceService
 
 
@@ -169,3 +170,76 @@ async def test_force_false_on_committed_raises(monkeypatch: pytest.MonkeyPatch) 
             domain=None,
             force=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_provider_outage_does_not_destroy_the_committed_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreachable LLM provider must leave the committed graph intact.
+
+    Regression for a P1 (hunt queue, 2026-08-04). In ``trigger_extraction`` the
+    LLM-provider preflight used to run *after* ``force_re_extract``.
+    ``force_re_extract`` deletes the source's nodes, edges and templates and
+    commits -- its atomicity guarantee covers only its own two writes, not the
+    caller's later failure points. So ``force=True`` on a COMMITTED source with
+    no reachable provider destroyed the subgraph, then raised
+    ``ExternalServiceError`` with nothing queued: the graph was gone and the
+    response said extraction could not start.
+
+    The load-bearing assertion is ``delete_source_artifacts`` never being
+    called. Asserting only that the call raises passes with the bug present --
+    it raised either way.
+    """
+    enqueued: list[dict[str, Any]] = []
+
+    async def fake_queue_import_analysis(**kwargs: Any) -> str:
+        enqueued.append(kwargs)
+        return "tsk_1"
+
+    monkeypatch.setattr(
+        "chaoscypher_cortex.features.sources.service.queue_utils.queue_import_analysis",
+        fake_queue_import_analysis,
+    )
+
+    # The outage: resolving a chat provider raises.
+    def _broken_factory() -> MagicMock:
+        factory = MagicMock()
+        factory.get_chat_provider.side_effect = RuntimeError("no provider configured")
+        return factory
+
+    monkeypatch.setattr("chaoscypher_core.llm_queue.get_provider_factory", _broken_factory)
+
+    settings = MagicMock()
+    settings.priorities.background = 50
+
+    storage_adapter = MagicMock()
+    graph_repository = MagicMock()
+    engine_service = MagicMock()
+    engine_service.get_source.return_value = {
+        "id": "src_1",
+        "status": "committed",
+        "filepath": "/tmp/doc.pdf",
+        "file_type": "pdf",
+        "filename": "doc.pdf",
+    }
+
+    service = SourceService.__new__(SourceService)
+    service.engine_service = engine_service
+    service.database_name = "default"
+    service.settings = settings
+    service.storage_adapter = storage_adapter
+    service.graph_repository = graph_repository
+    service.search_repository = None
+
+    with pytest.raises(ExternalServiceError):
+        await service.trigger_extraction(
+            source_id="src_1",
+            analysis_depth="full",
+            domain=None,
+            force=True,
+        )
+
+    graph_repository.delete_source_artifacts.assert_not_called()
+    storage_adapter.reset_for_re_extraction.assert_not_called()
+    assert enqueued == []

@@ -54,9 +54,13 @@ def reconcile_stuck_chats(
 
     """
     cutoff = datetime.now(UTC) - timedelta(seconds=stuck_threshold_seconds)
+    # Explicit high limit: the protocol default (100, newest first) would
+    # leave the OLDEST stuck chats — the ones most in need of recovery —
+    # permanently outside the sweep when more than 100 are wedged.
     processing_chats: list[dict[str, Any]] = adapter.list_chats(
         database_name,
         status="processing",
+        limit=10_000,
     )
 
     recovered = 0

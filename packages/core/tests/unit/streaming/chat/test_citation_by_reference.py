@@ -111,6 +111,44 @@ class TestValidateCitationReferences:
         assert result["per_citation"]["abc-123"]["verdict"] == "correct"
 
     @pytest.mark.asyncio
+    async def test_lowercase_sentence_refs_resolve(self):
+        r"""Lowercase refs (s1) parse case-insensitively and must also resolve.
+
+        Regression: the strict marker pattern is IGNORECASE so ``s1`` parses,
+        but resolution used a case-sensitive ``S(\d+)`` findall, silently
+        yielding no sentence text (2026-07-27 audit).
+        """
+        tool_results = [
+            {
+                "content": json.dumps(
+                    {
+                        "chunks": [
+                            {
+                                "chunk_id": "abc-123",
+                                "original_content": "Sentence one. Sentence two.",
+                                "chunk_metadata": {
+                                    "sentence_offsets": [
+                                        {"start": 0, "end": 13},
+                                        {"start": 14, "end": 27},
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                ),
+            }
+        ]
+        citations = {
+            "abc-123": {
+                "chunk_id": "abc-123",
+                "sentence_refs": "s1",
+                "label": "test.txt",
+            }
+        }
+        result = await validate_citation_references(tool_results, citations, "test-chat")
+        assert result["per_citation"]["abc-123"]["verdict"] == "correct"
+
+    @pytest.mark.asyncio
     async def test_out_of_bounds(self):
         """S5 ref on a chunk with only 1 sentence gives 'wrong' verdict."""
         tool_results = _make_tool_results(

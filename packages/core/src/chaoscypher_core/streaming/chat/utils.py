@@ -312,55 +312,7 @@ def parse_tool_arguments(
     return arguments_raw
 
 
-def create_fallback_response(
-    has_thinking: bool,
-    after_tools: bool = False,
-    tools_were_available: bool = True,
-) -> str:
-    """Create a fallback response for empty LLM responses.
-
-    Args:
-        has_thinking: Whether thinking content exists
-        after_tools: Whether this is after tool execution
-        tools_were_available: Whether tools were passed to the LLM (helps diagnose issues)
-
-    Returns:
-        Fallback response string
-
-    """
-    if after_tools:
-        return (
-            "I've executed the tool(s) above. Please check the tool output for details "
-            "on what was completed. If you need additional operations or have follow-up "
-            "questions, feel free to ask."
-        )
-
-    if has_thinking:
-        return (
-            "I've thought about your question. Could you please rephrase or provide "
-            "more details so I can better assist you?"
-        )
-
-    # If tools were available but we got no response, the model may not support tool calling
-    if tools_were_available:
-        return (
-            "I wasn't able to generate a response. This model may not support tool calling, "
-            "which is needed to search the knowledge graph.\n\n"
-            "**Recommended models with tool calling support:**\n"
-            "- qwen2.5:7b or qwen2.5:14b (excellent)\n"
-            "- llama3.1:8b (good)\n"
-            "- mistral:7b (basic)\n\n"
-            "You can change your model in Settings > LLM Configuration."
-        )
-
-    return (
-        "I apologize, but I didn't generate a response. Could you please try "
-        "rephrasing your question?"
-    )
-
-
 __all__ = [
-    "create_fallback_response",
     "format_sse_event",
     "get_context_window_for_provider",
     "get_model_name",

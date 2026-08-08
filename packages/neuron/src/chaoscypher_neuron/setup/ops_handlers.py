@@ -5,8 +5,8 @@
 
 Registers all handlers that run on the Operations queue: bulk
 operations, export, import, workflow execution, and quality-score
-recalculation.  Uses shared factories from ``chaoscypher_cortex``
-for service creation.
+recalculation.  Uses shared factories from ``chaoscypher_core.factories``
+for service creation (Neuron never imports from Cortex — CC013).
 """
 
 from typing import TYPE_CHECKING

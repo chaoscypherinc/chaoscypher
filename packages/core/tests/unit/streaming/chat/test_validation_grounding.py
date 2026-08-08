@@ -109,13 +109,13 @@ def test_extract_blockquote_single_line_pair():
     """A single blockquote line ending in a citation yields one pair."""
     content = (
         "Intro paragraph.\n"
-        "> This is a sufficiently long quoted sentence here [[cite:chunk-1:S1]]\n"
+        "> This is a sufficiently long quoted sentence here [[cite:chunk_1:S1]]\n"
         "Outro."
     )
     pairs = _extract_blockquote_citation_pairs(content)
     assert len(pairs) == 1
     text, chunk_id = pairs[0]
-    assert chunk_id == "chunk-1"
+    assert chunk_id == "chunk_1"
     assert "[[cite:" not in text
     assert text.startswith("This is a sufficiently long quoted sentence")
 
@@ -124,12 +124,12 @@ def test_extract_blockquote_multiline_joined():
     """A multi-line blockquote run is joined into a single quote text."""
     content = (
         "> first line of the quote that is long\n"
-        "> second line of the quote with cite [[cite:chunk-2:S1]]\n"
+        "> second line of the quote with cite [[cite:chunk_2:S1]]\n"
     )
     pairs = _extract_blockquote_citation_pairs(content)
     assert len(pairs) == 1
     text, chunk_id = pairs[0]
-    assert chunk_id == "chunk-2"
+    assert chunk_id == "chunk_2"
     assert "first line of the quote" in text
     assert "second line of the quote" in text
 
@@ -145,12 +145,12 @@ def test_extract_blockquote_resets_run_on_non_bq_line():
     content = (
         "> orphan blockquote line without any citation marker at all\n"
         "plain interrupting line\n"
-        "> the actual cited long blockquote line goes here [[cite:chunk-4:S1]]\n"
+        "> the actual cited long blockquote line goes here [[cite:chunk_4:S1]]\n"
     )
     pairs = _extract_blockquote_citation_pairs(content)
     assert len(pairs) == 1
     text, chunk_id = pairs[0]
-    assert chunk_id == "chunk-4"
+    assert chunk_id == "chunk_4"
     # The orphan line (reset by the plain line) must not be part of the quote.
     assert "orphan blockquote line" not in text
 
@@ -216,7 +216,7 @@ async def test_grounding_skipped_when_no_chunks():
 @pytest.mark.asyncio
 async def test_grounding_skipped_when_no_blockquotes():
     """Chunks present but no blockquotes -> skipped verdict."""
-    payload = {"chunks": [{"id": "c1", "original_content": "anything"}]}
+    payload = {"chunks": [{"chunk_id": "c1", "original_content": "anything"}]}
     tool_results = [{"name": "search_chunks", "content": json.dumps(payload)}]
     result = await validate_response_grounding(
         tool_results, "A plain response with no blockquotes.", "chat-2"
@@ -229,7 +229,7 @@ async def test_grounding_skipped_when_no_blockquotes():
 async def test_grounding_correct_all_verified():
     """All blockquotes found in source -> correct."""
     quote = "the quick brown fox jumps over the lazy dog repeatedly every day now"
-    payload = {"chunks": [{"id": "c1", "original_content": quote + " extra"}]}
+    payload = {"chunks": [{"chunk_id": "c1", "original_content": quote + " extra"}]}
     tool_results = [{"name": "search_chunks", "content": json.dumps(payload)}]
     response = f"> {quote} [[cite:c1:S1]]\n"
     result = await validate_response_grounding(tool_results, response, "chat-3")
@@ -241,7 +241,7 @@ async def test_grounding_correct_all_verified():
 @pytest.mark.asyncio
 async def test_grounding_wrong_none_verified():
     """No blockquote found in source -> wrong."""
-    payload = {"chunks": [{"id": "c1", "original_content": "totally different content"}]}
+    payload = {"chunks": [{"chunk_id": "c1", "original_content": "totally different content"}]}
     tool_results = [{"name": "search_chunks", "content": json.dumps(payload)}]
     response = (
         "> a fabricated sentence that does not appear in any chunk at all here [[cite:c1:S1]]\n"
@@ -257,7 +257,7 @@ async def test_grounding_partial_mixed_verdicts():
     good_quote = "the quick brown fox jumps over the lazy dog repeatedly every day now"
     payload = {
         "chunks": [
-            {"id": "c1", "original_content": good_quote + " trailing"},
+            {"chunk_id": "c1", "original_content": good_quote + " trailing"},
             {"id": "c2", "combined_content": "some other unrelated source text body"},
         ]
     }

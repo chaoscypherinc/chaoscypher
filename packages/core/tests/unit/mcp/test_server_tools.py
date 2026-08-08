@@ -1194,3 +1194,49 @@ class TestHandleAddDocumentAwaitingGate:
 
         assert result.get("status") != "awaiting_confirmation"
         assert result["success"] is True
+
+
+# ------------------------------------------------------------------ #
+#  TestFullPipelineExtractionDepth
+# ------------------------------------------------------------------ #
+
+
+class TestFullPipelineExtractionDepth:
+    """The full pipeline forwards extraction_depth as the engine's analysis_depth."""
+
+    @staticmethod
+    def _make_engine() -> MagicMock:
+        engine = MagicMock()
+        processing_result = MagicMock()
+        processing_result.model_dump.return_value = {"source_id": "f1", "status": None}
+        engine.add_document = AsyncMock(return_value=processing_result)
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_quick_depth_forwarded_to_engine(self):
+        """extraction_depth='quick' reaches engine.add_document as analysis_depth.
+
+        Previously the full-pipeline closure dropped extraction_depth
+        entirely, so add_document(extract_entities=true,
+        extraction_depth='quick') silently ran a full extraction.
+        """
+        from chaoscypher_core.mcp.server import _create_pipeline_callback
+
+        engine = self._make_engine()
+        pipeline = _create_pipeline_callback(engine, extract_entities=True)
+
+        await pipeline(file_path="/tmp/doc.txt", file_id="f1", extraction_depth="quick")
+
+        assert engine.add_document.await_args.kwargs["analysis_depth"] == "quick"
+
+    @pytest.mark.asyncio
+    async def test_unknown_depth_clamped_to_full(self):
+        """A value outside the schema enum degrades to the 'full' default."""
+        from chaoscypher_core.mcp.server import _create_pipeline_callback
+
+        engine = self._make_engine()
+        pipeline = _create_pipeline_callback(engine, extract_entities=True)
+
+        await pipeline(file_path="/tmp/doc.txt", file_id="f1", extraction_depth="bogus")
+
+        assert engine.add_document.await_args.kwargs["analysis_depth"] == "full"

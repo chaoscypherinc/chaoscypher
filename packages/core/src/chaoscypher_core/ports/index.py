@@ -90,6 +90,37 @@ class IndexingProtocol(Protocol):
         """
         ...
 
+    def update_chunk_embeddings_batch(
+        self,
+        embeddings_by_chunk: dict[str, str],
+        *,
+        embedding_model: str,
+        embedding_dimensions: int,
+        status: str,
+    ) -> list[str]:
+        """Batch form of :meth:`update_chunk_embedding` — one UPDATE, one commit.
+
+        Args:
+            embeddings_by_chunk: Mapping of chunk UUID → base64-encoded
+                embedding bytes.
+            embedding_model: Model name that generated the embeddings.
+            embedding_dimensions: Vector dimensions (e.g., 1024).
+            status: New status for every updated chunk.
+
+        Returns:
+            The subset of chunk ids that do not exist (skipped) — callers
+            keep the per-chunk accounting ``update_chunk_embedding``
+            expressed by raising ``NotFoundError``.
+
+        Notes:
+            - Chunk-side sibling of ``update_node_embeddings_batch``: an
+              embedding wave is up to ``batching.embedding_wave_size``
+              (default 2,000) chunks, so per-chunk single-row writes cost
+              one wide SELECT plus one COMMIT each.
+
+        """
+        ...
+
     def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
         """Get a single chunk by UUID with metadata.
 

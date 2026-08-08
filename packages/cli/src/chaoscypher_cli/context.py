@@ -610,6 +610,8 @@ def get_context(
     database_name: str | None = None,
     data_dir: str | Path | None = None,
     auto_connect: bool = True,
+    *,
+    explicit_database: bool = False,
 ) -> CLIContext:
     """Get or create the CLI context.
 
@@ -617,6 +619,13 @@ def get_context(
         database_name: Database name override (default: resolved from config)
         data_dir: Override data directory
         auto_connect: Automatically connect on creation
+        explicit_database: Treat ``database_name`` as an explicit user
+            choice and skip the resolution chain. ``get_database_name``
+            ignores a literal ``"default"`` override because it is Click's
+            flag default on ~30 commands — but call sites whose name comes
+            from a user-typed ARGUMENT (``db info NAME`` / ``db create
+            NAME``) must connect to exactly that database, including
+            ``"default"`` while another database is active.
 
     Returns:
         CLIContext instance
@@ -624,8 +633,12 @@ def get_context(
     """
     global _context_instance
 
-    # Resolve database name using priority chain
-    resolved_db = get_database_name(database_name)
+    # Resolve database name using priority chain (unless the caller marked
+    # the name as an explicit user choice).
+    if explicit_database and database_name:
+        resolved_db = database_name
+    else:
+        resolved_db = get_database_name(database_name)
 
     # Use existing context if same database
     if _context_instance is not None:

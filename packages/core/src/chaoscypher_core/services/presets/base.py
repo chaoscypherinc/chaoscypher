@@ -7,19 +7,23 @@ Defines the interface that all VRAM presets implement.
 Presets provide pre-configured Ollama LLM settings optimized
 for specific GPU VRAM sizes.
 
-Example:
-    from chaoscypher_core.services.presets import VRAMPreset
+The protocol requires the full surface below (name, display_name,
+description, vram_gb, gpu_examples, metadata, and the three settings
+accessors) — a partial implementation fails ``isinstance`` checks and
+breaks ``registry.list_presets()``. In practice, don't hand-roll a class:
+drop a JSON config in the presets plugins directory and let
+``ConfigurableVRAMPreset`` provide the implementation.
 
-    class MyPreset:
-        @property
-        def name(self) -> str:
-            return "my_preset"
-
-        def get_all_settings(self) -> dict[str, Any]:
-            return {
-                "ollama_chat_model": "qwen3:8b-instruct",
-                "ollama_num_ctx": 4096,
-            }
+Example (JSON-config route, the supported extension point):
+    {
+        "name": "my_preset",
+        "display_name": "My Preset",
+        "description": "Tuned for my GPU",
+        "vram_gb": 16,
+        "gpu_examples": ["RTX 4080"],
+        "ollama_settings": {"ollama_chat_model": "qwen3:8b", "ollama_num_ctx": 4096},
+        "llm_settings": {"ai_max_tokens": 8192}
+    }
 """
 
 from __future__ import annotations

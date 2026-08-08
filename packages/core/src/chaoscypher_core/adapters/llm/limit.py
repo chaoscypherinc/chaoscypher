@@ -107,6 +107,11 @@ class PrioritySemaphore:
         # active_count for a waiter that no longer exists (a leaked slot).
         self._abandoned: set[asyncio.Event] = set()
 
+        # Events force-woken by clear_waiting_queues() without a slot grant.
+        # A live waiter finding its event here must raise instead of running
+        # slotless — otherwise its release drives active_count negative.
+        self._cleared: set[asyncio.Event] = set()
+
         # Active slot tracking
         self.active_count = 0
         self.active_high_priority = 0
@@ -163,6 +168,13 @@ class PrioritySemaphore:
         except asyncio.CancelledError:
             await self._handle_cancelled_wait(my_event, high_priority)
             raise
+
+        # Woken by clear_waiting_queues(), not by a grant: no slot was
+        # consumed on our behalf, so we must not proceed into the LLM call
+        # (and must not release a slot we never held).
+        if my_event in self._cleared:
+            self._cleared.discard(my_event)
+            raise asyncio.CancelledError("LLM semaphore waiting queues were cleared")
 
         # Track wait time
         wait_time = (datetime.now(UTC) - start_time).total_seconds()
@@ -374,7 +386,8 @@ class PrioritySemaphore:
         This is useful when Valkey queues are cleared but semaphore still has
         waiting tasks that will never complete (orphaned waiters).
 
-        WARNING: This can cause deadlock if workers are actively waiting.
+        WARNING: Any live waiter still queued is woken with
+        ``asyncio.CancelledError`` — its LLM call is aborted, not resumed.
         Best practice: Only use this when:
         1. Valkey queues have been cleared, AND
         2. No workers are actively processing, AND
@@ -390,21 +403,22 @@ class PrioritySemaphore:
             high_cleared = 0
             low_cleared = 0
 
-            # Drain high-priority queue and set events to None to signal cancellation
+            # Drain high-priority queue; mark each event cleared so a live
+            # waiter raises on wake instead of proceeding without a slot.
             while not self.high_priority_waiters.empty():
                 try:
                     event = self.high_priority_waiters.get_nowait()
-                    # Set event to wake up any waiting tasks, but they'll see it's cancelled
+                    self._cleared.add(event)
                     event.set()
                     high_cleared += 1
                 except asyncio.QueueEmpty:
                     break
 
-            # Drain low-priority queue and set events to None to signal cancellation
+            # Drain low-priority queue the same way
             while not self.low_priority_waiters.empty():
                 try:
                     event = self.low_priority_waiters.get_nowait()
-                    # Set event to wake up any waiting tasks
+                    self._cleared.add(event)
                     event.set()
                     low_cleared += 1
                 except asyncio.QueueEmpty:
@@ -413,21 +427,25 @@ class PrioritySemaphore:
             # Both queues are now drained, so any tombstones are stale.
             self._abandoned.clear()
 
-            # After clearing, try to grant slots to any remaining waiters
-            await self._try_grant_slots()
+        # Grant outside the lock: _try_grant_slots re-acquires self.lock, and
+        # asyncio.Lock is not reentrant — awaiting it while still holding the
+        # lock deadlocks this coroutine and wedges every subsequent
+        # acquire()/release in the process (mirrors _release_slot /
+        # update_config, which both exit the lock before granting).
+        await self._try_grant_slots()
 
-            logger.warning(
-                "semaphore_waiting_queues_cleared",
-                high_priority_cleared=high_cleared,
-                low_priority_cleared=low_cleared,
-                recommendation="restart_backend_if_deadlock_persists",
-            )
+        logger.warning(
+            "semaphore_waiting_queues_cleared",
+            high_priority_cleared=high_cleared,
+            low_priority_cleared=low_cleared,
+            recommendation="restart_backend_if_deadlock_persists",
+        )
 
-            return {
-                "high_priority_cleared": high_cleared,
-                "low_priority_cleared": low_cleared,
-                "total_cleared": high_cleared + low_cleared,
-            }
+        return {
+            "high_priority_cleared": high_cleared,
+            "low_priority_cleared": low_cleared,
+            "total_cleared": high_cleared + low_cleared,
+        }
 
 
 # Global singleton instance (shared across all LLM providers). Double-checked

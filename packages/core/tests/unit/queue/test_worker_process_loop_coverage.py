@@ -314,10 +314,11 @@ async def test_process_task_cancelled_marks_and_reraises(
 ) -> None:
     """A CancelledError escaping handler dispatch marks status=cancelled and re-raises.
 
-    ``_execute_handler`` swallows a handler-raised CancelledError into a
-    cancelled-result return, so to drive the worker's OWN cancelled branch we
-    patch the module-level ``_execute_handler`` to let the CancelledError
-    propagate (mirrors a task cancelled by the drain/shutdown path).
+    Patches the module-level ``_execute_handler`` to raise CancelledError
+    directly so the worker's OWN cancelled branch is driven in isolation
+    (mirrors a task cancelled by the drain/shutdown path). The real
+    ``_execute_handler`` re-raises CancelledError after recording the
+    cancellation — see the in-handler timeout test below.
     """
     import chaoscypher_core.queue.worker as worker_mod
 
@@ -340,6 +341,148 @@ async def test_process_task_cancelled_marks_and_reraises(
         if c.kwargs.get("mapping", {}).get("status") == "cancelled"
     ]
     assert cancelled
+
+
+@pytest.mark.asyncio
+async def test_process_task_in_handler_timeout_hits_timeout_branch_not_completed() -> None:
+    """A timeout delivered mid-handler reaches the TimeoutError retry branch.
+
+    Regression test for the swallowed-cancellation bug: on Python 3.12+ the
+    ``wait_for`` timeout cancels the current task, so the CancelledError
+    lands inside ``_execute_handler``'s handler await. When that except
+    branch returned a normal dict instead of re-raising, ``wait_for``
+    returned it as a *success* — the timed-out task was recorded as a
+    cancelled completion and never retried. A nonzero timeout (unlike the
+    ``timeout=0`` tests above) is what drives the in-handler delivery path.
+    """
+
+    async def _slow(*_a: Any, **_k: Any) -> None:
+        await asyncio.sleep(10)
+
+    worker, valkey = _make_worker(handlers={QUEUE_OPERATIONS: {"test_op": _slow}})
+    valkey.hgetall = AsyncMock(return_value=_task_hash(attempts="0"))
+
+    cfg = {"concurrency": 1, "max_tries": 3, "timeout": 0.05}
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-inflight-timeout", QUEUE_OPERATIONS, cfg, sem)
+
+    assert result is None
+    # The TimeoutError branch wrote transient failed fields...
+    failed = [
+        c
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("error_type") == "transient"
+    ]
+    assert failed
+    # ...and scheduled a retry.
+    assert valkey.zadd.await_count >= 1
+    # The task was NOT recorded as a successful completion.
+    completed = [
+        c
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("status") == "completed"
+    ]
+    assert not completed
+    assert sem.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_execute_handler_reraises_genuine_cancel_after_marking() -> None:
+    """_execute_handler marks the hash cancelled then RE-RAISES CancelledError."""
+    from chaoscypher_core.queue.service import _execute_handler
+
+    valkey = _make_valkey()
+    started = asyncio.Event()
+
+    async def _handler(*_a: Any, **_k: Any) -> None:
+        started.set()
+        await asyncio.sleep(10)
+
+    exec_task = asyncio.create_task(
+        _execute_handler(
+            _handler,
+            "t-genuine-cancel",
+            QUEUE_OPERATIONS,
+            "test_op",
+            {},
+            {},
+            3600,
+            valkey,
+        )
+    )
+    await started.wait()
+    exec_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await exec_task
+
+    cancelled = [
+        c
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("status") == "cancelled"
+    ]
+    assert cancelled
+
+
+# ---------------------------------------------------------------------------
+# _process_task — cleanup-failure exception safety
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_process_task_ack_failure_still_releases_semaphore_and_retries() -> None:
+    """A failing completion ack must not leak the semaphore slot or drop the retry.
+
+    Regression test: ``complete_task_atomic`` raising in the finally block
+    used to abort cleanup mid-way — the semaphore was never released (a
+    permanent stall on the LLM queue, concurrency=1) and the scheduled
+    retry never ran.
+    """
+
+    async def _boom(*_a: Any, **_k: Any) -> None:
+        raise ConnectionError("transient blip")
+
+    qc = MagicMock()
+    qc.set_heartbeat = AsyncMock(return_value=None)
+    qc.refresh_heartbeat = AsyncMock(return_value=None)
+    qc.complete_task_atomic = AsyncMock(side_effect=ConnectionError("valkey down"))
+    qc.failed_result_ttl = 1209600
+    qc.get_transient_retry_policy = MagicMock(return_value=True)
+
+    worker, valkey = _make_worker(handlers={QUEUE_OPERATIONS: {"test_op": _boom}}, queue_client=qc)
+    worker._heartbeat_refresh_interval_seconds = 60
+    valkey.hgetall = AsyncMock(return_value=_task_hash(attempts="0"))
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-ack-fail", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result is None
+    qc.complete_task_atomic.assert_awaited_once()
+    # Semaphore released despite the ack failure.
+    assert sem.locked() is False
+    # Retry still scheduled (transient error with budget left).
+    assert valkey.zadd.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_process_task_retry_schedule_failure_is_contained() -> None:
+    """A failing _retry_task zadd is logged, not raised out of the finally."""
+
+    async def _boom(*_a: Any, **_k: Any) -> None:
+        raise ConnectionError("transient blip")
+
+    worker, valkey = _make_worker(handlers={QUEUE_OPERATIONS: {"test_op": _boom}})
+    valkey.hgetall = AsyncMock(return_value=_task_hash(attempts="0"))
+    valkey.zadd = AsyncMock(side_effect=ConnectionError("valkey down"))
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    # Must not raise despite the zadd failure inside retry scheduling.
+    result = await worker._process_task("t-retry-fail", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result is None
+    assert sem.locked() is False
 
 
 # ---------------------------------------------------------------------------

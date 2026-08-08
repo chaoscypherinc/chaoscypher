@@ -387,6 +387,13 @@ def test_estimate_prints_breakdown_and_exits(tmp_path: Path):
             "chaoscypher_cli.benchmark.discovery.user_dataset_root",
             return_value=tmp_path / "datasets",
         ),
+        # The registry-coverage gate now runs before --estimate returns (so
+        # --estimate validates coverage as documented); these fake models
+        # have no registry entries, so stub the gate for the breakdown test.
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
+        ),
     ):
         runner = CliRunner()
         result = runner.invoke(run, ["full-estimate", "--estimate"])
@@ -495,3 +502,91 @@ def test_local_only_strips_commercial_models_in_full_mode(tmp_path: Path):
     )
     # No judge in this config.
     assert cfg_used.judge is None
+
+
+def test_seed_and_temperature_flags_reach_full_mode_config(tmp_path: Path):
+    """`--seed` / `--temperature` overrides must land on the config passed to
+    run_full_benchmark (regression: full mode used the raw config values and
+    silently ignored both flags).
+    """
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    _write_full_config_no_chats(builtin_cfg, "full", ["p1"])
+    out_dir = tmp_path / "out"
+
+    captured_cfg: list[object] = []
+
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object) -> list:
+        captured_cfg.append(cfg)
+        return []
+
+    with (
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.run_full_benchmark",
+            side_effect=_fake_run_full,
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.default_wiring",
+            return_value=object(),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.user_benchmark_root",
+            return_value=tmp_path / "bench",
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(
+            run,
+            ["full", "--seed", "7", "--temperature", "0.5", "--out", str(out_dir)],
+        )
+
+    assert result.exit_code == 0, result.output
+    assert len(captured_cfg) == 1
+    cfg_used: BenchmarkConfig = captured_cfg[0]  # type: ignore[assignment]
+    assert cfg_used.seed == 7
+    assert cfg_used.temperature == 0.5
+
+
+def test_estimate_aborts_on_missing_registry_coverage(tmp_path: Path):
+    """`--estimate` fails fast when a model lacks a registry price entry —
+    the coverage gate runs before the estimate early-return, as documented.
+    """
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    _write_config(builtin_cfg, "extraction", ["p1"])
+
+    with (
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=["openai/gpt-x"],
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["extraction", "--estimate"])
+
+    assert result.exit_code != 0
+    assert "Missing registry price entries" in result.output

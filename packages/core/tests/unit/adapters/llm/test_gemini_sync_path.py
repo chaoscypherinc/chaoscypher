@@ -51,9 +51,11 @@ def _make_fake_response(finish_reason: str | None = "STOP") -> MagicMock:
     else:
         response.response_metadata = {}
     response.usage_metadata = {
-        "prompt_token_count": 10,
-        "candidates_token_count": 20,
-        "total_token_count": 30,
+        # LangChain's standardized UsageMetadata keys (the Google-native
+        # *_token_count fields are converted before reaching AIMessage).
+        "input_tokens": 10,
+        "output_tokens": 20,
+        "total_tokens": 30,
     }
     return response
 

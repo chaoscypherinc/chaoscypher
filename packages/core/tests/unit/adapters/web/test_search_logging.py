@@ -22,10 +22,12 @@ def _make_fake_client(response: httpx.Response) -> type:
         def __init__(self, *a: object, **kw: object) -> None:
             pass
 
-        async def get(self, url: str) -> httpx.Response:
+        async def get(self, url: httpx.URL | str, **_kwargs: object) -> httpx.Response:
             return response
 
-        async def stream(self, method: str, url: str) -> None:  # pragma: no cover
+        async def stream(
+            self, method: str, url: httpx.URL | str, **_kwargs: object
+        ) -> None:  # pragma: no cover
             pass
 
     return FakeClient
@@ -38,7 +40,10 @@ async def test_http_4xx_logged_with_status_code() -> None:
 
     # Reset the module-level cached client so _get_client() creates a fresh one
     # via the patched httpx.AsyncClient, rather than reusing a stale instance.
-    with patch.object(_search_mod, "_client", fake_instance):
+    with (
+        patch.object(_search_mod, "_client", fake_instance),
+        patch.object(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34"),
+    ):
         scraper = WebScraper()
         with structlog.testing.capture_logs() as logs:
             result = await scraper._fetch_with_redirect_validation("https://example.com/")
@@ -56,7 +61,10 @@ async def test_http_5xx_logged_with_status_code() -> None:
 
     # Reset the module-level cached client so _get_client() creates a fresh one
     # via the patched httpx.AsyncClient, rather than reusing a stale instance.
-    with patch.object(_search_mod, "_client", fake_instance):
+    with (
+        patch.object(_search_mod, "_client", fake_instance),
+        patch.object(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34"),
+    ):
         scraper = WebScraper()
         with structlog.testing.capture_logs() as logs:
             result = await scraper._fetch_with_redirect_validation("https://example.com/")

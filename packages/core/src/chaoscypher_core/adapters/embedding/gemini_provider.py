@@ -219,7 +219,9 @@ class GeminiEmbeddingProvider:
     async def check_health(self) -> EmbeddingHealthStatus:
         """Check Gemini embedding provider health with a cheap probe.
 
-        Hits ``GET {api_base}/v1beta/models?key=…`` and verifies the
+        Hits ``GET {api_base}/v1beta/models`` (key in the
+        ``x-goog-api-key`` header, matching every other Gemini call —
+        query-string keys leak into proxy/access logs) and verifies the
         configured model appears in the response. Deliberately does NOT
         run a real ``embed()`` round-trip: live probes burn Google's
         quota, consume billable tokens, and stack up under load when
@@ -230,12 +232,12 @@ class GeminiEmbeddingProvider:
         trailing segment so both naming conventions work.
         """
         url = f"{self.api_base}/v1beta/models"
-        params = {"key": self.api_key}
+        headers = {"x-goog-api-key": self.api_key}
         timeout = httpx.Timeout(5.0, connect=2.0)
         try:
             t0 = time.perf_counter()
             async with httpx.AsyncClient() as client:
-                response = await client.get(url, params=params, timeout=timeout)
+                response = await client.get(url, headers=headers, timeout=timeout)
             elapsed_ms = int((time.perf_counter() - t0) * 1000)
 
             if response.status_code in (401, 403):

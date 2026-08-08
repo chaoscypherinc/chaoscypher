@@ -9,17 +9,39 @@ Generates RSA 4096-bit certificates with SAN for localhost and optional hostname
 from __future__ import annotations
 
 import ipaddress
+import os
+import tempfile
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from cryptography import x509
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+
+
+def _write_private_key(key_path: Path, data: bytes) -> None:
+    """Write the private key atomically with owner-only permissions.
+
+    Mirrors ``credentials.py::_atomic_write``: ``mkstemp`` creates the
+    tempfile with mode 0600 from the start, so the unencrypted key is never
+    world-readable — not even for the window between file creation and a
+    later ``chmod`` (the previous ``write_bytes`` + ``chmod`` sequence
+    created the file under the process umask, typically 0644). The rename
+    is atomic, so a concurrent reader never sees a partial key file.
+    """
+    fd, tmp_path_str = tempfile.mkstemp(prefix=".server_key_", dir=str(key_path.parent))
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        if os.name == "posix":
+            tmp_path.chmod(0o600)
+        tmp_path.replace(key_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
 
 
 def generate_self_signed_cert(
@@ -71,11 +93,11 @@ def generate_self_signed_cert(
     key_path.parent.mkdir(parents=True, exist_ok=True)
 
     cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
-    key_path.write_bytes(
+    _write_private_key(
+        key_path,
         key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.TraditionalOpenSSL,
             encryption_algorithm=serialization.NoEncryption(),
-        )
+        ),
     )
-    key_path.chmod(0o600)

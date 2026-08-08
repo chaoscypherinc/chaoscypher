@@ -243,6 +243,30 @@ class SourceService:
         # Re-extraction on a COMMITTED source: reset commit state + graph artifacts
         # before dispatching, so the new extraction can claim the extraction slot
         # and the prior graph nodes/edges do not pollute the new commit.
+        # Preflight the LLM provider BEFORE anything destructive runs.
+        #
+        # This check used to sit *after* force_re_extract below. force_re_extract
+        # deletes the source's nodes, edges and templates and resets the row to
+        # INDEXED, and it commits -- its atomicity guarantee covers only its own
+        # two writes, not the caller's later failure points. So on a COMMITTED
+        # source with force=True and no reachable provider, the subgraph was
+        # destroyed and then the request raised ExternalServiceError with nothing
+        # queued: the user lost their committed graph to a provider outage and
+        # got an error telling them extraction could not start.
+        #
+        # Ordering is the whole fix -- a provider outage now fails the request
+        # with the graph untouched.
+        try:
+            from chaoscypher_core.llm_queue import get_provider_factory
+
+            factory = get_provider_factory()
+            factory.get_chat_provider()
+        except Exception as exc:
+            raise ExternalServiceError(
+                "llm",
+                reason="No LLM provider configured. Use an MCP client to extract.",
+            ) from exc
+
         # Both writes run inside adapter.transaction() via force_re_extract so the
         # adapter-side reset rolls back on any exception.
         if force and source_status == SourceStatus.COMMITTED:
@@ -257,17 +281,6 @@ class SourceService:
                 storage_adapter=self.storage_adapter,
                 graph_repository=self.graph_repository,
             )
-
-        try:
-            from chaoscypher_core.llm_queue import get_provider_factory
-
-            factory = get_provider_factory()
-            factory.get_chat_provider()
-        except Exception as exc:
-            raise ExternalServiceError(
-                "llm",
-                reason="No LLM provider configured. Use an MCP client to extract.",
-            ) from exc
 
         resolved_domain = domain if domain and domain != "__auto__" else None
 
@@ -1317,17 +1330,34 @@ class SourceService:
             "page_size": effective_page_size,
         }
 
-    def get_extraction_task(self, task_id: str) -> dict[str, Any] | None:
+    def get_extraction_task(
+        self,
+        task_id: str,
+        *,
+        source_id: str | None = None,
+    ) -> dict[str, Any] | None:
         """Get a single extraction task with full details.
 
         Args:
             task_id: Extraction task ID.
+            source_id: When given, the task must belong to this source
+                (via its extraction job) — a mismatch returns ``None`` so
+                the API surfaces 404 instead of leaking another source's
+                task through an arbitrary path segment.
 
         Returns:
-            Task dict with full details, or None if not found.
+            Task dict with full details, or None if not found (or not
+            owned by ``source_id`` when scoping is requested).
 
         """
-        return self.storage_adapter.get_extraction_task_detail(task_id)
+        task = self.storage_adapter.get_extraction_task_detail(task_id)
+        if task is None or source_id is None:
+            return task
+        job_id = str(task.get("job_id") or "")
+        job = self.storage_adapter.get_extraction_job(job_id) if job_id else None
+        if job is None or job.get("source_id") != source_id:
+            return None
+        return task
 
     def get_extraction_task_stats(self, source_id: str) -> dict[str, Any] | None:
         """Get aggregate statistics for extraction tasks.
@@ -1434,27 +1464,43 @@ class SourceService:
         self,
         source_id: str,
         *,
-        limit: int = 50,
-    ) -> list[dict[str, Any]]:
-        """Return the recovery audit trail for a source.
+        page: int = 1,
+        page_size: int | None = None,
+    ) -> dict[str, Any]:
+        """Return one page of the recovery audit trail for a source.
 
         Surfaces in the source detail page's recovery panel so operators
         can diagnose the "auto-recovered N times" warning without
-        grepping logs. Newest event first.
+        grepping logs. Newest event first; house ``?page=&page_size=``
+        pagination with an exact total for the envelope.
 
         Args:
             source_id: Source file ID.
-            limit: Maximum events to return. Default 50 covers the
-                10-attempt exhaustion cap with margin.
+            page: 1-based page number.
+            page_size: Events per page (default from settings).
 
         Returns:
-            List of event dicts ordered ``attempt_at`` desc.
+            Dict with ``events`` (ordered ``attempt_at`` desc),
+            ``total``, ``page``, and ``page_size``.
         """
-        return self.storage_adapter.list_recovery_events(
+        if page_size is None:
+            page_size = self.settings.pagination.default_page_size
+        events = self.storage_adapter.list_recovery_events(
             source_id=source_id,
             database_name=self.database_name,
-            limit=limit,
+            page=page,
+            page_size=page_size,
         )
+        total = self.storage_adapter.count_recovery_events(
+            source_id=source_id,
+            database_name=self.database_name,
+        )
+        return {
+            "events": events,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+        }
 
     def get_extraction_tasks_for_charts(self, source_id: str) -> list[dict[str, Any]]:
         """Get all extraction tasks with minimal fields for chart rendering.
@@ -1606,7 +1652,12 @@ class SourceService:
         updated = self.engine_service.get_source(source_id)
         return SourceResponse(**updated) if updated else SourceResponse(**source)
 
-    async def reextract_source(self, source_id: str) -> SourceResponse:
+    async def reextract_source(
+        self,
+        source_id: str,
+        *,
+        overrides: dict[str, Any] | None = None,
+    ) -> SourceResponse:
         """Implement POST /sources/{id}/re-extract.
 
         Distinct from ``retry_source``: Re-extract throws away any cached
@@ -1631,6 +1682,12 @@ class SourceService:
 
         Args:
             source_id: Source file ID to re-extract.
+            overrides: Optional per-call setting overrides, already reduced to
+                the keys the caller actually supplied (the handler dumps the
+                request model with ``exclude_none=True``). Applied to the
+                extraction payload for this run only -- never written back to
+                the source row. ``None`` or ``{}`` means "use the persisted
+                upload settings", which is the pre-2026-08-04 behaviour.
 
         Returns:
             SourceResponse for the updated source.
@@ -1771,6 +1828,21 @@ class SourceService:
             "forced_domain": forced_domain_value,
             "content_filtering": True,
         }
+
+        # Per-call overrides (added 2026-08-04). Only keys actually supplied are
+        # applied: the handler dumps the request model with
+        # ``exclude_none=True``, so an omitted field never reaches here and the
+        # persisted upload-time value continues to win. Sending no body is
+        # therefore byte-identical to the previous behaviour.
+        #
+        # Applied to the payload only, never written back to the source row --
+        # these are documented as "this run only", which is what makes a one-off
+        # re-extract under a different mode safe. ``filtering_mode`` is honoured
+        # because the worker's cascade prefers an explicit payload value over
+        # the row; before that ordering was corrected (same day, in this change)
+        # a payload mode was unreachable for every real source.
+        if overrides:
+            file_info.update(overrides)
 
         # Non-atomic by design: state teardown above commits before this
         # dispatch. If queueing fails the source is left in INDEXED with

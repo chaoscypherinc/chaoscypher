@@ -30,20 +30,22 @@ class DiagnosticDatabaseStats(BaseModel):
     database_name: str
     file_size_bytes: int | None = None
     table_counts: dict[str, int] = Field(default_factory=dict)
-    index_stats: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class DiagnosticReport(BaseModel):
-    """Complete diagnostic report for bug reports."""
+    """Complete diagnostic report for bug reports.
+
+    Container-specific enrichment (queue stats, service status) is not
+    part of the core report — Cortex's DiagnosticsService appends those
+    entries to the exported ZIP itself.
+    """
 
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     system: SystemInfo
     database: DiagnosticDatabaseStats
     settings: dict[str, Any] = Field(default_factory=dict)
     logs: dict[str, str] = Field(default_factory=dict)
-    queue: dict[str, Any] | None = None
-    services: list[dict[str, Any]] | None = None
 
     model_config = ConfigDict(extra="forbid")

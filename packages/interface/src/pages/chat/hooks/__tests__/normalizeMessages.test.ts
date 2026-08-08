@@ -36,4 +36,44 @@ describe('normalizeMessages', () => {
     expect(out[0].referenced_entities).toBeUndefined();
     expect(out[0].content).toBe('hi');
   });
+
+  it('merges per_citation verdicts into chunk citations', () => {
+    const input = msg({
+      chunk_citations: {
+        'c1:S1': { chunk_id: 'c1', sentence_refs: 'S1', label: 'a.txt' },
+        'c2:S1': { chunk_id: 'c2', sentence_refs: 'S1', label: 'b.txt' },
+      },
+      validation: {
+        verdict: 'partial',
+        reason: '1 of 2 verified',
+        per_citation: {
+          'c1:S1': { verdict: 'correct', reason: 'found' },
+          'c2:S1': { verdict: 'wrong', reason: 'missing' },
+        },
+      },
+    } as ChatMessage['extra_metadata']);
+    const out = normalizeMessages([input]);
+    expect(out[0].chunk_citations?.['c1:S1'].validation_verdict).toBe('correct');
+    expect(out[0].chunk_citations?.['c2:S1'].validation_verdict).toBe('wrong');
+  });
+
+  it('does not mutate the input message when merging verdicts (cache safety)', () => {
+    // The input objects live in the TanStack Query cache — clone, never
+    // mutate (CLAUDE.md § State management; 2026-07-27 audit regression).
+    const cite = { chunk_id: 'c1', sentence_refs: 'S1', label: 'a.txt' };
+    const input = msg({
+      chunk_citations: { 'c1:S1': cite },
+      validation: {
+        verdict: 'correct',
+        reason: 'verified',
+        per_citation: { 'c1:S1': { verdict: 'correct', reason: 'found' } },
+      },
+    } as ChatMessage['extra_metadata']);
+    const out = normalizeMessages([input]);
+    expect(out[0].chunk_citations?.['c1:S1'].validation_verdict).toBe('correct');
+    // The cached citation object must be untouched…
+    expect('validation_verdict' in cite).toBe(false);
+    // …and the normalized map must be a new object, not the cached one.
+    expect(out[0].chunk_citations).not.toBe(input.extra_metadata!.chunk_citations);
+  });
 });

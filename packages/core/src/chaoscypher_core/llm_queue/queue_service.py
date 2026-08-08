@@ -128,7 +128,11 @@ class LLMQueueService:
         db_name = self.settings.current_database
         spend_adapter = get_sqlite_adapter(db_name)
         try:
-            get_llm_spend_tracker().check_and_raise(
+            # The spend check/record run blocking SQLite that must not stall
+            # the worker's event loop (pub/sub, heartbeats, dispatcher) —
+            # offload like neuron's chat_completion handler does.
+            await asyncio.to_thread(
+                get_llm_spend_tracker().check_and_raise,
                 source_id=None,
                 settings=self.settings,
                 adapter=spend_adapter,
@@ -151,7 +155,8 @@ class LLMQueueService:
                 input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
                 output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
                 if input_tokens or output_tokens:
-                    get_llm_spend_tracker().record(
+                    await asyncio.to_thread(
+                        get_llm_spend_tracker().record,
                         None,
                         input_tokens + output_tokens,
                         adapter=spend_adapter,
@@ -161,7 +166,7 @@ class LLMQueueService:
             logger.info("chat_handler_wrapper_completed", task_id=task_id)
             return result.model_dump()
         finally:
-            spend_adapter.disconnect()
+            await asyncio.to_thread(spend_adapter.disconnect)
 
     async def _tool_handler_wrapper(
         self,
@@ -310,9 +315,14 @@ class LLMQueueService:
 
                 return result
 
-            # Task failed. ``task["error"]`` is already the public-safe,
-            # client-redacted message (see queue/client.py); use it directly
-            # rather than re-prefixing (which produced "Task failed: Task failed").
+            # Task failed. The hash stores the raw ``str(exc)``, but
+            # ``QueueClient._decode_record`` masks ``task["error"]`` to the
+            # literal "Task failed" on every read (pinned by
+            # test_client_coverage.py), so the message below is always that
+            # generic string today; ``error_type``/``error_code`` pass
+            # through unmasked. Whether to surface the real message at this
+            # boundary is an open decision — see internal/TODO.md
+            # (2026-07-30 queue section-audit).
             if status == "failed":
                 msg = task.get("error") or "Task failed"
                 raise OperationError(msg)

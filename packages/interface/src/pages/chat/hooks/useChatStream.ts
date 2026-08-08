@@ -202,7 +202,7 @@ export function useChatStream(
     };
 
     const doneCallbacks = {
-      onDone: async (dChatId: string, dWasNewChat: boolean) => {
+      onDone: async (dChatId: string, dWasNewChat: boolean, hadContent: boolean) => {
         // Auto-generate title for newly created chats, then patch the list +
         // the cached chat object.
         if (dWasNewChat && dChatId) {
@@ -221,6 +221,15 @@ export function useChatStream(
         // until a refetch resolves (2026-06-10 audit).
         cacheWriter.patchChat(dChatId, { status: 'active' });
         cacheWriter.patchListEntry(dChatId, { status: 'active' });
+
+        // Contentless done = we subscribed after the worker finished. The
+        // status patch above just stopped the processing-keyed poller, and
+        // the detail query never refetches on its own (staleTime: Infinity),
+        // so refetch it explicitly or the persisted answer never renders
+        // (2026-07-27 audit).
+        if (!hadContent) {
+          cacheWriter.invalidateChat(dChatId);
+        }
 
         // Refresh the sidebar list (status / message_count / new chat).
         cacheWriter.invalidateList();

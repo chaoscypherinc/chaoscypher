@@ -192,12 +192,17 @@ def set_value(key: str, value: str) -> None:
     VALUE is the new value to set. The change is validated against the
     settings schema and written atomically to settings.yaml.
 
+    List-typed settings (e.g. security.allowed_hosts) accept a JSON list or
+    a simple comma-separated list; scalar settings parse exactly as before.
+
     The active database is managed separately — use
     `chaoscypher db switch <name>` instead of setting current_database.
 
     Example:
         chaoscypher config set lexicon.timeout 60
         chaoscypher config set llm.chat_provider ollama
+        chaoscypher config set security.allowed_hosts '["a.example","b.example"]'
+        chaoscypher config set security.allowed_hosts a.example,b.example
     """
     if key == "current_database":
         raise click.ClickException(
@@ -210,7 +215,7 @@ def set_value(key: str, value: str) -> None:
     from chaoscypher_core.app_config import get_config_manager
     from chaoscypher_core.exceptions import ConfigError
 
-    parsed = _parse_value(value)
+    parsed = _parse_value(value, list_typed=_is_list_typed_field(key))
     nested: dict[str, Any] = {}
     _set_nested_value(nested, key, parsed)
 
@@ -367,8 +372,71 @@ def _set_nested_value(data: dict[str, Any], key: str, value: Any) -> None:
     data[keys[-1]] = value
 
 
-def _parse_value(value: str) -> bool | int | float | str:
-    """Parse a string value to appropriate type."""
+def _annotation_is_list(annotation: Any) -> bool:
+    """True if a Pydantic field annotation is (or unions to) a list type."""
+    import types
+    import typing as t
+
+    origin = t.get_origin(annotation)
+    if origin is list or annotation is list:
+        return True
+    if origin in (t.Union, types.UnionType):
+        return any(_annotation_is_list(arg) for arg in t.get_args(annotation))
+    return False
+
+
+def _is_list_typed_field(key: str) -> bool:
+    """True if the dotted settings path resolves to a list-typed field.
+
+    Unknown paths return False — the value then parses as a scalar and the
+    schema validation in ``update_settings`` reports the bad key.
+    """
+    from pydantic import BaseModel
+
+    from chaoscypher_core.app_config import Settings
+
+    model: type[BaseModel] = Settings
+    parts = key.split(".")
+    for i, part in enumerate(parts):
+        field = model.model_fields.get(part)
+        if field is None:
+            return False
+        annotation = field.annotation
+        if i == len(parts) - 1:
+            return _annotation_is_list(annotation)
+        if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
+            return False
+        model = annotation
+    return False
+
+
+def _parse_list_value(value: str) -> list[Any]:
+    """Parse a list-typed value: JSON list when it looks like one, else comma-split."""
+    stripped = value.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            msg = f"Invalid JSON list: {exc}"
+            raise click.ClickException(msg) from exc
+        if not isinstance(parsed, list):
+            msg = f"Expected a JSON list, got {type(parsed).__name__}"
+            raise click.ClickException(msg)
+        return parsed
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_value(value: str, *, list_typed: bool = False) -> bool | int | float | str | list[Any]:
+    """Parse a string value to the appropriate type.
+
+    Scalars parse exactly as they always have. When ``list_typed`` is True
+    (the target settings field is a list), the value is parsed as a JSON
+    list when it looks like one, else split on commas — so both
+    ``'["a.example","b.example"]'`` and ``a.example,b.example`` work.
+    """
+    if list_typed:
+        return _parse_list_value(value)
+
     # Boolean
     if value.lower() in ("true", "yes", "on"):
         return True

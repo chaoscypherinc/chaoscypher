@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog.testing
 from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
@@ -300,3 +301,102 @@ async def test_extract_chunk_handler_increments_aborted_counter(
     src_row = sqlite_adapter.get_source(source_id, "default")
     assert src_row["llm_chunks_aborted_by_loop"] == 1
     assert src_row["llm_chunks_truncated"] == 0
+
+
+@pytest.mark.asyncio
+async def test_post_commit_failure_keeps_chunk_completed(
+    sqlite_adapter: SqliteAdapter,
+) -> None:
+    """A failure AFTER the persist commit must not fail the committed chunk.
+
+    Regression: the whole post-commit tail (token tracking, counters,
+    progress update, activity checkpoint) sat inside the handler's outer
+    ``try``, so e.g. a ``QueueFullError`` from the finalize enqueue routed to
+    ``_handle_chunk_failure`` → ``fail_chunk_task``, which overwrites the
+    already-committed ``completed`` row with ``failed`` — and the finalizer
+    aggregates only ``completed`` rows, silently dropping the chunk's
+    already-paid-for entities.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from chaoscypher_core.operations.extraction.chunk_extraction_service import (
+        ChunkExtractionOperationsService,
+    )
+
+    source_id = "src_post_commit"
+    job_id = "job_post_commit"
+    task_id = "task_post_commit"
+    _seed(sqlite_adapter, source_id=source_id, job_id=job_id, task_id=task_id)
+    sqlite_adapter.create_chunk(
+        {
+            "id": "small_pc",
+            "database_name": "default",
+            "source_id": source_id,
+            "chunk_index": 0,
+            "content": "Alice met Bob in Paris." * 20,
+        }
+    )
+    sqlite_adapter.update_extraction_job(
+        job_id, {"extraction_config": '{"node_templates_formatted": ""}'}
+    )
+    sqlite_adapter.update_extraction_job(job_id, {"status": "in_progress"})
+
+    service = ChunkExtractionOperationsService(source_repository=sqlite_adapter)
+
+    async def _fake_extract_single_chunk(**_kwargs: Any) -> tuple[Any, ...]:
+        return (
+            [],
+            [],
+            10,
+            20,
+            {
+                "raw_llm_response": "",
+                "input_tokens": 10,
+                "output_tokens": 20,
+                "entity_count": 0,
+                "relationship_count": 0,
+                "invalid_relationship_count": 0,
+                "evidence_stats": {},
+                "sentences": [],
+                "filtering_log": None,
+                "_prompt_data": {},
+                "finish_reason": "stop",
+                "aborted_by_loop": False,
+            },
+        )
+
+    with (
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.AIEntityExtractor.extract_single_chunk",
+            new=AsyncMock(side_effect=_fake_extract_single_chunk),
+        ),
+        patch(
+            "chaoscypher_core.queue.queue_client.track_tokens",
+            new=AsyncMock(return_value=None),
+        ),
+        # The post-commit progress update blows up (stands in for the
+        # QueueFullError finalize-enqueue path).
+        patch.object(
+            service,
+            "_update_chunk_progress",
+            new=AsyncMock(side_effect=RuntimeError("post-commit boom")),
+        ),
+    ):
+        with structlog.testing.capture_logs() as captured:
+            result = await service._extract_chunk_handler(
+                data={
+                    "chunk_task_id": task_id,
+                    "job_id": job_id,
+                    "database_name": "default",
+                    "chunk_index": 0,
+                    "small_chunk_ids": ["small_pc"],
+                }
+            )
+
+    # The handler reports success and the committed row keeps its status —
+    # fail_chunk_task must never run against a completed chunk.
+    assert result["success"] is True
+    row = sqlite_adapter.get_chunk_task(task_id)
+    assert row is not None
+    assert row["status"] == "completed"
+    assert "chunk_post_commit_tail_failed" in {entry["event"] for entry in captured}

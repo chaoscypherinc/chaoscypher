@@ -26,7 +26,14 @@ from typing import Any
 import structlog
 import yaml
 from dynaconf import Dynaconf
-from pydantic import BaseModel, Field, SecretStr, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_serializer,
+    model_validator,
+)
 from pydantic_settings import BaseSettings
 
 from chaoscypher_core.exceptions import ConfigError as ConfigError  # re-export
@@ -48,6 +55,8 @@ class LocalAuthSettings(BaseModel):
     edge via ``auth_request /api/v1/auth/verify`` — the app just reads
     ``X-Auth-User`` downstream.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     credentials_path: Path = Field(
         default=Path("/data/credentials.json"),
@@ -98,6 +107,8 @@ class LocalAuthSettings(BaseModel):
 
 class QueueSettings(BaseModel):
     """Valkey queue backend configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     queue_host: str = "valkey"
     queue_port: int = 6379
@@ -227,6 +238,8 @@ class PrioritySettings(BaseModel):
     well-defined regime.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     interactive: int = Field(
         default=100,
         ge=0,
@@ -249,6 +262,8 @@ class PrioritySettings(BaseModel):
 
 class TimeoutSettings(BaseModel):
     """Timeout configuration (all values in seconds unless noted)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     # API timeouts
     llm_chat_wait: int = Field(default=120, description="Wait timeout for chat operations (2 min)")
@@ -284,6 +299,17 @@ class TimeoutSettings(BaseModel):
             "no-handler, timeout exhaustion, or reconciler abandonment) so the "
             "post-mortem record outlives the success ``result_ttl`` without "
             "accumulating forever."
+        ),
+    )
+    reconcile_lock_ttl: int = Field(
+        default=120,
+        ge=10,
+        description=(
+            "Seconds a queue-reconciler pass lock (``queue:{queue}:reconcile_lock``, "
+            "SET NX) is held before auto-expiry. Bounds one reconcile pass so a "
+            "crashed holder cannot block reconciliation forever; overlapping "
+            "callers (worker startup, periodic loop, Cortex lifespan safety net) "
+            "skip their pass instead of double-consuming retry budgets."
         ),
     )
 
@@ -393,12 +419,16 @@ class TimeoutSettings(BaseModel):
 class PortSettings(BaseModel):
     """Port configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     web_ui_api: int = Field(default=8080, description="Web UI API server port")
     valkey: int = Field(default=6379, description="Valkey server port")
 
 
 class WorkerSettings(BaseModel):
     """Worker concurrency configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     operations_max_concurrent: int = Field(
         default=8, description="Maximum concurrent operations worker tasks"
@@ -410,6 +440,8 @@ class WorkerSettings(BaseModel):
 
 class RateLimitSettings(BaseModel):
     """Rate limiting configuration for authentication endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
 
     login_max_requests: int = Field(
         default=5, ge=1, description="Max login attempts per IP per window"
@@ -499,6 +531,8 @@ class RateLimitSettings(BaseModel):
 class CorsSettings(BaseModel):
     """CORS (Cross-Origin Resource Sharing) configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     allowed_origins: list[str] = Field(
         default=[],
         description="Allowed CORS origins. Empty = auto-allow localhost origins (any port) for zero-config development.",
@@ -520,6 +554,8 @@ class CorsSettings(BaseModel):
 
 class TLSSettings(BaseModel):
     """TLS certificate and Nginx configuration paths (all-in-one container)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     cert_dir: str = Field(
         default="/data/secrets/tls",
@@ -550,6 +586,8 @@ class TLSSettings(BaseModel):
 class SecuritySettings(BaseModel):
     """HTTP boundary security settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     allowed_hosts: list[str] = Field(
         default_factory=lambda: ["localhost", "127.0.0.1", "::1"],
         description=(
@@ -569,6 +607,8 @@ class SecuritySettings(BaseModel):
 
 class LogsSettings(BaseModel):
     """Logging service configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     known_services: list[str] = Field(
         default=["cortex", "neuron", "nginx", "valkey"],
@@ -600,6 +640,8 @@ class LogsSettings(BaseModel):
 
 class ChatContextSettings(BaseModel):
     """Chat context window and preview configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     default_context_window: int = Field(
         default=32768, description="Fallback context window when provider info unavailable"
@@ -691,6 +733,8 @@ class SourceRecoverySettings(BaseModel):
     See source processing resumability tests for design context.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     worker_scan_interval_seconds: int = Field(
         default=60,
         description="How often workers scan for non-terminal sources.",
@@ -733,6 +777,20 @@ class SourceRecoverySettings(BaseModel):
             "is transitioned to status='error' with "
             "error_stage='recovery_exhausted'. Manual un-error (Cluster D "
             "API) resets the counter."
+        ),
+        ge=1,
+    )
+    mcp_extracting_stale_after_hours: int = Field(
+        default=6,
+        description=(
+            "Hours without client activity (last_activity_at) after which "
+            "a source stuck in status='mcp_extracting' is considered "
+            "abandoned and marked failed by the reconciler. MCP extraction "
+            "is driven by an external MCP client submitting chunk results — "
+            "there is no queue task to re-dispatch, so a disconnected "
+            "client otherwise stalls the source forever. Sized generously: "
+            "a large book extracted chunk-by-chunk over MCP can legitimately "
+            "idle between client sessions for a few hours."
         ),
         ge=1,
     )
@@ -855,6 +913,8 @@ class QueueRecoverySettings(BaseModel):
     See queue reconciliation tests for design context.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     heartbeat_ttl_seconds: int = Field(
         default=30,
         description="TTL on queue:task:{id}:heartbeat keys.",
@@ -898,6 +958,8 @@ class ShutdownSettings(BaseModel):
 
     See source pause and shutdown tests for design context.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     worker_shutdown_grace_seconds: int = Field(
         default=30,
@@ -963,6 +1025,8 @@ class ShutdownSettings(BaseModel):
 class HealthMonitorSettings(BaseModel):
     """Health monitor and conditional auto-pause settings."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = Field(default=True, description="Enable health-based auto-pause.")
     check_interval_seconds: float = Field(
         default=30.0, description="Seconds between health evaluation ticks.", ge=5.0
@@ -996,6 +1060,8 @@ class HealthMonitorSettings(BaseModel):
 class BackupSettings(BaseModel):
     """Database backup configuration."""
 
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = Field(default=True, description="Enable scheduled backups")
     interval: str = Field(
         default="daily",
@@ -1019,6 +1085,8 @@ class IntervalsSettings(BaseModel):
     Groups timer intervals for worker maintenance loops so they can be
     tuned via settings.yaml without touching code.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     search_sweep_seconds: int = Field(
         default=300,
@@ -1076,6 +1144,8 @@ class ServicesSettings(BaseModel):
     service names, but can be overridden for different deployment scenarios.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     cortex_internal_url: str = Field(
         default="http://cortex:8080",
         description="Internal URL for Cortex API (used by workers to trigger reloads)",
@@ -1094,6 +1164,8 @@ class ServicesSettings(BaseModel):
 
 class WorkflowsSettings(BaseModel):
     """Workflow engine configuration."""
+
+    model_config = ConfigDict(extra="forbid")
 
     max_recursion_depth: int = Field(
         default=10,
@@ -1122,6 +1194,8 @@ class WorkflowsSettings(BaseModel):
 class GraphSnapshotSettings(BaseModel):
     """Graph snapshot staleness detection (used by cortex graph_snapshot feature)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     staleness_threshold_seconds: int = Field(
         default=3600,
         ge=60,
@@ -1141,6 +1215,8 @@ class GraphSnapshotSettings(BaseModel):
 class PauseSettings(BaseModel):
     """Pause-operation tuning (used by cortex pause feature)."""
 
+    model_config = ConfigDict(extra="forbid")
+
     reason_max_chars: int = Field(
         default=500,
         ge=10,
@@ -1155,6 +1231,8 @@ class PauseSettings(BaseModel):
 
 class BenchmarkSettings(BaseModel):
     """Benchmark orchestration tunables."""
+
+    model_config = ConfigDict(extra="forbid")
 
     reindex_node_batch_limit: int = Field(
         default=100_000,
@@ -1220,6 +1298,71 @@ def _scrub_retired_keys(section: str, section_data: Any) -> Any:
                 key=str(key).lower(),
             )
     return section_data
+
+
+def _apply_queue_env_overrides(queue_data: dict[str, Any], local_auth_data: dict[str, Any]) -> None:
+    """Override queue/edge-auth settings from environment variables.
+
+    Docker compose sets QUEUE_HOST/PORT/DB/PASSWORD which take precedence
+    over whatever is in settings.yaml (the Docker named volume may have
+    stale values).
+    """
+    if os.environ.get("QUEUE_HOST"):
+        queue_data["queue_host"] = os.environ["QUEUE_HOST"]
+    if os.environ.get("QUEUE_PORT"):
+        queue_data["queue_port"] = int(os.environ["QUEUE_PORT"])
+    if os.environ.get("QUEUE_DB"):
+        queue_data["queue_database"] = int(os.environ["QUEUE_DB"])
+    if os.environ.get("QUEUE_PASSWORD"):
+        queue_data["queue_password"] = os.environ["QUEUE_PASSWORD"]
+    if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN"):
+        local_auth_data["edge_auth_token"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN"]
+    if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE"):
+        local_auth_data["edge_auth_token_path"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE"]
+    if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN_PATH"):
+        local_auth_data["edge_auth_token_path"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN_PATH"]
+
+
+def _apply_lexicon_env_overrides(lexicon_data: dict[str, Any]) -> None:
+    """Re-apply Lexicon env overrides after the YAML merge.
+
+    These fields' default_factory env reads only fire when the YAML carries
+    no value, which inverts the documented precedence (env → settings.yaml →
+    default). Same pattern as ``_apply_queue_env_overrides``.
+    """
+    if os.environ.get("LEXICON_URL"):
+        lexicon_data["url"] = os.environ["LEXICON_URL"]
+    if os.environ.get("LEXICON_API_PATH"):
+        lexicon_data["api_path"] = os.environ["LEXICON_API_PATH"]
+    lexicon_timeout_env = os.environ.get("CHAOSCYPHER_LEXICON_TIMEOUT")
+    if lexicon_timeout_env:
+        try:
+            lexicon_data["timeout"] = int(lexicon_timeout_env)
+        except ValueError:
+            # Mirror _default_lexicon_timeout: garbage never crashes boot.
+            logger.warning(
+                "lexicon_timeout_env_invalid",
+                value=lexicon_timeout_env,
+            )
+
+
+def _apply_paths_env_overrides(paths_data: dict[str, Any]) -> None:
+    """Re-apply path env overrides after the YAML merge.
+
+    Same rationale as ``_apply_lexicon_env_overrides``: the PathSettings
+    default_factory env reads lose to YAML, violating the documented
+    env → settings.yaml → default precedence.
+    """
+    if os.environ.get("CHAOSCYPHER_DATA_DIR"):
+        paths_data["data_dir"] = os.environ["CHAOSCYPHER_DATA_DIR"]
+    if os.environ.get("CHAOSCYPHER_CONFIG_DIR"):
+        paths_data["config_dir"] = os.environ["CHAOSCYPHER_CONFIG_DIR"]
+    if os.environ.get("CHAOSCYPHER_CACHE_DIR"):
+        paths_data["cache_dir"] = os.environ["CHAOSCYPHER_CACHE_DIR"]
+    if os.environ.get("CHAOSCYPHER_DEFAULT_SETTINGS_PATH"):
+        paths_data["default_settings_path"] = os.environ["CHAOSCYPHER_DEFAULT_SETTINGS_PATH"]
+    if os.environ.get("CHAOSCYPHER_STATIC_DIR"):
+        paths_data["static_dir"] = os.environ["CHAOSCYPHER_STATIC_DIR"]
 
 
 # ============================================================================
@@ -1387,7 +1530,6 @@ class Settings(BaseSettings):
                 settings_path=str(yaml_path),
                 action="using_defaults_with_env_overrides",
             )
-            data: dict[str, Any] = {}
         else:
             # Strict-mode: reject unknown top-level keys before dynaconf silences them.
             # Read raw YAML so we can compare against the canonical field names on the
@@ -1412,95 +1554,94 @@ class Settings(BaseSettings):
                     msg_parts.append(f"  - {key}{hint}")
                 raise ConfigError("\n".join(msg_parts))
 
-            # Use dynaconf to load settings with env var support
-            # This replaces 150+ lines of custom regex parsing and manual restructuring
-            dynaconf_settings = Dynaconf(
-                settings_files=[str(yaml_path)],
-                environments=False,  # Single environment mode
-                load_dotenv=True,  # Load .env files if present
-                envvar_prefix="CHAOSCYPHER",  # Env vars: CHAOSCYPHER_OLLAMA_BASE_URL
-                merge_enabled=True,  # Merge multiple sources
-            )
+        # Use dynaconf to load settings with env var support.
+        # Constructed unconditionally: dynaconf tolerates a missing settings
+        # file, and CHAOSCYPHER_* prefixed env overrides must apply on
+        # first-run installs (no settings.yaml yet) exactly as they do once
+        # the file exists — env → settings.yaml → default.
+        dynaconf_settings = Dynaconf(
+            settings_files=[str(yaml_path)],
+            environments=False,  # Single environment mode
+            load_dotenv=True,  # Load .env files if present
+            envvar_prefix="CHAOSCYPHER",  # Env vars: CHAOSCYPHER_LLM__OLLAMA_CHAT_MODEL
+            merge_enabled=True,  # Merge multiple sources
+        )
 
-            # Extract data from dynaconf and build nested structure
-            # Dynaconf provides clean dict access, we just need to structure it
-            data = dynaconf_settings.as_dict()
+        # Extract data from dynaconf and build nested structure
+        # Dynaconf provides clean dict access, we just need to structure it
+        data = dynaconf_settings.as_dict()
 
         # Helper to get values with case-insensitive keys
         def get_ci(key: str, default: Any = None) -> Any:
             return data.get(key.upper(), data.get(key.lower(), default))
 
-        # Extract nested settings (dynaconf converts keys to UPPERCASE)
-        llm_data = _scrub_retired_keys("llm", data.get("LLM", {}))
-        local_auth_data = data.get("LOCAL_AUTH", {})
-        queue_data = data.get("QUEUE", {})
+        # Helper for nested settings groups: dynaconf dunder env vars
+        # (CHAOSCYPHER_LLM__OLLAMA_CHAT_MODEL) surface the nested key in
+        # UPPERCASE while YAML sections keep their written case. Field names
+        # on the settings models are all lowercase, so normalise the section's
+        # top-level keys — deeper levels (user-defined dict keys like
+        # benchmark.vram_presets tiers) are left untouched.
+        def get_section(key: str) -> dict[str, Any]:
+            section = get_ci(key, {})
+            if not isinstance(section, dict):
+                return {}
+            return {str(k).lower(): v for k, v in section.items()}
 
-        # Override queue settings from environment variables.
-        # Docker compose sets QUEUE_HOST/PORT/DB/PASSWORD which take
-        # precedence over whatever is in settings.yaml (the Docker
-        # named volume may have stale values).
-        if os.environ.get("QUEUE_HOST"):
-            queue_data["queue_host"] = os.environ["QUEUE_HOST"]
-        if os.environ.get("QUEUE_PORT"):
-            queue_data["queue_port"] = int(os.environ["QUEUE_PORT"])
-        if os.environ.get("QUEUE_DB"):
-            queue_data["queue_database"] = int(os.environ["QUEUE_DB"])
-        if os.environ.get("QUEUE_PASSWORD"):
-            queue_data["queue_password"] = os.environ["QUEUE_PASSWORD"]
-        if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN"):
-            local_auth_data["edge_auth_token"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN"]
-        if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE"):
-            local_auth_data["edge_auth_token_path"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE"]
-        if os.environ.get("CHAOSCYPHER_EDGE_AUTH_TOKEN_PATH"):
-            local_auth_data["edge_auth_token_path"] = os.environ["CHAOSCYPHER_EDGE_AUTH_TOKEN_PATH"]
-        chunking_data = data.get("CHUNKING", {})
-        embedding_data = data.get("EMBEDDING", data.get("embedding", {}))
-        search_data = data.get("SEARCH", {})
-        source_processing_data = data.get("SOURCE_PROCESSING", {})
-        export_data = data.get("EXPORT", {})
-        lexicon_data = data.get("LEXICON", {})
-        paths_data = data.get("PATHS", {})
-        priorities_data = data.get("PRIORITIES", {})
-        timeouts_data = data.get("TIMEOUTS", {})
-        ports_data = data.get("PORTS", {})
-        batching_data = data.get("BATCHING", {})
-        pagination_data = data.get("PAGINATION", {})
-        retries_data = data.get("RETRIES", {})
-        queue_recovery_data = data.get("QUEUE_RECOVERY", {})
-        source_recovery_data = data.get("SOURCE_RECOVERY", {})
-        services_data = data.get("SERVICES", {})
-        backoff_data = data.get("BACKOFF", {})
-        analysis_data = data.get("ANALYSIS", {})
-        chat_context_data = data.get("CHAT_CONTEXT", {})
-        chat_data = _scrub_retired_keys("chat", data.get("CHAT", {}))
-        workers_data = data.get("WORKERS", {})
-        cors_data = data.get("CORS", {})
-        mcp_data = data.get("MCP", {})
-        backup_data = data.get("BACKUP", {})
-        database_data = data.get("DATABASE", {})
-        shutdown_data = data.get("SHUTDOWN", {})
-        health_monitor_data = data.get("HEALTH_MONITOR", {})
-        rate_limit_data = data.get("RATE_LIMIT", {})
-        tls_data = data.get("TLS", {})
-        security_data = data.get("SECURITY", {})
+        # Extract nested settings (dynaconf converts keys to UPPERCASE)
+        llm_data = _scrub_retired_keys("llm", get_section("LLM"))
+        local_auth_data = get_section("LOCAL_AUTH")
+        queue_data = get_section("QUEUE")
+        _apply_queue_env_overrides(queue_data, local_auth_data)
+        chunking_data = get_section("CHUNKING")
+        embedding_data = get_section("EMBEDDING")
+        search_data = get_section("SEARCH")
+        source_processing_data = get_section("SOURCE_PROCESSING")
+        export_data = get_section("EXPORT")
+        lexicon_data = get_section("LEXICON")
+        _apply_lexicon_env_overrides(lexicon_data)
+        paths_data = get_section("PATHS")
+        _apply_paths_env_overrides(paths_data)
+        priorities_data = get_section("PRIORITIES")
+        timeouts_data = get_section("TIMEOUTS")
+        ports_data = get_section("PORTS")
+        batching_data = get_section("BATCHING")
+        pagination_data = get_section("PAGINATION")
+        retries_data = get_section("RETRIES")
+        queue_recovery_data = get_section("QUEUE_RECOVERY")
+        source_recovery_data = get_section("SOURCE_RECOVERY")
+        services_data = get_section("SERVICES")
+        backoff_data = get_section("BACKOFF")
+        analysis_data = get_section("ANALYSIS")
+        chat_context_data = get_section("CHAT_CONTEXT")
+        chat_data = _scrub_retired_keys("chat", get_section("CHAT"))
+        workers_data = get_section("WORKERS")
+        cors_data = get_section("CORS")
+        mcp_data = get_section("MCP")
+        backup_data = get_section("BACKUP")
+        database_data = get_section("DATABASE")
+        shutdown_data = get_section("SHUTDOWN")
+        health_monitor_data = get_section("HEALTH_MONITOR")
+        rate_limit_data = get_section("RATE_LIMIT")
+        tls_data = get_section("TLS")
+        security_data = get_section("SECURITY")
         if os.environ.get("CHAOSCYPHER_ALLOWED_HOSTS"):
             security_data["allowed_hosts"] = [
                 host.strip()
                 for host in os.environ["CHAOSCYPHER_ALLOWED_HOSTS"].split(",")
                 if host.strip()
             ]
-        logs_data = data.get("LOGS", {})
+        logs_data = get_section("LOGS")
         if os.environ.get("SUPERVISOR_PASSWORD"):
             logs_data["supervisor_password"] = os.environ["SUPERVISOR_PASSWORD"]
-        intervals_data = data.get("INTERVALS", {})
-        workflows_data = data.get("WORKFLOWS", {})
-        web_data = data.get("WEB", {})
-        extraction_data = data.get("EXTRACTION", {})
-        graph_snapshot_data = data.get("GRAPH_SNAPSHOT", {})
-        pause_data = data.get("PAUSE", {})
-        quality_data = data.get("QUALITY", {})
-        cli_data = data.get("CLI", {})
-        benchmark_data = data.get("BENCHMARK", {})
+        intervals_data = get_section("INTERVALS")
+        workflows_data = get_section("WORKFLOWS")
+        web_data = get_section("WEB")
+        extraction_data = get_section("EXTRACTION")
+        graph_snapshot_data = get_section("GRAPH_SNAPSHOT")
+        pause_data = get_section("PAUSE")
+        quality_data = get_section("QUALITY")
+        cli_data = get_section("CLI")
+        benchmark_data = get_section("BENCHMARK")
 
         # Create validated Settings instance
         return cls(
@@ -1698,6 +1839,14 @@ _DEFAULT_SECRET_KEYS: tuple[str, ...] = (
     "access_key",
 )
 
+# Key-name suffixes that mark a field as a filesystem *location* rather than
+# secret material. ``local_auth.session_secret_path`` / ``edge_auth_token_path``
+# contain secret keywords but hold paths TO secret files — masking them broke
+# `config show` and let a full-object PATCH echoing the mask persist the
+# literal "configured" as the path (strip_masked_values only strips
+# ``_SECRET_FIELD_PATHS``, which excludes these fields).
+_PATHLIKE_KEY_SUFFIXES: tuple[str, ...] = ("_path", "_dir", "_filename")
+
 
 def mask_secret_value(value: str | SecretStr | None) -> str | None:
     """Return ``"configured"`` when set, ``None`` when unset.
@@ -1776,6 +1925,9 @@ def mask_settings_dict(
     # ``api_key_max_requests``, ``enable_token_cost_tracking``) are NOT
     # secrets — masking them with ``"configured"`` would corrupt the value
     # and break PATCH /settings round-trips with pydantic validation errors.
+    # Keys ending in a ``_PATHLIKE_KEY_SUFFIXES`` suffix (``_path``/``_dir``/
+    # ``_filename``) are filesystem locations, not secret material, and are
+    # likewise exempt from the keyword walk.
     def _walk(node: dict[str, Any]) -> None:
         for k, v in node.items():
             if isinstance(v, dict):
@@ -1784,7 +1936,11 @@ def mask_settings_dict(
                 for item in v:
                     if isinstance(item, dict):
                         _walk(item)
-            elif isinstance(v, (str, SecretStr)) and any(kw in k.lower() for kw in secret_keys):
+            elif (
+                isinstance(v, (str, SecretStr))
+                and not k.lower().endswith(_PATHLIKE_KEY_SUFFIXES)
+                and any(kw in k.lower() for kw in secret_keys)
+            ):
                 node[k] = mask_secret_value(v)
 
     if secret_keys:

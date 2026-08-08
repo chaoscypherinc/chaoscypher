@@ -97,6 +97,7 @@ class VisionStorageProtocol(Protocol):
         source_id: str,
         *,
         statuses: Sequence[VisionPageStatus] | None = None,
+        include_content: bool = True,
     ) -> list[VisionPageDescription]:
         """Return all rows for a source, optionally filtered by status.
 

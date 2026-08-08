@@ -8,7 +8,8 @@ Phase 7 audit-remediation (2026-05-09).
 Pins two new counter sites:
 
 - P1 #6 — EMBEDDING_CHUNK_FAILURES: incremented once per chunk that
-  cannot be persisted because the chunk row was not found (NotFoundError).
+  cannot be persisted because the chunk row no longer exists (reported
+  missing by update_chunk_embeddings_batch).
 - P2 #3 — EMBEDDING_DIMENSION_MISMATCHES: incremented when
   _validate_embeddings raises ValidationError with field="embedding_dimensions",
   BEFORE the exception propagates.
@@ -26,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_core import EngineSettings
-from chaoscypher_core.exceptions import NotFoundError, ValidationError
+from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.quality.counters import QualityCounter
 from chaoscypher_core.services.search.engine.index import IndexingService
 
@@ -67,6 +68,7 @@ def _make_service(
     # Seed the 2026-05-22 race-guard probe so embed_chunks doesn't
     # short-circuit on the source-deleted path.
     repo.get_chunks_by_source.return_value = ([], 1)
+    repo.update_chunk_embeddings_batch.return_value = []
     settings = EngineSettings()
     settings.search.vector_dimensions = vector_dimensions
     settings.batching.embedding_batch_size = 1000
@@ -82,20 +84,17 @@ def _make_service(
 
 @pytest.mark.unit
 class TestEmbeddingChunkFailureCounter:
-    """EMBEDDING_CHUNK_FAILURES is incremented per NotFoundError during persistence."""
+    """EMBEDDING_CHUNK_FAILURES is incremented per missing chunk during persistence."""
 
     @pytest.mark.asyncio
     async def test_single_not_found_increments_counter_once(self) -> None:
-        """When one of two chunks raises NotFoundError, the counter increments once."""
+        """When one of two chunks is missing, the counter increments once."""
         chunks = _make_chunks(2)
         vectors = [_make_vector(4), _make_vector(4)]
         service = _make_service(vectors=vectors, vector_dimensions=4)
 
-        # First chunk persists OK; second raises NotFoundError.
-        service.repository.update_chunk_embedding.side_effect = [
-            None,
-            NotFoundError("chunk", "chunk-1"),
-        ]
+        # First chunk persists OK; second is reported missing by the batch.
+        service.repository.update_chunk_embeddings_batch.return_value = ["chunk-1"]
 
         with patch(
             "chaoscypher_core.services.search.engine.index.increment_quality_counter",
@@ -107,7 +106,7 @@ class TestEmbeddingChunkFailureCounter:
                 database_name="default",
             )
 
-        # Counter incremented exactly once (for the one NotFoundError).
+        # Counter incremented exactly once (for the one missing chunk).
         mock_increment.assert_awaited_once_with(
             adapter=service.repository,
             source_id="src-pfail",
@@ -119,15 +118,12 @@ class TestEmbeddingChunkFailureCounter:
 
     @pytest.mark.asyncio
     async def test_two_not_found_increments_counter_twice(self) -> None:
-        """Two NotFoundError chunks → counter incremented twice, result = 0."""
+        """Two missing chunks → counter incremented twice, result = 0."""
         chunks = _make_chunks(2)
         vectors = [_make_vector(4), _make_vector(4)]
         service = _make_service(vectors=vectors, vector_dimensions=4)
 
-        service.repository.update_chunk_embedding.side_effect = [
-            NotFoundError("chunk", "chunk-0"),
-            NotFoundError("chunk", "chunk-1"),
-        ]
+        service.repository.update_chunk_embeddings_batch.return_value = ["chunk-0", "chunk-1"]
 
         with patch(
             "chaoscypher_core.services.search.engine.index.increment_quality_counter",
@@ -151,7 +147,7 @@ class TestEmbeddingChunkFailureCounter:
         chunks = _make_chunks(3)
         vectors = [_make_vector(4) for _ in range(3)]
         service = _make_service(vectors=vectors, vector_dimensions=4)
-        service.repository.update_chunk_embedding.return_value = None
+        service.repository.update_chunk_embeddings_batch.return_value = []
 
         with patch(
             "chaoscypher_core.services.search.engine.index.increment_quality_counter",
@@ -174,16 +170,15 @@ class TestEmbeddingChunkFailureCounter:
 
     @pytest.mark.asyncio
     async def test_non_not_found_error_propagates_without_incrementing(self) -> None:
-        """A non-NotFoundError exception is re-raised and the counter is NOT incremented."""
+        """A persistence exception is re-raised and the counter is NOT incremented."""
         chunks = _make_chunks(2)
         vectors = [_make_vector(4), _make_vector(4)]
         service = _make_service(vectors=vectors, vector_dimensions=4)
 
-        # Second chunk raises a generic RuntimeError (not NotFoundError).
-        service.repository.update_chunk_embedding.side_effect = [
-            None,
-            RuntimeError("unexpected DB error"),
-        ]
+        # The batch write raises a generic RuntimeError (DB failure).
+        service.repository.update_chunk_embeddings_batch.side_effect = RuntimeError(
+            "unexpected DB error"
+        )
 
         with patch(
             "chaoscypher_core.services.search.engine.index.increment_quality_counter",
@@ -305,7 +300,7 @@ class TestEmbeddingDimensionMismatchCounter:
         chunks = _make_chunks(2)
         vectors = [_make_vector(4), _make_vector(4)]
         service = _make_service(vectors=vectors, vector_dimensions=4)
-        service.repository.update_chunk_embedding.return_value = None
+        service.repository.update_chunk_embeddings_batch.return_value = []
 
         with patch(
             "chaoscypher_core.services.search.engine.index.increment_quality_counter",

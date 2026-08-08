@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,24 @@ from chaoscypher_core.services.sources.loaders.archive.handlers.registry import 
 
 
 logger = structlog.get_logger(__name__)
+
+# Archive-within-archive nesting depth for the current load.
+#
+# GenericHandler re-enters ``registry.load_document()`` for every extracted
+# file whose suffix is supported, and this loader supports .zip/.tar.gz/.tgz --
+# so a nested archive routes straight back here. ``max_extracted_size_mb`` and
+# ``max_files`` are enforced *per archive* inside ArchiveExtractor, so they do
+# not compose across levels: a level-1 archive holding N child archives
+# authorises N x those limits again, and so on down. Without a depth cap one
+# upload authorises unbounded extraction work.
+#
+# A ContextVar rather than a parameter because ``load_document(filepath)`` is
+# the loader-protocol signature shared by every loader, and the re-entry goes
+# through the registry, which cannot thread extra state through. ContextVars
+# also give correct isolation for the ``asyncio.to_thread`` calls that drive
+# ingestion: each thread gets a copy of the context, so concurrent uploads
+# cannot leak depth into one another.
+_archive_depth: ContextVar[int] = ContextVar("chaoscypher_archive_depth", default=0)
 
 
 class ArchiveLoader:
@@ -109,14 +128,33 @@ class ArchiveLoader:
         if not archive_path.exists():
             raise NotFoundError("Archive", filepath)
 
+        # Refuse before extracting anything: this is the amplification gate.
+        max_depth = self.settings.archive.max_nesting_depth
+        depth = _archive_depth.get()
+        if depth >= max_depth:
+            logger.warning(
+                "archive_nesting_limit_exceeded",
+                filepath=filepath,
+                depth=depth,
+                max_nesting_depth=max_depth,
+            )
+            msg = (
+                f"Archive nesting depth {depth + 1} exceeds the configured "
+                f"maximum of {max_depth}. Nested archives beyond this depth are "
+                f"not extracted."
+            )
+            raise OperationError(msg, operation="archive_load")
+
         logger.info(
             "archive_loading_started",
             filepath=filepath,
             archive_size=archive_path.stat().st_size,
+            depth=depth,
         )
 
         # Create temporary directory for extraction
         temp_dir = None
+        depth_token = _archive_depth.set(depth + 1)
         try:
             temp_dir = Path(tempfile.mkdtemp(prefix="chaoscypher_archive_"))
 
@@ -204,6 +242,11 @@ class ArchiveLoader:
             raise
 
         finally:
+            # Restore the caller's nesting depth first. This must not be
+            # skipped or a failed nested load would leave the depth inflated
+            # for every later archive on this context.
+            _archive_depth.reset(depth_token)
+
             # Step 4: Cleanup temp directory
             if temp_dir and temp_dir.exists():
                 try:

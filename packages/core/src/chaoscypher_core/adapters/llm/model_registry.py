@@ -48,8 +48,11 @@ class CloudModelRegistry:
         >>> for model in models:
         ...     print(f"{model['display_name']}: {model['context_window']} tokens")
         >>>
-        >>> # Get specific model
-        >>> model = registry.get_model("openai", "gpt-4.1")
+        >>> # Find a specific model (there is no get_model(); filter the list)
+        >>> model = next(
+        ...     (m for m in registry.get_models("openai") if m["id"] == "gpt-4.1"),
+        ...     None,
+        ... )
         >>> if model:
         ...     print(f"Context: {model['context_window']}")
         ...     print(f"Price: ${model['pricing']['input_per_million']}/M input")

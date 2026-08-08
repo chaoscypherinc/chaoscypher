@@ -136,10 +136,20 @@ Filtering mode is a property of the source, persisted at upload time. The
 UI **Re-extract** action (the three-dot source menu) re-runs extraction
 with the source's stored filtering mode — it does not offer a mode picker.
 
-To re-extract under a *different* mode, call the extraction API directly:
-`POST /sources/{id}/extraction` with `force=true` and `filtering_mode=…`.
-(The dedicated `POST /sources/{id}/re_extract` endpoint always reuses the
-stored mode and takes no `filtering_mode` argument.)
+To re-extract under a *different* mode, pass `filtering_mode` to either
+endpoint:
+
+- `POST /sources/{id}/extraction` with `force=true` and `filtering_mode=…`
+- `POST /sources/{id}/re_extract` with `{"filtering_mode": "…"}` in the body
+
+Both apply the mode to **that run only** — the source row keeps its
+upload-time value, so a later re-extract without an override returns to it.
+
+Fixed 2026-08-04: until then neither route worked. The extraction endpoint's
+`filtering_mode` was unreachable (the worker read the source row first, and the
+column is non-nullable with `default="balanced"`, so it was never empty), and
+`re_extract` declared no request body at all — so both silently ran a full,
+token-costing re-extraction under the stored mode.
 
 ## What about my counters?
 

@@ -24,12 +24,26 @@ import type { WorkflowStep, WorkflowStepCreate, WorkflowTrigger } from '../../..
 // ============================================================================
 
 /**
- * Convert canvas nodes and edges to API workflow steps
+ * A serialized workflow step together with its originating canvas node,
+ * so save logic can correlate each step with its own node (and stepId).
  */
-export function serializeWorkflow(
+export interface SerializedStep {
+  /** Canvas node id the step was serialized from. */
+  nodeId: string;
+  /** Existing server-side step id, if the node was loaded from the API. */
+  stepId?: string;
+  /** Step payload in API format. */
+  step: WorkflowStepCreate;
+}
+
+/**
+ * Convert canvas nodes and edges to API workflow steps, keeping each
+ * step correlated with the canvas node it came from.
+ */
+export function serializeWorkflowSteps(
   nodes: Node[],
   edges: Edge[]
-): WorkflowStepCreate[] {
+): SerializedStep[] {
   // Filter to only step nodes (exclude trigger nodes for now)
   const stepNodes = nodes.filter(
     (n) => n.type === 'stepNode' || n.type === 'conditionalNode'
@@ -44,35 +58,54 @@ export function serializeWorkflow(
   // Convert to API format
   return orderedNodes.map((node, index) => {
     const data = node.data as WorkflowStepNodeData | ConditionalNodeData;
+    const stepId = (node.data as { stepId?: string }).stepId;
 
     if (node.type === 'stepNode') {
       const stepData = data as WorkflowStepNodeData;
       return {
-        step_number: index + 1,
-        name: stepData.name,
-        description: stepData.description,
-        tool_type: stepData.toolType,
-        tool_id: stepData.toolId,
-        configuration: stepData.configuration || {},
-        depends_on: dependencyMap[node.id] || [],
-        continue_on_error: stepData.continueOnError || false,
-        thinking_mode: stepData.thinkingMode,
+        nodeId: node.id,
+        stepId,
+        step: {
+          step_number: index + 1,
+          name: stepData.name,
+          description: stepData.description,
+          tool_type: stepData.toolType,
+          tool_id: stepData.toolId,
+          configuration: stepData.configuration || {},
+          depends_on: dependencyMap[node.id] || [],
+          continue_on_error: stepData.continueOnError || false,
+          thinking_mode: stepData.thinkingMode,
+        },
       };
     } else {
       // Conditional node
       const condData = data as ConditionalNodeData;
       return {
-        step_number: index + 1,
-        name: condData.name || 'Condition',
-        description: `Conditional branch: ${JSON.stringify(condData.condition)}`,
-        tool_type: 'system_tool' as const,
-        tool_id: 'logic.conditional',
-        configuration: { condition: condData.condition },
-        depends_on: dependencyMap[node.id] || [],
-        continue_on_error: false,
+        nodeId: node.id,
+        stepId,
+        step: {
+          step_number: index + 1,
+          name: condData.name || 'Condition',
+          description: `Conditional branch: ${JSON.stringify(condData.condition)}`,
+          tool_type: 'system_tool' as const,
+          tool_id: 'logic.conditional',
+          configuration: { condition: condData.condition },
+          depends_on: dependencyMap[node.id] || [],
+          continue_on_error: false,
+        },
       };
     }
   });
+}
+
+/**
+ * Convert canvas nodes and edges to API workflow steps
+ */
+export function serializeWorkflow(
+  nodes: Node[],
+  edges: Edge[]
+): WorkflowStepCreate[] {
+  return serializeWorkflowSteps(nodes, edges).map((s) => s.step);
 }
 
 /**
@@ -206,6 +239,7 @@ export function deserializeWorkflow(
       },
       data: isConditional
         ? ({
+            stepId: step.id,
             name: step.name,
             condition: step.configuration?.condition || {
               field: '',

@@ -43,6 +43,19 @@ class _FakeValkey:
     async def delete(self, key: str) -> None:
         self.store.pop(key, None)
 
+    async def eval(self, script: str, numkeys: int, *keys_and_args: str) -> int:
+        """Emulate the Valkey EVAL command for the broker's string-CAS script.
+
+        This mirrors ``valkey.asyncio.Valkey.eval`` (server-side Lua), not
+        Python's builtin ``eval`` — the ``script`` text is never executed
+        here; the fake applies the known CAS semantics to the store.
+        """
+        key, expected, new = keys_and_args[0], keys_and_args[1], keys_and_args[2]
+        if self.store.get(key) == expected:
+            self.store[key] = new
+            return 1
+        return 0
+
 
 def _broker(fake: _FakeValkey) -> ValkeyApprovalBroker:
     return ValkeyApprovalBroker(client_getter=lambda: fake)
@@ -111,6 +124,31 @@ async def test_resolve_normalizes_decision_values() -> None:
     ok = await resolve_tool_approval("c1", "tc-6", "banana", client=fake)  # type: ignore[arg-type]
     assert ok is True
     assert fake.store[_approval_key("c1", "tc-6")] == "reject"
+
+
+async def test_resolve_concurrent_conflict_first_wins() -> None:
+    """Two conflicting resolvers: exactly one wins, no silent override.
+
+    Pins the 2026-06-28 hunter finding's fix (verdict 2026-07-23): the old
+    read-then-write let both callers observe PENDING and both write —
+    last write silently overrode the first decision. The fake's ``get``
+    is made to always claim PENDING (both callers pass the old read
+    check); the atomic CAS still lets only the first write through.
+    """
+    fake = _FakeValkey()
+    await _broker(fake).request("c1", "tc-8", "create_node", {}, iteration=1)
+
+    async def _lying_get(key: str) -> str | None:
+        return PENDING_SENTINEL
+
+    fake.get = _lying_get  # type: ignore[method-assign]
+
+    first = await resolve_tool_approval("c1", "tc-8", "approve", client=fake)
+    second = await resolve_tool_approval("c1", "tc-8", "reject", client=fake)
+
+    assert first is True
+    assert second is False
+    assert fake.store[_approval_key("c1", "tc-8")] == "approve"
 
 
 async def test_wait_without_client_fails_closed() -> None:

@@ -10,6 +10,7 @@ GET    /api/v1/backup/{filename}/download - Download a backup file
 DELETE /api/v1/backup/{filename}   - Delete a specific backup
 """
 
+import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, status
@@ -24,7 +25,6 @@ from chaoscypher_cortex.features.backup.models import (
     RestoreResponse,
 )
 from chaoscypher_cortex.features.backup.service import BackupFeatureService
-from chaoscypher_cortex.shared.api.errors import resource_not_found_error, validation_error
 from chaoscypher_cortex.shared.api.responses import (
     AUTH_ERROR_RESPONSES,
     COMMON_ERROR_RESPONSES,
@@ -67,8 +67,11 @@ async def create_backup(
     """Create a backup of the current database.
 
     Returns 201 Created since a new backup file is created.
+
+    The VACUUM INTO copy is blocking disk I/O — run it off the event loop
+    (same pattern as the backup scheduler in lifespan.py).
     """
-    return service.create_backup(database_name)
+    return await asyncio.to_thread(service.create_backup, database_name)
 
 
 @router.get(
@@ -104,13 +107,14 @@ async def restore_backup(
     database_name: Annotated[str, Depends(get_current_database_name)],
     service: Annotated[BackupFeatureService, Depends(get_backup_service)],
 ) -> dict[str, str]:
-    """Restore the current database from a backup."""
-    try:
-        return service.restore_backup(database_name, filename)
-    except FileNotFoundError:
-        raise resource_not_found_error("backup", filename) from None
-    except ValueError as e:
-        raise validation_error("backup_restore", internal_error=e) from e
+    """Restore the current database from a backup.
+
+    The safety copy + restore copy are blocking disk I/O — run them off
+    the event loop. Core BackupService raises ChaosCypherException
+    subclasses (NotFoundError/ValidationError/OperationError); the global
+    domain handler maps them to 404/400/422.
+    """
+    return await asyncio.to_thread(service.restore_backup, database_name, filename)
 
 
 @router.get(
@@ -127,16 +131,17 @@ async def download_backup(
     database_name: Annotated[str, Depends(get_current_database_name)],
     service: Annotated[BackupFeatureService, Depends(get_backup_service)],
 ) -> FileResponse:
-    """Download a backup file."""
-    try:
-        path = service.get_backup_path(database_name, filename)
-        return FileResponse(
-            path=str(path),
-            filename=filename,
-            media_type="application/x-sqlite3",
-        )
-    except FileNotFoundError:
-        raise resource_not_found_error("backup", filename) from None
+    """Download a backup file.
+
+    A missing backup raises core NotFoundError → 404 via the global
+    domain handler.
+    """
+    path = service.get_backup_path(database_name, filename)
+    return FileResponse(
+        path=str(path),
+        filename=filename,
+        media_type="application/x-sqlite3",
+    )
 
 
 @router.delete(
@@ -154,8 +159,9 @@ async def delete_backup(
     database_name: Annotated[str, Depends(get_current_database_name)],
     service: Annotated[BackupFeatureService, Depends(get_backup_service)],
 ) -> None:
-    """Delete a specific backup."""
-    try:
-        service.delete_backup(database_name, filename)
-    except FileNotFoundError:
-        raise resource_not_found_error("backup", filename) from None
+    """Delete a specific backup.
+
+    A missing backup raises core NotFoundError → 404 via the global
+    domain handler.
+    """
+    service.delete_backup(database_name, filename)

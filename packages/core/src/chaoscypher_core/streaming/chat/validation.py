@@ -192,7 +192,9 @@ async def validate_response_grounding(
         chunk_text_map: dict[str, list[str]] = {}
         all_normalized_texts: list[str] = []
         for c in search_chunks:
-            cid = c.get("id", "")
+            # search_chunks tool results key chunks by "chunk_id"; "id" kept
+            # as a fallback for older persisted tool-result payloads.
+            cid = c.get("chunk_id") or c.get("id") or ""
             for field in ("original_content", "combined_content"):
                 text = c.get(field, "")
                 if text:
@@ -294,7 +296,7 @@ async def validate_citation_references(
 
             # Parse sentence refs (e.g. "S1,S2") into zero-based indices
             sentence_refs = citation.get("sentence_refs", "")
-            indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs)]
+            indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs, re.IGNORECASE)]
 
             if not indices:
                 per_citation[cite_key] = {

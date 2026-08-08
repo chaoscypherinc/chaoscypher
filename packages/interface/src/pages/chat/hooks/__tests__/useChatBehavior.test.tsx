@@ -257,6 +257,55 @@ describe('chat: send + streaming accumulation', () => {
       /encountered an issue/i,
     );
   });
+
+  it('refetches the chat after a contentless done so the persisted answer renders', async () => {
+    // Contentless done = subscribe-after-finish race. onDone patches status
+    // to 'active', which stops the processing-keyed poller, and the detail
+    // query never refetches on its own (staleTime: Infinity) — so the done
+    // path must invalidate the detail query or the bubble stays empty
+    // forever (2026-07-27 audit).
+    installSseFetchMock(() => makeSseResponse([{ type: 'done' }]));
+
+    // The server's chat gains the persisted answer only after the send.
+    let detailFetches = 0;
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/chats') {
+        return Promise.resolve(listEnvelope([makeChatMeta({ id: 'c1' })]));
+      }
+      if (/^\/chats\/c1$/.test(url)) {
+        detailFetches += 1;
+        if (detailFetches === 1) {
+          return Promise.resolve({ data: makeChat({ id: 'c1' }) });
+        }
+        return Promise.resolve({
+          data: makeChat({
+            id: 'c1',
+            status: 'active',
+            messages: [
+              { role: 'user', content: 'hi' },
+              { role: 'assistant', content: 'Persisted answer' },
+            ] as Chat['messages'],
+          }),
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    const { result } = renderHook(() => useChat(), {
+      wrapper: makeChatWrapper(['/chat/c1']),
+    });
+    await waitFor(() => expect(result.current.currentChat?.id).toBe('c1'));
+
+    await act(async () => {
+      await result.current.handleSend('hi');
+    });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    // The persisted answer must arrive via the invalidation-triggered refetch.
+    await waitFor(() =>
+      expect(lastAssistant(result.current.messages)?.content).toBe('Persisted answer'),
+    );
+  });
 });
 
 // ===========================================================================

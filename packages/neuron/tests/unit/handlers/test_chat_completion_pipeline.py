@@ -404,8 +404,62 @@ async def test_run_source_scope_builds_source_metadata(
     assert result["success"] is True
     # Only the resolvable source made it into the metadata.
     assert captured["source_metadata"] == [{"id": "s1", "title": "Doc One"}]
-    # get_source was queried for both declared source_ids.
+    # get_source was queried for both declared source_ids, against the
+    # task's resolved database — never the live settings value (the operator
+    # may switch databases while a task sits in the queue).
     assert real_get_source.call_count == 2
+    for call in real_get_source.call_args_list:
+        assert call.args[1] == chat_service.database_name
+
+
+@pytest.mark.asyncio
+async def test_run_source_scope_null_title_falls_back_to_filename(
+    chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A source row with ``title=None`` falls back to filename, then id.
+
+    Regression: ``source.get("title", fallback)`` never fired because the
+    adapter's row always carries the ``title`` key (possibly None), so a
+    null title leaked into the LLM prompt metadata (2026-07-27 audit).
+    """
+    chat_service.create_chat(chat_id="scoped-nt", title="Scoped", source_ids=["s1", "s2"])
+
+    storage = chat_service.storage
+    rows = {
+        "s1": {"title": None, "filename": "notes.pdf"},
+        "s2": {"title": None, "filename": None},
+    }
+    monkeypatch.setattr(storage, "get_source", MagicMock(side_effect=lambda sid, db: rows[sid]))
+
+    captured: dict[str, Any] = {}
+    build_result = MagicMock()
+    build_result.messages_for_llm = []
+    build_result.context_info = MagicMock()
+
+    def _capture_build(chat: Any, chat_id: str, settings: Any, **kwargs: Any) -> Any:
+        captured["source_metadata"] = kwargs.get("source_metadata")
+        return build_result
+
+    provider = MagicMock()
+    provider.chat = AsyncMock(
+        side_effect=[_stream({"type": "done", "content": "Answer", "tool_calls": None})]
+    )
+
+    _patch_streaming_seams(
+        monkeypatch,
+        setup_chat_providers=lambda *a, **k: (provider, MagicMock(), []),
+    )
+    monkeypatch.setattr("chaoscypher_core.streaming.chat.build_messages_for_llm", _capture_build)
+
+    kwargs = _run_kwargs(chat_service)
+    kwargs["chat_id"] = "scoped-nt"
+    result = await cc._run_chat_completion(**kwargs)
+
+    assert result["success"] is True
+    assert captured["source_metadata"] == [
+        {"id": "s1", "title": "notes.pdf"},
+        {"id": "s2", "title": "s2"},
+    ]
 
 
 @pytest.mark.asyncio

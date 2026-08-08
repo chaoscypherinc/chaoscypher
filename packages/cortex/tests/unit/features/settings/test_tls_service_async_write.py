@@ -1,14 +1,23 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""TLSService.enable_custom must not block the event loop on disk I/O."""
+"""TLSService.enable_custom must not block the event loop on disk I/O.
+
+The previous version of this test joined a fixed ``for _ in range(20)``
+ticker with ``asyncio.gather`` and asserted ``tick_count >= 15`` — but the
+gather waits for the ticker to finish, so the count was always exactly 20
+and the test could not fail even with every ``asyncio.to_thread`` offload
+deleted (hunt queue 2026-08-01). This version asserts the offload mechanism
+itself: each disk operation must reach ``asyncio.to_thread``, which is
+deterministic and fails the moment any write is made synchronous again.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -32,34 +41,42 @@ def _make_tls_service(tmp_path: Path) -> TLSService:
 
 
 @pytest.mark.asyncio
-async def test_enable_custom_does_not_block_event_loop(tmp_path: Path) -> None:
-    """A slow write must not stall a concurrent async ticker."""
+async def test_enable_custom_offloads_every_disk_op_to_thread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every filesystem call in enable_custom must go through asyncio.to_thread.
+
+    Replacing any of the four offloads with a direct synchronous call (the
+    2026-05 event-loop-starvation regression this file pins) removes that
+    entry from the recorded sequence and fails the assertion — no wall-clock
+    thresholds involved.
+    """
     service = _make_tls_service(tmp_path)
     # Stub the nginx swap so the test focuses on disk I/O.
     service._switch_nginx_config = MagicMock()  # type: ignore[method-assign]
 
-    tick_count = 0
+    offloaded: list[str] = []
+    real_to_thread = asyncio.to_thread
 
-    async def ticker() -> None:
-        nonlocal tick_count
-        for _ in range(20):
-            await asyncio.sleep(0.02)
-            tick_count += 1
+    async def recording_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(getattr(func, "__qualname__", repr(func)))
+        return await real_to_thread(func, *args, **kwargs)
 
-    original_write_bytes = Path.write_bytes
+    monkeypatch.setattr(asyncio, "to_thread", recording_to_thread)
 
-    def slow_write_bytes(self: Path, data: bytes) -> int:
-        time.sleep(0.3)  # simulate slow disk
-        return original_write_bytes(self, data)
+    await service.enable_custom(cert_pem=b"-fake-cert-", key_pem=b"-fake-key-")
 
-    with patch.object(Path, "write_bytes", new=slow_write_bytes):
-        ticker_task = asyncio.create_task(ticker())
-        enable_task = asyncio.create_task(
-            service.enable_custom(cert_pem=b"-fake-cert-", key_pem=b"-fake-key-")
-        )
-        await asyncio.gather(ticker_task, enable_task)
+    assert offloaded == [
+        "Path.mkdir",
+        "Path.write_bytes",
+        "Path.write_bytes",
+        "Path.chmod",
+    ]
 
-    # If write_bytes blocked the loop, tick_count would be ~5 (two 0.3s writes
-    # consume ~0.6 s, leaving only ~10 of the 20 ticks to fire while the loop
-    # is actually free). With asyncio.to_thread, it stays ~20.
-    assert tick_count >= 15, f"Event loop appears blocked: only {tick_count} ticks fired"
+    # And the offloaded calls really performed the writes.
+    cert_path = tmp_path / "certs" / "server.crt"
+    key_path = tmp_path / "certs" / "server.key"
+    assert cert_path.read_bytes() == b"-fake-cert-"
+    assert key_path.read_bytes() == b"-fake-key-"
+    assert key_path.stat().st_mode & 0o777 == 0o600
+    service._switch_nginx_config.assert_called_once_with(https=True)

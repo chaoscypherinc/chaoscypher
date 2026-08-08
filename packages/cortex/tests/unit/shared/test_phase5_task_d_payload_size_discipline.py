@@ -98,6 +98,22 @@ def _find_class_field(tree: ast.Module, class_name: str, field_name: str) -> ast
     return None
 
 
+def _attr_call_linenos(func: ast.AST, attr_name: str) -> list[int]:
+    """Line numbers of every ``<obj>.<attr_name>(...)`` call inside ``func``.
+
+    Scopes call-shape assertions to a single function so a match elsewhere
+    in the module can never satisfy a contract about this function, and so
+    relative call order within the function can be asserted via lineno.
+    """
+    return [
+        node.lineno
+        for node in ast.walk(func)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == attr_name
+    ]
+
+
 def _enqueue_data_keys_in_function(func: ast.AST) -> set[str]:
     """Collect the set of dict keys passed as the ``data=`` kwarg of any
     ``enqueue_task``/``enqueue_tasks_batch`` call inside ``func``.
@@ -230,11 +246,26 @@ def test_queue_import_commit_writes_payload_to_db_before_enqueue() -> None:
     the DB write committed, and the handler would fail with
     commit_payload_not_found.
     """
-    src = _source(QUEUE_UTILS_MODULE)
-    assert "adapter.set_source_commit_payload(" in src, (
+    tree = _parse(QUEUE_UTILS_MODULE)
+    helper = _find_toplevel(tree, "queue_import_commit")
+    assert isinstance(helper, ast.AsyncFunctionDef), (
+        "queue_utils.py must define async def queue_import_commit(...)."
+    )
+
+    set_calls = _attr_call_linenos(helper, "set_source_commit_payload")
+    assert set_calls, (
         "queue_import_commit must call adapter.set_source_commit_payload(...) "
         "to persist the large commit_data dict before enqueueing the thin "
         "queue message. Without it, the handler has no payload to read."
+    )
+    enqueue_calls = _attr_call_linenos(helper, "enqueue_task")
+    assert enqueue_calls, "queue_import_commit must enqueue via queue_client.enqueue_task(...)."
+    assert max(set_calls) < min(enqueue_calls), (
+        "queue_import_commit must persist the commit payload BEFORE enqueueing: "
+        f"set_source_commit_payload at line(s) {set_calls} must precede "
+        f"enqueue_task at line(s) {enqueue_calls}. A successfully-enqueued "
+        "task could otherwise run before the DB write committed and fail "
+        "with commit_payload_not_found."
     )
 
 
@@ -305,8 +336,13 @@ def test_extract_chunk_handler_fetches_chunks_by_ids() -> None:
     AST-level assertion of the call shape keeps future refactors from
     silently dropping the rehydrate step.
     """
-    src = _source(CHUNK_EXTRACTION_MODULE)
-    assert "adapter.get_chunks_by_ids(" in src, (
+    tree = _parse(CHUNK_EXTRACTION_MODULE)
+    handler = _find_any_method(tree, "_extract_chunk_handler")
+    assert handler is not None, (
+        "chunk_extraction_service.py must define _extract_chunk_handler — "
+        "if renamed, update this test accordingly."
+    )
+    assert _attr_call_linenos(handler, "get_chunks_by_ids"), (
         "_extract_chunk_handler must call adapter.get_chunks_by_ids(...) to "
         "rehydrate chunk text from the DB — the queue payload no longer "
         "carries chunk_content (Phase 5 Task D)."
@@ -320,8 +356,13 @@ def test_import_commit_handler_reads_commit_payload_from_db() -> None:
     (payload no longer carries it). A stray ``data["commit_data"]``
     would crash with KeyError on every OP_IMPORT_COMMIT after Task D.
     """
-    src = _source(IMPORT_SERVICE_MODULE)
-    assert ".get_source_commit_payload(" in src, (
+    tree = _parse(IMPORT_SERVICE_MODULE)
+    handler = _find_any_method(tree, "_import_commit_handler")
+    assert handler is not None, (
+        "import_service.py must define _import_commit_handler — "
+        "if renamed, update this test accordingly."
+    )
+    assert _attr_call_linenos(handler, "get_source_commit_payload"), (
         "_import_commit_handler must call get_source_commit_payload(...) "
         "to rehydrate commit_data from the DB — the queue payload no longer "
         "carries commit_data (Phase 5 Task D)."
@@ -334,10 +375,14 @@ def test_import_commit_handler_reads_commit_payload_from_db() -> None:
     # flips status to COMMITTED. Pin the new home via Core's
     # ``services/sources/engine/commit/service.py`` so a future refactor
     # cannot silently drop the call.
-    commit_service_src = _source(
+    commit_service_tree = _parse(
         CORE_SRC / "services" / "sources" / "engine" / "commit" / "service.py"
     )
-    assert ".clear_source_commit_payload(" in commit_service_src, (
+    commit_impl = _find_any_method(commit_service_tree, "_commit_impl")
+    assert commit_impl is not None, (
+        "commit/service.py must define _commit_impl — if renamed, update this test."
+    )
+    assert _attr_call_linenos(commit_impl, "clear_source_commit_payload"), (
         "SourceCommitService must call clear_source_commit_payload(...) as "
         "the last write inside its inner commit transaction so the payload "
         "is discarded atomically with a successful commit (and preserved "
@@ -346,7 +391,9 @@ def test_import_commit_handler_reads_commit_payload_from_db() -> None:
         "commit service so the outer transaction at import_service.py:1230 "
         "can be removed."
     )
-    assert 'data["commit_data"]' not in src and "data['commit_data']" not in src, (
+    handler_src = ast.get_source_segment(_source(IMPORT_SERVICE_MODULE), handler) or ""
+    assert handler_src, "could not extract _import_commit_handler's source segment"
+    assert 'data["commit_data"]' not in handler_src and "data['commit_data']" not in handler_src, (
         "_import_commit_handler must not read commit_data from the task "
         "data dict — Task D moved commit_data onto SourceRow.commit_payload. "
         'A stray data["commit_data"] will crash with KeyError on every '

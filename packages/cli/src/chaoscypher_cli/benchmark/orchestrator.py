@@ -253,7 +253,27 @@ def _stamp_provenance(rows: list[BenchmarkResult], **provenance: str) -> None:
         r.metrics.update(provenance)
 
 
-def default_wiring(*, workspace: Path) -> OrchestratorWiring:  # noqa: PLR0915 - benchmark wiring with documented helper closures
+def _provider_llm_kwargs(model: ModelConfig, source_llm: Any) -> dict[str, Any]:
+    """Build LLMSettings kwargs for a benchmark model, inheriting runtime config.
+
+    Copies Ollama instance config (for a local model) and the cloud API keys
+    from ``source_llm`` so yaml-configured credentials reach the constructed
+    provider — bare LLMSettings would fall back to env-var defaults only.
+    """
+    llm_kwargs: dict[str, Any] = {
+        "chat_provider": model.provider,
+        f"{model.provider}_chat_model": model.model,
+    }
+    if model.provider == "ollama" and getattr(source_llm, "ollama_instances", None):
+        llm_kwargs["ollama_instances"] = source_llm.ollama_instances
+    for key_field in ("openai_api_key", "anthropic_api_key", "gemini_api_key"):
+        val = getattr(source_llm, key_field, None)
+        if val is not None:
+            llm_kwargs[key_field] = val
+    return llm_kwargs
+
+
+def default_wiring(*, workspace: Path) -> OrchestratorWiring:
     """Build production OrchestratorWiring against real ChaosCypher infra.
 
     All callables close over ``workspace`` to persist the graph cache and
@@ -367,18 +387,9 @@ def default_wiring(*, workspace: Path) -> OrchestratorWiring:  # noqa: PLR0915 -
         from chaoscypher_core.adapters.llm.provider import LLMProvider
         from chaoscypher_core.settings import EngineSettings, LLMSettings
 
-        # Build a minimal EngineSettings wired to the requested provider/model.
-        chat_field = f"{chat_model.provider}_chat_model"
-        llm_kwargs: dict[str, Any] = {"chat_provider": chat_model.provider}
-        # Copy Ollama instance config from the current ctx if provider matches.
-        if chat_model.provider == "ollama" and hasattr(ctx.settings.llm, "ollama_instances"):
-            llm_kwargs["ollama_instances"] = ctx.settings.llm.ollama_instances
-        # Carry over API keys for cloud providers.
-        for key_field in ("openai_api_key", "anthropic_api_key", "gemini_api_key"):
-            val = getattr(ctx.settings.llm, key_field, None)
-            if val is not None:
-                llm_kwargs[key_field] = val
-        llm_kwargs[chat_field] = chat_model.model
+        # Build a minimal EngineSettings wired to the requested provider/model,
+        # inheriting instance config + cloud API keys from the current ctx.
+        llm_kwargs = _provider_llm_kwargs(chat_model, ctx.settings.llm)
         settings = EngineSettings(llm=LLMSettings(**llm_kwargs))
         provider = LLMProvider(settings=settings)
 
@@ -395,16 +406,16 @@ def default_wiring(*, workspace: Path) -> OrchestratorWiring:  # noqa: PLR0915 -
     async def _judge_call(judge: ModelConfig, prompt: str) -> str:
         """Send a single judge prompt and return the model's reply text."""
         from chaoscypher_core.adapters.llm.provider import LLMProvider
+        from chaoscypher_core.app_config import get_settings
         from chaoscypher_core.settings import EngineSettings, LLMSettings
 
-        chat_field = f"{judge.provider}_chat_model"
-        # Let LLMSettings defaults handle provider-specific config (e.g. Ollama
-        # instances) — no hardcoded URLs. This matches how _chat inherits from
-        # ctx.settings.llm rather than constructing its own config.
-        llm_kwargs: dict[str, Any] = {
-            "chat_provider": judge.provider,
-            chat_field: judge.model,
-        }
+        # Inherit runtime config from the operator's settings like _chat does
+        # (judge_call's wiring contract carries no ctx, so read the canonical
+        # global settings): Ollama instance config for a local judge, and the
+        # cloud API keys for a commercial one. Building bare LLMSettings here
+        # left the keys to the env-var default_factory, so a yaml-configured
+        # key 401'd every judge call.
+        llm_kwargs = _provider_llm_kwargs(judge, get_settings().llm)
         settings = EngineSettings(llm=LLMSettings(**llm_kwargs))
         provider = LLMProvider(settings=settings)
         res = await provider.chat([{"role": "user", "content": prompt}])

@@ -9,7 +9,7 @@
  * tool schemas) and layers on keyboard shortcuts.
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   useNodesState,
   useEdgesState,
@@ -184,22 +184,46 @@ export function useWorkflowBuilder(): UseWorkflowBuilderReturn {
   // Keyboard shortcuts
   // =========================================================================
 
+  // Keep the latest handlers/selection in a ref so the (mount-once) keydown
+  // listener always reads current values without re-subscribing per render.
+  const shortcutsRef = useRef({
+    handleUndo,
+    handleRedo,
+    handleSave: persistence.handleSave,
+    selectedNode: canvas.selectedNode,
+    selectedEdge: canvas.selectedEdge,
+    deleteSelectedNode: canvas.deleteSelectedNode,
+    deleteSelectedEdge: canvas.deleteSelectedEdge,
+  });
+  useEffect(() => {
+    shortcutsRef.current = {
+      handleUndo,
+      handleRedo,
+      handleSave: persistence.handleSave,
+      selectedNode: canvas.selectedNode,
+      selectedEdge: canvas.selectedEdge,
+      deleteSelectedNode: canvas.deleteSelectedNode,
+      deleteSelectedEdge: canvas.deleteSelectedEdge,
+    };
+  });
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      const shortcuts = shortcutsRef.current;
       if (event.ctrlKey && event.key === 'z' && !event.shiftKey) {
         event.preventDefault();
-        handleUndo();
+        shortcuts.handleUndo();
       }
       if (
         (event.ctrlKey && event.key === 'y') ||
         (event.ctrlKey && event.shiftKey && event.key === 'z')
       ) {
         event.preventDefault();
-        handleRedo();
+        shortcuts.handleRedo();
       }
       if (event.ctrlKey && event.key === 's') {
         event.preventDefault();
-        persistence.handleSave();
+        shortcuts.handleSave();
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         const target = event.target as HTMLElement;
@@ -208,10 +232,10 @@ export function useWorkflowBuilder(): UseWorkflowBuilderReturn {
           target.tagName === 'TEXTAREA' ||
           target.isContentEditable;
         if (!isInputField) {
-          if (canvas.selectedNode) {
-            canvas.deleteSelectedNode();
-          } else if (canvas.selectedEdge) {
-            canvas.deleteSelectedEdge();
+          if (shortcuts.selectedNode) {
+            shortcuts.deleteSelectedNode();
+          } else if (shortcuts.selectedEdge) {
+            shortcuts.deleteSelectedEdge();
           }
         }
       }
@@ -219,17 +243,7 @@ export function useWorkflowBuilder(): UseWorkflowBuilderReturn {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-    // persistence.handleSave is intentionally omitted to avoid a stale
-    // closure issue — the handler reads the latest reference at call time.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    handleUndo,
-    handleRedo,
-    canvas.selectedNode,
-    canvas.selectedEdge,
-    canvas.deleteSelectedNode,
-    canvas.deleteSelectedEdge,
-  ]);
+  }, []);
 
   // =========================================================================
   // Return

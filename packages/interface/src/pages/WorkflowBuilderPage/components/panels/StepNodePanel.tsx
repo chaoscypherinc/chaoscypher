@@ -9,7 +9,7 @@
  * thinking mode), and the output data schema.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Typography,
@@ -63,6 +63,38 @@ export const StepNodePanel: React.FC<StepNodePanelProps> = ({
   toolOutputSchema,
   upstreamFields,
 }) => {
+  // Local raw-string state for the JSON editor so intermediate-invalid
+  // input isn't snapped back to the last valid value on every keystroke.
+  // Valid JSON is committed as the user types; invalid JSON just shows a
+  // helper message until it parses again.
+  const [configText, setConfigText] = useState(() =>
+    JSON.stringify(nodeData.configuration || {}, null, 2)
+  );
+  const [configInvalid, setConfigInvalid] = useState(false);
+
+  // Re-seed the editor whenever it is (re)opened — the panel state hook
+  // closes the JSON editor when the selected node changes, so this also
+  // resets the text for a newly selected node.
+  useEffect(() => {
+    if (showJsonEditor) {
+      setConfigText(JSON.stringify(nodeData.configuration || {}, null, 2));
+      setConfigInvalid(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showJsonEditor]);
+
+  const handleConfigTextChange = (text: string) => {
+    setConfigText(text);
+    try {
+      const parsed = JSON.parse(text);
+      setConfigInvalid(false);
+      onChange('configuration', parsed);
+    } catch {
+      // Keep the raw text; flag it until it parses again.
+      setConfigInvalid(true);
+    }
+  };
+
   return (
     <>
       {/* Basic Info */}
@@ -134,14 +166,10 @@ export const StepNodePanel: React.FC<StepNodePanelProps> = ({
             // Fallback JSON editor
             (<TextField
               label="Configuration (JSON)"
-              value={JSON.stringify(nodeData.configuration || {}, null, 2)}
-              onChange={(e) => {
-                try {
-                  onChange('configuration', JSON.parse(e.target.value));
-                } catch {
-                  // Invalid JSON, ignore
-                }
-              }}
+              value={configText}
+              onChange={(e) => handleConfigTextChange(e.target.value)}
+              error={configInvalid}
+              helperText={configInvalid ? 'Invalid JSON — changes not applied' : undefined}
               fullWidth
               size="small"
               margin="dense"

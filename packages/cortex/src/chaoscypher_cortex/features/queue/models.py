@@ -87,9 +87,15 @@ class TaskDetailResponse(BaseModel):
     queue: str = Field(description="Queue name (e.g. 'llm', 'operations').")
     operation: str = Field(description="Operation name registered on the queue.")
     status: str = Field(
-        description="Current lifecycle status: queued | running | completed | failed | cancelled.",
+        description=(
+            "Current lifecycle status: queued | running | completed | failed"
+            " | cancelled | retried (a failed task claimed by retry_task;"
+            " retried_to links the replacement)."
+        ),
     )
-    priority: int = Field(description="Effective dispatch priority (lower = sooner).")
+    priority: int = Field(
+        description="Effective dispatch priority (higher = sooner; ZPOPMAX pops highest first)."
+    )
     created_at: str = Field(description="ISO-8601 UTC timestamp when the task was enqueued.")
     metadata: dict[str, Any] = Field(
         default_factory=dict,

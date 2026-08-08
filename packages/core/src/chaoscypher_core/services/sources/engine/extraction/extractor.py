@@ -25,9 +25,8 @@ from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner im
     enforce_relationship_limits,
     validate_relationship_type_constraints,
 )
-from chaoscypher_core.services.sources.engine.extraction.utils.type_normalizer import (
-    filter_structural_entities,
-    normalize_entity_types,
+from chaoscypher_core.services.sources.engine.extraction.utils.post_extraction import (
+    apply_structural_and_normalization,
 )
 
 
@@ -55,12 +54,15 @@ async def extract_entities_from_groups(
     settings: EngineSettings,
     embedding_service: Any,
     file_info: dict[str, Any] | None = None,
-    get_domain_structural_filters: Any = lambda _: ([], []),
 ) -> dict[str, Any]:
     """Extract entities from hierarchical chunk groups using the AI pipeline.
 
     Uses domain detection for domain-specific extraction guidance and applies
-    type normalization post-extraction.
+    the shared post-extraction helper
+    (``apply_structural_and_normalization``) AFTER dedup, in lockstep with
+    the service (``finalize_distributed_extraction``) and worker
+    (``_finalize_extraction_inner``) paths — see CANONICAL_PATTERNS §
+    Post-extraction filters.
 
     Args:
         hierarchical_groups: Hierarchical chunk groups from ChunkingService.
@@ -72,9 +74,6 @@ async def extract_entities_from_groups(
             explicitly only when you intend to disable semantic dedup
             (e.g., a unit test that doesn't exercise the feature).
         file_info: Optional file metadata for domain detection.
-        get_domain_structural_filters: Callable that accepts a domain name and
-            returns ``(structural_types, generic_types)`` tuple.  Defaults to
-            a no-op that skips structural filtering.
 
     Returns:
         Dictionary with entities, relationships, cached_embeddings,
@@ -134,14 +133,8 @@ async def extract_entities_from_groups(
                 alias_count=len(domain_type_aliases),
             )
 
-    # Step 1b: Filter out structural entities (chapters, sections, etc.)
-    from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
-        FilteringLog as FilteringLogCls,
-    )
-
-    cross_chunk_log = FilteringLogCls()
-
-    # Resolve filtering config for cross-chunk filters
+    # Resolve filtering config for the post-dedup cross-chunk filters and
+    # the shared structural-and-normalization helper below.
     from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
         resolve_filtering_config,
     )
@@ -155,23 +148,13 @@ async def extract_entities_from_groups(
         mode=str(_filtering_mode),
         domain_overrides=dict(_domain_limits) if _domain_limits else None,
     )
-    _should_filter_structural = _cross_chunk_config.enable_structural_filter
-    if _should_filter_structural:
-        structural_types, generic_types = get_domain_structural_filters(detected_domain)
-        all_entities, all_relationships, _ = filter_structural_entities(
-            all_entities,
-            all_relationships,
-            structural_entity_types=structural_types,
-            filtering_log=cross_chunk_log,
-        )
-    else:
-        _, generic_types = get_domain_structural_filters(detected_domain)
 
     # Step 2: Deduplicate, remap, resolve names
     from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
         DomainResolver,
     )
 
+    domain_resolver = DomainResolver(settings)
     deduplicated, remapped, cached_embeddings, dedup_log_dict = await run_deduplication(
         entities=all_entities,
         relationships=all_relationships,
@@ -179,15 +162,13 @@ async def extract_entities_from_groups(
         settings=settings,
         embedding_service=embedding_service,
         domain_extraction_limits=domain_extraction_limits,
-        domain_resolver=DomainResolver(settings),
+        domain_resolver=domain_resolver,
         filtering_config=_cross_chunk_config,
     )
 
-    # Merge structural filter log with dedup log
-    cross_chunk_dict = cross_chunk_log.to_dict()
-    if dedup_log_dict and dedup_log_dict.get("stages"):
-        cross_chunk_dict["stages"].extend(dedup_log_dict["stages"])
-        cross_chunk_dict["total_removed"] += dedup_log_dict.get("total_removed", 0)
+    cross_chunk_dict: dict[str, Any] = (
+        dedup_log_dict if dedup_log_dict else {"stages": [], "total_removed": 0}
+    )
 
     # Step 2b: Cross-chunk relationship filtering (Phase 6 reorder).
     # Type-constraint validation and relationship-limit enforcement run
@@ -214,11 +195,29 @@ async def extract_entities_from_groups(
         cross_chunk_dict["stages"].extend(_filter_log_dict["stages"])
         cross_chunk_dict["total_removed"] += _filter_log_dict.get("total_removed", 0)
 
-    # Step 3: Apply domain-specific type normalization
-    if normalization_rules:
-        deduplicated = normalize_entity_types(
-            deduplicated, normalization_rules, generic_types=generic_types
+    # Step 3: Filter structural entities + apply domain-specific type
+    # normalization POST-dedup via the shared helper, in lockstep with the
+    # service (``finalize_distributed_extraction``) and worker
+    # (``_finalize_extraction_inner``) paths. Running the structural filter
+    # after dedup means a structural entity produced by merging name
+    # variants is still filtered; running it before (the old ordering)
+    # missed those. Domain resolution mirrors the finalizer's use of the
+    # private resolver — the standalone path composes the same chain.
+    resolved_domain_obj = domain_resolver._resolve_domain(detected_domain)  # noqa: SLF001 - standalone path composes the same domain resolution chain as the service/worker finalizers
+    deduplicated, remapped, structural_filtered = apply_structural_and_normalization(
+        deduplicated,
+        remapped,
+        domain=resolved_domain_obj,
+        filtering_config=_cross_chunk_config,
+        normalization_rules=normalization_rules,
+    )
+    if structural_filtered > 0:
+        logger.info(
+            "structural_entities_filtered_in_standalone",
+            removed=structural_filtered,
+            remaining=len(deduplicated),
         )
+    if normalization_rules:
         logger.info(
             "type_normalization_applied",
             domain=detected_domain,

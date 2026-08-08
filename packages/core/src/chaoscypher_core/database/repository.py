@@ -12,6 +12,7 @@ from pathlib import Path
 
 import structlog
 
+from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.models import DatabaseInfo
 
 
@@ -70,24 +71,30 @@ class DatabaseRepository:
         return DatabaseInfo.from_path(name, db_path, self.path_settings.app_db_filename)
 
     def create_database(self, name: str) -> DatabaseInfo:
-        """Create a new database with empty structure."""
+        """Create a new database with empty structure.
+
+        Raises:
+            ValidationError: If the name is invalid, reserved, too long,
+                or the database already exists (mapped to HTTP 400 at the
+                Cortex error boundary).
+        """
         # Validate name
         if not name or not name.replace("_", "").replace("-", "").isalnum():
             msg = "Database name must be alphanumeric (underscores and hyphens allowed)"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
         if len(name) > _MAX_DB_NAME_LENGTH:
             msg = f"Database name must be {_MAX_DB_NAME_LENGTH} characters or fewer"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
         if name.lower() in _RESERVED_DB_NAMES:
             msg = f"Database name '{name}' is reserved"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
 
         db_path = os.path.join(self.databases_dir, name)
 
         # Check if already exists
         if os.path.exists(db_path):
             msg = f"Database '{name}' already exists"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
 
         # Create directory structure using centralized path settings
         os.makedirs(db_path, exist_ok=True)
@@ -106,10 +113,17 @@ class DatabaseRepository:
         return DatabaseInfo.from_path(name, db_path, self.path_settings.app_db_filename)
 
     def delete_database(self, name: str, allow_default: bool = False) -> bool:
-        """Delete a database (with safety checks)."""
+        """Delete a database (with safety checks).
+
+        Raises:
+            ValidationError: If deleting the default database without
+                ``allow_default``, the name escapes the databases dir, or
+                the database does not exist (mapped to HTTP 400 at the
+                Cortex error boundary).
+        """
         if name == "default" and not allow_default:
             msg = "Cannot delete default database"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
 
         db_path = os.path.join(self.databases_dir, name)
 
@@ -117,11 +131,11 @@ class DatabaseRepository:
         resolved = Path(db_path).resolve()
         if not resolved.is_relative_to(Path(self.databases_dir).resolve()):
             msg = "Invalid database name"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
 
         if not os.path.exists(db_path):
             msg = f"Database '{name}' does not exist"
-            raise ValueError(msg)
+            raise ValidationError(msg, field="name")
 
         # Delete the entire directory
         shutil.rmtree(db_path)

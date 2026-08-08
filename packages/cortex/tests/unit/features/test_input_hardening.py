@@ -23,21 +23,19 @@ from chaoscypher_core.exceptions import ValidationError
 
 
 @pytest.mark.asyncio
-async def test_list_system_events_clamps_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_list_system_events_clamps_limit() -> None:
     """A huge ?limit is clamped to pagination.max_page_size before hitting storage."""
     from chaoscypher_cortex.features.pause import api as pause_api
 
-    fake_adapter = MagicMock()
-    fake_adapter.list_system_events.return_value = []
-    monkeypatch.setattr(
-        "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
-        lambda **_: fake_adapter,
+    fake_service = MagicMock()
+    fake_service.list_events = AsyncMock(return_value=[])
+
+    await pause_api.list_system_events(
+        _="user", service=fake_service, event_type=None, limit=10_000_000
     )
 
-    await pause_api.list_system_events(_="user", event_type=None, limit=10_000_000)
-
     cap = pause_api.get_settings().pagination.max_page_size
-    assert fake_adapter.list_system_events.call_args.kwargs["limit"] == cap
+    assert fake_service.list_events.await_args.kwargs["limit"] == cap
 
 
 @pytest.mark.asyncio

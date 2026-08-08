@@ -84,7 +84,6 @@ from chaoscypher_core.streaming.chat.tools import (
     MAX_TOTAL_TOOL_CALLS,
 )
 from chaoscypher_core.streaming.chat.utils import (
-    create_fallback_response,
     extract_thinking_from_tags,
     format_sse_event,
     get_model_name,
@@ -147,7 +146,6 @@ __all__ = [
     "consume_llm_stream",
     "correct_mismatched_citations",
     # Utils
-    "create_fallback_response",
     "enrich_chunk_citations_from_tool_results",
     "enrich_entity_references_from_tool_results",
     "extract_chunk_citations",

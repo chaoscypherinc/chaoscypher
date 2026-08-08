@@ -285,7 +285,15 @@ class PdfLoader:
 
                 pdf_doc = pdfium.PdfDocument(filepath)
                 try:
-                    for page_idx in range(len(pdf_doc)):
+                    # Honor pdf_max_pages here too: text extraction above
+                    # already stops at the cap, so scanning every page for
+                    # images would report image pages the pipeline never
+                    # processes — metadata["pages"] / image_page_count must
+                    # describe the capped document, not the full file.
+                    image_scan_pages = len(pdf_doc)
+                    if pdf_max_pages is not None:
+                        image_scan_pages = min(image_scan_pages, pdf_max_pages)
+                    for page_idx in range(image_scan_pages):
                         pdf_page = pdf_doc[page_idx]
                         image_count = 0
                         for obj in pdf_page.get_objects():

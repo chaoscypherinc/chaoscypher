@@ -574,7 +574,7 @@ _traverse_path = ToolDefinition(
 )
 
 # ============================================================================
-# New MCP-only tools (2 read, 2 write)
+# New MCP-only tools (2 read, 4 write)
 # ============================================================================
 
 _get_summary_context = ToolDefinition(

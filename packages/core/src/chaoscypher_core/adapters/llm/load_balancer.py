@@ -137,6 +137,11 @@ class OllamaLoadBalancer:
             # llm_max_concurrent is set to instance count to match available capacity
             instance_count = len(new_instances)
             self._global_config = {
+                # BaseLLMProvider reads config["chat_provider"] in its
+                # priority-disabled warning branch; omitting it made
+                # reload_config crash with KeyError when llm_enable_priority
+                # is False.
+                "chat_provider": "ollama",
                 "ollama_chat_model": llm_settings.ollama_chat_model,
                 "ollama_num_batch": llm_settings.ollama_num_batch,
                 "ollama_num_ctx": llm_settings.ollama_num_ctx,

@@ -181,7 +181,9 @@ export function useSettingsActions(): UseSettingsActionsReturn {
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       logger.error('Failed to save settings:', error);
-      showAlert('Error', 'Failed to save settings');
+      // Surface the backend's actionable message (unknown keys, range
+      // violations) instead of a fixed string.
+      showAlert('Error', getApiErrorMessage(error) || 'Failed to save settings');
     } finally {
       setSaving(false);
     }

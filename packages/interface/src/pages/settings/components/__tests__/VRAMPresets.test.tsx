@@ -80,12 +80,14 @@ describe('VRAMPresets', () => {
     expect(setSettings.mock.calls[0][0].llm.ollama_num_batch).toBe(256);
   });
 
-  it('clears Ollama batch size to undefined when emptied', () => {
+  it('clears Ollama batch size to null when emptied', () => {
+    // null (not undefined) — undefined keys are dropped by JSON.stringify,
+    // so the clear never reached the backend and the old value came back.
     const settings = makeSettings({ ollama_num_batch: 512 });
     render(<VRAMPresets settings={settings} setSettings={setSettings} />);
     fireEvent.change(getNumberInput(/Batch Size/i), { target: { value: '' } });
     expect(setSettings).toHaveBeenCalledTimes(1);
-    expect(setSettings.mock.calls[0][0].llm.ollama_num_batch).toBeUndefined();
+    expect(setSettings.mock.calls[0][0].llm.ollama_num_batch).toBeNull();
   });
 
   it('parses Ollama num_parallel and num_thread on change', () => {

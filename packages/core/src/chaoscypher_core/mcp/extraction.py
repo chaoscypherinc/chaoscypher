@@ -1278,6 +1278,18 @@ class ExtractionOrchestrator:
         missing = sorted(expected_set - submitted_set)
 
         if missing:
+            # Roll the CAS back before raising — without this a premature
+            # finalize call strands the source at 'committing', where a
+            # retry can never win the MCP_EXTRACTING -> COMMITTING
+            # transition and no MCP-side recovery path exists (the worker
+            # reconciler only re-dispatches committing sources that carry a
+            # commit payload, which an MCP source at this point does not).
+            self.engine.storage_adapter.transition_source_status(
+                source_id,
+                from_status=SourceStatus.COMMITTING,
+                to_status=SourceStatus.MCP_EXTRACTING,
+                database_name=db,
+            )
             msg = (
                 f"Incomplete: {len(submissions)}/{total_chunks} chunks submitted. "
                 f"Missing indices: {missing}"
@@ -1490,6 +1502,10 @@ class ExtractionOrchestrator:
         # long-lived MCP server process), which is a slow leak we don't
         # need — the cache only exists to bridge get_tasks → finalize.
         self._filtering_configs.pop(source_id, None)
+        # Same lifetime bound for the rate-limit bucket: submissions are done
+        # once finalize commits, so the per-source timestamp deque is dead
+        # weight from here on.
+        self._submission_timestamps.pop(source_id, None)
 
         nodes_created = len(commit_result.get("created_nodes", []))
         edges_created = len(commit_result.get("created_edges", []))

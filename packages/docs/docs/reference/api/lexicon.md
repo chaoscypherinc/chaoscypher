@@ -332,7 +332,7 @@ Search for packages on the Lexicon registry. An empty query returns all packages
 | `sort_by`      | string      | No       | `downloads` | Sort field: `relevance`, `stars`, `downloads`, `newest`, `updated`, `name` |
 | `is_public`    | bool/null   | No       | `null`      | Filter by visibility (`true` or `false`)                           |
 | `owner_id`     | string/null | No       | `null`      | Filter by owner ID                                                 |
-| `package_type` | string/null | No       | `null`      | Filter by type: `FULL`, `TEMPLATES`, `KNOWLEDGE`, `WORKFLOWS`, `MIXED` |
+| `conformance_class` | string/null | No       | `null`      | Filter by CCX conformance class (e.g. `ccx-core`) |
 
 #### Examples
 
@@ -344,7 +344,7 @@ curl "http://localhost/api/v1/lexicon/search"
 curl "http://localhost/api/v1/lexicon/search?query=medical"
 
 # Search with filters
-curl "http://localhost/api/v1/lexicon/search?query=finance&sort_by=stars&is_public=true&package_type=KNOWLEDGE"
+curl "http://localhost/api/v1/lexicon/search?query=finance&sort_by=stars&is_public=true&conformance_class=ccx-core"
 
 # Paginated results
 curl "http://localhost/api/v1/lexicon/search?query=science&page=2&limit=10"
@@ -365,7 +365,8 @@ curl "http://localhost/api/v1/lexicon/search?query=science&page=2&limit=10"
       "owner_name": "John Doe",
       "owner_id": "user-xyz789",
       "is_public": true,
-      "package_type": "KNOWLEDGE",
+      "conformance_classes": ["ccx-core"],
+      "is_signed": false,
       "star_count": 42,
       "version_count": 3,
       "download_count": 1250,
@@ -399,7 +400,8 @@ curl "http://localhost/api/v1/lexicon/search?query=science&page=2&limit=10"
 | `owner_name`     | string | Owner's display name                                                             |
 | `owner_id`       | string | Owner's user ID                                                                  |
 | `is_public`      | bool   | Public visibility                                                                |
-| `package_type`   | string | Package type: `FULL`, `TEMPLATES`, `KNOWLEDGE`, `WORKFLOWS`, `MIXED`   |
+| `conformance_classes` | list[string]/null | CCX conformance classes the package satisfies (e.g. `["ccx-core"]`) |
+| `is_signed`      | bool/null | Whether the package is cryptographically signed                       |
 | `star_count`     | int    | Number of stars                                                                  |
 | `version_count`  | int    | Number of published versions                                                     |
 | `download_count` | int    | Total downloads across all versions                                              |
@@ -442,7 +444,8 @@ curl "http://localhost/api/v1/lexicon/r/johndoe/medical-ontology"
   "owner_name": "John Doe",
   "owner_id": "user-xyz789",
   "is_public": true,
-  "package_type": "KNOWLEDGE",
+  "conformance_classes": ["ccx-core"],
+  "is_signed": false,
   "star_count": 42,
   "version_count": 3,
   "download_count": 1250,
@@ -573,7 +576,8 @@ curl -X POST "http://localhost/api/v1/lexicon/upload?public=true&message=Initial
   "owner_name": "John Doe",
   "owner_id": "user-xyz789",
   "is_public": true,
-  "package_type": "FULL",
+  "conformance_classes": ["ccx-core"],
+  "is_signed": false,
   "star_count": 0,
   "version_count": 1,
   "download_count": 0,

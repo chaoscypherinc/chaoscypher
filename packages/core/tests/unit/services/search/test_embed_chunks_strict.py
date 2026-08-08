@@ -47,6 +47,7 @@ def _make_indexing_service(
     # Seed the 2026-05-22 race-guard probe so embed_chunks doesn't
     # short-circuit on the source-deleted path.
     repo.get_chunks_by_source.return_value = ([], 1)
+    repo.update_chunk_embeddings_batch.return_value = []
     settings = EngineSettings()
     settings.search.vector_dimensions = vector_dimensions
     # Make batching predictable: one batch of all chunks at concurrency 1.
@@ -107,7 +108,7 @@ class TestEmbedChunksCountMismatch:
         assert exc.details.get("expected") == 100
         assert exc.details.get("actual") == 99
         # And — critically — no persistence occurred.
-        assert service.repository.update_chunk_embedding.call_count == 0
+        assert service.repository.update_chunk_embeddings_batch.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +139,7 @@ class TestEmbedChunksNaNVector:
 
         exc = exc_info.value
         assert exc.code == "VALIDATION_ERROR"
-        assert service.repository.update_chunk_embedding.call_count == 0
+        assert service.repository.update_chunk_embeddings_batch.call_count == 0
 
     @pytest.mark.asyncio
     async def test_inf_in_one_vector_raises_and_persists_nothing(self) -> None:
@@ -157,7 +158,7 @@ class TestEmbedChunksNaNVector:
                 database_name="default",
             )
 
-        assert service.repository.update_chunk_embedding.call_count == 0
+        assert service.repository.update_chunk_embeddings_batch.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +190,7 @@ class TestEmbedChunksWrongDimension:
 
         exc = exc_info.value
         assert exc.code == "VALIDATION_ERROR"
-        assert service.repository.update_chunk_embedding.call_count == 0
+        assert service.repository.update_chunk_embeddings_batch.call_count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +220,10 @@ class TestEmbedChunksHappyPath:
         )
 
         assert result == 10
-        assert service.repository.update_chunk_embedding.call_count == 10
+        # One bulk write carrying all 10 chunks (was: 10 single-row writes).
+        assert service.repository.update_chunk_embeddings_batch.call_count == 1
+        persisted = service.repository.update_chunk_embeddings_batch.call_args.args[0]
+        assert len(persisted) == 10
 
 
 # ---------------------------------------------------------------------------

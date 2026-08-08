@@ -96,7 +96,7 @@ class OpenAIEmbeddingProvider:
     ) -> tuple[list[list[float]], TokenUsage | None]:
         """Send an embedding request to OpenAI with retry logic.
 
-        Retries up to ``_MAX_RETRIES`` times with exponential backoff on
+        Retries per ``RetrySettings`` (see ``_retry.py``) with exponential backoff on
         rate-limit (429) and server errors (5xx). Respects ``Retry-After``
         header when present.
 

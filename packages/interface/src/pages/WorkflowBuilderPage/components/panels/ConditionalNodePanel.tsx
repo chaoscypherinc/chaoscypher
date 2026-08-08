@@ -8,7 +8,7 @@
  * toggled between a visual ConditionBuilder and a raw JSON fallback.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Typography,
@@ -53,6 +53,36 @@ export const ConditionalNodePanel: React.FC<ConditionalNodePanelProps> = ({
   conditionGroup,
   upstreamFields,
 }) => {
+  // Local raw-string state for the JSON editor so intermediate-invalid
+  // input isn't snapped back to the last valid value on every keystroke.
+  const [conditionText, setConditionText] = useState(() =>
+    JSON.stringify(nodeData.condition || {}, null, 2)
+  );
+  const [conditionInvalid, setConditionInvalid] = useState(false);
+
+  // Re-seed the editor whenever it is (re)opened — the panel state hook
+  // closes the JSON editor when the selected node changes, so this also
+  // resets the text for a newly selected node.
+  useEffect(() => {
+    if (showJsonEditor) {
+      setConditionText(JSON.stringify(nodeData.condition || {}, null, 2));
+      setConditionInvalid(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showJsonEditor]);
+
+  const handleConditionTextChange = (text: string) => {
+    setConditionText(text);
+    try {
+      const parsed = JSON.parse(text);
+      setConditionInvalid(false);
+      onChange('condition', parsed);
+    } catch {
+      // Keep the raw text; flag it until it parses again.
+      setConditionInvalid(true);
+    }
+  };
+
   return (
     <>
       <Accordion defaultExpanded disableGutters elevation={0}>
@@ -103,14 +133,10 @@ export const ConditionalNodePanel: React.FC<ConditionalNodePanelProps> = ({
           {showJsonEditor ? (
             <TextField
               label="Condition (JSON)"
-              value={JSON.stringify(nodeData.condition || {}, null, 2)}
-              onChange={(e) => {
-                try {
-                  onChange('condition', JSON.parse(e.target.value));
-                } catch {
-                  // Invalid JSON, ignore
-                }
-              }}
+              value={conditionText}
+              onChange={(e) => handleConditionTextChange(e.target.value)}
+              error={conditionInvalid}
+              helperText={conditionInvalid ? 'Invalid JSON — changes not applied' : undefined}
               fullWidth
               size="small"
               margin="dense"

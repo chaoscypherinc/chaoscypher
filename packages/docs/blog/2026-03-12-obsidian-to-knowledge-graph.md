@@ -34,6 +34,20 @@ No plugin required -- the archive loader does the work:
 
 6. **Ask questions.** "What decisions led to the current architecture?" or "Where do my notes on attention mechanisms and retrieval overlap?" -- answered with citations back to your own notes, not the internet.
 
+## Scripting the Import
+
+The steps above walk through the UI, but the same pipeline is reachable without opening a browser.
+
+**For developers:** `POST /api/v1/sources` takes a multipart file upload and runs it through the identical loader dispatch the UI uses -- point it at your vault archive and it works the same way. `POST /api/v1/sources/batch` accepts a list of files if you're importing several exports at once, which is handy wired into a nightly vault-backup job: export, POST the archive, let indexing and extraction pick it up. In plain English: anything the "Upload" button does, a script can do too, over HTTP.
+
+**For CLI users:** the same import is one command:
+
+```bash
+chaoscypher source add my-vault.zip
+```
+
+`source add` isn't Obsidian-specific -- it's the general-purpose source-loading command, and it routes to the archive loader the same way the web UI does whenever it sees a `.zip` or `.tar.gz`. There's no separate "import vault" subcommand, because none is needed. In plain English: if you'd rather stay in the terminal, one command gets your vault into the graph.
+
 ## A Few Tips for a Good First Pass
 
 - Keep filenames and headings descriptive -- they become context the extractor uses.

@@ -126,15 +126,13 @@ class DatabasesService:
             Created database info
 
         Raises:
-            ValidationError: If the name is invalid or the database already
-                exists (mapped to 422 at the Cortex error boundary).
+            ValidationError: Propagated from DatabaseRepository when the
+                name is invalid or the database already exists (mapped to
+                400 at the Cortex error boundary).
 
         """
-        try:
-            db_info = self.database_repository.create_database(name)
-            return DatabaseResponse.model_validate(db_info.model_dump())
-        except ValueError as e:
-            raise ValidationError(str(e)) from e
+        db_info = self.database_repository.create_database(name)
+        return DatabaseResponse.model_validate(db_info.model_dump())
 
     def delete_database(self, name: str) -> None:
         """Delete a database.
@@ -143,9 +141,9 @@ class DatabasesService:
             name: Database name to delete
 
         Raises:
-            ValidationError: If deleting the currently active database, or if
-                the database does not exist (mapped to 422 at the Cortex error
-                boundary).
+            ValidationError: If deleting the currently active database, or
+                propagated from DatabaseRepository when the database does
+                not exist (mapped to 400 at the Cortex error boundary).
 
         """
         # Safety check - cannot delete current database
@@ -154,7 +152,4 @@ class DatabasesService:
             msg = "Cannot delete the currently active database. Switch to another database first."
             raise ValidationError(msg)
 
-        try:
-            self.database_repository.delete_database(name)
-        except ValueError as e:
-            raise ValidationError(str(e)) from e
+        self.database_repository.delete_database(name)

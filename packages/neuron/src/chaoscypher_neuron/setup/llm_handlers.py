@@ -68,8 +68,8 @@ async def setup_llm_handlers(ctx: WorkerContext) -> None:
     )
     chunk_extraction_service.register_handlers()
 
-    # Register vision per-page handler (OP_VISION_PAGE on LLM queue).
-    # OP_VISION_FINALIZE will be added here when Task 11 (vision_finalizer) ships.
+    # Register vision handlers: OP_VISION_PAGE on the LLM queue and
+    # OP_VISION_FINALIZE on the operations queue.
     vision_operations_service = VisionOperationsService(
         adapter=ctx["storage_adapter"],
         settings=settings,

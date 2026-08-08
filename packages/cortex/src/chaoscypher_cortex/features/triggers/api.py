@@ -33,6 +33,7 @@ from chaoscypher_cortex.shared.api.responses import (
     AUTH_ERROR_RESPONSES,
     COMMON_ERROR_RESPONSES,
     NOT_FOUND_RESPONSE,
+    ErrorDetail,
 )
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
 
@@ -134,7 +135,7 @@ async def create_trigger(
     trigger_create: TriggerCreate,
     trigger_service: Annotated[TriggerService, Depends(get_trigger_service)],
     _: CurrentUsername,
-) -> TriggerDict | None:
+) -> TriggerDict:
     """Create a new trigger.
 
     - Single-user mode: the local operator owns everything.
@@ -142,8 +143,17 @@ async def create_trigger(
     # Convert Pydantic model to dict for engine service
     trigger_data = trigger_create.model_dump(exclude_unset=True)
     trigger_id = trigger_service.create_trigger(trigger_data)
-    # Return the created trigger
-    return trigger_service.get_trigger(trigger_id)
+    # Return the created trigger (explicit 500 on a vanished row — parity with
+    # the workflows and tools create endpoints)
+    created = trigger_service.get_trigger(trigger_id)
+    if created is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorDetail(
+                code="OPERATION_FAILED", message="Failed to create trigger"
+            ).model_dump(),
+        )
+    return created
 
 
 @router.get(

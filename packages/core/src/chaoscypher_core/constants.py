@@ -76,7 +76,7 @@ OPERATION_QUEUE_ROUTING: dict[str, str] = {
     OP_EMBED_CHUNKS: QUEUE_LLM,
     OP_INDEX_IMPORTED_SOURCE: QUEUE_LLM,
     OP_INDEX_IMPORTED_NODES: QUEUE_LLM,
-    "chat_background": QUEUE_LLM,
+    OP_CHAT_BACKGROUND: QUEUE_LLM,
     "regenerate_template_embeddings": QUEUE_LLM,
     # QUEUE_OPERATIONS — I/O-bound work, 8 concurrent workers, parallel.
     "bulk_nodes": QUEUE_OPERATIONS,

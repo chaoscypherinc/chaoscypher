@@ -34,6 +34,7 @@ from chaoscypher_cortex.features.sources.api import (
 )
 from chaoscypher_cortex.features.sources.models import (
     PaginatedSourcesResponse,
+    ReExtractRequest,
     SourceResponse,
     UrlImportRequest,
 )
@@ -328,13 +329,35 @@ class TestRetryReextractHandlers:
 
     @pytest.mark.asyncio
     async def test_reextract_delegates_to_service(self) -> None:
-        """reextract_source awaits service.reextract_source and returns the response."""
+        """reextract_source awaits service.reextract_source and returns the response.
+
+        No body supplied -> ``overrides=None``, which the service treats as "use
+        the persisted settings" (the pre-2026-08-04 behaviour).
+        """
         service = MagicMock()
         service.reextract_source = AsyncMock(return_value=_source_response("src-2"))
 
         result = await reextract_source(_="test-user", source_id="src-2", service=service)
 
-        service.reextract_source.assert_awaited_once_with("src-2")
+        service.reextract_source.assert_awaited_once_with("src-2", overrides=None)
+        assert result.id == "src-2"
+
+    @pytest.mark.asyncio
+    async def test_reextract_forwards_only_supplied_overrides(self) -> None:
+        """A body is dumped with exclude_none, so omitted fields never reach the service."""
+        service = MagicMock()
+        service.reextract_source = AsyncMock(return_value=_source_response("src-2"))
+
+        result = await reextract_source(
+            _="test-user",
+            source_id="src-2",
+            service=service,
+            overrides=ReExtractRequest(filtering_mode="strict"),
+        )
+
+        service.reextract_source.assert_awaited_once_with(
+            "src-2", overrides={"filtering_mode": "strict"}
+        )
         assert result.id == "src-2"
 
 
@@ -352,29 +375,35 @@ class TestRecoveryEventsHandler:
         """Handler returns recovery events when the source exists."""
         service = MagicMock()
         service.get_source.return_value = {"id": "src-1"}
-        service.list_recovery_events.return_value = [
-            {
-                "id": "ev-1",
-                "source_id": "src-1",
-                "database_name": "default",
-                "attempt_at": _NOW,
-                "from_status": "extracting",
-                "action_taken": "extract_chunk",
-                "reason": "stalled",
-                "enqueued_count": 1,
-            }
-        ]
+        service.list_recovery_events.return_value = {
+            "events": [
+                {
+                    "id": "ev-1",
+                    "source_id": "src-1",
+                    "database_name": "default",
+                    "attempt_at": _NOW,
+                    "from_status": "extracting",
+                    "action_taken": "extract_chunk",
+                    "reason": "stalled",
+                    "enqueued_count": 1,
+                }
+            ],
+            "total": 1,
+            "page": 1,
+            "page_size": 50,
+        }
 
         result = await list_source_recovery_events(
             _="test-user",
             source_id="src-1",
             service=service,
-            limit=50,
+            pagination=(1, 50),
         )
 
-        service.list_recovery_events.assert_called_once_with("src-1", limit=50)
-        assert len(result.events) == 1
-        assert result.events[0].id == "ev-1"
+        service.list_recovery_events.assert_called_once_with("src-1", page=1, page_size=50)
+        assert len(result.data) == 1
+        assert result.data[0].id == "ev-1"
+        assert result.pagination.total == 1
 
     @pytest.mark.asyncio
     async def test_raises_404_when_source_missing(self) -> None:
@@ -387,7 +416,7 @@ class TestRecoveryEventsHandler:
                 _="test-user",
                 source_id="missing",
                 service=service,
-                limit=50,
+                pagination=(1, 50),
             )
 
         assert exc_info.value.status_code == 404

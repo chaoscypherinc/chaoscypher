@@ -798,4 +798,29 @@ class TestGetContextFactory:
         ctx_mod._context_instance = None
         # Must not raise.
         reset_context()
-        assert ctx_mod._context_instance is None
+
+
+class TestGetContextExplicitDatabase:
+    """``explicit_database=True`` pins the named database — even "default".
+
+    ``get_database_name`` deliberately treats a literal "default" override
+    as no-override because 31 commands use Click's ``default="default"``.
+    Call sites whose name comes from an explicit user ARGUMENT (db info /
+    db create) opt out of that resolution so ``db info default`` connects
+    to the actual default database after a switch.
+    """
+
+    def test_explicit_default_wins_over_env(self) -> None:
+        os.environ["CHAOSCYPHER_DATABASE"] = "myproj"
+        ctx = get_context(database_name="default", auto_connect=False, explicit_database=True)
+        assert ctx.database_name == "default"
+
+    def test_non_explicit_default_still_resolves_via_env(self) -> None:
+        os.environ["CHAOSCYPHER_DATABASE"] = "myproj"
+        ctx = get_context(database_name="default", auto_connect=False)
+        assert ctx.database_name == "myproj"
+
+    def test_explicit_flag_without_name_falls_back_to_resolution(self) -> None:
+        os.environ["CHAOSCYPHER_DATABASE"] = "myproj"
+        ctx = get_context(auto_connect=False, explicit_database=True)
+        assert ctx.database_name == "myproj"

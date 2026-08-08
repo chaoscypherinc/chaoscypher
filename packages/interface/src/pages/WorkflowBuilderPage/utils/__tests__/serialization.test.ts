@@ -3,7 +3,12 @@
 
 import { describe, it, expect } from 'vitest';
 import type { Node, Edge } from '@xyflow/react';
-import { serializeWorkflow, deserializeWorkflow, validateWorkflow } from '../serialization';
+import {
+  serializeWorkflow,
+  serializeWorkflowSteps,
+  deserializeWorkflow,
+  validateWorkflow,
+} from '../serialization';
 import type {
   WorkflowStepNodeData,
   ConditionalNodeData,
@@ -369,6 +374,9 @@ describe('deserializeWorkflow', () => {
     const data = condNode?.data as ConditionalNodeData;
     expect(data.name).toBe('Branch Step');
     expect(data.condition).toEqual({ field: 'status', operator: 'equals', value: 'done' });
+    // Regression: conditional nodes must carry their server step id, or
+    // every save deletes and recreates them.
+    expect(data.stepId).toBe('cond-1');
   });
 
   it('creates edges from depends_on', () => {
@@ -459,6 +467,41 @@ describe('deserializeWorkflow', () => {
     const { nodes } = deserializeWorkflow(metadata, [step]);
     const node = nodes.find((n) => n.id === 'wf-step');
     expect(node?.type).toBe('conditionalNode');
+  });
+});
+
+// ============================================================================
+// serializeWorkflowSteps (node correlation)
+// ============================================================================
+
+describe('serializeWorkflowSteps', () => {
+  it('keeps each serialized step correlated with its originating node and stepId', () => {
+    const s1 = makeStepNode('n1', { stepId: 'step-a', name: 'First' });
+    const s2 = makeStepNode('n2', { stepId: 'step-b', name: 'Second' });
+    const s3 = makeStepNode('n3', { name: 'New step (no id yet)' });
+    const edges = [makeEdge('n1', 'n2'), makeEdge('n2', 'n3')];
+
+    const result = serializeWorkflowSteps([s1, s2, s3], edges);
+
+    expect(result).toHaveLength(3);
+    const byNode = new Map(result.map((r) => [r.nodeId, r]));
+    expect(byNode.get('n1')?.stepId).toBe('step-a');
+    expect(byNode.get('n1')?.step.name).toBe('First');
+    expect(byNode.get('n2')?.stepId).toBe('step-b');
+    expect(byNode.get('n2')?.step.name).toBe('Second');
+    expect(byNode.get('n3')?.stepId).toBeUndefined();
+    expect(byNode.get('n3')?.step.name).toBe('New step (no id yet)');
+  });
+
+  it('carries stepId for conditional nodes too', () => {
+    const cond = makeConditionalNode('c1', { stepId: 'step-cond' });
+
+    const result = serializeWorkflowSteps([cond], []);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].nodeId).toBe('c1');
+    expect(result[0].stepId).toBe('step-cond');
+    expect(result[0].step.tool_id).toBe('logic.conditional');
   });
 });
 

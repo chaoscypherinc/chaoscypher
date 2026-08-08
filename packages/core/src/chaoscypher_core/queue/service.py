@@ -254,6 +254,10 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
         The handler's return value.
 
     Raises:
+        asyncio.CancelledError: Re-raised after marking the task hash
+            ``cancelled`` so the worker's ``wait_for`` timeout converts a
+            timeout-cancel into ``TimeoutError`` and a genuine cancel
+            reaches the worker's shutdown accounting.
         Exception: Re-raised for transient errors so the worker can retry.
 
     """
@@ -284,6 +288,16 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
             async with _maybe_session_scope():
                 result = await handler(data, metadata=metadata, task_id=task_id)
         except asyncio.CancelledError:
+            # Record the interruption, then RE-RAISE. Swallowing the
+            # CancelledError here defeated the worker's ``asyncio.wait_for``
+            # timeout: on Python 3.12+ the timeout cancels the current task,
+            # the cancellation landed in this handler, and returning a normal
+            # dict made ``wait_for`` return it as a *success* — so timed-out
+            # tasks were recorded as ``cancelled`` completions and the
+            # worker's ``except TimeoutError`` retry path never ran. With the
+            # re-raise, ``wait_for`` converts a timeout-cancel into
+            # ``TimeoutError`` (worker retries / dead-letters) and a genuine
+            # cancel propagates to the worker's CancelledError branch.
             logger.info("task_cancelled", task_id=task_id, queue=queue, operation=operation)
             hset_result = client.hset(
                 f"queue:task:{task_id}",
@@ -296,7 +310,7 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
                 pass  # Sync result
             else:
                 await hset_result  # Async result
-            return {"status": "cancelled", "message": "Task was cancelled"}
+            raise
         except Exception as exc:
             error_type = classify_error(exc)
             error_msg = str(exc)

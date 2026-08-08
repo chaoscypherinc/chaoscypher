@@ -170,6 +170,12 @@ def _splice_descriptions_into_documents(
     # document's _page_texts length.
     successful_statuses = {VisionPageStatus.SUCCEEDED.value, VisionPageStatus.TRUNCATED.value}
 
+    # Documents whose _page_texts were mutated, keyed by id() (dicts are
+    # unhashable). Content is rejoined ONCE per document after the row loop —
+    # rejoining inside it is O(pages²) string copying, and vision_max_pages
+    # allows 2,000 rows.
+    spliced_docs: dict[int, dict[str, Any]] = {}
+
     for row in page_rows:
         if row["status"] not in successful_statuses:
             continue
@@ -209,7 +215,7 @@ def _splice_descriptions_into_documents(
                     f"{page_texts[page_number - 1]}\n\n[Visual Content]\n"
                     f"{description}\n[/Visual Content]"
                 )
-                doc["content"] = "\n\n".join(page_texts)
+                spliced_docs[id(doc)] = doc
                 # Carry the image_path forward into per-page metadata so
                 # downstream UI can render thumbnails. Mirrors the legacy
                 # post-merge loop.
@@ -220,6 +226,9 @@ def _splice_descriptions_into_documents(
                             p["image_path"] = image_path
                             break
                 break
+
+    for doc in spliced_docs.values():
+        doc["content"] = "\n\n".join(doc["metadata"]["_page_texts"])
 
     return documents
 
@@ -428,7 +437,9 @@ async def handle_vision_finalize(  # noqa: PLR0911 - idempotency state machine; 
 
     # 6. Splice descriptions into documents (in-memory; the indexing
     #    resume path will re-run the same splice deterministically).
-    _splice_descriptions_into_documents(documents, page_rows)
+    #    Offloaded like steps 4/5 — the splice is pure CPU string work over
+    #    up to vision_max_pages rows and must not block the worker loop.
+    documents = await asyncio.to_thread(_splice_descriptions_into_documents, documents, page_rows)
 
     succeeded_count = sum(1 for r in page_rows if r["status"] == VisionPageStatus.SUCCEEDED.value)
     truncated_count = sum(1 for r in page_rows if r["status"] == VisionPageStatus.TRUNCATED.value)

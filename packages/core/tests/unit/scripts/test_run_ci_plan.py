@@ -38,6 +38,7 @@ _COMMON = [
     "docstrings",
     "deadcode",
     "bundle-size",
+    "docs-build",
     "license-check",
     "test-cov-interface",
 ]
@@ -69,3 +70,17 @@ def test_every_planned_step_has_a_definition():
     for mode in ("docker", "local"):
         for step in _RUN_CI.build_plan(mode):
             assert step in _RUN_CI._STEPS, f"{step} missing from _STEPS"
+
+
+def test_docker_image_build_is_defined_but_off_plan():
+    """``docker-image-build`` must stay out of both default plans.
+
+    It builds the production image and therefore needs a Docker daemon, which
+    not every CI environment provides — putting it in a plan would fail those
+    runs at this step. It is meant to be invoked explicitly
+    (``run_ci.py --steps docker-image-build``) before cutting a release and on
+    any change to ``packages/docker/Dockerfile``, which no default plan builds.
+    """
+    assert "docker-image-build" in _RUN_CI._STEPS
+    for mode in ("docker", "local"):
+        assert "docker-image-build" not in _RUN_CI.build_plan(mode)

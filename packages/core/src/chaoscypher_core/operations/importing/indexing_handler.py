@@ -213,6 +213,7 @@ async def _rollup_phase6_loader_counters(
         ("loader_docx_paragraphs_skipped", QualityCounter.LOADER_DOCX_PARAGRAPHS_SKIPPED),
         ("loader_xlsx_rows_skipped", QualityCounter.LOADER_XLSX_ROWS_SKIPPED),
         ("loader_csv_rows_truncated", QualityCounter.LOADER_CSV_ROWS_TRUNCATED),
+        ("loader_epub_chapters_skipped", QualityCounter.LOADER_EPUB_CHAPTERS_SKIPPED),
     )
     dict_keys: tuple[str, ...] = (
         "loader_html_dropped_tags",
@@ -327,7 +328,46 @@ async def handle_index_document(
     resume_after_vision = bool(data.get("resume_after_vision", False))
 
     settings = get_settings()
-    database_name = settings.current_database
+
+    # The target database is the one captured in the task metadata at
+    # ENQUEUE time (cortex's ``current_database`` then), NOT this worker's
+    # live global. The worker is a separate process whose settings and
+    # database-bound context lag a UI database switch (only
+    # ``rebuild_database_bound_context`` re-binds them), so a task enqueued
+    # before/during the switch window would otherwise chunk into the wrong
+    # database — FK IntegrityError on the chunk insert, source stuck
+    # ``pending``. Mirrors the ``7e667d5`` export-handler fix.
+    meta_database = (metadata or {}).get("database_name")
+    database_name = meta_database or settings.current_database
+
+    # Use cached engine_settings from worker context, fallback to building
+    if engine_settings is None:
+        from chaoscypher_core.app_config.engine_factory import (
+            build_engine_settings,
+        )
+
+        engine_settings = build_engine_settings(settings)
+
+    # Task-database rebind: when the worker's shared adapter is bound to a
+    # different database than the task targets, build task-scoped
+    # replacements so the source-row reads AND the chunk writes land in
+    # the task's database. Cheap — the SQLAlchemy engine is cached per
+    # database path, only a session is created.
+    adapter = source_repository
+    bound_database = getattr(adapter, "database_name", None)
+    if meta_database and isinstance(bound_database, str) and bound_database != meta_database:
+        from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+        from chaoscypher_core.utils.chunk import ChunkingService
+
+        logger.info(
+            "indexing_rebound_to_task_database",
+            source_id=file_id,
+            task_database=meta_database,
+            worker_database=bound_database,
+        )
+        engine_settings = engine_settings.model_copy(update={"current_database": meta_database})
+        adapter = get_sqlite_adapter(meta_database, settings=settings)
+        chunking_service = ChunkingService(engine_settings, repository=adapter)
 
     # Workstream 1 (2026-05-07): user upload settings (extraction_depth /
     # enable_normalization / enable_vision) live authoritatively on the
@@ -338,7 +378,7 @@ async def handle_index_document(
     row_settings: dict[str, Any] = {}
     if isinstance(file_id, str):
         try:
-            row = source_repository.get_source(file_id, database_name)
+            row = adapter.get_source(file_id, database_name)
         except (SQLAlchemyError, OperationalError) as exc:
             logger.warning(
                 "indexing_row_settings_lookup_failed",
@@ -401,7 +441,7 @@ async def handle_index_document(
         pause_check = check_paused(
             source_id=file_id,
             database_name=database_name,
-            adapter=source_repository,
+            adapter=adapter,
         )
         if pause_check.paused:
             logger.info(
@@ -412,17 +452,6 @@ async def handle_index_document(
                 reason=pause_check.reason,
             )
             return {"skipped": "paused"}
-
-    # Use cached engine_settings from worker context, fallback to building
-    if engine_settings is None:
-        from chaoscypher_core.app_config.engine_factory import (
-            build_engine_settings,
-        )
-
-        engine_settings = build_engine_settings(settings)
-
-    # Use shared adapter (passed from worker context)
-    adapter = source_repository
 
     if not isinstance(file_id, str):
         msg = "file_id must be a string"

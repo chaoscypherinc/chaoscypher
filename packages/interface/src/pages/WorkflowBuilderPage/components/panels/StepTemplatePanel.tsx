@@ -8,7 +8,7 @@
  * new workflow steps quickly.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Drawer,
   Box,
@@ -60,7 +60,17 @@ export const StepTemplatePanel: React.FC<StepTemplatePanelProps> = ({
     deleteTemplate,
     exportTemplates,
     importTemplates,
+    refresh,
   } = useStepTemplates();
+
+  // Re-read templates from storage whenever the panel opens — "Save as
+  // Template" writes through a different useStepTemplates instance, so
+  // this instance would otherwise show stale data.
+  useEffect(() => {
+    if (open) {
+      refresh();
+    }
+  }, [open, refresh]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [importDialogOpen, setImportDialogOpen] = useState(false);

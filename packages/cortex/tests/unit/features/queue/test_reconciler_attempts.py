@@ -65,6 +65,56 @@ def _build_mock_client(
         await valkey.expire(f"queue:task:{task_id}", client._failed_result_ttl)
 
     client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+    client.failed_result_ttl = client._failed_result_ttl
+
+    # Emulate the guarded-write primitives (requeue_atomic.lua /
+    # guarded_status_write.lua) against the fixture hash, routing the
+    # component operations through the same valkey recorder the assertions
+    # inspect — a ``zadd_raises`` fixture therefore still aborts the move
+    # exactly like a transient Valkey error inside the real call would.
+    async def _requeue_atomic(queue_name: str, task_id: str, priority: float) -> str:
+        if not task_hash:
+            return "__missing__"
+        status = task_hash.get("status", "running")
+        if status in {"completed", "cancelled"}:
+            return status
+        await valkey.hset(
+            f"queue:task:{task_id}",
+            mapping={"status": "queued", "error": "", "error_type": ""},
+        )
+        await valkey.persist(f"queue:task:{task_id}")
+        await valkey.zadd(f"queue:{queue_name}:pending", {task_id: priority})
+        await valkey.srem(f"queue:{queue_name}:running", task_id)
+        await valkey.hincrby(f"queue:task:{task_id}", "attempts", 1)
+        return "__ok__"
+
+    client.requeue_task_atomic = AsyncMock(side_effect=_requeue_atomic)
+
+    async def _guarded_status_write(
+        task_id: str,
+        *,
+        new_status: str,
+        allowed_from: tuple[str, ...],
+        extra_fields: dict | None = None,
+        remove_from: str | None = None,
+        removal: str = "none",
+        expire_seconds: int | None = None,
+    ) -> str:
+        if not task_hash:
+            return "__missing__"
+        status = task_hash.get("status", "running")
+        if status not in allowed_from:
+            return status
+        await valkey.hset(
+            f"queue:task:{task_id}", mapping={"status": new_status, **(extra_fields or {})}
+        )
+        if remove_from and removal == "srem":
+            await valkey.srem(remove_from, task_id)
+        if expire_seconds is not None:
+            await valkey.expire(f"queue:task:{task_id}", expire_seconds)
+        return "__ok__"
+
+    client.guarded_status_write = AsyncMock(side_effect=_guarded_status_write)
 
     return client
 
@@ -188,15 +238,14 @@ async def test_handle_abandoned_marks_failed_at_max_tries() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_abandoned_hincrby_called_after_zadd_not_before() -> None:
-    """Hincrby must be called strictly after zadd, never before.
+async def test_handle_abandoned_requeue_is_one_atomic_move() -> None:
+    """The requeue delegates to ONE atomic Lua move — no bare sequence.
 
-    This validates the ordering invariant: if zadd succeeds, hincrby
-    follows; if zadd had been called first and raised, attempts would
-    have been consumed for nothing.
+    The zadd-before-srem / hincrby-after-zadd ordering invariants the old
+    Python sequence enforced now live inside ``requeue_atomic.lua``, so
+    ``_handle_abandoned`` must issue exactly one ``requeue_task_atomic``
+    call and never touch zadd/srem/hincrby directly on the requeue path.
     """
-    call_order: list[str] = []
-
     client = MagicMock()
     valkey = MagicMock()
     client.client = valkey
@@ -210,31 +259,14 @@ async def test_handle_abandoned_hincrby_called_after_zadd_not_before() -> None:
     async def _hgetall(_key: str) -> dict[bytes, bytes]:
         return {k.encode(): v.encode() for k, v in task_hash.items()}
 
-    async def _zadd(_key: str, _mapping: dict) -> int:
-        call_order.append("zadd")
-        return 1
-
-    async def _hincrby(_key: str, _field: str, _amount: int) -> int:
-        call_order.append("hincrby")
-        return 2
-
     valkey.hgetall = AsyncMock(side_effect=_hgetall)
     valkey.srem = AsyncMock(return_value=1)
     valkey.hset = AsyncMock(return_value=1)
-    valkey.zadd = AsyncMock(side_effect=_zadd)
-    valkey.hincrby = AsyncMock(side_effect=_hincrby)
-    # PERSIST/EXPIRE for the dead-letter retention path.
-    valkey.persist = AsyncMock(return_value=True)
-    valkey.expire = AsyncMock(return_value=True)
+    valkey.zadd = AsyncMock(return_value=1)
+    valkey.hincrby = AsyncMock(return_value=2)
 
     client.get_retry_policy = MagicMock(return_value=True)
-    client._failed_result_ttl = 14 * 86_400
-
-    async def _mark_failed(task_id: str, fields: dict[str, str]) -> None:
-        await valkey.hset(f"queue:task:{task_id}", mapping=fields)
-        await valkey.expire(f"queue:task:{task_id}", client._failed_result_ttl)
-
-    client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+    client.requeue_task_atomic = AsyncMock(return_value="__ok__")
     stats = ReconcileStats()
 
     await _handle_abandoned(
@@ -245,11 +277,11 @@ async def test_handle_abandoned_hincrby_called_after_zadd_not_before() -> None:
         stats=stats,
     )
 
-    assert "zadd" in call_order, "zadd was not called"
-    assert "hincrby" in call_order, "hincrby was not called"
-    assert call_order.index("zadd") < call_order.index("hincrby"), (
-        f"hincrby must be called after zadd; actual order: {call_order}"
-    )
+    client.requeue_task_atomic.assert_awaited_once_with("operations", "order-test-id", 50.0)
+    valkey.zadd.assert_not_awaited()
+    valkey.srem.assert_not_awaited()
+    valkey.hincrby.assert_not_awaited()
+    assert stats.recovered_crashed == 1
 
 
 @pytest.mark.asyncio
@@ -290,15 +322,14 @@ async def test_handle_abandoned_leaves_task_in_running_on_zadd_failure() -> None
 
 
 @pytest.mark.asyncio
-async def test_handle_abandoned_srem_called_after_zadd_not_before() -> None:
-    """Removal from running (srem) must run strictly after zadd, never before.
+async def test_handle_abandoned_terminal_fail_is_one_guarded_write() -> None:
+    """Terminal failure delegates to ONE guarded write — no srem-then-hset.
 
-    This is the limbo-prevention ordering invariant: the task must be safely
-    in the pending queue (zadd) before it is removed from the running set
-    (srem), so it is never absent from both sets at once.
+    The old sequence SREM'd the task out of the running set before the
+    terminal HSET; a transient failure between the two leaked a
+    half-written hash no future cycle would revisit (2026-06-14 finding).
+    The guarded write does mark-failed + SREM + dead-letter TTL atomically.
     """
-    call_order: list[str] = []
-
     client = MagicMock()
     valkey = MagicMock()
     client.client = valkey
@@ -312,30 +343,13 @@ async def test_handle_abandoned_srem_called_after_zadd_not_before() -> None:
     async def _hgetall(_key: str) -> dict[bytes, bytes]:
         return {k.encode(): v.encode() for k, v in task_hash.items()}
 
-    async def _zadd(_key: str, _mapping: dict) -> int:
-        call_order.append("zadd")
-        return 1
-
-    async def _srem(_key: str, _member: str) -> int:
-        call_order.append("srem")
-        return 1
-
     valkey.hgetall = AsyncMock(side_effect=_hgetall)
-    valkey.srem = AsyncMock(side_effect=_srem)
+    valkey.srem = AsyncMock(return_value=1)
     valkey.hset = AsyncMock(return_value=1)
-    valkey.zadd = AsyncMock(side_effect=_zadd)
-    valkey.hincrby = AsyncMock(return_value=2)
-    valkey.persist = AsyncMock(return_value=True)
-    valkey.expire = AsyncMock(return_value=True)
 
-    client.get_retry_policy = MagicMock(return_value=True)
-    client._failed_result_ttl = 14 * 86_400
-
-    async def _mark_failed(task_id: str, fields: dict[str, str]) -> None:
-        await valkey.hset(f"queue:task:{task_id}", mapping=fields)
-        await valkey.expire(f"queue:task:{task_id}", client._failed_result_ttl)
-
-    client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+    client.get_retry_policy = MagicMock(return_value=False)
+    client.failed_result_ttl = 14 * 86_400
+    client.guarded_status_write = AsyncMock(return_value="__ok__")
     stats = ReconcileStats()
 
     await _handle_abandoned(
@@ -346,8 +360,13 @@ async def test_handle_abandoned_srem_called_after_zadd_not_before() -> None:
         stats=stats,
     )
 
-    assert "zadd" in call_order, "zadd was not called"
-    assert "srem" in call_order, "srem was not called"
-    assert call_order.index("zadd") < call_order.index("srem"), (
-        f"srem must be called after zadd; actual order: {call_order}"
-    )
+    client.guarded_status_write.assert_awaited_once()
+    kwargs = client.guarded_status_write.await_args.kwargs
+    assert kwargs["new_status"] == "failed"
+    assert kwargs["removal"] == "srem"
+    assert kwargs["remove_from"] == "queue:operations:running"
+    assert kwargs["expire_seconds"] == client.failed_result_ttl
+    # No bare srem/hset outside the guarded write on the terminal path.
+    valkey.srem.assert_not_awaited()
+    valkey.hset.assert_not_awaited()
+    assert stats.failed_unrecoverable == 1

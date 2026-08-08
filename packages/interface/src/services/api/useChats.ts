@@ -272,6 +272,8 @@ export interface ChatCacheWriter {
   patchListEntry: (chatId: string, patch: Partial<ChatMetadata>) => void;
   /** Invalidate the `['chats']` list so it refetches from the server. */
   invalidateList: () => void;
+  /** Invalidate `['chat', id]` so the detail query refetches from the server. */
+  invalidateChat: (chatId: string) => void;
 }
 
 /** Build a {@link ChatCacheWriter} bound to a specific QueryClient. */
@@ -308,6 +310,9 @@ export function makeChatCacheWriter(qc: QueryClient): ChatCacheWriter {
     },
     invalidateList: () => {
       void qc.invalidateQueries({ queryKey: CHATS_QUERY_KEY });
+    },
+    invalidateChat: (chatId) => {
+      void qc.invalidateQueries({ queryKey: chatQueryKey(chatId) });
     },
   };
 }

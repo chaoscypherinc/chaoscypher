@@ -34,7 +34,7 @@ import trafilatura
 from chaoscypher_core.exceptions import MaxBytesExceeded, ValidationError
 from chaoscypher_core.settings import WebSettings
 from chaoscypher_core.utils.encoding import detect_encoding
-from chaoscypher_core.utils.url_safety import validate_url_safety
+from chaoscypher_core.utils.url_safety import resolve_pinned_ip, validate_url_safety
 
 
 logger = structlog.get_logger(__name__)
@@ -83,6 +83,28 @@ _TEXTUAL_CONTENT_TYPES: frozenset[str] = frozenset(
         "application/javascript",
     }
 )
+
+
+def _pinned_request(url: str) -> tuple[httpx.URL, dict[str, str], dict[str, str]] | None:
+    """Resolve *url* once and return a pinned request target.
+
+    ``validate_url_safety`` vets the hostname but the client re-resolves DNS at
+    connect time — a DNS-rebinding window. Dial the vetted IP instead, carrying
+    the original authority as the Host header and, for TLS, the hostname for
+    SNI + certificate verification (mirrors http_request_plugin's pinning).
+
+    Returns ``(request_url, headers, extensions)`` or ``None`` when the URL is
+    blocked or unresolvable — callers MUST treat ``None`` as "blocked".
+    """
+    pinned_ip = resolve_pinned_ip(url, strict=True)
+    if pinned_ip is None:
+        return None
+    original = httpx.URL(url)
+    headers = {"Host": original.netloc.decode("ascii")}
+    extensions: dict[str, str] = {}
+    if original.scheme == "https":
+        extensions = {"sni_hostname": original.host}
+    return original.copy_with(host=pinned_ip), headers, extensions
 
 
 @dataclass
@@ -340,15 +362,19 @@ class WebScraper:
         current_url = url
         client = _get_client(self._web_settings.fetch_timeout_seconds)
         for _ in range(max_redirects):
-            if not validate_url_safety(current_url, strict=True):
+            pinned = _pinned_request(current_url)
+            if pinned is None:
                 logger.warning("redirect_blocked_by_safety_policy", url=current_url)
                 return None
-            response = await client.get(current_url)
+            request_url, headers, extensions = pinned
+            response = await client.get(request_url, headers=headers, extensions=extensions)
             if response.is_redirect:
                 location = response.headers.get("location")
                 if not location:
                     return None
-                current_url = str(response.url.join(location))
+                # Join against the LOGICAL url — response.url carries the
+                # pinned IP and must not leak into the next hop.
+                current_url = str(httpx.URL(current_url).join(location))
                 continue
             if response.status_code >= 400:
                 logger.warning(
@@ -390,17 +416,19 @@ class WebScraper:
         current_url = url
         client = _get_client(self._web_settings.fetch_timeout_seconds)
         for _ in range(max_redirects):
-            if not validate_url_safety(current_url, strict=True):
+            pinned = _pinned_request(current_url)
+            if pinned is None:
                 logger.warning("redirect_blocked_by_safety_policy", url=current_url)
                 return None
+            request_url, headers, extensions = pinned
             if max_bytes is None:
                 # Legacy path: single GET, full body.
-                response = await client.get(current_url)
+                response = await client.get(request_url, headers=headers, extensions=extensions)
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
                         return None
-                    current_url = str(response.url.join(location))
+                    current_url = str(httpx.URL(current_url).join(location))
                     continue
                 if response.status_code >= 400:
                     logger.warning(
@@ -411,12 +439,14 @@ class WebScraper:
                     return None
                 return response
             # Capped streaming path.
-            async with client.stream("GET", current_url) as response:
+            async with client.stream(
+                "GET", request_url, headers=headers, extensions=extensions
+            ) as response:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
                         return None
-                    current_url = str(response.url.join(location))
+                    current_url = str(httpx.URL(current_url).join(location))
                     continue
                 if response.status_code >= 400:
                     logger.warning(

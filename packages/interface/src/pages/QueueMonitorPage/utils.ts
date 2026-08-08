@@ -43,6 +43,8 @@ export function getStatusColor(status: string): MuiChipColor {
       return 'error';
     case 'cancelled':
       return 'secondary';
+    case 'retried':
+      return 'info';
     default:
       return 'default';
   }
@@ -104,14 +106,20 @@ const STATUS_SORT_ORDER: Record<string, number> = {
   cancelled: 4,
 };
 
-/** Sort tasks: running first, then queued, then by descending created_at. */
-export function sortTasks<T extends { status: string; created_at?: number }>(
+/** Sort tasks: running first, then queued, then by descending created_at.
+ *
+ * `created_at` is an ISO-8601 UTC string (the backend never sends numbers),
+ * so the tie-break is a lexicographic compare — valid for ISO timestamps.
+ * The old numeric subtraction produced NaN on strings, silently disabling
+ * the tie-break.
+ */
+export function sortTasks<T extends { status: string; created_at?: string }>(
   tasks: T[],
 ): T[] {
   return [...tasks].sort((a, b) => {
     const aPriority = STATUS_SORT_ORDER[a.status] ?? 99;
     const bPriority = STATUS_SORT_ORDER[b.status] ?? 99;
     if (aPriority !== bPriority) return aPriority - bPriority;
-    return (b.created_at || 0) - (a.created_at || 0);
+    return (b.created_at ?? '').localeCompare(a.created_at ?? '');
   });
 }

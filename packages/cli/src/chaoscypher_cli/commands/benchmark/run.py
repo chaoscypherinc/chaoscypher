@@ -140,11 +140,6 @@ def run(
             raise click.Abort
         bundles = [b for b in bundles if b.id == dataset_id]
 
-    # --estimate: print stage-by-stage call count and exit.
-    if estimate:
-        _print_estimate(cfg, bundles)
-        return
-
     is_full_mode = bool(cfg.embedders or cfg.chats)
 
     from chaoscypher_cli.benchmark.models import assert_registry_coverage
@@ -165,6 +160,13 @@ def run(
             + ", ".join(missing)
         )
         raise click.Abort
+
+    # --estimate: print stage-by-stage call count and exit. Runs AFTER the
+    # registry-coverage gate so `--estimate` validates what the docs say it
+    # validates (a model missing a price entry fails here, not mid-run).
+    if estimate:
+        _print_estimate(cfg, bundles)
+        return
 
     if is_full_mode:
         from dataclasses import replace
@@ -199,6 +201,11 @@ def run(
                 raise click.Abort
         else:
             filtered_cfg = cfg
+
+        # Apply the --seed / --temperature CLI overrides in full mode too —
+        # the orchestrator reads config.seed / config.temperature, so leaving
+        # the raw config values here silently ignored both flags.
+        filtered_cfg = replace(filtered_cfg, seed=effective_seed, temperature=effective_temp)
 
         rows = asyncio.run(run_full_benchmark(filtered_cfg, bundles, wiring=wiring))
     else:

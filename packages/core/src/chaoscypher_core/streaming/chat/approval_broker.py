@@ -26,6 +26,16 @@ logger = get_logger(__name__)
 
 PENDING_SENTINEL = "pending"
 
+# Server-side Lua for the pending->decision flip (Valkey EVAL — not Python
+# eval). Mirrors ``QueueClient._STRING_CAS_SCRIPT``; duplicated because
+# ``resolve_tool_approval`` receives a raw Valkey client, not the queue
+# wrapper. Keep the two in sync.
+_RESOLVE_CAS_SCRIPT = (
+    "local v = redis.call('GET', KEYS[1]) "
+    "if v == ARGV[1] then redis.call('SET', KEYS[1], ARGV[2], 'KEEPTTL') return 1 end "
+    "return 0"
+)
+
 # Grace added to the key TTL beyond the decision timeout so a decision
 # arriving at the buzzer still lands on a live key.
 _TTL_GRACE_SECONDS = 60
@@ -174,14 +184,21 @@ async def resolve_tool_approval(
         return False
 
     key = _approval_key(chat_id, tool_call_id)
-    value = await client.get(key)
-    if isinstance(value, bytes):
-        value = value.decode()
-    if value != PENDING_SENTINEL:
+    normalized = decision if decision in ("approve", "reject") else "reject"
+
+    # One atomic compare-and-swap: the old read-then-write let two
+    # concurrent resolvers carrying conflicting decisions both observe
+    # PENDING and both write — last write silently overrode the first
+    # decision (2026-06-28 finding; first-decision-wins decided
+    # 2026-07-23). Server-side Lua flips the key only while it still
+    # holds the pending sentinel, keeping the TTL. This is the same
+    # script as ``QueueClient.compare_and_swap_string`` — duplicated
+    # because this endpoint receives a raw Valkey client, not the queue
+    # wrapper; keep the two in sync.
+    resolved = await client.eval(_RESOLVE_CAS_SCRIPT, 1, key, PENDING_SENTINEL, normalized)
+    if not int(resolved or 0):
         return False
 
-    normalized = decision if decision in ("approve", "reject") else "reject"
-    await client.set(key, normalized, keepttl=True)
     logger.info(
         "tool_approval_resolved",
         chat_id=chat_id,

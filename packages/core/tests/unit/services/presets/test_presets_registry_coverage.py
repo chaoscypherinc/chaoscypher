@@ -85,9 +85,9 @@ class TestConfigurableVRAMPresetFullConfig:
     def test_metadata_built_from_config(self) -> None:
         preset = ConfigurableVRAMPreset(_full_config())
         md = preset.metadata
-        # metadata_from_dict derives plugin_id from the "name" key, which the
-        # preset populates with the display_name.
-        assert md.plugin_id == "Test VRAM"
+        # plugin_id is the preset name (the registry key); the display name
+        # only ever populates the human-facing "name" field.
+        assert md.plugin_id == "vram_test"
         assert md.name == "Test VRAM"
         assert md.version == "2.1.0"
         assert md.author == "Tester"
@@ -340,3 +340,65 @@ class TestVRAMPresetRegistryReload:
         registry.reload()
         assert registry.count() == before
         assert registry.get("vram_24gb") is not None
+
+
+# ----------------------------------------------------------------------
+# User-preset provenance (2026-07-23 llm section-audit regression)
+# ----------------------------------------------------------------------
+class TestUserPresetProvenance:
+    """User-dir presets must register with user provenance.
+
+    Regression: ``_register_preset_from_config`` used to call
+    ``_register_by_id`` without ``source_path``/``is_user``, so every user
+    preset classified as builtin and two user presets claiming the same
+    name silently last-write-won in filesystem order.
+    """
+
+    @staticmethod
+    def _write_user_preset(user_dir: Any, filename: str, name: str) -> None:
+        config = _full_config()
+        config["name"] = name
+        (user_dir / filename).write_text(json.dumps(config), encoding="utf-8")
+
+    def test_user_preset_registered_with_user_origin(self, tmp_path: Any) -> None:
+        user_dir = tmp_path / "plugins" / "presets"
+        user_dir.mkdir(parents=True)
+        self._write_user_preset(user_dir, "mine.json", "vram_user_test")
+
+        registry = VRAMPresetRegistry(SimpleNamespace(data_dir=str(tmp_path)))
+
+        assert registry._plugin_origins["vram_user_test"] == "user"
+        source, is_user = registry._plugin_sources["vram_user_test"]
+        assert is_user is True
+        assert source.endswith("mine.json")
+
+    def test_duplicate_user_presets_rejected_not_clobbered(self, tmp_path: Any) -> None:
+        """The second user preset claiming a taken name is rejected.
+
+        ``_scan_directory`` isolates per-file failures, so the
+        DuplicatePluginError surfaces as a ``preset_registration_failed``
+        warning — the essential guarantee is that the duplicate no longer
+        overwrites the first registration (the winner's recorded source and
+        its config stay consistent).
+        """
+        user_dir = tmp_path / "plugins" / "presets"
+        user_dir.mkdir(parents=True)
+        config_a = _full_config()
+        config_a["name"] = "vram_dupe"
+        config_a["vram_gb"] = 11
+        (user_dir / "a.json").write_text(json.dumps(config_a), encoding="utf-8")
+        config_b = _full_config()
+        config_b["name"] = "vram_dupe"
+        config_b["vram_gb"] = 99
+        (user_dir / "b.json").write_text(json.dumps(config_b), encoding="utf-8")
+
+        registry = VRAMPresetRegistry(SimpleNamespace(data_dir=str(tmp_path)))
+
+        winner = registry.get_preset("vram_dupe")
+        assert winner is not None
+        source, is_user = registry._plugin_sources["vram_dupe"]
+        assert is_user is True
+        # The registered preset still matches the file recorded as its
+        # source — the losing duplicate did not clobber it.
+        winner_config = json.loads((user_dir / source.rsplit("/", 1)[-1]).read_text())
+        assert winner.vram_gb == winner_config["vram_gb"]

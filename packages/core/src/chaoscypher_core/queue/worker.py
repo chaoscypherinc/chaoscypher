@@ -81,10 +81,18 @@ async def _heartbeat_refresher(
         ttl_seconds: TTL applied on each refresh.
     """
     # CancelledError propagates naturally when the handler task completes
-    # and this refresher coroutine is cancelled.
+    # and this refresher coroutine is cancelled. A failed refresh (e.g. a
+    # transient Valkey blip) must NOT kill the loop: the handler is still
+    # running, and a silently-dead refresher lets the TTL lapse so the
+    # reconciler requeues live work. Log and retry at the next interval —
+    # if the outage persists past the TTL, abandonment classification is
+    # then a truthful signal rather than a refresher artifact.
     while True:
         await asyncio.sleep(refresh_interval)
-        await refresh(task_id, ttl_seconds)
+        try:
+            await refresh(task_id, ttl_seconds)
+        except Exception:
+            logger.warning("heartbeat_refresh_failed", task_id=task_id, exc_info=True)
 
 
 async def _run_with_heartbeat(
@@ -478,7 +486,7 @@ class QueueWorker:
         )
         return False
 
-    async def _process_task(  # noqa: PLR0911,PLR0912,PLR0915 — linear guard-return flow, each branch is a distinct dispatch outcome; dead-letter retention adds 2 terminal/non-terminal gates that read cleanest co-located with the existing fail sites
+    async def _process_task(  # noqa: PLR0911 — linear guard-return flow, each branch is a distinct dispatch outcome; dead-letter retention adds 2 terminal/non-terminal gates that read cleanest co-located with the existing fail sites
         self,
         task_id: str,
         queue_name: str,
@@ -690,25 +698,55 @@ class QueueWorker:
                 return None
 
         finally:
+            await self._finish_task_cleanup(
+                task_id, queue_name, running_key, semaphore, pending_retry
+            )
+
+    async def _finish_task_cleanup(
+        self,
+        task_id: str,
+        queue_name: str,
+        running_key: str,
+        semaphore: asyncio.Semaphore,
+        pending_retry: tuple[int, int] | None,
+    ) -> None:
+        """Ack completion, release the slot, schedule any retry, unbind context.
+
+        Runs as ``_process_task``'s finally. Exception-safe by construction:
+        a failing completion ack (Valkey blip) MUST NOT abort the rest of
+        cleanup — the task stays in the running set and the reconciler
+        recovers it once its heartbeat lapses, but the semaphore below must
+        still be released, or the slot leaks until restart (a total stall on
+        the LLM queue, whose concurrency is 1).
+        """
+        try:
             # COMPLETE ORDER: atomic SREM + DEL heartbeat via Lua. Both
             # operations happen or neither does, preventing a reconciler
             # race where the task looks abandoned between the two cleanup
             # calls. Falls back to bare SREM when _queue_client is not
             # injected.
-            if self._queue_client is not None:
-                await self._queue_client.complete_task_atomic(queue_name, task_id)
-            else:
-                await _await_result(self.client.srem(running_key, task_id))
-
-            # Release semaphore BEFORE any retry scheduling to avoid blocking
-            # the queue slot during backoff (especially critical for LLM queue
-            # with concurrency=1).
-            semaphore.release()
+            try:
+                if self._queue_client is not None:
+                    await self._queue_client.complete_task_atomic(queue_name, task_id)
+                else:
+                    await _await_result(self.client.srem(running_key, task_id))
+            except Exception:
+                logger.exception("task_completion_ack_failed", task_id=task_id, queue=queue_name)
+            finally:
+                # Release semaphore BEFORE any retry scheduling to avoid
+                # blocking the queue slot during backoff (especially
+                # critical for LLM queue with concurrency=1).
+                semaphore.release()
 
             # Schedule retry after semaphore is released
             if pending_retry is not None:
-                await self._retry_task(task_id, queue_name, pending_retry[0], pending_retry[1])
-
+                try:
+                    await self._retry_task(task_id, queue_name, pending_retry[0], pending_retry[1])
+                except Exception:
+                    logger.exception(
+                        "task_retry_schedule_failed", task_id=task_id, queue=queue_name
+                    )
+        finally:
             structlog.contextvars.unbind_contextvars("task_id", "queue")
 
     async def _retry_task(
@@ -720,8 +758,9 @@ class QueueWorker:
         can check whether the backoff has elapsed before processing. The task is
         also re-added with a future-biased score so it sorts after ready items.
 
-        Backoff schedule: 5s, 15s, 35s, 75s, 155s base (exponential) with
-        random jitter at 50-150% of the base to avoid thundering herd.
+        Backoff schedule: 5s, 10s, 20s, 40s, 80s, 160s, then capped at 300s
+        base (exponential doubling) with random jitter at 50-150% of the
+        base to avoid thundering herd.
 
         Args:
             task_id: Task to retry.
@@ -809,7 +848,13 @@ class QueueWorker:
                             },
                         )
                     )
-                    await _await_result(self.client.expire(health_key, 10))
+                    # TTL derived from the publish interval (5x, floor 10s)
+                    # so a slower configured interval can't let the key
+                    # expire between publishes and flap the worker
+                    # "offline" in the monitor.
+                    await _await_result(
+                        self.client.expire(health_key, max(10, self._health_report_interval * 5))
+                    )
 
                 await asyncio.sleep(self._health_report_interval)
         except asyncio.CancelledError:

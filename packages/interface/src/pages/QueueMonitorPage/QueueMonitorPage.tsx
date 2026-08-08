@@ -4,7 +4,7 @@
 /**
  * QueueMonitorPage — Monitor and manage background task queues.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Box,
   Typography,
@@ -19,7 +19,7 @@ import {
   useQueueStats,
   useQueueTasks,
   useCancelTask,
-  useCancelTasks,
+  useCancelAllTasks,
   useClearTaskHistory,
 } from '../../services/api/useQueue';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
@@ -51,7 +51,7 @@ export default function QueueMonitorPage() {
   );
 
   const cancelTaskMutation = useCancelTask();
-  const cancelTasksMutation = useCancelTasks();
+  const cancelAllTasksMutation = useCancelAllTasks();
   const clearHistoryMutation = useClearTaskHistory();
 
   // Confirmation dialogs
@@ -65,7 +65,6 @@ export default function QueueMonitorPage() {
   const totalInQueue = tasksQuery.data?.total_in_queue ?? 0;
   const stats = statsQuery.data?.queues ?? [];
 
-  const activeTasks = tasks.filter((t) => t.status === 'queued' || t.status === 'running');
   const finishedTasks = tasks.filter((t) =>
     t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled',
   );
@@ -74,8 +73,21 @@ export default function QueueMonitorPage() {
   const runningTasks = tasks.filter((t) => t.status === 'running').length;
   const failedTasks = tasks.filter((t) => t.status === 'failed').length;
   const displayedTasks = tasks.length;
-  const totalTasks = totalInQueue > 0 ? totalInQueue : displayedTasks;
+  // total_in_queue is the ACTIVE (queued + running) count across all pages —
+  // the backend documents it as "not a pagination metric". The pagination
+  // envelope's `total` is the recent-history count the table pages over.
+  const totalActiveTasks = totalInQueue;
+  const totalTasks = pagination?.total ?? displayedTasks;
   const totalPages = pagination?.total_pages ?? 0;
+
+  // Clamp the page when the result set shrinks under us (e.g. Clear
+  // History from page 2): without this the page polls an empty page
+  // forever with the pagination controls unmounted.
+  useEffect(() => {
+    if (pagination && currentPage > pagination.total_pages) {
+      setCurrentPage(Math.max(1, pagination.total_pages));
+    }
+  }, [pagination, currentPage]);
 
   // Handlers
   const handleRefresh = () => {
@@ -99,7 +111,7 @@ export default function QueueMonitorPage() {
   };
 
   const handleCancelAllClick = () => {
-    if (activeTasks.length === 0) {
+    if (totalActiveTasks === 0) {
       notify('No active tasks to cancel', 'info');
       return;
     }
@@ -109,12 +121,10 @@ export default function QueueMonitorPage() {
   const handleCancelAllConfirm = async () => {
     await cancelAllDialog.confirm(async () => {
       try {
-        const taskIds = activeTasks.map((t) => t.task_id);
-        const result = await cancelTasksMutation.mutateAsync(taskIds);
-        notify(
-          `Successfully cancelled ${result.cancelled_count} of ${result.requested_count} tasks`,
-          'success',
-        );
+        // Server-side cancel-all: covers every active task, not just the
+        // ones on the current page.
+        const result = await cancelAllTasksMutation.mutateAsync();
+        notify(`Successfully cancelled ${result.cancelled} task(s)`, 'success');
       } catch (error) {
         logger.error('Failed to cancel all tasks:', error);
         notify(`Failed to cancel all tasks: ${error}`, 'error');
@@ -160,7 +170,7 @@ export default function QueueMonitorPage() {
         onRefresh={handleRefresh}
         onCancelAll={handleCancelAllClick}
         cancellingAll={cancelAllDialog.isConfirming}
-        hasActiveTasks={activeTasks.length > 0}
+        hasActiveTasks={totalActiveTasks > 0}
       />
 
       {statsError && (
@@ -245,7 +255,8 @@ export default function QueueMonitorPage() {
         <DialogTitle sx={{ color: 'text.primary' }}>Cancel All Active Tasks</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: 'text.secondary' }}>
-            Are you sure you want to cancel ALL {activeTasks.length} active tasks?
+            Are you sure you want to cancel ALL {totalActiveTasks} active task
+            {totalActiveTasks === 1 ? '' : 's'} across every queue?
           </Typography>
           <Typography sx={{ mt: 1, fontWeight: 'bold', color: 'error.main', fontSize: 13 }}>
             This action cannot be undone.

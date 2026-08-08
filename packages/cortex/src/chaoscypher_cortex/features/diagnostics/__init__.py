@@ -13,17 +13,14 @@ added to ADR-0002's aggregator allow-list.
 
 Exports:
     DiagnosticsService: Creates diagnostic bundles.
-    DiagnosticExportResponse: Export response model.
     router: FastAPI router for diagnostics endpoints.
 """
 
 from chaoscypher_cortex.features.diagnostics.api import router
-from chaoscypher_cortex.features.diagnostics.models import DiagnosticExportResponse
 from chaoscypher_cortex.features.diagnostics.service import DiagnosticsService
 
 
 __all__ = [
-    "DiagnosticExportResponse",
     "DiagnosticsService",
     "router",
 ]

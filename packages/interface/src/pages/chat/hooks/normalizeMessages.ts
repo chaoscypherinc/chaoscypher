@@ -63,13 +63,26 @@ export function normalizeMessages(messages: ChatMessage[]): ExtendedChatMessage[
       if (msg.extra_metadata.warnings) {
         normalized.warnings = msg.extra_metadata.warnings;
       }
-      // Merge per_citation verdicts into chunk citations for persisted messages
+      // Merge per_citation verdicts into chunk citations for persisted
+      // messages. Rebuild the map immutably: `normalized.chunk_citations` is
+      // the SAME object as `msg.extra_metadata.chunk_citations` held in the
+      // TanStack Query cache, and cache data must never be mutated in place
+      // (CLAUDE.md § State management: clone, never mutate).
       const perCitation = msg.extra_metadata.validation?.per_citation;
       if (perCitation && normalized.chunk_citations) {
-        for (const [id, cite] of Object.entries(normalized.chunk_citations)) {
-          const v = (perCitation as Record<string, { verdict: string }>)[id]?.verdict;
-          cite.validation_verdict = v === 'correct' ? 'correct' : v === 'wrong' ? 'wrong' : null;
-        }
+        normalized.chunk_citations = Object.fromEntries(
+          Object.entries(normalized.chunk_citations).map(([id, cite]) => {
+            const v = (perCitation as Record<string, { verdict: string }>)[id]?.verdict;
+            return [
+              id,
+              {
+                ...cite,
+                validation_verdict:
+                  v === 'correct' ? ('correct' as const) : v === 'wrong' ? ('wrong' as const) : null,
+              },
+            ];
+          }),
+        );
       }
     }
     return normalized;

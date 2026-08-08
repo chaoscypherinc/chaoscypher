@@ -407,14 +407,11 @@ async def apply_preset(
     {"preset_id": "vram_24gb"}
     ```
 
-    **Updates these settings:**
-    - ollama_chat_model
-    - ollama_num_ctx
-    - ollama_num_batch
-    - ai_max_tokens
-    - thinking_for_chat
-    - thinking_for_tools
-    - thinking_for_extraction
+    **Updates these settings** (whatever the preset's JSON carries — for the
+    shipped presets that is the ollama_* model/context/batch tuning fields
+    plus ai_context_window, ai_max_tokens, extraction_max_tokens,
+    thinking_for_chat, and on the larger tiers ollama_num_parallel; the
+    service additionally records `ollama_quick_preset` = the applied id):
 
     **Preserves:**
     - All other settings (API keys, URLs, instances, etc.)

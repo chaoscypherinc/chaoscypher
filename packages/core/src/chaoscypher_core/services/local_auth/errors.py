@@ -10,6 +10,7 @@ from chaoscypher_core.exceptions import AuthenticationError
 __all__ = [
     "ApiKeyNotFound",
     "CorruptCredentialsFile",
+    "CredentialsAlreadyInitialized",
     "CredentialsNotInitialized",
     "InvalidPassword",
     "InvalidSessionCookie",
@@ -30,6 +31,10 @@ class LocalAuthError(AuthenticationError):
 
 class CredentialsNotInitialized(LocalAuthError):  # noqa: N818 — spec-defined name
     """Credentials file does not exist yet."""
+
+
+class CredentialsAlreadyInitialized(LocalAuthError):  # noqa: N818 — spec-defined name
+    """Credentials file already exists (double first-run initialize)."""
 
 
 class CorruptCredentialsFile(LocalAuthError):  # noqa: N818 — spec-defined name

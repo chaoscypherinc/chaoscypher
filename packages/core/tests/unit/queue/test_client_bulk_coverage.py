@@ -48,6 +48,10 @@ def _bare_client() -> QueueClient:
     client._failed_result_ttl = 14 * 86_400
     client._cancel_ttl = 300
     client._atomic_complete_sha = None
+    client._guarded_status_write_sha = None
+    client._guarded_delete_sha = None
+    client._requeue_atomic_sha = None
+    client._string_cas_sha = None
     client.monitor = None
     client._handlers = {}
     client._retry_policy = {}
@@ -101,6 +105,9 @@ def _make_client() -> tuple[QueueClient, MagicMock, list[dict[str, Any]]]:
     valkey.llen = AsyncMock(return_value=0)
     valkey.lrange = AsyncMock(return_value=[])
     valkey.lrem = AsyncMock(return_value=1)
+    valkey.set = AsyncMock(return_value=True)
+    valkey.script_load = AsyncMock(return_value="sha-abc")
+    valkey.evalsha = AsyncMock(return_value=b"__ok__")
 
     client.client = valkey
     return client, valkey, recorded
@@ -278,15 +285,38 @@ async def test_cancel_tasks_batch_terminal_skipped() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_tasks_batch_cancels_active() -> None:
-    """A queued task is cancelled via the pipeline and persisted to the DB."""
+    """A queued task is cancelled via a guarded write (no unguarded pipeline).
+
+    Queued tasks never run, so no SQLite cancel-persist is needed — that
+    durability fallback exists for running handlers polling
+    ``is_task_cancelled`` (parity with ``cancel_task``'s queued branch).
+    """
     client, valkey, recorded = _make_client()
     valkey.hgetall = AsyncMock(return_value=_hash_payload(status="queued"))
     client._persist_cancellation_to_db = MagicMock()
 
     result = await client.cancel_tasks_batch(["t-q"])
     assert result["cancelled"] == 1
-    assert any(e["op"] == "hset" and e["mapping"]["status"] == "cancelled" for e in recorded)
+    valkey.evalsha.assert_awaited_once()
+    args = valkey.evalsha.await_args.args
+    assert args[6] == "zrem"  # guarded write removed it from pending
+    assert not any(e["op"] == "hset" for e in recorded)  # no pipeline write
+    client._persist_cancellation_to_db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cancel_tasks_batch_running_gets_flag_and_persist() -> None:
+    """A running task gets the cooperative cancel flag + durable persist."""
+    client, valkey, _recorded = _make_client()
+    valkey.hgetall = AsyncMock(return_value=_hash_payload(status="running"))
+    client._persist_cancellation_to_db = MagicMock()
+
+    result = await client.cancel_tasks_batch(["t-r"])
+    assert result["cancelled"] == 1
+    valkey.set.assert_awaited_once_with("queue:cancel:t-1", "1", ex=300)
     client._persist_cancellation_to_db.assert_called_once()
+    args = valkey.evalsha.await_args.args
+    assert args[6] == "srem"
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +350,13 @@ async def test_cancel_by_metadata_queued_deletes() -> None:
 
     cancelled = await client.cancel_by_metadata({"source_id": "s1"})
     assert cancelled == 1
-    assert any(e["op"] == "delete" for e in recorded)
+    # Guarded delete (Lua) — never an unguarded pipeline delete that could
+    # destroy a task that raced queued -> running.
+    valkey.evalsha.assert_awaited_once()
+    args = valkey.evalsha.await_args.args
+    assert args[2] == "queue:task:t-q"
+    assert args[6] == "zrem"
+    assert not any(e["op"] == "delete" for e in recorded)
 
 
 @pytest.mark.asyncio
@@ -336,8 +372,9 @@ async def test_cancel_by_metadata_running_sets_flag() -> None:
 
     cancelled = await client.cancel_by_metadata({"source_id": "s1"})
     assert cancelled == 1
-    assert any(e["op"] == "set" for e in recorded)
-    assert any(e["op"] == "srem" for e in recorded)
+    valkey.set.assert_awaited_once_with("queue:cancel:t-r", "1", ex=300)
+    args = valkey.evalsha.await_args.args
+    assert args[6] == "srem"  # guarded write removed it from the running set
 
 
 # ---------------------------------------------------------------------------
@@ -357,18 +394,50 @@ async def test_cancel_all_tasks_none_to_cancel() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_all_tasks_queue_filtered() -> None:
-    """Only tasks in the requested queue are cancelled."""
+    """Only tasks in the requested queue are cancelled.
+
+    The delegated cancel_tasks_batch re-reads each selected task, so the
+    hgetall side_effect provides a third response for t-a's second read.
+    """
     client, valkey, recorded = _make_client()
     valkey.scan_iter = _scan_iter([b"queue:task:t-a", b"queue:task:t-b"])
     valkey.hgetall = AsyncMock(
         side_effect=[
             _hash_payload(task_id="t-a", queue=QUEUE_OPERATIONS, status="queued"),
             _hash_payload(task_id="t-b", queue="llm", status="queued"),
+            _hash_payload(task_id="t-a", queue=QUEUE_OPERATIONS, status="queued"),
         ]
     )
 
     cancelled = await client.cancel_all_tasks(queue=QUEUE_OPERATIONS)
     assert cancelled == 1
+    # The one cancel went through the guarded CAS write, not a pipeline HSET.
+    valkey.evalsha.assert_awaited_once()
+    assert not any(e["op"] == "hset" for e in recorded)
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_tasks_running_sets_flag_and_persists() -> None:
+    """Bulk-cancel of a RUNNING task must set the cooperative cancel flag.
+
+    The pre-fix pipeline wrote status=cancelled without the
+    queue:cancel:{id} flag or the running-set SREM, so the handler ran to
+    completion unaware and its success path overwrote the cancellation.
+    Delegation to cancel_tasks_batch pins flag + DB persist + srem removal.
+    """
+    client, valkey, recorded = _make_client()
+    valkey.scan_iter = _scan_iter([b"queue:task:t-r"])
+    valkey.hgetall = AsyncMock(return_value=_hash_payload(status="running"))
+    client._persist_cancellation_to_db = MagicMock()
+
+    cancelled = await client.cancel_all_tasks()
+
+    assert cancelled == 1
+    valkey.set.assert_awaited_once_with("queue:cancel:t-1", "1", ex=300)
+    client._persist_cancellation_to_db.assert_called_once()
+    args = valkey.evalsha.await_args.args
+    assert args[6] == "srem"  # guarded write removed it from the running set
+    assert not any(e["op"] == "hset" for e in recorded)  # no unguarded pipeline write
 
 
 # ---------------------------------------------------------------------------

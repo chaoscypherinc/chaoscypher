@@ -149,6 +149,34 @@ class TestCreateTrigger:
     """Tests for the create_trigger handler."""
 
     @pytest.mark.asyncio
+    async def test_create_returns_500_when_created_trigger_vanishes(self) -> None:
+        """Parity with workflows/tools create: a None post-create read raises a
+        structured 500 OPERATION_FAILED instead of failing response validation.
+        """
+        from fastapi import HTTPException
+
+        mock_service = MagicMock()
+        mock_service.create_trigger.return_value = "t-new"
+        mock_service.get_trigger.return_value = None
+
+        trigger_create = TriggerCreate(
+            name="Watch sources",
+            event_source="source.created",
+            filters={},
+            workflow_id="wf-1",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await create_trigger(
+                trigger_create=trigger_create,
+                trigger_service=mock_service,
+                _="test-user",
+            )
+
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.detail["code"] == "OPERATION_FAILED"
+
+    @pytest.mark.asyncio
     async def test_creates_and_returns_trigger(self) -> None:
         """Handler calls create_trigger then get_trigger and returns the result."""
         mock_service = MagicMock()

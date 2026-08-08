@@ -281,6 +281,11 @@ class OllamaModelsService:
                         )
 
             except Exception:
+                logger.exception(
+                    "ollama_model_remove_error",
+                    model=model,
+                    instance_id=inst_id,
+                )
                 results.append(
                     {"instance_id": inst_id, "success": False, "error": "Model removal failed"}
                 )

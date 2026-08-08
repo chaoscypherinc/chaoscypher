@@ -73,6 +73,9 @@ def seed_system_tools(session: Session) -> None:
     System tools are global (not per-database).
     Uses upsert pattern - updates existing tools if they exist.
 
+    Does NOT commit — the caller owns the transaction boundary (e.g.
+    ``adapter.transaction()`` or an explicit ``session.commit()``).
+
     Args:
         session: Database session
 
@@ -130,7 +133,6 @@ def seed_system_tools(session: Session) -> None:
             session.add(tool)
             logger.debug("system_tool_created", tool_id=tool_data["id"])
 
-    session.commit()
     logger.info("system_tools_seeded", tool_count=len(plugins))
 
 
@@ -139,6 +141,8 @@ def seed_default_workflows(session: Session, database_name: str) -> None:
 
     Creates or updates:
     - Generate Embeddings workflow
+
+    Does NOT commit — the caller owns the transaction boundary.
 
     Args:
         session: Database session
@@ -244,7 +248,6 @@ def seed_default_workflows(session: Session, database_name: str) -> None:
             session.add(step)
             logger.debug("workflow_step_created", step_name=step_data["name"])
 
-    session.commit()
     logger.info("workflows_seeded")
 
 
@@ -258,6 +261,8 @@ def seed_default_triggers(session: Session, database_name: str) -> None:
     be seeded here, but no code path ever publishes that event — Cortex's
     ``update_node`` re-embeds synchronously instead — so the dormant row
     was removed (migration 0002 deletes it from existing databases).
+
+    Does NOT commit — the caller owns the transaction boundary.
 
     Args:
         session: Database session
@@ -313,7 +318,6 @@ def seed_default_triggers(session: Session, database_name: str) -> None:
             trigger_id=trigger_data["id"],
         )
 
-    session.commit()
     logger.info("triggers_seeded")
 
 

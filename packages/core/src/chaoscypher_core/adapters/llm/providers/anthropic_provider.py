@@ -260,11 +260,12 @@ class AnthropicProvider(BaseLLMProvider):
         if hasattr(response, "tool_calls") and response.tool_calls:
             tool_calls = format_tool_calls_response(response.tool_calls)
 
-        # Extract usage info
+        # Extract usage info. AIMessage.usage_metadata is None (not absent)
+        # when the provider omits usage, so guard on the value.
         usage = {}
         raw_finish_reason: str | None = None
-        if hasattr(response, "usage_metadata"):
-            usage_metadata = response.usage_metadata
+        usage_metadata = getattr(response, "usage_metadata", None)
+        if usage_metadata:
             usage = {
                 "prompt_tokens": usage_metadata.get("input_tokens", 0),
                 "completion_tokens": usage_metadata.get("output_tokens", 0),

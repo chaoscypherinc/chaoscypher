@@ -11,6 +11,7 @@ Extracted from ResetService to follow Single Responsibility Principle.
 """
 
 import shutil
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -102,9 +103,16 @@ class DataResetService:
         finally:
             adapter.disconnect()
 
-        # Delete uploaded import files directory
+        # Delete uploaded import files directory. Derive the path from
+        # self.database_name — settings.database_dir resolves to the
+        # CURRENT database, which may differ from the reset target.
         try:
-            imports_dir = settings.database_dir / settings.paths.imports_subdir
+            imports_dir = (
+                Path(settings.paths.data_dir)
+                / settings.paths.databases_subdir
+                / self.database_name
+                / settings.paths.imports_subdir
+            )
             if imports_dir.exists():
                 shutil.rmtree(imports_dir)
                 stats["imports_directory_deleted"] = True

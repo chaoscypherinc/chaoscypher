@@ -41,6 +41,7 @@ export function buildStageStats(
   if (num('loader_warnings_count') > 0) load.push({ label: 'Warnings', value: num('loader_warnings_count'), tone: 'warn', description: 'Non-fatal warnings emitted by the loader while reading the source.' });
   if (num('loader_files_skipped') > 0) load.push({ label: 'Files skipped', value: num('loader_files_skipped'), tone: 'warn', description: 'Files in the upload that were skipped — unsupported type or unreadable.' });
   if (num('loader_replacement_chars_count') > 0) load.push({ label: 'Repl. chars', value: num('loader_replacement_chars_count'), tone: 'warn', description: 'Unicode replacement characters (�) found — usually a decoding/encoding problem in the source.' });
+  if (num('loader_epub_chapters_skipped') > 0) load.push({ label: 'Chapters skipped', value: num('loader_epub_chapters_skipped'), tone: 'warn', description: 'EPUB chapters listed in the reading order that could not be loaded — missing from the manifest or absent from the archive.' });
 
   const clean: StageStatItem[] = [];
   if (num('cleaner_chars_removed') > 0) clean.push({ label: 'Removed', value: fmt(num('cleaner_chars_removed')), description: 'Characters removed by the text cleaner — boilerplate, control characters, and markup.' });

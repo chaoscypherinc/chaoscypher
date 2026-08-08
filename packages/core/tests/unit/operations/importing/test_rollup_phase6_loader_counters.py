@@ -184,6 +184,32 @@ async def test_rollup_scalar_docx_paragraphs_skipped() -> None:
     assert adapter.last_dict_update("loader_docx_paragraphs_skipped") is None
 
 
+@pytest.mark.asyncio
+async def test_rollup_scalar_epub_chapters_skipped() -> None:
+    """EPUB chapters-skipped scalars sum and route via increment_source_counter.
+
+    2026-07-23: the EPUB loader dropped manifest-less spine items and
+    missing-from-zip chapters with only a log line — no counter. The
+    loader now surfaces ``loader_epub_chapters_skipped`` in metadata and
+    the rollup must increment the matching source-row column.
+    """
+    documents = [
+        {"metadata": {"loader_epub_chapters_skipped": 2}},
+    ]
+    adapter = _FakeAdapter()
+
+    await _rollup_phase6_loader_counters(
+        documents=documents,
+        adapter=adapter,
+        source_id="src-epub",
+        database_name="test",
+    )
+
+    total = adapter.increment_column_total("loader_epub_chapters_skipped")
+    assert total == 2, f"Expected 2 incremented, got {total!r}"
+    assert adapter.last_dict_update("loader_epub_chapters_skipped") is None
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------

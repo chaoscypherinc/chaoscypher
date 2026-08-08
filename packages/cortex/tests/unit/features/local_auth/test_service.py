@@ -11,6 +11,7 @@ import pytest
 
 from chaoscypher_core.services.local_auth import (
     ApiKeyNotFound,
+    CredentialsAlreadyInitialized,
     CredentialsFile,
     InvalidPassword,
     InvalidSessionCookie,
@@ -55,7 +56,7 @@ def test_status_with_valid_cookie(service: LocalAuthService) -> None:
 
 def test_setup_twice_fails(service: LocalAuthService) -> None:
     service.setup("admin", "password123")
-    with pytest.raises(FileExistsError):
+    with pytest.raises(CredentialsAlreadyInitialized):
         service.setup("other", "password456")
 
 

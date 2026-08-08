@@ -29,7 +29,7 @@ def show(results_path: Path, out: Path | None) -> None:
     rows = load_results(results_path)
     md = render_leaderboard(rows)
     if out is not None:
-        out.write_text(md)
+        out.write_text(md, encoding="utf-8")
     else:
         click.echo(md)
 

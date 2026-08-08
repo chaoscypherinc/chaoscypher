@@ -726,12 +726,14 @@ class TestFindSpecFiles:
         assert len(found) == 1
 
     def test_multiple_specs_same_root(self, tmp_path: Path) -> None:
-        """openapi.json and swagger.json at root are both found."""
+        """openapi.json and swagger.json at root are both found, in priority order."""
         (tmp_path / "openapi.json").write_text("{}")
         (tmp_path / "swagger.json").write_text("{}")
         handler = OpenAPIHandler()
         found = handler._find_spec_files(tmp_path)
-        assert len(found) == 2
+        assert found == [tmp_path / "openapi.json", tmp_path / "swagger.json"], (
+            "SPEC_FILENAMES priority order must hold: openapi.json before swagger.json"
+        )
 
     def test_spec_in_subdirectory(self, tmp_path: Path) -> None:
         sub = tmp_path / "vendor"
@@ -758,12 +760,17 @@ class TestFindSpecFiles:
         assert found == []
 
     def test_find_spec_file_returns_first(self, tmp_path: Path) -> None:
-        """_find_spec_file (singular) returns the first result."""
+        """_find_spec_file (singular) returns the highest-priority match.
+
+        SPEC_FILENAMES orders openapi.json before swagger.json; when both
+        coexist, the singular helper must pick openapi.json — not merely
+        "some spec file".
+        """
         (tmp_path / "openapi.json").write_text("{}")
         (tmp_path / "swagger.json").write_text("{}")
         handler = OpenAPIHandler()
         single = handler._find_spec_file(tmp_path)
-        assert single is not None
+        assert single == tmp_path / "openapi.json"
 
     def test_find_spec_file_returns_none_when_empty(self, tmp_path: Path) -> None:
         handler = OpenAPIHandler()

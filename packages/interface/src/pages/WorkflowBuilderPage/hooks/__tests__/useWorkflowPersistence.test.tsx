@@ -40,18 +40,28 @@ vi.mock('react-router', async (importOriginal) => {
 const mockLoadWorkflow = vi.fn<(id: string) => Promise<{ nodes: Node[]; edges: Edge[] } | null>>();
 const mockSaveWorkflow =
   vi.fn<(nodes: Node[], edges: Edge[], meta: Record<string, unknown>) => Promise<string | null>>();
+// Captures the options the persistence hook passes to useWorkflowSerialization
+// (onError, onStepIdsAssigned) so tests can drive those callbacks.
+const capturedSerializationOptions: {
+  onError?: (error: string) => void;
+  onStepIdsAssigned?: (assignments: Array<{ nodeId: string; stepId: string }>) => void;
+} = {};
 vi.mock('../useWorkflowSerialization', () => ({
-  useWorkflowSerialization: () => ({
-    workflow: null,
-    isLoading: false,
-    isSaving: false,
-    error: null,
-    validationErrors: [],
-    loadWorkflow: mockLoadWorkflow,
-    saveWorkflow: mockSaveWorkflow,
-    createWorkflow: vi.fn(),
-    validate: vi.fn(),
-  }),
+  useWorkflowSerialization: (options: typeof capturedSerializationOptions = {}) => {
+    capturedSerializationOptions.onError = options.onError;
+    capturedSerializationOptions.onStepIdsAssigned = options.onStepIdsAssigned;
+    return {
+      workflow: null,
+      isLoading: false,
+      isSaving: false,
+      error: null,
+      validationErrors: [],
+      loadWorkflow: mockLoadWorkflow,
+      saveWorkflow: mockSaveWorkflow,
+      createWorkflow: vi.fn(),
+      validate: vi.fn(),
+    };
+  },
 }));
 
 const mockSaveTemplate = vi.fn();
@@ -102,11 +112,11 @@ beforeEach(() => {
 // <Routes>, so render the hook inside a matching route.
 // ---------------------------------------------------------------------------
 
-function renderWithRoute(opts: { workflowId?: string } = {}) {
+function renderWithRoute(opts: { workflowId?: string; initialNodes?: Node[] } = {}) {
   const { workflowId } = opts;
   const path = workflowId ? `/builder/${workflowId}` : '/builder';
 
-  let nodes: Node[] = [];
+  let nodes: Node[] = opts.initialNodes ?? [];
   let edges: Edge[] = [];
   const setNodes = vi.fn((updater: React.SetStateAction<Node[]>) => {
     nodes = typeof updater === 'function' ? (updater as (n: Node[]) => Node[])(nodes) : updater;
@@ -222,6 +232,59 @@ describe('useWorkflowPersistence — save', () => {
     });
 
     expect(view.current.error).toBe('Failed to save workflow');
+  });
+
+  it('surfaces validation/API failures when saveWorkflow returns null via onError', async () => {
+    mockedApiClient.get.mockResolvedValue({ data: makeApiWorkflow({ id: 'wf-7' }) });
+    // saveWorkflow does not throw on validation/API failure — it reports
+    // through the onError option and resolves null. The persistence hook
+    // must wire its setError as onError so the failure is not silent.
+    mockSaveWorkflow.mockImplementation(async () => {
+      capturedSerializationOptions.onError?.(
+        'Validation failed: Workflow must have at least one step',
+      );
+      return null;
+    });
+
+    const view = renderWithRoute({ workflowId: 'wf-7' });
+    await waitFor(() => expect(view.current.workflow?.id).toBe('wf-7'));
+
+    await act(async () => {
+      await view.current.handleSave();
+    });
+
+    expect(view.current.error).toBe(
+      'Validation failed: Workflow must have at least one step',
+    );
+    expect(view.current.successMessage).toBeNull();
+  });
+
+  it('writes server-assigned step ids back onto the canvas nodes after save', async () => {
+    mockedApiClient.get.mockResolvedValue({ data: makeApiWorkflow({ id: 'wf-7' }) });
+    // Prevent the load-effect hydration from replacing our initial nodes.
+    mockLoadWorkflow.mockResolvedValue(null);
+    mockSaveWorkflow.mockImplementation(async () => {
+      capturedSerializationOptions.onStepIdsAssigned?.([
+        { nodeId: 'n1', stepId: 'step-42' },
+      ]);
+      return 'wf-7';
+    });
+
+    const initialNodes: Node[] = [
+      { id: 'n1', type: 'stepNode', position: { x: 0, y: 0 }, data: { name: 'A' } },
+      { id: 'n2', type: 'stepNode', position: { x: 0, y: 0 }, data: { name: 'B' } },
+    ];
+
+    const view = renderWithRoute({ workflowId: 'wf-7', initialNodes });
+    await waitFor(() => expect(view.current.workflow?.id).toBe('wf-7'));
+
+    await act(async () => {
+      await view.current.handleSave();
+    });
+
+    const nodes = view.getNodes();
+    expect(nodes.find((n) => n.id === 'n1')?.data.stepId).toBe('step-42');
+    expect(nodes.find((n) => n.id === 'n2')?.data.stepId).toBeUndefined();
   });
 });
 

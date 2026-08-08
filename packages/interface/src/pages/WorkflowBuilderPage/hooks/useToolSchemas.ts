@@ -72,13 +72,10 @@ export function useToolSchemas(): UseToolSchemasResult {
     setError(null);
 
     try {
-      // Fetch the tool details from API
-      const tools = await toolsApi.listSystem();
-      const tool = tools.find((t) => t.id === toolId);
-
-      if (!tool) {
-        throw new Error(`Tool not found: ${toolId}`);
-      }
+      // Fetch the tool detail from API. The list endpoint only returns
+      // summaries (no input_schema/output_schema), so the per-tool detail
+      // endpoint is the only source of schemas.
+      const tool = await toolsApi.getSystem(toolId);
 
       // Parse schemas
       const inputSchema = parseToolInputSchema(tool.input_schema);
@@ -203,24 +200,40 @@ export function useToolSchemas(): UseToolSchemasResult {
 
       setIsLoading(true);
       try {
-        // Fetch all tools at once
-        const tools = await toolsApi.listSystem();
+        // Fetch each tool's detail in parallel — the list endpoint only
+        // returns summaries without schemas, so per-tool detail calls are
+        // required to populate the cache.
+        const results = await Promise.allSettled(
+          uncached.map((toolId) => toolsApi.getSystem(toolId))
+        );
 
-        // Parse and cache each requested tool
+        // Parse and cache each successfully fetched tool
         const newCache: ToolSchemaCache = {};
-        for (const toolId of uncached) {
-          const tool = tools.find((t) => t.id === toolId);
-          if (tool) {
-            newCache[toolId] = {
+        let firstFailure: unknown = null;
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled') {
+            const tool = result.value;
+            newCache[uncached[index]] = {
               inputSchema: parseToolInputSchema(tool.input_schema),
               outputSchema: parseToolOutputSchema(tool.output_schema),
               rawInputSchema: tool.input_schema || {},
               rawOutputSchema: tool.output_schema || {},
             };
+          } else if (firstFailure === null) {
+            firstFailure = result.reason;
           }
-        }
+        });
 
         setCache((prev) => ({ ...prev, ...newCache }));
+
+        if (firstFailure !== null) {
+          logger.error('Failed to preload tool schemas:', firstFailure);
+          setError(
+            firstFailure instanceof Error
+              ? firstFailure.message
+              : 'Failed to preload tool schemas'
+          );
+        }
       } catch (err) {
         logger.error('Failed to preload tool schemas:', err);
         setError(err instanceof Error ? err.message : 'Failed to preload tool schemas');

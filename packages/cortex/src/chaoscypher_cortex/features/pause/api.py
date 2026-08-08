@@ -42,6 +42,7 @@ from chaoscypher_cortex.features.pause.service import PauseService
 from chaoscypher_cortex.shared.api.responses import (
     AUTH_ERROR_RESPONSES,
     COMMON_ERROR_RESPONSES,
+    NOT_FOUND_RESPONSE,
 )
 from chaoscypher_cortex.shared.auth.dependencies import CurrentUsername
 
@@ -72,6 +73,9 @@ def get_pause_service() -> PauseService:
         stalled_threshold_seconds=settings.source_recovery.stalled_threshold_seconds,
         max_recovery_attempts=settings.source_recovery.max_recovery_attempts,
         recovery_warn_threshold=settings.source_recovery.recovery_warn_threshold,
+        mcp_extracting_stale_after_hours=(
+            settings.source_recovery.mcp_extracting_stale_after_hours
+        ),
     )
     return PauseService(repository=repository, source_recovery=source_recovery)
 
@@ -136,6 +140,7 @@ async def bulk_resume_endpoint(
     responses={
         **COMMON_ERROR_RESPONSES,
         **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
     },
 )
 async def pause_source_endpoint(
@@ -159,6 +164,7 @@ async def pause_source_endpoint(
     responses={
         **COMMON_ERROR_RESPONSES,
         **AUTH_ERROR_RESPONSES,
+        **NOT_FOUND_RESPONSE,
     },
 )
 async def resume_source_endpoint(
@@ -241,6 +247,7 @@ async def system_status_endpoint(
 )
 async def list_system_events(
     _: CurrentUsername,
+    service: Annotated[PauseService, Depends(get_pause_service)],
     event_type: str | None = None,
     limit: int = 50,
 ) -> list[SystemEventResponse]:
@@ -248,16 +255,10 @@ async def list_system_events(
 
     Filterable by type: pause, resume, health_change, task_failed, recovery.
     """
-    from chaoscypher_core.database.adapter_factory import (
-        get_sqlite_adapter,
-    )
-
-    settings = get_settings()
     # Clamp to the shared pagination ceiling so ?limit=999999999 can't try to
     # materialize an unbounded result set (self-inflicted DoS guard).
-    capped_limit = min(max(limit, 1), settings.pagination.max_page_size)
-    adapter = get_sqlite_adapter(database_name=settings.current_database)
-    events = adapter.list_system_events(event_type=event_type, limit=capped_limit)
+    capped_limit = min(max(limit, 1), get_settings().pagination.max_page_size)
+    events = await service.list_events(event_type=event_type, limit=capped_limit)
     return [SystemEventResponse(**event) for event in events]
 
 
@@ -271,13 +272,8 @@ async def list_system_events(
 )
 async def clear_system_events(
     _: CurrentUsername,
+    service: Annotated[PauseService, Depends(get_pause_service)],
 ) -> SystemEventsClearResponse:
     """Delete all system events."""
-    from chaoscypher_core.database.adapter_factory import (
-        get_sqlite_adapter,
-    )
-
-    settings = get_settings()
-    adapter = get_sqlite_adapter(database_name=settings.current_database)
-    deleted = adapter.clear_system_events()
+    deleted = await service.clear_events()
     return SystemEventsClearResponse(deleted=deleted)

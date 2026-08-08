@@ -12,22 +12,22 @@ checks, provider switching, and performance diagnostics. Critical for debugging
 LLM integration issues and monitoring token usage.
 
 Components:
-- LLMService: Provider health checks and queue statistics
+- LLMService: Queue statistics, task listing/cancellation, semaphore reset
 - LLMStatsResponse: Provider status and performance metrics DTO
 - router: FastAPI endpoints for /api/v1/llm
 
 Architecture:
-Integrates with backend.shared.llm.factory for provider health and queue service
-for statistics. No repository layer needed. Service layer aggregates provider
-status, queue depth, and recent job history. Factory function provides dependencies.
+Wraps the LLM queue service singleton from chaoscypher_core.llm_queue. No
+repository layer needed. Service layer aggregates queue stats, current tasks,
+and cancellation. (Provider health lives in the settings feature at
+GET /api/v1/settings/llm/health.)
 
 Example:
     from chaoscypher_cortex.features.llm import LLMService
+    from chaoscypher_core.llm_queue import get_llm_queue_service
 
-    # Check LLM health and queue
-    service = LLMService(provider_factory, queue_service)
-    stats = await service.get_llm_stats()
-    is_healthy = await service.check_provider_health("ollama")
+    service = LLMService(get_llm_queue_service())
+    stats = await service.get_stats()
 
 """
 

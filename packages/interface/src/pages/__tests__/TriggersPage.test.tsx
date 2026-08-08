@@ -37,7 +37,7 @@ function makeFakeTrigger(overrides: Partial<FakeTrigger> = {}): FakeTrigger {
   return {
     id: 't1',
     name: 'Test trigger',
-    event_source: 'node.created',
+    event_source: 'node.create',
     workflow_id: 'wf1',
     filters: {},
     workflow_inputs: null,
@@ -114,5 +114,88 @@ describe('TriggersPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/server boom/i)).toBeTruthy();
     });
+  });
+
+  it('event-source filter options match real trigger values', async () => {
+    // Real triggers carry backend EventSource enum values like 'node.create'
+    // (regression: the filter used to list nonexistent names like
+    // 'node.created' so it could never match anything).
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/triggers') {
+        return Promise.resolve({
+          data: { data: [makeFakeTrigger({ event_source: 'node.create' })] },
+        });
+      }
+      if (url === '/workflows') {
+        return Promise.resolve({ data: { data: [{ id: 'wf1', name: 'My Workflow' }] } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <Routes>
+        <Route path="/triggers" element={<TriggersPage />} />
+      </Routes>,
+      { wrapper: makeWrapper({ initialEntries: ['/triggers'] }) },
+    );
+
+    await screen.findByText('Test trigger');
+
+    // Open the Event Source filter and pick the option matching the trigger.
+    const select = screen.getByRole('combobox', { name: /event source/i });
+    fireEvent.mouseDown(select);
+    const nodeCreatedOption = await screen.findByRole('option', { name: 'Node Created' });
+    fireEvent.click(nodeCreatedOption);
+
+    // The trigger's real event_source value matches the filter → still shown.
+    await waitFor(() => {
+      expect(screen.getByText('Test trigger')).toBeTruthy();
+    });
+
+    // Switching to a non-matching source hides the trigger.
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /event source/i }));
+    const edgeCreatedOption = await screen.findByRole('option', { name: 'Edge Created' });
+    fireEvent.click(edgeCreatedOption);
+
+    await waitFor(() => {
+      expect(screen.queryByText('Test trigger')).toBeNull();
+    });
+  });
+
+  it('keeps a dismissed query-sourced error dismissed on re-render', async () => {
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/triggers') {
+        return Promise.reject(new Error('trigger list boom'));
+      }
+      if (url === '/workflows') {
+        return Promise.resolve({ data: { data: [] } });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(
+      <Routes>
+        <Route path="/triggers" element={<TriggersPage />} />
+      </Routes>,
+      { wrapper: makeWrapper({ initialEntries: ['/triggers'] }) },
+    );
+
+    // Query error surfaces in the closable alert.
+    await screen.findByText(/trigger list boom/i);
+
+    // Dismiss it — it must not immediately re-render (regression: onClose
+    // only cleared local error state, so the query error reappeared).
+    fireEvent.click(screen.getByRole('button', { name: /close/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/trigger list boom/i)).toBeNull();
+    });
+
+    // Force a re-render via unrelated state (typing in the search box) and
+    // confirm the dismissed error stays gone.
+    fireEvent.change(screen.getByLabelText(/search triggers/i), {
+      target: { value: 'abc' },
+    });
+    expect(screen.queryByText(/trigger list boom/i)).toBeNull();
   });
 });

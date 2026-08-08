@@ -56,6 +56,7 @@ from chaoscypher_cortex.features.sources.models import (
     ProcessingStatsResponse,
     RecoveryEventListResponse,
     RecoveryEventResponse,
+    ReExtractRequest,
     SourceImageInfo,
     SourceResponse,
     SourceSummaryResponse,
@@ -854,6 +855,7 @@ async def reextract_source(
     _: CurrentUsername,
     source_id: str,
     service: Annotated[SourceService, Depends(get_source_service)],
+    overrides: ReExtractRequest | None = None,
 ) -> SourceResponse:
     """Manually re-run entity extraction on a source (audit fix #F49).
 
@@ -881,8 +883,20 @@ async def reextract_source(
     - ``pending`` / ``indexing`` → 400; the source has not produced any
       extraction artifact yet, so a re-extract is not meaningful — wait
       for indexing to complete (or use the regular extraction trigger).
+
+    **Optional body (added 2026-08-04).** Send any subset of
+    ``auto_analyze``, ``enable_normalization``, ``enable_vision``,
+    ``content_filtering`` and ``filtering_mode`` to override the source's
+    persisted upload settings **for this run only** — the source row is not
+    modified. Omitted fields fall through to the persisted values, so sending
+    no body preserves the previous behaviour exactly. Before this the handler
+    declared no body model and FastAPI discarded any JSON silently, returning
+    ``202`` for a re-extraction that used the old settings.
     """
-    return await service.reextract_source(source_id)
+    return await service.reextract_source(
+        source_id,
+        overrides=overrides.model_dump(exclude_none=True) if overrides else None,
+    )
 
 
 @router.get(
@@ -897,22 +911,34 @@ async def list_source_recovery_events(
     _: CurrentUsername,
     source_id: str,
     service: Annotated[SourceService, Depends(get_source_service)],
-    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    pagination: PageParams,
 ) -> RecoveryEventListResponse:
-    """Return the recovery audit trail for a source.
+    """Return the recovery audit trail for a source (paginated).
 
     Backs the source detail page's recovery panel so operators can
     see which recoveries fired, when, why, and what was dispatched —
     instead of grepping container logs.
 
-    **Returns:** events newest first (max ``limit``).
+    **Returns:** events newest first in the standard
+    ``{data, pagination}`` envelope (``?page=&page_size=``).
     """
     if service.get_source(source_id) is None:
         raise resource_not_found_error("source", source_id)
 
-    rows = service.list_recovery_events(source_id, limit=limit)
+    page, page_size = pagination
+    result = service.list_recovery_events(source_id, page=page, page_size=page_size)
+    total: int = result["total"]
+    total_pages = max(1, (total + page_size - 1) // page_size)
     return RecoveryEventListResponse(
-        events=[RecoveryEventResponse(**r) for r in rows],
+        data=[RecoveryEventResponse(**r) for r in result["events"]],
+        pagination=PaginationMetadata(
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        ),
     )
 
 

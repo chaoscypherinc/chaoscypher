@@ -84,7 +84,7 @@ class WorkflowUpdate(BaseModel):
 class WorkflowStepCreate(BaseModel):
     """Model for creating a workflow step."""
 
-    step_number: int
+    step_number: int | None = None
     name: str
     description: str | None = None
     tool_type: StepToolType

@@ -182,7 +182,7 @@ def _format_validation_error(error: ValidationError) -> str:
         return f"Field '{field_path}': {message}"
 
     # Handle common error patterns
-    if "'required property" in message.lower():
+    if "is a required property" in message.lower():
         # Extract field name from message
         import re
 

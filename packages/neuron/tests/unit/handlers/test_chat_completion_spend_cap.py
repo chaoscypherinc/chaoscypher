@@ -117,6 +117,24 @@ def test_spend_check_passes_when_under_cap(mock_get_adapter: MagicMock) -> None:
 
 
 @patch(_ADAPTER_FACTORY)
+def test_spend_check_cap_error_survives_disconnect_failure(mock_get_adapter: MagicMock) -> None:
+    """A close failure in the ``finally`` must not mask the spend-cap error.
+
+    An exception raised from a ``finally`` REPLACES the in-flight one, so an
+    unguarded ``disconnect()`` turned the permanent ``LLMSpendCapExceededError``
+    (is_retryable=False) into an unclassified error the queue retries against a
+    still-exceeded cap.
+    """
+    adapter = MagicMock()
+    adapter.get_daily_token_spend.return_value = 10_000
+    adapter.disconnect.side_effect = RuntimeError("session close failed")
+    mock_get_adapter.return_value = adapter
+
+    with pytest.raises(LLMSpendCapExceededError):
+        cc._spend_check(_settings(per_day=5_000))
+
+
+@patch(_ADAPTER_FACTORY)
 def test_spend_record_adds_turn_tokens_to_daily_total(mock_get_adapter: MagicMock) -> None:
     """A completed turn's tokens are written to the persisted daily total."""
     adapter = MagicMock()

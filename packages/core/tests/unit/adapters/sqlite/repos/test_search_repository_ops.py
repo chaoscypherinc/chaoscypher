@@ -358,6 +358,29 @@ class TestReindexFlags:
     def test_is_rebuilding_default_false(self, search_repo: SearchRepository):
         assert search_repo.is_rebuilding is False
 
+    def test_flag_read_failure_returns_false_and_logs(self, search_repo: SearchRepository):
+        """A failed search_metadata read defaults False but must leave a trace.
+
+        The read fails exactly during the DB contention the flags exist to
+        guard (mid-rebuild), so a silent False sends semantic_search into
+        dropped vec0 tables with no signal — the swallow must log like the
+        write side (_set_reindex_flag) already does.
+        """
+        import structlog.testing
+
+        class _BrokenEngine:
+            def connect(self):
+                msg = "database is locked"
+                raise RuntimeError(msg)
+
+        search_repo._engine = _BrokenEngine()  # type: ignore[assignment]
+        with structlog.testing.capture_logs() as captured:
+            assert search_repo.needs_full_reindex is False
+            assert search_repo.is_rebuilding is False
+        events = {entry["event"] for entry in captured}
+        assert "needs_full_reindex_read_failed" in events
+        assert "is_rebuilding_read_failed" in events
+
     @pytest.mark.asyncio
     async def test_flush_reindex_reembeds_and_clears_queue(self, search_repo: SearchRepository):
         search_repo.schedule_reindex("a", "text a", "node")

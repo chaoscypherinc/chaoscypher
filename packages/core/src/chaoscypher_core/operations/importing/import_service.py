@@ -559,20 +559,37 @@ def _build_extraction_config(
     )
 
     # Resolve the effective preset selector. Cascade (highest first):
-    # source_row.filtering_mode > file_info.filtering_mode > domain jsonld
+    # file_info.filtering_mode (explicit per-call override) >
+    # source_row.filtering_mode (persisted upload-time value) > domain jsonld
     # > engine default. Kept as its own variable and serialised under a
     # top-level ``filtering_mode`` key on the extraction_config JSON —
     # sibling to ``extraction_limits``, never inlined into it. The earlier
     # inlining was the source of ``domain_config_unknown_keys_dropped``
     # noise: ``resolve_filtering_config(domain_overrides=…)`` only accepts
     # ``FilteringConfig`` field names, and the preset selector isn't one.
+    #
+    # Payload-before-row, corrected 2026-08-04. The order used to be
+    # row-before-payload, which made the payload branch **dead code**: the
+    # ``sources.filtering_mode`` column is non-nullable with
+    # ``default="balanced"``, so the row value is never empty and the fallback
+    # was unreachable for every real source. A caller passing
+    # ``filtering_mode`` to ``POST /sources/{id}/extraction`` paid for a full
+    # LLM re-extraction and silently got the persisted mode instead.
+    #
+    # Only an explicit, non-empty string counts as an override -- the enqueue
+    # site writes ``file_info["filtering_mode"] = filtering_mode`` verbatim and
+    # that parameter defaults to ``None``, so an absent override falls straight
+    # through to the row and preserves the previous behaviour exactly. The
+    # override is deliberately NOT persisted: it applies to this run only,
+    # which is what the API documents.
     _filtering_mode_override: str | None = None
-    if source_row is not None:
+    _payload_value = file_info.get("filtering_mode")
+    if isinstance(_payload_value, str) and _payload_value:
+        _filtering_mode_override = _payload_value
+    if _filtering_mode_override is None and source_row is not None:
         _row_value = source_row.get("filtering_mode")
         if isinstance(_row_value, str) and _row_value:
             _filtering_mode_override = _row_value
-    if _filtering_mode_override is None:
-        _filtering_mode_override = file_info.get("filtering_mode")
     _domain_default_mode: str | None = (
         domain.get_filtering_mode() if hasattr(domain, "get_filtering_mode") else None
     )

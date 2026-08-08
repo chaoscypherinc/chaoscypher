@@ -69,6 +69,25 @@ def test_show_masks_secrets(isolated_settings) -> None:
     assert "super-secret-token" not in result.output
 
 
+def test_show_json_renders_real_auth_paths(isolated_settings) -> None:
+    """Non-secret path fields must render as real paths, not the mask placeholder.
+
+    Regression: `session_secret_path` / `edge_auth_token_path` contain the
+    keywords "secret"/"token" and were swept up by the keyword mask, so
+    `config show` displayed "configured" instead of the filesystem path.
+    """
+    import json
+
+    result = CliRunner().invoke(config, ["show", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    json_text = result.output[result.output.index("{") :]
+    parsed = json.loads(json_text)
+    assert parsed["local_auth"]["session_secret_path"] != "configured"
+    assert "session_secret" in parsed["local_auth"]["session_secret_path"]
+    assert parsed["local_auth"]["edge_auth_token_path"] != "configured"
+    assert "edge_auth_token" in parsed["local_auth"]["edge_auth_token_path"]
+
+
 # ---------------------------------------------------------------------------
 # get
 # ---------------------------------------------------------------------------
@@ -139,6 +158,84 @@ def test_set_echoes_non_secret_value(isolated_settings) -> None:
     result = CliRunner().invoke(config, ["set", "lexicon.timeout", "77"])
     assert result.exit_code == 0, result.output
     assert "77" in result.output
+
+
+# ---------------------------------------------------------------------------
+# set — list-valued settings (parity with the web UI's allowed_hosts editor)
+# ---------------------------------------------------------------------------
+
+
+def test_set_list_field_json_syntax(isolated_settings) -> None:
+    """A JSON list assigns a list-typed setting."""
+    result = CliRunner().invoke(
+        config,
+        ["set", "security.allowed_hosts", '["a.example","b.example"]'],
+    )
+    assert result.exit_code == 0, result.output
+    from chaoscypher_core.app_config import get_config_manager
+
+    loaded = get_config_manager().load_settings()
+    assert loaded.security.allowed_hosts == ["a.example", "b.example"]
+
+
+def test_set_list_field_comma_syntax(isolated_settings) -> None:
+    """A simple comma-separated value also assigns a list-typed setting."""
+    result = CliRunner().invoke(
+        config,
+        ["set", "security.allowed_hosts", "a.example,b.example"],
+    )
+    assert result.exit_code == 0, result.output
+    from chaoscypher_core.app_config import get_config_manager
+
+    loaded = get_config_manager().load_settings()
+    assert loaded.security.allowed_hosts == ["a.example", "b.example"]
+
+
+def test_set_list_field_single_value_becomes_one_element_list(isolated_settings) -> None:
+    result = CliRunner().invoke(config, ["set", "security.allowed_hosts", "only.example"])
+    assert result.exit_code == 0, result.output
+    from chaoscypher_core.app_config import get_config_manager
+
+    loaded = get_config_manager().load_settings()
+    assert loaded.security.allowed_hosts == ["only.example"]
+
+
+def test_set_list_field_numeric_elements_coerced(isolated_settings) -> None:
+    """Comma-split strings coerce through pydantic for list[float] fields."""
+    result = CliRunner().invoke(config, ["set", "lexicon.retry_backoff", "1.5,3.0,6.0"])
+    assert result.exit_code == 0, result.output
+    from chaoscypher_core.app_config import get_config_manager
+
+    loaded = get_config_manager().load_settings()
+    assert loaded.lexicon.retry_backoff == [1.5, 3.0, 6.0]
+
+
+def test_set_list_field_round_trips_through_get(isolated_settings) -> None:
+    set_result = CliRunner().invoke(
+        config,
+        ["set", "security.allowed_hosts", '["a.example","b.example"]'],
+    )
+    assert set_result.exit_code == 0, set_result.output
+    get_result = CliRunner().invoke(config, ["get", "security.allowed_hosts"])
+    assert get_result.exit_code == 0, get_result.output
+    assert "a.example" in get_result.output
+    assert "b.example" in get_result.output
+
+
+def test_set_list_field_invalid_json_fails_clearly(isolated_settings) -> None:
+    """A malformed JSON list is rejected instead of silently misparsed."""
+    result = CliRunner().invoke(config, ["set", "security.allowed_hosts", '["a.example",]'])
+    assert result.exit_code != 0
+    assert "json" in result.output.lower()
+
+
+def test_set_scalar_unaffected_by_list_support(isolated_settings) -> None:
+    """Scalar fields keep today's exact parsing behavior."""
+    result = CliRunner().invoke(config, ["set", "lexicon.timeout", "77"])
+    assert result.exit_code == 0, result.output
+    from chaoscypher_core.app_config import get_config_manager
+
+    assert get_config_manager().load_settings().lexicon.timeout == 77
 
 
 # ---------------------------------------------------------------------------
@@ -251,3 +348,39 @@ class TestNestedHelpers:
     )
     def test_parse_value(self, raw: str, expected: object) -> None:
         assert _parse_value(raw) == expected
+
+    def test_parse_value_json_list_when_list_typed(self) -> None:
+        assert _parse_value('["a", "b"]', list_typed=True) == ["a", "b"]
+
+    def test_parse_value_comma_split_when_list_typed(self) -> None:
+        assert _parse_value("a, b ,c", list_typed=True) == ["a", "b", "c"]
+
+    def test_parse_value_single_item_when_list_typed(self) -> None:
+        assert _parse_value("a", list_typed=True) == ["a"]
+
+    def test_parse_value_empty_json_list_when_list_typed(self) -> None:
+        assert _parse_value("[]", list_typed=True) == []
+
+    def test_parse_value_bracket_string_stays_string_for_scalars(self) -> None:
+        """A scalar target never engages list parsing — exact legacy behavior."""
+        assert _parse_value('["a", "b"]') == '["a", "b"]'
+
+
+class TestIsListTypedField:
+    @pytest.mark.parametrize(
+        ("key", "expected"),
+        [
+            ("security.allowed_hosts", True),
+            ("cors.allowed_origins", True),
+            ("lexicon.retry_backoff", True),
+            ("lexicon.timeout", False),
+            ("llm.chat_provider", False),
+            ("current_database", False),
+            ("security.nope_not_a_field", False),
+            ("nope.at_all", False),
+        ],
+    )
+    def test_resolution(self, key: str, expected: bool) -> None:
+        from chaoscypher_cli.commands.config_cmd import _is_list_typed_field
+
+        assert _is_list_typed_field(key) is expected

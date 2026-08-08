@@ -35,6 +35,8 @@ def _seeded_triggers(tmp_path: Path) -> list[Trigger]:
         with Session(engine) as session:
             seed_default_workflows(session, "default")
             seed_default_triggers(session, "default")
+            # Seed helpers no longer commit — the caller owns the boundary.
+            session.commit()
             return list(session.exec(select(Trigger)).all())
     finally:
         evict_engine(db_path)

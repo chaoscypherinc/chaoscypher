@@ -356,6 +356,7 @@ async def get_chat_messages(
 
     - Single-user mode: the local operator owns everything.
     """
+    raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
     return chat_service.get_chat_messages(chat_id)
 
 
@@ -631,11 +632,14 @@ async def export_chat(
 ) -> Response:
     """Export a conversation as JSON (default) or Markdown.
 
-    JSON returns ``{"data": <full chat object>}`` (the shape the web UI's
-    download button consumes). Markdown returns a ``text/markdown``
-    attachment with role headings, entity markers reduced to bold labels,
-    and citations rendered as footnotes carrying the source filename and
-    sentence text where the persisted metadata has them.
+    JSON returns ``{"data": <chat object>}`` in the same ``ChatResponse``
+    shape as ``GET /chats/{id}`` (the shape the web UI's download button
+    consumes). Markdown returns a ``text/markdown`` attachment with role
+    headings, entity markers reduced to bold labels, and citations rendered
+    as footnotes carrying the source filename and sentence text where the
+    persisted metadata has them. Both formats carry the chat's most recent
+    messages window (the storage tail, currently 500) — not unbounded
+    history.
 
     - Single-user mode: the local operator owns everything.
     """
@@ -648,7 +652,7 @@ async def export_chat(
             media_type="text/markdown",
             headers={"Content-Disposition": f'attachment; filename="chat-{chat_id}.md"'},
         )
-    return JSONResponse({"data": jsonable_encoder(chat)})
+    return JSONResponse({"data": jsonable_encoder(ChatResponse.model_validate(chat).model_dump())})
 
 
 # ============================================================================
@@ -695,6 +699,14 @@ async def send_message(
     # Edit-and-resend: replace an existing user message (and everything
     # after it) with this content, atomically before the new row is added.
     if message.replace_from_message_id:
+        # The truncate is destructive: guard it like /retry and /regenerate
+        # so an in-flight worker turn can't flush buffered messages against
+        # a history edited out from under it.
+        if chat.get("status") == ChatStatus.PROCESSING:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A turn is already in progress",
+            )
         anchor = next(
             (
                 m
@@ -748,12 +760,13 @@ async def chat_events(
     Otherwise the endpoint subscribes to Valkey pub/sub and forwards events
     until a 'done' or 'error' event is received or the client disconnects.
 
-    **Event Types:**
-    - ``content``: LLM response content delta
-    - ``tool_start``: Tool execution started
-    - ``tool_result``: Tool execution result
-    - ``done``: Processing completed successfully
-    - ``error``: Processing failed
+    **Event Types:** all 15 variants of the shared-loop event union
+    (``chaoscypher_core.streaming.chat.events``) are forwarded verbatim —
+    ``content``, ``thinking``, ``thinking_delta``, ``iteration_progress``,
+    ``tool_start``, ``tool_result``, ``tool_calls``, ``cached_tool_calls``,
+    ``tool_approval_required``, ``tool_rejected``, ``warning``,
+    ``timing_update``, ``context_info``, ``done``, ``error``.
+    The stream closes after ``done`` or ``error``.
 
     - Single-user mode: the local operator owns everything.
     """
@@ -919,8 +932,7 @@ async def generate_title(
         if not title:
             title = "Untitled Chat"
 
-        if title:
-            chat_service.update_chat(chat_id=chat_id, updates={"title": title})
+        chat_service.update_chat(chat_id=chat_id, updates={"title": title})
     except Exception:
         logger.warning("title_generation_failed", chat_id=chat_id, exc_info=True)
         # Silently fall through — chat keeps its existing title

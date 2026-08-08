@@ -145,6 +145,42 @@ class TestMaskSettingsDictTypeAware:
         masked = mask_settings_dict(raw)
         assert masked["plugins"]["x"]["my_token"] == "configured"
 
+    def test_path_field_containing_secret_keyword_not_masked(self) -> None:
+        """Filesystem-path fields whose names contain a secret keyword stay readable.
+
+        ``local_auth.session_secret_path`` / ``local_auth.edge_auth_token_path``
+        are paths TO secret files, not secrets themselves. Masking them broke
+        ``config show`` (rendered "configured" instead of the path) and let a
+        full-object PATCH echoing the mask write the literal string
+        "configured" into the path field.
+        """
+        raw = {
+            "local_auth": {
+                "session_secret_path": "/data/secrets/session_secret",
+                "edge_auth_token_path": "/data/secrets/edge_auth_token",
+            }
+        }
+        masked = mask_settings_dict(raw)
+        assert masked["local_auth"]["session_secret_path"] == "/data/secrets/session_secret"
+        assert masked["local_auth"]["edge_auth_token_path"] == "/data/secrets/edge_auth_token"
+
+    def test_dir_and_filename_fields_with_secret_keyword_not_masked(self) -> None:
+        raw = {
+            "plugins": {
+                "token_dir": "/data/tokens",
+                "secret_filename": "secret.key",
+            }
+        }
+        masked = mask_settings_dict(raw)
+        assert masked["plugins"]["token_dir"] == "/data/tokens"
+        assert masked["plugins"]["secret_filename"] == "secret.key"
+
+    def test_edge_auth_token_itself_still_masked(self) -> None:
+        """The actual secret (path-based mask list) keeps being masked."""
+        raw = {"local_auth": {"edge_auth_token": "real-shared-token"}}
+        masked = mask_settings_dict(raw)
+        assert masked["local_auth"]["edge_auth_token"] == "configured"
+
     def test_full_settings_dict_round_trips_after_masking(self) -> None:
         """End-to-end: mask a realistic settings shape, ensure non-secret fields are unchanged."""
         raw: dict[str, object] = {
@@ -178,3 +214,30 @@ class TestMaskSettingsDictTypeAware:
         assert masked["rate_limit"]["api_key_window_seconds"] == 3600
         assert masked["chunking"]["target_group_tokens"] == 600
         assert masked["chunking"]["output_tokens_per_chunk"] == 2000
+
+
+class TestMaskedRoundTripPathFields:
+    """Masking a full Settings dump must never corrupt filesystem-path fields.
+
+    Regression: the keyword walk masked ``local_auth.session_secret_path`` /
+    ``edge_auth_token_path`` to "configured"; a client echoing the masked dump
+    back through PATCH /settings then persisted the literal placeholder as the
+    path (``strip_masked_values`` only strips ``_SECRET_FIELD_PATHS``, which
+    excludes these fields).
+    """
+
+    def test_masked_round_trip_preserves_local_auth_paths(self) -> None:
+        from chaoscypher_core.app_config import Settings, strip_masked_values
+
+        settings = Settings()
+        dump = settings.model_dump(mode="json")
+        expected_session = dump["local_auth"]["session_secret_path"]
+        expected_edge = dump["local_auth"]["edge_auth_token_path"]
+
+        masked = mask_settings_dict(dump)
+        stripped = strip_masked_values(masked)
+
+        assert stripped["local_auth"]["session_secret_path"] == expected_session
+        assert stripped["local_auth"]["edge_auth_token_path"] == expected_edge
+        assert stripped["local_auth"]["session_secret_path"] != "configured"
+        assert stripped["local_auth"]["edge_auth_token_path"] != "configured"

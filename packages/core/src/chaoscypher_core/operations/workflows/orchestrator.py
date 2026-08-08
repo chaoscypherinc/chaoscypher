@@ -521,7 +521,7 @@ async def execute_step_task(
     logger.info("workflow_step_execution_started", step_config=step_config)
 
     # Create step executor
-    step_executor = StepExecutor(  # type: ignore[call-arg]
+    step_executor = StepExecutor(
         graph_repository=graph_repository,
         search_repository=search_repository,
         llm_service=llm_service,
@@ -539,7 +539,7 @@ async def execute_step_task(
     )
 
     # Execute step with workflow executor for nested workflows
-    result = await step_executor.execute_step(  # type: ignore[call-arg]
+    result = await step_executor.execute_step(
         step_config=step_config,
         step_inputs=step_inputs,
         workflow_context=workflow_context,

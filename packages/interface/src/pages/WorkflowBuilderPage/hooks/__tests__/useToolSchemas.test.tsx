@@ -5,7 +5,10 @@
  * Tests for useToolSchemas — tool schema fetching and caching hook.
  *
  * Strategy:
- * - Mock toolsApi.listSystem so tests run without a real network.
+ * - Mock toolsApi.getSystem (the per-tool detail endpoint that carries
+ *   input_schema/output_schema) so tests run without a real network.
+ *   toolsApi.listSystem is also mocked to prove the hook never reads
+ *   schemas off the summary list endpoint (which has none).
  * - Do NOT mock schemaParser — use the real pure functions so
  *   field/port shape is verified end-to-end.
  * - Mock logger to observe error calls.
@@ -23,6 +26,7 @@ import type { SystemTool } from '../../../../services/api/tools';
 vi.mock('../../../../services/api/tools', () => ({
   toolsApi: {
     listSystem: vi.fn<() => Promise<SystemTool[]>>(),
+    getSystem: vi.fn<(toolId: string) => Promise<SystemTool>>(),
   },
 }));
 
@@ -67,6 +71,18 @@ function makeTool(overrides?: Partial<SystemTool>): SystemTool {
     },
     ...overrides,
   };
+}
+
+/**
+ * The list endpoint's summary shape: no input_schema/output_schema fields.
+ * Cast is needed because the client types still declare listSystem as
+ * returning full SystemTool objects (a known pre-existing mismatch).
+ */
+function makeToolSummary(overrides?: Partial<SystemTool>): SystemTool {
+  const tool = makeTool(overrides) as unknown as Record<string, unknown>;
+  delete tool.input_schema;
+  delete tool.output_schema;
+  return tool as unknown as SystemTool;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +142,7 @@ describe('useToolSchemas — getInputSchema / getOutputSchema before fetch', () 
   it('returns [] for getInputSchema when tool is not yet cached', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
     // Never resolves so we can check the pre-fetch state
-    (toolsApi.listSystem as Mock).mockReturnValue(new Promise(() => {}));
+    (toolsApi.getSystem as Mock).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -138,7 +154,7 @@ describe('useToolSchemas — getInputSchema / getOutputSchema before fetch', () 
 
   it('returns [] for getOutputSchema when tool is not yet cached', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockReturnValue(new Promise(() => {}));
+    (toolsApi.getSystem as Mock).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -150,7 +166,7 @@ describe('useToolSchemas — getInputSchema / getOutputSchema before fetch', () 
 
   it('returns null for getRawSchema when tool is not yet cached', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockReturnValue(new Promise(() => {}));
+    (toolsApi.getSystem as Mock).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -166,9 +182,9 @@ describe('useToolSchemas — getInputSchema / getOutputSchema before fetch', () 
 // ---------------------------------------------------------------------------
 
 describe('useToolSchemas — fetching tool schema', () => {
-  it('calls toolsApi.listSystem when getInputSchema is called for uncached tool', async () => {
+  it('calls toolsApi.getSystem when getInputSchema is called for uncached tool', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -177,13 +193,13 @@ describe('useToolSchemas — fetching tool schema', () => {
     });
 
     await waitFor(() => {
-      expect(toolsApi.listSystem).toHaveBeenCalledTimes(1);
+      expect(toolsApi.getSystem).toHaveBeenCalledWith('tool-search');
     });
   });
 
   it('parses input schema fields after fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -210,7 +226,7 @@ describe('useToolSchemas — fetching tool schema', () => {
 
   it('parses output schema fields after fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -232,7 +248,7 @@ describe('useToolSchemas — fetching tool schema', () => {
 
   it('sets isLoading = false after fetch completes', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -247,7 +263,7 @@ describe('useToolSchemas — fetching tool schema', () => {
 
   it('error remains null after successful fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -265,6 +281,57 @@ describe('useToolSchemas — fetching tool schema', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Suite: regression — schemas must come from the detail endpoint
+// ---------------------------------------------------------------------------
+
+describe('useToolSchemas — detail endpoint regression', () => {
+  it('does not read schemas from listSystem (summary shape has none)', async () => {
+    const { useToolSchemas, toolsApi } = await importHook();
+    // The list endpoint returns summaries WITHOUT schema fields. If the
+    // hook were still reading schemas off listSystem, every cached schema
+    // would silently be {} / [].
+    (toolsApi.listSystem as Mock).mockResolvedValue([makeToolSummary()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
+
+    const { result } = renderHook(() => useToolSchemas());
+
+    act(() => {
+      result.current.getInputSchema('tool-search');
+    });
+
+    await waitFor(() => {
+      const schema = result.current.getInputSchema('tool-search');
+      expect(schema.length).toBeGreaterThan(0);
+    });
+
+    // Schemas were populated from the detail endpoint, never the list.
+    expect(toolsApi.getSystem).toHaveBeenCalledWith('tool-search');
+    expect(toolsApi.listSystem).not.toHaveBeenCalled();
+  });
+
+  it('a summary-shaped tool (no schema fields) alone yields empty schemas', async () => {
+    const { useToolSchemas, toolsApi } = await importHook();
+    // Even if the detail endpoint were to return the summary shape, the
+    // parser yields no fields — proving the summary alone cannot populate
+    // schemas and the detail fetch is load-bearing.
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeToolSummary());
+
+    const { result } = renderHook(() => useToolSchemas());
+
+    act(() => {
+      result.current.getInputSchema('tool-search');
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.getInputSchema('tool-search')).toEqual([]);
+    expect(result.current.getOutputSchema('tool-search')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Suite: getRawSchema after fetch
 // ---------------------------------------------------------------------------
 
@@ -272,7 +339,7 @@ describe('useToolSchemas — getRawSchema', () => {
   it('returns raw input and output schema after fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
     const tool = makeTool();
-    (toolsApi.listSystem as Mock).mockResolvedValue([tool]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(tool);
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -298,7 +365,7 @@ describe('useToolSchemas — getRawSchema', () => {
 describe('useToolSchemas — getInputPorts / getOutputPorts', () => {
   it('returns input DataPorts with correct shape after fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -323,7 +390,7 @@ describe('useToolSchemas — getInputPorts / getOutputPorts', () => {
 
   it('returns output DataPorts with correct shape after fetch', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -345,7 +412,7 @@ describe('useToolSchemas — getInputPorts / getOutputPorts', () => {
 
   it('returns [] ports before fetch completes', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockReturnValue(new Promise(() => {}));
+    (toolsApi.getSystem as Mock).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -361,9 +428,9 @@ describe('useToolSchemas — getInputPorts / getOutputPorts', () => {
 // ---------------------------------------------------------------------------
 
 describe('useToolSchemas — caching', () => {
-  it('does not call toolsApi.listSystem again for the same toolId', async () => {
+  it('does not call toolsApi.getSystem again for the same toolId', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -378,7 +445,7 @@ describe('useToolSchemas — caching', () => {
       expect(schema.length).toBeGreaterThan(0);
     });
 
-    const callCountAfterFirstFetch = (toolsApi.listSystem as Mock).mock.calls.length;
+    const callCountAfterFirstFetch = (toolsApi.getSystem as Mock).mock.calls.length;
 
     // Second call — should NOT trigger another fetch
     act(() => {
@@ -388,15 +455,15 @@ describe('useToolSchemas — caching', () => {
     // Small settle
     await act(async () => { await Promise.resolve(); });
 
-    expect((toolsApi.listSystem as Mock).mock.calls.length).toBe(callCountAfterFirstFetch);
+    expect((toolsApi.getSystem as Mock).mock.calls.length).toBe(callCountAfterFirstFetch);
   });
 
   it('does not re-fetch while a fetch for the same tool is in flight', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
 
-    let resolveList!: (v: SystemTool[]) => void;
-    (toolsApi.listSystem as Mock).mockReturnValue(
-      new Promise<SystemTool[]>((res) => { resolveList = res; }),
+    let resolveGet!: (v: SystemTool) => void;
+    (toolsApi.getSystem as Mock).mockReturnValue(
+      new Promise<SystemTool>((res) => { resolveGet = res; }),
     );
 
     const { result } = renderHook(() => useToolSchemas());
@@ -409,12 +476,12 @@ describe('useToolSchemas — caching', () => {
       result.current.getInputSchema('tool-search');
     });
 
-    // listSystem must only have been called once
-    expect((toolsApi.listSystem as Mock).mock.calls.length).toBe(1);
+    // getSystem must only have been called once
+    expect((toolsApi.getSystem as Mock).mock.calls.length).toBe(1);
 
     // Cleanup
     await act(async () => {
-      resolveList([makeTool()]);
+      resolveGet(makeTool());
     });
   });
 });
@@ -424,9 +491,9 @@ describe('useToolSchemas — caching', () => {
 // ---------------------------------------------------------------------------
 
 describe('useToolSchemas — error path', () => {
-  it('calls logger.error when listSystem rejects', async () => {
+  it('calls logger.error when getSystem rejects', async () => {
     const { useToolSchemas, toolsApi, logger } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('Network down'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('Network down'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -446,7 +513,7 @@ describe('useToolSchemas — error path', () => {
 
   it('sets error message from Error instance', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('Connection refused'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('Connection refused'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -461,7 +528,7 @@ describe('useToolSchemas — error path', () => {
 
   it('sets generic error message when thrown value is not an Error', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue('plain string');
+    (toolsApi.getSystem as Mock).mockRejectedValue('plain string');
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -474,10 +541,9 @@ describe('useToolSchemas — error path', () => {
     });
   });
 
-  it('sets error when tool is not found in listSystem response', async () => {
+  it('sets error when the detail endpoint 404s (tool not found)', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    // List returns a different tool, not the one requested
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool({ id: 'other-tool' })]);
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('Tool not found: tool-search'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -492,7 +558,7 @@ describe('useToolSchemas — error path', () => {
 
   it('sets isLoading = false after error', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('fail'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('fail'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -513,9 +579,7 @@ describe('useToolSchemas — error path', () => {
 describe('useToolSchemas — empty/missing schema', () => {
   it('returns [] input schema when input_schema is empty object', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([
-      makeTool({ input_schema: {} }),
-    ]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool({ input_schema: {} }));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -533,9 +597,7 @@ describe('useToolSchemas — empty/missing schema', () => {
 
   it('returns [] output schema when output_schema is empty object', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([
-      makeTool({ output_schema: {} }),
-    ]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool({ output_schema: {} }));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -555,7 +617,7 @@ describe('useToolSchemas — empty/missing schema', () => {
     const { useToolSchemas, toolsApi } = await importHook();
     // Cast to allow missing optional for this edge-case test
     const tool = makeTool({ input_schema: undefined as unknown as Record<string, unknown> });
-    (toolsApi.listSystem as Mock).mockResolvedValue([tool]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(tool);
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -581,9 +643,9 @@ describe('useToolSchemas — refreshTool', () => {
   it('removes tool from cache (subsequent getInputSchema returns [])', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
     // First fetch: succeeds
-    (toolsApi.listSystem as Mock).mockResolvedValueOnce([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValueOnce(makeTool());
     // Subsequent fetch (after refresh clears cache): hangs so we can inspect the cleared state
-    (toolsApi.listSystem as Mock).mockReturnValue(new Promise(() => {}));
+    (toolsApi.getSystem as Mock).mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -596,25 +658,19 @@ describe('useToolSchemas — refreshTool', () => {
     });
 
     // Call refreshTool — it removes the entry from cache then calls fetchToolSchema.
-    // Due to React's batched state updates, the cache may still appear non-empty
-    // in the same synchronous closure, but after the refresh promise resolves the
-    // cache entry will have been cleared at minimum once.
     await act(async () => {
       await result.current.refreshTool('tool-search');
     });
 
-    // After refresh and with a pending re-fetch, the schema is either empty (cache
-    // was cleared and the new fetch is in flight) or re-populated.
-    // Either way the call should have been made to listSystem at least once for the
-    // initial fetch.
-    expect((toolsApi.listSystem as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
+    // The initial fetch should have hit the detail endpoint at least once.
+    expect((toolsApi.getSystem as Mock).mock.calls.length).toBeGreaterThanOrEqual(1);
   });
 
   it('updates cached data after refresh via subsequent getInputSchema trigger', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
 
     // First fetch: tool with 'query' field only
-    (toolsApi.listSystem as Mock).mockResolvedValueOnce([
+    (toolsApi.getSystem as Mock).mockResolvedValueOnce(
       makeTool({
         input_schema: {
           type: 'object',
@@ -622,9 +678,9 @@ describe('useToolSchemas — refreshTool', () => {
           required: ['query'],
         },
       }),
-    ]);
+    );
     // After refresh: tool with additional 'filter' field
-    (toolsApi.listSystem as Mock).mockResolvedValue([
+    (toolsApi.getSystem as Mock).mockResolvedValue(
       makeTool({
         input_schema: {
           type: 'object',
@@ -635,7 +691,7 @@ describe('useToolSchemas — refreshTool', () => {
           required: ['query'],
         },
       }),
-    ]);
+    );
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -665,9 +721,9 @@ describe('useToolSchemas — refreshTool', () => {
   it('calls logger.error when a fetch triggered after refreshTool fails', async () => {
     const { useToolSchemas, toolsApi, logger } = await importHook();
     // Populate cache first
-    (toolsApi.listSystem as Mock).mockResolvedValueOnce([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValueOnce(makeTool());
     // All subsequent calls fail
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('Refresh failed'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('Refresh failed'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -699,11 +755,11 @@ describe('useToolSchemas — refreshTool', () => {
 // ---------------------------------------------------------------------------
 
 describe('useToolSchemas — preloadTools', () => {
-  it('fetches and caches all requested tools in one listSystem call', async () => {
+  it('fetches details for each requested tool and caches them', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    const toolA = makeTool({ id: 'tool-a', name: 'Tool A' });
-    const toolB = makeTool({ id: 'tool-b', name: 'Tool B' });
-    (toolsApi.listSystem as Mock).mockResolvedValue([toolA, toolB]);
+    (toolsApi.getSystem as Mock).mockImplementation((id: string) =>
+      Promise.resolve(makeTool({ id, name: `Tool ${id}` })),
+    );
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -711,7 +767,9 @@ describe('useToolSchemas — preloadTools', () => {
       await result.current.preloadTools(['tool-a', 'tool-b']);
     });
 
-    expect(toolsApi.listSystem).toHaveBeenCalledTimes(1);
+    expect(toolsApi.getSystem).toHaveBeenCalledTimes(2);
+    expect(toolsApi.getSystem).toHaveBeenCalledWith('tool-a');
+    expect(toolsApi.getSystem).toHaveBeenCalledWith('tool-b');
 
     const schemaA = result.current.getInputSchema('tool-a');
     const schemaB = result.current.getInputSchema('tool-b');
@@ -721,7 +779,7 @@ describe('useToolSchemas — preloadTools', () => {
 
   it('does nothing when all toolIds are already cached', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -733,19 +791,19 @@ describe('useToolSchemas — preloadTools', () => {
       expect(result.current.getInputSchema('tool-search').length).toBeGreaterThan(0);
     });
 
-    const callsBeforePreload = (toolsApi.listSystem as Mock).mock.calls.length;
+    const callsBeforePreload = (toolsApi.getSystem as Mock).mock.calls.length;
 
     await act(async () => {
       await result.current.preloadTools(['tool-search']);
     });
 
-    // Should not have made an additional listSystem call
-    expect((toolsApi.listSystem as Mock).mock.calls.length).toBe(callsBeforePreload);
+    // Should not have made an additional getSystem call
+    expect((toolsApi.getSystem as Mock).mock.calls.length).toBe(callsBeforePreload);
   });
 
   it('does nothing when toolIds array is empty', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -753,12 +811,12 @@ describe('useToolSchemas — preloadTools', () => {
       await result.current.preloadTools([]);
     });
 
-    expect(toolsApi.listSystem).not.toHaveBeenCalled();
+    expect(toolsApi.getSystem).not.toHaveBeenCalled();
   });
 
   it('sets isLoading = false after preloadTools completes', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool()]);
+    (toolsApi.getSystem as Mock).mockResolvedValue(makeTool());
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -771,7 +829,7 @@ describe('useToolSchemas — preloadTools', () => {
 
   it('calls logger.error and sets error when preloadTools fetch fails', async () => {
     const { useToolSchemas, toolsApi, logger } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('Preload error'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('Preload error'));
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -788,7 +846,7 @@ describe('useToolSchemas — preloadTools', () => {
 
   it('sets generic error message when preloadTools non-Error is thrown', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue('oops');
+    (toolsApi.getSystem as Mock).mockRejectedValue('oops');
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -799,10 +857,13 @@ describe('useToolSchemas — preloadTools', () => {
     expect(result.current.error).toBe('Failed to preload tool schemas');
   });
 
-  it('skips tools not found in listSystem response during preload', async () => {
+  it('still caches successful tools when another tool detail fetch fails', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    // Only tool-a is returned; tool-b is absent
-    (toolsApi.listSystem as Mock).mockResolvedValue([makeTool({ id: 'tool-a' })]);
+    (toolsApi.getSystem as Mock).mockImplementation((id: string) =>
+      id === 'tool-missing'
+        ? Promise.reject(new Error('Not found'))
+        : Promise.resolve(makeTool({ id })),
+    );
 
     const { result } = renderHook(() => useToolSchemas());
 
@@ -821,7 +882,7 @@ describe('useToolSchemas — preloadTools', () => {
 
   it('sets isLoading = false after preloadTools error', async () => {
     const { useToolSchemas, toolsApi } = await importHook();
-    (toolsApi.listSystem as Mock).mockRejectedValue(new Error('fail'));
+    (toolsApi.getSystem as Mock).mockRejectedValue(new Error('fail'));
 
     const { result } = renderHook(() => useToolSchemas());
 

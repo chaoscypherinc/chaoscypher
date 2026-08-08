@@ -17,7 +17,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy.orm import load_only
-from sqlmodel import desc, select
+from sqlmodel import desc, func, select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import SourceRecoveryEvent
@@ -89,25 +89,28 @@ class SourceRecoveryEventsMixin(SqliteMixinBase):
         *,
         source_id: str,
         database_name: str,
-        limit: int = 50,
+        page: int = 1,
+        page_size: int = 50,
     ) -> list[dict[str, Any]]:
-        """Return the most-recent recovery events for a source.
+        """Return one page of recovery events for a source.
 
         Newest-first so the UI panel shows the most recent attempt at
-        the top. Capped at ``limit`` rows; callers requesting more than
-        the historical retention can iterate via offset (not yet
-        implemented — current scale is well under the cap).
+        the top. House ``?page=&page_size=`` pagination (1-based);
+        ``count_recovery_events`` supplies the exact total for the
+        response envelope.
 
         Args:
             source_id: Source to fetch events for.
             database_name: Active database (multi-DB isolation).
-            limit: Maximum rows to return. Default 50 covers the
-                10-attempt exhaustion cap with a 5x margin.
+            page: 1-based page number.
+            page_size: Rows per page. Default 50 covers the 10-attempt
+                exhaustion cap with a 5x margin.
 
         Returns:
             List of event dicts ordered ``attempt_at`` desc.
         """
         self._ensure_connected()
+        offset = max(page - 1, 0) * page_size
         statement = (
             select(SourceRecoveryEvent)
             .options(
@@ -127,7 +130,8 @@ class SourceRecoveryEventsMixin(SqliteMixinBase):
                 SourceRecoveryEvent.database_name == database_name,
             )
             .order_by(desc(SourceRecoveryEvent.attempt_at))
-            .limit(limit)
+            .offset(offset)
+            .limit(page_size)
         )
         rows = self.session.scalars(statement).all()
         return [
@@ -143,3 +147,19 @@ class SourceRecoveryEventsMixin(SqliteMixinBase):
             }
             for r in rows
         ]
+
+    def count_recovery_events(self, *, source_id: str, database_name: str) -> int:
+        """Exact recovery-event total for one source (pagination envelope).
+
+        Single ``SELECT COUNT(*)`` — no row materialization.
+        """
+        self._ensure_connected()
+        statement = (
+            select(func.count())
+            .select_from(SourceRecoveryEvent)
+            .where(
+                SourceRecoveryEvent.source_id == source_id,
+                SourceRecoveryEvent.database_name == database_name,
+            )
+        )
+        return int(self.session.exec(statement).one())

@@ -9,8 +9,9 @@ GET    /api/v1/llm/tasks - List current LLM tasks
 GET    /api/v1/llm/tasks/{task_id} - Get task status
 DELETE /api/v1/llm/tasks/{task_id} - Cancel task
 DELETE /api/v1/llm/tasks - Cancel all tasks (bulk)
-GET    /api/v1/llm/health - Health check
 DELETE /api/v1/llm/semaphore - Clear semaphore.
+
+(The LLM health snapshot lives at GET /api/v1/settings/llm/health, not here.)
 """
 
 from typing import Annotated

@@ -1135,7 +1135,9 @@ async def _execute_tool(
     result = await deps.tool_executor.execute_tool(tool_name, arguments)
     duration_ms = round((time.monotonic() - tool_start) * 1000)
 
-    result_json = json.dumps(result)
+    # default=str: a handler returning a non-JSON-serializable value
+    # (datetime, set) must degrade to its string form, not fail the turn.
+    result_json = json.dumps(result, default=str)
     logger.info(
         "chat_completion_tool_result",
         chat_id=chat_id,
@@ -1185,6 +1187,7 @@ async def _execute_tool(
 __all__ = [
     "ApprovalBroker",
     "AutoApproveBroker",
+    "CancelCheck",
     "ChatEventSink",
     "ChatLoopDeps",
     "ChatLoopResult",

@@ -11,6 +11,7 @@ import http.client
 import re
 import socket
 import time
+import urllib.parse
 import xmlrpc.client
 from pathlib import Path
 from typing import Any, cast
@@ -141,7 +142,11 @@ class LogService:
             return ServiceStatusResponse(available=False, services=[])
 
         try:
-            url = f"http://{self._supervisor_username}:{self._supervisor_password}@localhost/RPC2"
+            # Quote the credentials — a '@' or ':' in the password would
+            # otherwise corrupt the URL authority component.
+            username = urllib.parse.quote(self._supervisor_username, safe="")
+            password = urllib.parse.quote(self._supervisor_password, safe="")
+            url = f"http://{username}:{password}@localhost/RPC2"
             proxy = xmlrpc.client.ServerProxy(
                 url,
                 transport=_UnixStreamTransport(self._supervisor_socket),

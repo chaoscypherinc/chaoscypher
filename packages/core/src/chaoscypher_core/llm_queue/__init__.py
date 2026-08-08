@@ -3,17 +3,18 @@
 
 """LLM Infrastructure Module - Backend Queue Wrapper.
 
-This module wraps the standalone chaoscypher.llm module with queue coordination
+This module wraps ``chaoscypher_core.adapters.llm`` with queue coordination
 for Docker/Valkey environments.
 
 Architecture:
-- chaoscypher.llm: Standalone LLM core (providers, factory, semaphore, cost tracking)
-- backend.shared.llm: Queue wrappers for web API and workers
+- chaoscypher_core.adapters.llm: Standalone LLM core (providers, factory,
+  semaphore, cost tracking)
+- chaoscypher_core.llm_queue: Queue wrappers for web API and workers
 
 Main Components:
 - LLMQueueService: Queue coordination service for LLM operations
 - TaskType: Task type enum (chat, embedding, tool)
-- get_llm_semaphore: Priority semaphore factory (from chaoscypher)
+- get_llm_semaphore: Priority semaphore factory (from the adapters layer)
 
 All core LLM functionality is imported from chaoscypher_core.adapters.llm to avoid duplication.
 """

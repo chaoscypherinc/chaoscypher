@@ -1061,3 +1061,96 @@ class TestQuickModeFinalize:
         assert result["quality_breakdown"] is not None
         assert result["quality_breakdown"]["richness"] is None
         assert result["quality_breakdown"]["topology_score"] is None
+
+
+# ------------------------------------------------------------------ #
+#  TestFinalizeStateSafety
+# ------------------------------------------------------------------ #
+
+
+class TestFinalizeStateSafety:
+    """finalize() must not strand sources or leak per-source caches."""
+
+    @pytest.mark.asyncio
+    async def test_incomplete_finalize_rolls_status_back(self, orchestrator, mock_engine):
+        """A premature finalize returns the source to mcp_extracting.
+
+        Without the rollback the source stays at 'committing' forever: a
+        retried finalize can never win the MCP_EXTRACTING -> COMMITTING
+        CAS, and no MCP-side recovery path touches 'committing'.
+        """
+        from chaoscypher_core.models import SourceStatus
+
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting",
+            chunk_indices=[0, 28, 56],
+        )
+        # Only 1 of 3 submitted — finalize must reject AND roll back.
+        mock_engine.storage_adapter.list_extraction_submissions.return_value = [
+            {
+                "chunk_group_index": 0,
+                "entities_text": "E|Alice|Person||0.9|S1|A person",
+                "relationships_text": "",
+            },
+        ]
+
+        with pytest.raises(ValueError, match=r"Incomplete.*Missing indices"):
+            await orchestrator.finalize("src_001")
+
+        calls = mock_engine.storage_adapter.transition_source_status.call_args_list
+        assert len(calls) == 2, "expected the claiming CAS plus the rollback"
+        rollback = calls[1]
+        assert rollback.kwargs["from_status"] == SourceStatus.COMMITTING
+        assert rollback.kwargs["to_status"] == SourceStatus.MCP_EXTRACTING
+
+    @pytest.mark.asyncio
+    async def test_successful_finalize_evicts_per_source_caches(self, orchestrator, mock_engine):
+        """finalize() evicts both per-source cache entries it may hold.
+
+        ``_filtering_configs`` and ``_submission_timestamps`` are keyed by
+        source_id and only exist to bridge get_tasks/submit_chunk into
+        finalize; leaving either behind leaks one entry per finalized
+        source for the lifetime of a long-lived MCP server process.
+        """
+        from collections import deque
+
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting",
+            filename="quick.txt",
+            domain="generic",
+            chunk_indices=[0],
+        )
+        mock_engine.storage_adapter.list_extraction_submissions.return_value = [
+            {
+                "chunk_group_index": 0,
+                "entities_text": "E|Alice|Person||0.9|S1|A person",
+                "relationships_text": "",
+            },
+        ]
+        mock_engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+            return_value={
+                "entities": [{"name": "Alice"}],
+                "relationships": [],
+                "suggested_templates": [],
+                "suggested_edge_templates": [],
+                "metadata": {},
+            }
+        )
+        mock_engine.commit_service.commit = AsyncMock(
+            return_value={
+                "created_nodes": ["n1"],
+                "created_edges": [],
+                "created_templates": [],
+            }
+        )
+        mock_engine.storage_adapter.delete_extraction_submissions.return_value = 1
+
+        # Simulate prior get_tasks / submit_chunk activity for this source.
+        orchestrator._filtering_configs["src_001"] = MagicMock(minimum_alias_length=2)
+        orchestrator._submission_timestamps["src_001"] = deque([0.0])
+
+        result = await orchestrator.finalize("src_001")
+
+        assert result["success"] is True
+        assert "src_001" not in orchestrator._filtering_configs
+        assert "src_001" not in orchestrator._submission_timestamps

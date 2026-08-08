@@ -10,6 +10,63 @@ description: Release-by-release history of Chaos Cypher features, fixes, and bre
 
 Entries from June 2026 onward are grouped by release so you can map them to the version you are running — check yours with `chaoscypher --version` (CLI) or the container image tag.
 
+### August 2026
+
+#### v0.4.0 (2026-08-07)
+
+##### Breaking Changes
+
+- **`GET /sources/{id}/recovery_events` now uses standard pagination.** The endpoint previously took `?limit=` (1–200, default 50) and returned `{"events": [...]}`. It now takes `?page=&page_size=` and returns the house `{data, pagination}` envelope, matching every other list endpoint. **Migration:** replace `?limit=N` with `?page_size=N`, and read events from `data` instead of `events`; the pagination block is `{total, page, page_size, total_pages, has_next, has_prev}`. `?limit=` is no longer read. The web UI ships already migrated, so the product is self-consistent — this affects external API consumers only. (Pre-1.0 convention: breaking changes ride MINOR; `0.y.z` carries no compatibility guarantee.)
+
+##### Security
+
+- **Compose package resolver could be made to write outside its extraction directory** — the resolver built its extraction path from the Lexicon hub's own `version` string, so a hostile or compromised hub could place package contents anywhere the process could reach, including the auto-executed user-plugin directory. Path construction is now hardened. The same fix corrects shifted client arguments that had made hub resolution unable to match any package, so no working behavior regresses.
+- **`cryptography` 48.0.1 → 50.0.0** — CVE-2026-69247, CVE-2026-69248, CVE-2026-69249. 50.0.0 is the minimal clearing version (69247 does not clear below it).
+- **URL import no longer has a DNS-rebinding window.** `POST /api/v1/sources/url` validated each hop and then handed the *hostname* back to the HTTP client, which re-resolved it at connect time — so a name that resolved to a public address during the check could resolve to an internal one for the actual fetch. The fetch now dials the validated IP directly, carrying the original `Host` header and TLS SNI, and redirect targets are re-validated the same way. Earlier releases documented this as an accepted residual in the self-hosted threat model; that entry is gone because the residual is.
+- **`pypdf` ×6 CVEs cleared** — ×4 earlier in this cycle, plus CVE-2026-71852 and CVE-2026-71870 in `pypdf 6.14.2`, cleared by 6.15.0 on the day they were published. PDF parsing is an attacker-reachable surface for anyone ingesting untrusted PDFs, so this is the highest-value dependency fix in the release.
+- **`js-yaml` CVE-2026-59870** cleared (4.3.1).
+- **Further dependency advisories cleared** — `pyasn1`, `fast-uri`, `brace-expansion`, `react-router`, `js-yaml` (via redocly), `nanoid`, `dompurify`, `mermaid`, every other `packages/docs` npm advisory, and `undici` / `ip-address` in the frontend toolchain. `pip-audit` and both `npm audit` runs report clean, and the documentation site's dependencies are now covered by the CI security gate.
+- **Self-signed TLS key is created with `0600` from the start** — previously it was briefly world-readable on disk.
+- **Typed local-auth errors** for a corrupt password hash and for double-initialize, instead of opaque failures.
+
+##### Data correctness
+
+- **`load_text` silently dropped every document after the first** — multi-document loads were losing content with no error surfaced.
+- **Backup restore could lose recent commits.** The restore path unlinked the live WAL/SHM and overwrote `app.db` *before* disposing cached engines, and its "safety backup" was a WAL-blind file copy — so recent committed data could vanish on a restore. Restore now mirrors the upgrade-rollback path and takes its safety copy with `VACUUM INTO`.
+- **`env > settings.yaml` precedence restored** — a regression had stopped environment variables from winning.
+- **Races that produced duplicate or lost work are closed** — `confirm_extraction` and `retry_task` claim via SQL compare-and-set; queue cancellation and reconciler paths are atomic under a lock; chat tool-approval is first-decision-wins.
+- **`StageProgress` no longer reports a stage complete when its body raised.**
+- **A failure *after* a chunk was committed no longer discards its extracted entities.** Everything following the chunk-persist commit sat inside the same `try`, so a late failure (for example a full finalize queue) marked an already-committed chunk `failed` — and because the finalizer aggregates only `completed` rows, the entities you had already paid to extract were silently dropped. The post-commit tail is now guarded and the row stays `completed`.
+- **Archive and RST ingest fixes** — three P1 defects in the archive/RST loader paths and in force-re-extract.
+- PDF image-detection scans are capped at `pdf_max_pages`; workflow-system reset is atomic and reports real deleted counts; chunk-pipeline handlers honour the task's target database.
+
+##### Reliability
+
+- **One call to `DELETE /llm/semaphore` could wedge all LLM traffic for the process lifetime** — `PrioritySemaphore.clear_waiting_queues()` awaited a helper that re-acquired its own non-reentrant lock, deadlocking on itself. A related path leaked a concurrency slot permanently when an exception escaped the worker's cleanup block.
+- **MCP extraction hardening** — finalize now rolls back cleanly on failure, quick-depth is forwarded correctly, and a session leak is evicted rather than accumulating.
+- Deep audit passes over the chat and queue slices fixed a batch of defects each: citation-grammar alignment and contentless-done refetch in chat; worker-cleanup semaphore leak, swallowed-timeout-as-cancelled, sub-cent LLM cost truncation, and several queue-monitor UI defects.
+- **Workflows slice audit — the automation path had four defects that made it unusable in places.** `ai.extract_json` always failed with "Engine settings not provided" and `ai.prompt` silently fell back to hardcoded defaults, because settings were never threaded into the tool context. Queued step execution died with a `TypeError` from an orchestrator/executor signature mismatch hidden behind two `type: ignore`s. Imported or duplicated workflows were stored with an empty database name, so they never appeared in any list. And `summarize` lost every page beyond the first for all sources after the first. Also fixed here: explicit `temperature=0.0` and `chunk_overlap=0` are honoured instead of being replaced by defaults, malformed fenced JSON from a model falls back to text instead of raising, trigger stats no longer grow without bound in the long-lived executor, and CrossEncoder construction is moved off the event loop.
+- **Speed-ups on the paths that dominate large imports** — chunk-embedding persistence went from one full-row `SELECT` plus one real `COMMIT` per chunk (up to 2,000 per wave) to a single batched update; the vision finalizer no longer rebuilds the whole document body once per page description; package-import citation writes and workflow-execution listings use the batch primitives that already existed alongside them.
+- **Failures stop being invisible** — search-index flag reads log instead of silently returning `false` during the contention they exist to guard, and a close failure while recording spend no longer masks a permanent spend-cap error into one the queue retries forever.
+
+##### Features
+
+- **Per-call extraction overrides now actually take effect.** The source-creation API accepted per-call extraction settings and then ignored them, falling back to the global configuration; the values you pass are now applied to that source's extraction.
+- **`chaoscypher source list --limit`** with an honest truncation footer, and **`config set`** now accepts list-valued settings.
+- **Filter dropdowns are reachable by their label** for screen readers — the shared search/filter bar rendered its selects with no accessible name.
+- **EPUB chapter skips are surfaced** via a new `loader_epub_chapters_skipped` quality counter (migration `0006`).
+- **Abandoned `mcp_extracting` sources are marked failed** after a staleness window. *Behaviour change:* sources that previously hung in `mcp_extracting` now transition to `failed`.
+- **Guarded-write / atomic-move primitives** on the queue client (internal substrate for the correctness fixes above).
+
+##### Migrations
+
+- **`0006_loader_epub_chapters_skipped`** — additive only (one new quality-counter column), classified `safe_auto`, so it applies on startup with automatic migrations enabled (the default). No destructive operations.
+- **Where to find the automatic pre-migration backup.** It is written **per database**, next to the database file itself: `<data_dir>/databases/<database_name>/backups/pre-<revision>-<timestamp>.db` — e.g. `/data/databases/default/backups/pre-0006-20260804T145504Z.db`. Note this is *not* `<data_dir>/backups/`, which is where **manual and scheduled** backups go; that directory exists but stays empty unless you take one. Earlier changelog entries named the wrong path here.
+
+##### Upgrade advisory
+
+- Drain the queue before swapping the image: stop new submissions and wait for `/api/v1/queue/stats` to report 0 pending on all queues. Payload-version negotiation is not yet implemented, so don't run mixed old/new versions against the same queue.
+
 ### July 2026
 
 #### v0.3.1 (2026-07-20)
@@ -36,7 +93,7 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 - **Richer packages** — exports can embed a `graph_preview.png`, per-domain source breakdowns, and `derived_from`/`dependencies` lineage in the manifest; the source's original text is persisted at index time (`sources.full_text`) and travels with the package. The Lexicon client speaks the Hub's CCX 3.0 contract (async job envelope on upload, `{data}` unwrap fix).
 - **Fixes** — driver dashboard repaired (fetches, charts, queue lists); switching the active database now re-points workers immediately, so chunk writes no longer land in the previously-active database, and exports honor the task's target database; a path-handling bug that could delete application files when removing a source with a non-absolute filepath is fixed; MCP worker crashes surface properly and the queue reconciler no longer strands requeued tasks; SPA routes show a styled error page on upstream 5xx; imported-node search filters by the `source_id` column rather than stale properties; embedding retry backoff is jittered to avoid thundering-herd retries.
 - **Security & dependencies** — every dependency CVE flagged since v0.2.0 is patched (pypdf, cryptography, starlette, python-multipart, langchain, langsmith, msgpack, pydantic-settings, esbuild, dompurify, the `ws` DoS, and more); both frontend packages report `npm audit` clean; FastAPI is pinned below 0.137 pending an upstream router regression fix.
-- **Migrations** — three revisions apply on upgrade: `0003` (adds `ccx_iri` columns to nodes/edges/sources), `0004` (adds `sources.full_text`), and `0005` (data migration: recomputes chunk `sentence_offsets` from content — classified *needs-confirmation*; with automatic migrations enabled, the default, it applies on startup and performs one scan of `document_chunks` on first boot). No destructive schema operations; `0005` rewrites only derived offset values, which are recomputable from content. The automatic pre-migration backup lands in `<data_dir>/backups/`.
+- **Migrations** — three revisions apply on upgrade: `0003` (adds `ccx_iri` columns to nodes/edges/sources), `0004` (adds `sources.full_text`), and `0005` (data migration: recomputes chunk `sentence_offsets` from content — classified *needs-confirmation*; with automatic migrations enabled, the default, it applies on startup and performs one scan of `document_chunks` on first boot). No destructive schema operations; `0005` rewrites only derived offset values, which are recomputable from content. The automatic pre-migration backup is written per database at `<data_dir>/databases/<database_name>/backups/pre-<revision>-<timestamp>.db` (corrected 2026-08-04 — earlier text named `<data_dir>/backups/`, which is the manual/scheduled backup location, not this one).
 - **Upgrade advisory** — drain the queue before swapping the image: stop new submissions and wait for `/api/v1/queue/stats` to report 0 pending tasks on all queues. This release adds new operation types for imported-source indexing; don't run mixed old/new versions against the same queue.
 
 ### June 2026

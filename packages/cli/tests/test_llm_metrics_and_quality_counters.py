@@ -386,19 +386,21 @@ async def test_increment_quality_counter_is_additive(
 
 
 @pytest.mark.asyncio
-async def test_increment_quality_counter_swallows_unknown_source(
+async def test_increment_quality_counter_unknown_source_is_a_noop(
     sqlite_adapter,
 ) -> None:  # type: ignore[no-untyped-def]
-    """Per docstring: failures are logged and swallowed — the helper
-    is best-effort and must not block the pipeline. Pin that
-    contract so a future "throw on unknown source" refactor surfaces.
+    """An unknown source_id must not raise.
+
+    The underlying UPDATE matches zero rows and returns normally (SQLite
+    accepts a 0-row UPDATE), so this pins the success path's tolerance of
+    a missing row — the swallow-and-log branch is exercised separately
+    below with an adapter that actually raises.
     """
     from chaoscypher_core.services.quality.counters import (
         QualityCounter,
         increment_quality_counter,
     )
 
-    # No exception — just a logged warning.
     await increment_quality_counter(
         adapter=sqlite_adapter,
         source_id="does-not-exist",
@@ -406,6 +408,40 @@ async def test_increment_quality_counter_swallows_unknown_source(
         counter=QualityCounter.ORPHAN_ENTITIES_FILTERED,
         n=1,
     )
+
+
+@pytest.mark.asyncio
+async def test_increment_quality_counter_swallows_and_logs_adapter_failure() -> None:
+    """Per docstring: failures are logged at WARNING and swallowed.
+
+    Drives the except branch with an adapter whose UPDATE genuinely
+    raises (e.g. a closed/broken session), pinning both halves of the
+    best-effort contract: no exception escapes to the pipeline, and the
+    failure is not silent.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from chaoscypher_core.services.quality import counters as counters_module
+    from chaoscypher_core.services.quality.counters import (
+        QualityCounter,
+        increment_quality_counter,
+    )
+
+    broken_adapter = MagicMock()
+    broken_adapter.increment_source_counter.side_effect = RuntimeError("session is closed")
+
+    with patch.object(counters_module, "logger") as mock_logger:
+        await increment_quality_counter(
+            adapter=broken_adapter,
+            source_id="src-broken",
+            database_name="default",
+            counter=QualityCounter.ORPHAN_ENTITIES_FILTERED,
+            n=1,
+        )
+
+    broken_adapter.increment_source_counter.assert_called_once()
+    mock_logger.warning.assert_called_once()
+    assert mock_logger.warning.call_args.args[0] == "quality_counter_increment_failed"
 
 
 # ---------------------------------------------------------------------------

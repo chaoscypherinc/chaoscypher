@@ -4,11 +4,13 @@
 """Async cloud-LLM connectivity probes.
 
 Lifted from `chaoscypher_cli.commands.setup` (urllib-based, sync) into
-core async helpers so the wizard's verify endpoint and the CLI can
-share validation logic. The cortex-side endpoint
-(/settings/llm/verify) wraps these for the settings page's "Test
-Connection" button. The verify gate itself is real-time as of
-2026-05-22 — see :func:`chaoscypher_core.services.llm.health.get_llm_health`.
+core async helpers. The cortex-side endpoint (/settings/llm/verify)
+wraps these for the settings page's "Test Connection" button. NOTE: the
+CLI wizard still carries its own sync urllib copies of these probes
+(`chaoscypher_cli.commands.setup._test_*_connection`) — converging it
+onto these helpers is a filed TODO, so until then behavior can drift.
+The verify gate itself is real-time as of 2026-05-22 — see
+:func:`chaoscypher_core.services.llm.health.get_llm_health`.
 
 Returns ``(success: bool, message: str)`` per call so callers can
 surface a user-actionable error without needing to interpret
@@ -20,10 +22,6 @@ from __future__ import annotations
 from typing import Final
 
 import httpx
-import structlog
-
-
-logger = structlog.get_logger(__name__)
 
 
 # Timeouts are intentionally tight — a verify call should fail fast
@@ -84,11 +82,19 @@ async def verify_anthropic_key(api_key: str) -> tuple[bool, str]:
 
 
 async def verify_gemini_key(api_key: str) -> tuple[bool, str]:
-    """Probe ``generativelanguage.googleapis.com`` with the provided key."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    """Probe ``generativelanguage.googleapis.com`` with the provided key.
+
+    The key travels in the ``x-goog-api-key`` header, never the query
+    string — several httpx error types stringify with the full request
+    URL, which would leak the secret into the returned error message,
+    logs, and proxy access logs.
+    """
     try:
         async with httpx.AsyncClient(timeout=_VERIFY_TIMEOUT_SECONDS) as client:
-            response = await client.get(url)
+            response = await client.get(
+                "https://generativelanguage.googleapis.com/v1beta/models",
+                headers={"x-goog-api-key": api_key},
+            )
     except httpx.TimeoutException:
         return False, "Connection timed out"
     except httpx.HTTPError as exc:

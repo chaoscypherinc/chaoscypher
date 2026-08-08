@@ -55,6 +55,9 @@ def get_source_recovery_for_dashboard() -> tuple[SourceRecovery, str]:
         stalled_threshold_seconds=settings.source_recovery.stalled_threshold_seconds,
         max_recovery_attempts=settings.source_recovery.max_recovery_attempts,
         recovery_warn_threshold=settings.source_recovery.recovery_warn_threshold,
+        mcp_extracting_stale_after_hours=(
+            settings.source_recovery.mcp_extracting_stale_after_hours
+        ),
     )
     return recovery, database_name
 

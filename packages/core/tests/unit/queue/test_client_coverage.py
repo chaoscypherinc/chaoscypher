@@ -79,6 +79,10 @@ def _bare_client() -> QueueClient:
     client._failed_result_ttl = 14 * 86_400
     client._cancel_ttl = 300
     client._atomic_complete_sha = None
+    client._guarded_status_write_sha = None
+    client._guarded_delete_sha = None
+    client._requeue_atomic_sha = None
+    client._string_cas_sha = None
     client.monitor = None
     client._handlers = {}
     client._retry_policy = {}
@@ -106,7 +110,9 @@ def _make_queue_client() -> tuple[QueueClient, MagicMock, list[dict[str, Any]]]:
     valkey.expire = AsyncMock(return_value=True)
     valkey.delete = AsyncMock(return_value=1)
     valkey.script_load = AsyncMock(return_value="sha-123")
-    valkey.evalsha = AsyncMock(return_value=1)
+    # b"__ok__" satisfies the guarded-script contract; complete_task_atomic
+    # ignores the return value entirely.
+    valkey.evalsha = AsyncMock(return_value=b"__ok__")
 
     client.client = valkey
     return client, valkey, recorded
@@ -438,39 +444,46 @@ async def test_cancel_task_terminal_returns_true() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_task_queued_zrem_and_hset() -> None:
-    """A queued task is removed from pending and marked cancelled via pipeline."""
+    """A queued task is cancelled via one guarded zrem+write (Lua)."""
     client, valkey, recorded = _make_queue_client()
     valkey.hgetall = AsyncMock(return_value=_hash_payload(status="queued"))
 
     assert await client.cancel_task("t-q") is True
-    # The cancellation hset goes through the pipeline recorder.
-    assert any(e["mapping"].get("status") == "cancelled" for e in recorded)
+    valkey.evalsha.assert_awaited_once()
+    args = valkey.evalsha.await_args.args
+    assert args[5] == "queued"  # allowed_from
+    assert args[6] == "zrem"
+    assert not recorded  # no unguarded pipeline write
 
 
 @pytest.mark.asyncio
 async def test_cancel_task_running_in_set_sets_flag_and_srem() -> None:
-    """A running task in the running set gets the cancel flag, SREM, and DB persist."""
+    """A running task gets the cancel flag, a guarded srem+write, and DB persist."""
     client, valkey, _ = _make_queue_client()
     valkey.hgetall = AsyncMock(return_value=_hash_payload(status="running", data=json.dumps({})))
-    valkey.sismember = AsyncMock(return_value=1)
     client._persist_cancellation_to_db = MagicMock()
 
     assert await client.cancel_task("t-run") is True
     valkey.set.assert_awaited()  # cancel flag set
-    valkey.srem.assert_awaited()
+    args = valkey.evalsha.await_args.args
+    assert args[5] == "queued,running"
+    assert args[6] == "srem"
     client._persist_cancellation_to_db.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_cancel_task_orphaned_running_marks_cancelled() -> None:
-    """A running task NOT in the running set is just marked cancelled."""
+    """A running-status task not in the running set still cancels cleanly.
+
+    The old SISMEMBER orphan branch is subsumed by the guarded write:
+    SREM of a non-member is a no-op inside the Lua script, and the
+    (harmless) cooperative flag simply expires.
+    """
     client, valkey, _ = _make_queue_client()
     valkey.hgetall = AsyncMock(return_value=_hash_payload(status="running"))
-    valkey.sismember = AsyncMock(return_value=0)
 
     assert await client.cancel_task("t-orphan") is True
-    valkey.set.assert_not_awaited()  # no cancel flag — orphan path
-    valkey.hset.assert_awaited()
+    valkey.evalsha.assert_awaited_once()
 
 
 @pytest.mark.asyncio

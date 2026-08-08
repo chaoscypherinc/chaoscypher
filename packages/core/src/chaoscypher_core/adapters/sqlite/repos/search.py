@@ -1539,7 +1539,11 @@ class SearchRepository:
                     text("SELECT value FROM search_metadata WHERE key = 'needs_full_reindex'")
                 ).fetchone()
                 return row is not None and row[0] == "true"
-        except Exception:
+        except Exception as e:
+            # False is the safe default, but the read failure itself must be
+            # visible — it fires exactly during the DB contention this flag
+            # exists to guard (mirrors _set_reindex_flag's write-side logging).
+            logger.warning("needs_full_reindex_read_failed", error=str(e))
             return False
 
     def _set_reindex_flag(self, value: bool) -> None:
@@ -1604,7 +1608,10 @@ class SearchRepository:
                     text("SELECT value FROM search_metadata WHERE key = 'is_rebuilding'")
                 ).fetchone()
                 return row is not None and row[0] == "true"
-        except Exception:
+        except Exception as e:
+            # A silent False here sends semantic_search into vec0 tables that
+            # may just have been DROPped mid-rebuild — log before defaulting.
+            logger.warning("is_rebuilding_read_failed", error=str(e))
             return False
 
     def schedule_reindex(

@@ -186,8 +186,14 @@ def dispose_all_engines() -> None:
     """
     with _engines_lock:
         for db_path_str, engine in list(_engines.items()):
-            engine.dispose()
-            logger.info("database_engine_disposed", db_path=db_path_str)
+            # One failing dispose must not abort the loop: the remaining
+            # engines would stay cached (and their stale pooled connections
+            # alive) while the caller believes the cache is empty.
+            try:
+                engine.dispose()
+                logger.info("database_engine_disposed", db_path=db_path_str)
+            except Exception:
+                logger.exception("database_engine_dispose_failed", db_path=db_path_str)
         _engines.clear()
 
 

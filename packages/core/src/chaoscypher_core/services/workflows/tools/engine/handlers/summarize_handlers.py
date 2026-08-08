@@ -274,6 +274,10 @@ class SummarizeToolHandlers:
         page_size = self.settings.batching.summarize_chunk_page_size
         all_chunks: list[dict[str, Any]] = []
         for source_id in source_ids:
+            # Per-source counter: `total` is per-source, so comparing it against
+            # the cross-source accumulator would stop after one page for every
+            # source after the first
+            source_chunks: list[dict[str, Any]] = []
             page = 1
             while True:
                 chunks, total = self.indexing.get_chunks_by_source(
@@ -290,10 +294,11 @@ class SummarizeToolHandlers:
                     total=total,
                     adapter_db=getattr(self.indexing, "database_name", "unknown"),
                 )
-                all_chunks.extend(chunks)
-                if len(all_chunks) >= total or not chunks:
+                source_chunks.extend(chunks)
+                if len(source_chunks) >= total or not chunks:
                     break
                 page += 1
+            all_chunks.extend(source_chunks)
         return all_chunks
 
     async def _retrieve_by_query(self, query: str, limit: int = 100) -> list[dict[str, Any]]:

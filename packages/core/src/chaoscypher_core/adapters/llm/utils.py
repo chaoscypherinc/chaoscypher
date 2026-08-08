@@ -9,6 +9,7 @@ message objects. Framework-agnostic response parsing lives in
 ``chaoscypher_core.utils.llm_response``.
 """
 
+import json
 from typing import Any
 
 import structlog
@@ -16,6 +17,24 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+    """Normalize a tool call's ``function.arguments`` into a dict.
+
+    ``format_tool_calls_response`` stores arguments as a dict, but the
+    OpenAI wire format (and any history round-tripped through it) carries
+    a JSON string. Unparseable input degrades to an empty dict.
+    """
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str) and arguments:
+        try:
+            parsed = json.loads(arguments)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def convert_to_langchain_messages(
@@ -48,7 +67,18 @@ def convert_to_langchain_messages(
         if role == "system":
             lc_messages.append(SystemMessage(content=content))
         elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
+            # Preserve tool_calls: cloud providers reject a ToolMessage whose
+            # preceding assistant turn doesn't carry the matching tool_calls.
+            tool_calls = msg.get("tool_calls") or []
+            lc_tool_calls = [
+                {
+                    "id": tc.get("id", ""),
+                    "name": tc.get("function", {}).get("name", ""),
+                    "args": _parse_tool_arguments(tc.get("function", {}).get("arguments")),
+                }
+                for tc in tool_calls
+            ]
+            lc_messages.append(AIMessage(content=content, tool_calls=lc_tool_calls))
         elif role == "user":
             lc_messages.append(HumanMessage(content=content))
         elif role == "tool":

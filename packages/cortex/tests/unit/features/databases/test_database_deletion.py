@@ -50,7 +50,7 @@ class TestDatabaseRepositoryDelete:
 
     def test_blocks_default_deletion(self, repo) -> None:
         _create_db(repo, "default")
-        with pytest.raises(ValueError, match="Cannot delete default"):
+        with pytest.raises(ValidationError, match="Cannot delete default"):
             repo.delete_database("default")
         assert os.path.exists(os.path.join(repo.databases_dir, "default"))
 
@@ -61,7 +61,7 @@ class TestDatabaseRepositoryDelete:
         assert not os.path.exists(os.path.join(repo.databases_dir, "default"))
 
     def test_raises_on_nonexistent(self, repo) -> None:
-        with pytest.raises(ValueError, match="does not exist"):
+        with pytest.raises(ValidationError, match="does not exist"):
             repo.delete_database("ghost")
 
     def test_deletes_all_subdirectories(self, repo) -> None:
@@ -131,9 +131,10 @@ class TestDatabaseServiceDelete:
         service.delete_database("other_db")
         mock_repo.delete_database.assert_called_once_with("other_db")
 
-    def test_wraps_value_error_as_validation_error(self, service, mock_repo) -> None:
-        mock_repo.delete_database.side_effect = ValueError("does not exist")
-        with pytest.raises(ValidationError):
+    def test_repository_validation_error_propagates(self, service, mock_repo) -> None:
+        """Core ValidationError from the repository reaches the caller unchanged."""
+        mock_repo.delete_database.side_effect = ValidationError("does not exist")
+        with pytest.raises(ValidationError, match="does not exist"):
             service.delete_database("ghost")
 
     def test_allows_non_active_database(self, service, mock_settings) -> None:

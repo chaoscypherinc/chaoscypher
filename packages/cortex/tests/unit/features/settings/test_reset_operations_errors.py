@@ -72,10 +72,11 @@ def test_reset_knowledge_graph_propagates_when_clear_all_fails() -> None:
 @pytest.mark.asyncio
 async def test_delete_import_files_propagates_when_rmtree_fails() -> None:
     class _Paths:
+        data_dir = str(pathlib.Path("/tmp/does-not-exist-xyz"))
+        databases_subdir = "databases"
         imports_subdir = "imports"
 
     class _Settings:
-        database_dir = pathlib.Path("/tmp/does-not-exist-xyz")
         paths = _Paths()
 
     stats: dict[str, object] = {}
@@ -85,7 +86,7 @@ async def test_delete_import_files_propagates_when_rmtree_fails() -> None:
         patch("shutil.rmtree", side_effect=_BoomError("rmtree blew up")),
         pytest.raises(_BoomError),
     ):
-        await reset_operations._delete_import_files(_Settings(), stats)
+        await reset_operations._delete_import_files(_Settings(), "test_db", stats)
 
 
 def test_reset_search_indices_propagates_when_clear_fails() -> None:

@@ -258,7 +258,9 @@ async def handle_embed_chunks(
         data: Task data — must contain ``source_id`` and ``file_info``.
         source_repository: SqliteAdapter implementing storage protocols.
         indexing_service: IndexingService cached at worker level.
-        metadata: Task metadata (unused here but part of handler contract).
+        metadata: Task metadata — carries the target ``database_name``
+            captured at enqueue time; the handler executes against that
+            database, not the worker's live global.
         task_id: Queue task ID — used to poll cancellation.
 
     Returns:
@@ -287,8 +289,36 @@ async def handle_embed_chunks(
     )
 
     settings = get_settings()
-    database_name = settings.current_database
+
+    # The target database comes from the task metadata captured at ENQUEUE
+    # time, not this worker's live global (mirrors ``handle_index_document``
+    # and the ``7e667d5`` export-handler fix): the embed stage of a task
+    # chunked into another database must read and write that same database,
+    # or the chunk lookups and source-status writes land in whatever the
+    # worker happens to be bound to after a database switch.
+    meta_database = (metadata or {}).get("database_name")
+    database_name = meta_database or settings.current_database
+
     adapter = source_repository
+    bound_database = getattr(adapter, "database_name", None)
+    if meta_database and isinstance(bound_database, str) and bound_database != meta_database:
+        from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+        from chaoscypher_core.services.search.engine.index import IndexingService
+
+        logger.info(
+            "embedding_rebound_to_task_database",
+            source_id=source_id,
+            task_database=meta_database,
+            worker_database=bound_database,
+        )
+        adapter = get_sqlite_adapter(meta_database, settings=settings)
+        indexing_service = IndexingService(
+            repository=adapter,
+            settings=indexing_service.settings.model_copy(
+                update={"current_database": meta_database}
+            ),
+            embedding_service=indexing_service.embedding_service,
+        )
 
     # Pause guard: if the source or the system is paused, return
     # {"skipped": "paused"} without touching any real work. Paused is

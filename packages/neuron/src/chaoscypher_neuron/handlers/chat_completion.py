@@ -18,7 +18,7 @@ import functools
 import time
 from typing import TYPE_CHECKING, Any
 
-from chaoscypher_core.constants import QUEUE_LLM
+from chaoscypher_core.constants import OP_CHAT_BACKGROUND, QUEUE_LLM
 from chaoscypher_core.queue import queue_client
 from chaoscypher_core.queue.pubsub import publish_chat_event
 from chaoscypher_core.utils.logging.app_config import get_logger
@@ -149,7 +149,7 @@ def register_chat_completion_handler(
             # failed without retry.
             raise
 
-    queue_client.register_handlers(QUEUE_LLM, {"chat_background": chat_completion_handler})
+    queue_client.register_handlers(QUEUE_LLM, {OP_CHAT_BACKGROUND: chat_completion_handler})
 
 
 def _spend_check(settings: Settings) -> None:
@@ -178,7 +178,14 @@ def _spend_check(settings: Settings) -> None:
             database_name=db_name,
         )
     finally:
-        adapter.disconnect()
+        try:
+            adapter.disconnect()
+        except Exception:
+            # A close failure raised from a ``finally`` would REPLACE an
+            # in-flight exception — for _spend_check that means the permanent
+            # LLMSpendCapExceededError is masked by an unclassified error and
+            # the turn retries against a still-exceeded cap.
+            logger.warning("spend_adapter_disconnect_failed", exc_info=True)
 
 
 def _spend_record(settings: Settings, total_tokens: int) -> None:
@@ -202,7 +209,14 @@ def _spend_record(settings: Settings, total_tokens: int) -> None:
             database_name=db_name,
         )
     finally:
-        adapter.disconnect()
+        try:
+            adapter.disconnect()
+        except Exception:
+            # A close failure raised from a ``finally`` would REPLACE an
+            # in-flight exception — for _spend_check that means the permanent
+            # LLMSpendCapExceededError is masked by an unclassified error and
+            # the turn retries against a still-exceeded cap.
+            logger.warning("spend_adapter_disconnect_failed", exc_info=True)
 
 
 async def _record_turn_spend(
@@ -288,12 +302,17 @@ async def _run_chat_completion(
     if source_ids:
         source_metadata = []
         for sid in source_ids:
-            source = storage_adapter.get_source(sid, settings.current_database)
+            # Use the task's resolved database (chat_service.database_name),
+            # not the live settings value — the operator may have switched the
+            # active database while this task sat in the queue.
+            source = storage_adapter.get_source(sid, chat_service.database_name)
             if source:
+                # get_source rows always carry a "title" key (possibly None),
+                # so dict.get's default never fires — fall through explicitly.
                 source_metadata.append(
                     {
                         "id": sid,
-                        "title": source.get("title", source.get("filename", sid)),
+                        "title": source.get("title") or source.get("filename") or sid,
                     }
                 )
 

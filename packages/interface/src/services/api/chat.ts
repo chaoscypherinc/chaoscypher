@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { apiClient, API_BASE } from './client';
-import type { Chat, ChatMessage, ChatMetadata } from '../../types';
+import type { Chat, ChatMetadata } from '../../types';
 import type { PaginationMetadata } from '../crudApiFactory';
 
 interface PaginatedChatList {
@@ -11,16 +11,6 @@ interface PaginatedChatList {
 }
 
 export const chatApi = {
-  sendMessage: async (message: string, chatId?: string): Promise<ChatMessage> => {
-    if (!chatId) {
-      throw new Error('Chat ID is required');
-    }
-    const response = await apiClient.post<ChatMessage>(`/chats/${chatId}/messages`, {
-      role: 'user',
-      content: message,
-    });
-    return response.data;
-  },
   createChat: async (options?: {
     title?: string;
     source_ids?: string[];

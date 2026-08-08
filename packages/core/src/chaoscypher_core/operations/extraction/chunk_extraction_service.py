@@ -715,83 +715,100 @@ class ChunkExtractionOperationsService:
                 _chunk_parser_lines_dropped,
             ) = await asyncio.to_thread(_run_chunk_persist_txn)
 
-            # Track tokens AFTER successful SQLite commit so a rollback does not
-            # leave a phantom Valkey bump that double-counts on retry.
-            if input_tokens > 0 or output_tokens > 0:
-                from chaoscypher_core.queue import queue_client as _qc
+            # Everything below runs AFTER the chunk's output is durably
+            # committed. A failure here must not route to the outer except —
+            # _handle_chunk_failure would fail_chunk_task() the committed row
+            # (no status precondition), and the finalizer aggregates only
+            # status == "completed", silently dropping the chunk's entities.
+            # Log and return success instead; a missed progress bump or
+            # activity checkpoint is reconciled by SourceRecovery. Mirrors the
+            # import-commit guard ("Never let a snapshot-refresh failure undo
+            # the commit success", import_service.py).
+            try:
+                # Track tokens AFTER successful SQLite commit so a rollback does not
+                # leave a phantom Valkey bump that double-counts on retry.
+                if input_tokens > 0 or output_tokens > 0:
+                    from chaoscypher_core.queue import queue_client as _qc
 
-                await _qc.track_tokens(QUEUE_LLM, input_tokens, output_tokens)
+                    await _qc.track_tokens(QUEUE_LLM, input_tokens, output_tokens)
 
-                # Feed the spend tracker so the per-source / per-day cap
-                # observes this chunk's consumption. Same post-commit
-                # placement as the queue counter to avoid double-counting.
-                spend_tracker.record(
-                    source_id if isinstance(source_id, str) else None,
-                    input_tokens + output_tokens,
+                    # Feed the spend tracker so the per-source / per-day cap
+                    # observes this chunk's consumption. Same post-commit
+                    # placement as the queue counter to avoid double-counting.
+                    spend_tracker.record(
+                        source_id if isinstance(source_id, str) else None,
+                        input_tokens + output_tokens,
+                        adapter=adapter,
+                        database_name=database_name,
+                    )
+
+                # Bump source-level observability counters. Done after the
+                # transaction so a rollback (which would have raised before
+                # this point) cannot double-count. Both increments are
+                # best-effort — ``increment_quality_counter`` already
+                # logs+swallows any failure.
+                if isinstance(source_id, str):
+                    from chaoscypher_core.services.quality.counters import (
+                        QualityCounter,
+                        increment_quality_counter,
+                    )
+
+                    if _chunk_finish_reason == "length":
+                        await increment_quality_counter(
+                            adapter=adapter,
+                            source_id=source_id,
+                            database_name=database_name,
+                            counter=QualityCounter.LLM_CHUNKS_TRUNCATED,
+                            n=1,
+                        )
+                    if _chunk_aborted_by_loop:
+                        await increment_quality_counter(
+                            adapter=adapter,
+                            source_id=source_id,
+                            database_name=database_name,
+                            counter=QualityCounter.LLM_CHUNKS_ABORTED_BY_LOOP,
+                            n=1,
+                        )
+                    if _chunk_parser_lines_dropped > 0:
+                        await increment_quality_counter(
+                            adapter=adapter,
+                            source_id=source_id,
+                            database_name=database_name,
+                            counter=QualityCounter.PARSER_LINES_DROPPED,
+                            n=_chunk_parser_lines_dropped,
+                        )
+
+                # Update progress and maybe trigger finalization
+                await self._update_chunk_progress(
                     adapter=adapter,
-                    database_name=database_name,
-                )
-
-            # Bump source-level observability counters. Done after the
-            # transaction so a rollback (which would have raised before
-            # this point) cannot double-count. Both increments are
-            # best-effort — ``increment_quality_counter`` already
-            # logs+swallows any failure.
-            if isinstance(source_id, str):
-                from chaoscypher_core.services.quality.counters import (
-                    QualityCounter,
-                    increment_quality_counter,
-                )
-
-                if _chunk_finish_reason == "length":
-                    await increment_quality_counter(
-                        adapter=adapter,
-                        source_id=source_id,
-                        database_name=database_name,
-                        counter=QualityCounter.LLM_CHUNKS_TRUNCATED,
-                        n=1,
-                    )
-                if _chunk_aborted_by_loop:
-                    await increment_quality_counter(
-                        adapter=adapter,
-                        source_id=source_id,
-                        database_name=database_name,
-                        counter=QualityCounter.LLM_CHUNKS_ABORTED_BY_LOOP,
-                        n=1,
-                    )
-                if _chunk_parser_lines_dropped > 0:
-                    await increment_quality_counter(
-                        adapter=adapter,
-                        source_id=source_id,
-                        database_name=database_name,
-                        counter=QualityCounter.PARSER_LINES_DROPPED,
-                        n=_chunk_parser_lines_dropped,
-                    )
-
-            # Update progress and maybe trigger finalization
-            await self._update_chunk_progress(
-                adapter=adapter,
-                job_id=job_id,
-                source_id=source_id,
-                database_name=database_name,
-                chunk_task_id=chunk_task_id,
-                chunk_index=chunk_index,
-                task_outcome="completed",
-                settings=settings,
-            )
-
-            # Checkpoint last_activity_at so the source-reconciler can
-            # distinguish real progress from a stall. This runs on the
-            # per-chunk hot path so the checkpoint is fine-grained.
-            # Guard source_id like every other source-scoped call in this
-            # handler (heartbeat / spend tracker / progress) — job.get(
-            # "source_id") may be None, and an UPDATE against a null id is a
-            # silent no-op at best.
-            if isinstance(source_id, str):
-                adapter.update_source_last_activity(
+                    job_id=job_id,
                     source_id=source_id,
                     database_name=database_name,
-                    at_time=datetime.now(UTC),
+                    chunk_task_id=chunk_task_id,
+                    chunk_index=chunk_index,
+                    task_outcome="completed",
+                    settings=settings,
+                )
+
+                # Checkpoint last_activity_at so the source-reconciler can
+                # distinguish real progress from a stall. This runs on the
+                # per-chunk hot path so the checkpoint is fine-grained.
+                # Guard source_id like every other source-scoped call in this
+                # handler (heartbeat / spend tracker / progress) — job.get(
+                # "source_id") may be None, and an UPDATE against a null id is a
+                # silent no-op at best.
+                if isinstance(source_id, str):
+                    adapter.update_source_last_activity(
+                        source_id=source_id,
+                        database_name=database_name,
+                        at_time=datetime.now(UTC),
+                    )
+            except Exception:
+                logger.exception(
+                    "chunk_post_commit_tail_failed",
+                    chunk_task_id=chunk_task_id,
+                    job_id=job_id,
+                    chunk_index=chunk_index,
                 )
 
             return {

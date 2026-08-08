@@ -147,6 +147,18 @@ class TestExtractJsonFromText:
         text = "no json at all here"
         assert self.plugin._extract_json_from_text(text) == text
 
+    def test_malformed_json_inside_fence_returns_text(self) -> None:
+        """Regression: a fenced-but-invalid payload (e.g. truncated LLM
+        output) must fall back to the raw text, not propagate
+        JSONDecodeError out of the helper.
+        """
+        text = "prelude ```json\n{bad json}\n``` trailer"
+        assert self.plugin._extract_json_from_text(text) == text
+
+    def test_malformed_plain_fence_returns_text(self) -> None:
+        text = "noise ```\n{truncated\n``` more"
+        assert self.plugin._extract_json_from_text(text) == text
+
 
 # ---------------------------------------------------------------------------
 # _parse_llm_output
@@ -298,6 +310,23 @@ class TestExecuteSinglePrompt:
         assert out["entities"] == [{"name": "A"}]
         assert out["_metadata"]["model"] == "m2"
         assert out["_metadata"]["tokens_used"] == 20
+
+    @pytest.mark.asyncio
+    async def test_explicit_zero_temperature_honored(self) -> None:
+        """Regression: temperature=0.0 is a valid explicit input and must not
+        be replaced by the settings default via a falsy `or` fallback.
+        """
+        plugin = PromptPlugin()
+        llm = _make_llm_service(content="ok", model="m", tokens=1)
+        ctx = _make_context(llm_service=llm)
+
+        await plugin.execute(
+            {"prompt": "DoThing", "output_format": "text", "temperature": 0.0},
+            ctx,
+        )
+
+        _args, kwargs = llm.queue_operation.await_args
+        assert kwargs["temperature"] == 0.0
 
     @pytest.mark.asyncio
     async def test_context_prepended_to_prompt(self) -> None:

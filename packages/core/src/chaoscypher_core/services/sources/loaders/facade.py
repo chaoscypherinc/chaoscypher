@@ -11,12 +11,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import structlog
+
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.sources.loaders.factory import get_loader_registry
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.settings import EngineSettings
+
+
+logger = structlog.get_logger(__name__)
 
 
 class Loaders:
@@ -39,13 +44,22 @@ class Loaders:
         Supports PDF, text, CSV, JSON, audio, video, image, and archive
         formats.
 
+        Multi-document loaders (CSV = one document per row, JSONL = one
+        per line, archives = one per member) produce more than one
+        document; their contents are joined with a blank line so no
+        document is silently dropped. The merge is surfaced via the
+        ``load_text_documents_merged`` structured log event — this path
+        has no source row to attach a quality counter to, so the log
+        event is the visibility mechanism.
+
         Args:
             file_path: Path to the document file.
             settings: Optional engine settings. When ``None``, uses
                 default ``EngineSettings()``.
 
         Returns:
-            Document text content as a string.
+            Document text content as a string. For multi-document
+            loaders, every document's content joined with a blank line.
 
         Raises:
             FileNotFoundError: If file_path doesn't exist.
@@ -64,4 +78,11 @@ class Loaders:
             msg = f"No content loaded from: {file_path}"
             raise ValidationError(msg, field="content")
 
-        return str(documents[0]["content"])
+        if len(documents) > 1:
+            logger.info(
+                "load_text_documents_merged",
+                file_path=file_path,
+                document_count=len(documents),
+            )
+
+        return "\n\n".join(str(doc["content"]) for doc in documents)

@@ -135,6 +135,22 @@ def _minimal_step_create() -> WorkflowStepCreate:
     )
 
 
+def test_step_create_step_number_optional() -> None:
+    """Regression: step_number is documented as auto-incrementing when omitted;
+    a required field made that path 422 at Pydantic validation.
+    """
+    from chaoscypher_core.models import StepToolType
+
+    step = WorkflowStepCreate(
+        name="No number",
+        tool_type=StepToolType.SYSTEM_TOOL,
+        tool_id="sys-tool-1",
+        configuration={},
+    )
+    assert step.step_number is None
+    assert step.model_dump()["step_number"] is None
+
+
 # ---------------------------------------------------------------------------
 # TestGetGlobalStats
 # ---------------------------------------------------------------------------

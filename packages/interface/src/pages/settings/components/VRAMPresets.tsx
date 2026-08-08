@@ -70,7 +70,7 @@ export default function VRAMPresets({
               type="number"
               value={settings.llm.ollama_num_batch || ''}
               onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_batch: e.target.value ? parseInt(e.target.value) : undefined } })
+                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_batch: e.target.value ? parseInt(e.target.value) : null } })
               }
               fullWidth
               helperText="Batch size for processing"
@@ -82,7 +82,7 @@ export default function VRAMPresets({
               type="number"
               value={settings.llm.ollama_num_parallel || ''}
               onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_parallel: e.target.value ? parseInt(e.target.value) : undefined } })
+                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_parallel: e.target.value ? parseInt(e.target.value) : null } })
               }
               fullWidth
               helperText="Number of parallel sequences"
@@ -94,7 +94,7 @@ export default function VRAMPresets({
               type="number"
               value={settings.llm.ollama_num_thread || ''}
               onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_thread: e.target.value ? parseInt(e.target.value) : undefined } })
+                setSettings({ ...settings, llm: { ...settings.llm, ollama_num_thread: e.target.value ? parseInt(e.target.value) : null } })
               }
               fullWidth
               helperText="CPU threads to use"
@@ -206,11 +206,16 @@ export default function VRAMPresets({
               label="Temperature"
               type="number"
               value={settings.llm.ai_temperature}
-              onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, ai_temperature: parseFloat(e.target.value) } })
-              }
+              onChange={(e) => {
+                // Guard NaN: an emptied field would serialize as null and
+                // fail backend validation, aborting the whole save.
+                const parsed = parseFloat(e.target.value);
+                if (!Number.isNaN(parsed)) {
+                  setSettings({ ...settings, llm: { ...settings.llm, ai_temperature: parsed } });
+                }
+              }}
               fullWidth
-              helperText="0.0 = deterministic, 2.0 = very creative (default: 0.7)"
+              helperText="0.0 = deterministic, 2.0 = very creative (default: 0.3)"
               slotProps={{ htmlInput: { min: 0, max: 2, step: 0.1 } }}
             />
 
@@ -218,12 +223,15 @@ export default function VRAMPresets({
               label="Max Tokens (Output)"
               type="number"
               value={settings.llm.ai_max_tokens}
-              onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, ai_max_tokens: parseInt(e.target.value) } })
-              }
+              onChange={(e) => {
+                const parsed = parseInt(e.target.value);
+                if (!Number.isNaN(parsed)) {
+                  setSettings({ ...settings, llm: { ...settings.llm, ai_max_tokens: parsed } });
+                }
+              }}
               fullWidth
               helperText="Maximum tokens AI can generate"
-              slotProps={{ htmlInput: { min: 256, max: 32768, step: 256 } }}
+              slotProps={{ htmlInput: { min: 256, max: 131072, step: 256 } }}
             />
 
           </Box>

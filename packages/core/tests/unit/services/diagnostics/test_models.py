@@ -75,5 +75,3 @@ class TestDiagnosticReport:
         assert report.system.chaoscypher_version == "0.1.0"
         assert report.database.database_name == "default"
         assert report.logs["cortex"] == "INFO Started"
-        assert report.queue is None
-        assert report.services is None

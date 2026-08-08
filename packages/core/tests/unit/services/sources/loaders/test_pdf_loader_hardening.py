@@ -605,3 +605,94 @@ class TestLocationIndex:
             {"start_char": 16, "end_char": 28, "page_number": 2, "section": None},
             {"start_char": 30, "end_char": 41, "page_number": 3, "section": None},
         ]
+
+
+# ---------------------------------------------------------------------------
+# 2026-07-23: image-detection pass honors pdf_max_pages
+# ---------------------------------------------------------------------------
+
+
+class _FakePdfiumDoc:
+    """pypdfium2 PdfDocument stand-in that records which pages were touched."""
+
+    def __init__(self, page_count: int) -> None:
+        self._page_count = page_count
+        self.accessed: list[int] = []
+        self.closed = False
+
+    def __len__(self) -> int:
+        return self._page_count
+
+    def __getitem__(self, idx: int) -> MagicMock:
+        self.accessed.append(idx)
+        page = MagicMock()
+        page.get_objects.return_value = []
+        return page
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _fake_pdfium_module(doc: _FakePdfiumDoc) -> MagicMock:
+    module = MagicMock()
+    module.PdfDocument.return_value = doc
+    module.raw.FPDF_PAGEOBJ_IMAGE = 3
+    return module
+
+
+class TestImageDetectionHonorsPageCap:
+    """The pypdfium image pass must scan only the capped page range.
+
+    Text extraction honors ``pdf_max_pages`` but the image-detection pass
+    iterated ALL pages, so ``metadata["pages"]`` / ``image_page_count``
+    described pages the pipeline will never process (and burned time
+    scanning a 2000-page PDF capped at 50).
+    """
+
+    def test_capped_pdf_scans_only_capped_range(self, tmp_path: Path) -> None:
+        import sys
+
+        dummy_pdf = tmp_path / "big.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 stub")
+
+        pages = [_make_page(f"page {i}") for i in range(5)]
+        reader = _make_reader(pages)
+        reader.pages = pages
+
+        doc = _FakePdfiumDoc(page_count=5)
+        settings = _make_settings(pdf_max_pages=3)
+        loader = PdfLoader(settings=settings)
+
+        with (
+            patch("pypdf.PdfReader", return_value=reader),
+            patch.dict(sys.modules, {"pypdfium2": _fake_pdfium_module(doc)}),
+        ):
+            docs = loader.load_document(str(dummy_pdf))
+
+        assert doc.accessed == [0, 1, 2], (
+            f"image scan must stop at the pdf_max_pages cap; touched {doc.accessed}"
+        )
+        assert len(docs[0]["metadata"]["pages"]) == 3
+        assert doc.closed is True
+
+    def test_uncapped_pdf_scans_all_pages(self, tmp_path: Path) -> None:
+        import sys
+
+        dummy_pdf = tmp_path / "normal.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 stub")
+
+        pages = [_make_page(f"page {i}") for i in range(4)]
+        reader = _make_reader(pages)
+        reader.pages = pages
+
+        doc = _FakePdfiumDoc(page_count=4)
+        loader = PdfLoader()  # no settings — no cap
+
+        with (
+            patch("pypdf.PdfReader", return_value=reader),
+            patch.dict(sys.modules, {"pypdfium2": _fake_pdfium_module(doc)}),
+        ):
+            docs = loader.load_document(str(dummy_pdf))
+
+        assert doc.accessed == [0, 1, 2, 3]
+        assert len(docs[0]["metadata"]["pages"]) == 4

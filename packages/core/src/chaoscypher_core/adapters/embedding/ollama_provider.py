@@ -100,7 +100,7 @@ class OllamaEmbeddingProvider:
     async def _request_embeddings(self, input_data: str | list[str]) -> list[list[float]]:
         """Send an embedding request to Ollama with retry logic.
 
-        Retries up to ``_MAX_RETRIES`` times with exponential backoff on
+        Retries per ``RetrySettings`` (see ``_retry.py``) with exponential backoff on
         transient failures (5xx status codes and connection errors).
         Timeout scales with batch size to prevent false timeouts on large
         batches.

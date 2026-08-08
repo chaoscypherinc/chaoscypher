@@ -2179,6 +2179,19 @@ class ArchiveSettings(BaseModel):
         le=100000,
         description="Maximum number of files to extract from archive",
     )
+    max_nesting_depth: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description=(
+            "Maximum archive-within-archive nesting depth. GenericHandler "
+            "re-enters the loader registry for any extracted file with a "
+            "supported suffix, and .zip/.tar.gz/.tgz are supported -- so "
+            "nested archives recurse. max_extracted_size_mb and max_files are "
+            "enforced per archive and do NOT compose across levels, meaning "
+            "one upload can otherwise authorise unbounded downstream work."
+        ),
+    )
 
     # Ignore patterns (critical for mixed archives like React apps)
     ignore_dirs: list[str] = Field(

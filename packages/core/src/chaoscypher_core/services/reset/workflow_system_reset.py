@@ -64,21 +64,14 @@ class WorkflowSystemResetService:
                 workflow_count = adapter.count_workflows(database_name=self.database_name)
                 user_tool_count = adapter.count_user_tools(database_name=self.database_name)
                 trigger_count = adapter.count_triggers(database_name=self.database_name)
-                # Execution counts aren't on dedicated protocol methods yet;
-                # use list-length as a cheap approximation. For reset stats
-                # this is good enough.
-                workflow_execution_count = (
-                    len(adapter.list_active_executions(workflow_id=""))
-                    if hasattr(adapter, "list_active_executions")
-                    else 0
-                )
-                # TriggerExecutionRow count: no dedicated count method,
-                # but clear_all returns the rowcount.
 
-                # Delete all workflow-system data in FK order
-                # 1. Execution history first (FKs into triggers + workflows)
+                # Delete all workflow-system data in FK order.
+                # 1. Execution history first (FKs into triggers + workflows).
+                # Both clear_all methods return the deleted rowcount, which
+                # is what the stats report — ALL executions are deleted, not
+                # just active ones.
                 trigger_execution_count = adapter.clear_all_trigger_executions()
-                adapter.clear_all_workflow_executions()
+                workflow_execution_count = adapter.clear_all_workflow_executions()
                 adapter.clear_all_workflow_statistics()
                 adapter.clear_all_workflow_steps()
                 # 2. Workflows (scoped) then tools (system_tools are global)
@@ -88,7 +81,10 @@ class WorkflowSystemResetService:
                 adapter.clear_all_system_tools()
                 adapter.delete_all_triggers(database_name=self.database_name)
 
-                # Reseed defaults (inside the same transaction — no mid-method commit)
+                # Reseed defaults inside the same transaction. The seed
+                # helpers do not commit; the enclosing adapter.transaction()
+                # commits on clean exit and rolls everything back (deletes
+                # AND partial reseeds) if any seed step raises.
                 session = adapter.session
                 assert session is not None, "adapter.session required for reseed"
                 seed_system_tools(session)

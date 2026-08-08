@@ -87,6 +87,11 @@ class QualityCounter(StrEnum):
     LOADER_XLSX_ROWS_SKIPPED = "loader_xlsx_rows_skipped"
     LOADER_PPTX_SHAPES_SKIPPED = "loader_pptx_shapes_skipped"  # name unchanged; retyped to JSON
     LOADER_CSV_ROWS_TRUNCATED = "loader_csv_rows_truncated"
+    # 2026-07-23: EPUB chapter-skip visibility. Incremented by the indexing
+    # handler's loader rollup from ``loader_epub_chapters_skipped`` metadata
+    # — counts spine idrefs with no manifest entry plus manifest chapters
+    # missing from the zip (both previously silent log-only skips).
+    LOADER_EPUB_CHAPTERS_SKIPPED = "loader_epub_chapters_skipped"
     CLEANER_PLUGIN_LOAD_FAILURES = "cleaner_plugin_load_failures"
     # Phase 7 audit-remediation (2026-05-09): new embedding counters.
     EMBEDDING_CHUNK_FAILURES = "embedding_chunk_failures"
@@ -177,6 +182,8 @@ _RESET_DEFAULTS: dict[str, Any] = {
     # Phase 7 audit-remediation (2026-05-09): retyped to JSON; reset to None (was 0).
     "loader_pptx_shapes_skipped": None,  # JSON column; nullable
     "loader_csv_rows_truncated": 0,
+    # 2026-07-23: EPUB chapter-skip counter.
+    "loader_epub_chapters_skipped": 0,
     "cleaner_plugin_load_failures": 0,
     # Phase 7 audit-remediation (2026-05-09): two cumulative llm_* columns
     # missed by the original Phase 1 deferral sweep. With these added, every

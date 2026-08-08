@@ -9,17 +9,6 @@ Pydantic DTOs for log viewing and service status responses.
 from pydantic import BaseModel, ConfigDict
 
 
-class LogEntry(BaseModel):
-    """A single parsed log line."""
-
-    timestamp: str
-    service: str
-    level: str
-    message: str
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class LogResponse(BaseModel):
     """Response containing log lines for a service or all services."""
 

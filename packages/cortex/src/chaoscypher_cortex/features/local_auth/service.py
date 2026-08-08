@@ -75,7 +75,7 @@ class LocalAuthService:
             Signed session cookie for the newly-created admin.
 
         Raises:
-            FileExistsError: Credentials are already initialized.
+            CredentialsAlreadyInitialized: Credentials are already initialized.
 
         """
         self._creds.initialize(username, password)

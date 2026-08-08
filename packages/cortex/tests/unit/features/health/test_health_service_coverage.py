@@ -101,8 +101,8 @@ async def test_minimal_health_reflects_cached_degraded(
 ) -> None:
     """Minimal health mirrors a cached degraded response's healthy flag."""
     service = HealthService(settings=ollama_settings, queue_client=None)
-    # Seed the cache with an unhealthy full response.
-    service._cache = (
+    # Seed the shared class-level cache with an unhealthy full response.
+    HealthService._cache = (
         time.monotonic(),
         HealthCheckResponse(healthy=False, status="degraded", checks={}),
     )
@@ -145,7 +145,7 @@ async def test_full_health_returns_cached_within_ttl(ollama_settings: MagicMock)
         status="ok",
         checks={"ollama": HealthCheckItem(status="ok", message="cached")},
     )
-    service._cache = (time.monotonic(), cached)
+    HealthService._cache = (time.monotonic(), cached)
 
     with patch.object(service._registry, "check_all", new=AsyncMock()) as mock_check_all:
         result = await service.check_health(detailed=True)

@@ -23,6 +23,7 @@ from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import get_engine
 from chaoscypher_core.adapters.sqlite.models import SourceRow
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.operations.importing import confirmation_gate
 from chaoscypher_core.operations.importing.confirmation_gate import (
     gate_decision,
     park_for_confirmation,
@@ -630,3 +631,60 @@ class TestConfirmExtractionPastGate:
         """A confirm against a vanished source raises (no silent True)."""
         with pytest.raises(ConflictError):
             await confirm_extraction(adapter, "does-not-exist", "medical", _OVERRIDES)
+
+
+# ---------------------------------------------------------------------------
+# Pre-gate SQL CAS — the write-once claim is atomic (2026-07-19 finding)
+# ---------------------------------------------------------------------------
+
+
+class TestPreGateClaimAtomic:
+    """The pre-gate confirm claims ``extraction_confirmed_at`` via SQL CAS.
+
+    The old guard was check-then-write on the ORM row: two concurrent
+    confirms (cortex + MCP, separate sessions) could both observe
+    ``extraction_confirmed_at IS NULL`` and both write — a silent lost
+    update of the first caller's domain choice. The claim is now a
+    rowcount-checked ``UPDATE … WHERE extraction_confirmed_at IS NULL``
+    (verdict 2026-07-23), the timestamp-column analogue of
+    ``transition_source_status``.
+    """
+
+    def test_claim_is_write_once(self, adapter: SqliteAdapter) -> None:
+        """First claim wins (rowcount 1); the second loses (rowcount 0)."""
+        _seed_status(adapter, "src-claim-1", status=SourceStatus.INDEXING)
+
+        assert confirmation_gate._claim_pre_gate_confirmation(adapter, "src-claim-1") is True
+        assert confirmation_gate._claim_pre_gate_confirmation(adapter, "src-claim-1") is False
+
+        adapter.session.expire_all()
+        row = adapter.session.get(SourceRow, "src-claim-1")
+        assert row is not None
+        assert row.extraction_confirmed_at is not None
+
+    @pytest.mark.asyncio
+    async def test_pre_gate_confirm_honors_lost_claim(
+        self, adapter: SqliteAdapter, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A confirm whose claim loses must NOT apply its decision.
+
+        Simulates the race window: the ORM row in hand still shows
+        ``extraction_confirmed_at is None`` (the stale read both callers
+        made), but a rival won the claim in between — the loser must
+        raise ConflictError and leave the rival's fields untouched
+        instead of silently overwriting them.
+        """
+        _seed_status(adapter, "src-claim-2", status=SourceStatus.INDEXING)
+        monkeypatch.setattr(
+            confirmation_gate,
+            "_claim_pre_gate_confirmation",
+            lambda _adapter, _file_id: False,
+        )
+
+        with pytest.raises(ConflictError):
+            await confirm_extraction(adapter, "src-claim-2", "legal", _OVERRIDES)
+
+        adapter.session.expire_all()
+        row = adapter.session.get(SourceRow, "src-claim-2")
+        assert row is not None
+        assert row.forced_domain is None  # loser wrote nothing

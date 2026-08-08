@@ -52,6 +52,25 @@ def get_log_service(
     )
 
 
+def _effective_lines(lines: int | None, settings: Settings) -> int:
+    """Resolve the requested line count against settings.
+
+    ``None`` falls back to the pagination default; explicit values are
+    clamped to ``settings.logs.max_log_lines`` (the cap used to be a
+    hardcoded ``le=10000`` literal that duplicated that setting).
+
+    Args:
+        lines: Requested line count from the query string (ge=1), or None.
+        settings: Application settings.
+
+    Returns:
+        The effective line count to read.
+    """
+    if lines is None:
+        return int(settings.pagination.log_tail_lines)
+    return min(lines, settings.logs.max_log_lines)
+
+
 @router.get(
     "",
     response_model=LogResponse,
@@ -64,9 +83,7 @@ async def get_all_logs(
     _: CurrentUsername,
     service: Annotated[LogService, Depends(get_log_service)],
     settings: Annotated[Settings, Depends(get_settings)],
-    lines: int | None = Query(
-        default=None, ge=1, le=10000, description="Number of lines to return"
-    ),
+    lines: int | None = Query(default=None, ge=1, description="Number of lines to return"),
 ) -> LogResponse:
     """Get interleaved logs from all services, sorted by timestamp.
 
@@ -74,12 +91,13 @@ async def get_all_logs(
         _: CurrentUsername — auth-gate only, value unused.
         service: LogService instance.
         settings: Application settings.
-        lines: Number of tail lines to return (default from settings).
+        lines: Number of tail lines to return (default from settings;
+            clamped to ``settings.logs.max_log_lines``).
 
     Returns:
         LogResponse with merged log lines.
     """
-    effective_lines = lines if lines is not None else settings.pagination.log_tail_lines
+    effective_lines = _effective_lines(lines, settings)
     return await asyncio.to_thread(service.get_all_logs, lines=effective_lines)
 
 
@@ -124,9 +142,7 @@ async def get_service_logs(
     service_name: str,
     service: Annotated[LogService, Depends(get_log_service)],
     settings: Annotated[Settings, Depends(get_settings)],
-    lines: int | None = Query(
-        default=None, ge=1, le=10000, description="Number of lines to return"
-    ),
+    lines: int | None = Query(default=None, ge=1, description="Number of lines to return"),
 ) -> LogResponse:
     """Get logs for a specific service.
 
@@ -135,10 +151,11 @@ async def get_service_logs(
         service_name: Service name (cortex, neuron, nginx, valkey).
         service: LogService instance.
         settings: Application settings.
-        lines: Number of tail lines to return (default from settings).
+        lines: Number of tail lines to return (default from settings;
+            clamped to ``settings.logs.max_log_lines``).
 
     Returns:
         LogResponse with the requested service's log lines.
     """
-    effective_lines = lines if lines is not None else settings.pagination.log_tail_lines
+    effective_lines = _effective_lines(lines, settings)
     return await asyncio.to_thread(service.get_logs, service_name, lines=effective_lines)

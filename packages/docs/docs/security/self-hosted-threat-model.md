@@ -18,6 +18,7 @@ This page lists the threats Chaos Cypher defends against, the threats accepted b
 - **Common archive attacks.** Backup, package, and source-loader archive extraction enforces path containment (`is_relative_to`), per-file + total decompressed size caps, member-count caps, and rejects symlinks and devices. Both the source-loader path and the `.ccx` package import path use the same `ArchiveExtractor` helper.
 - **Credential leaks via diagnostic exports.** Log files are scrubbed for `Authorization`, `api_key=`, `Bearer`, and `token=` patterns before zipping. Secret-bearing settings render as `"configured"` rather than partial reveals.
 - **`dev_mode` shipping to production by accident.** Cortex refuses to start when `settings.dev_mode=True` unless the operator has explicitly set `CHAOSCYPHER_ALLOW_DEV_MODE=1` to acknowledge.
+- **DNS rebinding on URL import.** `POST /api/v1/sources/url` validates each hop and then dials the *resolved IP* it validated, carrying the original `Host` header and TLS SNI, so a name that re-resolves to an internal address between the check and the connection cannot redirect the fetch. Redirect targets are re-validated the same way. This closes the check-then-reconnect window that earlier releases listed as an accepted residual.
 
 ## What Chaos Cypher Explicitly Doesn't Defend Against
 
@@ -27,7 +28,6 @@ These are pragmatic deferrals for the single-user self-hosted posture. The enter
 |---|---|---|
 | **First-arrival admin race.** | Open-by-default bind matches the self-hosted convention (Vaultwarden, Jellyfin, Home Assistant, Gitea). Adding a setup-token UX or loopback gate would push the "everyone disables the security" failure mode. | Set `CHAOSCYPHER_BIND=127.0.0.1` for first boot, complete `/setup`, then flip back. Or run the first boot on a network you fully control (laptop on home Wi-Fi, not a public VPS) before exposing it. |
 | **Online password brute-force beyond bcrypt + nginx rate-limit.** | Account lockout would lock the owner out. Self-hosted single-user attacker doesn't get many guesses through `5r/s` + bcrypt. | Set a 16+ char password; put the box behind a VPN or Tailscale; don't expose `0.0.0.0` without TLS. |
-| **DNS rebinding on operator-supplied URLs.** | The operator triggers `POST /api/v1/sources/url` themselves; an attacker needs DNS control + the operator fetching their URL. | Don't fetch URLs from untrusted sources. |
 | **Tampered backup restores.** | The operator only restores backups they made themselves. | Verify backup file integrity out-of-band (e.g., compare `sha256sum` to a copy you trust). |
 | **Disguised file uploads** (e.g. SVG-with-script labeled as PDF). | The operator uploads their own files. | Don't upload files you didn't create. |
 | **Username enumeration via login timing.** | The operator knows the username. | N/A. |

@@ -308,7 +308,9 @@ def build_messages_for_llm(
         msg
         for msg in all_messages
         if msg
-        and not msg.get("content", "").startswith("I apologize, but I didn't generate a response")
+        and not (msg.get("content") or "").startswith(
+            "I apologize, but I was unable to generate a response"
+        )
     ]
 
     # Collect messages within budget (newest to oldest)

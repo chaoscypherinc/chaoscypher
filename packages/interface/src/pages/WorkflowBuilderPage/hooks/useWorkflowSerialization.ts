@@ -12,12 +12,27 @@ import { useState, useCallback } from 'react';
 import type { Node, Edge } from '@xyflow/react';
 import { workflowsApi } from '../../../services/api/workflows';
 import { triggersApi } from '../../../services/api/triggers';
-import { serializeWorkflow, deserializeWorkflow, validateWorkflow } from '../utils/serialization';
+import { serializeWorkflowSteps, deserializeWorkflow, validateWorkflow } from '../utils/serialization';
 import type { ValidationError, WorkflowMetadata, EventTriggerNodeData } from '../types';
+
+/** A canvas-node-to-server-step id assignment made during a save. */
+export interface StepIdAssignment {
+  /** Canvas node id the step was created from. */
+  nodeId: string;
+  /** Server-assigned step id. */
+  stepId: string;
+}
 
 interface UseWorkflowSerializationOptions {
   onSuccess?: (message: string) => void;
   onError?: (error: string) => void;
+  /**
+   * Called after a save creates new steps, with the server-assigned ids so
+   * the caller can write them back onto the canvas nodes (`data.stepId`).
+   * Without this write-back, unchanged steps get deleted and recreated on
+   * every subsequent save.
+   */
+  onStepIdsAssigned?: (assignments: StepIdAssignment[]) => void;
 }
 
 interface UseWorkflowSerializationResult {
@@ -46,7 +61,7 @@ interface UseWorkflowSerializationResult {
 export function useWorkflowSerialization(
   options: UseWorkflowSerializationOptions = {}
 ): UseWorkflowSerializationResult {
-  const { onSuccess, onError } = options;
+  const { onSuccess, onError, onStepIdsAssigned } = options;
 
   const [workflow, setWorkflow] = useState<WorkflowMetadata | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -102,7 +117,9 @@ export function useWorkflowSerialization(
       metadata: Partial<WorkflowMetadata>
     ): Promise<string | null> => {
       if (!workflow?.id) {
-        setError('No workflow loaded');
+        const message = 'No workflow loaded';
+        setError(message);
+        onError?.(message);
         return null;
       }
 
@@ -132,8 +149,9 @@ export function useWorkflowSerialization(
         const existingSteps = await workflowsApi.listSteps(workflow.id);
         const existingStepIds = new Set(existingSteps.map((s) => s.id));
 
-        // Serialize canvas to steps
-        const newSteps = serializeWorkflow(nodes, edges);
+        // Serialize canvas to steps, keeping each step correlated with the
+        // canvas node (and existing stepId) it was serialized from.
+        const serializedSteps = serializeWorkflowSteps(nodes, edges);
 
         // Delete removed steps
         for (const existingStep of existingSteps) {
@@ -145,23 +163,24 @@ export function useWorkflowSerialization(
           }
         }
 
-        // Create or update steps
-        for (const step of newSteps) {
-          const existingNode = nodes.find(
-            (n) => (n.data as { stepId?: string }).stepId && existingStepIds.has((n.data as { stepId?: string }).stepId!)
-          );
-
-          if (existingNode && (existingNode.data as { stepId?: string }).stepId) {
-            // Update existing step
-            await workflowsApi.updateStep(
-              workflow.id,
-              (existingNode.data as { stepId?: string }).stepId!,
-              step
-            );
+        // Create or update steps — each serialized step is matched against
+        // its own originating node's stepId.
+        const stepIdAssignments: StepIdAssignment[] = [];
+        for (const { nodeId, stepId, step } of serializedSteps) {
+          if (stepId && existingStepIds.has(stepId)) {
+            // Update the step belonging to this node
+            await workflowsApi.updateStep(workflow.id, stepId, step);
           } else {
-            // Create new step
-            await workflowsApi.createStep(workflow.id, step);
+            // Create new step and remember the server-assigned id so the
+            // caller can write it back onto the node.
+            const created = await workflowsApi.createStep(workflow.id, step);
+            if (created?.id) {
+              stepIdAssignments.push({ nodeId, stepId: created.id });
+            }
           }
+        }
+        if (stepIdAssignments.length > 0) {
+          onStepIdsAssigned?.(stepIdAssignments);
         }
 
         // Reorder steps
@@ -227,7 +246,7 @@ export function useWorkflowSerialization(
         setIsSaving(false);
       }
     },
-    [workflow, onSuccess, onError]
+    [workflow, onSuccess, onError, onStepIdsAssigned]
   );
 
   /**
@@ -265,10 +284,18 @@ export function useWorkflowSerialization(
 
         setWorkflow(newWorkflow as WorkflowMetadata);
 
-        // Serialize and create steps
-        const steps = serializeWorkflow(nodes, edges);
-        for (const step of steps) {
-          await workflowsApi.createStep(newWorkflow.id, step);
+        // Serialize and create steps, writing server-assigned ids back to
+        // the caller so later saves update instead of delete+recreate.
+        const serializedSteps = serializeWorkflowSteps(nodes, edges);
+        const stepIdAssignments: StepIdAssignment[] = [];
+        for (const { nodeId, step } of serializedSteps) {
+          const created = await workflowsApi.createStep(newWorkflow.id, step);
+          if (created?.id) {
+            stepIdAssignments.push({ nodeId, stepId: created.id });
+          }
+        }
+        if (stepIdAssignments.length > 0) {
+          onStepIdsAssigned?.(stepIdAssignments);
         }
 
         // Create triggers from EventTriggerNodes
@@ -297,7 +324,7 @@ export function useWorkflowSerialization(
         setIsSaving(false);
       }
     },
-    [onSuccess, onError]
+    [onSuccess, onError, onStepIdsAssigned]
   );
 
   /**

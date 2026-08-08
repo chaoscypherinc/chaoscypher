@@ -104,6 +104,7 @@ async def execute_system_tool(
         discovery_service=discovery_service,
         search_repository=search_repository,
         database_name=database_name,
+        settings=settings,
     )
 
     logger.debug(

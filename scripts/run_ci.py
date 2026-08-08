@@ -31,6 +31,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 INTERFACE = "packages/interface"
+DOCS = "packages/docs"
 COVERAGE_XML = REPO_ROOT / "packages/docker/test-output/coverage.xml"
 
 # Sentinel payload for the advisory diff-cover step (Python logic, not a plain
@@ -77,6 +78,7 @@ _STEPS: dict[str, list[Command] | str] = {
     "lint-internal-refs": [
         ("uv run python scripts/check_no_internal_refs.py", None),
         ("uv run python scripts/check_spdx_headers.py", None),
+        ("uv run python scripts/check_metrics_artifacts.py", None),
     ],
     "docstrings": [
         (
@@ -97,6 +99,17 @@ _STEPS: dict[str, list[Command] | str] = {
     "bundle-size": [
         ("npm run build", INTERFACE),
         ("npx size-limit", INTERFACE),
+    ],
+    # packages/docs was audited but never compiled until 2026-08-03. It deploys
+    # to chaoscypher.com from `main` via a Cloudflare Worker build, independently
+    # of any release, so a dependency bump that breaks the Docusaurus build used
+    # to pass CI green and take the public site down at deploy time instead
+    # (near-miss: PR #375, verified by hand). `npm ci` is part of the step rather
+    # than a setup precondition so a fresh sandbox clone needs no extra runbook
+    # instruction to run it.
+    "docs-build": [
+        ("npm ci", DOCS),
+        ("npm run build", DOCS),
     ],
     "license-check": [
         ("uv run python scripts/license_check_python.py", None),
@@ -126,9 +139,28 @@ _STEPS: dict[str, list[Command] | str] = {
             None,
         ),
     ],
+    # Builds the PRODUCTION image. Deliberately NOT in either default plan: it
+    # needs a Docker daemon, which not every CI environment provides, so putting
+    # it in a plan would fail those runs at this step. Run it explicitly --
+    # `run_ci.py --steps docker-image-build` -- before cutting a release and on
+    # any change to packages/docker/Dockerfile. The `docker-test` step is NOT a
+    # substitute: it builds packages/docker/test/Dockerfile, a different file,
+    # so no default plan ever exercises the image that ships to users.
+    "docker-image-build": [
+        ("docker build -f packages/docker/Dockerfile -t chaoscypher-ci-verify:latest .", None),
+    ],
     "security": [
         ("uv run pip-audit --ignore-vuln PYSEC-2022-42969", None),
+        # interface compiles into the shipped bundle, so it stays strict.
         ("npm audit --audit-level=high", INTERFACE),
+        # packages/docs has its own lockfile (wrangler/docusaurus chain);
+        # CVEs there were invisible to the gate until 2026-07 (issue #328).
+        # It is a build-only tree that renders to static assets, and its ~1000
+        # transitive packages mean unfixable upstream advisories arrive
+        # regularly — blocking on those halts every push while mitigating
+        # nothing, so this gate blocks on *fixable* high+ findings and reports
+        # the rest. Self-clearing: a published fix makes it blocking again.
+        ("uv run python scripts/npm_audit_gate.py packages/docs", None),
     ],
 }
 
@@ -143,6 +175,7 @@ _COMMON = [
     "docstrings",
     "deadcode",
     "bundle-size",
+    "docs-build",
     "license-check",
     "test-cov-interface",
 ]

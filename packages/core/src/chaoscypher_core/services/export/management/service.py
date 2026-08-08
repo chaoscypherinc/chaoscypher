@@ -418,11 +418,15 @@ class CcxExporter:
         (:meth:`_source_stats`) without re-reading the source store.
         """
         records: list[dict[str, Any]] = []
-        for source in self._list_sources(source_ids):
+        sources = self._list_sources(source_ids)
+        # Attach tag NAMES so they ride along as ccx:Source ``keywords`` and
+        # aggregate into the manifest ``tags`` (hub search indexes tags).
+        # One IN(...) query for the whole scope — an unscoped export
+        # enumerates every source, so per-row get_source_tags is N+1.
+        tags_by_source = self.sources.get_source_tags_batch([s["id"] for s in sources])
+        for source in sources:
             source_id = source["id"]
-            # Attach tag NAMES so they ride along as ccx:Source ``keywords`` and
-            # aggregate into the manifest ``tags`` (hub search indexes tags).
-            source["tags"] = [t["name"] for t in self.sources.get_source_tags(source_id)]
+            source["tags"] = [t["name"] for t in tags_by_source.get(source_id, [])]
             chunks = self._collect_chunks(source_id)
             citations_by_chunk = self._collect_citations_by_chunk(source_id)
             for chunk in chunks:

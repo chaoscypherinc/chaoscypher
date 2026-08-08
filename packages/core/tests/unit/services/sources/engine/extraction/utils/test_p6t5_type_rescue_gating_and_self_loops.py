@@ -14,6 +14,8 @@ Tests:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
@@ -107,47 +109,91 @@ def test_validate_relationships_keeps_self_loop_when_allowed() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_type_rescue_disabled_via_filtering_config() -> None:
-    """When enable_type_rescue=False, rescue_invalid_entity_types is not called
-    and entities with invalid types are preserved rather than dropped.
-
-    This is an indirect test: we verify that the entities list going into the
-    rescue step is unmodified when the gate is closed.
+def _filter_entities_kwargs(cfg: FilteringConfig) -> dict:
+    """Common kwargs driving the real ``_filter_entities`` with only the
+    type-rescue stage active (evidence/exclusions/plausibility all off).
     """
-    from unittest.mock import patch
+    return {
+        "entities": [
+            {"name": "Alice", "type": "InvalidType"},
+            {"name": "Bob", "type": "Person"},
+        ],
+        "sentences": [],
+        "chunk_content": "",
+        "filtering_config": cfg,
+        "entity_exclusions": None,
+        "strict_entity_types": True,
+        "valid_entity_type_names": {"Person"},
+        "named_referent_types": None,
+        "normalization_rules": None,
+        "property_type_mapping": None,
+        "filtering_log": MagicMock(),
+    }
 
+
+@pytest.mark.asyncio
+async def test_type_rescue_disabled_via_filtering_config() -> None:
+    """When enable_type_rescue=False, the real gate inside ``_filter_entities``
+    must skip ``rescue_invalid_entity_types`` and preserve invalid-typed
+    entities.
+
+    The previous version of this test hand-copied the gating expression into
+    the test body and asserted a mock that a pre-patch local import made
+    unreachable, so deleting the production gate left it green (hunt queue
+    2026-08-01). This version drives ``_filter_entities`` itself.
+    """
+    from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
+        _filter_entities,
+    )
+
+    cfg = FilteringConfig(
+        enable_type_rescue=False,
+        evidence_validation_mode="off",
+        enable_entity_exclusions=False,
+        enable_plausibility_filter=False,
+    )
+
+    with patch(
+        "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.rescue_invalid_entity_types"
+    ) as mock_rescue:
+        filtered, stats = await _filter_entities(**_filter_entities_kwargs(cfg))
+
+    mock_rescue.assert_not_called()
+    assert "type_rescue" not in stats
+    # Gate closed: InvalidType is neither rescued nor dropped.
+    assert [e["name"] for e in filtered] == ["Alice", "Bob"]
+    assert filtered[0]["type"] == "InvalidType"
+
+
+@pytest.mark.asyncio
+async def test_type_rescue_enabled_reaches_rescue_via_filter_entities() -> None:
+    """Sibling proof the gate is live: with enable_type_rescue=True the same
+    call path must invoke ``rescue_invalid_entity_types`` exactly once.
+    """
     from chaoscypher_core.services.sources.engine.extraction.utils import (
         rescue_invalid_entity_types,
     )
+    from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
+        _filter_entities,
+    )
 
-    cfg = FilteringConfig(enable_type_rescue=False)
-    entities = [
-        {"name": "Alice", "type": "InvalidType"},
-        {"name": "Bob", "type": "Person"},
-    ]
+    cfg = FilteringConfig(
+        enable_type_rescue=True,
+        evidence_validation_mode="off",
+        enable_entity_exclusions=False,
+        enable_plausibility_filter=False,
+    )
 
     with patch(
         "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.rescue_invalid_entity_types",
         wraps=rescue_invalid_entity_types,
     ) as mock_rescue:
-        # Simulate the gating logic directly
-        _type_rescue_enabled = getattr(cfg, "enable_type_rescue", True)
-        strict_entity_types = True
-        valid_entity_type_names: set[str] = {"Person"}
+        filtered, stats = await _filter_entities(**_filter_entities_kwargs(cfg))
 
-        rescued_entities = list(entities)
-        if _type_rescue_enabled and strict_entity_types and valid_entity_type_names:
-            rescued_entities, _, _, _ = rescue_invalid_entity_types(
-                entities,
-                [],
-                valid_types=valid_entity_type_names,
-                normalization_rules={},
-                property_type_mapping={},
-            )
-
-        mock_rescue.assert_not_called()
-        # Entities unchanged — InvalidType was not rescued/dropped
-        assert len(rescued_entities) == 2
+    mock_rescue.assert_called_once()
+    assert "type_rescue" in stats
+    # The valid entity always survives the real rescue pass.
+    assert "Bob" in [e["name"] for e in filtered]
 
 
 __all__: list[str] = []

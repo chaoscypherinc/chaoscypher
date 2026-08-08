@@ -168,7 +168,12 @@ async function importHook() {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // resetAllMocks, not clearAllMocks: the mocked modules are singletons, and
+  // clearAllMocks only clears call history — queued `mockResolvedValueOnce`
+  // values survive it. A test that queues more `once` values than it consumes
+  // then feeds them to whichever test runs next, which is how the step
+  // correlation cases below saw another test's `listSteps` payload.
+  vi.resetAllMocks();
 });
 
 // ===========================================================================
@@ -1071,6 +1076,123 @@ describe('useWorkflowSerialization — saveWorkflow', () => {
     });
 
     expect(workflowsApi.reorderSteps).toHaveBeenCalledWith('wf-1', expect.any(Array));
+  });
+});
+
+// ===========================================================================
+// Suite: per-step correlation + step id write-back (regressions)
+// ===========================================================================
+
+describe('useWorkflowSerialization — step correlation regressions', () => {
+  it('updates each existing step with its own id (not the first matching node)', async () => {
+    const { useWorkflowSerialization, workflowsApi } = await importHook();
+
+    const stepA = makeWorkflowStep({ id: 'step-a', name: 'Step A' });
+    const stepB = makeWorkflowStep({ id: 'step-b', name: 'Step B', step_number: 2 });
+
+    const trigger: Node = {
+      id: 'trigger',
+      type: 'triggerNode',
+      position: { x: 0, y: 0 },
+      data: { eventSource: 'manual', filters: {}, label: 'Manual Trigger' },
+    };
+    const nodeA = makeStepNode('na', { stepId: 'step-a', name: 'Step A' });
+    const nodeB = makeStepNode('nb', { stepId: 'step-b', name: 'Step B edited' });
+    const nodes = [trigger, nodeA, nodeB];
+    const edges = [makeEdge('trigger', 'na'), makeEdge('na', 'nb')];
+
+    (workflowsApi.get as Mock).mockResolvedValue(makeApiWorkflow({ id: 'wf-1' }));
+    (workflowsApi.listSteps as Mock)
+      .mockResolvedValueOnce([]) // load
+      .mockResolvedValueOnce([stepA, stepB]) // save: existing steps
+      .mockResolvedValueOnce([stepA, stepB]); // save: reorder listing
+    (workflowsApi.listTriggers as Mock).mockResolvedValue([]);
+    (workflowsApi.update as Mock).mockResolvedValue(makeApiWorkflow());
+    (workflowsApi.updateStep as Mock).mockResolvedValue({});
+    (workflowsApi.reorderSteps as Mock).mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useWorkflowSerialization());
+
+    await act(async () => {
+      await result.current.loadWorkflow('wf-1');
+    });
+
+    await act(async () => {
+      await result.current.saveWorkflow(nodes, edges, { name: 'X' });
+    });
+
+    // Each step must be updated against its OWN id — the old matcher sent
+    // every serialized step to the first node that had any stepId.
+    expect(workflowsApi.updateStep).toHaveBeenCalledWith(
+      'wf-1',
+      'step-a',
+      expect.objectContaining({ name: 'Step A' }),
+    );
+    expect(workflowsApi.updateStep).toHaveBeenCalledWith(
+      'wf-1',
+      'step-b',
+      expect.objectContaining({ name: 'Step B edited' }),
+    );
+    expect(workflowsApi.updateStep).toHaveBeenCalledTimes(2);
+    expect(workflowsApi.createStep).not.toHaveBeenCalled();
+    expect(workflowsApi.deleteStep).not.toHaveBeenCalled();
+  });
+
+  it('reports created step ids so a second save updates instead of delete+recreate', async () => {
+    const { useWorkflowSerialization, workflowsApi } = await importHook();
+    const { nodes, edges } = makeValidCanvas();
+
+    const createdStep = makeWorkflowStep({ id: 'step-new', name: 'Step s1' });
+
+    (workflowsApi.get as Mock).mockResolvedValue(makeApiWorkflow({ id: 'wf-1' }));
+    (workflowsApi.listSteps as Mock)
+      .mockResolvedValueOnce([]) // load
+      .mockResolvedValueOnce([]) // save 1: existing steps
+      .mockResolvedValueOnce([createdStep]) // save 1: reorder listing
+      .mockResolvedValueOnce([createdStep]) // save 2: existing steps
+      .mockResolvedValueOnce([createdStep]); // save 2: reorder listing
+    (workflowsApi.listTriggers as Mock).mockResolvedValue([]);
+    (workflowsApi.update as Mock).mockResolvedValue(makeApiWorkflow());
+    (workflowsApi.createStep as Mock).mockResolvedValue(createdStep);
+    (workflowsApi.updateStep as Mock).mockResolvedValue(createdStep);
+    (workflowsApi.deleteStep as Mock).mockResolvedValue(undefined);
+    (workflowsApi.reorderSteps as Mock).mockResolvedValue(undefined);
+
+    const onStepIdsAssigned = vi.fn<(a: Array<{ nodeId: string; stepId: string }>) => void>();
+    const { result } = renderHook(() => useWorkflowSerialization({ onStepIdsAssigned }));
+
+    await act(async () => {
+      await result.current.loadWorkflow('wf-1');
+    });
+
+    // First save: the node has no stepId yet → createStep, then the
+    // server-assigned id is reported back for the node.
+    await act(async () => {
+      await result.current.saveWorkflow(nodes, edges, { name: 'X' });
+    });
+
+    expect(workflowsApi.createStep).toHaveBeenCalledTimes(1);
+    expect(onStepIdsAssigned).toHaveBeenCalledWith([{ nodeId: 's1', stepId: 'step-new' }]);
+
+    // Simulate the caller writing the assigned id back onto the node
+    // (useWorkflowPersistence does this via setNodes).
+    const nodesWithIds = nodes.map((n) =>
+      n.id === 's1' ? { ...n, data: { ...n.data, stepId: 'step-new' } } : n,
+    );
+
+    // Second save: the unchanged step must be updated in place — no
+    // delete+recreate churn.
+    await act(async () => {
+      await result.current.saveWorkflow(nodesWithIds, edges, { name: 'X' });
+    });
+
+    expect(workflowsApi.deleteStep).not.toHaveBeenCalled();
+    expect(workflowsApi.createStep).toHaveBeenCalledTimes(1); // still just the first save
+    expect(workflowsApi.updateStep).toHaveBeenCalledWith(
+      'wf-1',
+      'step-new',
+      expect.objectContaining({ name: 'Step s1' }),
+    );
   });
 });
 

@@ -55,6 +55,9 @@ def _make_valkey(*, cancel_key_exists: bool = False) -> MagicMock:
     valkey.srem = AsyncMock(return_value=1)
     valkey.hset = AsyncMock(return_value=1)
     valkey.pipeline = MagicMock(return_value=MagicMock())
+    # Guarded-write primitive backend (cancel paths route through Lua).
+    valkey.script_load = AsyncMock(return_value="sha-abc")
+    valkey.evalsha = AsyncMock(return_value=b"__ok__")
     return valkey
 
 

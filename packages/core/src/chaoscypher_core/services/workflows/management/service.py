@@ -82,7 +82,7 @@ class WorkflowService:
 
         # SRP: Delegate export/import to specialized service
         self.portability_service = WorkflowPortabilityService(
-            repository=storage, tool_service=tool_service
+            repository=storage, tool_service=tool_service, database_name=database_name
         )
 
     # ========================================================================
@@ -308,7 +308,7 @@ class WorkflowService:
         # Build step data dict (storage protocol expects dict, returns dict)
         now = datetime.now(UTC)
         step_dict = {
-            "id": step_data.get("id", f"step_{now.timestamp()}"),
+            "id": step_data.get("id") or generate_id("step"),
             "workflow_id": step_data["workflow_id"],
             "step_number": step_data["step_number"],
             "name": step_data["name"],

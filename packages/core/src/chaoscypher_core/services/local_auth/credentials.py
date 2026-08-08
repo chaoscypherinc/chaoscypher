@@ -22,6 +22,7 @@ from passlib.hash import bcrypt  # type: ignore[import-untyped]
 from chaoscypher_core.services.local_auth.errors import (
     ApiKeyNotFound,
     CorruptCredentialsFile,
+    CredentialsAlreadyInitialized,
     CredentialsNotInitialized,
     InvalidPassword,
     UsernameMismatch,
@@ -90,13 +91,13 @@ class CredentialsFile:
             password: Plaintext password; hashed with bcrypt before storage.
 
         Raises:
-            FileExistsError: If the credentials file already exists.
+            CredentialsAlreadyInitialized: If the credentials file already exists.
 
         """
         with self._lock:
             if self._path.exists():
                 msg = f"Credentials already initialized at {self._path}"
-                raise FileExistsError(msg)
+                raise CredentialsAlreadyInitialized(msg)
             data: CredentialsData = {
                 "user": {
                     "username": username,
@@ -140,6 +141,7 @@ class CredentialsFile:
 
         Raises:
             CredentialsNotInitialized: If no credentials file exists.
+            CorruptCredentialsFile: If the stored hash is malformed.
             UsernameMismatch: If ``username`` does not match the stored user.
             InvalidPassword: If ``old_password`` does not verify.
 
@@ -148,7 +150,7 @@ class CredentialsFile:
             data = self._load()
             if data["user"]["username"] != username:
                 raise UsernameMismatch(username)
-            if not bcrypt.verify(old_password, data["user"]["password_hash"]):
+            if not self._verify_stored_hash(old_password, data["user"]["password_hash"]):
                 raise InvalidPassword
             data["user"]["password_hash"] = bcrypt.using(rounds=BCRYPT_ROUNDS).hash(new_password)
             data["session_epoch"] += 1
@@ -164,6 +166,7 @@ class CredentialsFile:
 
         Raises:
             CredentialsNotInitialized: If no credentials file exists.
+            CorruptCredentialsFile: If the stored hash is malformed.
             UsernameMismatch: If ``old_username`` does not match the stored user.
             InvalidPassword: If ``password`` does not verify.
 
@@ -172,7 +175,7 @@ class CredentialsFile:
             data = self._load()
             if data["user"]["username"] != old_username:
                 raise UsernameMismatch(old_username)
-            if not bcrypt.verify(password, data["user"]["password_hash"]):
+            if not self._verify_stored_hash(password, data["user"]["password_hash"]):
                 raise InvalidPassword
             data["user"]["username"] = new_username
             data["session_epoch"] += 1
@@ -297,6 +300,21 @@ class CredentialsFile:
                     rec["last_used_at"] = datetime.now(UTC).isoformat()
                     self._atomic_write(data)
                     return
+
+    def _verify_stored_hash(self, password: str, password_hash: str) -> bool:
+        """Verify ``password`` against a stored bcrypt hash.
+
+        Raises:
+            CorruptCredentialsFile: If the stored hash is malformed.
+                ``bcrypt.verify`` raises ``ValueError`` on a hash it cannot
+                parse; that must surface as a typed local-auth error, not a
+                bare stdlib exception (CC045 class).
+
+        """
+        try:
+            return bool(bcrypt.verify(password, password_hash))
+        except ValueError as exc:
+            raise CorruptCredentialsFile(str(self._path)) from exc
 
     def _load(self) -> CredentialsData:
         """Read and parse the on-disk credentials file.

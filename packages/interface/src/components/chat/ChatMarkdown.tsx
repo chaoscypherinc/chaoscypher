@@ -18,7 +18,9 @@ import ChunkCitation from './ChunkCitation';
 const ENTITY_REFERENCE_PATTERN = /\[\[(node|edge)[_:\-./\s]([a-zA-Z_]*[a-f0-9-]+)\|([^\]]+)\]\]/gi;
 
 // Pattern to match chunk citations: [[cite:CHUNK_ID:Sn|label]] or [[cite:CHUNK_ID#Sn]]
-const CHUNK_CITATION_PATTERN = /\[\[cite:([a-f0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]/gi;
+// The ID group mirrors core CHUNK_CITATION_PATTERN: hex UUIDs, C-aliases,
+// and prefixed lexicon-import ids (chunk_<hex>) — never arbitrary letter junk.
+const CHUNK_CITATION_PATTERN = /\[\[cite:((?:[a-z]+_)?[a-f0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]/gi;
 
 // Loose pattern matching ANY [[cite:...]] marker regardless of internal
 // validity. The backend salvages/scrubs malformed markers, but streamed
@@ -26,12 +28,35 @@ const CHUNK_CITATION_PATTERN = /\[\[cite:([a-f0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(
 // the strict pattern can't render rather than showing raw marker text.
 const LOOSE_CITE_PATTERN = /\[\[cite:[^\]]*\]\]/gi;
 
+// Fenced code blocks (``` / ~~~) and inline code spans. Marker rewriting must
+// never touch code regions: code is verbatim by definition, and ReactMarkdown
+// renders code content through components this file does not make
+// placeholder-aware — a substituted marker there leaks as literal %%CITE_n%%
+// (same bug class as the fixed 2026-06-10 heading leak).
+const CODE_REGION_PATTERN = /```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)|`[^`\n]*`/g;
+
+/** Apply a string transform only outside fenced/inline code regions. */
+function transformOutsideCode(content: string, transform: (segment: string) => string): string {
+  let result = '';
+  let lastIndex = 0;
+  CODE_REGION_PATTERN.lastIndex = 0;
+  let match;
+  while ((match = CODE_REGION_PATTERN.exec(content)) !== null) {
+    result += transform(content.slice(lastIndex, match.index)) + match[0];
+    lastIndex = match.index + match[0].length;
+  }
+  result += transform(content.slice(lastIndex));
+  return result;
+}
+
 /** Remove [[cite:...]] markers the strict pattern cannot parse. */
 function stripMalformedCitations(content: string): string {
-  return content.replace(LOOSE_CITE_PATTERN, (marker) => {
-    CHUNK_CITATION_PATTERN.lastIndex = 0;
-    return CHUNK_CITATION_PATTERN.test(marker) ? marker : '';
-  });
+  return transformOutsideCode(content, (segment) =>
+    segment.replace(LOOSE_CITE_PATTERN, (marker) => {
+      CHUNK_CITATION_PATTERN.lastIndex = 0;
+      return CHUNK_CITATION_PATTERN.test(marker) ? marker : '';
+    }),
+  );
 }
 
 interface ChatMarkdownProps {
@@ -62,33 +87,38 @@ function preprocessContent(content: string): { processed: string; placeholders: 
   const placeholders = new Map<string, PlaceholderData>();
   let counter = 0;
 
-  ENTITY_REFERENCE_PATTERN.lastIndex = 0;
-  CHUNK_CITATION_PATTERN.lastIndex = 0;
+  // Code regions keep their literal marker text — see CODE_REGION_PATTERN.
+  const processed = transformOutsideCode(content, (segment) => {
+    ENTITY_REFERENCE_PATTERN.lastIndex = 0;
+    CHUNK_CITATION_PATTERN.lastIndex = 0;
 
-  // Replace entity references
-  let processed = content.replace(ENTITY_REFERENCE_PATTERN, (_match, entityType, entityId, label) => {
-    const placeholder = `%%ENTITY_${counter}%%`;
-    placeholders.set(placeholder, {
-      kind: 'entity',
-      type: entityType.toLowerCase(),
-      id: entityId,
-      label: label,
+    // Replace entity references
+    let out = segment.replace(ENTITY_REFERENCE_PATTERN, (_match, entityType, entityId, label) => {
+      const placeholder = `%%ENTITY_${counter}%%`;
+      placeholders.set(placeholder, {
+        kind: 'entity',
+        type: entityType.toLowerCase(),
+        id: entityId,
+        label: label,
+      });
+      counter++;
+      return placeholder;
     });
-    counter++;
-    return placeholder;
-  });
 
-  // Replace chunk citations
-  processed = processed.replace(CHUNK_CITATION_PATTERN, (_match, chunkId, sentenceRefs, label) => {
-    const placeholder = `%%CITE_${counter}%%`;
-    placeholders.set(placeholder, {
-      kind: 'citation',
-      chunkId: chunkId,
-      sentenceRefs: sentenceRefs,
-      label: label,
+    // Replace chunk citations
+    out = out.replace(CHUNK_CITATION_PATTERN, (_match, chunkId, sentenceRefs, label) => {
+      const placeholder = `%%CITE_${counter}%%`;
+      placeholders.set(placeholder, {
+        kind: 'citation',
+        chunkId: chunkId,
+        sentenceRefs: sentenceRefs,
+        label: label,
+      });
+      counter++;
+      return placeholder;
     });
-    counter++;
-    return placeholder;
+
+    return out;
   });
 
   return { processed, placeholders };

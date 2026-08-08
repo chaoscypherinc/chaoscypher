@@ -46,9 +46,22 @@ console = Console()
     type=click.Choice(["table", "json", "yaml"]),
     help="Output format",
 )
+@click.option(
+    "--limit",
+    "-n",
+    "limit",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Maximum number of files to fetch (default: adapter default, 100).",
+)
 @click.option("--database", "-d", default="default", help="Database name")
 def list_files(
-    status: str | None, pending: bool, awaiting: bool, output_format: str, database: str
+    status: str | None,
+    pending: bool,
+    awaiting: bool,
+    output_format: str,
+    limit: int | None,
+    database: str,
 ) -> None:
     """List all ingested files.
 
@@ -58,6 +71,7 @@ def list_files(
         chaoscypher source list
         chaoscypher source list --pending            # Show resumable files
         chaoscypher source list --status indexed
+        chaoscypher source list --limit 500
         chaoscypher source list --format json
     """
     try:
@@ -70,9 +84,13 @@ def list_files(
         # ``--database``, which would otherwise query the ``default`` DB
         # even when ``db current`` reports a different active workspace.
         effective_status = SourceStatus.AWAITING_CONFIRMATION if awaiting else status
+        # Only pass ``limit`` through when the user asked for one, so the
+        # adapter's own default stays the single source of truth.
+        limit_kwargs: dict[str, int] = {} if limit is None else {"limit": limit}
         files = ctx.storage_adapter.list_files(
-            database_name=ctx.database_name, status=effective_status
+            database_name=ctx.database_name, status=effective_status, **limit_kwargs
         )
+        fetched_count = len(files)
 
         # Apply pending filter (excludes committed and errored). Use the real
         # enum value ``SourceStatus.ERROR`` ("error"): there is no "failed"
@@ -158,7 +176,25 @@ def list_files(
                 )
 
             console.print(table)
-            console.print(f"\n[dim]Total: {len(files)} file(s)[/dim]")
+
+            # Truncation visibility: the adapter caps the fetch (default
+            # 100), so "Total" lied for databases with more sources than
+            # the cap. Compare the fetched row count against the real
+            # DB total and say so when rows were left behind.
+            if effective_status:
+                total_in_db = ctx.storage_adapter.count_sources_by_statuses(
+                    statuses=[str(effective_status)],
+                    database_name=ctx.database_name,
+                )
+            else:
+                total_in_db = ctx.storage_adapter.count_sources(database_name=ctx.database_name)
+            if total_in_db > fetched_count:
+                console.print(
+                    f"\n[dim]Showing first {len(files)} of {total_in_db} file(s)."
+                    " Use --limit to fetch more.[/dim]"
+                )
+            else:
+                console.print(f"\n[dim]Total: {len(files)} file(s)[/dim]")
 
             # Show resume hint for pending files
             if pending and files:

@@ -327,9 +327,32 @@ class WorkflowExecutionsMixin(SqliteMixinBase, WorkflowExecutionStorageProtocol)
 
         """
         self._ensure_connected()
-        statement = select(WorkflowExecution).where(
-            WorkflowExecution.workflow_id == workflow_id,
-            WorkflowExecution.status.in_(["pending", "queued", "running"]),
+        statement = (
+            select(WorkflowExecution)
+            .options(
+                load_only(
+                    WorkflowExecution.id,
+                    WorkflowExecution.workflow_id,
+                    WorkflowExecution.triggered_by,
+                    WorkflowExecution.trigger_id,
+                    WorkflowExecution.parent_execution_id,
+                    WorkflowExecution.inputs,
+                    WorkflowExecution.outputs,
+                    WorkflowExecution.status,
+                    WorkflowExecution.current_step_id,
+                    WorkflowExecution.failed_step_id,
+                    WorkflowExecution.error_message,
+                    WorkflowExecution.duration_ms,
+                    WorkflowExecution.created_at,
+                    WorkflowExecution.started_at,
+                    WorkflowExecution.completed_at,
+                    # EXCLUDE: step_executions (relationship — prevents N+1 queries)
+                )
+            )
+            .where(
+                WorkflowExecution.workflow_id == workflow_id,
+                WorkflowExecution.status.in_(["pending", "queued", "running"]),
+            )
         )
         rows = self.session.exec(statement).all()
         return self._entities_to_dicts(rows)

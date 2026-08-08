@@ -259,9 +259,12 @@ def enrich_entity_references_from_tool_results(
 
 # Pattern: [[cite:CHUNK_ID:Sn|label]] or [[cite:CHUNK_ID#Sn]] (label optional)
 # Accepts : or # as separator between chunk ID and sentence refs
-# ID group must match both hex UUIDs (a-f0-9-) and chunk aliases (C0, C1, etc.)
+# ID group must match hex UUIDs (a-f0-9-), chunk aliases (C0, C1, etc.), and
+# prefixed ids from the lexicon importer (chunk_<hex>). It must NOT match
+# arbitrary letter junk (e.g. O5) — the interface strict pattern rejects
+# those, and the layers must agree on one grammar (SECTION_MAP § chat).
 CHUNK_CITATION_PATTERN = re.compile(
-    r"\[\[cite:([A-Za-z0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]",
+    r"\[\[cite:((?:[a-z]+_)?[a-f0-9-]+)[:#](S\d+(?:[,;]\s*S\d+)*)(?:\|([^\]]+))?\]\]",
     re.IGNORECASE,
 )
 
@@ -280,13 +283,13 @@ class ChunkCitationData(TypedDict, total=False):
 
 # Pattern: [CHUNK <alias-or-uuid>] or [CHUNK <alias-or-uuid> | <filename>]
 _RAW_CHUNK_REF_PATTERN = re.compile(
-    r"\[CHUNK\s+(C\d+|[a-f0-9-]+)(?:\s*\|\s*([^\]]+))?\]",
+    r"\[CHUNK\s+(C\d+|(?:[a-z]+_)?[a-f0-9-]+)(?:\s*\|\s*([^\]]+))?\]",
     re.IGNORECASE,
 )
 
 # Pattern: (Chunk C0, Sentence S1) or (Chunk C0, Sentences S1, S2)
 _PAREN_CHUNK_REF_PATTERN = re.compile(
-    r"\(Chunk\s+(C\d+|[a-f0-9-]+),?\s*Sentences?\s+(S\d+(?:[,;\s]+S\d+)*)\)",
+    r"\(Chunk\s+(C\d+|(?:[a-z]+_)?[a-f0-9-]+),?\s*Sentences?\s+(S\d+(?:[,;\s]+S\d+)*)\)",
     re.IGNORECASE,
 )
 
@@ -312,7 +315,7 @@ _LOOSE_CITE_PATTERN = re.compile(
 # Token classifiers for salvaging malformed citation ref lists (fullmatch use)
 _SENTENCE_TOKEN_RE = re.compile(r"S\d+", re.IGNORECASE)
 _ALIAS_TOKEN_RE = re.compile(r"C\d+", re.IGNORECASE)
-_UUIDISH_TOKEN_RE = re.compile(r"[a-f0-9-]{8,}", re.IGNORECASE)
+_UUIDISH_TOKEN_RE = re.compile(r"(?:[a-z]+_)?[a-f0-9-]{8,}", re.IGNORECASE)
 
 
 def _tidy_removal_whitespace(text: str) -> str:
@@ -453,7 +456,10 @@ def _build_chunk_alias_map(
             if not isinstance(chunk_list, list):
                 continue
             for chunk in chunk_list:
-                if isinstance(chunk, dict) and "chunk_alias" in chunk:
+                # Guard both keys: a malformed tool result missing chunk_id
+                # would otherwise KeyError through normalize_chunk_references
+                # → finalize_chat_content and fail the whole turn.
+                if isinstance(chunk, dict) and chunk.get("chunk_alias") and chunk.get("chunk_id"):
                     alias = chunk["chunk_alias"]
                     alias_map[alias.upper()] = (
                         chunk["chunk_id"],
@@ -501,7 +507,9 @@ def normalize_chunk_references(
     def _replace_paren(match: re.Match[str]) -> str:
         ref = match.group(1)
         raw_refs = match.group(2)  # e.g. "S1" or "S1, S2"
-        sentence_refs = ",".join(s.strip() for s in re.findall(r"S\d+", raw_refs))
+        sentence_refs = ",".join(
+            s.strip().upper() for s in re.findall(r"S\d+", raw_refs, re.IGNORECASE)
+        )
         return f"[[cite:{ref}:{sentence_refs}|source]]"
 
     content = _PAREN_CHUNK_REF_PATTERN.sub(_replace_paren, content)
@@ -1359,7 +1367,7 @@ def _resolve_sentence_text(
         Joined sentence text, or None if nothing resolved.
 
     """
-    indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs)]
+    indices = [int(s) - 1 for s in re.findall(r"S(\d+)", sentence_refs, re.IGNORECASE)]
     sentences = [
         original_content[offsets[idx]["start"] : offsets[idx]["end"]]
         for idx in indices

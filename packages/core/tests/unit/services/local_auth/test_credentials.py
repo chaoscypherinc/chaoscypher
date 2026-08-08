@@ -13,8 +13,10 @@ import pytest
 from chaoscypher_core.services.local_auth.credentials import CredentialsFile
 from chaoscypher_core.services.local_auth.errors import (
     CorruptCredentialsFile,
+    CredentialsAlreadyInitialized,
     CredentialsNotInitialized,
     InvalidPassword,
+    LocalAuthError,
     UsernameMismatch,
 )
 
@@ -41,11 +43,17 @@ def test_initialize_creates_file_with_user(cred_path: Path) -> None:
     assert data["session_epoch"] == 1
 
 
-def test_initialize_twice_raises(cred_path: Path) -> None:
+def test_initialize_twice_raises_typed_auth_error(cred_path: Path) -> None:
+    """Double initialize raises the local-auth hierarchy, not stdlib FileExistsError."""
     creds = CredentialsFile(cred_path)
     creds.initialize("admin", "pw")
-    with pytest.raises(FileExistsError):
+    with pytest.raises(CredentialsAlreadyInitialized):
         creds.initialize("other", "pw2")
+
+
+def test_credentials_already_initialized_is_local_auth_error() -> None:
+    """The double-init error participates in the shared auth hierarchy."""
+    assert issubclass(CredentialsAlreadyInitialized, LocalAuthError)
 
 
 def test_file_has_0600_permissions(cred_path: Path) -> None:
@@ -146,6 +154,35 @@ def test_load_corrupt_file_raises(cred_path: Path) -> None:
     creds = CredentialsFile(cred_path)
     with pytest.raises(CorruptCredentialsFile):
         creds.verify_password("admin", "pw")
+
+
+def _write_corrupt_hash(cred_path: Path) -> None:
+    """Persist a credentials file whose stored bcrypt hash is malformed."""
+    data = json.loads(cred_path.read_text())
+    data["user"]["password_hash"] = "not-a-bcrypt-hash"
+    cred_path.write_text(json.dumps(data))
+
+
+def test_change_password_corrupt_hash_raises_typed_error(cred_path: Path) -> None:
+    """A malformed stored hash surfaces as a typed auth error, not ValueError.
+
+    bcrypt.verify raises ValueError on a hash it cannot parse;
+    ``verify_password`` guards that, but ``change_password`` called
+    ``bcrypt.verify`` bare (CC045 class).
+    """
+    creds = CredentialsFile(cred_path)
+    creds.initialize("admin", "pw")
+    _write_corrupt_hash(cred_path)
+    with pytest.raises(CorruptCredentialsFile):
+        creds.change_password("admin", "pw", "new-pw")
+
+
+def test_change_username_corrupt_hash_raises_typed_error(cred_path: Path) -> None:
+    creds = CredentialsFile(cred_path)
+    creds.initialize("admin", "pw")
+    _write_corrupt_hash(cred_path)
+    with pytest.raises(CorruptCredentialsFile):
+        creds.change_username("admin", "pw", "newname")
 
 
 def test_touch_api_key_updates_last_used(cred_path: Path) -> None:

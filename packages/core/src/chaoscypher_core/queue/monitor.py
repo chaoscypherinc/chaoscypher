@@ -163,11 +163,15 @@ class QueueMonitor:
         if not isinstance(hincrby_result2, int):
             await hincrby_result2
 
-        cost_cents = int(cost_usd * 100)
-        hincrby_result3 = self.client.hincrby(
-            f"queue:{queue}:stats", "total_cost_cents", cost_cents
+        # Accumulate fractional cents via HINCRBYFLOAT: per-call LLM costs
+        # are routinely sub-cent, so truncating to int here recorded $0 for
+        # every such call and chronically undercounted the queue total.
+        # HINCRBYFLOAT accepts a field previously written by HINCRBY, so
+        # existing integer-valued stats keys keep working.
+        hincrby_result3 = self.client.hincrbyfloat(
+            f"queue:{queue}:stats", "total_cost_cents", cost_usd * 100
         )
-        if not isinstance(hincrby_result3, int):
+        if not isinstance(hincrby_result3, float):
             await hincrby_result3
 
     async def get_token_stats(
@@ -223,7 +227,9 @@ class QueueMonitor:
                 if not isinstance(hget_result3, (str, bytes, type(None)))
                 else hget_result3
             )
-            cost_cents = int(cost_cents_raw or 0)
+            # float() parse: the field holds fractional cents since the
+            # HINCRBYFLOAT change (and parses legacy integer values fine).
+            cost_cents = float(cost_cents_raw or 0)
             total_cost_usd = cost_cents / 100.0
 
         return {

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from chaoscypher_core.database.backup import backup_database
 from chaoscypher_core.database.engine import get_db_path
+from chaoscypher_core.exceptions import NotFoundError, ValidationError
 from chaoscypher_core.database.migrations.runner import (
     current_revision,
     pending_revisions,
@@ -147,16 +148,22 @@ class UpgradeService:
         )
 
     def rollback(self) -> RollbackResponse:
-        """Restore the database from the pre-upgrade backup."""
+        """Restore the database from the pre-upgrade backup.
+
+        Raises:
+            ValidationError: If no pre-upgrade backup is recorded (mapped
+                to HTTP 400 at the Cortex error boundary).
+            NotFoundError: If the recorded backup file is missing from
+                disk (mapped to HTTP 404).
+        """
         state = get_upgrade_state(self.db_path)
         if not state.last_backup:
             msg = "No backup available to roll back to."
-            raise RuntimeError(msg)
+            raise ValidationError(msg)
 
         backup_path = Path(state.last_backup)
         if not backup_path.exists():
-            msg = f"Backup file missing: {backup_path}"
-            raise FileNotFoundError(msg)
+            raise NotFoundError("Backup", str(backup_path))
 
         # The app runs app.db in WAL mode. Before overwriting it we must
         # dispose cached engines and delete the post-upgrade ``.db-wal`` /

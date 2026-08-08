@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import tempfile
 from collections import deque
 from dataclasses import dataclass, field
@@ -41,6 +42,14 @@ from chaoscypher_core.services.package import extract_archive
 
 
 logger = structlog.get_logger(__name__)
+
+# The hub's version string becomes a single cache-directory segment (and a
+# download-URL segment). The hub is a third party, so the value is validated
+# before any filesystem use: no separators, no leading dot, bounded length.
+# A hostile "../../.." or absolute-path version would otherwise choose the
+# extraction destination itself, bypassing extract_archive's zip-slip guard
+# (which validates member names relative to dest_dir, never dest_dir).
+_SAFE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 
 
 @dataclass
@@ -369,9 +378,22 @@ class PackageResolver:
             ResolverError: If download fails.
         """
         try:
-            # Get package info (resolves "latest" to actual version)
-            info = await client.get_package_info(spec.name, spec.version or "latest")
+            # Get package info (resolves "latest" to actual version). The
+            # client signature is (owner_username, repo_name, version) —
+            # spec.name is "owner/name" or a bare "name".
+            owner, _, repo = spec.name.rpartition("/")
+            info = await client.get_package_info(owner, repo, spec.version)
             actual_version = info.version
+
+            # The version is hub-controlled input used as a path segment
+            # below (and a URL segment in download()); reject anything that
+            # could escape the cache directory.
+            if not _SAFE_VERSION_RE.fullmatch(actual_version):
+                raise ResolverError(
+                    "Hub returned an unsafe version string",
+                    package=spec.raw,
+                    details={"version": actual_version},
+                )
 
             # Check cache first
             cache_path = self.cache_dir / "packages" / spec.name.replace("/", "-")
@@ -392,7 +414,7 @@ class PackageResolver:
                     version=actual_version,
                 )
 
-                archive_bytes = await client.download(spec.name, actual_version)
+                archive_bytes = await client.download(owner, repo, actual_version)
 
                 # Validate + read the CCX 3.0 manifest from the downloaded
                 # bytes, then extract to cache for downstream composition.

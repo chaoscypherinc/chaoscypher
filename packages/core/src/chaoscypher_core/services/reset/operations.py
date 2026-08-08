@@ -114,20 +114,32 @@ def _reset_knowledge_graph(database_name: str, stats: dict[str, object]) -> None
         raise
 
 
-async def _delete_import_files(settings: Settings, stats: dict[str, object]) -> None:
-    """Delete the uploaded import files directory.
+async def _delete_import_files(
+    settings: Settings, database_name: str, stats: dict[str, object]
+) -> None:
+    """Delete the uploaded import files directory for *database_name*.
+
+    Derives the path from ``database_name`` — ``settings.database_dir``
+    resolves to the CURRENT database, which may differ from the reset
+    target.
 
     Args:
-        settings: Application settings with ``database_dir`` and ``paths``
-            attributes.
+        settings: Application settings with a ``paths`` attribute.
+        database_name: Target database name.
         stats: Mutable stats dict updated with ``imports_directory_deleted``.
 
     """
     import asyncio
     import shutil
+    from pathlib import Path
 
     try:
-        imports_dir = settings.database_dir / settings.paths.imports_subdir
+        imports_dir = (
+            Path(settings.paths.data_dir)
+            / settings.paths.databases_subdir
+            / database_name
+            / settings.paths.imports_subdir
+        )
         if imports_dir.exists():
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, shutil.rmtree, imports_dir)
@@ -354,7 +366,7 @@ class ResetOperations:
 
         _delete_source_data(database_name, total_stats)
         _reset_knowledge_graph(database_name, total_stats)
-        await _delete_import_files(settings, total_stats)
+        await _delete_import_files(settings, database_name, total_stats)
         _reset_search_indices(database_name, total_stats)
 
         logger.info("knowledge_base_reset_complete", stats=total_stats)

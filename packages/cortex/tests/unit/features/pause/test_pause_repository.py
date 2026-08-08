@@ -10,26 +10,38 @@ from chaoscypher_cortex.features.pause.repository import PauseRepository
 
 def test_pause_source_delegates_to_adapter() -> None:
     adapter = MagicMock()
+    adapter.bulk_set_sources_paused = MagicMock(return_value=1)
     repo = PauseRepository(adapter=adapter)
 
-    repo.pause_source(source_id="s-1", database_name="default", reason="x")
+    updated = repo.pause_source(source_id="s-1", database_name="default", reason="x")
 
-    adapter.set_source_paused.assert_called_once_with(
-        source_id="s-1",
+    assert updated == 1
+    adapter.bulk_set_sources_paused.assert_called_once_with(
+        source_ids=["s-1"],
         database_name="default",
         is_paused=True,
         reason="x",
     )
 
 
-def test_resume_source_passes_false() -> None:
+def test_pause_source_returns_zero_for_missing_source() -> None:
     adapter = MagicMock()
+    adapter.bulk_set_sources_paused = MagicMock(return_value=0)
     repo = PauseRepository(adapter=adapter)
 
-    repo.resume_source(source_id="s-1", database_name="default")
+    assert repo.pause_source(source_id="nope", database_name="default", reason=None) == 0
 
-    adapter.set_source_paused.assert_called_once_with(
-        source_id="s-1",
+
+def test_resume_source_passes_false() -> None:
+    adapter = MagicMock()
+    adapter.bulk_set_sources_paused = MagicMock(return_value=1)
+    repo = PauseRepository(adapter=adapter)
+
+    updated = repo.resume_source(source_id="s-1", database_name="default")
+
+    assert updated == 1
+    adapter.bulk_set_sources_paused.assert_called_once_with(
+        source_ids=["s-1"],
         database_name="default",
         is_paused=False,
         reason=None,

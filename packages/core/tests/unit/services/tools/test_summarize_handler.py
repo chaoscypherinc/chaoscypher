@@ -73,6 +73,48 @@ def mock_embedding():
     return AsyncMock(return_value={"embedding": [0.1] * 8})
 
 
+class TestRetrieveBySourcePagination:
+    """Regression: per-source pagination must not stop early after source 1."""
+
+    @pytest.mark.asyncio
+    async def test_multi_source_fetches_all_pages_of_every_source(
+        self, mock_search, mock_llm_chat, mock_embedding
+    ):
+        """The page-loop break used to compare the cross-source accumulator
+        against the current source's per-source total, so every source after
+        the first lost all pages beyond its first.
+        """
+        per_source = {
+            "srcA": [_make_chunk(i, source_id="srcA") for i in range(5)],
+            "srcB": [_make_chunk(i, source_id="srcB") for i in range(5)],
+        }
+        page_size = 3
+
+        def get_by_source(*, source_id, page, page_size, include_embeddings):
+            chunks = per_source[source_id]
+            start = (page - 1) * page_size
+            return chunks[start : start + page_size], len(chunks)
+
+        indexing = MagicMock()
+        indexing.get_chunks_by_source.side_effect = get_by_source
+        settings = _make_settings()
+        settings.batching.summarize_chunk_page_size = page_size
+
+        handlers = SummarizeToolHandlers(
+            indexing_repository=indexing,
+            search_repository=mock_search,
+            llm_chat_callback=mock_llm_chat,
+            embedding_callback=mock_embedding,
+            settings=settings,
+        )
+
+        chunks = await handlers._retrieve_by_source(["srcA", "srcB"])
+
+        assert len(chunks) == 10
+        assert {c["source_id"] for c in chunks} == {"srcA", "srcB"}
+        assert sum(1 for c in chunks if c["source_id"] == "srcB") == 5
+
+
 class TestSummarizeHandler:
     """Test the summarize() method end-to-end."""
 

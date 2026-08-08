@@ -46,8 +46,11 @@ class TriggerStatsTracker:
         # Per-trigger statistics
         self.trigger_stats: dict[str, TriggerStats] = {}
 
-        # Track execution times for average calculation (per trigger)
-        self.execution_times: dict[str, list[float]] = defaultdict(list)
+        # Track execution times for average calculation (per trigger), bounded
+        # like trigger_history — the executor lives for the process lifetime
+        self.execution_times: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=history_limit)
+        )
 
         logger.info("trigger_stats_tracker_initialized", history_limit=history_limit)
 

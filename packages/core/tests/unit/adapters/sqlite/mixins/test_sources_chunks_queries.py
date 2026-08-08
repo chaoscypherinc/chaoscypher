@@ -268,6 +268,38 @@ def test_update_chunk_embedding_missing_raises(adapter: SqliteAdapter) -> None:
         )
 
 
+def test_update_chunk_embeddings_batch(adapter: SqliteAdapter) -> None:
+    """The batch writer persists every existing chunk and reports missing ids."""
+    _seed_source(adapter)
+    _add_chunk(adapter, "c-1")
+    _add_chunk(adapter, "c-2", chunk_index=1)
+
+    missing = adapter.update_chunk_embeddings_batch(
+        {"c-1": "vec-one", "c-2": "vec-two", "c-gone": "vec-three"},
+        embedding_model="model-x",
+        embedding_dimensions=384,
+        status="indexed",
+    )
+
+    assert missing == ["c-gone"]
+    for chunk_id, payload in (("c-1", "vec-one"), ("c-2", "vec-two")):
+        found = adapter.get_chunk_by_id(chunk_id)
+        assert found is not None
+        assert found["embedding_model"] == "model-x"
+        assert found["embedding_dimensions"] == 384
+        assert found["status"] == "indexed"
+        assert found["embedding"] in (payload.encode("utf-8"), payload)
+
+
+def test_update_chunk_embeddings_batch_empty_is_noop(adapter: SqliteAdapter) -> None:
+    assert (
+        adapter.update_chunk_embeddings_batch(
+            {}, embedding_model="m", embedding_dimensions=1, status="indexed"
+        )
+        == []
+    )
+
+
 # ---------------------------------------------------------------------------
 # Unembedded chunk queries
 # ---------------------------------------------------------------------------

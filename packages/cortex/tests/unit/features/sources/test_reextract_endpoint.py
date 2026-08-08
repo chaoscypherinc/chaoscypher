@@ -360,3 +360,83 @@ class TestReextractSource:
         call_kwargs = mock_bus.emit.call_args.kwargs
         assert call_kwargs["details"]["source_id"] == "src-1"
         assert call_kwargs["details"]["prior_status"] == "extracted"
+
+
+@pytest.mark.unit
+class TestReextractPerCallOverrides:
+    """`POST /sources/{id}/re_extract` accepts optional per-call setting overrides.
+
+    Before 2026-08-04 the handler declared no body model, so FastAPI silently
+    discarded any JSON: a client sending ``{"filtering_mode": "strict"}`` got
+    ``202`` and a full, token-costing re-extraction under the *old* settings.
+    """
+
+    @staticmethod
+    def _service_and_queue() -> tuple[Any, Any, Any]:
+        adapter = MagicMock()
+        engine = MagicMock()
+        engine.get_source.side_effect = [
+            _source_dict(status="indexed"),
+            _source_dict(status="indexed"),
+        ]
+        service = _make_service(adapter=adapter, engine_service=engine)
+        return service, adapter, engine
+
+    @pytest.mark.asyncio
+    async def test_supplied_overrides_reach_the_extraction_payload(self) -> None:
+        """A supplied override must land in the file_info the worker reads."""
+        service, _adapter, _engine = self._service_and_queue()
+
+        with (
+            patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
+            patch("chaoscypher_cortex.features.sources.service.event_bus"),
+            _patched_provider(),
+        ):
+            mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
+            await service.reextract_source(
+                "src-1",
+                overrides={"filtering_mode": "strict", "content_filtering": False},
+            )
+
+        file_info = mock_queue.queue_import_analysis.call_args.kwargs["file_info"]
+        assert file_info["filtering_mode"] == "strict"
+        assert file_info["content_filtering"] is False
+
+    @pytest.mark.asyncio
+    async def test_no_overrides_leaves_the_payload_untouched(self) -> None:
+        """Sending no body must be byte-identical to the previous behaviour.
+
+        Load-bearing for backwards compatibility: `content_filtering` keeps its
+        hardcoded True and no `filtering_mode` key is injected, so the worker
+        falls through to the persisted row exactly as before.
+        """
+        service, _adapter, _engine = self._service_and_queue()
+
+        with (
+            patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
+            patch("chaoscypher_cortex.features.sources.service.event_bus"),
+            _patched_provider(),
+        ):
+            mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
+            await service.reextract_source("src-1")
+
+        file_info = mock_queue.queue_import_analysis.call_args.kwargs["file_info"]
+        assert "filtering_mode" not in file_info
+        assert file_info["content_filtering"] is True
+
+    @pytest.mark.asyncio
+    async def test_empty_override_dict_is_a_no_op(self) -> None:
+        """A body with every field omitted dumps to {} and must change nothing."""
+        service, _adapter, _engine = self._service_and_queue()
+
+        with (
+            patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
+            patch("chaoscypher_cortex.features.sources.service.event_bus"),
+            _patched_provider(),
+        ):
+            mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
+            await service.reextract_source("src-1", overrides={})
+
+        file_info = mock_queue.queue_import_analysis.call_args.kwargs["file_info"]
+        assert "filtering_mode" not in file_info
+        assert file_info["content_filtering"] is True

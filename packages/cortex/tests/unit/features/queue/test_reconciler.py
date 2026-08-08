@@ -70,6 +70,62 @@ def _build_mock_client(
         await valkey.expire(f"queue:task:{task_id}", client._failed_result_ttl)
 
     client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+
+    # Pass-lock primitives for reconcile_queue's SET NX guard.
+    valkey.set = AsyncMock(return_value=True)
+    valkey.eval = AsyncMock(return_value=1)
+    client._reconcile_lock_ttl = 120
+    client.failed_result_ttl = client._failed_result_ttl
+
+    # Emulate the guarded-write primitives against task_hashes, routing the
+    # component operations through the same valkey recorder the assertions
+    # inspect. Fixtures here may omit ``status`` (production hashes always
+    # carry one once claimed) — treat missing as ``running``.
+    async def _requeue_atomic(queue_name: str, task_id: str, priority: float) -> str:
+        raw = task_hashes.get(task_id) or {}
+        if not raw:
+            return "__missing__"
+        status = raw.get("status", "running")
+        if status in {"completed", "cancelled"}:
+            return status
+        await valkey.hset(
+            f"queue:task:{task_id}",
+            mapping={"status": "queued", "error": "", "error_type": ""},
+        )
+        await valkey.persist(f"queue:task:{task_id}")
+        await valkey.zadd(f"queue:{queue_name}:pending", {task_id: priority})
+        await valkey.srem(f"queue:{queue_name}:running", task_id)
+        await valkey.hincrby(f"queue:task:{task_id}", "attempts", 1)
+        return "__ok__"
+
+    client.requeue_task_atomic = AsyncMock(side_effect=_requeue_atomic)
+
+    async def _guarded_status_write(
+        task_id: str,
+        *,
+        new_status: str,
+        allowed_from: tuple[str, ...],
+        extra_fields: dict | None = None,
+        remove_from: str | None = None,
+        removal: str = "none",
+        expire_seconds: int | None = None,
+    ) -> str:
+        raw = task_hashes.get(task_id) or {}
+        if not raw:
+            return "__missing__"
+        status = raw.get("status", "running")
+        if status not in allowed_from:
+            return status
+        await valkey.hset(
+            f"queue:task:{task_id}", mapping={"status": new_status, **(extra_fields or {})}
+        )
+        if remove_from and removal == "srem":
+            await valkey.srem(remove_from, task_id)
+        if expire_seconds is not None:
+            await valkey.expire(f"queue:task:{task_id}", expire_seconds)
+        return "__ok__"
+
+    client.guarded_status_write = AsyncMock(side_effect=_guarded_status_write)
     return client
 
 

@@ -20,7 +20,7 @@ Example:
     results = await client.search("medical")
 
     # Download package
-    archive = await client.download("john/medical", "1.0.0")
+    archive = await client.download("john", "medical", "1.0.0")
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx
 import structlog
@@ -850,7 +851,9 @@ class LexiconClient:
         info endpoint. For download, use download() directly.
 
         Args:
-            owner_username: Package owner's username.
+            owner_username: Package owner's username. May be ``""`` for a
+                bare package reference; the match then falls back to
+                name-only and must be unambiguous.
             repo_name: Repository/package name.
             version: Optional version (not used for search).
 
@@ -863,10 +866,24 @@ class LexiconClient:
             limit=100,
         )
 
-        # Find exact match
-        for pkg in packages:
-            if pkg.owner_username == owner_username and pkg.name == repo_name:
-                return pkg
+        # Find exact match (name-only when no owner was specified)
+        matches = [
+            pkg
+            for pkg in packages
+            if pkg.name == repo_name
+            and (not owner_username or pkg.owner_username == owner_username)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise LexiconClientError(
+                status_code=409,
+                message="Ambiguous package name; use owner/name",
+                details={
+                    "name": repo_name,
+                    "owners": sorted(pkg.owner_username for pkg in matches),
+                },
+            )
 
         raise LexiconClientError(
             status_code=404,
@@ -893,7 +910,12 @@ class LexiconClient:
         Raises:
             LexiconClientError: On download failure.
         """
-        download_url = f"{self.base_url}/packages/{owner_username}/{repo_name}/{version}"
+        # Each component is a single URL path segment; encode so a hostile
+        # value ("../..", "a/b", "?x") cannot rewrite the request path.
+        download_url = (
+            f"{self.base_url}/packages/"
+            f"{quote(owner_username, safe='')}/{quote(repo_name, safe='')}/{quote(version, safe='')}"
+        )
 
         headers = {}
         if self.auth.is_authenticated:

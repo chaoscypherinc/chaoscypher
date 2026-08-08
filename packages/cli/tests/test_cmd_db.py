@@ -107,7 +107,11 @@ class TestCreate:
         assert result.exit_code == 0, result.output
         assert "Created database 'my-project'" in result.output
         # The directory is materialized by get_context(auto_connect=True).
-        mock_get_context.assert_called_once_with(database_name="my-project", auto_connect=True)
+        # explicit_database=True pins the NAMED database — the argument came
+        # from the user, so a literal "default" must not be re-resolved.
+        mock_get_context.assert_called_once_with(
+            database_name="my-project", auto_connect=True, explicit_database=True
+        )
         assert str(created_ctx.database_dir) in result.output
 
     def test_create_rejects_invalid_name(self, tmp_path: Path) -> None:
@@ -678,6 +682,34 @@ class TestInfo:
         data = json.loads(result.output)  # must not raise
         assert data["path"] == str(databases_dir / "beta")
         assert data["contents"] == {"nodes": 5, "edges": 2, "templates": 1}
+
+    def test_info_default_after_switch_targets_default_db(self, tmp_path: Path) -> None:
+        """``db info default`` with current=myproj reports DEFAULT's contents.
+
+        The context factory ignores a literal "default" override (it is
+        Click's flag default), so without the explicit_database opt-in the
+        command silently connected to the switched-to database instead.
+        """
+        runner = CliRunner()
+        databases_dir = tmp_path / "databases"
+        _make_db(databases_dir, "default")
+        _make_db(databases_dir, "myproj")
+        ctx = self._ctx_with_stats(1, 1, 1)
+
+        with patch(
+            "chaoscypher_cli.commands.db.info.get_databases_dir",
+            return_value=databases_dir,
+        ):
+            with _patch_current_db("info", "myproj"):
+                with patch(
+                    "chaoscypher_cli.commands.db.info.get_context", return_value=ctx
+                ) as mock_get_context:
+                    result = runner.invoke(info, ["default"])
+
+        assert result.exit_code == 0, result.output
+        mock_get_context.assert_called_once_with(
+            database_name="default", auto_connect=True, explicit_database=True
+        )
 
     def test_info_not_found(self, tmp_path: Path) -> None:
         runner = CliRunner()

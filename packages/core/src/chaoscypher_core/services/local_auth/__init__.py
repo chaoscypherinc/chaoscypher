@@ -17,6 +17,7 @@ from chaoscypher_core.services.local_auth.credentials import (
 from chaoscypher_core.services.local_auth.errors import (
     ApiKeyNotFound,
     CorruptCredentialsFile,
+    CredentialsAlreadyInitialized,
     CredentialsNotInitialized,
     InvalidPassword,
     InvalidSessionCookie,
@@ -35,6 +36,7 @@ __all__ = [
     "ApiKeyNotFound",
     "ApiKeyRecord",
     "CorruptCredentialsFile",
+    "CredentialsAlreadyInitialized",
     "CredentialsData",
     "CredentialsFile",
     "CredentialsNotInitialized",

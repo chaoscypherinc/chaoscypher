@@ -172,8 +172,16 @@ class VRAMPresetRegistry(BaseRegistry["VRAMPreset"]):
         # Create ConfigurableVRAMPreset instance
         instance = ConfigurableVRAMPreset(config)
 
-        # Register using parent's _register_by_id
-        self._register_by_id(instance.name, instance)
+        # Register using parent's _register_by_id, carrying provenance so
+        # user presets classify as origin "user" and two user presets
+        # claiming the same name raise DuplicatePluginError instead of
+        # silently last-write-winning in iterdir() order.
+        self._register_by_id(
+            instance.name,
+            instance,
+            source_path=config_path,
+            is_user=(path_type == "user"),
+        )
         self._configs[instance.name] = config
 
         logger.info(

@@ -315,7 +315,9 @@ def create_tool_execution_node(
                     break
                 await _sleep_backoff()
 
-        logger.exception(
+        # logger.error, not .exception — no active exception here (outside the
+        # retry loop's except blocks), so exc_info would render "NoneType: None"
+        logger.error(
             "workflow_step_execution_error",
             step_id=step_id,
             error_type=type(last_exc).__name__ if last_exc else "Unknown",
@@ -348,7 +350,7 @@ def create_error_handler_node() -> Callable:
 
     async def handle_error(state: WorkflowState) -> WorkflowState:
         """Mark workflow as failed."""
-        logger.exception(
+        logger.error(
             "workflow_error_handler",
             workflow_id=state.workflow_id,
             execution_id=state.execution_id,

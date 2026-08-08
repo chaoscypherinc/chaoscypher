@@ -9,8 +9,6 @@ import { getCardStyle } from '../../theme/cardStyles';
 import { StatusColors } from '../../theme/colors';
 import type { UserTool } from '../../services/api/tools';
 
-export type { UserTool };
-
 /** Props for a single UserToolCard. */
 interface UserToolCardProps {
   tool: UserTool;

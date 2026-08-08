@@ -484,3 +484,38 @@ async def test_run_with_heartbeat_cancels_refresher_on_raise() -> None:
             refresh_interval=0.001,
             ttl_seconds=30,
         )
+
+
+@pytest.mark.asyncio
+async def test_run_with_heartbeat_refresher_survives_refresh_failure() -> None:
+    """A transient refresh failure must not silently kill the refresher loop.
+
+    Pre-fix, the first raising ``refresh`` call terminated the background
+    task with zero logging; the still-running handler's heartbeat then
+    expired and the reconciler could requeue live work. The loop now logs
+    the failure and keeps refreshing at the next interval.
+    """
+    attempts: list[int] = []
+    recovered = asyncio.Event()
+
+    async def _refresh(_task_id: str, _ttl: int) -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ConnectionError("valkey blip")
+        recovered.set()
+
+    async def _factory() -> str:
+        # Handler outlives the failed refresh; it finishes only after the
+        # refresher demonstrably kept going and refreshed again.
+        await asyncio.wait_for(recovered.wait(), timeout=5.0)
+        return "still-alive"
+
+    result = await _run_with_heartbeat(
+        task_id="t-1",
+        coro_factory=_factory,
+        refresh=_refresh,
+        refresh_interval=0.001,
+        ttl_seconds=30,
+    )
+    assert result == "still-alive"
+    assert len(attempts) >= 2, "refresher died after the first failed refresh"

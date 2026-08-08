@@ -47,6 +47,7 @@ def _make_valkey() -> MagicMock:
     valkey.scard = AsyncMock(return_value=0)
     valkey.hgetall = AsyncMock(return_value={})
     valkey.hincrby = AsyncMock(return_value=1)
+    valkey.hincrbyfloat = AsyncMock(return_value=1.0)
     valkey.hget = AsyncMock(return_value=None)
     valkey.delete = AsyncMock(return_value=1)
     return valkey
@@ -189,7 +190,7 @@ async def test_track_tokens_no_client_noop() -> None:
 
 @pytest.mark.asyncio
 async def test_track_tokens_increments_stats_hash() -> None:
-    """track_tokens HINCRBY's input/output tokens and cost-cents into the stats hash."""
+    """track_tokens HINCRBY's tokens and HINCRBYFLOAT's cost-cents into the stats hash."""
     valkey = _make_valkey()
     monitor = QueueMonitor(client=valkey)
 
@@ -198,8 +199,44 @@ async def test_track_tokens_increments_stats_hash() -> None:
     stats_key = "queue:llm:stats"
     valkey.hincrby.assert_any_await(stats_key, "total_input_tokens", 100)
     valkey.hincrby.assert_any_await(stats_key, "total_output_tokens", 50)
-    # 2.5 USD -> 250 cents.
-    valkey.hincrby.assert_any_await(stats_key, "total_cost_cents", 250)
+    # 2.5 USD -> 250.0 cents, accumulated as a float.
+    valkey.hincrbyfloat.assert_any_await(stats_key, "total_cost_cents", 250.0)
+
+
+@pytest.mark.asyncio
+async def test_track_tokens_sub_cent_cost_not_truncated_to_zero() -> None:
+    """Sub-cent per-call costs accumulate fractionally instead of truncating to $0.
+
+    Regression test: ``int(cost_usd * 100)`` recorded 0 cents for every
+    call cheaper than a cent — i.e. for virtually every extraction call —
+    so ``total_cost_usd`` chronically reported $0.
+    """
+    valkey = _make_valkey()
+    monitor = QueueMonitor(client=valkey)
+
+    await monitor.track_tokens("llm", input_tokens=10, output_tokens=5, cost_usd=0.004)
+
+    increments = [
+        c.args[2] for c in valkey.hincrbyfloat.await_args_list if c.args[1] == "total_cost_cents"
+    ]
+    assert increments == [pytest.approx(0.4)]
+
+
+@pytest.mark.asyncio
+async def test_get_token_stats_parses_fractional_cents() -> None:
+    """get_token_stats parses a fractional cents field written by HINCRBYFLOAT."""
+    valkey = _make_valkey()
+
+    async def _hget(_key: str, field: str) -> bytes | None:
+        return {"total_input_tokens": b"10", "total_output_tokens": b"5"}.get(
+            field, b"0.4" if field == "total_cost_cents" else None
+        )
+
+    valkey.hget = MagicMock(side_effect=lambda key, field: _hget(key, field))
+    monitor = QueueMonitor(client=valkey)
+
+    stats = await monitor.get_token_stats("llm")
+    assert stats["total_cost_usd"] == pytest.approx(0.004)
 
 
 # ---------------------------------------------------------------------------

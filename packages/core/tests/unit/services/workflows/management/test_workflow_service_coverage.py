@@ -23,6 +23,20 @@ def _make_service(storage: MagicMock | None = None) -> tuple[WorkflowService, Ma
 
 
 # ---------------------------------------------------------------------------
+# Construction
+# ---------------------------------------------------------------------------
+
+
+def test_portability_service_inherits_database_name() -> None:
+    """Regression: the factory-built portability service used to default to
+    database_name="" — imported/duplicated workflows were written under the
+    empty database and never appeared in list_workflows for the real one.
+    """
+    svc, _storage = _make_service()
+    assert svc.portability_service.database_name == "db1"
+
+
+# ---------------------------------------------------------------------------
 # Workflow CRUD
 # ---------------------------------------------------------------------------
 

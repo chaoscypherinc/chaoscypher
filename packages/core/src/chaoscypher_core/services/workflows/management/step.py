@@ -17,6 +17,7 @@ from chaoscypher_core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
@@ -118,9 +119,10 @@ class WorkflowStepsService:
             msg = "Cannot modify system workflows"
             raise AuthorizationError(msg)
 
-        # Generate step ID if not provided
+        # Generate step ID if not provided (generate_id, not timestamps —
+        # same-microsecond creations must not collide)
         now = datetime.now(UTC)
-        step_id = step_data.get("id", f"step_{now.timestamp()}")
+        step_id = step_data.get("id") or generate_id("step")
 
         # Determine step number (auto-increment if not provided)
         step_number = step_data.get("step_number")

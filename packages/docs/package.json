@@ -19,7 +19,7 @@
     "@docusaurus/plugin-client-redirects": "3.10.2",
     "@docusaurus/preset-classic": "^3.10.2",
     "@docusaurus/theme-mermaid": "^3.10.2",
-    "@easyops-cn/docusaurus-search-local": "^0.55.2",
+    "@easyops-cn/docusaurus-search-local": "^0.55.3",
     "@mdx-js/react": "^3.0.0",
     "clsx": "^2.1.0",
     "prism-react-renderer": "^2.3.0",
@@ -31,7 +31,7 @@
     "@docusaurus/types": "^3.7.0",
     "typescript": "~5.9.3",
     "vitest": "^3.2.7",
-    "wrangler": "^4.112.0"
+    "wrangler": "^4.117.0"
   },
   "browserslist": {
     "production": [
@@ -53,6 +53,9 @@
     "webpackbar": "^7.0.0",
     "uuid": "^11.1.1",
     "esbuild": "^0.28.1",
-    "joi": "^17.13.4"
+    "joi": "^17.13.4",
+    "js-yaml": "^4.3.1",
+    "brace-expansion": "^5.0.8",
+    "undici": "^7.29.0"
   }
 }

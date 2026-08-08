@@ -63,7 +63,7 @@ async def test_redirect_helper_uses_injected_max_redirects(
     hop_count = {"n": 0}
 
     class RedirectClient:
-        async def get(self, url: str) -> httpx.Response:
+        async def get(self, url: httpx.URL | str, **_kwargs: Any) -> httpx.Response:
             hop_count["n"] += 1
             return httpx.Response(
                 302,
@@ -72,7 +72,8 @@ async def test_redirect_helper_uses_injected_max_redirects(
             )
 
     monkeypatch.setattr(_search_mod, "_get_client", lambda timeout_seconds: RedirectClient())
-    monkeypatch.setattr(_search_mod, "validate_url_safety", lambda *a, **kw: True)
+    # Pin deterministically — the redirect loop dials resolve_pinned_ip's IP.
+    monkeypatch.setattr(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34")
 
     scraper = WebScraper(web_settings=WebSettings(max_redirects=3))
     result = await scraper._fetch_with_redirect_validation("https://example.com/start")
@@ -89,7 +90,7 @@ async def test_capped_redirect_helper_uses_injected_max_redirects(
     hop_count = {"n": 0}
 
     class RedirectClient:
-        async def get(self, url: str) -> httpx.Response:
+        async def get(self, url: httpx.URL | str, **_kwargs: Any) -> httpx.Response:
             hop_count["n"] += 1
             return httpx.Response(
                 302,
@@ -98,7 +99,8 @@ async def test_capped_redirect_helper_uses_injected_max_redirects(
             )
 
     monkeypatch.setattr(_search_mod, "_get_client", lambda timeout_seconds: RedirectClient())
-    monkeypatch.setattr(_search_mod, "validate_url_safety", lambda *a, **kw: True)
+    # Pin deterministically — the redirect loop dials resolve_pinned_ip's IP.
+    monkeypatch.setattr(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34")
 
     scraper = WebScraper(web_settings=WebSettings(max_redirects=2))
     # max_bytes=None → legacy single-GET-per-hop path.
@@ -123,7 +125,7 @@ async def test_injected_timeout_threaded_into_client(
     seen: dict[str, float] = {}
 
     class FakeClient:
-        async def get(self, url: str) -> httpx.Response:
+        async def get(self, url: httpx.URL | str, **_kwargs: Any) -> httpx.Response:
             return httpx.Response(200, request=httpx.Request("GET", url), text="ok")
 
     def fake_get_client(timeout_seconds: float) -> FakeClient:
@@ -131,9 +133,64 @@ async def test_injected_timeout_threaded_into_client(
         return FakeClient()
 
     monkeypatch.setattr(_search_mod, "_get_client", fake_get_client)
-    monkeypatch.setattr(_search_mod, "validate_url_safety", lambda *a, **kw: True)
+    # Pin deterministically — the redirect loop dials resolve_pinned_ip's IP.
+    monkeypatch.setattr(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34")
 
     scraper = WebScraper(web_settings=WebSettings(fetch_timeout_seconds=7.0))
     await scraper._fetch_with_redirect_validation("https://example.com/")
 
     assert seen["timeout"] == 7.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_dials_pinned_ip_with_host_header_and_sni(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fetch loop dials the vetted IP, not the hostname (DNS-rebinding fix).
+
+    ``validate_url_safety`` alone left a TOCTOU: the vetted hostname was handed
+    to httpx, which re-resolves DNS at connect time. The loop must dial the IP
+    ``resolve_pinned_ip`` returned, carrying the original authority as the Host
+    header and the hostname as TLS SNI (the http_request_plugin pattern).
+    """
+    seen: dict[str, Any] = {}
+
+    class FakeClient:
+        async def get(self, url: httpx.URL | str, **kwargs: Any) -> httpx.Response:
+            seen["url"] = httpx.URL(url)
+            seen["headers"] = kwargs.get("headers")
+            seen["extensions"] = kwargs.get("extensions")
+            return httpx.Response(200, request=httpx.Request("GET", url), text="ok")
+
+    monkeypatch.setattr(_search_mod, "_get_client", lambda timeout_seconds: FakeClient())
+    monkeypatch.setattr(_search_mod, "resolve_pinned_ip", lambda *a, **kw: "93.184.216.34")
+
+    scraper = WebScraper()
+    result = await scraper._fetch_with_redirect_validation("https://example.com/page")
+
+    assert result == "ok"
+    assert seen["url"].host == "93.184.216.34"
+    assert seen["headers"]["Host"] == "example.com"
+    assert seen["extensions"] == {"sni_hostname": "example.com"}
+
+
+@pytest.mark.asyncio
+async def test_fetch_blocked_when_pin_unresolvable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``resolve_pinned_ip`` returning None blocks the fetch before any dial."""
+    dialed = {"n": 0}
+
+    class FakeClient:
+        async def get(self, url: httpx.URL | str, **_kwargs: Any) -> httpx.Response:
+            dialed["n"] += 1
+            return httpx.Response(200, request=httpx.Request("GET", url), text="ok")
+
+    monkeypatch.setattr(_search_mod, "_get_client", lambda timeout_seconds: FakeClient())
+    monkeypatch.setattr(_search_mod, "resolve_pinned_ip", lambda *a, **kw: None)
+
+    scraper = WebScraper()
+    assert await scraper._fetch_with_redirect_validation("https://blocked.internal/") is None
+    assert (
+        await scraper._fetch_with_redirect_validation_capped("https://blocked.internal/", 10)
+        is None
+    )
+    assert dialed["n"] == 0

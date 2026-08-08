@@ -45,6 +45,7 @@ def _make_repository() -> MagicMock:
     # accidentally hit the source-deleted short-circuit. Tests that want
     # the deleted-mid-flight path override this to (_, 0).
     repo.get_chunks_by_source.return_value = ([], 1)
+    repo.update_chunk_embeddings_batch.return_value = []
     return repo
 
 
@@ -124,7 +125,9 @@ class TestEmbedChunksDimensionCrossCheck:
         )
 
         assert count == 2
-        assert repo.update_chunk_embedding.call_count == 2
+        # One bulk write carrying both chunks (was: one write per chunk).
+        assert repo.update_chunk_embeddings_batch.call_count == 1
+        assert len(repo.update_chunk_embeddings_batch.call_args.args[0]) == 2
 
     @pytest.mark.asyncio
     async def test_expected_dimensions_none_falls_back_to_settings(self) -> None:

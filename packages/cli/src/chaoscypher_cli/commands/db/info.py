@@ -42,10 +42,12 @@ def info(name: str, as_json: bool) -> None:
         print_unwrapped(f"\nExpected location: {db_path}")
         sys.exit(1)
 
-    # Get content counts by connecting to the database
+    # Get content counts by connecting to the database. The name is an
+    # explicit user argument — pin it, so `db info default` reports the
+    # actual default database even while another database is active.
     counts = {}
     try:
-        ctx = get_context(database_name=name, auto_connect=True)
+        ctx = get_context(database_name=name, auto_connect=True, explicit_database=True)
         stats = ctx.get_stats()
         counts = {
             "nodes": stats.get("nodes", 0),
