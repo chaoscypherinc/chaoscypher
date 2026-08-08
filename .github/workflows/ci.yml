@@ -181,5 +181,13 @@ jobs:
 
       - name: Docs dependency audit
         # Audits the lockfile only — no npm ci needed in packages/docs.
-        run: npm audit --audit-level=high
-        working-directory: packages/docs
+        # Blocks on high+ advisories that HAVE a published fix and reports the
+        # ones that do not, because packages/docs is a build-only tree whose
+        # ~1000 transitive Docusaurus packages produce unfixable upstream
+        # advisories regularly (image-size GHSA-w3rx-r6r6-pgpr /
+        # GHSA-5p2g-fcmc-qvqq report fixAvailable:false on every published
+        # version). Blocking on those halts all work while mitigating nothing.
+        # Self-clearing: a published fix makes it blocking again.
+        # Mirrors the `security` step in scripts/run_ci.py — keep the two in
+        # sync; they encode the same policy in two places.
+        run: uv run python scripts/npm_audit_gate.py packages/docs
