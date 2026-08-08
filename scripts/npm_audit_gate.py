@@ -77,6 +77,59 @@ def _run_audit(directory: Path) -> dict:
         raise RuntimeError(msg) from exc
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Return a comparable tuple for a dotted version, ignoring any suffix."""
+    parts: list[int] = []
+    for chunk in str(version).split("-")[0].split("."):
+        try:
+            parts.append(int(chunk))
+        except ValueError:
+            break
+    return tuple(parts)
+
+
+def installed_versions(directory: Path) -> dict[str, str]:
+    """Map package name -> resolved version from a package-lock.json."""
+    lock = directory / "package-lock.json"
+    # Separate handlers, not `except (OSError, json.JSONDecodeError)`: ruff-format
+    # on py314 strips the parens off a tuple except-clause, which is Python 2
+    # syntax and fails to parse. Keep these split.
+    try:
+        data = json.loads(lock.read_text(encoding="utf-8"))
+    except OSError:  # pragma: no cover - unreadable lockfile
+        return {}
+    except json.JSONDecodeError:  # pragma: no cover - malformed lockfile
+        return {}
+    versions: dict[str, str] = {}
+    for path, meta in (data.get("packages") or {}).items():
+        if not path.startswith("node_modules/"):
+            continue
+        name = path.split("node_modules/", 1)[1]
+        version = meta.get("version")
+        if name and version and name not in versions:
+            versions[name] = version
+    return versions
+
+
+def is_downgrade(fix: object, current: dict[str, str]) -> bool:
+    """Return True when npm's suggested 'fix' moves a package *backwards*.
+
+    npm resolves `fixAvailable` to any version that avoids the advisory, which
+    for a deep transitive dep is often an ancient release of an unrelated
+    parent. Observed 2026-08-07: the only remediation npm offered for
+    ``image-size`` was ``@easyops-cn/docusaurus-search-local@0.29.0`` while the
+    project is on ``0.55.3`` — the latest published. Rolling back 26 minor
+    versions of the docs search plugin is a regression, not a fix, so it is
+    reported rather than blocking.
+    """
+    if not isinstance(fix, dict):
+        return False
+    name, version = fix.get("name"), fix.get("version")
+    if not name or not version or name not in current:
+        return False
+    return _version_tuple(version) < _version_tuple(current[name])
+
+
 def _advisory_titles(entry: dict) -> list[str]:
     """Return human-readable advisory titles/URLs for one vulnerability entry."""
     titles: list[str] = []
@@ -88,7 +141,9 @@ def _advisory_titles(entry: dict) -> list[str]:
     return titles
 
 
-def classify(report: dict, floor: str) -> tuple[list[dict], list[dict], int]:
+def classify(
+    report: dict, floor: str, current: dict[str, str] | None = None
+) -> tuple[list[dict], list[dict], int]:
     """Split a parsed report into (fixable, unfixable, propagated_count) at/above ``floor``.
 
     Only entries that **carry** an advisory are classified. npm lists one entry
@@ -118,14 +173,17 @@ def classify(report: dict, floor: str) -> tuple[list[dict], list[dict], int]:
             # Downstream of another entry — its fate follows the root's.
             propagated += 1
             continue
+        fix = entry.get("fixAvailable", False)
+        downgrade = is_downgrade(fix, current or {})
         record = {
             "name": name,
             "severity": severity,
             "range": entry.get("range", "*"),
             "titles": titles,
-            "fix": entry.get("fixAvailable", False),
+            "fix": fix,
+            "downgrade": downgrade,
         }
-        if record["fix"]:
+        if fix and not downgrade:
             fixable.append(record)
         else:
             unfixable.append(record)
@@ -137,7 +195,9 @@ def _print_group(header: str, records: list[dict]) -> None:
     print(f"\n{header}")
     for rec in records:
         fix = rec["fix"]
-        if isinstance(fix, dict):
+        if rec.get("downgrade") and isinstance(fix, dict):
+            fix_note = f"npm's only remediation is a DOWNGRADE to {fix.get('name')}@{fix.get('version')} — not a fix"
+        elif isinstance(fix, dict):
             major = " (SEMVER-MAJOR)" if fix.get("isSemVerMajor") else ""
             fix_note = f"fix: {fix.get('name')}@{fix.get('version')}{major}"
         elif fix:
@@ -169,7 +229,7 @@ def main() -> int:
         return 2
 
     report = _run_audit(directory)
-    fixable, unfixable, propagated = classify(report, args.severity)
+    fixable, unfixable, propagated = classify(report, args.severity, installed_versions(directory))
 
     print(f"[npm-audit-gate] {directory} — severity floor: {args.severity}")
     if propagated:

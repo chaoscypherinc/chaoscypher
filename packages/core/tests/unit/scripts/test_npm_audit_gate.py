@@ -125,6 +125,50 @@ def test_severity_floor_excludes_lower_severities() -> None:
     assert (fixable, unfixable, propagated) == ([], [], 0)
 
 
+def test_a_downgrade_is_not_treated_as_a_fix() -> None:
+    """Regression: npm offers *any* version avoiding the advisory, including older ones.
+
+    Observed 2026-08-07 — the only remediation npm produced for ``image-size``
+    was ``@easyops-cn/docusaurus-search-local@0.29.0`` while the project runs
+    ``0.55.3``, the latest published. Rolling a dependency back 26 minor
+    versions is a regression, so it reports rather than blocks.
+    """
+    gate = _load_gate()
+    report = {
+        "vulnerabilities": {
+            "image-size": _root(
+                "high",
+                {
+                    "name": "@easyops-cn/docusaurus-search-local",
+                    "version": "0.29.0",
+                    "isSemVerMajor": True,
+                },
+            )
+        }
+    }
+    current = {"@easyops-cn/docusaurus-search-local": "0.55.3"}
+
+    fixable, unfixable, _ = gate.classify(report, "high", current)
+
+    assert fixable == []
+    assert [r["name"] for r in unfixable] == ["image-size"]
+    assert unfixable[0]["downgrade"] is True
+
+
+def test_a_forward_bump_still_blocks_even_when_semver_major() -> None:
+    """A genuine forward upgrade stays blocking — majorness alone is not an excuse."""
+    gate = _load_gate()
+    report = {
+        "vulnerabilities": {
+            "leftpad": _root("high", {"name": "leftpad", "version": "2.0.0", "isSemVerMajor": True})
+        }
+    }
+
+    fixable, _, _ = gate.classify(report, "high", {"leftpad": "1.4.2"})
+
+    assert [r["name"] for r in fixable] == ["leftpad"]
+
+
 def test_unknown_severity_is_treated_as_blocking() -> None:
     """An unrecognised severity string must fail closed, not silently pass."""
     gate = _load_gate()
