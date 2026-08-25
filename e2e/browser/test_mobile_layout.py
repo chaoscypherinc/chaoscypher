@@ -225,18 +225,24 @@ def seeded_app(browser_base_url: str, browser_session_cookie: str) -> dict:
                     )
 
         # 4. Upload a source so /sources has content
-        sample_txt = Path(__file__).parents[2] / "fixtures" / "sample_data" / "sample.txt"
-        if sample_txt.exists():
-            existing_sources = client.get("/api/v1/sources").json()
-            if existing_sources["pagination"]["total"] == 0:
-                with sample_txt.open("rb") as f:
-                    client.post(
-                        "/api/v1/sources",
-                        files={"file": ("mobile_seed.txt", f, "text/plain")},
-                        data={"extract_entities": "false"},
-                    )
-                # Wait briefly for indexing
-                time.sleep(3)
+        sample_txt = Path(__file__).parents[1] / "fixtures" / "sample_data" / "sample.txt"
+        if not sample_txt.exists():
+            # A wrong path here used to be swallowed silently (the table
+            # stayed empty and test_no_horizontal_overflow_sources_page
+            # measured an empty state) while this fixture still reported
+            # {"seeded": True}. Fail loudly instead: a missing fixture file
+            # is a real setup bug, not something to shrug off.
+            pytest.fail(f"sample.txt fixture not found at {sample_txt}")
+        existing_sources = client.get("/api/v1/sources").json()
+        if existing_sources["pagination"]["total"] == 0:
+            with sample_txt.open("rb") as f:
+                client.post(
+                    "/api/v1/sources",
+                    files={"file": ("mobile_seed.txt", f, "text/plain")},
+                    data={"extract_entities": "false"},
+                )
+            # Wait briefly for indexing
+            time.sleep(3)
 
     return {"seeded": True}
 

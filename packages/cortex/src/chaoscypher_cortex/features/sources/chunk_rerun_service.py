@@ -116,6 +116,11 @@ class ChunkRerunService:
             metadata={
                 "job_id": job_id,
                 "source_id": source_id,
+                # database_name is required alongside source_id: the
+                # consumer (QueueClient.in_flight_chunk_task_ids) filters on
+                # BOTH keys, so omitting either one leaves this task
+                # invisible to the in-flight guard.
+                "database_name": self._database_name,
                 "operation_type": OP_EXTRACT_CHUNK,
                 "rerun": True,
                 "attempt_number": attempt_number,

@@ -331,3 +331,39 @@ class TestCopyPackageData:
         await merger._copy_package_data(pkg, pkg.path / "data")
         # nothing created under databases/default for this package
         assert not (merger.output_dir / "databases" / "default" / "graphs" / pkg.namespace).exists()
+
+
+# ---------------------------------------------------------------------------
+# CompositionResult totals
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestMergeTotals:
+    @pytest.mark.asyncio
+    async def test_replace_duplicates_not_double_counted(self, tmp_path: Path) -> None:
+        """Under REPLACE a shared entity id yields ONE entity in the totals.
+
+        The per-package counters increment once per package while the merged
+        dict keeps a single entry — CompositionResult totals must reflect the
+        merged structures, not the sum of per-package counts.
+        """
+        merger = _merger(tmp_path, MergeStrategy.REPLACE)
+        pkg_a = _make_package(
+            tmp_path,
+            name="pkg-a",
+            entities={"e1": {"label": "A"}},
+            relationships=[],
+        )
+        pkg_b = _make_package(
+            tmp_path,
+            name="pkg-b",
+            entities={"e1": {"label": "B (replaces A)"}},
+            relationships=[],
+        )
+
+        result = await merger.merge([pkg_a, pkg_b])
+
+        assert result.success, result.errors
+        assert result.total_entities == 1
+        assert result.total_relationships == 0

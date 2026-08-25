@@ -41,8 +41,11 @@ class TestWorkflowExecution:
             f"/api/v1/workflows/{workflow_id}/executions",
             json={},
         )
-        # May return 202 (queued), 200 (started), or 400 (no steps)
-        assert resp.status_code in (200, 202, 400)
+        # POST /{id}/executions is declared status_code=202 and has no
+        # 200 path; a fresh workflow is active, and no "no steps" check
+        # exists — 202 is the only correct outcome.
+        assert resp.status_code == 202
+        assert resp.json()["execution_id"]
 
 
 class TestWorkflowSteps:
@@ -61,8 +64,7 @@ class TestWorkflowSteps:
 
         # Get a system tool to reference
         sys_tools = client.get("/api/v1/tools/system").json()
-        if not sys_tools:
-            return
+        assert sys_tools, "system tools not seeded"
         tool_id = sys_tools[0]["id"]
 
         resp = client.post(
@@ -70,13 +72,16 @@ class TestWorkflowSteps:
             json={
                 "step_number": 1,
                 "name": "Test Step",
-                "tool_type": "system",
+                # StepToolType member — the old "system" was rejected by
+                # body validation with 422 on every run, so the loose
+                # (201, 400, 422) set could never pin creation.
+                "tool_type": "system_tool",
                 "tool_id": tool_id,
                 "configuration": {},
             },
         )
-        # 201 for success, 400/422 if config schema invalid
-        assert resp.status_code in (201, 400, 422)
+        assert resp.status_code == 201, f"Step create failed: {resp.text}"
+        assert resp.json()["name"] == "Test Step"
 
 
 class TestWorkflowImport:

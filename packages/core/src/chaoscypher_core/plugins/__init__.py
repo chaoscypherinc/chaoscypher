@@ -101,6 +101,7 @@ from chaoscypher_core.plugins.discovery import (
 from chaoscypher_core.plugins.factory import (
     create_registry_factory,
     default_cache_key,
+    register_registry_cache,
 )
 
 # Registry base class
@@ -126,5 +127,6 @@ __all__ = [
     "discover_python_plugins",
     "load_user_python_plugin",
     "metadata_from_dict",
+    "register_registry_cache",
     "user_plugins_allowed",
 ]

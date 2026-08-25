@@ -125,6 +125,38 @@ def test_delete_messages_after_wrong_chat_is_noop(adapter: SqliteAdapter) -> Non
 
 
 # ---------------------------------------------------------------------------
+# claim_chat_processing — atomic CAS on status for retry/regenerate
+# ---------------------------------------------------------------------------
+
+
+def test_claim_chat_processing_wins_from_non_processing_status(adapter: SqliteAdapter) -> None:
+    """A chat in 'active' or 'error' can be claimed exactly once."""
+    with adapter.transaction():
+        adapter.session.add(Chat(id="c1", database_name="test", title="t1", status="active"))
+        adapter.session.add(Chat(id="c2", database_name="test", title="t2", status="error"))
+
+    assert adapter.claim_chat_processing("c1") is True
+    assert adapter.get_chat("c1", "test")["status"] == "processing"
+    assert adapter.claim_chat_processing("c2") is True
+    assert adapter.get_chat("c2", "test")["status"] == "processing"
+
+
+def test_claim_chat_processing_rejects_when_already_processing(adapter: SqliteAdapter) -> None:
+    """The CAS refuses a second claim while status is 'processing'."""
+    with adapter.transaction():
+        adapter.session.add(Chat(id="c1", database_name="test", title="t1", status="active"))
+
+    assert adapter.claim_chat_processing("c1") is True
+    # Second claim must lose — this is the double-enqueue window.
+    assert adapter.claim_chat_processing("c1") is False
+    assert adapter.get_chat("c1", "test")["status"] == "processing"
+
+
+def test_claim_chat_processing_unknown_chat_returns_false(adapter: SqliteAdapter) -> None:
+    assert adapter.claim_chat_processing("nope") is False
+
+
+# ---------------------------------------------------------------------------
 # Title search (server-side chat switcher search)
 # ---------------------------------------------------------------------------
 

@@ -32,6 +32,10 @@ rules:
         - "**/database/migrations/versions/0001_baseline.py"
         - "**/database/migrations/versions/0030_llm_stage_progress.py"
         - "**/tests/**/test_0030_llm_stage_progress.py"
+        # The regression guard that asserts the six names are ABSENT from
+        # SourceResponse / SourceSummaryResponse has to spell them out.
+        # Same "references the names by definition" carve-out as above.
+        - "**/tests/**/test_sources_endpoint_legacy_fields_removed.py"
     pattern-either:
       # Bare-name identifier references (assignments, reads, function args).
       - pattern: extraction_chunks_submitted

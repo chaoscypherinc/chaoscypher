@@ -12,7 +12,6 @@ types-builder stage can extract the OpenAPI schema without side effects.
 from __future__ import annotations
 
 import os
-from contextlib import suppress
 from pathlib import Path
 
 import structlog
@@ -21,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from chaoscypher_core.utils.secure_write import atomic_secret_write
 from chaoscypher_cortex.boot import APP_VERSION
 from chaoscypher_cortex.lifespan import lifespan_full
 from chaoscypher_cortex.middleware import (
@@ -64,10 +64,10 @@ def _load_or_create_session_secret(secret_path: Path) -> bytes:
     )
     secret_path.parent.mkdir(parents=True, exist_ok=True)
     data = os.urandom(32)
-    secret_path.write_bytes(data)
-    with suppress(AttributeError, OSError):
-        # Windows: chmod has limited semantics; acceptable for dev.
-        secret_path.chmod(0o600)
+    # Atomic 0600 write — the old write_bytes + post-hoc chmod left the
+    # HMAC secret umask-readable between the two calls (helper no-ops the
+    # chmod off POSIX, covering the old Windows suppress).
+    atomic_secret_write(secret_path, data, prefix=".session_secret_")
     return data
 
 
@@ -223,11 +223,14 @@ def create_app(*, schema_only: bool = False) -> FastAPI:  # noqa: PLR0915 — ap
         session_secret=session_secret,
         cookie_ttl_seconds=settings.local_auth.cookie_ttl_seconds,
     )
+    # cookie_secure is re-resolved on every cookie write (not baked in at
+    # construction) so enabling TLS at runtime upgrades session cookies to
+    # Secure without a container restart.
     app.include_router(
         build_local_auth_router(
             local_auth_service,
             cookie_name=settings.local_auth.cookie_name,
-            cookie_secure=settings.local_auth.cookie_secure,
+            cookie_secure_provider=lambda: get_settings().local_auth.cookie_secure,
         )
     )
 

@@ -213,20 +213,23 @@ async def generate_embeddings(
 
     **Process:**
     1. Find all nodes without embeddings
-    2. Trigger embedding generation workflow for each node
-    3. Queue them in the LLM service (background processing)
+    2. Embed them in waves — one batched provider call per wave
+    3. Persist and index each wave in one transaction, so a provider
+       failure part-way through keeps the waves already written and a
+       repeated call resumes from there
 
     **Use Cases:**
     - Existing nodes created before auto-embedding was enabled
     - Nodes imported from external sources without embeddings
 
     **Note:**
-    - Processing happens asynchronously in the background
-    - Use GET /api/v1/search/stats to monitor progress
+    - Processing is synchronous: the request completes only once every
+      pending node has been embedded and persisted, so the connection is
+      held for the full run. There is no background job to poll.
 
     **Returns:**
     - Total nodes in graph
-    - Number of nodes queued for embedding generation
+    - Number of nodes embedded (and how many failed, in the message)
     - Success status
     """
     # Note: trigger_service is not yet available in VSA

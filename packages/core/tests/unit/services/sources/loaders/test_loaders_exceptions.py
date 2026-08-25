@@ -354,3 +354,94 @@ class TestArchiveExtractorFileNotFoundExceptions:
         assert err.code == "NOT_FOUND"
         assert err.resource_type == "Archive"
         assert str(missing) in err.identifier
+
+
+class TestTarGzStreamingLimits:
+    """extractor.py _extract_tar_gz — limits enforced on a streaming pass."""
+
+    @staticmethod
+    def _make_tar_gz(archive_path: Path, files: dict[str, bytes]) -> None:
+        import io
+        import tarfile
+
+        with tarfile.open(archive_path, "w:gz") as tarf:
+            for name, data in files.items():
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tarf.addfile(info, io.BytesIO(data))
+
+    def test_size_cap_raises_before_full_inflate(self, tmp_path: Path) -> None:
+        """A member pushing past max_size aborts during the streaming pass."""
+        import tarfile
+
+        from chaoscypher_core.services.sources.loaders.archive.exceptions import (
+            ArchiveExtractionError,
+        )
+        from chaoscypher_core.services.sources.loaders.archive.extractor import ArchiveExtractor
+        from chaoscypher_core.settings import EngineSettings, PathSettings
+
+        archive = tmp_path / "big.tar.gz"
+        self._make_tar_gz(
+            archive,
+            {
+                "a.txt": b"x" * 4096,
+                "b.txt": b"y" * 4096,
+                "c.txt": b"z" * 4096,
+            },
+        )
+
+        settings = EngineSettings(paths=PathSettings(data_dir=str(tmp_path)))
+        extractor = ArchiveExtractor(settings=settings, max_size=4096)
+        dest = tmp_path / "out"
+
+        # getmembers() would fully inflate the stream upfront; the limit
+        # pass must never reach it (it belongs to the extraction pass only).
+        with (
+            patch.object(tarfile.TarFile, "getmembers", autospec=True) as getmembers_mock,
+            pytest.raises(ArchiveExtractionError, match="size limit"),
+        ):
+            extractor.extract(archive, dest)
+
+        getmembers_mock.assert_not_called()
+        assert not any(dest.rglob("*.txt"))
+
+    def test_file_count_cap_raises_incrementally(self, tmp_path: Path) -> None:
+        """The member-count cap aborts as soon as it is crossed."""
+        from chaoscypher_core.services.sources.loaders.archive.exceptions import (
+            ArchiveExtractionError,
+        )
+        from chaoscypher_core.services.sources.loaders.archive.extractor import ArchiveExtractor
+        from chaoscypher_core.settings import EngineSettings, PathSettings
+
+        archive = tmp_path / "many.tar.gz"
+        self._make_tar_gz(
+            archive,
+            {f"f{i}.txt": b"data" for i in range(5)},
+        )
+
+        settings = EngineSettings(paths=PathSettings(data_dir=str(tmp_path)))
+        extractor = ArchiveExtractor(settings=settings, max_files=2)
+        dest = tmp_path / "out"
+
+        with pytest.raises(ArchiveExtractionError, match="file limit"):
+            extractor.extract(archive, dest)
+
+        assert not any(dest.rglob("*.txt"))
+
+    def test_within_limits_extracts_successfully(self, tmp_path: Path) -> None:
+        """A well-formed tar.gz under all limits still extracts."""
+        from chaoscypher_core.services.sources.loaders.archive.extractor import ArchiveExtractor
+        from chaoscypher_core.settings import EngineSettings, PathSettings
+
+        archive = tmp_path / "ok.tar.gz"
+        self._make_tar_gz(archive, {"docs/a.txt": b"hello", "docs/b.txt": b"world"})
+
+        settings = EngineSettings(paths=PathSettings(data_dir=str(tmp_path)))
+        extractor = ArchiveExtractor(settings=settings)
+        dest = tmp_path / "out"
+
+        result = extractor.extract(archive, dest)
+
+        assert result == dest
+        assert (dest / "docs" / "a.txt").read_bytes() == b"hello"
+        assert (dest / "docs" / "b.txt").read_bytes() == b"world"

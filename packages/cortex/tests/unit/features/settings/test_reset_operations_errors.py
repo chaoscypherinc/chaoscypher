@@ -57,16 +57,50 @@ def test_delete_source_data_propagates_when_adapter_fails() -> None:
 
 
 def test_reset_knowledge_graph_propagates_when_clear_all_fails() -> None:
+    """``clear_all()`` failing must propagate — not zero the counters.
+
+    2026-08-12: this test used to make ``get_graph_repository`` itself
+    raise, one line BEFORE the ``clear_all()`` call it is named after
+    (operations.py:101 vs :102). That exercised only the outer whole-body
+    ``except ... raise``, so the concrete regression — wrapping just the
+    named call in ``try: ... except Exception: graph_result = {"nodes_
+    removed": 0, ...}`` — stayed green while ``reset_knowledge_base``
+    again returned HTTP 200 ``{"status": "success", "nodes_deleted": 0}``
+    over a failed clear. The failure is now injected inside the guarded
+    region, per the model in
+    ``test_delete_source_data_propagates_when_adapter_fails`` above.
+    """
     stats: dict[str, object] = {}
+
+    adapter = MagicMock()
+    adapter.transaction.return_value.__enter__ = MagicMock(return_value=None)
+    adapter.transaction.return_value.__exit__ = MagicMock(return_value=None)
+
+    graph_repo = MagicMock()
+    graph_repo.clear_all.side_effect = _BoomError("clear_all failed")
+
+    seed = MagicMock()
 
     with (
         patch(
-            "chaoscypher_core.repo_factories.get_graph_repository",
-            side_effect=_BoomError("graph repo init failed"),
+            "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+            return_value=adapter,
         ),
+        patch(
+            "chaoscypher_core.repo_factories.get_graph_repository",
+            return_value=graph_repo,
+        ),
+        patch("chaoscypher_core.database.seed.seed_default_templates", seed),
         pytest.raises(_BoomError),
     ):
         reset_operations._reset_knowledge_graph("test_db", stats)
+
+    graph_repo.clear_all.assert_called_once()
+    # The counters must NOT be written — reporting zeros over a failed
+    # clear is exactly the swallow this file exists to prevent.
+    assert stats == {}, f"counters were written despite the clear failing: {stats}"
+    seed.assert_not_called()
+    adapter.disconnect.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -90,16 +124,34 @@ async def test_delete_import_files_propagates_when_rmtree_fails() -> None:
 
 
 def test_reset_search_indices_propagates_when_clear_fails() -> None:
+    """``clear_all_indices()`` failing must propagate — not report success.
+
+    Same correction as the knowledge-graph sibling above: the failure was
+    injected at ``get_search_repository`` (operations.py:169), one line
+    before the ``clear_all_indices()`` call at :170 that the test names.
+    """
     stats: dict[str, object] = {}
+
+    search_repo = MagicMock()
+    search_repo.clear_all_indices.side_effect = _BoomError("clear_all_indices failed")
+    invalidate = MagicMock()
 
     with (
         patch(
             "chaoscypher_core.repo_factories.get_search_repository",
-            side_effect=_BoomError("search repo init failed"),
+            return_value=search_repo,
+        ),
+        patch(
+            "chaoscypher_core.repo_factories.search_factory.invalidate_search_repository",
+            invalidate,
         ),
         pytest.raises(_BoomError),
     ):
         reset_operations._reset_search_indices("test_db", stats)
+
+    search_repo.clear_all_indices.assert_called_once()
+    assert stats == {}, f"search_indices_cleared reported despite the clear failing: {stats}"
+    invalidate.assert_not_called()
 
 
 @pytest.mark.asyncio

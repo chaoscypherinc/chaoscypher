@@ -424,6 +424,26 @@ def test_lookup_location_returns_none_when_char_start_past_index() -> None:
     assert _lookup_location(index, 200) == (None, None)
 
 
+def test_lookup_location_separator_gap_and_boundary_edges() -> None:
+    """Bisect lookup preserves the linear scan's exact semantics: page-start
+    and page-end chars resolve, chars in the inter-page separator gap and
+    past coverage return (None, None), with or without precomputed starts.
+    """
+    index: LocationIndex = [
+        _make_page_boundary(0, 10, 1),
+        _make_page_boundary(12, 20, 2),  # 10-11 is the "\n\n" separator gap
+    ]
+    starts = [b["start_char"] for b in index]
+    for precomputed in (None, starts):
+        assert _lookup_location(index, 0, precomputed) == (1, None)  # exact page start
+        assert _lookup_location(index, 9, precomputed) == (1, None)  # last char of page 1
+        assert _lookup_location(index, 10, precomputed) == (None, None)  # separator gap
+        assert _lookup_location(index, 11, precomputed) == (None, None)  # separator gap
+        assert _lookup_location(index, 12, precomputed) == (2, None)  # exact page start
+        assert _lookup_location(index, 19, precomputed) == (2, None)  # last char of page 2
+        assert _lookup_location(index, 20, precomputed) == (None, None)  # past coverage
+
+
 def test_lookup_location_finds_section() -> None:
     index: LocationIndex = [
         _make_section_boundary(0, 500, "Chapter 1"),

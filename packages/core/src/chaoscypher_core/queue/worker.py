@@ -31,9 +31,11 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.queue.client import GUARDED_OK, compose_pending_score
 from chaoscypher_core.queue.reconciler import reconcile_queue
 from chaoscypher_core.queue.service import _execute_handler, classify_error
 from chaoscypher_core.queue.utils import iso_now as _iso_now
+from chaoscypher_core.queue.worker_timeouts import reconciler_cutoff_seconds
 
 
 if TYPE_CHECKING:
@@ -322,8 +324,8 @@ class QueueWorker:
                     continue  # Re-check self._running
 
                 # Pop highest-priority item (ZPOPMAX pops highest score first).
-                # Scores encode priority minus a time fraction, so FIFO holds
-                # within a priority tier.
+                # Scores encode priority minus a seq/_PENDING_SCORE_SEQ_SCALE
+                # fraction (queue/client.py), so FIFO holds within a tier.
                 items = await self.client.zpopmax(pending_key, count=1)
                 if not items:
                     semaphore.release()
@@ -576,13 +578,10 @@ class QueueWorker:
                 )
                 return None
 
-            # Mark running
-            await _await_result(
-                self.client.hset(
-                    f"queue:task:{task_id}",
-                    mapping={"status": "running", "started_at": _iso_now()},
-                )
-            )
+            # Mark running — guarded claim. On refusal the finally cleanup
+            # (SREM + semaphore release) still runs.
+            if not await self._claim_running(task_id, queue_name, task_data):
+                return None
 
             # Execute with timeout. When _queue_client is available,
             # _run_with_heartbeat drives a background asyncio.Task on the
@@ -702,6 +701,58 @@ class QueueWorker:
                 task_id, queue_name, running_key, semaphore, pending_retry
             )
 
+    async def _claim_running(
+        self,
+        task_id: str,
+        queue_name: str,
+        task_data: dict[str, Any],
+    ) -> bool:
+        """Stamp ``running`` on the task hash, refusing a raced status change.
+
+        A cancel landing in the ZPOPMAX→dispatch window writes ``cancelled``
+        while the task sits in neither the pending zset nor (yet) the running
+        stamp; an unguarded HSET here would silently resurrect it and the
+        handler would run anyway. With a queue client the claim is a guarded
+        CAS (``allowed_from=("queued",)``); the pre-injection fallback checks
+        the already-read hash snapshot for a terminal status before the
+        plain HSET.
+
+        Returns:
+            True when the claim succeeded and dispatch may proceed.
+        """
+        if self._queue_client is not None:
+            outcome = await self._queue_client.guarded_status_write(
+                task_id,
+                new_status="running",
+                allowed_from=("queued",),
+                extra_fields={"started_at": _iso_now()},
+            )
+            if outcome != GUARDED_OK:
+                logger.info(
+                    "task_claim_refused_status_changed",
+                    task_id=task_id,
+                    queue=queue_name,
+                    outcome=outcome,
+                )
+                return False
+            return True
+
+        if task_data.get("status") in {"completed", "failed", "cancelled"}:
+            logger.info(
+                "task_claim_refused_status_changed",
+                task_id=task_id,
+                queue=queue_name,
+                outcome=task_data.get("status"),
+            )
+            return False
+        await _await_result(
+            self.client.hset(
+                f"queue:task:{task_id}",
+                mapping={"status": "running", "started_at": _iso_now()},
+            )
+        )
+        return True
+
     async def _finish_task_cleanup(
         self,
         task_id: str,
@@ -755,8 +806,15 @@ class QueueWorker:
         """Re-add a task to the pending queue with a delayed retry_after timestamp.
 
         Stores a ``retry_after`` epoch timestamp in the task hash so the poller
-        can check whether the backoff has elapsed before processing. The task is
-        also re-added with a future-biased score so it sorts after ready items.
+        can check whether the backoff has elapsed before processing (2026-08-15:
+        this is still the ONLY thing that gates actual dispatch — unchanged by
+        the scoring fix below). The task is also re-added to the pending ZSET
+        at the CURRENT TAIL of its priority tier — a fresh sequence draw from
+        the same per-queue counter ``compose_pending_score`` uses for a plain
+        enqueue, not a synthetic "due position" derived from wall-clock time.
+        See ``QueueClient``'s module comment above ``_PENDING_SCORE_SEQ_SCALE``
+        for why a time-derived fraction here would eventually invert priority
+        ordering against fresh work.
 
         Backoff schedule: 5s, 10s, 20s, 40s, 80s, 160s, then capped at 300s
         base (exponential doubling) with random jitter at 50-150% of the
@@ -781,18 +839,68 @@ class QueueWorker:
             backoff_seconds=round(backoff, 1),
         )
 
-        # Reset status to queued
-        await _await_result(
-            self.client.hset(
-                f"queue:task:{task_id}",
-                mapping={
-                    "status": "queued",
+        # Reset status to queued — but never resurrect a cancelled task.
+        # A cancel that lands while the task is running CASes
+        # ``running → cancelled``, and the transient-failure write then
+        # clobbers that to ``failed`` before this method runs, so the hash
+        # status alone cannot be trusted: consult the durable cancel flag
+        # first (set before the status CAS in ``cancel_task``), repairing
+        # the clobbered status instead of requeueing. The requeue itself is
+        # a guarded CAS from ``failed`` — the same refusal both sibling
+        # requeue paths (cancel-path ``retry_task``, the reconciler's Lua)
+        # already implement — closing the inverse race where a cancel lands
+        # between the failure write and this requeue.
+        if self._queue_client is not None:
+            if await self._queue_client.is_task_cancelled(task_id):
+                await _await_result(
+                    self.client.hset(
+                        f"queue:task:{task_id}",
+                        mapping={
+                            "status": "cancelled",
+                            "error": "Task cancelled during retry backoff",
+                            "completed_at": _iso_now(),
+                        },
+                    )
+                )
+                logger.info(
+                    "task_retry_refused_cancelled",
+                    task_id=task_id,
+                    queue=queue_name,
+                    attempt=attempt,
+                )
+                return
+            outcome = await self._queue_client.guarded_status_write(
+                task_id,
+                new_status="queued",
+                allowed_from=("failed",),
+                extra_fields={
                     "error": "",
                     "error_type": "",
                     "retry_after": str(time.time() + backoff),
                 },
             )
-        )
+            if outcome != GUARDED_OK:
+                logger.info(
+                    "task_retry_refused_status_changed",
+                    task_id=task_id,
+                    queue=queue_name,
+                    outcome=outcome,
+                )
+                return
+        else:
+            # Pre-injection fallback (test harnesses without a queue
+            # client): keep the plain write.
+            await _await_result(
+                self.client.hset(
+                    f"queue:task:{task_id}",
+                    mapping={
+                        "status": "queued",
+                        "error": "",
+                        "error_type": "",
+                        "retry_after": str(time.time() + backoff),
+                    },
+                )
+            )
 
         # Defensive: clear any dead-letter retention TTL that an earlier
         # terminal-fail write may have applied. The worker's gating SHOULD
@@ -807,12 +915,19 @@ class QueueWorker:
             raw_priority.decode() if isinstance(raw_priority, bytes) else raw_priority or "50"
         )
 
-        # Composite score: priority minus a future-time fraction so the
-        # task sorts BELOW currently-ready items (ZPOPMAX pops highest
-        # score first). Effect: the task is gated until the reconciler or
-        # `_get_retry_after` check clears the retry window.
-        future_time = time.time() + backoff
-        score = priority - future_time / 1e10
+        # Composite score: a fresh seq from the SAME per-queue counter a
+        # plain enqueue() draws from, so the retry takes the current tail
+        # position of its priority tier — not a time-derived fraction.
+        # (A prior version subtracted (time.time() + backoff) / 1e10: that
+        # fraction is fixed at schedule time, ~0.18 at any 2026-era epoch,
+        # while a fresh enqueue's seq-based fraction keeps growing — the
+        # two would cross and silently flip every outstanding retry to
+        # the FRONT of its tier once the per-queue counter passed
+        # ~1.965e11, well inside the documented tier-crossing ceiling.)
+        # Dispatch eligibility is unaffected either way: `_get_retry_after`
+        # is what actually gates a popped-but-not-yet-due task.
+        seq = await _await_result(self.client.incr(f"queue:{queue_name}:seq"))
+        score = compose_pending_score(priority, seq)
         await _await_result(self.client.zadd(f"queue:{queue_name}:pending", {task_id: score}))
 
     # ------------------------------------------------------------------
@@ -934,7 +1049,7 @@ class QueueWorker:
                     client=self._queue_client,
                     queue_name=queue_name,
                     max_tries=config["max_tries"],
-                    timeout_seconds=config.get("timeout"),
+                    timeout_seconds=reconciler_cutoff_seconds(config.get("timeout")),
                 )
                 if stats.total() > 0:
                     logger.warning(
@@ -979,7 +1094,7 @@ class QueueWorker:
                         client=self._queue_client,
                         queue_name=queue_name,
                         max_tries=config["max_tries"],
-                        timeout_seconds=config.get("timeout"),
+                        timeout_seconds=reconciler_cutoff_seconds(config.get("timeout")),
                     )
                     if stats.total() > 0:
                         logger.warning(

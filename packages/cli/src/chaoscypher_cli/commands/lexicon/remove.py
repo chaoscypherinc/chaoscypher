@@ -53,10 +53,10 @@ def remove(package: str, version: str | None, remove_all: bool, force: bool) -> 
     PACKAGE should be in format: user/packagename or just packagename
 
     Example:
-        chaoscypher remove john/medical-ontology
-        chaoscypher remove john/medical-ontology --version 1.2.0
-        chaoscypher remove my-package --all
-        chaoscypher remove my-package --force
+        chaoscypher lexicon remove john/medical-ontology
+        chaoscypher lexicon remove john/medical-ontology --version 1.2.0
+        chaoscypher lexicon remove my-package --all
+        chaoscypher lexicon remove my-package --force
     """
     # Validate user-supplied names BEFORE any filesystem operation so a name
     # like "..\\..\\x" can never resolve (and rmtree) outside the packages dir.
@@ -95,7 +95,7 @@ def remove(package: str, version: str | None, remove_all: bool, force: bool) -> 
 
         if not package_path.exists():
             console.print(f"[red]Package not found:[/red] {package}")
-            console.print("\nUse 'chaoscypher list' to see installed packages.")
+            console.print("\nUse 'chaoscypher lexicon list' to see installed packages.")
             sys.exit(1)
 
         # Get versions

@@ -57,7 +57,6 @@ def _batch_embed_returning(vector: list[float], provider: str = "test"):
         return BatchEmbedResult(
             embeddings=[vector for _ in texts],
             total=len(texts),
-            failed=0,
             provider=provider,
         )
 

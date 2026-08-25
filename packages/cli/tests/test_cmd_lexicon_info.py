@@ -395,3 +395,30 @@ def test_info_local_file_read_error_exits_nonzero(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "Failed to read" in result.output or "Bad zip" in result.output
+
+
+def test_info_hub_unreachable_prints_hint_not_traceback() -> None:
+    """A plain ExternalServiceError (hub down) yields the operator hint, not a traceback."""
+    from chaoscypher_core.exceptions import ExternalServiceError
+
+    mock_client = AsyncMock()
+    mock_client.get_package_info = AsyncMock(
+        side_effect=ExternalServiceError("Lexicon", "Connection refused")
+    )
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    runner = CliRunner()
+    with (
+        patch("chaoscypher_cli.commands.lexicon.info.LexiconClient", return_value=mock_client),
+        patch("chaoscypher_cli.commands.lexicon.info.get_auth_config", return_value=None),
+        patch(
+            "chaoscypher_cli.commands.lexicon.info.get_lexicon_url",
+            return_value="https://lexicon.example.com",
+        ),
+    ):
+        result = runner.invoke(info, ["john/test-package"])
+
+    assert result.exit_code == 1
+    assert "Cannot reach Lexicon Hub" in result.output
+    assert "Traceback" not in result.output

@@ -36,6 +36,17 @@ services:
       # Semgrep rules — the rule self-tests assert /app/tools/semgrep/rules
       # is populated; without this mount they fail only inside Docker CI.
       - ../../../tools:/app/tools:ro
+      # Semgrep ignore list — load-bearing, not a convenience. The Dockerfile
+      # COPYs only manifests + src, so anything not mounted here simply does
+      # not exist at /app. Without this file semgrep falls back to its
+      # BUILT-IN default ignore list, which drops every `tests/` path, and
+      # CC040/CC041 (paths.include: '**/tests/**') scan zero targets — so
+      # `make ci-local`'s lint-claude step inside this container would report
+      # success while enforcing nothing, exactly the failure the host-side
+      # .semgrepignore was added to fix. The rule self-tests
+      # (packages/core/tests/unit/scripts/test_semgrep_rule_selftests.py)
+      # detect its absence and fail loudly.
+      - ../../../.semgrepignore:/app/.semgrepignore:ro
       # Output directory for coverage reports (writable)
       - ../test-output:/app/coverage_html
     environment:

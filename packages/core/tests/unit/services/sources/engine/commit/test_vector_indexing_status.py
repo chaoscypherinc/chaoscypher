@@ -203,3 +203,51 @@ async def test_retry_exhausted_marks_failed(
     assert row.vector_indexing_status == "failed", (
         f"expected 'failed' after retry exhaustion, got {row.vector_indexing_status!r}"
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_retry_enqueue_still_marks_degraded(
+    adapter_with_default_templates: SqliteAdapter,
+) -> None:
+    """An exception inside _enqueue_search_retry must not escape the commit.
+
+    The enqueue opens a fresh transaction right after a rollback, under the
+    same lock contention that just broke indexing. Unguarded, its exception
+    escaped _commit_impl AFTER commit_complete was already set — the
+    DbLockRetryPolicy retry then hit the commit_complete early-return, so
+    the source was left stuck at vector_indexing_status='pending' with no
+    retry row, no degraded badge, and no path to recovery.
+    """
+    adapter = adapter_with_default_templates
+    source_id = "src_vec_enqueue_fails"
+
+    _seed_extracted_source(adapter, source_id)
+    service = _build_commit_service(adapter)
+
+    with (
+        patch.object(
+            service,
+            "_index_chunks_to_vector_search",
+            side_effect=RuntimeError("vec exploded"),
+        ),
+        patch.object(
+            service,
+            "_enqueue_search_retry",
+            side_effect=RuntimeError("database is locked"),
+        ),
+    ):
+        # Must not raise — the enqueue failure is contained.
+        await service.commit(
+            file_id=source_id,
+            commit_data=_EMPTY_COMMIT_DATA,
+            file_info={"id": source_id, "database_name": adapter.database_name},
+        )
+
+    assert adapter.session is not None
+    adapter.session.expire_all()
+    row = adapter.session.get(SourceRow, source_id)
+    assert row is not None
+    assert row.vector_indexing_status == "degraded", (
+        f"expected 'degraded' even when the retry enqueue itself fails, "
+        f"got {row.vector_indexing_status!r}"
+    )

@@ -227,7 +227,8 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
                 audit_log_user_plugin_file,
             )
 
-            audit_log_user_plugin_file(config_path, registry="DomainRegistry")
+            if not audit_log_user_plugin_file(config_path, registry="DomainRegistry"):
+                return
 
         # Load JSON config
         content = config_path.read_text(encoding="utf-8")

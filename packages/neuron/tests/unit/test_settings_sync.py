@@ -105,7 +105,10 @@ class TestReloadLlmProvider:
             mock_new_service = MagicMock()
             patches["svc_cls"].return_value = mock_new_service
 
-            await reload_llm_provider(ctx)
+            result = await reload_llm_provider(ctx)
+
+        # A successful reload reports success so callers can advance state.
+        assert result is True
 
         # Config manager had its cache invalidated
         ctx["config_manager"].invalidate_cache.assert_called_once()
@@ -121,7 +124,10 @@ class TestReloadLlmProvider:
         ctx["config_manager"] = None  # Explicitly None
 
         original_settings = ctx["settings"]
-        await reload_llm_provider(ctx)
+        result = await reload_llm_provider(ctx)
+
+        # A skipped reload reports failure, not success.
+        assert result is False
 
         # Settings should be unchanged (nothing happened)
         assert ctx["settings"] is original_settings
@@ -144,7 +150,10 @@ class TestReloadLlmProvider:
             patch("chaoscypher_core.app_config.set_settings"),
         ):
             mock_gs.cache_clear = MagicMock()
-            await reload_llm_provider(ctx)
+            result = await reload_llm_provider(ctx)
+
+        # A rolled-back reload reports failure so callers don't advance state.
+        assert result is False
 
         # Previous context values are restored
         assert ctx["settings"] is original_settings
@@ -642,3 +651,70 @@ class TestVersionReconciliation:
                     await task
 
         mock_reload.assert_not_called()
+
+
+# ============================================================================
+# Version Counter Reconciliation — held back on reload failure (Task B3)
+# ============================================================================
+
+
+class TestVersionReconciliationOnReloadFailure:
+    """``_reconcile_version`` must not advance ``_known_version`` on a failed reload.
+
+    Before this fix, ``_reconcile_version`` advanced ``_known_version`` to the
+    live value unconditionally, regardless of whether ``reload_llm_provider``
+    actually succeeded. A transient failure (Ollama momentarily down, a new
+    database file unopenable) permanently pinned the worker to stale settings
+    — or the wrong database file on a database switch — until restart, because
+    the next reconcile pass saw ``known == live`` and never retried.
+    """
+
+    @pytest.mark.asyncio
+    async def test_known_version_not_advanced_on_reload_failure(self) -> None:
+        """A failed reload leaves ``_known_version`` behind so the next reconcile retries."""
+        from chaoscypher_neuron import settings_sync
+        from chaoscypher_neuron.settings_sync import _reconcile_version
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=b"5")
+
+        with (
+            patch(
+                "chaoscypher_neuron.settings_sync.reload_llm_provider",
+                new_callable=AsyncMock,
+                return_value=False,
+            ) as mock_reload,
+            patch("chaoscypher_neuron.settings_sync._known_version", 3),
+        ):
+            await _reconcile_version(mock_client, {})
+            # Reload failed — known_version must remain held back at 3, not
+            # jump to the live value of 5.
+            assert settings_sync._known_version == 3
+
+            # Because known_version was held back, a second reconcile pass
+            # sees live (5) > known (3) again and retries the reload.
+            await _reconcile_version(mock_client, {})
+
+        assert mock_reload.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_known_version_advances_on_reload_success(self) -> None:
+        """A successful reload advances ``_known_version`` to the live value."""
+        from chaoscypher_neuron import settings_sync
+        from chaoscypher_neuron.settings_sync import _reconcile_version
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=b"5")
+
+        with (
+            patch(
+                "chaoscypher_neuron.settings_sync.reload_llm_provider",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_reload,
+            patch("chaoscypher_neuron.settings_sync._known_version", 3),
+        ):
+            await _reconcile_version(mock_client, {})
+            assert settings_sync._known_version == 5
+
+        mock_reload.assert_called_once()

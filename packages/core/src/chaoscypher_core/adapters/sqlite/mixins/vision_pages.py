@@ -132,11 +132,13 @@ class VisionPagesMixin(SqliteMixinBase):
         """Return all rows for a source, optionally filtered by status.
 
         Ordered by (page_number, region_index). Pass
-        ``include_content=False`` when only the light columns are needed
-        (e.g. recovery counting statuses) — the ``description`` and
-        ``error_message`` Text columns are then excluded from the query
+        ``include_content=False`` when the per-page LLM ``description``
+        Text column is not needed (recovery counting statuses; the
+        polled listing endpoint) — it is then excluded from the query
         and returned as ``None`` (mirrors the ``list_chunks``
-        ``include_content`` pattern).
+        ``include_content`` pattern). ``error_message`` stays in the
+        light projection: it is short, and the frontend renders it on
+        failed pages.
         """
         self._ensure_connected()
 
@@ -160,10 +162,11 @@ class VisionPagesMixin(SqliteMixinBase):
                     VisionPageDescription.status,
                     VisionPageDescription.image_path,
                     VisionPageDescription.finish_reason,
+                    VisionPageDescription.error_message,
                     VisionPageDescription.attempts,
                     VisionPageDescription.created_at,
                     VisionPageDescription.updated_at,
-                    # EXCLUDE: description, error_message (Text columns)
+                    # EXCLUDE: description (Text column no light caller reads)
                 )
             )
         if statuses:
@@ -173,7 +176,11 @@ class VisionPagesMixin(SqliteMixinBase):
         rows = self.session.scalars(stmt).all()
         if not include_content:
             return [
-                {**self._vision_page_to_dict_light(r), "description": None, "error_message": None}
+                {
+                    **self._vision_page_to_dict_light(r),
+                    "description": None,
+                    "error_message": r.error_message,
+                }
                 for r in rows
             ]
         return [self._vision_page_to_dict(r) for r in rows]

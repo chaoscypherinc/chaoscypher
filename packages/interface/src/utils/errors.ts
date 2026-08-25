@@ -72,6 +72,28 @@ export function getApiErrorMessage(err: unknown): string {
 }
 
 /**
+ * True when a caught error is the templates API's 409 "template in use"
+ * conflict (machine code `TEMPLATE_IN_USE` in the unified envelope).
+ *
+ * Matches on HTTP status + the stable error code — never on the
+ * human-readable message, which the backend rewrites (the public 409
+ * message is "Template cannot be deleted because it is in use").
+ */
+export function isTemplateInUseError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as HttpLikeError & { status?: number | null };
+  const status = e.status ?? e.response?.status ?? null;
+  if (status !== 409) return false;
+  const data = e.response?.data;
+  const code =
+    data?.error ??
+    (data?.detail && typeof data.detail === 'object' ? data.detail.code : undefined);
+  // A 409 from a template delete without a readable code still means "in
+  // use" — the endpoint has no other conflict cause.
+  return code === undefined || code === 'TEMPLATE_IN_USE';
+}
+
+/**
  * Returns true when the caught value looks like a "request was aborted by the
  * caller" error from fetch or the API client.
  */

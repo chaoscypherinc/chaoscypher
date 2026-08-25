@@ -15,23 +15,26 @@ if TYPE_CHECKING:
 def install_chunk_indices_shortcut(orchestrator: ExtractionOrchestrator) -> None:
     """Patch ``_get_expected_indices`` to honor an in-source-dict cache.
 
-    Tests inject ``extraction_chunk_indices: [0, 1, ...]`` into mock
+    Tests inject ``_test_expected_chunk_indices: [0, 1, ...]`` into mock
     source dicts as a fixture shortcut: it spares the test from mocking
     the entire ``_build_source_groups`` chain (storage adapter, domain
     content filters, token-budget grouping).
 
-    Production no longer reads this field — migration 0030 dropped the
-    column, so a real ``source`` returned by storage never has it. The
-    production code path always re-derives via ``_get_group_indices``.
-    This helper installs the shortcut *only on the test instance* so
-    tests stay readable without polluting production.
+    The key is deliberately NOT the pre-0030 column name
+    (``extraction_chunk_indices``): migration 0030 dropped that column, a
+    real ``source`` returned by storage never carries it, and CC049 bans
+    any remaining reference to it. The underscore prefix marks this as a
+    test-harness-only key with no storage counterpart. The production
+    code path always re-derives via ``_get_group_indices``; this helper
+    installs the shortcut *only on the test instance* so tests stay
+    readable without polluting production.
 
     Call once per orchestrator instance, after construction.
     """
     original = orchestrator._get_expected_indices
 
     def _shortcut(source: dict[str, Any]) -> set[int]:
-        cached = source.get("extraction_chunk_indices")
+        cached = source.get("_test_expected_chunk_indices")
         if cached is not None:
             return set(cached)
         return original(source)

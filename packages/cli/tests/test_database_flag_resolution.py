@@ -24,38 +24,110 @@ on a freshly-populated ``cli_smoke_warpeace`` DB. The fix is mechanical
 — each affected site uses ``ctx.database_name`` (the resolved value)
 instead of the raw ``database`` arg.
 
-These tests pin the contract by introspecting the source of both
-affected commands. If a future refactor reintroduces the raw-arg
-pattern, the assertion fires before the user hits an empty list.
+``source list`` is pinned behaviourally: the command is invoked with a
+mocked context whose resolved ``database_name`` differs from the Click
+default, and the adapter calls are inspected.
+
+2026-08-12: the ``source list`` test used to grep
+``inspect.getsourcelines(list_files.callback)`` for
+``"database_name=ctx.database_name"``. That token occurs three times in
+the callback (the load-bearing ``list_files`` call plus two
+``count_sources*`` calls), so regressing the load-bearing one back to the
+raw ``database`` arg left the assertion green. Its paired negative
+(``"list_files(database_name=database," not in body``) was dead by
+construction — the real source breaks the line after ``list_files(``, so
+that substring is absent whether or not the bug is present.
 """
 
 from __future__ import annotations
 
 import inspect
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+from click.testing import CliRunner
 
 
-def test_source_list_uses_resolved_database_name() -> None:
-    """``chaoscypher source list`` must query ``ctx.database_name``,
-    not the raw Click ``database`` arg.
+# The name ``db switch`` made active. Deliberately not "default", so a
+# command that queries the raw Click arg lands on the wrong database.
+_ACTIVE_DB = "cli_smoke_warpeace"
+
+
+def _ctx(files: list[dict[str, Any]] | None = None, total: int = 0) -> MagicMock:
+    """A CLI context whose resolved database differs from the Click default."""
+    ctx = MagicMock()
+    ctx.database_name = _ACTIVE_DB
+    ctx.storage_adapter.list_files.return_value = files or []
+    ctx.storage_adapter.count_sources.return_value = total
+    ctx.storage_adapter.count_sources_by_statuses.return_value = total
+    return ctx
+
+
+def _database_names(adapter: MagicMock) -> set[str]:
+    """Every ``database_name`` kwarg the command sent to the adapter."""
+    names: set[str] = set()
+    for method in ("list_files", "count_sources", "count_sources_by_statuses"):
+        for call in getattr(adapter, method).call_args_list:
+            if "database_name" in call.kwargs:
+                names.add(call.kwargs["database_name"])
+    return names
+
+
+def test_source_list_queries_the_resolved_database_not_the_raw_flag() -> None:
+    """``chaoscypher source list`` must query ``ctx.database_name``.
+
+    With ``--database`` omitted, Click substitutes the literal "default".
+    ``get_context`` treats that as "no override" and resolves the active
+    workspace, so the adapter query must use the RESOLVED name — passing
+    the raw arg is Bug 10 and shows "No ingested files found" on a
+    populated database.
     """
     from chaoscypher_cli.commands.source.list import list_files
 
-    # Click wraps the function in a Command object; the original
-    # callable lives on ``.callback``.
-    callback = list_files.callback
-    src_lines, _ = inspect.getsourcelines(callback)
-    body = "".join(src_lines)
+    runner = CliRunner()
+    ctx = _ctx(files=[{"id": "s1", "filename": "f.txt", "status": "indexed", "file_size": 1}])
 
-    # The right call: list_files(database_name=ctx.database_name, ...)
-    assert "database_name=ctx.database_name" in body, (
+    with patch("chaoscypher_cli.commands.source.list.get_context", return_value=ctx) as get_context:
+        result = runner.invoke(list_files, [])
+
+    assert result.exit_code == 0, result.output
+    # get_context receives the raw Click default and does the resolving...
+    assert get_context.call_args.kwargs["database_name"] == "default"
+    # ...so the adapter query must carry the resolved name, not "default".
+    kwargs = ctx.storage_adapter.list_files.call_args.kwargs
+    assert kwargs["database_name"] == _ACTIVE_DB, (
         "source list passes the unresolved Click ``database`` arg to "
         "list_files. Use ``ctx.database_name`` (resolved via get_context) "
         "so the query honours ``db switch``."
     )
-    # The wrong call: list_files(database_name=database, ...) bare token
-    assert "list_files(database_name=database," not in body, (
-        "source list still passes the raw ``database`` arg to list_files. Bug 10 regression."
-    )
+
+
+def test_source_list_count_queries_use_the_resolved_database_too() -> None:
+    """The truncation-footer counts must target the same resolved database.
+
+    A count taken against ``default`` while the rows come from the active
+    workspace produces a nonsensical "Showing first N of M" footer, so all
+    three adapter calls in the callback are covered here rather than only
+    the one the original regression named.
+    """
+    from chaoscypher_cli.commands.source.list import list_files
+
+    runner = CliRunner()
+    rows = [
+        {"id": f"s{i}", "filename": f"f{i}.txt", "status": "indexed", "file_size": 1}
+        for i in range(3)
+    ]
+
+    for argv in ([], ["--status", "indexed"]):
+        ctx = _ctx(files=rows, total=99)  # total > fetched → truncation branch
+        with patch("chaoscypher_cli.commands.source.list.get_context", return_value=ctx):
+            result = runner.invoke(list_files, argv)
+
+        assert result.exit_code == 0, result.output
+        assert "Showing first 3 of 99" in result.output, f"argv={argv}: no count query ran"
+        assert _database_names(ctx.storage_adapter) == {_ACTIVE_DB}, (
+            f"argv={argv}: an adapter query used an unresolved database name"
+        )
 
 
 def test_package_load_uses_resolved_database_name() -> None:

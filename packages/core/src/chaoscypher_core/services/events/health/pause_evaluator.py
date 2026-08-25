@@ -16,6 +16,7 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import structlog
@@ -28,6 +29,43 @@ if TYPE_CHECKING:
     from chaoscypher_core.services.events.health.registry import HealthRegistry
 
 logger = structlog.get_logger(__name__)
+
+# Shared format between the trip writer (_format_pause_reason, used when
+# persisting a new auto-pause) and the restart-recovery parser
+# (_parse_pause_reason, used to re-derive the tripped-probe witness set
+# after a process restart loses its in-memory state). Keeping both sides
+# of this contract on one prefix constant and one pair of helpers means
+# the writer and parser cannot drift independently -- see entry 804.
+_AUTO_PAUSE_REASON_PREFIX = "Auto-paused: "
+
+
+def _format_pause_reason(probe_names: set[str]) -> str:
+    """Format tripped probe names into the persisted auto-pause reason.
+
+    Sorts and comma-joins the names after ``_AUTO_PAUSE_REASON_PREFIX`` so
+    the output is deterministic and round-trips through
+    :func:`_parse_pause_reason`. This is the single source of truth for
+    the reason-string format; ``tick()`` never builds this string itself.
+    """
+    return f"{_AUTO_PAUSE_REASON_PREFIX}{', '.join(sorted(probe_names))}"
+
+
+def _parse_pause_reason(reason: str | None) -> set[str] | None:
+    """Parse probe names back out of a persisted auto-pause reason string.
+
+    Inverse of :func:`_format_pause_reason`. Returns ``None`` -- never an
+    empty set -- when ``reason`` is missing, doesn't carry the expected
+    prefix, or decodes to no probe names, so callers can distinguish "this
+    isn't an auto-pause reason we understand" from "the pause legitimately
+    involves zero probes" (which should never happen). Callers must treat
+    ``None`` as unrecoverable and leave the pause alone rather than
+    guessing.
+    """
+    if reason is None or not reason.startswith(_AUTO_PAUSE_REASON_PREFIX):
+        return None
+    names_part = reason[len(_AUTO_PAUSE_REASON_PREFIX) :]
+    names = {name.strip() for name in names_part.split(",") if name.strip()}
+    return names or None
 
 
 class HealthPauseEvaluator:
@@ -69,6 +107,56 @@ class HealthPauseEvaluator:
         self._tripped_probes: set[str] = set()
         self._previous_failures: dict[str, int] = {}
 
+    def _recover_tripped_probes(
+        self,
+        *,
+        reason: str | None,
+        own_probes: set[str],
+    ) -> set[str]:
+        """Re-derive the tripped-probe witness set after a process restart.
+
+        ``_tripped_probes`` lives only in memory, but the pause it guards
+        is persisted, so a restarted process starts with an empty set even
+        though the system is still paused. This recovers it by parsing the
+        persisted ``reason`` string (see :func:`_parse_pause_reason`) and
+        requiring ``own_probes`` -- the probes this process's own registry
+        actually checks -- to FULLY cover the persisted names.
+
+        Full coverage, not mere overlap, is required: the caller's
+        eventual clear-check only iterates the *returned* set, but
+        ``set_system_paused(is_paused=False)`` is a global flip. If this
+        process only vouches for some of the probes that caused the pause
+        (e.g. it owns ``disk_space`` but the pause was jointly caused by
+        ``disk_space`` *and* ``queue``, which this process cannot check),
+        accepting a partial match would let it clear a system-wide pause
+        while blind to whether the probe it can't see is still failing.
+        Partial coverage is therefore treated exactly like zero coverage.
+
+        Returns an empty set (never clears this tick) if the reason is
+        unparseable, or if ``own_probes`` does not fully cover the
+        persisted names (including the case of no overlap at all).
+
+        Args:
+            reason: The persisted ``processing_paused_reason`` string.
+            own_probes: Names of probes registered on this evaluator's
+                own registry (i.e. this tick's probe-result keys).
+        """
+        parsed = _parse_pause_reason(reason)
+        if parsed is None:
+            logger.warning("unparseable_auto_pause_reason", reason=reason)
+            return set()
+
+        if not parsed <= own_probes:
+            logger.debug(
+                "foreign_auto_pause_trip",
+                persisted=sorted(parsed),
+                own_probes=sorted(own_probes),
+                unowned=sorted(parsed - own_probes),
+            )
+            return set()
+
+        return parsed
+
     async def tick(self) -> None:
         """Run one evaluation cycle.
 
@@ -77,7 +165,9 @@ class HealthPauseEvaluator:
         pauses are never modified.
         """
         results = await self._registry.check_all()
-        state = self._adapter.get_system_state()
+        # Offload the blocking SQLite call; to_thread's context copy carries
+        # the caller's session scope into the worker thread.
+        state = await asyncio.to_thread(self._adapter.get_system_state)
 
         is_paused = state["processing_paused"]
         paused_by = state.get("paused_by")
@@ -134,9 +224,9 @@ class HealthPauseEvaluator:
             }
             if tripped:
                 self._tripped_probes = tripped
-                probe_list = ", ".join(sorted(tripped))
-                reason = f"Auto-paused: {probe_list}"
-                self._adapter.set_system_paused(
+                reason = _format_pause_reason(tripped)
+                await asyncio.to_thread(
+                    self._adapter.set_system_paused,
                     is_paused=True,
                     reason=reason,
                     paused_by="health_monitor",
@@ -149,6 +239,18 @@ class HealthPauseEvaluator:
             return
 
         # Clear check: auto-resume only if we caused the pause.
+        if paused_by == "health_monitor" and not self._tripped_probes:
+            # Fresh evaluator instance (e.g. after a process restart) has
+            # no in-memory witness even though the persisted state says a
+            # health-monitor pause is active. Re-derive it from the
+            # persisted reason, requiring the probes this process itself
+            # registered to FULLY cover the persisted names -- see
+            # _recover_tripped_probes for why partial coverage is refused.
+            self._tripped_probes = self._recover_tripped_probes(
+                reason=state.get("processing_paused_reason"),
+                own_probes=set(results),
+            )
+
         if paused_by == "health_monitor" and self._tripped_probes:
             # Cannot auto-resume if any tripped probe is non-recoverable.
             for name in self._tripped_probes:
@@ -166,7 +268,8 @@ class HealthPauseEvaluator:
                 for name in self._tripped_probes
             )
             if all_cleared:
-                self._adapter.set_system_paused(
+                await asyncio.to_thread(
+                    self._adapter.set_system_paused,
                     is_paused=False,
                     reason=None,
                     paused_by=None,

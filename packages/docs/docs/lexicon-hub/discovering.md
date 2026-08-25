@@ -55,7 +55,7 @@ chaoscypher lexicon search "science" --limit 5
 curl "http://localhost:8080/api/v1/lexicon/search?query=medical"
 
 # With filters
-curl "http://localhost:8080/api/v1/lexicon/search?query=finance&sort_by=stars&package_type=KNOWLEDGE"
+curl "http://localhost:8080/api/v1/lexicon/search?query=finance&sort_by=stars&conformance_class=ccx-core"
 
 # Paginated
 curl "http://localhost:8080/api/v1/lexicon/search?query=science&page=2&limit=10"
@@ -71,24 +71,19 @@ curl "http://localhost:8080/api/v1/lexicon/search?query=science&page=2&limit=10"
 |------|-------------|
 | `relevance` | Best match for your query (default for keyword searches) |
 | `downloads` | Most downloaded first |
-| `stars` | Most starred first (API only) |
-| `newest` | Most recently created (API only) |
+| `stars` | Most starred first |
+| `newest` | Most recently created |
 | `updated` | Most recently updated |
 | `name` | Alphabetical |
 
-The CLI `--sort` flag accepts `relevance`, `downloads`, `updated`, and `name`. `stars` and `newest` are available only via the REST API's `sort_by` parameter.
+The CLI `--sort` flag and the REST API's `sort_by` parameter both accept all of these values.
 
-### Package Types
+### Conformance Classes
 
-Filter by what the package contains:
-
-| Type | Description |
-|------|-------------|
-| `FULL` | Complete knowledge graph (templates + entities + relationships) |
-| `TEMPLATES` | Schema definitions only (node and edge types) |
-| `KNOWLEDGE` | Graph data only (entities and relationships) |
-| `WORKFLOWS` | Automation pipeline definitions |
-| `MIXED` | Combination of multiple types |
+The search API's `conformance_class` parameter filters by which parts of the
+CCX spec a package satisfies (e.g. `ccx-core`). What a package *contains*
+(templates, knowledge, workflows, or a combination) is a property of how it
+was exported and is described by its metadata — it is not a search filter.
 
 ## Viewing Package Details
 
@@ -113,12 +108,13 @@ Package: john/medical-ontology
 ╰────────────────────────────────────────────────╯
 
 Details:
-  Package Type: ontology
+  Conformance: ccx-core
+  Signed: no
   Downloads: 3,200
   Stars: 48
   Versions: 5
-  Created: 2025-06-15T10:30:00Z
-  Updated: 2026-01-20T14:22:00Z
+  Created: 1750415400000
+  Updated: 1768918920000
 
 To install:
   chaoscypher pull john/medical-ontology

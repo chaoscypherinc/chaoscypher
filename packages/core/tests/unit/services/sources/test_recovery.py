@@ -9,7 +9,7 @@ after a worker crash.
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -274,6 +274,96 @@ async def test_extracted_source_dispatches_commit(
     assert kwargs["database_name"] == "default"
 
 
+def test_load_commit_data_returns_sentinel_on_transient_read_failure(
+    in_memory_adapter,
+) -> None:
+    """A transient read failure returns the read-failure sentinel, not `{}`.
+
+    Entry 446: before the fix, an exception from ``list_source_entities``
+    (e.g. SQLite "database is locked" during the ~60s reconcile pass) was
+    caught and collapsed to `{}` -- byte-identical to the legitimate-empty
+    return -- so the commit handler routed it through ``_commit_empty``
+    and permanently zero-graph-committed the source. The sentinel
+    (``None``) lets ``_classify_extracted`` / ``_classify_committing``
+    tell the two cases apart and skip dispatch instead.
+    """
+    recovery = SourceRecovery(adapter=in_memory_adapter, queue_client=AsyncMock())
+
+    def _raise_locked(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("database is locked")
+
+    in_memory_adapter.list_source_entities = _raise_locked
+
+    result = recovery._load_commit_data(source_id="src-transient", database_name="default")
+
+    assert result is None
+
+
+def test_load_commit_data_returns_empty_dict_for_genuine_empty(
+    in_memory_adapter,
+) -> None:
+    """Genuinely no entities/relationships/payload still returns `{}` (not None).
+
+    Regression guard for the other half of entry 446's fix: the sentinel
+    must only fire on a real read failure. A source that legitimately
+    extracted zero entities (pure prose, math-heavy doc, etc.) must keep
+    returning `{}` so the commit handler still routes it through
+    ``_commit_empty``.
+    """
+    recovery = SourceRecovery(adapter=in_memory_adapter, queue_client=AsyncMock())
+
+    result = recovery._load_commit_data(source_id="src-empty", database_name="default")
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_transient_read_failure_skips_commit_dispatch_for_extracted() -> None:
+    """A transient _load_commit_data failure must not dispatch IMPORT_COMMIT.
+
+    Entry 446, status=extracted branch. When ``_load_commit_data`` returns
+    the read-failure sentinel, ``_classify_extracted`` must skip dispatch
+    entirely (return ``None``) rather than building a commit descriptor
+    from an empty/garbage payload. No queue interaction, no recovery-
+    counter bump -- the source is reclassified on the next reconcile pass
+    once the transient failure has cleared.
+    """
+    adapter = MagicMock()
+    adapter.get_system_state.return_value = {"processing_paused": False}
+
+    queue_client = AsyncMock()
+    queue_client.task_exists_for_source = AsyncMock(return_value=False)
+
+    service = SourceRecovery(adapter=adapter, queue_client=queue_client)
+    service._is_recently_active = MagicMock(return_value=False)
+    service._load_commit_data = MagicMock(return_value=None)
+
+    source = {
+        "id": "src-transient-extracted",
+        "status": "extracted",
+        "is_paused": False,
+        "recovery_attempts": 0,
+        "commit_complete": False,
+    }
+    stats = RecoveryStats()
+
+    with patch(
+        "chaoscypher_core.services.sources.recovery.queue_utils.queue_import_commit",
+        new_callable=AsyncMock,
+    ) as mock_qic:
+        await service._recover_one(
+            source=source,
+            database_name="default",
+            stats=stats,
+            respect_stall_threshold=True,
+        )
+
+    mock_qic.assert_not_awaited()
+    adapter.increment_source_recovery_attempts.assert_not_called()
+    assert stats.recovered == 0
+    assert stats.skipped_healthy == 1
+
+
 @pytest.mark.asyncio
 async def test_extracting_with_no_job_redispatches_analysis(
     in_memory_adapter,
@@ -387,6 +477,50 @@ async def test_committing_source_with_no_queue_task_redispatches_commit(
     _, kwargs = mock_qic.await_args
     assert kwargs["file_id"] == "src-10"
     assert kwargs["database_name"] == "default"
+
+
+@pytest.mark.asyncio
+async def test_transient_read_failure_skips_commit_dispatch_for_committing() -> None:
+    """A transient _load_commit_data failure must not dispatch IMPORT_COMMIT.
+
+    Entry 446, status=committing branch -- parallel to the ``extracted``
+    version above. Confirms the sentinel check was applied to both
+    commit-dispatch call sites, not just one of them.
+    """
+    adapter = MagicMock()
+    adapter.get_system_state.return_value = {"processing_paused": False}
+
+    queue_client = AsyncMock()
+    queue_client.task_exists_for_source = AsyncMock(return_value=False)
+
+    service = SourceRecovery(adapter=adapter, queue_client=queue_client)
+    service._is_recently_active = MagicMock(return_value=False)
+    service._load_commit_data = MagicMock(return_value=None)
+
+    source = {
+        "id": "src-transient-committing",
+        "status": "committing",
+        "is_paused": False,
+        "recovery_attempts": 0,
+        "commit_complete": False,
+    }
+    stats = RecoveryStats()
+
+    with patch(
+        "chaoscypher_core.services.sources.recovery.queue_utils.queue_import_commit",
+        new_callable=AsyncMock,
+    ) as mock_qic:
+        await service._recover_one(
+            source=source,
+            database_name="default",
+            stats=stats,
+            respect_stall_threshold=True,
+        )
+
+    mock_qic.assert_not_awaited()
+    adapter.increment_source_recovery_attempts.assert_not_called()
+    assert stats.recovered == 0
+    assert stats.skipped_healthy == 1
 
 
 @pytest.mark.asyncio

@@ -22,9 +22,13 @@ done about them:
 This is self-clearing: the moment upstream publishes a fix, the finding moves
 into the fixable bucket and blocks again until the bump is taken.
 
-Scope note: this is for build-only trees whose output ships as pre-rendered
-static assets. ``packages/interface`` compiles into the shipped bundle and
-keeps the strict ``npm audit --audit-level=high``.
+Scope note: originally built for build-only trees whose output ships as
+pre-rendered static assets, e.g. ``packages/docs``. ``packages/interface``
+compiles into the shipped bundle, so its production dependency tree keeps a
+plain strict ``npm audit --omit=dev --audit-level=high`` alongside this gate;
+this gate then covers interface's *full* tree (including devDependencies-only
+tooling like bundle-size checks), where unfixable/downgrade-only advisories in
+dev-only chains would otherwise block every push with no action available.
 
 Usage:
     uv run python scripts/npm_audit_gate.py packages/docs

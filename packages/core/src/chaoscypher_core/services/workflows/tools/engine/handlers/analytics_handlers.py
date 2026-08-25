@@ -131,6 +131,7 @@ class AnalyticsToolHandlers:
         # Filter nodes by source scope
         if source_ids:
             pre_filter = len(nodes)
+            pre_filter_sample = [getattr(n, "source_id", None) for n in nodes[:5]]
             nodes = [
                 n for n in nodes if not getattr(n, "source_id", None) or n.source_id in source_ids
             ]
@@ -139,9 +140,7 @@ class AnalyticsToolHandlers:
                 before_source_filter=pre_filter,
                 after_source_filter=len(nodes),
                 source_ids=source_ids,
-                sample_node_source_ids=[
-                    getattr(n, "source_id", None) for n in self._load_nodes()[:5]
-                ]
+                sample_node_source_ids=pre_filter_sample
                 if pre_filter > 0 and len(nodes) == 0
                 else [],
             )

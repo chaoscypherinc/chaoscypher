@@ -972,7 +972,6 @@ or `make lint-claude`):
   CC029  ?skip= / ?offset= pagination
   CC031  HTTPException raised in Core or service layer
   CC033  Sync route handler in Cortex feature api.py
-  CC036  get_settings from internal chaoscypher_core.settings outside Core
   CC038  CheckConstraint in models (new columns use StrEnum + String)
   CC040  ':memory:' SQLite URL in tests
   CC041  asyncio.run() in tests

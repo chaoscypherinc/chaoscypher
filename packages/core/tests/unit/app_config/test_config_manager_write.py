@@ -28,6 +28,31 @@ def test_update_settings_writes_owner_only_permissions(tmp_path):
     assert stat.S_IMODE(settings_path.stat().st_mode) == 0o600
 
 
+def test_update_settings_routes_through_atomic_secret_write(tmp_path, monkeypatch):
+    """The write delegates to atomic_secret_write (0600 from creation).
+
+    A plain open()-then-chmod leaves the secrets world-readable for the
+    window before the chmod; the canonical helper creates the tempfile at
+    0600 via mkstemp, so pin the delegation itself.
+    """
+    calls: list[tuple] = []
+
+    def _record(path, data, *, prefix=".secret_"):
+        calls.append((path, data, prefix))
+        path.write_text(data if isinstance(data, str) else data.decode("utf-8"))
+
+    monkeypatch.setattr(
+        "chaoscypher_core.app_config.manager.atomic_secret_write",
+        _record,
+    )
+    settings_path = tmp_path / "settings.yaml"
+    manager = ConfigManager(settings_path=str(settings_path))
+    manager.update_settings({"llm": {"chat_provider": "openai"}})
+    assert len(calls) == 1
+    assert calls[0][0] == settings_path
+    assert calls[0][2] == ".settings_"
+
+
 def test_update_settings_leaves_no_temp_file_and_writes_content(tmp_path):
     settings_path = tmp_path / "settings.yaml"
     manager = ConfigManager(settings_path=str(settings_path))

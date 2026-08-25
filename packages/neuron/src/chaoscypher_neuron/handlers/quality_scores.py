@@ -78,7 +78,11 @@ def register_quality_score_handler(
             database_name=database_name,
         )
 
-        from chaoscypher_core.services.quality import SCORING_VERSION, QualityScorer
+        from chaoscypher_core.services.quality import (
+            SCORING_VERSION,
+            QualityScorer,
+            build_entity_chunk_mentions,
+        )
 
         success_count = 0
         errors: list[dict[str, Any]] = []
@@ -121,10 +125,9 @@ def register_quality_score_handler(
                     except Exception:
                         logger.debug("domain_quality_scoring_lookup_failed", domain=domain)
 
-                entity_chunk_mentions: dict[int, int] = {}
-                for idx, entity in enumerate(entities):
-                    chunks = entity.get("source_chunks", []) or entity.get("chunks", [])
-                    entity_chunk_mentions[idx] = len(chunks) if chunks else 1
+                # Canonical chunk-mention map (handles the table rows'
+                # ``source_chunk_indices`` key as well as the legacy aliases).
+                entity_chunk_mentions = build_entity_chunk_mentions(entities)
 
                 chunk_count = source.get("chunk_count", 0) or 0
 

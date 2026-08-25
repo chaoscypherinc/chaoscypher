@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Nodes per embedding wave when no settings are wired (mirrors the default of
+# ``BatchingSettings.embedding_batch_size``, which drives it when they are).
+_DEFAULT_EMBED_WAVE_SIZE = 512
+
 
 class SearchService:
     """Service for search business logic with node and chunk hydration.
@@ -232,8 +236,15 @@ class SearchService:
             return {}
 
         chunks_dict: dict[str, dict[str, Any]] = {}
+        # One SELECT for the whole result page (mirrors _hydrate_nodes'
+        # get_nodes_batch), then one get_source per DISTINCT
+        # (source_id, database_name) — chunks of one document share a
+        # source, so the per-chunk lookup re-fetched the same row.
+        chunk_rows = self.indexing_repository.get_chunks_by_ids_batch(chunk_ids)
+        chunks_by_id = {row["id"]: row for row in chunk_rows}
+        source_memo: dict[tuple[str, str], dict[str, Any] | None] = {}
         for chunk_id in chunk_ids:
-            chunk_data = self.indexing_repository.get_chunk_by_id(chunk_id)
+            chunk_data = chunks_by_id.get(chunk_id)
             if not chunk_data:
                 continue
 
@@ -242,7 +253,12 @@ class SearchService:
 
             source: dict[str, Any] | None = None
             if source_id and database_name:
-                source = self.source_repository.get_source(source_id, database_name)
+                memo_key = (source_id, database_name)
+                if memo_key not in source_memo:
+                    source_memo[memo_key] = self.source_repository.get_source(
+                        source_id, database_name
+                    )
+                source = source_memo[memo_key]
             else:
                 logger.warning(
                     "chunk_missing_source_reference",
@@ -562,29 +578,20 @@ class SearchService:
                     # so the existing embedding is never read — skip loading it.
                     include_embedding=False,
                 )
-                for node in all_nodes:
-                    try:
-                        # Build text from node label + properties
-                        text_parts = [node.label]
-                        text_parts.extend(
-                            v for v in (node.properties or {}).values() if isinstance(v, str)
-                        )
-                        text = " ".join(text_parts)
-
-                        result = await embedding_callback.embed(text)
-                        from chaoscypher_core.models import NodeUpdate
-
-                        self.graph_repository.update_node(
-                            node.id, NodeUpdate(embedding=result.embedding)
-                        )
-                        nodes_reembedded += 1
-                    except Exception as e:
-                        failed_node_id = node.id
-                        logger.warning(
-                            "rebuild_node_reembed_failed",
-                            node_id=failed_node_id,
-                            error=str(e),
-                        )
+                # Batch instead of an embed + SELECT/UPDATE/COMMIT/refresh per
+                # node, but slice into waves so a failure is survivable:
+                # `batch_embed` fails as a unit, and N here is every node in the
+                # graph, so one all-or-nothing call would throw away the whole
+                # re-embed on a single transient error.
+                wave_size = (
+                    self.settings.batching.embedding_batch_size
+                    if self.settings
+                    else _DEFAULT_EMBED_WAVE_SIZE
+                )
+                for start in range(0, len(all_nodes), wave_size):
+                    nodes_reembedded += await self._reembed_node_wave(
+                        all_nodes[start : start + wave_size], embedding_callback
+                    )
                 if nodes_reembedded:
                     logger.info(
                         "rebuild_nodes_reembedded",
@@ -612,6 +619,72 @@ class SearchService:
                 f"indexed {rebuild_result.get('chunks_indexed', 0)} chunks"
             ),
         }
+
+    async def _reembed_node_wave(self, nodes: list[Any], embedding_callback: Any) -> int:
+        """Re-embed one wave of nodes and persist it; returns rows written.
+
+        One ``batch_embed`` (the provider chunks it into API calls internally)
+        and one ``update_node_embeddings_batch`` transaction — the shape
+        ``operations/importing/imported_source_handler._reembed_nodes`` uses.
+
+        Failure granularity is the wave, not the node: the embedding port is
+        all-or-nothing (``batch_embed`` raises on the first bad text rather
+        than returning an empty vector for it — every shipped provider,
+        ollama/openai/gemini/local, works this way), so the port's documented
+        "empty list for failures" shape in ``embeddings`` is defensive only.
+        Waving is what keeps one transient error from costing the whole
+        graph's re-embed.
+        """
+        texts: list[str] = []
+        for node in nodes:
+            # Build text from node label + properties
+            text_parts = [node.label]
+            text_parts.extend(v for v in (node.properties or {}).values() if isinstance(v, str))
+            texts.append(" ".join(text_parts))
+
+        try:
+            result = await embedding_callback.batch_embed(texts)
+            embeddings = result.embeddings
+        except Exception as e:
+            logger.warning(
+                "rebuild_node_reembed_failed",
+                node_count=len(texts),
+                error=str(e),
+            )
+            return 0
+
+        if len(embeddings) != len(nodes):
+            # A well-behaved provider returns one vector per text; a short list
+            # silently leaves the tail nodes vectorless.
+            logger.warning(
+                "rebuild_node_reembed_count_mismatch",
+                requested=len(nodes),
+                returned=len(embeddings),
+            )
+
+        updates: dict[str, list[float]] = {}
+        for node, vector in zip(nodes, embeddings, strict=False):
+            if not vector:
+                logger.warning(
+                    "rebuild_node_reembed_failed",
+                    node_id=node.id,
+                    error="empty embedding returned",
+                )
+                continue
+            updates[node.id] = vector
+        if not updates:
+            return 0
+
+        try:
+            written: int = self.graph_repository.update_node_embeddings_batch(updates)
+        except Exception as e:
+            logger.warning(
+                "rebuild_node_reembed_write_failed",
+                node_count=len(updates),
+                error=str(e),
+            )
+            return 0
+        return written
 
     def _rebuild_chunk_vector_index(self) -> int:
         """Re-index all committed chunk embeddings into the vector search index.

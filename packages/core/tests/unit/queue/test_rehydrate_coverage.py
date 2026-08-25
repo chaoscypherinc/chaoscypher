@@ -103,7 +103,7 @@ def _make_spec(
     """Build a RehydrationSpec bound to a fake table for the chunk operation."""
     table = _make_table(with_cancelled_at=with_cancelled_at)
 
-    def _default_payload(_row: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _default_payload(_row: Any, _session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return ({"k": "v"}, {"rehydrated": True})
 
     def _default_reset(row: Any, new_id: str) -> None:
@@ -216,7 +216,7 @@ async def test_rehydrate_spec_passes_built_payload_to_enqueue() -> None:
     """build_payload's (data, metadata) tuple flows through to enqueue()."""
     row = _FakeRow(id="r5", status="running", queue_task_id=None)
 
-    def _payload(_row: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _payload(_row: Any, _session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return ({"chunk_task_id": _row.id}, {"prior_status": _row.status})
 
     spec = _make_spec(build_payload=_payload)
@@ -278,7 +278,7 @@ async def test_rehydrate_queue_from_db_isolates_spec_failure(
         operation=OP_EXTRACT_CHUNK,
         table_factory=_boom_factory,
         non_terminal_statuses=("running",),
-        build_payload=lambda _r: ({}, {}),
+        build_payload=lambda _r, _s: ({}, {}),
         reset_row=lambda _r, _i: None,
     )
     good_spec = _make_spec()

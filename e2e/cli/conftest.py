@@ -11,12 +11,23 @@ whether to load real commands vs stubs. We patch sys.argv in the
 invoke helper to make LazyGroup load the real commands.
 """
 
+import hashlib
+import math
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from chaoscypher_core.models import BatchEmbedResult, EmbedResult
+    from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
+    from chaoscypher_core.settings import EngineSettings
 
 
 def pytest_collection_modifyitems(config, items):
@@ -47,6 +58,114 @@ def reset_cli_singletons() -> None:
     # module-global ``_settings``, which would survive the lru reset and
     # keep serving the first test's data_dir.
     app_config._settings = None
+
+
+class _DeterministicEmbeddingProvider:
+    """Hermetic stand-in for the configured embedding provider.
+
+    Satisfies ``EmbeddingProviderProtocol`` structurally with vectors
+    derived from ``sha256(text)``, so identical input always yields an
+    identical vector -- within a run, across runs, and across machines
+    (unlike ``hash()``, which is salted per process).
+
+    Exists because the real ``local`` provider needs Qwen3-Embedding-0.6B
+    weights: the cloud routine sandbox has no HF cache,
+    ``allow_model_download`` defaults False and ``huggingface.co`` is
+    403-blocked there, so ``e2e-cli`` failed for five nights (#435/#437);
+    on a dev machine the same test silently *downloaded* the model and
+    spent ~50s doing it. Either way the tier's result depended on ambient
+    model state rather than on the code under test.
+
+    Semantic quality is irrelevant to what this tier asserts:
+    ``SearchRepository.vector_search`` applies no similarity threshold,
+    so any well-formed vector of the configured width exercises the real
+    path -- embed -> ``vec_search_chunks`` insert -> retrieval.
+    """
+
+    model_name = "e2e-deterministic-embed"
+
+    def __init__(self, dimensions: int) -> None:
+        """Build a provider emitting ``dimensions``-wide unit vectors."""
+        self.dimensions = dimensions
+
+    @property
+    def provider_type(self) -> str:
+        """Return the provider type identifier (matches the protocol)."""
+        return "e2e-deterministic"
+
+    def _vector(self, text: str) -> list[float]:
+        """Derive a stable unit vector of the configured width from text."""
+        digest = hashlib.sha256(text.encode("utf-8")).digest()
+        raw = [
+            (digest[i % len(digest)] ^ (i * 31 % 256)) / 255.0 - 0.5 for i in range(self.dimensions)
+        ]
+        norm = math.sqrt(sum(v * v for v in raw)) or 1.0
+        return [v / norm for v in raw]
+
+    async def embed(self, text: str) -> EmbedResult:
+        """Embed a single text deterministically."""
+        from chaoscypher_core.models import EmbedResult, TokenUsage
+
+        tokens = max(1, len(text) // 4)
+        return EmbedResult(
+            embedding=self._vector(text),
+            provider=self.provider_type,
+            usage=TokenUsage(input_tokens=tokens, output_tokens=0, total_tokens=tokens),
+        )
+
+    async def batch_embed(self, texts: list[str], batch_size: int = 64) -> BatchEmbedResult:
+        """Embed a batch deterministically (all-or-nothing, per the port)."""
+        from chaoscypher_core.models import BatchEmbedResult
+
+        return BatchEmbedResult(
+            embeddings=[self._vector(t) for t in texts],
+            total=len(texts),
+            provider=self.provider_type,
+        )
+
+    async def check_health(self) -> EmbeddingHealthStatus:
+        """Report healthy -- this provider has nothing to be unavailable."""
+        from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
+
+        return EmbeddingHealthStatus(
+            healthy=True,
+            provider=self.provider_type,
+            model=self.model_name,
+            dimensions=self.dimensions,
+            message="deterministic e2e provider",
+        )
+
+
+@pytest.fixture(autouse=True)
+def hermetic_embeddings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Route every embedding request through the deterministic provider.
+
+    Patches the factory at each module that binds the name, because call
+    sites differ: most import it lazily inside a function (the commit
+    service, ``chaoscypher_cli.context``) and so resolve the package
+    attribute at call time, while ``repo_factories.embedding_factory``
+    binds it at import. Patching only one of them leaves the other on the
+    real model -- which is how this tier came to depend on ambient model
+    state in the first place.
+
+    The singleton in ``embedding_factory`` is invalidated on both sides of
+    the test: entering, so a provider cached by an earlier test cannot
+    serve this one, and leaving, so this fake cannot escape the tier.
+    """
+    from chaoscypher_core import adapters as adapters_pkg
+    from chaoscypher_core.adapters import embedding as embedding_pkg
+    from chaoscypher_core.adapters.embedding import factory as embedding_factory_mod
+    from chaoscypher_core.repo_factories import embedding_factory
+
+    def _create(settings: EngineSettings) -> _DeterministicEmbeddingProvider:
+        return _DeterministicEmbeddingProvider(settings.search.vector_dimensions)
+
+    for module in (adapters_pkg, embedding_pkg, embedding_factory_mod, embedding_factory):
+        monkeypatch.setattr(module, "create_embedding_provider", _create)
+
+    embedding_factory.invalidate_embedding_service()
+    yield
+    embedding_factory.invalidate_embedding_service()
 
 
 @pytest.fixture

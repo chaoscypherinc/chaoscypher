@@ -45,6 +45,18 @@ BYTES_PER_KIB = 1_024
 BYTES_PER_MIB = 1_048_576
 BYTES_PER_GIB = 1_073_741_824
 
+# ---- Worker task-timeout clamp ------------------------------------------
+# Bounds an operator's ``workers.yaml`` ``timeout`` override is clamped into.
+# Not operator-tunable: they encode supervisor / Valkey tolerances. They live
+# here (rather than beside either consumer) because BOTH the worker that
+# enforces the deadline (``chaoscypher_neuron.config.load_worker_config``) and
+# the reconciler cutoff resolver that must clear it
+# (``chaoscypher_core.queue.worker_timeouts``) clamp with them — drift between
+# the two puts the reconciler's heartbeat-blind absolute-timeout branch back
+# inside the worker's live window, which requeues running tasks.
+WORKER_TIMEOUT_MIN_SECONDS = 60
+WORKER_TIMEOUT_MAX_SECONDS = SECONDS_PER_DAY
+
 # ---- Backup interval presets (cortex lifespan.py) -----------------------
 BACKUP_INTERVAL_PRESETS: dict[str, int] = {
     "hourly": SECONDS_PER_HOUR,

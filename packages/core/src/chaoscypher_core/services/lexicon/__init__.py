@@ -32,7 +32,7 @@ High-level service example:
     # Search packages
     results = await service.search(LexiconSearchRequest(query="medical"))
     for pkg in results.packages:
-        print(f"{pkg.name} v{pkg.version}")
+        print(f"{pkg.full_name}: {pkg.description}")
 """
 
 # Client (low-level)

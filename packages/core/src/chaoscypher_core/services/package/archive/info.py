@@ -77,18 +77,20 @@ def get_archive_info(archive_path: Path) -> ArchiveInfo:
 
     compressed_size = archive_path.stat().st_size
     uncompressed_size = 0
+    file_count = 0
     contents: list[str] = []
 
     with zipfile.ZipFile(archive_path, "r") as zipf:
         for member in zipf.infolist():
             contents.append(member.filename)
             if not member.is_dir():
+                file_count += 1
                 uncompressed_size += member.file_size
 
     return ArchiveInfo(
         compressed_size=compressed_size,
         uncompressed_size=uncompressed_size,
-        file_count=len(contents),
+        file_count=file_count,
         contents=tuple(contents),
     )
 

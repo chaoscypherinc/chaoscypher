@@ -86,15 +86,30 @@ def start(host: str, port: int | None, reload: bool) -> None:
     )
 
     from chaoscypher_core.database.engine import init_database
+    from chaoscypher_core.exceptions import UnsupportedDatabaseLineageError
 
     logger.info("initializing_database", database_name=settings.current_database)
-    init_database(
-        settings.current_database,
-        data_dir=settings.paths.data_dir,
-        databases_subdir=settings.paths.databases_subdir,
-        app_db_filename=settings.paths.app_db_filename,
-        strict_schema_drift=settings.database.strict_schema_drift,
-    )
+    try:
+        init_database(
+            settings.current_database,
+            data_dir=settings.paths.data_dir,
+            databases_subdir=settings.paths.databases_subdir,
+            app_db_filename=settings.paths.app_db_filename,
+            strict_schema_drift=settings.database.strict_schema_drift,
+        )
+    except UnsupportedDatabaseLineageError as exc:
+        # Terminal, operator-actionable condition: the database is from a
+        # migration lineage this build cannot upgrade. Print the guidance and
+        # exit cleanly — a traceback here would bury the one paragraph the
+        # operator needs, and starting uvicorn against an unusable schema
+        # would only crash later with a less useful error.
+        logger.error(  # noqa: TRY400 — the traceback is noise; the message is the point
+            "cortex_unsupported_database_lineage",
+            database_name=settings.current_database,
+            revision=exc.revision,
+        )
+        click.echo(f"\nChaosCypher cannot start.\n\n{exc.message}\n", err=True)
+        raise SystemExit(1) from exc
 
     # Suppress /health access log spam (fires every 30s from Docker healthcheck)
     logging.getLogger("uvicorn.access").addFilter(_HealthCheckFilter())

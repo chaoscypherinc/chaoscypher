@@ -16,9 +16,9 @@ specifying properties, relationships, and constraints.
 Example:
     chaoscypher graph template list
     chaoscypher graph template create --name Person -p name:string:required
-    chaoscypher graph template get Person
-    chaoscypher graph template update Person -a email:email
-    chaoscypher graph template delete Person
+    chaoscypher graph template get tmpl_a1b2c3d4e5
+    chaoscypher graph template update tmpl_a1b2c3d4e5 -a email:email
+    chaoscypher graph template delete tmpl_a1b2c3d4e5
 """
 
 import click

@@ -463,6 +463,7 @@ def _make_spend_guard(ctx: Any) -> Any:
     from chaoscypher_core.services.llm.spend import get_llm_spend_tracker
 
     async def _spend_guard() -> None:
+        """Raise when this database's daily LLM spend cap is already reached."""
         # Synchronous SQLite read; brief enough for the single-user CLI loop
         # (same in-loop usage as CLISourceProcessingService extraction).
         get_llm_spend_tracker().check_and_raise(

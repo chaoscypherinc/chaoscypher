@@ -18,6 +18,7 @@ Single source of truth for all document chunking.
 """
 
 import re
+from bisect import bisect_right
 from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -70,17 +71,27 @@ LocationIndex = list[LocationBoundary]
 def _lookup_location(
     location_index: LocationIndex | None,
     char_start: int,
+    starts: list[int] | None = None,
 ) -> tuple[int | None, str | None]:
     """Return ``(page_number, section)`` for the boundary containing ``char_start``.
 
     Returns ``(None, None)`` when the index is missing/empty or when
-    ``char_start`` falls outside every boundary range. The latter case
-    is a defensive default for the rare event of Phase-5a recompute
-    producing a char_start past the index's coverage.
+    ``char_start`` falls outside every boundary range (e.g. in an
+    inter-page separator gap). The latter case is a defensive default
+    for the rare event of Phase-5a recompute producing a char_start
+    past the index's coverage.
+
+    ``starts`` is an optional precomputed ``[b["start_char"] for b in
+    location_index]`` so per-chunk callers pay the list build once;
+    when omitted it is derived here.
     """
     if not location_index:
         return None, None
-    for boundary in location_index:
+    if starts is None:
+        starts = [boundary["start_char"] for boundary in location_index]
+    i = bisect_right(starts, char_start) - 1
+    if i >= 0:
+        boundary = location_index[i]
         if boundary["start_char"] <= char_start < boundary["end_char"]:
             return boundary["page_number"], boundary["section"]
     return None, None
@@ -570,9 +581,10 @@ class ChunkingService:
             # matches the index. Replaces the deleted _assign_page_numbers
             # post-pass in indexing_handler / CLI service.
             if location_index is not None:
+                boundary_starts = [b["start_char"] for b in location_index]
                 for chunk in filtered_chunks:
                     char_start = chunk.get("char_start") or 0
-                    page, section = _lookup_location(location_index, char_start)
+                    page, section = _lookup_location(location_index, char_start, boundary_starts)
                     chunk["page_number"] = page
                     chunk["section"] = section
 
@@ -1319,6 +1331,10 @@ def _recompute_chunk_offsets(
     # share their head with the previous chunk's tail, so the floor is the
     # previous chunk's START, not its end.
     cursor = 0
+    # Raw-text floor for level 1, mirroring the collapsed-space cursor:
+    # search forward from the previous chunk's start, fall back to a
+    # whole-document scan on miss.
+    raw_cursor = 0
 
     def _apply_collapsed_match(chunk: dict[str, Any], first: int, last: int) -> None:
         chunk["char_start"] = collapsed_starts[first]
@@ -1329,12 +1345,15 @@ def _recompute_chunk_offsets(
         content: str = chunk.get("content", "")
 
         # --- Level 1: exact substring match ---
-        idx = original_text.find(content)
+        idx = original_text.find(content, raw_cursor)
+        if idx == -1:
+            idx = original_text.find(content)
         if idx != -1:
             chunk["char_start"] = idx
             chunk["char_end"] = idx + len(content)
             chunk["citation_offset_method"] = "exact"
             exact_count += 1
+            raw_cursor = idx
             continue
 
         # Whitespace-collapsed needle shared by levels 2 and 3.

@@ -362,7 +362,7 @@ async def test_run_chat_not_found_publishes_and_raises(
 async def test_run_source_scope_builds_source_metadata(
     chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """source_ids on the chat drives ``get_source`` lookups into source_metadata.
+    """source_ids on the chat drives one batched title lookup into source_metadata.
 
     A scoped chat is created; ``build_messages_for_llm`` is captured so we can
     assert the resolved ``source_metadata`` (one resolvable source, one missing)
@@ -371,10 +371,9 @@ async def test_run_source_scope_builds_source_metadata(
     chat_service.create_chat(chat_id="scoped", title="Scoped", source_ids=["s1", "s2"])
 
     storage = chat_service.storage
-    real_get_source = MagicMock(
-        side_effect=lambda sid, db: {"title": "Doc One"} if sid == "s1" else None
-    )
-    monkeypatch.setattr(storage, "get_source", real_get_source)
+    # s2 is absent from the map — the adapter omits ids with no row.
+    real_get_titles = MagicMock(return_value={"s1": "Doc One"})
+    monkeypatch.setattr(storage, "get_source_titles_by_ids", real_get_titles)
 
     captured: dict[str, Any] = {}
     build_result = MagicMock()
@@ -404,32 +403,32 @@ async def test_run_source_scope_builds_source_metadata(
     assert result["success"] is True
     # Only the resolvable source made it into the metadata.
     assert captured["source_metadata"] == [{"id": "s1", "title": "Doc One"}]
-    # get_source was queried for both declared source_ids, against the
+    # One batched lookup covers both declared source_ids, against the
     # task's resolved database — never the live settings value (the operator
     # may switch databases while a task sits in the queue).
-    assert real_get_source.call_count == 2
-    for call in real_get_source.call_args_list:
-        assert call.args[1] == chat_service.database_name
+    real_get_titles.assert_called_once_with(["s1", "s2"], chat_service.database_name)
 
 
 @pytest.mark.asyncio
 async def test_run_source_scope_null_title_falls_back_to_filename(
     chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A source row with ``title=None`` falls back to filename, then id.
+    """A source whose title AND filename are both null falls back to its id.
 
     Regression: ``source.get("title", fallback)`` never fired because the
     adapter's row always carries the ``title`` key (possibly None), so a
     null title leaked into the LLM prompt metadata (2026-07-27 audit).
+    The title-or-filename fallback now lives inside
+    ``get_source_titles_by_ids``; the handler still owns the final
+    None -> id fallback, pinned here.
     """
     chat_service.create_chat(chat_id="scoped-nt", title="Scoped", source_ids=["s1", "s2"])
 
     storage = chat_service.storage
-    rows = {
-        "s1": {"title": None, "filename": "notes.pdf"},
-        "s2": {"title": None, "filename": None},
-    }
-    monkeypatch.setattr(storage, "get_source", MagicMock(side_effect=lambda sid, db: rows[sid]))
+    # The adapter maps title-or-filename per id; a row with both null
+    # yields None (key still present, unlike a missing row).
+    titles = {"s1": "notes.pdf", "s2": None}
+    monkeypatch.setattr(storage, "get_source_titles_by_ids", MagicMock(return_value=titles))
 
     captured: dict[str, Any] = {}
     build_result = MagicMock()

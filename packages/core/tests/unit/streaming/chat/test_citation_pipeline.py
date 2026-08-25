@@ -566,8 +566,9 @@ class TestInjectCitationsForUncitedParagraphs:
         content = f'The narrator notes "{LONG_QUOTE}".'
         out = inject_citations_for_uncited_paragraphs(content, tool_results)
         assert "[[cite:p-1:S1|source.txt]]" in out
-        # marker placed before the final period
-        assert out.rstrip().endswith("]].") or "]] ." in out or out.rstrip()[-1] == "."
+        # marker placed before the final period — the injector appends
+        # " [[cite:...]]" ahead of trailing punctuation, deterministically.
+        assert out.rstrip().endswith("]].")
 
     def test_skips_already_cited_paragraph(self):
         chunk = _chunk("p-1", LONG_QUOTE, chunk_index=0)

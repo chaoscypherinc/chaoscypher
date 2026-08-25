@@ -22,6 +22,7 @@ from rich.table import Table
 from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
 from chaoscypher_cli.utils.console import get_console, print_error
 from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.exceptions import ExternalServiceError
 from chaoscypher_core.services.lexicon import LexiconClient, LexiconClientError
 
 
@@ -49,13 +50,22 @@ def format_downloads(count: int) -> str:
     show_default="from settings.cli.search_default_limit",
     help="Maximum results to show",
 )
-@click.option("--tag", "-t", multiple=True, help="Filter by tags")
-@click.option("--author", "-a", help="Filter by author username")
+@click.option(
+    "--tag",
+    "-t",
+    multiple=True,
+    help="Add tag terms to the search query (can be repeated)",
+)
+@click.option(
+    "--author",
+    "-a",
+    help="Filter the returned results by author username (applied after --limit)",
+)
 @click.option(
     "--sort",
     "-s",
     default="relevance",
-    type=click.Choice(["relevance", "downloads", "updated", "name"]),
+    type=click.Choice(["relevance", "downloads", "stars", "newest", "updated", "name"]),
     help="Sort results by",
 )
 def search(query: str, limit: int, tag: tuple[str, ...], author: str | None, sort: str) -> None:
@@ -134,4 +144,15 @@ def search(query: str, limit: int, tag: tuple[str, ...], author: str | None, sor
 
     except LexiconClientError as e:
         print_error(f"Search failed: {e}")
+        sys.exit(1)
+    except ExternalServiceError as e:
+        # LexiconClient wraps httpx.ConnectError into ExternalServiceError when
+        # the hub isn't reachable — turn it into a one-line operator hint
+        # instead of a raw traceback (same handler as pull/push/login).
+        print_error(f"Cannot reach Lexicon Hub at {lexicon_url}: {e}")
+        console.print(
+            "  [dim]Set LEXICON_URL or run a local hub. "
+            "Check connectivity with [cyan]curl -I "
+            f"{lexicon_url}[/cyan].[/dim]",
+        )
         sys.exit(1)

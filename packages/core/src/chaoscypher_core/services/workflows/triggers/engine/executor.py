@@ -91,7 +91,6 @@ class TriggerExecutor:
         event_queue_timeout: float = 1.0,
         event_queue_maxsize: int = 10_000,
         graph_manager: Any = None,
-        discovery_service: Any = None,
     ) -> None:
         """Initialize the trigger service.
 
@@ -112,7 +111,6 @@ class TriggerExecutor:
                 without limit. Guards against unbounded memory growth if the consumer
                 stalls or falls behind during a large import.
             graph_manager: GraphRepository instance for checking node embeddings (optional)
-            discovery_service: DiscoveryService for AI analysis (optional, removed)
 
         """
         self.trigger_service = trigger_service
@@ -121,7 +119,6 @@ class TriggerExecutor:
         self.llm_service = llm_service
         self.graph_repository = graph_repository
         self.search_repository = search_repository
-        self.discovery_service = discovery_service
         self.database_name = database_name
         self.execute_workflow_fn = execute_workflow_fn
         self.graph_manager = graph_manager
@@ -416,7 +413,6 @@ class TriggerExecutor:
                 llm_service=self.llm_service,
                 graph_repository=self.graph_repository,
                 search_repository=self.search_repository,
-                discovery_service=self.discovery_service,
                 database_name=self.database_name,
                 triggered_by="trigger",
                 trigger_id=trigger["id"],
@@ -495,7 +491,6 @@ class TriggerExecutor:
                 llm_service=self.llm_service,
                 graph_repository=self.graph_repository,
                 search_repository=self.search_repository,
-                discovery_service=self.discovery_service,
                 database_name=self.database_name,
                 triggered_by="trigger",
                 trigger_id=trigger["id"],

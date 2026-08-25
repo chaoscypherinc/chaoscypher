@@ -60,6 +60,61 @@ async def test_tick_increments_processed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tick_n_records_a_whole_batch_in_one_write() -> None:
+    """``tick(n=k)`` advances processed by k with a SINGLE storage write.
+
+    Batch stages (the embedding wave) complete k units per storage round
+    trip; ticking k times issued k UPDATEs + k COMMITs for one wave.
+    """
+    storage = _fake_storage()
+    async with StageProgress(
+        storage=storage,
+        parent_id="src-1",
+        stage=StageName.EMBEDDING,
+        total=10,
+    ) as progress:
+        await progress.tick(n=4, duration_ms=8000)
+        await progress.tick(n=6, duration_ms=12000)
+
+    assert storage.tick_stage.call_count == 2
+    assert storage.tick_stage.call_args_list[0].kwargs["processed"] == 4
+    assert storage.tick_stage.call_args_list[1].kwargs["processed"] == 10
+
+
+@pytest.mark.asyncio
+async def test_tick_n_keeps_avg_ms_per_unit() -> None:
+    """``avg_ms`` stays a PER-UNIT figure when a tick carries n units.
+
+    Consumers multiply it by the remaining count for the ETA
+    (``(total - processed) * avg_ms``), so charging a whole batch's
+    wall-clock to one unit would inflate every estimate n-fold.
+    """
+    storage = _fake_storage()
+    async with StageProgress(
+        storage=storage,
+        parent_id="src-1",
+        stage=StageName.EMBEDDING,
+        total=10,
+    ) as progress:
+        await progress.tick(n=4, duration_ms=8000)
+    assert storage.tick_stage.call_args.kwargs["avg_ms"] == 2000
+
+
+@pytest.mark.asyncio
+async def test_tick_n_zero_or_negative_is_a_no_op() -> None:
+    """A wave that embedded nothing writes nothing."""
+    storage = _fake_storage()
+    async with StageProgress(
+        storage=storage,
+        parent_id="src-1",
+        stage=StageName.EMBEDDING,
+        total=10,
+    ) as progress:
+        await progress.tick(n=0)
+    storage.tick_stage.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_tick_first_observation_is_avg() -> None:
     """First tick sets avg_ms = duration_ms (no EMA blending)."""
     storage = _fake_storage()

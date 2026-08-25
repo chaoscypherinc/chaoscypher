@@ -326,7 +326,7 @@ chaoscypher compose up --build
 
 ### compose down
 
-Stop composition services started by `compose up --detach`.
+Stop composition services started by `compose up --detach`. Known limitation: `down` runs in a new process that has no handle on the detached server, so it currently cannot stop it — see [compose down](compose.md#down) for details and workarounds.
 
 ```bash
 chaoscypher compose down

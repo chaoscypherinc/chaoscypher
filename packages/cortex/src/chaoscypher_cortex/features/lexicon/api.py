@@ -154,6 +154,9 @@ def _handle_lexicon_error(e: LexiconClientError) -> HTTPException:
         404: 404,  # Not Found
         408: 408,  # Request Timeout (device code expired)
         410: 408,  # Gone -> Request Timeout
+        429: 429,  # Too Many Requests — an upstream rate limit is not an
+        # outage; collapsing it to 503 flips the UI into its
+        # "registry not deployed" state.
     }
     http_status = status_map.get(e.status_code, 503)  # Default to Service Unavailable
     logger.warning(
@@ -407,10 +410,13 @@ async def search_packages(
         Search response with matching packages.
     """
     try:
+        # LimitParam clamps to pagination.max_page_size (1000), but the hub
+        # request model caps limit at 100 — without this clamp 101..1000
+        # raised a pydantic ValidationError inside the handler (a 500).
         request = LexiconSearchRequest(
             query=query,
             page=page,
-            limit=limit,
+            limit=min(limit, 100),
             sort_by=sort_by,
             is_public=is_public,
             owner_id=owner_id,
@@ -516,7 +522,14 @@ async def import_package(
             "database_name": settings.current_database,
         },
         priority=settings.priorities.background,
-        metadata={"operation_type": "lexicon_import", "package": package_key},
+        metadata={
+            "operation_type": "lexicon_import",
+            "package": package_key,
+            # The post-import reindex handler reads database_name from task
+            # METADATA (falling back to "default"), and cancel-by-database
+            # scoping matches on it — data= alone is not enough.
+            "database_name": settings.current_database,
+        },
     )
 
     return LexiconImportResponse(

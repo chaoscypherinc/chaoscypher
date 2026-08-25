@@ -99,6 +99,7 @@ def test_local_auth_secret_fields_are_stripped() -> None:
             "local_auth": {
                 "cookie_secure": True,
                 "edge_auth_token": "leaked-token",
+                "edge_auth_header": "X-Renamed-Trust-Header",
                 "session_secret_path": "/evil/path",
                 "credentials_path": "/evil/creds",
             }
@@ -106,3 +107,20 @@ def test_local_auth_secret_fields_are_stripped() -> None:
     )
     dumped = req.model_dump(exclude_none=True, exclude_unset=True)
     assert dumped == {"local_auth": {"cookie_secure": True}}
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    ["../../../tmp/pwn", "a/b", "", ".", "..", "a" * 65, "a\\b"],
+)
+def test_current_database_traversal_forms_rejected(bad_name: str) -> None:
+    """current_database feeds raw path joins — traversal forms must 422 at the DTO."""
+    with pytest.raises(ValidationError):
+        SettingsUpdateRequest.model_validate({"current_database": bad_name})
+
+
+@pytest.mark.parametrize("good_name", ["default", "my-db_2", "research-2026"])
+def test_current_database_legitimate_names_accepted(good_name: str) -> None:
+    """Every name create_database would accept passes the DTO check."""
+    req = SettingsUpdateRequest.model_validate({"current_database": good_name})
+    assert req.model_dump()["current_database"] == good_name

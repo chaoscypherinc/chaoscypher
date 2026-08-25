@@ -109,6 +109,53 @@ def _validate_zip_member(member: zipfile.ZipInfo, dest_dir: Path) -> None:
         raise ArchiveSecurityError(msg) from e
 
 
+def _validate_member_for_extraction(
+    member: zipfile.ZipInfo,
+    dest_dir: Path,
+    strip_components: int,
+) -> None:
+    """Validate one non-directory member against the EFFECTIVE (stripped) name.
+
+    Replicates ``_validate_zip_member``'s checks for ``extract_archive``'s
+    strip-aware first pass. The blocked-file-type check is name-independent,
+    so it runs before (and regardless of) ``strip_components`` — it was
+    previously only in ``_validate_zip_member`` and never ran on this path.
+
+    Raises:
+        ArchiveSecurityError: If the member is unsafe.
+    """
+    # Reject Unix-side symlinks / devices / FIFOs.
+    unix_mode = _zip_member_unix_mode(member)
+    if unix_mode in _BLOCKED_FILE_TYPES:
+        msg = f"Unsafe file type in archive ({oct(unix_mode)}): {member.filename}"
+        raise ArchiveSecurityError(msg)
+
+    # Compute the effective name after stripping, without mutating member
+    effective_name = member.filename
+    if strip_components > 0:
+        parts = Path(effective_name).parts
+        if len(parts) <= strip_components:
+            return  # Member is skipped entirely by the extraction pass too
+        effective_name = str(Path(*parts[strip_components:]))
+
+    effective_path = Path(effective_name)
+    if effective_path.is_absolute():
+        msg = f"Absolute path in archive is not allowed: {effective_name}"
+        raise ArchiveSecurityError(msg)
+    if ".." in effective_path.parts:
+        msg = f"Path traversal in archive is not allowed: {effective_name}"
+        raise ArchiveSecurityError(msg)
+    try:
+        full_path = (dest_dir / effective_path).resolve()
+        dest_resolved = dest_dir.resolve()
+        if not full_path.is_relative_to(dest_resolved):
+            msg = f"Path escapes destination directory: {effective_name}"
+            raise ArchiveSecurityError(msg)
+    except (OSError, ValueError) as e:
+        msg = f"Invalid path in archive: {effective_name} ({e})"
+        raise ArchiveSecurityError(msg) from e
+
+
 def extract_archive(
     archive_path: Path,
     dest_dir: Path,
@@ -161,35 +208,9 @@ def extract_archive(
 
         # First pass: validate all members (without mutating filenames)
         for member in members:
-            # Skip directories
             if member.is_dir():
                 continue
-
-            # Compute the effective name after stripping, without mutating member
-            effective_name = member.filename
-            if strip_components > 0:
-                parts = Path(effective_name).parts
-                if len(parts) <= strip_components:
-                    continue  # Skip this member entirely
-                effective_name = str(Path(*parts[strip_components:]))
-
-            # Replicate _validate_zip_member checks against the effective name
-            effective_path = Path(effective_name)
-            if effective_path.is_absolute():
-                msg = f"Absolute path in archive is not allowed: {effective_name}"
-                raise ArchiveSecurityError(msg)
-            if ".." in effective_path.parts:
-                msg = f"Path traversal in archive is not allowed: {effective_name}"
-                raise ArchiveSecurityError(msg)
-            try:
-                full_path = (dest_dir / effective_path).resolve()
-                dest_resolved = dest_dir.resolve()
-                if not full_path.is_relative_to(dest_resolved):
-                    msg = f"Path escapes destination directory: {effective_name}"
-                    raise ArchiveSecurityError(msg)
-            except (OSError, ValueError) as e:
-                msg = f"Invalid path in archive: {effective_name} ({e})"
-                raise ArchiveSecurityError(msg) from e
+            _validate_member_for_extraction(member, dest_dir, strip_components)
 
         # Second pass: extract validated members
         for idx, member in enumerate(members):
@@ -205,13 +226,17 @@ def extract_archive(
                     continue
                 member.filename = str(Path(*parts[strip_components:]))
 
-            zipf.extract(member, dest_dir)
-
-            # Restore original filename for next iteration if needed
-            member.filename = original_filename
+            extracted_name = member.filename
+            try:
+                zipf.extract(member, dest_dir)
+            finally:
+                # Restore even when extract raises — members are shared
+                # ZipInfo objects and a mutated filename would corrupt any
+                # retry or later use of the same ZipFile.
+                member.filename = original_filename
 
             if progress_callback:
-                progress_callback(member.filename, idx + 1, total_members)
+                progress_callback(extracted_name, idx + 1, total_members)
 
     logger.info(
         "archive_extracted",

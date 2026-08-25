@@ -20,6 +20,7 @@ from sqlmodel import delete, select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import (
+    ChunkExtractionJob,
     LLMStageProgress,
     SourceEntity,
     SourceEntityEmbedding,
@@ -537,10 +538,27 @@ class SourceIndexingMixin(
 
         Clears:
           - extraction_complete + commit_complete (re-extract redoes both)
-          - current_extraction_job_id (any running handler will discover
-            its slot has been reassigned and exit on its next checkpoint)
+          - current_extraction_job_id
           - step progress fields
           - any prior error_message / error_stage
+
+        Cancels, in the same transaction as the source reset, every
+        still-active (``pending``/``running``) ``ChunkExtractionJob`` for
+        this source, cascading their in-flight chunk tasks (audit fix
+        #F53, extended from ``reset_for_retry``). That cancellation — not
+        the cleared ``current_extraction_job_id`` pointer, which no
+        handler reads — is what actually stops the previous run:
+
+          - chunk handlers already dispatched to the LLM queue skip any
+            task whose parent job is cancelled, so they stop writing
+            results that belong to the run the user just replaced;
+          - ``get_active_extraction_job`` only returns pending/running
+            jobs, so the re-dispatched analysis creates a *fresh* job
+            instead of resuming the old one and silently re-serving its
+            partial results as the "re-extraction". A finalize task queued
+            before the cancel cannot undo that: ``start_extraction_job``
+            refuses to restart a terminal job, so the cancelled row stays
+            out of the active-job lookup.
 
         The caller is responsible for clearing ``commit_payload``
         (via ``clear_source_commit_payload``) and quality counters
@@ -552,23 +570,51 @@ class SourceIndexingMixin(
             source_id: Source to reset back to INDEXED.
         """
         self._ensure_connected()
-        source = self.session.get(SourceRow, source_id)
+        # One transaction for the row reset + the job cancellation, so a
+        # crash can never leave the source INDEXED with its old job still
+        # active (which is exactly the resume the re-extract must avoid).
+        with self.transaction():  # type: ignore[attr-defined]  # resolved at runtime via SqliteAdapter mixin composition
+            source = self.session.get(SourceRow, source_id)
 
-        if not source:
-            return
+            if not source:
+                return
 
-        source.status = SourceStatus.INDEXED
-        source.extraction_complete = False
-        source.commit_complete = False
-        source.current_extraction_job_id = None
-        source.current_step = 0
-        source.total_steps = 0
-        source.step_description = ""
-        source.error_message = None
-        source.error_stage = None
+            # Selected by the same active-status predicate
+            # ``get_active_extraction_job`` uses rather than by
+            # ``current_extraction_job_id``: that pointer holds a single
+            # slot, so an older job left active by an earlier pass would
+            # survive the reset and still be resumable. Scoped to this
+            # source_id — other sources' jobs are never touched.
+            active_jobs = self.session.exec(
+                select(ChunkExtractionJob).where(
+                    ChunkExtractionJob.source_id == source_id,
+                    ChunkExtractionJob.status.in_(("pending", "running")),
+                )
+            ).all()
+            active_job_ids = [job.id for job in active_jobs]
 
-        self.session.add(source)
-        self._maybe_commit()
+            source.status = SourceStatus.INDEXED
+            source.extraction_complete = False
+            source.commit_complete = False
+            source.current_extraction_job_id = None
+            source.current_step = 0
+            source.total_steps = 0
+            source.step_description = ""
+            source.error_message = None
+            source.error_stage = None
+
+            self.session.add(source)
+
+            # The SELECT above is the only protection against rewriting a
+            # finished run: a job that was already terminal is simply not in
+            # this list. The cascade's own terminal check cannot help here —
+            # it re-reads through the identity map inside this transaction,
+            # so it sees the same row the SELECT loaded. A completion that
+            # commits inside this window is therefore invisible and loses to
+            # the cancel, which is the outcome we want: the user asked for
+            # that run's results to be discarded.
+            for job_id in active_job_ids:
+                self.cancel_extraction_job_cascade(job_id)  # type: ignore[attr-defined]  # resolved at runtime via SqliteAdapter mixin composition
 
     def abort_processing(
         self,
@@ -1321,7 +1367,25 @@ class SourceIndexingMixin(
         helper does this correctly — prefer it over invoking the two
         methods directly.
 
-        Idempotent: running on a non-committed source is a no-op write.
+        No status guard: this method checks only that the source row
+        exists and belongs to ``database_name`` — ``source.status`` is
+        never read, so it is NOT a no-op on a non-committed source. Called
+        on an EXTRACTED-but-not-committed source it still deletes that
+        source's entity/relationship/stage-progress rows and forces
+        status back to INDEXED. Its only direct caller,
+        ``services.sources.management.re_extraction.force_re_extract``,
+        does not gate on status either — it unconditionally deletes graph
+        artifacts and calls this method. The COMMITTED-status precondition
+        is enforced one level further up, by whoever calls
+        ``force_re_extract``: Cortex's ``SourcesService.trigger_extraction``
+        (the ``allowed_statuses`` check in features/sources/service.py),
+        Cortex's ``SourcesService.reextract_source`` (its
+        ``source_status == SourceStatus.COMMITTED`` branch, same file), and
+        the CLI's ``commands/source/extract.py:140`` (via
+        ``sources/service.py``'s ``reset_for_re_extraction`` wrapper). It is
+        safe today only because all three of those call sites gate before
+        reaching this method — the precondition is their responsibility,
+        not this method's or ``force_re_extract``'s.
         """
         self._ensure_connected()
         source = self.session.get(SourceRow, source_id)

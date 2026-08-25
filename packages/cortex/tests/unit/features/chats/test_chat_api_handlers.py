@@ -285,7 +285,7 @@ class TestMissingChat404s:
     async def test_add_message_missing_chat_404(self) -> None:
         """No existence check previously meant an FK IntegrityError 500."""
         service = MagicMock()
-        service.get_chat.return_value = None
+        service.get_chat_summary.return_value = None
 
         with pytest.raises(HTTPException) as exc:
             await add_message(
@@ -421,7 +421,7 @@ class TestMessageHandlers:
     async def test_get_chat_messages_delegates(self) -> None:
         """get_chat_messages returns the service's message list."""
         service = MagicMock()
-        service.get_chat.return_value = _chat_dict("chat-1")
+        service.get_chat_summary.return_value = _chat_dict("chat-1")
         service.get_chat_messages.return_value = [{"id": "m1"}, {"id": "m2"}]
 
         result = await get_chat_messages(
@@ -442,7 +442,7 @@ class TestMessageHandlers:
         chat" from "no chat" (2026-07-27 audit).
         """
         service = MagicMock()
-        service.get_chat.return_value = None
+        service.get_chat_summary.return_value = None
 
         with pytest.raises(HTTPException) as exc_info:
             await get_chat_messages(
@@ -555,7 +555,11 @@ class TestSendMessageHandler:
         (2026-07-27 audit; mirrors the /retry and /regenerate guards).
         """
         service = MagicMock()
-        service.get_chat.return_value = _chat_dict("chat-1", status="processing")
+        chat = _chat_dict("chat-1", status="processing")
+        chat["messages"] = [{"id": "m1", "role": "user", "content": "original"}]
+        service.get_chat.return_value = chat
+        # The atomic claim loses while a turn is in flight.
+        service.try_begin_processing.return_value = False
         settings = _settings()
         body = ChatSendRequest(content="edited", replace_from_message_id="m1")
 
@@ -627,7 +631,7 @@ class TestCancelChatTurnHandler:
         from chaoscypher_cortex.features.chats.api import cancel_chat_turn
 
         service = MagicMock()
-        service.get_chat.return_value = _chat_dict("chat-1", status="processing")
+        service.get_chat_summary.return_value = _chat_dict("chat-1", status="processing")
 
         with patch(
             "chaoscypher_core.streaming.chat.cancellation.request_cancel",
@@ -644,7 +648,7 @@ class TestCancelChatTurnHandler:
         from chaoscypher_cortex.features.chats.api import cancel_chat_turn
 
         service = MagicMock()
-        service.get_chat.return_value = None
+        service.get_chat_summary.return_value = None
 
         with patch(
             "chaoscypher_core.streaming.chat.cancellation.request_cancel",
@@ -662,7 +666,7 @@ class TestCancelChatTurnHandler:
         from chaoscypher_cortex.features.chats.api import cancel_chat_turn
 
         service = MagicMock()
-        service.get_chat.return_value = _chat_dict("chat-1", status="active")
+        service.get_chat_summary.return_value = _chat_dict("chat-1", status="active")
 
         with pytest.raises(HTTPException) as exc_info:
             await cancel_chat_turn(chat_id="chat-1", chat_service=service, _="test-user")
@@ -675,7 +679,7 @@ class TestCancelChatTurnHandler:
         from chaoscypher_cortex.features.chats.api import cancel_chat_turn
 
         service = MagicMock()
-        service.get_chat.return_value = _chat_dict("chat-1", status="processing")
+        service.get_chat_summary.return_value = _chat_dict("chat-1", status="processing")
 
         with patch(
             "chaoscypher_core.streaming.chat.cancellation.request_cancel",
@@ -726,7 +730,7 @@ class TestRetryChatTurnHandler:
             )
 
         service.add_message.assert_not_called()
-        service.update_chat_status.assert_called_once_with("chat-1", "processing")
+        service.try_begin_processing.assert_called_once_with("chat-1")
         mock_enqueue.assert_awaited_once()
         assert result.task_id == "task-7"
         assert result.status == "processing"
@@ -746,16 +750,81 @@ class TestRetryChatTurnHandler:
 
     @pytest.mark.asyncio
     async def test_raises_409_when_already_processing(self) -> None:
+        """The atomic claim losing means a turn is in flight — 409, no enqueue."""
         from chaoscypher_cortex.features.chats.api import retry_chat_turn
 
         service = MagicMock()
         service.get_chat.return_value = self._chat_with_history(status="processing")
+        service.try_begin_processing.return_value = False
 
-        with pytest.raises(HTTPException) as exc_info:
-            await retry_chat_turn(
-                chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
-            )
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(),
+            ) as mock_enqueue,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await retry_chat_turn(
+                    chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
+                )
         assert exc_info.value.status_code == 409
+        mock_enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_retries_one_wins_one_409_single_enqueue(self) -> None:
+        """Two concurrent retries: exactly one 202 + one 409, one enqueue.
+
+        The claim is the only guard — a stateful fake models the CAS: the
+        first caller wins, every later caller loses (2026-07-27 audit).
+        """
+        import asyncio
+
+        from chaoscypher_cortex.features.chats.api import retry_chat_turn
+
+        service = MagicMock()
+        service.get_chat.return_value = self._chat_with_history()
+        claimed = False
+
+        def _cas_claim(chat_id: str) -> bool:
+            nonlocal claimed
+            if claimed:
+                return False
+            claimed = True
+            return True
+
+        service.try_begin_processing.side_effect = _cas_claim
+
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(return_value="task-7"),
+            ) as mock_enqueue,
+        ):
+            results = await asyncio.gather(
+                retry_chat_turn(
+                    chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
+                ),
+                retry_chat_turn(
+                    chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
+                ),
+                return_exceptions=True,
+            )
+
+        winners = [r for r in results if not isinstance(r, BaseException)]
+        losers = [r for r in results if isinstance(r, HTTPException)]
+        assert len(winners) == 1
+        assert winners[0].task_id == "task-7"
+        assert len(losers) == 1
+        assert losers[0].status_code == 409
+        mock_enqueue.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_raises_409_when_no_user_message(self) -> None:
@@ -926,10 +995,11 @@ class TestRegenerateChatTurnHandler:
                 chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
             )
 
-        # Trailing answer dropped, last user message kept.
+        # Trailing answer dropped, last user message kept — and only after
+        # the atomic claim succeeded.
+        service.try_begin_processing.assert_called_once_with("chat-1")
         service.truncate_from_message.assert_called_once_with("chat-1", "m3", inclusive=False)
         service.add_message.assert_not_called()
-        service.update_chat_status.assert_called_once_with("chat-1", "processing")
         mock_enqueue.assert_awaited_once()
         assert result.task_id == "task-r"
 
@@ -937,13 +1007,23 @@ class TestRegenerateChatTurnHandler:
     async def test_409_when_processing_or_no_user_message(self) -> None:
         from chaoscypher_cortex.features.chats.api import regenerate_chat_turn
 
+        # Claim lost — a turn is already in flight; the destructive truncate
+        # must not run.
         service = MagicMock()
         service.get_chat.return_value = self._chat(status="processing")
-        with pytest.raises(HTTPException) as exc_info:
+        service.try_begin_processing.return_value = False
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
             await regenerate_chat_turn(
                 chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
             )
         assert exc_info.value.status_code == 409
+        service.truncate_from_message.assert_not_called()
 
         empty = _chat_dict("chat-1")
         empty["messages"] = []
@@ -992,6 +1072,7 @@ class TestSendReplaceFromMessage:
                 _="test-user",
             )
 
+        service.try_begin_processing.assert_called_once_with("chat-1")
         service.truncate_from_message.assert_called_once_with("chat-1", "m1", inclusive=True)
         service.add_message.assert_called_once_with(
             "chat-1", role="user", content="edited question"
@@ -1019,6 +1100,67 @@ class TestSendReplaceFromMessage:
         assert exc_info.value.status_code == 409
         service.truncate_from_message.assert_not_called()
         service.add_message.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# chat_events — SSE pre-subscribe terminal-status window
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestChatEventsSentinel:
+    """The __subscribed__ sentinel closes the pre-subscribe lost-done window."""
+
+    @pytest.mark.asyncio
+    async def test_terminal_flip_between_precheck_and_subscribe_emits_done(self) -> None:
+        """Status flips terminal in the window → stream emits done, not a hang.
+
+        The fake subscription yields only the sentinel and then blocks
+        forever — exactly what happens when the worker's ``done`` was
+        published before SUBSCRIBE landed. The generator must reconcile on
+        the sentinel and finish instead of waiting on a dead channel.
+        """
+        import asyncio
+        import json as _json
+
+        from chaoscypher_cortex.features.chats.api import chat_events
+
+        processing = _chat_dict("chat-1", status="processing")
+        completed = _chat_dict("chat-1", status="completed")
+
+        service = MagicMock()
+        # First read: pre-subscribe check (processing → falls through to
+        # subscribe). Second read: sentinel reconciliation (completed).
+        service.get_chat_summary.side_effect = [processing, completed]
+
+        request = MagicMock()
+        request.is_disconnected = AsyncMock(return_value=False)
+
+        async def fake_subscribe(chat_id: str) -> Any:
+            yield {"type": "__subscribed__", "data": {}}
+            # Simulate a channel that will never carry another message.
+            await asyncio.Event().wait()
+
+        async def _collect(iterator: Any) -> list[bytes]:
+            return [frame async for frame in iterator]
+
+        with patch(
+            "chaoscypher_cortex.features.chats.api.subscribe_chat_events",
+            new=fake_subscribe,
+        ):
+            response = await chat_events(
+                chat_id="chat-1", request=request, chat_service=service, _="test-user"
+            )
+            # A hang here means the sentinel reconciliation is broken.
+            frames = await asyncio.wait_for(_collect(response.body_iterator), timeout=5)
+
+        assert len(frames) == 1
+        payload = _json.loads(frames[0].decode().removeprefix("data: ").strip())
+        assert payload["type"] == "done"
+        assert payload["status"] == "completed"
+        # The sentinel itself was never forwarded to the client.
+        assert all(b"__subscribed__" not in frame for frame in frames)
+        assert service.get_chat_summary.call_count == 2
 
 
 # ---------------------------------------------------------------------------

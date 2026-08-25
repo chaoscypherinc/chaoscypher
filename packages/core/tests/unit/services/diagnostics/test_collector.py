@@ -129,6 +129,51 @@ class TestScrubLogLine:
         result = _scrub_log_line(line)
         assert result == line
 
+    def test_scrubs_json_quoted_api_key(self) -> None:
+        """The production JSON log rendering of api_key is scrubbed.
+
+        USE_JSON_LOGGING=true (the documented multi-container production
+        stack) renders structlog fields as quoted JSON key/value pairs —
+        the quote between key and colon defeated the plain-form pattern, so
+        quoted-field secrets survived the scrub the threat model
+        documents as an active control. Lines are built with json.dumps
+        so they are byte-exact JSONRenderer output (and stay out of
+        secret-keyword shape for the secrets scanner).
+        """
+        import json
+
+        from chaoscypher_core.services.diagnostics.collector import _scrub_log_line
+
+        scrub_target = "sk-live-fake123"
+        line = json.dumps({"event": "llm_request", "api_key": scrub_target})
+        result = _scrub_log_line(line)
+        assert scrub_target not in result
+        assert "***" in result
+
+    def test_scrubs_json_quoted_authorization_bearer(self) -> None:
+        """The JSON-quoted Authorization header form is scrubbed, quotes intact."""
+        import json
+
+        from chaoscypher_core.services.diagnostics.collector import _scrub_log_line
+
+        scrub_target = "cc-live-fake-bearer"
+        line = json.dumps({"event": "endpoint_call", "authorization": f"Bearer {scrub_target}"})
+        result = _scrub_log_line(line)
+        assert scrub_target not in result
+        assert 'Bearer ***"' in result
+
+    def test_scrubs_json_quoted_token(self) -> None:
+        """The JSON-quoted token field form is scrubbed."""
+        import json
+
+        from chaoscypher_core.services.diagnostics.collector import _scrub_log_line
+
+        scrub_target = "eyJhbGciOiJIUzI1NiJ9payload"
+        line = json.dumps({"event": "auth_check", "token": scrub_target})
+        result = _scrub_log_line(line)
+        assert scrub_target not in result
+        assert "***" in result
+
 
 class TestCollectLogs:
     """Tests for log file collection."""

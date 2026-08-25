@@ -12,6 +12,7 @@ from rich.table import Table
 
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_json
+from chaoscypher_core.app_config import get_settings
 
 
 console = Console()
@@ -36,28 +37,44 @@ console = Console()
     type=click.Choice(["node", "edge"]),
     help="Filter by template type",
 )
+@click.option("--page", "-p", default=1, type=int, help="Page number")
+@click.option(
+    "--limit",
+    "-l",
+    type=int,
+    default=lambda: get_settings().cli.list_page_size,
+    show_default="from settings.cli.list_page_size",
+    help="Items per page",
+)
 @click.option("--database", "-d", default="default", help="Database name")
 def list_templates(
     output_format: str,
     verbose: bool,
     template_type: str | None,
+    page: int,
+    limit: int,
     database: str,
 ) -> None:
     """Show available templates in the knowledge graph.
 
-    Lists all templates defined in the database.
+    Lists templates defined in the database, with pagination.
 
     Example:
         chaoscypher graph template list
         chaoscypher graph template list --format json
         chaoscypher graph template list --verbose
         chaoscypher graph template list --type node
+        chaoscypher graph template list --page 2 --limit 100
     """
     try:
         ctx = get_context(database_name=database)
 
         # Get templates
-        result = ctx.template_service.list_templates(template_type=template_type)
+        result = ctx.template_service.list_templates(
+            template_type=template_type,
+            page=page,
+            page_size=limit,
+        )
         templates = result.get("data", [])
 
         if output_format == "json":
@@ -121,7 +138,17 @@ def list_templates(
             # Summary
             pagination = result.get("pagination", {})
             total = pagination.get("total", len(templates))
-            console.print(f"\n[dim]Total: {total} template(s)[/dim]")
+            total_pages = pagination.get("total_pages", 1)
+            current_page = pagination.get("page", page)
+
+            console.print(
+                f"\n[dim]Page {current_page}/{total_pages} • Total: {total} template(s)[/dim]"
+            )
+
+            if current_page < total_pages:
+                console.print(
+                    f"[dim]Next page: chaoscypher graph template list --page {current_page + 1}[/dim]"
+                )
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

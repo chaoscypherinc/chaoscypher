@@ -45,6 +45,19 @@ _BAD_LOOP_WITHOUT_COMMIT = """
 class BadLoop:
     async def embed_loop(self, template_ids, session):
         for tid in template_ids:
+            self.search_repository.index_template(tid, [0.0], session=session)
+            await self.embedding_service.embed(tid)
+"""
+
+# Same hazard, but with the await ahead of the write in SOURCE order. The
+# rule walks the AST in document order and so pairs each await with the
+# most recent PRECEDING uncommitted write — here there is none, and the
+# write that carries into the next iteration's await is invisible to it.
+# See ``test_cc051_does_not_catch_loop_whose_await_precedes_the_write``.
+_UNCAUGHT_LOOP_AWAIT_BEFORE_WRITE = """
+class UncaughtLoop:
+    async def embed_loop(self, template_ids, session):
+        for tid in template_ids:
             embedding = await self.embedding_service.embed(tid)
             self.search_repository.index_template(tid, embedding, session=session)
 """
@@ -73,13 +86,18 @@ class GoodAdapterPath:
         await self.do_external_io()
 """
 
+# Deliberately the SAME statement order as _BAD_LOOP_WITHOUT_COMMIT with
+# only ``session.commit()`` inserted, so the pair differs by exactly the
+# thing under test. (Before 2026-08-12 this fixture put the await first,
+# which the rule never fires on for any loop — so it passed even with
+# commit-detection removed.)
 _GOOD_LOOP_WITH_PER_ITER_COMMIT = """
 class GoodLoop:
     async def embed_loop(self, template_ids, session):
         for tid in template_ids:
-            embedding = await self.embedding_service.embed(tid)
-            self.search_repository.index_template(tid, embedding, session=session)
+            self.search_repository.index_template(tid, [0.0], session=session)
             session.commit()
+            await self.embedding_service.embed(tid)
 """
 
 _GOOD_NO_AWAIT_AFTER_WRITE = """
@@ -140,28 +158,49 @@ def test_cc051_catches_session_kwarg_followed_by_await(tmp_path: Path) -> None:
 
 
 def test_cc051_catches_loop_without_per_iteration_commit(tmp_path: Path) -> None:
-    """A loop with `session=session` + `await` + no commit fires once per iteration's await.
+    """A loop body of `session=session` write → `await`, no commit → CC051.
 
-    The rule pairs each await with the most recent uncommitted write.
-    In a single-loop body, the AST has one write call and one await
-    statement (each appearing exactly once in source), so the rule
-    fires once. The fix's per-iteration `session.commit()` clears the
-    pending-write tracker before the next iteration's await.
+    This is the shape the second-iteration writer-lock-contention fix
+    targeted in ``_embed_created_templates``: the write acquires the
+    SQLite writer lock and the loop then awaits external I/O while
+    holding it. The paired
+    ``test_cc051_allows_loop_with_per_iteration_commit`` proves the rule
+    discriminates rather than firing on every loop.
     """
     target = _write(tmp_path, _CORE_HANDLER_PATH, _BAD_LOOP_WITHOUT_COMMIT)
     tree = ast.parse(_BAD_LOOP_WITHOUT_COMMIT)
     violations = _LINTER.check_session_held_across_await(target, tree)
-    # The first iteration's await comes BEFORE the write inside the body
-    # (source-order). The lint rule walks AST in document order, so the
-    # write at the END of the loop body pairs with NO following await
-    # inside this function — but real iteration order would carry the
-    # write into the next pass's await. The rule's loop-detection
-    # heuristic is best-effort; what we pin here is that the rule
-    # ALSO catches the simpler kwarg-then-await pattern above. Loops
-    # whose first statement is the write (most common shape) are
-    # covered by `test_cc051_catches_session_kwarg_followed_by_await`.
-    # This fixture documents the limitation rather than asserting on it.
-    _ = violations  # rule may or may not fire on this exact AST shape
+    assert len(violations) >= 1, f"expected at least 1 CC051 violation, got {violations!r}"
+    assert all(v.rule == "CC051" for v in violations)
+
+
+def test_cc051_does_not_catch_loop_whose_await_precedes_the_write(tmp_path: Path) -> None:
+    """KNOWN LIMITATION, pinned deliberately: source-order await-then-write is missed.
+
+    The hazard is real — the write at the end of the body carries the
+    writer lock into the NEXT iteration's await — but the rule walks the
+    AST in document order and pairs each await only with a preceding
+    uncommitted write, so this shape reports nothing.
+
+    2026-08-12: this test previously carried the name
+    ``test_cc051_catches_loop_without_per_iteration_commit``, ran the
+    linter on this fixture, and then discarded the result with
+    ``_ = violations``, so it passed whether the rule fired zero times or
+    fifty. Verified against the current rule that the shape genuinely
+    yields zero violations, so the honest fix is to pin the limitation
+    here (this assertion fails the day the rule learns to catch it — at
+    which point delete this test and fold the fixture into the one above)
+    and give the catchable shape a real assertion, which the test above
+    now has.
+    """
+    target = _write(tmp_path, _CORE_HANDLER_PATH, _UNCAUGHT_LOOP_AWAIT_BEFORE_WRITE)
+    tree = ast.parse(_UNCAUGHT_LOOP_AWAIT_BEFORE_WRITE)
+    violations = _LINTER.check_session_held_across_await(target, tree)
+    assert violations == [], (
+        "CC051 now catches the await-before-write loop shape — good news. "
+        "Delete this limitation test and assert the catch instead; "
+        f"got {violations!r}"
+    )
 
 
 def test_cc051_catches_self_adapter_session_path(tmp_path: Path) -> None:

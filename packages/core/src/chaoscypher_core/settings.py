@@ -691,6 +691,52 @@ class LLMSettings(BaseModel):
             raise ValueError(msg)
         return v
 
+    @model_validator(mode="after")
+    def _clamp_reserved_below_max_concurrent(self) -> LLMSettings:
+        """Normalize ``llm_reserved_interactive`` below ``llm_max_concurrent``, warning if adjusted.
+
+        ``PrioritySemaphore`` already refuses to let its own
+        ``reserved_high_priority`` reach ``max_concurrent`` — it clamps to
+        ``max_concurrent - 1`` (see ``adapters/llm/limit.py``) — so a
+        ``llm_reserved_interactive >= llm_max_concurrent`` config never
+        actually starves anything at runtime on the direct-construction
+        path (``adapters/llm/factory.py``); it is silently renormalized.
+        An earlier version of this validator *raised* on that config
+        instead of clamping, which sounds stricter but is actually worse:
+        ``Settings.load_from_yaml`` builds ``LLMSettings(**llm_data)`` with
+        no surrounding ``try``/``except``, so the raise aborted startup
+        entirely on a ``settings.yaml`` that used to merely run
+        starved — including ``max_concurrent=1, reserved_high_priority=1``,
+        the exact example this module's own docstring taught until this
+        fix. Clamping instead matches both the semaphore's own behavior
+        and the UI's clamp (``VRAMPresets.tsx``, ``maxReserved =
+        maxConcurrent - 1``): normalize down to ``max_concurrent - 1``
+        (floor 0) and warn, never reject.
+
+        Note this only binds the direct-construction path. The
+        Ollama load-balanced path (``adapters/llm/load_balancer.py``)
+        overrides ``max_concurrent`` with the live enabled-instance count
+        before calling ``update_llm_semaphore_config`` — a value this
+        validator never sees — so for that path the semaphore's own
+        runtime clamp is the final word, not this field-level one.
+        """
+        if self.llm_reserved_interactive >= self.llm_max_concurrent:
+            original = self.llm_reserved_interactive
+            clamped = max(self.llm_max_concurrent - 1, 0)
+            structlog.get_logger(__name__).warning(
+                "llm_reserved_interactive_clamped",
+                original_value=original,
+                clamped_value=clamped,
+                llm_max_concurrent=self.llm_max_concurrent,
+                hint=(
+                    "llm_reserved_interactive must be less than "
+                    "llm_max_concurrent or background LLM work never gets "
+                    f"a slot; normalized {original} down to {clamped}."
+                ),
+            )
+            self.llm_reserved_interactive = clamped
+        return self
+
     # API keys use SecretStr so they redact in repr() and logs. A
     # field_serializer round-trips the plaintext to disk so the
     # settings.yaml read-write cycle works (same pattern as
@@ -2789,6 +2835,29 @@ class EmbeddingSettings(BaseModel):
     )
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("api_base")
+    @classmethod
+    def _validate_api_base(cls, v: str | None) -> str | None:
+        """Reject embedding api_base URLs that target cloud-metadata endpoints.
+
+        Same permissive policy as ``OllamaInstance.base_url`` /
+        ``LLMSettings.openai_base_url``: loopback/private/LAN http URLs
+        stay allowed, cloud-metadata hosts and non-http schemes are
+        rejected. This field outranks the validated
+        ``ollama_instances[].base_url`` in the embedding factory and the
+        embedding API key rides every request as a Bearer token, so it
+        must not be the one unvalidated custom-endpoint field.
+        ``None``/empty pass through — the factory treats falsy as unset.
+        """
+        if not v:
+            return v
+        from chaoscypher_core.utils.url_safety import validate_url_safety
+
+        if not validate_url_safety(v):
+            msg = f"Embedding api_base rejected by safety policy: {v!r}"
+            raise ValueError(msg)
+        return v
 
     @field_serializer("api_key", when_used="always")
     def _serialize_api_key(self, v: SecretStr | None) -> str | None:

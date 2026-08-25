@@ -11,6 +11,7 @@ from rich.console import Console
 
 from chaoscypher_cli.commands.template.utils import parse_property
 from chaoscypher_cli.context import get_context
+from chaoscypher_core.exceptions import NotFoundError
 
 
 console = Console()
@@ -33,25 +34,26 @@ def update(
 ) -> None:
     """Modify an existing template.
 
-    TEMPLATE_ID is the unique identifier of the template to update.
+    TEMPLATE_ID is the unique identifier of the template to update
+    (from `chaoscypher graph template list`).
 
     Property format: name:type[:required]
-    Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME, URL, EMAIL, JSON
+    Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME,
+    URL, EMAIL, ENUM, JSON, NODE_REFERENCE, NODE_REFERENCE_LIST.
+    (ENUM values and NODE_REFERENCE allowed types cannot be set from this
+    syntax — use the web UI or API for those.)
 
     Example:
-        chaoscypher graph template update Person --name "Individual"
-        chaoscypher graph template update Person --description "A person entity"
-        chaoscypher graph template update Person -a phone:string -a address:text
-        chaoscypher graph template update Person -r obsolete_field
+        chaoscypher graph template update tmpl_a1b2c3d4e5 --name "Individual"
+        chaoscypher graph template update tmpl_a1b2c3d4e5 --description "A person entity"
+        chaoscypher graph template update tmpl_a1b2c3d4e5 -a phone:string -a address:text
+        chaoscypher graph template update tmpl_a1b2c3d4e5 -r obsolete_field
     """
     try:
         ctx = get_context(database_name=database)
 
-        # Get existing template
+        # Get existing template (raises NotFoundError if missing)
         existing = ctx.template_service.get_template(template_id)
-        if not existing:
-            console.print(f"[red]Template not found:[/red] {template_id}")
-            sys.exit(1)
 
         # Convert to dict if needed
         if hasattr(existing, "model_dump"):
@@ -139,6 +141,9 @@ def update(
         if description is not None:
             console.print(f"  [dim]Description:[/dim] {description}")
 
+    except NotFoundError:
+        console.print(f"[red]Template not found:[/red] {template_id}")
+        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

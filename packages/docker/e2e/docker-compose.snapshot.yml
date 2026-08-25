@@ -1,17 +1,20 @@
-# E2E compose for the migration-roundtrip smoke test.
+# E2E compose for the pre-squash-database refusal smoke test.
 #
 # Spins up a SEPARATE stack (different project name, different ports)
-# pre-seeded with a snapshot of the current-HEAD ``app.db`` +
-# ``credentials.json``. The cortex's normal boot sequence runs
-# Alembic, which on a stale snapshot would either upgrade in place
-# (the migration-roundtrip path we want to exercise) or refuse to
-# boot if a destructive change was missed.
+# pre-seeded with a snapshot of ``app.db`` + ``credentials.json`` taken
+# from a build that PREDATES the 2026-06-02 migration squash — it is
+# stamped at ``0044``, a revision the package no longer ships. That
+# staleness is the point: the cortex's normal boot sequence runs
+# Alembic, which must refuse the unsupported lineage with a guided
+# error rather than upgrade it in place.
+#
+# This stack is therefore expected NEVER to become healthy.
 #
 # Usage:
 #   docker compose -f docker-compose.snapshot.yml \
-#     --project-name chaoscypher-e2e-snap up -d app
+#     --project-name chaoscypher-e2e-snap up -d --build app
 #
-# The test ``e2e/api/test_migration_roundtrip.py`` orchestrates
+# The test ``e2e/migrations/test_migration_roundtrip.py`` orchestrates
 # bring-up + assertions + teardown.
 
 name: chaoscypher-e2e-snap

@@ -53,18 +53,26 @@ class VisionPagesRepository:
         self,
         source_id: str,
         statuses: Sequence[VisionPageStatus] | None = None,
+        *,
+        include_content: bool = True,
     ) -> list[VisionPageDescription]:
         """Return all vision_page_descriptions for the source.
 
         Args:
             source_id: Target source.
             statuses: Optional status filter (e.g. [FAILED]).
+            include_content: Pass ``False`` to skip the per-page LLM
+                ``description`` Text column (returned as ``None``) when
+                the caller does not read it — e.g. the polled listing
+                endpoint.
 
         Returns:
             List of storage TypedDicts.
 
         """
-        return self._storage.list_vision_page_descriptions(source_id, statuses=statuses)
+        return self._storage.list_vision_page_descriptions(
+            source_id, statuses=statuses, include_content=include_content
+        )
 
     def reset_for_retry(self, page_id: str) -> bool:
         """Reset one page to PENDING (decrementing the job counter).

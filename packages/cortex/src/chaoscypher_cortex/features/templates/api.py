@@ -8,6 +8,7 @@ POST   /api/v1/templates - Create template
 GET    /api/v1/templates/{id} - Get template
 PATCH  /api/v1/templates/{id} - Update template
 DELETE /api/v1/templates/{id} - Delete template
+POST   /api/v1/templates/embeddings - Regenerate template embeddings (202)
 POST   /api/v1/templates/batch - Batch operations.
 """
 
@@ -62,6 +63,7 @@ def get_template_service(
     response_model=PaginatedTemplatesResponse,
     responses={
         **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
     },
 )
 async def list_templates(
@@ -128,6 +130,7 @@ async def create_template(
     response_model=TemplateResponse,
     responses={
         **COMMON_ERROR_RESPONSES,
+        **AUTH_ERROR_RESPONSES,
         **NOT_FOUND_RESPONSE,
     },
 )

@@ -12,6 +12,103 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 
 ### August 2026
 
+#### v0.4.1 (2026-08-25)
+
+A large fixes-only patch release — 75 commits since v0.4.0. No new features, no
+breaking API changes, no schema migrations. Security hardening, data-correctness
+fixes, and queue/worker reliability dominate.
+
+##### Security
+
+- **Diagnostic exports could leak API keys when JSON logging is enabled** — the diagnostic collector's secret-scrubbing patterns matched only the unquoted form (`api_key=VALUE`, `api_key: VALUE`). With `USE_JSON_LOGGING=true`, structlog renders log lines as JSON and quotes the field name, so `"api_key": "..."`, `"authorization": "Bearer ..."`, and `"token": "..."` slipped through unmasked and were written into the exported bundle. **This is the headline reason to upgrade if you run the multi-container production stack**, which sets `USE_JSON_LOGGING=true` by default — a diagnostic bundle is something you generate specifically to send to someone else. The all-in-one image defaults to `false` and was not affected. Patterns now match both renderings. If you exported and shared a diagnostic bundle from an earlier version of a JSON-logging deployment, rotate the provider keys that instance was configured with.
+- **Prompt injection through ingested documents is fenced** — entity names harvested from graph tool results and source titles interpolated into the chat system prompt are text a document author controls, and they were spliced verbatim into synthesized `role="user"` guidance — the channel the model is told to treat as authoritative. A label carrying a newline plus a fake `SYSTEM:` line could escalate into the instruction channel and, under the default never-ask tool-approval mode, drive an unattended mutating tool call. Names are now sanitized at the single harvest point (control characters stripped, length capped) and the interpolated lists are wrapped in the repo's `<untrusted_document>` fence. Forged closing fence tags inside document content are defanged, and the system prompt now names the fence explicitly.
+- **`CHAOSCYPHER_ALLOW_USER_PLUGINS=0` now actually disables user domain plugins** — the kill switch was honoured by the other plugin loaders but not this one, so user-supplied domain plugins were discovered and executed even with discovery switched off. If you set this variable expecting it to hold, it now does.
+- **Archive ingest enforces size and file-count caps before inflation** — `tar.gz` inputs are measured on a streaming pass, so a decompression bomb is rejected instead of being expanded first.
+- **Secret material is written atomically at `0600`** — the custom-TLS key upload, the session HMAC secret, and the Lexicon OAuth token used write-then-`chmod`, leaving a brief window where the file was readable by other local users. All three now go through one shared atomic-write helper, and the Lexicon config directory's mode is re-applied on every call.
+- **A settings PATCH can no longer lock you out permanently** — `local_auth.edge_auth_header` names the nginx→Cortex trust header; it was writable through the settings API, so renaming it made every subsequent request unauthenticated with no way back in. It joins the protected-field list.
+- **Custom embedding endpoints are URL-validated** — `EmbeddingSettings.api_base` now carries the same `validate_url_safety` guard as every sibling custom-endpoint setting.
+- **Secure-cookie flag follows TLS state** — `cookie_secure` is re-resolved per cookie write and settings are reloaded when TLS configuration changes, instead of being fixed at process start.
+- **`settings.yaml` is written atomically at `0600`** — the settings file carries plaintext provider API keys, the edge-auth token, and the queue and supervisor passwords, and it was written at umask permissions (typically world-readable) and only narrowed to `0600` afterwards. It now goes through the same `mkstemp`-based atomic-secret-write helper as the other secret files, so the plaintext never touches disk in a readable mode.
+- **`current_database` is format-validated** — the setting was writable via the settings API with no shape check and joins queries as a raw path segment; it now carries a validator, closing a path-injection-shaped hole.
+
+##### Data correctness
+
+- **A busy-database retry could silently discard committed work** — on `SQLITE_BUSY`, the commit retry rolled back and re-applied a snapshot of pending objects; inside `adapter.transaction()` every write has already been flushed, so that snapshot was always empty. The rollback threw the work away, the retry committed nothing, and success was logged. Callers proceeded on that "successful" commit — `delete_source` in particular tore a source apart, removing the search index and file while the SQL rows survived. The retry now re-arms and re-issues the COMMIT that SQLite is still holding open, and raises when it cannot verify that state.
+- **A rebound task database could read and write the wrong database file** — the SQLite adapter and graph repository adopted an ambient session without checking it belonged to their own engine, so an adapter rebound to a task's database could silently operate on the surrounding scope's database instead. Symptoms were cross-database data loss on reset, sources stuck pending, and exports reading the wrong database. Both now adopt the ambient session only when its engine matches.
+- **The reconciler no longer dispatches a second copy of live work** — its absolute-timeout branch is deliberately heartbeat-blind, and its requeue path refuses only completed/cancelled tasks, so a `running` task reset to `queued` gets claimed by a second worker. Two call sites derived the cutoff from the wrong timeout (Cortex's safety net read the settings default while workers run on the `workers.yaml` override; both worker sites passed their own deadline verbatim, so the cutoff expired at the same instant the worker's did). A single resolver now reads the same override, clamps it with shared policy bounds, floors it at the settings default, and adds a safety margin.
+- **Cancelled tasks are not dispatched, and cancellation survives a restart** — the worker's running-claim is now guarded against a task cancelled between claim and dispatch, and `cancel_by_metadata` persists a durable cancellation marker rather than relying on in-flight state alone.
+- **Chat retry/regenerate no longer double-enqueues** — status is claimed atomically, and terminal status is reconciled after SSE subscribe via a sentinel, closing the window where a client subscribing late saw a stale non-terminal state.
+- **A failed save no longer duplicates chat messages on retry** — message persistence committed one row at a time with no enclosing transaction, so a mid-write failure left earlier rows durable and the retry re-inserted them. The whole batch now commits as one transaction, matching the documented contract.
+- **Sources no longer wedge at `vector_indexing_status: pending`** — a failure while enqueuing the search-index retry, after the commit had been marked complete, permanently lost the retry, the degraded mark, and every recovery path. All three enqueue sites are guarded; on failure the source is marked `degraded`, which is recoverable.
+- **A source is marked indexed only after its last pending search row drains**, so the indexed state can no longer be reported ahead of the work.
+- **Template re-embedding: one bad template no longer poisons the batch, and graph/search can't silently diverge** — each template's work is now isolated and failures are counted rather than forcing a full-batch retry that re-embeds everything already done. The graph-row update and the search-index write also share a single transaction; previously the graph write committed on its own while an index failure was swallowed as a warning, leaving a permanent mismatch with no reconciliation path.
+- **Extraction recovery keeps SQLite and the queue in agreement** — when marking a chunk task queued fails after the re-enqueue succeeded, the live queue task is now best-effort cancelled before the error propagates.
+- **Vision pages retry instead of being marked failed** — retryable LLM errors from image description are propagated rather than swallowed into a terminal per-page failure.
+- **Per-source table rows are scored correctly in quality scoring (v8)** — reference counts and chunk mentions were computed against the wrong source of truth, so quality scores for table-bearing sources were wrong; the Cortex slice, the Neuron recalculation handler, and the CLI now all ride the same canonical helpers and read the per-source extraction tables.
+- **Migration backups are recorded before they are needed** — the pre-apply backup path is persisted before the upgrade runs, and `last_backup` survives a successful data-changing apply.
+- **A task retry can no longer resurrect a cancelled task** — the retry path blind-wrote `status="queued"` with no compare-and-swap, so a task cancelled while running was revived and executed a second time in full; the reconciler's guards never saw the cancelled state to refuse it. The retry now claims through the same guarded status write as everything else.
+- **Switching databases rebinds the system-event bus** — the singleton `event_bus` stayed bound to the previous database's adapter after a switch, silently writing system events into the old database file.
+- **Re-importing a CCX package no longer duplicates citations** — import is idempotent on citation rows, matching the upsert-by-IRI behavior nodes and edges already had.
+
+##### Reliability
+
+- **Low-priority LLM work no longer starves** — the admission gate compared total active work against the low-priority allowance instead of the low tier's own counter, so high-priority work consumed the low tier's budget and a low-priority waiter could block forever on an untimed wait. The reserved-interactive slot count is also clamped below `llm_max_concurrent` (matching the UI's own clamp) on load, on live settings reload, and when the maximum alone shrinks. A configuration with `llm_reserved_interactive >= llm_max_concurrent` is now clamped with a warning naming both values rather than starving silently.
+- **Databases created before the 2026-06-02 schema squash now refuse startup with guidance instead of failing obscurely** — such a database was re-stamped at the baseline, after which the shipped migrations replayed against a schema they were never written for and the boot died in the drift gate on every supervisor retry. The squash predates every public release, so no released build ever wrote one of these; they are explicitly unsupported. Cortex now exits cleanly with an `UnsupportedDatabaseLineageError` naming the revision and the recovery path (back up, then re-create or export/re-import), and the stamp is left untouched.
+- **Queue reconciliation falls back to the canonical queues** when Cortex's reconcile registry is empty, instead of silently reconciling nothing.
+- **Blocking work moved off the event loop** — the stuck-chat sweeper's SQLite I/O, the Neuron health-monitor tick (now also inside a session scope), the vision spend-tracker check/record, and the chat status/persist writes all run in threads, matching the offload pattern the surrounding handlers already used.
+- **Bulk resume recovers per source** — each recovery in a bulk resume runs in its own adapter session scope, so one failure no longer aborts the rest.
+- **Source heartbeats run on their own session** — background beats could execute on the finalize transaction's session from a second thread. Each beat now uses a short-lived session of its own.
+- **Upgrade recovery finds its source** — the recovery path reads `source_id` from task metadata, where it actually lives.
+- **Cancellation no longer phantom-releases an LLM slot** that a clear-wake had already handed to another waiter.
+- **`POST /admin/plugins/reload` actually reloads** — the endpoint cleared a cache map no production code ever populated, returning success while every real registry kept serving stale plugins until a process restart. The loader, domain, and preset registry caches are now registered with the invalidation path — and they are keyed by the resolved plugin root rather than settings-object identity, so per-request settings objects no longer leak one dead registry each.
+- **Cortex's health-monitor tick runs in its own session scope** — it shared the process-singleton fallback session with request handlers emitting system events, a not-thread-safe combination whose failure mode was system events silently stopping and auto-pause dying for the life of the process (the Neuron sibling was fixed for exactly this earlier).
+- **The Lexicon client no longer leaks connection pools** — download/upload clients were created per request and never closed, and all four `LexiconSettings` knobs (timeouts, retries) were ignored; both fixed.
+
+##### Performance
+
+- **`POST /search/embeddings` batches** — it embedded up to 10,000 nodes one at a time inside the request: one provider round trip, one SELECT+UPDATE+COMMIT, and one single-row vector upsert per node. It now collects the pairs, makes one batched embedding call, and persists in one transaction with a batched index refresh — roughly 156 provider calls for 10,000 nodes at the default batch size instead of 10,000. (Its docstring also no longer claims the work happens in the background; it never did.)
+- **CLI `index-file` batches chunk-embedding writes** — one bulk UPDATE and one commit per embedding wave, replacing a full-row SELECT plus a real commit per chunk (a 3 MB import was ~4,000 of each). Resumability is preserved at wave granularity.
+- **Search results hydrate faster** — assembling a page of chunk results issued two serial database calls per chunk. Chunks are now fetched in one batched query per page and repeated source lookups are memoized, mirroring how node results already worked. Most noticeable on large result pages.
+- **Read paths project only what they use** — chunk-task summaries collapse to one `GROUP BY`, the workflows dashboard replaces per-workflow queries with one aggregate, `update_file`/`update_source_columns` project key columns only, graph-snapshot staleness reads three scalars instead of loading the row's JSON payload, and scoped-chat source titles resolve in one batched call instead of a per-source loop.
+- **`GET /sources/{id}/vision_pages` stops shipping every page's LLM description** — the endpoint is polled, and the description text column dominated the payload; `error_message` (which the UI renders) is retained.
+- **Chat existence and status checks stop loading 500 message rows** — four `chats` endpoints now use a summary read, and `GET /chats/{id}/messages` no longer reads its messages twice.
+- **Chunk-offset matching is no longer quadratic** — exact matching carries a forward cursor and per-chunk location lookups use binary search.
+- **Deleting a source batches its orphaned search-index node deletes** instead of one pooled connection and commit per orphan.
+
+##### Interface
+
+- **Light mode is readable again** — the theme swapped `background` on the dark-mode toggle but pinned `text.*` and `divider` to the dark-only slate neutrals unconditionally, so switching to light mode (a live switch in General Settings) rendered near-white text on a near-white background across every component reading the `text.*` token. The slate overrides now apply only in dark mode, with MUI's accessible light defaults otherwise.
+- **The Sources status filter is actually applied** — the parameter was accepted but never placed on the outgoing request.
+- **The template force-delete dialog can open** — it matched two error-message substrings the API never sends; it now matches the real `409 TEMPLATE_IN_USE` response. The templates empty state also spans the right number of columns.
+
+##### CLI
+
+- **`template list` paginates** (`--page`/`--limit`, the same idiom as `node list`) instead of silently truncating at 50.
+- **`template get`/`update`/`delete` report a missing template** rather than falling through dead `None` guards, and the help text lists all 13 property types.
+- **`quality` commands read the per-source extraction tables**, matching the scoring fix above.
+- **`quality recalculate` exits non-zero on failure** — it counted and printed per-source errors but always exited 0, so scripted invocations could not distinguish success from total failure. Old `cc …` command hints in error messages are also corrected to `chaoscypher …`.
+
+##### Docs
+
+- The `GET /sources/{id}/chunks` API reference shows the `{data, pagination}` envelope the endpoint actually returns, and the `reset/knowledge` and `reset/all` result payload keys are corrected.
+- Template docs corrected: CLI examples used names where only IDs resolve, and delete semantics were documented backwards (`force=true` is a cascade delete; a plain delete is blocked, never dangling).
+- The upgrading guide and ADR-0006 no longer promise auto-recovery for pre-squash databases.
+- **The CCX 3.0 format has a published draft specification** — [`reference/ccx-format`](../reference/ccx-format.md) documents the container, manifest schema, JSON-LD graph members, `sources.jsonl` row schemas, and the validator's conformance classes, written against the shipped `ccx-format` reader.
+
+##### Dependencies
+
+- Frontend minor/patch group updates (7 + 8 packages), a `python` 3.14.6→3.14.7-slim production base-image bump, and documentation-site dev-dependency bumps.
+
+##### Migrations
+
+- **None.** No schema changes in this release; the only edit under `migrations/versions/` is a docstring correction.
+
+##### Upgrade advisory
+
+- No queue payload schemas changed, but the standing guidance applies: drain the queue before swapping the image (stop new submissions, wait for `/api/v1/queue/stats` to report 0 pending on all queues), since payload-version negotiation is not yet implemented.
+- If your `settings.yaml` sets `llm_reserved_interactive` at or above `llm_max_concurrent`, startup now clamps it and logs a warning — the effective value changes, so check the log line and set an intentional value.
+- If you set `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` but were relying on user domain plugins loading anyway, they will stop loading after this upgrade.
+
 #### v0.4.0 (2026-08-07)
 
 ##### Breaking Changes

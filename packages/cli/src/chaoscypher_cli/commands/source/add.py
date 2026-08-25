@@ -13,13 +13,13 @@ Supports file paths, directories, URLs, file IDs (resume), and interactive
 resume picker. Multiple inputs can be processed in a single command.
 
 Example:
-    cc source add document.pdf                             # Single file
-    cc source add a.pdf b.pdf c.pdf                        # Multiple files
-    cc source add ./documents/                             # All files in directory
-    cc source add https://example.com/article              # URL import
-    cc source add document.pdf --index-only                # Stop after indexing
-    cc source add if_abc123                                # Resume by file ID
-    cc source add --resume                                 # Interactive resume picker
+    chaoscypher source add document.pdf                             # Single file
+    chaoscypher source add a.pdf b.pdf c.pdf                        # Multiple files
+    chaoscypher source add ./documents/                             # All files in directory
+    chaoscypher source add https://example.com/article              # URL import
+    chaoscypher source add document.pdf --index-only                # Stop after indexing
+    chaoscypher source add if_abc123                                # Resume by file ID
+    chaoscypher source add --resume                                 # Interactive resume picker
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def _show_resume_picker(ctx: CLIContext, console: Any) -> str | None:
 
     if not pending:
         console.print("[dim]No pending files to resume.[/dim]")
-        console.print("\nAdd files with: cc source add <file>")
+        console.print("\nAdd files with: chaoscypher source add <file>")
         return None
 
     console.print("\n[bold]Select file to resume:[/bold]\n")
@@ -468,7 +468,7 @@ def add(
             file_record = ctx.storage_adapter.get_file(file_id, ctx.database_name)
             if not file_record:
                 console.print(f"[red]File ID not found:[/red] {file_id}")
-                console.print("\nList files with: cc source list")
+                console.print("\nList files with: chaoscypher source list")
                 sys.exit(1)
             if not quiet:
                 console.print(f"[cyan]Resuming:[/cyan] {file_record.get('filename')} ({file_id})\n")
@@ -553,7 +553,7 @@ def add(
                 if r.parked_for_confirmation:
                     console.print(
                         f"[yellow]AWAITING[/yellow] {r.file_id} "
-                        f"(detected: {r.detected_domain}) — cc source confirm {r.file_id}"
+                        f"(detected: {r.detected_domain}) — chaoscypher source confirm {r.file_id}"
                     )
                 elif r.success:
                     extra = f" — domain: {r.detected_domain}" if r.detected_domain else ""

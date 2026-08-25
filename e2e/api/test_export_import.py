@@ -97,20 +97,20 @@ class TestExportImport:
         assert result_resp.status_code == 200
         result_data = result_resp.json()
 
-        # Step 4: Verify the result contains the export package
-        # Result may have content/data/result key with base64 CCX
-        ccx_b64 = (
-            result_data.get("content")
-            or result_data.get("data", {}).get("content")
-            or result_data.get("result", {}).get("content")
-        )
-        if ccx_b64:
-            # Decode and verify it's a valid ZIP (CCX files are ZIPs)
-            ccx_bytes = base64.b64decode(ccx_b64)
-            with zipfile.ZipFile(BytesIO(ccx_bytes)) as zf:
-                names = zf.namelist()
-                # CCX packages must have manifest.json
-                assert "manifest.json" in names, f"Missing manifest in {names}"
+        # Step 4: Verify the result contains the export package.
+        # TaskResultResponse wraps the export payload as
+        # {"result": {"filename", "content", "size_bytes"}} — index it
+        # directly so any payload-shape drift fails loudly (the old
+        # triple-fallback + `if ccx_b64:` silently passed on an empty
+        # or reshaped export).
+        ccx_b64 = result_data["result"]["content"]
+        assert ccx_b64, "export returned an empty package"
+        # Decode and verify it's a valid ZIP (CCX files are ZIPs)
+        ccx_bytes = base64.b64decode(ccx_b64)
+        with zipfile.ZipFile(BytesIO(ccx_bytes)) as zf:
+            names = zf.namelist()
+            # CCX packages must have manifest.json
+            assert "manifest.json" in names, f"Missing manifest in {names}"
 
     def test_export_by_sources(self, client: httpx.Client) -> None:
         """Test source-filtered export endpoint."""

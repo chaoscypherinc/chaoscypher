@@ -99,8 +99,14 @@ def pull(
             info = await client.get_package_info(owner_username, repo_name, version)
             actual_version = info.version
 
+            # Download with the RESOLVED owner: for a bare package name the
+            # local owner_username is "", and get_package_info's name-only
+            # fallback is what recovered the real owner — reusing "" here
+            # built a malformed …/packages//<name>/… download URL.
+            resolved_owner = info.owner_username or owner_username
+
             # Download the archive
-            archive_bytes = await client.download(owner_username, repo_name, version or "latest")
+            archive_bytes = await client.download(resolved_owner, repo_name, version or "latest")
             return archive_bytes, actual_version
 
     try:

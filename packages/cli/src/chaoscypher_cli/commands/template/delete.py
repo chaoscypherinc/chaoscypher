@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.prompt import Confirm
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_core.exceptions import NotFoundError
 
 
 console = Console()
@@ -22,24 +23,22 @@ console = Console()
 def delete(template_id: str, force: bool, database: str) -> None:
     """Delete a template from the knowledge graph.
 
-    TEMPLATE_ID is the unique identifier of the template to delete.
+    TEMPLATE_ID is the unique identifier of the template to delete
+    (from `chaoscypher graph template list`).
 
-    Warning: Deleting a template does not delete nodes created from it,
-    but those nodes will no longer have a valid template reference.
+    Deletion is blocked while nodes or edges still use the template.
+    Remove those items first (or delete via the API with force=true,
+    which deletes the dependent nodes and edges as well).
 
     Example:
-        chaoscypher graph template delete Person
-        chaoscypher graph template delete tmpl-123 --force
+        chaoscypher graph template delete tmpl_a1b2c3d4e5
+        chaoscypher graph template delete tmpl_a1b2c3d4e5 --force
     """
     try:
         ctx = get_context(database_name=database)
 
         # Get template first to show info
         template = ctx.template_service.get_template(template_id)
-
-        if not template:
-            console.print(f"[red]Template not found:[/red] {template_id}")
-            sys.exit(1)
 
         # Convert to dict if needed
         if hasattr(template, "model_dump"):
@@ -58,7 +57,7 @@ def delete(template_id: str, force: bool, database: str) -> None:
 
         if not force:
             console.print(
-                "\n[yellow]Warning:[/yellow] Nodes using this template will lose their template reference."
+                "\n[yellow]Note:[/yellow] Deletion is blocked if nodes or edges still use this template."
             )
             if not Confirm.ask("Are you sure you want to delete this template?", default=False):
                 console.print("[yellow]Cancelled.[/yellow]")
@@ -69,6 +68,9 @@ def delete(template_id: str, force: bool, database: str) -> None:
 
         console.print("[green]✓ Template deleted successfully[/green]")
 
+    except NotFoundError:
+        console.print(f"[red]Template not found:[/red] {template_id}")
+        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

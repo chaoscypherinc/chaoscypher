@@ -460,6 +460,47 @@ class TestAnalyzeGraphStructure:
         assert result["statistics"]["edge_count"] == 1
 
     @pytest.mark.asyncio
+    async def test_zero_survivor_source_filter_loads_nodes_once(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+        settings: EngineSettings,
+    ) -> None:
+        """The zero-survivor debug sample reuses the already-loaded node list.
+
+        Regression: the ``sample_node_source_ids`` log field re-ran the full
+        ``list_nodes_minimal`` query (a second whole-table load) instead of
+        sampling the list already in memory.
+        """
+        nodes = [make_node("n1", "Alice", source_id="src1")]
+        _configure_graph_repo(graph_repo, nodes=nodes, edges=[])
+
+        analytics = _make_analytics_mock(
+            communities={"communities": [], "num_communities": 0},
+            pagerank={"top_nodes": []},
+            clustering={"average_clustering": 0.0},
+        )
+        handler = _make_handler(graph_repo, search_repo, analytics, settings)
+
+        with (
+            patch(
+                "chaoscypher_core.services.workflows.tools.engine.handlers"
+                ".analytics_handlers.GraphAnalyticsService.calculate_node_degrees_simple",
+                return_value={},
+            ),
+            patch(
+                "chaoscypher_core.services.workflows.tools.engine.handlers"
+                ".analytics_handlers.GraphAnalyticsService.find_isolated_nodes_simple",
+                return_value=[],
+            ),
+        ):
+            # src-other matches nothing -> zero survivors -> sample path fires
+            result = await handler.analyze_graph_structure(source_ids=["src-other"])
+
+        assert result["statistics"]["node_count"] == 0
+        graph_repo.list_nodes_minimal.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_combined_template_and_source_filters(
         self,
         graph_repo: MagicMock,

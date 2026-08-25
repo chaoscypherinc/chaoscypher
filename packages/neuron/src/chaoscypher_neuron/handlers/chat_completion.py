@@ -100,7 +100,9 @@ def register_chat_completion_handler(
         # is already set by the POST /send endpoint, but on a retry after a
         # transient failure the error handler below will have set it to
         # "error" — reset it so the user sees processing status again.
-        chat_service.update_chat_status(chat_id, "processing")
+        # Offloaded: the write runs blocking SQLite that must not stall the
+        # LLM worker's event loop (pub/sub, heartbeats, dispatcher).
+        await asyncio.to_thread(chat_service.update_chat_status, chat_id, "processing")
 
         try:
             return await _run_chat_completion(
@@ -125,7 +127,7 @@ def register_chat_completion_handler(
             # LLM error into a permanent one. Swallow-and-log so the original
             # exception always propagates.
             try:
-                chat_service.update_chat_status(chat_id, "error")
+                await asyncio.to_thread(chat_service.update_chat_status, chat_id, "error")
                 await publish_chat_event(
                     chat_id,
                     "error",
@@ -300,21 +302,18 @@ async def _run_chat_completion(
     source_ids = chat.get("source_ids")
     source_metadata = None
     if source_ids:
-        source_metadata = []
-        for sid in source_ids:
-            # Use the task's resolved database (chat_service.database_name),
-            # not the live settings value — the operator may have switched the
-            # active database while this task sat in the queue.
-            source = storage_adapter.get_source(sid, chat_service.database_name)
-            if source:
-                # get_source rows always carry a "title" key (possibly None),
-                # so dict.get's default never fires — fall through explicitly.
-                source_metadata.append(
-                    {
-                        "id": sid,
-                        "title": source.get("title") or source.get("filename") or sid,
-                    }
-                )
+        # Use the task's resolved database (chat_service.database_name),
+        # not the live settings value — the operator may have switched the
+        # active database while this task sat in the queue.
+        title_map = storage_adapter.get_source_titles_by_ids(source_ids, chat_service.database_name)
+        # Missing ids are absent from the map (source deleted mid-queue) and
+        # are skipped; a source whose title AND filename are both null maps
+        # to None, so fall back to the id explicitly.
+        source_metadata = [
+            {"id": sid, "title": title_map.get(sid) or sid}
+            for sid in source_ids
+            if sid in title_map
+        ]
 
     # Setup providers and tools.
     # The worker runs ON the LLM queue (concurrency=1), so tool LLM callbacks
@@ -423,7 +422,7 @@ async def _run_chat_completion(
     loop_result = await run_chat_tool_loop(messages_for_llm, deps)
 
     if loop_result.error_occurred:
-        chat_service.update_chat_status(chat_id, "error")
+        await asyncio.to_thread(chat_service.update_chat_status, chat_id, "error")
         error_msg = (
             "LLM streaming failed"
             if loop_result.error_stage == "initial_stream"
@@ -539,10 +538,17 @@ async def _finalize_and_publish(
     pending_messages.append(
         chat_service.build_message(chat_id, "assistant", answer.content, extra_metadata)
     )
+
     # Single persistence point for the whole run — tool results buffered during
     # the loop plus this assistant answer, written together on success.
-    chat_service.persist_messages(pending_messages)
-    chat_service.update_chat_status(chat_id, "active")
+    # One thread hop for both writes: persist_messages already wraps the
+    # turn in one transaction, and both calls run blocking SQLite that must
+    # not stall the LLM worker's event loop.
+    def _persist_and_activate() -> None:
+        chat_service.persist_messages(pending_messages)
+        chat_service.update_chat_status(chat_id, "active")
+
+    await asyncio.to_thread(_persist_and_activate)
 
     # Publish done event
     done_data: dict[str, Any] = {

@@ -54,9 +54,12 @@ system_router = APIRouter()
 def get_pause_service() -> PauseService:
     """Build a PauseService for the current request.
 
-    Uses the shared SqliteAdapter (singleton keyed by database name)
-    and constructs a SourceRecovery on demand with the live
-    queue client. Called per-request via FastAPI's Depends.
+    Uses the shared SqliteAdapter (one instance per database name) and
+    constructs a SourceRecovery on demand with the live queue client.
+    The adapter is also handed to PauseService so each bulk-resume
+    recovery runs inside its own ``session_scope()`` instead of the
+    adapter's shared fallback session. Called per-request via
+    FastAPI's Depends.
     """
     from chaoscypher_core.database.adapter_factory import (
         get_sqlite_adapter,
@@ -77,7 +80,7 @@ def get_pause_service() -> PauseService:
             settings.source_recovery.mcp_extracting_stale_after_hours
         ),
     )
-    return PauseService(repository=repository, source_recovery=source_recovery)
+    return PauseService(repository=repository, source_recovery=source_recovery, adapter=adapter)
 
 
 # ---------------------------------------------------------------------------

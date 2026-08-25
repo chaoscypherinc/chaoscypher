@@ -26,7 +26,7 @@ Interface is part of the ChaosCypher neural architecture:
 
 - **Framework**: React 19 + TypeScript 6 (strict)
 - **Build Tool**: Vite 8
-- **Routing**: React Router 7
+- **Routing**: React Router 8
 - **State Management**: TanStack Query (server/streaming state) + React Context (UI state only)
 - **UI Components / Styling**: MUI 9 + Emotion (`sx` prop); no CSS Modules
 - **Testing**: Vitest 4 + React Testing Library

@@ -6,9 +6,19 @@
 Verifies that each handler calls the correct QualityService method with the
 correct arguments and transforms the response correctly. FastAPI DI is
 bypassed — the service mock is passed directly as a function argument.
+
+Also pins that the three analysis handlers run their synchronous service call
+via ``asyncio.to_thread``. ``QualityService`` does blocking SQLite I/O whose
+volume is bounded by the source count, not by the request: the unpaginated
+calls re-score every version-stale source (four DB round trips each), and even
+the paginated one loads the whole source table before cutting its page. Run
+directly in an ``async def`` handler that work blocks the event loop for the
+whole cortex process.
 """
 
-from unittest.mock import MagicMock
+import asyncio
+from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -66,13 +76,18 @@ def _source_score(
     }
 
 
-def _analysis_result(sources: list[dict] | None = None) -> dict:
-    """Return a minimal analyze_sources service result."""
+def _analysis_result(sources: list[dict] | None = None, total: int | None = None) -> dict:
+    """Return a minimal analyze_sources service result.
+
+    ``sources`` is the page the service already sorted and sliced; ``total``
+    is the full match count it reports alongside it (defaults to the page
+    length, which is what an unpaginated call returns).
+    """
     if sources is None:
         sources = [_source_score()]
     return {
         "sources": sources,
-        "total_sources": len(sources),
+        "total_sources": len(sources) if total is None else total,
         "avg_score": 75.0,
         "avg_entity_quality": 60.0,
         "avg_relationship_quality": 55.0,
@@ -353,13 +368,13 @@ class TestAnalyzeSourcesGet:
     """Tests for the analyze_sources_get (GET) handler."""
 
     @pytest.mark.asyncio
-    async def test_returns_paginated_sorted_response(self) -> None:
-        """Handler calls analyze_sources, sorts by total_score desc, and paginates."""
+    async def test_returns_the_service_page_verbatim(self) -> None:
+        """Sorting and slicing live in the service; the handler passes the page through."""
         mock_service = MagicMock()
         sources = [
-            _source_score("src-1", total_score=50.0),
             _source_score("src-2", total_score=90.0),
             _source_score("src-3", total_score=70.0),
+            _source_score("src-1", total_score=50.0),
         ]
         mock_service.analyze_sources.return_value = _analysis_result(sources)
 
@@ -373,41 +388,40 @@ class TestAnalyzeSourcesGet:
             sort_order="desc",
         )
 
-        # Sorted descending: src-2 (90), src-3 (70), src-1 (50)
-        assert result["sources"][0]["source_id"] == "src-2"
-        assert result["sources"][1]["source_id"] == "src-3"
-        assert result["sources"][2]["source_id"] == "src-1"
+        assert [s["source_id"] for s in result["sources"]] == ["src-2", "src-3", "src-1"]
         assert result["total_sources"] == 3
 
     @pytest.mark.asyncio
-    async def test_sorts_ascending(self) -> None:
-        """Handler sorts sources ascending when sort_order=asc."""
+    async def test_forwards_sort_and_page_params_to_the_service(self) -> None:
+        """Every pagination/ordering param is pushed down instead of applied here."""
         mock_service = MagicMock()
-        sources = [
-            _source_score("src-1", total_score=50.0),
-            _source_score("src-2", total_score=90.0),
-        ]
-        mock_service.analyze_sources.return_value = _analysis_result(sources)
+        mock_service.analyze_sources.return_value = _analysis_result()
 
-        result = await analyze_sources_get(
+        await analyze_sources_get(
             _="test-user",
             service=mock_service,
-            pagination=(1, 10),
-            domain=None,
-            min_entities=0,
-            sort_by="total_score",
+            pagination=(2, 25),
+            domain="medical",
+            min_entities=3,
+            sort_by="avg_entity_quality",
             sort_order="asc",
         )
 
-        assert result["sources"][0]["source_id"] == "src-1"
-        assert result["sources"][1]["source_id"] == "src-2"
+        mock_service.analyze_sources.assert_called_once_with(
+            domain="medical",
+            min_entities=3,
+            page=2,
+            page_size=25,
+            sort_by="avg_entity_quality",
+            sort_order="asc",
+        )
 
     @pytest.mark.asyncio
-    async def test_paginates_results(self) -> None:
-        """Handler slices sources according to page/page_size params."""
+    async def test_pagination_metadata_uses_the_service_total(self) -> None:
+        """``total`` comes from the service's full match count, not the page length."""
         mock_service = MagicMock()
-        sources = [_source_score(f"src-{i}", total_score=float(i)) for i in range(6)]
-        mock_service.analyze_sources.return_value = _analysis_result(sources)
+        page = [_source_score(f"src-{i}") for i in range(2)]
+        mock_service.analyze_sources.return_value = _analysis_result(page, total=6)
 
         result = await analyze_sources_get(
             _="test-user",
@@ -420,28 +434,13 @@ class TestAnalyzeSourcesGet:
         )
 
         assert len(result["sources"]) == 2
+        assert result["total_sources"] == 6
         assert result["pagination"]["page"] == 2
         assert result["pagination"]["page_size"] == 2
         assert result["pagination"]["total"] == 6
         assert result["pagination"]["total_pages"] == 3
-
-    @pytest.mark.asyncio
-    async def test_passes_domain_and_min_entities_to_service(self) -> None:
-        """Handler forwards domain and min_entities query params to the service."""
-        mock_service = MagicMock()
-        mock_service.analyze_sources.return_value = _analysis_result()
-
-        await analyze_sources_get(
-            _="test-user",
-            service=mock_service,
-            pagination=(1, 50),
-            domain="medical",
-            min_entities=3,
-            sort_by="total_score",
-            sort_order="desc",
-        )
-
-        mock_service.analyze_sources.assert_called_once_with(domain="medical", min_entities=3)
+        assert result["pagination"]["has_next"] is True
+        assert result["pagination"]["has_prev"] is True
 
     @pytest.mark.asyncio
     async def test_empty_sources_returns_one_page(self) -> None:
@@ -465,27 +464,26 @@ class TestAnalyzeSourcesGet:
         assert result["pagination"]["has_prev"] is False
 
     @pytest.mark.asyncio
-    async def test_sorts_by_avg_entity_quality(self) -> None:
-        """Handler can sort by avg_entity_quality field."""
+    async def test_forwards_aggregate_metrics(self) -> None:
+        """The service's global averages are surfaced unchanged."""
         mock_service = MagicMock()
-        sources = [
-            _source_score("src-1", avg_entity_quality=40.0),
-            _source_score("src-2", avg_entity_quality=80.0),
-        ]
-        mock_service.analyze_sources.return_value = _analysis_result(sources)
+        mock_service.analyze_sources.return_value = _analysis_result(
+            [_source_score("src-1")], total=40
+        )
 
         result = await analyze_sources_get(
             _="test-user",
             service=mock_service,
-            pagination=(1, 10),
+            pagination=(1, 1),
             domain=None,
             min_entities=0,
-            sort_by="avg_entity_quality",
+            sort_by="total_score",
             sort_order="desc",
         )
 
-        assert result["sources"][0]["source_id"] == "src-2"
-        assert result["sources"][1]["source_id"] == "src-1"
+        assert result["avg_score"] == 75.0
+        assert result["avg_entity_quality"] == 60.0
+        assert result["avg_relationship_quality"] == 55.0
 
 
 # ---------------------------------------------------------------------------
@@ -554,3 +552,116 @@ class TestGetQualitySummary:
         mock_service.get_summary.assert_called_once_with()
         assert result["total_sources"] == 10
         assert result["avg_total_score"] == 72.5
+
+
+# ---------------------------------------------------------------------------
+# Event-loop offload — the analysis handlers must not run sync DB work inline
+# ---------------------------------------------------------------------------
+
+
+_API_MODULE = "chaoscypher_cortex.features.quality.api"
+
+
+def _record_offloads() -> tuple[Any, list[str]]:
+    """Patch the api module's ``asyncio.to_thread``, recording what it offloads."""
+    offloaded: list[str] = []
+    real_to_thread = asyncio.to_thread
+
+    async def recording_to_thread(func: Any, /, *args: Any, **kwargs: Any) -> Any:
+        offloaded.append(getattr(func, "_mock_name", None) or repr(func))
+        return await real_to_thread(func, *args, **kwargs)
+
+    return patch(f"{_API_MODULE}.asyncio.to_thread", recording_to_thread), offloaded
+
+
+@pytest.mark.unit
+class TestAnalysisHandlersOffloadBlockingWork:
+    """The synchronous QualityService calls run in a worker thread."""
+
+    @pytest.mark.asyncio
+    async def test_get_quality_summary_offloads_to_thread(self) -> None:
+        """``/quality/summary`` re-scores every stale source — never on the loop."""
+        mock_service = MagicMock()
+        mock_service.get_summary.return_value = {"total_sources": 0}
+
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            await get_quality_summary(_="test-user", service=mock_service)
+
+        assert offloaded == ["get_summary"]
+        mock_service.get_summary.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_analyze_sources_post_offloads_to_thread(self) -> None:
+        """``POST /quality/analyze`` scores the whole match set — never on the loop."""
+        mock_service = MagicMock()
+        mock_service.analyze_sources.return_value = _analysis_result()
+
+        request = QualityAnalysisRequest(source_ids=None, domain=None, min_entities=0)
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            await analyze_sources(_="test-user", request=request, service=mock_service)
+
+        assert offloaded == ["analyze_sources"]
+
+    @pytest.mark.asyncio
+    async def test_analyze_sources_get_offloads_to_thread(self) -> None:
+        """The paginated read still loads the whole source table before slicing."""
+        mock_service = MagicMock()
+        mock_service.analyze_sources.return_value = _analysis_result()
+
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            await analyze_sources_get(
+                _="test-user",
+                service=mock_service,
+                pagination=(1, 10),
+                domain=None,
+                min_entities=0,
+                sort_by="total_score",
+                sort_order="desc",
+            )
+
+        assert offloaded == ["analyze_sources"]
+
+    @pytest.mark.asyncio
+    async def test_recalculate_scores_offloads_to_thread(self) -> None:
+        """``POST /quality/recalculate`` rescores the whole table — never on the loop."""
+        mock_service = MagicMock()
+        mock_service.recalculate_all_scores.return_value = {
+            "recalculated_count": 0,
+            "errors": [],
+        }
+
+        request = RecalculateRequest(domain=None)
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            await recalculate_scores(_="test-user", request=request, service=mock_service)
+
+        assert offloaded == ["recalculate_all_scores"]
+        mock_service.recalculate_all_scores.assert_called_once_with(domain=None)
+
+    @pytest.mark.asyncio
+    async def test_get_outdated_sources_offloads_to_thread(self) -> None:
+        """``GET /quality/outdated`` reads the whole source table."""
+        mock_service = MagicMock()
+        mock_service.get_outdated_sources.return_value = []
+
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            result = await get_outdated_sources(_="test-user", service=mock_service)
+
+        assert offloaded == ["get_outdated_sources"]
+        assert result["outdated_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_compare_domains_offloads_to_thread(self) -> None:
+        """``GET /quality/domains`` reads the whole source table."""
+        mock_service = MagicMock()
+        mock_service.compare_domains.return_value = {"domains": []}
+
+        patcher, offloaded = _record_offloads()
+        with patcher:
+            await compare_domains(_="test-user", service=mock_service)
+
+        assert offloaded == ["compare_domains"]

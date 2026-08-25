@@ -92,6 +92,12 @@ async def subscribe_chat_events(chat_id: str) -> AsyncIterator[dict[str, Any]]:
     block regardless of how the caller exits (normal return, exception, or
     ``GeneratorExit``).
 
+    The first yielded event is always the internal sentinel
+    ``{"type": "__subscribed__", "data": {}}``, emitted immediately after the
+    SUBSCRIBE completes. Consumers use it to reconcile state they read before
+    subscribing (a terminal status published in that window is otherwise
+    lost); it must never be forwarded to clients.
+
     Args:
         chat_id: Unique identifier for the chat session to subscribe to.
 
@@ -118,6 +124,10 @@ async def subscribe_chat_events(chat_id: str) -> AsyncIterator[dict[str, Any]]:
     try:
         await pubsub.subscribe(channel)
         logger.debug("chat_events_subscribed", chat_id=chat_id, channel=channel)
+
+        # Signal the consumer that the subscription is live so it can
+        # re-check state read before subscribing (see docstring).
+        yield {"type": "__subscribed__", "data": {}}
 
         while True:
             try:

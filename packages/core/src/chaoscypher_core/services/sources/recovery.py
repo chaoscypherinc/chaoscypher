@@ -1067,6 +1067,12 @@ class SourceRecovery:
         # omits the heavy commit_payload column so we re-fetch on
         # demand for the commit-dispatch path.
         commit_data = self._load_commit_data(source_id=source_id, database_name=database_name)
+        if commit_data is None:
+            # Entry 446: a transient read failure, not genuine
+            # emptiness — skip dispatch entirely so this source is
+            # reclassified (and its commit data re-read) on the next
+            # reconcile pass rather than being zero-graph-committed.
+            return None
         # Return a descriptor instead of dispatching here — _recover_one
         # must increment the counter BEFORE any queue interaction
         # (audit fix #H7). dispatch_kind="commit" tells _recover_one to
@@ -1109,6 +1115,12 @@ class SourceRecovery:
         # Same on-demand load as the extracted branch — the
         # bulk-scan listing skips the heavy commit_payload column.
         commit_data = self._load_commit_data(source_id=source_id, database_name=database_name)
+        if commit_data is None:
+            # Entry 446: a transient read failure, not genuine
+            # emptiness — skip dispatch entirely so this source is
+            # reclassified (and its commit data re-read) on the next
+            # reconcile pass rather than being zero-graph-committed.
+            return None
         # Return a descriptor instead of dispatching here — _recover_one
         # must increment the counter BEFORE any queue interaction
         # (audit fix #H7). dispatch_kind="commit" tells _recover_one to
@@ -1119,7 +1131,12 @@ class SourceRecovery:
             "commit_data": commit_data,
         }
 
-    async def _classify_vision_pending(
+    # Suppression rationale: four distinct guards (no-job, counter/row
+    # reconciliation, counter-terminal, and the page-scoped in-flight
+    # filter's own no-pending / scan-failure / all-in-flight sub-cases)
+    # inherently branch and return early at each — same shape as
+    # ``_classify_extracting``'s suppression above.
+    async def _classify_vision_pending(  # noqa: PLR0911
         self,
         *,
         source: dict[str, Any],
@@ -1216,6 +1233,59 @@ class SourceRecovery:
             # probably a transient ordering artifact. Treat as healthy.
             return None
 
+        # Filter out pages that already have a live Valkey queue task —
+        # those are in-flight, not stalled, and re-dispatching them would
+        # pay a second billable vision LLM call before the CAS in
+        # ``update_vision_page_description`` rejects the loser. Page-scoped
+        # (not the source-level ``_queue_has_task_for`` every other arm
+        # uses) because vision pages are dispatched as one N-page batch and
+        # drained one at a time — QUEUE_LLM concurrency is 1. A source-level
+        # "any task live" check would block recovery of a genuinely lost
+        # page (worker crash / Valkey eviction) for as long as ANY sibling
+        # page in the batch is still live, which at concurrency=1 can be
+        # most of the job's duration. Mirrors the ``in_flight_chunk_task_ids``
+        # filter ``_classify_extracting`` uses for the same reason on its
+        # own compound (per-chunk) dispatch. A queue client that doesn't
+        # implement the helper at all (old client / version-skew) degrades
+        # to legacy behavior (dispatch all pending pages) — same tradeoff
+        # the chunk arm accepts at its own ``getattr`` fallback.
+        in_flight_method = getattr(self.queue_client, "in_flight_vision_page_ids", None)
+        if in_flight_method is not None:
+            try:
+                in_flight: set[str] = await in_flight_method(
+                    source_id=source_id,
+                    database_name=database_name,
+                )
+            except Exception as exc:
+                # Suppress the WHOLE dispatch on a scan failure rather than
+                # falling back to "assume nothing is in flight, dispatch
+                # everything" (the chunk arm's fallback): that idiom is
+                # only safe there because extract_chunk has a documented
+                # pre-work DB short-circuit, while a vision page pays the
+                # billable LLM call BEFORE its CAS rejects a duplicate —
+                # dispatching on uncertainty here reopens the exact
+                # money bug this filter exists to close. Mirrors
+                # ``_queue_has_task_for``'s assume-in-flight-on-error
+                # polarity (``queue_check_failed_assuming_in_flight``);
+                # the ~60s reconcile pass retries.
+                logger.warning(
+                    "in_flight_vision_page_check_failed_assuming_all_in_flight",
+                    source_id=source_id,
+                    database_name=database_name,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                return None
+            if in_flight:
+                pending_pages = [row for row in pending_pages if row["id"] not in in_flight]
+                if not pending_pages:
+                    # Every pending page is already in flight on Valkey.
+                    # Source is healthy; the worker just hasn't drained
+                    # them yet. Returning None here means _recover_one
+                    # counts this as skipped_healthy and does not bump
+                    # recovery_attempts.
+                    return None
+
         return {
             "compound": [
                 {
@@ -1263,7 +1333,7 @@ class SourceRecovery:
             "priority": 0,
         }
 
-    def _load_commit_data(self, *, source_id: str, database_name: str) -> dict[str, Any]:
+    def _load_commit_data(self, *, source_id: str, database_name: str) -> dict[str, Any] | None:
         """Load the commit-data dict for the commit-dispatch path.
 
         Prefers the persisted ``commit_payload`` (set by the extraction
@@ -1274,10 +1344,29 @@ class SourceRecovery:
         payload is missing (e.g. partial-failure mid-reset that wiped
         it).
 
-        Returns an empty dict when neither source is available; the
-        commit handler routes empty dicts through ``_commit_empty``
-        (zero-graph commit) rather than skipping, so callers no longer
-        guard on this.
+        Returns one of three shapes, and callers MUST distinguish them:
+
+        - A populated dict: the normal case, ready to dispatch.
+        - ``{}`` (empty dict): the source genuinely has no entities and
+          no relationships. The commit handler routes this through
+          ``_commit_empty`` (zero-graph commit) rather than skipping.
+        - ``None``: the read itself failed (e.g. SQLite "database is
+          locked" racing a live extraction writer during the ~60s
+          reconcile pass) — NOT genuine emptiness. Entry 446: this used
+          to collapse to the same ``{}`` as the legitimate-empty case,
+          so the commit handler couldn't tell "no rows" from "couldn't
+          read the rows" and permanently zero-graph-committed sources
+          whose real extracted data was still sitting in the DB.
+          Callers must skip dispatch entirely on ``None`` so the source
+          is reclassified — and this data re-read — on the next
+          reconcile pass instead.
+
+        No ``QualityCounter`` increment on the ``None`` path: nothing is
+        dropped here (the extraction rows are untouched in the DB), only
+        deferred to the next pass, so this isn't a silent-drop site in
+        the sense that rule targets. See ``QualityCounter`` in
+        ``chaoscypher_core.services.quality.counters`` for the sites
+        that rule does cover.
         """
         try:
             payload = self.adapter.get_source_commit_payload(
@@ -1311,7 +1400,13 @@ class SourceRecovery:
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
-            return {}
+            # Entry 446: a transient read failure is NOT the same as
+            # genuine emptiness — return the distinct None sentinel so
+            # _classify_extracted / _classify_committing skip dispatch
+            # this pass instead of routing a false-empty payload into
+            # _commit_empty (which would permanently zero-graph-commit
+            # the source and block all later retry).
+            return None
 
         if not entities and not relationships:
             return {}

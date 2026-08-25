@@ -45,10 +45,13 @@ def _json(run_cli: Callable, args: list[str], env: dict[str, str]) -> object:
     return json.loads(text[min(candidates) :])
 
 
-def _node_labels(run_cli: Callable, env: dict[str, str]) -> set[str]:
+def _nodes(run_cli: Callable, env: dict[str, str]) -> list[dict]:
     payload = _json(run_cli, ["graph", "node", "list", "--format", "json", "--limit", "500"], env)
-    data = payload["data"] if isinstance(payload, dict) else payload
-    return {n["label"] for n in data}
+    return payload["data"] if isinstance(payload, dict) else payload
+
+
+def _node_labels(run_cli: Callable, env: dict[str, str]) -> set[str]:
+    return {n["label"] for n in _nodes(run_cli, env)}
 
 
 def _edges(run_cli: Callable, env: dict[str, str]) -> list[dict]:
@@ -158,13 +161,23 @@ class TestCcxRoundtrip:
     ) -> None:
         """Loading the same package twice does not duplicate nodes/edges."""
         run_cli(["graph", "package", "load", str(seed_ccx)], env=cli_env)
-        nodes_first = _node_labels(run_cli, cli_env)
+        nodes_first = _nodes(run_cli, cli_env)
         edges_first = _edges(run_cli, cli_env)
 
         # Re-load the SAME package into the SAME database.
         result = run_cli(["graph", "package", "load", str(seed_ccx)], env=cli_env)
         assert result.exit_code == 0, f"Re-import failed: {result.output}"
 
-        # Counts are stable (upsert-by-IRI, no duplicates).
-        assert _node_labels(run_cli, cli_env) == nodes_first
+        # Counts are the primary check: a set-of-labels comparison is
+        # invariant under duplication (re-inserting every node as a new
+        # row with the same label leaves the label set unchanged), so it
+        # can't catch the exact regression ("does not duplicate nodes")
+        # this test is named for. Node count is compared directly; label
+        # set is kept as a secondary sanity check that content, not just
+        # row count, round-tripped.
+        nodes_second = _nodes(run_cli, cli_env)
+        assert len(nodes_second) == len(nodes_first), (
+            f"Node count changed on re-import: {len(nodes_first)} -> {len(nodes_second)}"
+        )
+        assert {n["label"] for n in nodes_second} == {n["label"] for n in nodes_first}
         assert len(_edges(run_cli, cli_env)) == len(edges_first)

@@ -43,8 +43,30 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
-# Module-level caches for different registry types
-_registry_caches: dict[type, dict[Any, Any]] = {}
+# Module-level caches for different registry types, keyed by registry
+# class name. Populated by create_registry_factory and by
+# register_registry_cache; invalidate_all_caches clears every entry.
+_registry_caches: dict[str, dict[Any, Any]] = {}
+
+
+def register_registry_cache(name: str, cache: dict[Any, Any]) -> dict[Any, Any]:
+    """Register a module-owned registry cache for central invalidation.
+
+    Registry factories that manage their own cache dict (rather than going
+    through create_registry_factory) call this at module import so that
+    invalidate_all_caches — the backend of ``POST /admin/plugins/reload`` —
+    actually clears them. The dict is registered by reference: callers must
+    mutate it in place (``cache.clear()``), never rebind the module global.
+
+    Args:
+        name: Registry class name reported by invalidate_all_caches.
+        cache: The cache dict, stored by reference.
+
+    Returns:
+        The same dict, so callers can register at assignment site.
+    """
+    _registry_caches[name] = cache
+    return cache
 
 
 def create_registry_factory[R: "BaseRegistry"](
@@ -76,10 +98,10 @@ def create_registry_factory[R: "BaseRegistry"](
         assert registry1 is registry2
     """
     # Initialize cache for this registry type
-    if registry_class not in _registry_caches:
-        _registry_caches[registry_class] = {}
+    if registry_class.__name__ not in _registry_caches:
+        _registry_caches[registry_class.__name__] = {}
 
-    cache = _registry_caches[registry_class]
+    cache = _registry_caches[registry_class.__name__]
 
     # Default cache key function
     if cache_key_fn is None:
@@ -191,8 +213,8 @@ def invalidate_all_caches() -> dict[str, int]:
         Mapping of registry class name to the number of entries cleared.
     """
     result: dict[str, int] = {}
-    for cls, cache in _registry_caches.items():
-        result[cls.__name__] = len(cache)
+    for name, cache in _registry_caches.items():
+        result[name] = len(cache)
         cache.clear()
     logger.info("registry_factory_all_caches_cleared", counts=result)
     return result
@@ -202,4 +224,5 @@ __all__ = [
     "create_registry_factory",
     "default_cache_key",
     "invalidate_all_caches",
+    "register_registry_cache",
 ]

@@ -92,6 +92,12 @@ async def _reconcile_version(client: Valkey, ctx: WorkerContext) -> None:
     Called immediately after subscribing so workers that start after a publish
     automatically pick up the missed settings change.
 
+    ``_known_version`` only advances when ``reload_llm_provider`` reports
+    success. A transient reload failure (Ollama momentarily down, a new
+    database file unopenable) leaves ``_known_version`` held back so the
+    next reconcile pass retries, instead of permanently pinning the worker
+    to stale settings or the wrong database file.
+
     Args:
         client: Valkey client used for the pub/sub connection (also used for GET).
         ctx: Typed worker context dictionary passed through to reload_llm_provider.
@@ -112,8 +118,14 @@ async def _reconcile_version(client: Valkey, ctx: WorkerContext) -> None:
             known=_known_version,
             live=live_version,
         )
-        await reload_llm_provider(ctx)
-        _known_version = live_version
+        if await reload_llm_provider(ctx):
+            _known_version = live_version
+        else:
+            logger.warning(
+                "settings_reload_catchup_held_back",
+                held_back_version=live_version,
+                known=_known_version,
+            )
     else:
         logger.debug(
             "settings_version_current",
@@ -260,7 +272,7 @@ def _refresh_database_context(ctx: WorkerContext, settings: Settings) -> Any:
     return current_search_repo
 
 
-async def reload_llm_provider(ctx: WorkerContext) -> None:
+async def reload_llm_provider(ctx: WorkerContext) -> bool:
     """Reload the LLM provider with fresh settings.
 
     Uses an asyncio lock to prevent concurrent reloads from racing
@@ -269,6 +281,17 @@ async def reload_llm_provider(ctx: WorkerContext) -> None:
 
     Args:
         ctx: Typed worker context dictionary.
+
+    Returns:
+        True if the reload completed and ``ctx`` now reflects the new
+        settings. False if the reload was skipped (lock-acquire timeout,
+        missing ``config_manager``) or failed and was rolled back — in
+        either case ``ctx`` still reflects the previous settings. Callers
+        MUST treat False as "nothing changed": the version reconciler in
+        particular holds back its known-version counter on False so the
+        next reconcile pass retries instead of permanently pinning the
+        worker to stale settings, or the wrong database file after a
+        database switch.
 
     """
     from chaoscypher_core.app_config.engine_factory import build_engine_settings
@@ -285,13 +308,13 @@ async def reload_llm_provider(ctx: WorkerContext) -> None:
             "settings_reload_lock_timeout",
             message="Could not acquire reload lock within 30s, skipping reload",
         )
-        return
+        return False
 
     try:
         config_manager = ctx.get("config_manager")
         if not config_manager:
             logger.warning("config_manager_not_found_for_reload")
-            return
+            return False
 
         # Snapshot current context so we can restore on failure
         prev_settings = ctx.get("settings")
@@ -351,6 +374,7 @@ async def reload_llm_provider(ctx: WorkerContext) -> None:
                 extraction_model=settings.llm.ollama_extraction_model,
                 ollama_instances=len(settings.llm.ollama_instances or []),
             )
+            return True
         except Exception:
             logger.error("llm_provider_reload_failed", exc_info=True)
             # Restore previous context so handlers keep working with old settings
@@ -362,5 +386,6 @@ async def reload_llm_provider(ctx: WorkerContext) -> None:
                 ctx["llm_service"] = prev_llm_service
             if prev_engine_settings is not None:
                 ctx["engine_settings"] = prev_engine_settings
+            return False
     finally:
         _reload_lock.release()

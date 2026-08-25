@@ -228,6 +228,46 @@ def test_registry_skips_invalid_domain_with_warning(tmp_path: Path) -> None:
     assert "broken.jsonld" in str(events[0].get("file", ""))
 
 
+def test_registry_kill_switch_skips_user_domain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+        DomainRegistry,
+    )
+    from chaoscypher_core.settings import EngineSettings, PathSettings
+
+    user_dir = tmp_path / "plugins" / "domains"
+    user_dir.mkdir(parents=True)
+    (user_dir / "usertestdomain.jsonld").write_text(
+        json.dumps(
+            {
+                "name": "usertestdomain",
+                "description": "User test domain",
+                "entity_templates": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = EngineSettings(
+        paths=PathSettings(
+            data_dir=str(tmp_path),
+            config_dir=str(tmp_path / "c"),
+            cache_dir=str(tmp_path / "ch"),
+        )
+    )
+
+    # Kill switch off (default): the user domain is registered.
+    monkeypatch.delenv("CHAOSCYPHER_ALLOW_USER_PLUGINS", raising=False)
+    registry = DomainRegistry(settings=settings)
+    assert registry.get("usertestdomain") is not None
+
+    # Kill switch on: the user domain must NOT be registered.
+    monkeypatch.setenv("CHAOSCYPHER_ALLOW_USER_PLUGINS", "0")
+    registry = DomainRegistry(settings=settings)
+    assert registry.get("usertestdomain") is None
+
+
 def test_registry_still_loads_builtin_domains() -> None:
     from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
         DomainRegistry,

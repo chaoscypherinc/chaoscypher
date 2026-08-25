@@ -50,7 +50,7 @@ def _make_source(
         "filename": filename,
         "status": status,
         "extraction_domain": domain,
-        "extraction_chunk_indices": chunk_indices,
+        "_test_expected_chunk_indices": chunk_indices,
         "stage_progress": stage_progress,
     }
 

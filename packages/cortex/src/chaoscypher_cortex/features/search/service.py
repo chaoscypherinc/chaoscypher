@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.models import NodeUpdate
 from chaoscypher_core.services.search.engine.search import (
     SearchService as EngineSearchService,
 )
@@ -32,6 +31,10 @@ if TYPE_CHECKING:
     from chaoscypher_core.app_config import Settings
 
 logger = structlog.get_logger(__name__)
+
+# Nodes per embedding wave when no Settings are wired (mirrors the default of
+# ``BatchingSettings.embedding_batch_size``, which drives it when they are).
+_DEFAULT_EMBED_WAVE_SIZE = 512
 
 
 class SearchService:
@@ -350,59 +353,27 @@ class SearchService:
 
         embedding_service = get_embedding_service()
 
+        # Batch the run instead of one provider round trip + one write per node,
+        # but slice it into waves so a failure is survivable: `batch_embed` fails
+        # as a unit, so a single wave carrying every node would discard all the
+        # vectors already computed. One wave = one batch_embed + one txn + one
+        # index write, and completed waves stay committed (see
+        # _embed_and_persist_wave).
+        wave_size = (
+            self.settings.batching.embedding_batch_size
+            if self.settings
+            else _DEFAULT_EMBED_WAVE_SIZE
+        )
+
         processed_count = 0
         failed_count = 0
-
-        for node in nodes_without_embeddings:
-            try:
-                # Build text from node properties
-                text = self._node_to_embedding_text(node)
-
-                # Generate embedding
-                result = await embedding_service.embed(text)
-                embedding = result.embedding
-
-                if not embedding:
-                    logger.warning(
-                        "search_embedding_empty_result",
-                        node_id=node.id,
-                    )
-                    failed_count += 1
-                    continue
-
-                # Update node with embedding
-                node_update = NodeUpdate(embedding=embedding)
-                updated_node = self.graph_repository.update_node(node.id, node_update)
-
-                if not updated_node:
-                    logger.warning(
-                        "search_embedding_node_update_failed",
-                        node_id=node.id,
-                    )
-                    failed_count += 1
-                    continue
-
-                # Update search index
-                if updated_node.embedding:
-                    self.search_repository.index_node_embedding(
-                        updated_node.id, updated_node.embedding
-                    )
-
-                processed_count += 1
-                logger.debug(
-                    "search_embedding_node_processed",
-                    node_id=node.id,
-                    embedding_dimensions=len(embedding),
-                )
-
-            except Exception as e:
-                logger.exception(
-                    "search_embedding_node_failed",
-                    node_id=node.id,
-                    error_type=type(e).__name__,
-                    error_message=str(e),
-                )
-                failed_count += 1
+        for start in range(0, len(nodes_without_embeddings), wave_size):
+            wave = nodes_without_embeddings[start : start + wave_size]
+            wave_processed, wave_failed = await self._embed_and_persist_wave(
+                wave, embedding_service
+            )
+            processed_count += wave_processed
+            failed_count += wave_failed
 
         logger.info(
             "search_embedding_generation_completed",
@@ -421,6 +392,104 @@ class SearchService:
             processed_count=processed_count,
             message=message,
         )
+
+    async def _embed_and_persist_wave(
+        self, nodes: list[Any], embedding_service: Any
+    ) -> tuple[int, int]:
+        """Embed one wave of nodes and persist it; returns (processed, failed).
+
+        One ``batch_embed`` (the provider chunks it into API calls internally),
+        one ``update_node_embeddings_batch`` transaction, one
+        ``index_nodes_batch`` — the shape the import path uses in
+        ``_reembed_nodes``.
+
+        Failure granularity is the wave, not the node: the embedding port is
+        all-or-nothing (``batch_embed`` raises on the first bad text rather
+        than returning an empty vector for it — every shipped provider,
+        ollama/openai/gemini/local, works this way), so the port's documented
+        "empty list for failures" shape in ``embeddings`` is defensive only.
+        Losing one wave is why the caller waves at all: earlier waves are
+        already committed, so a transient provider error costs this slice and
+        a repeated call resumes from it.
+        """
+        texts = [self._node_to_embedding_text(node) for node in nodes]
+        try:
+            batch_result = await embedding_service.batch_embed(texts)
+            embeddings = batch_result.embeddings
+        except Exception as e:
+            # Reported, not raised, so the caller still gets the counts.
+            logger.exception(
+                "search_embedding_batch_failed",
+                node_count=len(texts),
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            return 0, len(nodes)
+
+        if len(embeddings) != len(nodes):
+            # A well-behaved provider returns one vector per text; a short list
+            # leaves the tail nodes vectorless, so they are counted as failures.
+            logger.warning(
+                "search_embedding_batch_count_mismatch",
+                requested=len(nodes),
+                returned=len(embeddings),
+            )
+
+        updates: dict[str, list[float]] = {}
+        embedded_nodes: list[Any] = []
+        for node, embedding in zip(nodes, embeddings, strict=False):
+            if not embedding:
+                logger.warning(
+                    "search_embedding_empty_result",
+                    node_id=node.id,
+                )
+                continue
+            # Keep the in-memory node fresh so index_nodes_batch sees the vector.
+            node.embedding = embedding
+            updates[node.id] = embedding
+            embedded_nodes.append(node)
+
+        if not updates:
+            return 0, len(nodes)
+
+        try:
+            # One txn, not N SELECT+UPDATE+COMMIT round trips. The return is the
+            # number of rows actually found, so a node deleted mid-request stays
+            # counted as a failure (what update_node -> None did before).
+            changed = self.graph_repository.update_node_embeddings_batch(updates)
+        except Exception as e:
+            logger.exception(
+                "search_embedding_batch_write_failed",
+                node_count=len(updates),
+                error_type=type(e).__name__,
+                error_message=str(e),
+            )
+            return 0, len(nodes)
+
+        confirmed = embedded_nodes
+        if changed != len(updates):
+            logger.warning(
+                "search_embedding_node_update_failed",
+                requested=len(updates),
+                updated=changed,
+            )
+            # The batch write reports only a count, so re-read to learn which
+            # rows survived: a node deleted mid-request must not be pushed into
+            # the search index (what the per-node update_node -> None check did).
+            found = (
+                {n.id for n in self.graph_repository.get_nodes_batch(list(updates))}
+                if changed
+                else set()
+            )
+            confirmed = [node for node in embedded_nodes if node.id in found]
+
+        if confirmed:
+            # One batched index write, not one vec0 upsert per node. Best-effort
+            # by contract (it logs rather than raises), and the vectors are
+            # already durably persisted above.
+            self.search_repository.index_nodes_batch(confirmed)
+
+        return changed, len(nodes) - changed
 
     def _node_to_embedding_text(self, node: Any) -> str:
         """Convert node to text suitable for embeddings.

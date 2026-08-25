@@ -493,7 +493,7 @@ async def test_multispec_rehydrates_each_table_independently(
 
     fake_embed_resets: list[tuple[Any, str]] = []
 
-    def _build_embed_payload(row: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _build_embed_payload(row: Any, _session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         return ({"source_id": row.source_id}, {"operation_type": OP_EMBED_CHUNKS})
 
     def _reset_embed_row(row: Any, new_qtid: str) -> None:
@@ -564,7 +564,7 @@ async def test_multispec_failure_in_one_spec_does_not_block_others(
         operation=OP_EMBED_CHUNKS,
         table_factory=_exploding_factory,
         non_terminal_statuses=("pending",),
-        build_payload=lambda _row: ({}, {}),
+        build_payload=lambda _row, _session: ({}, {}),
         reset_row=lambda _row, _qtid: None,
     )
 
@@ -611,7 +611,7 @@ async def test_multispec_cancelled_at_filter_skipped_when_column_absent(
 
     captured_payload: dict[str, Any] = {}
 
-    def _build(row: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    def _build(row: Any, _session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
         captured_payload["called"] = True
         return ({"id": row.id}, {})
 

@@ -125,3 +125,37 @@ class TestSourceStatsDomains:
         ]
         stats = calculate_source_stats(sources=sources)
         assert stats.domains == {"literary": 2, "scientific": 1}
+
+
+class TestSourceStatsRagReady:
+    """rag_ready must compare embedding counts exactly, not the rounded pct."""
+
+    def test_one_missing_embedding_among_many_is_not_rag_ready(self):
+        """100k chunks with one unembedded: pct rounds to 100.0, rag_ready False."""
+        chunks = [{"embedding": b"\x00", "content": "x"} for _ in range(99_999)]
+        chunks.append({"content": "x"})  # no embedding
+        sources = [
+            {
+                "id": "s1",
+                "chunks": chunks,
+                "citations": [],
+                "tags": [],
+                "created_at": None,
+            }
+        ]
+        stats = calculate_source_stats(sources=sources, include_embeddings=True)
+        assert stats.embedding_coverage_pct == 100.0  # the rounding artifact
+        assert stats.rag_ready is False
+
+    def test_fully_embedded_is_rag_ready(self):
+        sources = [
+            {
+                "id": "s1",
+                "chunks": [{"embedding": b"\x00", "content": "x"}],
+                "citations": [],
+                "tags": [],
+                "created_at": None,
+            }
+        ]
+        stats = calculate_source_stats(sources=sources, include_embeddings=True)
+        assert stats.rag_ready is True

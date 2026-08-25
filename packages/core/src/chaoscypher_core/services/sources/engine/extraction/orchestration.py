@@ -681,7 +681,7 @@ def cache_quality_scores(
         Cached scores dict on success, or ``None`` on failure.
     """
     try:
-        from chaoscypher_core.services.quality import QualityScorer
+        from chaoscypher_core.services.quality import QualityScorer, build_entity_chunk_mentions
         from chaoscypher_core.services.sources.engine.extraction.domains import (
             get_domain_registry,
         )
@@ -693,11 +693,8 @@ def cache_quality_scores(
             if domain_analyzer and hasattr(domain_analyzer, "get_quality_scoring"):
                 quality_config = domain_analyzer.get_quality_scoring()
 
-        # Build entity chunk mentions from extraction data
-        entity_chunk_mentions: dict[int, int] = {}
-        for idx, entity in enumerate(entities):
-            chunks = entity.get("source_chunk_indices", []) or entity.get("source_chunks", [])
-            entity_chunk_mentions[idx] = len(chunks) if chunks else 1
+        # Canonical chunk-mention map (source_chunk_indices + legacy aliases).
+        entity_chunk_mentions = build_entity_chunk_mentions(entities)
 
         scorer = QualityScorer(quality_config)
         cached_scores = scorer.get_cacheable_scores(

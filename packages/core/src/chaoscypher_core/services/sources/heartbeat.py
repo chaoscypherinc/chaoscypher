@@ -124,7 +124,7 @@ class SourceHeartbeat:
 
     async def __aenter__(self) -> SourceHeartbeat:
         """Emit the first heartbeat and start the background loop."""
-        self._beat()
+        await self._isolated_beat()
         self._task = asyncio.create_task(self._loop())
         return self
 
@@ -144,7 +144,44 @@ class SourceHeartbeat:
         # completed and the reconciler scans the database in the next
         # millisecond. Without this, exit-time race could still trigger
         # a duplicate dispatch before the status transition commits.
-        self._beat()
+        await self._isolated_beat()
+
+    async def _isolated_beat(self) -> None:
+        """Emit one heartbeat on a session of its own.
+
+        The wrapped handler runs inside ``adapter.session_scope()``, and
+        both ``asyncio.create_task`` (the beat loop) and
+        ``asyncio.to_thread`` (handlers offloading a transaction body)
+        COPY that context — so a plain ``_beat()`` from the background
+        loop resolves ``adapter.session`` to the handler's own
+        ``SafeSession`` and can execute on it from a second thread
+        mid-flush (``Session is already flushing`` /
+        ``This transaction is closed``). Entering a fresh
+        ``session_scope()`` here rebinds the ContextVar within THIS
+        task's context only, so the beat writes through its own
+        short-lived session and the handler's session is never touched.
+        Falls back to a plain beat for adapters without
+        ``session_scope`` (in-memory test fakes).
+        """
+        scope = getattr(self._adapter, "session_scope", None)
+        if scope is None:
+            self._beat()
+            return
+        try:
+            cm = scope()
+            await cm.__aenter__()
+        except Exception:
+            # Isolation unavailable (fake adapter whose session_scope is
+            # not a real async CM, or a disconnected adapter) — fall back
+            # to the plain best-effort beat, which swallows its own
+            # failures.
+            self._beat()
+            return
+        try:
+            self._beat()
+        finally:
+            with suppress(Exception):
+                await cm.__aexit__(None, None, None)
 
     def _beat(self) -> None:
         """Emit one heartbeat, swallowing any error."""
@@ -179,7 +216,7 @@ class SourceHeartbeat:
                 now = time.monotonic()
                 sleep_for = max(0.0, next_beat_at - now)
                 await asyncio.sleep(sleep_for)
-                self._beat()
+                await self._isolated_beat()
                 # Advance deadline by one interval from when this beat
                 # was SCHEDULED (not when it finished), so overruns don't
                 # accumulate into drift.

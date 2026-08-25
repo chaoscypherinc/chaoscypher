@@ -132,7 +132,7 @@ async def test_get_tasks_reads_filtering_mode_from_source_row() -> None:
         "extraction_depth": "full",
         "forced_domain": None,
         "extraction_domain": None,
-        "extraction_chunk_indices": None,
+        "_test_expected_chunk_indices": None,
         "stage_progress": {},
     }
     engine.storage_adapter.transition_source_status.return_value = True
@@ -221,7 +221,7 @@ async def test_finalize_threads_cached_filtering_config_and_file_info() -> None:
         "extraction_depth": "full",
         "extraction_domain": None,
         "forced_domain": None,
-        "extraction_chunk_indices": [0],
+        "_test_expected_chunk_indices": [0],
         "chunk_count": 1,
     }
     engine.storage_adapter.list_extraction_submissions.return_value = [
@@ -305,7 +305,7 @@ async def test_finalize_falls_back_to_row_when_cache_misses() -> None:
         "extraction_depth": "full",
         "extraction_domain": None,
         "forced_domain": None,
-        "extraction_chunk_indices": [0],
+        "_test_expected_chunk_indices": [0],
         "chunk_count": 1,
     }
     engine.storage_adapter.list_extraction_submissions.return_value = [
@@ -390,7 +390,7 @@ async def test_finalize_threads_minimum_alias_length_into_parser() -> None:
         "extraction_depth": "full",
         "extraction_domain": None,
         "forced_domain": None,
-        "extraction_chunk_indices": [0],
+        "_test_expected_chunk_indices": [0],
         "chunk_count": 1,
     }
     # The submission carries a single E| line whose aliases mix lengths.
@@ -474,7 +474,7 @@ async def test_finalize_persists_entity_embeddings_for_commit() -> None:
         "extraction_depth": "full",
         "extraction_domain": None,
         "forced_domain": None,
-        "extraction_chunk_indices": [0],
+        "_test_expected_chunk_indices": [0],
         "chunk_count": 1,
     }
     engine.storage_adapter.list_extraction_submissions.return_value = [

@@ -18,6 +18,7 @@ from chaoscypher_core.database.migrations.runner import (
     upgrade_to,
     upgrade_to_head,
 )
+from chaoscypher_core.exceptions import UnsupportedDatabaseLineageError
 
 
 def _fresh_db(tmp_path: Path) -> Path:
@@ -153,12 +154,14 @@ def test_downgrade_baseline_to_base_is_guarded_noop(tmp_path: Path) -> None:
     assert rows, "baseline downgrade must not drop user tables"
 
 
-def test_ensure_stamped_recovers_orphan_revision(tmp_path: Path) -> None:
-    """An alembic_version row pointing at a revision we don't ship gets re-stamped.
+def test_ensure_stamped_refuses_unknown_revision(tmp_path: Path) -> None:
+    """An alembic_version row we don't ship is refused, never silently re-stamped.
 
     Covers the 'old Alembic setup was deleted but left a stamp behind' case.
-    Without this recovery, upgrade_to_head would crash with
-    'Can't locate revision identified by ...'.
+    Re-stamping such a database at the baseline (the pre-2026-08-14 behaviour)
+    replayed 0002→HEAD against a schema those migrations were never written
+    for, so the boot died later in the drift gate with an opaque
+    ``SchemaIntegrityError``. Refusing here keeps the failure honest.
     """
     db = _fresh_db(tmp_path)
     engine = get_engine(db)
@@ -177,22 +180,69 @@ def test_ensure_stamped_recovers_orphan_revision(tmp_path: Path) -> None:
 
     assert current_revision(db) == "999_ghost_revision"
 
-    ensure_stamped(db)
+    with pytest.raises(UnsupportedDatabaseLineageError) as excinfo:
+        ensure_stamped(db)
 
-    # After recovery, the row is re-stamped at the baseline (0001).
-    # Post-baseline migrations will be re-applied on the next boot.
-    assert current_revision(db) == "0001"
+    assert excinfo.value.revision == "999_ghost_revision"
+    assert excinfo.value.code == "UNSUPPORTED_DATABASE_LINEAGE"
+    # The stamp is left exactly as found — no silent re-stamp.
+    assert current_revision(db) == "999_ghost_revision"
 
 
-def test_ensure_stamped_recovers_squashed_away_revision(tmp_path: Path) -> None:
-    """A DB stamped at a now-deleted pre-squash revision is re-stamped to baseline.
+def test_unsupported_lineage_message_is_guided(tmp_path: Path) -> None:
+    """The refusal message names the revision and the operator's way out.
+
+    A bare "unsupported revision" would leave an operator with nowhere to go.
+    The message must carry (a) the offending revision id, (b) both causes an
+    unresolvable revision can have — the retired pre-2026-06-02 / pre-v0.1.0
+    lineage, *or* a build newer than this one — and (c) the recovery for each.
+
+    The downgrade branch is load-bearing. ``ensure_stamped`` cannot tell the
+    two apart from a revision id, and a database stamped *ahead* of the code
+    is healthy: sending that operator down the "re-create or export/re-import"
+    path would destroy live data when the real fix is to put the newer build
+    back. So the non-destructive advice must be present and must come first.
+    """
+    db = _fresh_db(tmp_path)
+    engine = get_engine(db)
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"
+        )
+        conn.exec_driver_sql("DELETE FROM alembic_version")
+        conn.exec_driver_sql("INSERT INTO alembic_version (version_num) VALUES ('0044')")
+
+    with pytest.raises(UnsupportedDatabaseLineageError) as excinfo:
+        ensure_stamped(db)
+
+    message = excinfo.value.message
+    lowered = message.lower()
+    assert "0044" in message
+    assert "2026-06-02" in message
+    assert "v0.1.0" in message
+    # Both causes named, and the destructive advice is conditional ("otherwise").
+    assert "newer build" in lowered
+    for guidance in ("downgraded", "re-install", "otherwise", "back up", "re-create", "export"):
+        assert guidance in lowered, f"missing guidance {guidance!r}: {message}"
+    # Non-destructive advice first — an operator who stops reading early must
+    # not act on the destructive branch.
+    assert lowered.index("re-install") < lowered.index("re-create"), (
+        "the downgrade fix must precede the re-create/export advice"
+    )
+    assert excinfo.value.details["revision"] == "0044"
+
+
+def test_ensure_stamped_refuses_pre_squash_revision(tmp_path: Path) -> None:
+    """A DB stamped at a now-deleted pre-squash revision refuses startup.
 
     The 2026-06-02 squash collapsed migrations 0001-0050 into a single
     0001 baseline, so any existing database recorded at a revision like
-    ``0050_chunk_job_finalize_claimed`` now points at a script the package
-    no longer ships. ``ensure_stamped`` must re-stamp it to the baseline
-    (the schema is unchanged, so no data is lost) instead of letting
-    ``upgrade_to_head`` crash on an unresolvable revision.
+    ``0050_chunk_job_finalize_claimed`` points at a script the package no
+    longer ships. Ruled unsupported (2026-08-14): the squash predates every
+    public release, so no released build ever produced such a database, and
+    re-stamping one at the baseline only defers the failure to the drift
+    gate. ``ensure_stamped`` refuses it up front instead.
     """
     db = tmp_path / "legacy.db"
     # Build the current schema via the real startup path, then forge a
@@ -212,6 +262,31 @@ def test_ensure_stamped_recovers_squashed_away_revision(tmp_path: Path) -> None:
 
     assert current_revision(db) == "0050_chunk_job_finalize_claimed"
 
-    ensure_stamped(db)  # must not raise
+    with pytest.raises(UnsupportedDatabaseLineageError):
+        ensure_stamped(db)
 
-    assert current_revision(db) == "0001"
+    assert current_revision(db) == "0050_chunk_job_finalize_claimed"
+
+
+def test_startup_migrations_propagate_unsupported_lineage(tmp_path: Path) -> None:
+    """The startup runner surfaces the refusal instead of upgrading anyway.
+
+    ``run_startup_migrations`` is what every entry point calls, so the
+    refusal has to escape it — its internal apply-failure gate must not
+    swallow this into a maintenance-mode state that offers an Apply button
+    for a database that can never be applied.
+    """
+    from chaoscypher_core.database.migrations.startup import run_startup_migrations
+
+    db = tmp_path / "legacy.db"
+    run_startup_migrations(db)
+
+    import sqlite3
+
+    con = sqlite3.connect(str(db))
+    con.execute("UPDATE alembic_version SET version_num = '0044'")
+    con.commit()
+    con.close()
+
+    with pytest.raises(UnsupportedDatabaseLineageError):
+        run_startup_migrations(db)

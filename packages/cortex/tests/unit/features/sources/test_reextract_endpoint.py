@@ -174,7 +174,8 @@ class TestReextractSource:
         Each of these statuses must take the same teardown shape:
 
           - ``reset_to_indexed_for_re_extract`` flips status to INDEXED +
-            clears extraction state + nulls the active job pointer +
+            clears extraction state + cancels any still-active extraction
+            job (so a running run stops instead of being resumed) +
             clears any error fields (Phase 5 Task E state-machine method
             introduced to replace a bare ``update_file({"status": ...})``
             write; see ``SourceIndexingMixin.reset_to_indexed_for_re_extract``),

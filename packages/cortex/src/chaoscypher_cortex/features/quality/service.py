@@ -11,13 +11,38 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.app_config import get_settings
-from chaoscypher_core.services.quality import SCORING_VERSION, QualityScorer
+from chaoscypher_core.services.quality import (
+    SCORING_VERSION,
+    QualityScorer,
+    build_entity_chunk_mentions,
+    cacheable_scores_from,
+)
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
 
 logger = structlog.get_logger(__name__)
+
+# ``SqliteAdapter.list_files`` declares ``limit: int = 100`` and applies it as a
+# SQL LIMIT, so an omitted argument silently analyses only the newest 100
+# sources — and the reported ``total`` is derived from that same truncated
+# list, so the user gets a partial analysis presented as complete. Every read
+# in this module wants the whole source set, so pass an explicit bulk ceiling.
+# Sized like the other internal bulk-fetch ceilings in the tree (the source
+# table is orders of magnitude smaller than the chunk table they bound).
+SOURCE_FETCH_LIMIT = 100_000
+
+# Row-level equivalents of the sort fields the ``GET /quality/analyze``
+# endpoint accepts. Ordering has to run off columns ``list_files`` already
+# returns, because selecting the page BEFORE anything is scored is exactly
+# what stops page 2 from re-scoring page 1.
+_SORT_KEY_COLUMNS = {
+    "total_score": "cached_richness_score",
+    "avg_entity_quality": "cached_avg_entity_quality",
+    "avg_relationship_quality": "cached_avg_relationship_quality",
+    "entity_count": "extraction_entities_count",
+}
 
 
 class QualityService:
@@ -186,11 +211,9 @@ class QualityService:
         # Create scorer and score the source
         scorer = QualityScorer(quality_config)
 
-        # Build entity chunk mentions from extraction data if available
-        entity_chunk_mentions: dict[int, int] = {}
-        for idx, entity in enumerate(entities):
-            chunks = entity.get("source_chunks", []) or entity.get("chunks", [])
-            entity_chunk_mentions[idx] = len(chunks) if chunks else 1
+        # Canonical chunk-mention map (handles the table rows'
+        # ``source_chunk_indices`` key as well as the legacy aliases).
+        entity_chunk_mentions = build_entity_chunk_mentions(entities)
 
         chunk_count = source.get("chunk_count", 0) or 0
 
@@ -202,15 +225,10 @@ class QualityService:
             chunk_count=chunk_count,
         )
 
-        # Cache the scores
+        # Cache the scores — projected from the score just computed, so the
+        # source is not scored a second time just to fill the cache.
         try:
-            cached_scores = scorer.get_cacheable_scores(
-                source_id=source_id,
-                entities=entities,
-                relationships=relationships,
-                entity_chunk_mentions=entity_chunk_mentions,
-                chunk_count=chunk_count,
-            )
+            cached_scores = cacheable_scores_from(score)
             self.adapter.update_file(
                 source_id, database_name=self.database_name, updates=cached_scores
             )
@@ -347,6 +365,7 @@ class QualityService:
                 "structural_penalty": 0.0,
                 "hub_skew": 1.0,
                 "reciprocal_rate": 0.0,
+                "coverage_score": 0.0,
                 "entity_scores": [] if include_details else None,
                 "relationship_scores": [] if include_details else None,
             }
@@ -383,7 +402,7 @@ class QualityService:
         Returns:
             Result dict with recalculated_count and any errors.
         """
-        sources = self.adapter.list_files(self.database_name)
+        sources = self.adapter.list_files(self.database_name, limit=SOURCE_FETCH_LIMIT)
         recalculated_count = 0
         errors: list[dict[str, Any]] = []
 
@@ -436,7 +455,7 @@ class QualityService:
         Returns:
             List of source dicts that need score recalculation.
         """
-        sources = self.adapter.list_files(self.database_name)
+        sources = self.adapter.list_files(self.database_name, limit=SOURCE_FETCH_LIMIT)
         outdated = []
 
         for source in sources:
@@ -457,77 +476,165 @@ class QualityService:
 
         return outdated
 
+    def _score_source_row(self, source: dict[str, Any]) -> dict[str, Any] | None:
+        """Score one already-loaded source row, preferring its cached scores.
+
+        The cached branch is pure dict work on columns ``list_files`` already
+        returned. The fallback costs four DB round trips (``get_file``,
+        ``list_source_entities``, ``list_source_relationships``,
+        ``update_file``), which is why paginated callers select the page
+        before calling this.
+
+        Args:
+            source: Source dict from ``list_files``.
+
+        Returns:
+            Quality score dict, or None when the source has no usable ID.
+        """
+        source_id = source.get("id")
+        if source_id is None:
+            return None
+        if self._has_valid_cached_scores(source):
+            return self._build_result_from_cache(source, include_details=False)
+        return self.score_source(source_id, include_details=False)
+
+    @staticmethod
+    def _order_source_rows(
+        rows: list[dict[str, Any]], sort_by: str | None, sort_order: str
+    ) -> list[dict[str, Any]]:
+        """Order source rows by a cached column, leaving unknown keys untouched.
+
+        Args:
+            rows: Source dicts from ``list_files``.
+            sort_by: Requested sort field (API-level name).
+            sort_order: ``"asc"`` or ``"desc"``.
+
+        Returns:
+            The ordered rows (the input list when *sort_by* is not sortable).
+        """
+        column = _SORT_KEY_COLUMNS.get(sort_by or "")
+        if column is None:
+            return rows
+        reverse = sort_order.lower() == "desc"
+        return sorted(rows, key=lambda row: row.get(column) or 0, reverse=reverse)
+
     def analyze_sources(
         self,
         source_ids: list[str] | None = None,
         domain: str | None = None,
         min_entities: int = 0,
+        page: int | None = None,
+        page_size: int | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "desc",
     ) -> dict[str, Any]:
         """Analyze quality across multiple sources.
 
         Uses cached scores when available to avoid loading extraction_results.
 
+        Filtering, ordering and paging all happen on the source rows, before
+        any scoring: a paginated call scores only the rows on the requested
+        page, so page 2 no longer repeats page 1's work.
+
         Args:
             source_ids: Specific source IDs to analyze (None = all).
             domain: Filter by extraction domain.
             min_entities: Minimum entity count to include.
+            page: 1-based page to return. ``None`` (the default, used by the
+                POST endpoint and ``get_summary``) scores and returns every
+                match, preserving the unpaginated contract.
+            page_size: Rows per page; only honoured together with *page*.
+            sort_by: Ordering field applied across all matches before the page
+                is cut. Unknown values leave the natural order untouched.
+            sort_order: ``"asc"`` or ``"desc"`` (default).
 
         Returns:
             Analysis results with source scores and aggregated metrics.
+            ``total_sources`` counts every match, not just the returned page.
         """
-        # Get all sources (list_files doesn't load extraction_results for perf)
-        sources = self.adapter.list_files(self.database_name)
+        # Fetch the FULL source set — see SOURCE_FETCH_LIMIT. (list_files
+        # doesn't load extraction_results, so this stays a cheap projection.)
+        sources = self.adapter.list_files(self.database_name, limit=SOURCE_FETCH_LIMIT)
 
-        # Filter and score sources
-        scores: list[dict[str, Any]] = []
-        total_entity_quality = 0.0
-        total_relationship_quality = 0.0
-        total_score = 0.0
-        count_with_entities = 0
-        count_with_relationships = 0
-
+        # Filter on the raw rows: every predicate reads a pre-computed column,
+        # so none of this costs a round trip.
+        matches: list[dict[str, Any]] = []
         for source in sources:
             # Skip if not in requested source_ids
             if source_ids and source.get("id") not in source_ids:
                 continue
 
             # Skip if domain doesn't match
-            source_domain = source.get("extraction_domain")
-            if domain and source_domain != domain:
+            if domain and source.get("extraction_domain") != domain:
                 continue
 
             # Use pre-computed counts (avoids loading extraction_results)
-            entity_count = source.get("extraction_entities_count") or 0
-            if entity_count < min_entities:
+            if (source.get("extraction_entities_count") or 0) < min_entities:
                 continue
 
-            # If source has valid cached scores, use them directly
-            # This avoids calling get_file() which loads extraction_results
-            source_id_val = source.get("id")
-            if source_id_val is None:
+            if source.get("id") is None:
                 continue
-            if self._has_valid_cached_scores(source):
-                score: dict[str, Any] | None = self._build_result_from_cache(
-                    source, include_details=False
-                )
-            else:
-                # Need to calculate - this will load full source
-                score = self.score_source(source_id_val, include_details=False)
 
+            matches.append(source)
+
+        paginated = page is not None and page_size is not None
+        if page is not None and page_size is not None:
+            matches = self._order_source_rows(matches, sort_by, sort_order)
+            start = (page - 1) * page_size
+            page_rows = matches[start : start + page_size]
+        else:
+            page_rows = matches
+
+        scores: list[dict[str, Any]] = []
+        for source in page_rows:
+            score = self._score_source_row(source)
             if score:
                 scores.append(score)
-                total_score += score["total_score"]
 
-                if score["entity_count"] > 0:
-                    total_entity_quality += score["avg_entity_quality"]
-                    count_with_entities += 1
+        # Re-sort the page on the values actually being returned. The page was
+        # selected on cached columns, which are empty for a version-stale row,
+        # so on a cold cache the pre-scoring order can disagree with the fresh
+        # scores. This restores the within-page invariant at the cost of
+        # sorting at most ``page_size`` dicts. Cross-page ordering still
+        # follows the cached columns — fixing that would mean scoring every
+        # match, which is exactly what this push-down exists to avoid.
+        if paginated and sort_by in _SORT_KEY_COLUMNS:
+            scores.sort(key=lambda row: row.get(sort_by) or 0, reverse=sort_order.lower() == "desc")
 
-                if score["relationship_count"] > 0:
-                    total_relationship_quality += score["avg_relationship_quality"]
-                    count_with_relationships += 1
+        # Averages span every match, not just the page. Off-page rows join the
+        # aggregate only from their cached scores — recalculating them here
+        # would reinstate the whole-table rescoring this push-down removes. In
+        # steady state (scores are cached when extraction completes) that is
+        # every row, so a paginated call's averages match the unpaginated one.
+        aggregated: list[dict[str, Any]] = scores
+        if paginated:
+            page_ids = {row.get("id") for row in page_rows}
+            aggregated = list(scores)
+            aggregated.extend(
+                self._build_result_from_cache(row, include_details=False)
+                for row in matches
+                if row.get("id") not in page_ids and self._has_valid_cached_scores(row)
+            )
+
+        total_entity_quality = 0.0
+        total_relationship_quality = 0.0
+        total_score = 0.0
+        count_with_entities = 0
+        count_with_relationships = 0
+
+        for score in aggregated:
+            total_score += score["total_score"]
+
+            if score["entity_count"] > 0:
+                total_entity_quality += score["avg_entity_quality"]
+                count_with_entities += 1
+
+            if score["relationship_count"] > 0:
+                total_relationship_quality += score["avg_relationship_quality"]
+                count_with_relationships += 1
 
         # Calculate averages
-        avg_score = total_score / len(scores) if scores else 0.0
+        avg_score = total_score / len(aggregated) if aggregated else 0.0
         avg_entity_quality = (
             total_entity_quality / count_with_entities if count_with_entities else 0.0
         )
@@ -539,7 +646,7 @@ class QualityService:
 
         return {
             "sources": scores,
-            "total_sources": len(scores),
+            "total_sources": len(matches) if paginated else len(scores),
             "avg_score": round(avg_score, 2),
             "avg_entity_quality": round(avg_entity_quality, 2),
             "avg_relationship_quality": round(avg_relationship_quality, 2),
@@ -552,7 +659,7 @@ class QualityService:
             Domain performance comparison with metrics per domain.
         """
         # Get all sources with extractions
-        sources = self.adapter.list_files(self.database_name)
+        sources = self.adapter.list_files(self.database_name, limit=SOURCE_FETCH_LIMIT)
 
         # Group by domain
         domain_metrics: dict[str, dict[str, Any]] = {}

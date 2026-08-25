@@ -305,7 +305,19 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
     )
 
     try:
-        adapter.start_extraction_job(job_id)
+        if not adapter.start_extraction_job(job_id):
+            # The job is terminal (or its row is gone) — typically a
+            # re-extract cancelled it while this finalize sat on the queue.
+            # Aggregating now would attribute the abandoned run's chunks to
+            # the source the user just reset, and the refused start is what
+            # keeps the cancelled job out of the fresh analysis's resume
+            # lookup. Skip cleanly; the re-dispatched analysis owns the source.
+            logger.info(
+                "finalize_skipped_job_gone",
+                job_id=job_id,
+                source_id=source_id,
+            )
+            return {"skipped": "job_gone", "job_id": job_id}
         adapter.update_step_progress(source_id, 1, 1, "Finalizing extraction results")
 
         job_record = adapter.get_extraction_job(job_id)

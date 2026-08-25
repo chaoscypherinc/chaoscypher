@@ -324,9 +324,10 @@ result.provider     # "local"
 ```python
 result.embeddings   # list[list[float]] — same order as input
 result.total        # int — total texts processed
-result.failed       # int — always 0 for local embeddings
 result.provider     # "local"
 ```
+
+`batch_embed()` is all-or-nothing: it either returns a full batch of vectors or raises — there is no partial-success count to inspect.
 
 ## Health Checks
 

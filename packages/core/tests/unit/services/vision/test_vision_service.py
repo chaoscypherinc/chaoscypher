@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.services.vision.service import VisionResult, VisionService
 
 
@@ -56,6 +57,22 @@ class TestVisionService:
         service = VisionService(llm_provider=mock_llm_provider)
         result = await service.describe_image(b"fake-data", prompt="Describe.")
         assert isinstance(result, VisionResult)
+        assert result == VisionResult(description=None, finish_reason=None)
+
+    @pytest.mark.asyncio
+    async def test_describe_image_reraises_retryable_llm_error(self, mock_llm_provider):
+        """Retryable LLM errors propagate so the queue's retry machinery sees them."""
+        mock_llm_provider.chat.side_effect = LLMError("rate limited", is_retryable=True)
+        service = VisionService(llm_provider=mock_llm_provider)
+        with pytest.raises(LLMError):
+            await service.describe_image(b"fake-data", prompt="Describe.")
+
+    @pytest.mark.asyncio
+    async def test_describe_image_swallows_non_retryable_llm_error(self, mock_llm_provider):
+        """Non-retryable LLM errors are permanent: null result, no raise."""
+        mock_llm_provider.chat.side_effect = LLMError("bad request", is_retryable=False)
+        service = VisionService(llm_provider=mock_llm_provider)
+        result = await service.describe_image(b"fake-data", prompt="Describe.")
         assert result == VisionResult(description=None, finish_reason=None)
 
     @pytest.mark.asyncio

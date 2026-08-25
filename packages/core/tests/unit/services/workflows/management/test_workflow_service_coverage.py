@@ -328,19 +328,18 @@ def test_get_global_stats_aggregates() -> None:
         {"id": "w1", "is_active": True},
         {"id": "w2", "is_active": False},
     ]
+    storage.get_workflow_statistics_totals.return_value = {
+        "total_executions": 4,
+        "successful_executions": 3,
+        "failed_executions": 1,
+        "cancelled_executions": 0,
+    }
 
-    def stats_for(wid: str) -> dict[str, Any] | None:
-        if wid == "w1":
-            return {
-                "total_executions": 4,
-                "successful_executions": 3,
-                "failed_executions": 1,
-                "cancelled_executions": 0,
-            }
-        return None  # w2 has no stats row
-
-    storage.get_workflow_statistics.side_effect = stats_for
     result = svc.get_global_stats()
+    # One aggregate call scoped to the service's database — never a
+    # per-workflow statistics round-trip.
+    storage.get_workflow_statistics_totals.assert_called_once_with(database_name="db1")
+    storage.get_workflow_statistics.assert_not_called()
     assert result["total_workflows"] == 2
     assert result["active_workflows"] == 1
     assert result["inactive_workflows"] == 1
@@ -353,7 +352,12 @@ def test_get_global_stats_aggregates() -> None:
 def test_get_global_stats_no_executions_zero_rate() -> None:
     svc, storage = _make_service()
     storage.list_workflows.return_value = [{"id": "w1", "is_active": True}]
-    storage.get_workflow_statistics.return_value = None
+    storage.get_workflow_statistics_totals.return_value = {
+        "total_executions": 0,
+        "successful_executions": 0,
+        "failed_executions": 0,
+        "cancelled_executions": 0,
+    }
     result = svc.get_global_stats()
     assert result["success_rate"] == 0.0
     assert result["total_executions"] == 0

@@ -13,6 +13,7 @@ REST API for extraction quality evaluation:
 - GET /quality/outdated - Get sources with outdated scores
 """
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -173,8 +174,16 @@ async def recalculate_scores(
     **Returns:**
     - Number of sources recalculated
     - List of any errors encountered
+
+    **Note:** this rescores every matching source unconditionally (four DB
+    round trips each), so the work is bounded by the source count, not by the
+    request. Prefer the background recalculation the queue already runs.
     """
-    return service.recalculate_all_scores(domain=request.domain)
+    # Offloaded: a full-table rescore is synchronous SQLite I/O over an
+    # unbounded number of sources. Awaiting it inline would block the event
+    # loop — and therefore every other request in this process — for minutes
+    # on a large workspace.
+    return await asyncio.to_thread(service.recalculate_all_scores, domain=request.domain)
 
 
 @router.get(
@@ -198,7 +207,9 @@ async def get_outdated_sources(
     - Count of outdated sources
     - List of source info for sources needing recalculation
     """
-    outdated = service.get_outdated_sources()
+    # Offloaded for consistency with the rest of the slice: the scan itself is
+    # cheap per row, but it reads the whole source table.
+    outdated = await asyncio.to_thread(service.get_outdated_sources)
     return {
         "outdated_count": len(outdated),
         "sources": outdated,
@@ -232,8 +243,16 @@ async def analyze_sources(
     **Returns:**
     - List of source quality scores
     - Aggregated average metrics
+
+    **Note:** this call scores every match. Sources whose cached scores are
+    missing or version-stale are recalculated inline (four DB round trips
+    each), so the work is bounded by the source count, not by the request.
     """
-    return service.analyze_sources(
+    # Offloaded: the scoring loop is synchronous SQLite I/O over an unbounded
+    # number of sources. Awaiting it inline would block the event loop — and
+    # therefore every other request in this process — for its full duration.
+    return await asyncio.to_thread(
+        service.analyze_sources,
         source_ids=request.source_ids,
         domain=request.domain,
         min_entities=request.min_entities,
@@ -255,7 +274,9 @@ async def analyze_sources_get(
     min_entities: int = Query(default=0, ge=0, description="Minimum entity count"),
     sort_by: str = Query(
         default="total_score",
-        description="Sort field (total_score, avg_entity_quality, entity_count)",
+        description=(
+            "Sort field (total_score, avg_entity_quality, avg_relationship_quality, entity_count)"
+        ),
     ),
     sort_order: str = Query(default="desc", description="Sort order (asc, desc)"),
 ) -> dict:
@@ -273,26 +294,40 @@ async def analyze_sources_get(
     - Paginated list of source quality scores
     - Pagination metadata
     - Aggregated average metrics
+
+    **Note:** only the requested page is scored. The ``avg_*`` aggregates
+    cover every match whose cached scores are valid, plus the returned page —
+    so until caches are warm (e.g. right after a scoring-version bump, while
+    the background recalculation is still running) they are page-dependent.
+    Once every source is cached they cover the full match set on every page.
+
+    **Note:** ``sort_by`` selects the page from each source's *cached* score,
+    then re-sorts the page on the fresh values it returns. A page is therefore
+    always internally ordered, but while caches are cold the split of sources
+    across pages follows the cached values, so a source may not sit on the page
+    its returned score implies. This resolves once every source is cached.
     """
     page, page_size = pagination
-    result = service.analyze_sources(
+    # Sorting and paging are pushed into the service so only this page's
+    # sources are scored — slicing here meant every page re-scored the whole
+    # set, and the pre-slice list was itself silently capped at 100 rows.
+    #
+    # Still offloaded: the page's scoring is bounded, but the source-row read
+    # underneath it is not — analyze_sources loads the whole source table
+    # before it can filter and cut the page.
+    result = await asyncio.to_thread(
+        service.analyze_sources,
         domain=domain,
         min_entities=min_entities,
+        page=page,
+        page_size=page_size,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
-    sources = result["sources"]
-
-    # Sort
-    reverse = sort_order.lower() == "desc"
-    if sort_by in ("total_score", "avg_entity_quality", "avg_relationship_quality", "entity_count"):
-        sources.sort(key=lambda x: x.get(sort_by, 0), reverse=reverse)
-
-    # Paginate
-    total = len(sources)
+    page_sources = result["sources"]
+    total = result["total_sources"]
     total_pages = (total + page_size - 1) // page_size if total > 0 else 1
-    start = (page - 1) * page_size
-    end = start + page_size
-    page_sources = sources[start:end]
 
     return {
         "sources": page_sources,
@@ -336,7 +371,9 @@ async def compare_domains(
     - List of domains with average scores, counts, and ratios
     - Sorted by average total score descending
     """
-    return service.compare_domains()
+    # Offloaded for the same reason as /outdated: whole-table read, and any
+    # source without valid cached scores is recalculated inline.
+    return await asyncio.to_thread(service.compare_domains)
 
 
 @router.get(
@@ -359,5 +396,10 @@ async def get_quality_summary(
     **Returns:**
     - Summary statistics
     - Top and bottom performing sources
+
+    **Note:** funnels through the unpaginated ``analyze_sources``, so it
+    inherits its cost — every version-stale source is recalculated inline.
     """
-    return service.get_summary()
+    # Offloaded for the same reason as POST /analyze: unbounded synchronous
+    # SQLite work must not run on the event loop.
+    return await asyncio.to_thread(service.get_summary)

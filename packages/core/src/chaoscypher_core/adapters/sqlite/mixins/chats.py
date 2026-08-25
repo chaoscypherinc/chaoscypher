@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import load_only
-from sqlmodel import col, delete, func, select
+from sqlmodel import col, delete, func, select, update
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import Chat, ChatMessage
@@ -72,6 +72,31 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         self._maybe_commit()
         self.session.refresh(chat)
         return self._entity_to_dict(chat)
+
+    def claim_chat_processing(self, chat_id: str) -> bool:
+        """Atomically claim a chat for processing (compare-and-swap on status).
+
+        Single UPDATE with a ``status != 'processing'`` guard so two
+        concurrent claims cannot both succeed — closing the check-then-act
+        window that let retry/regenerate double-enqueue a turn.
+
+        Args:
+            chat_id: Chat to claim.
+
+        Returns:
+            True when this call transitioned the chat to ``processing``;
+            False when the chat is unknown or already processing.
+        """
+        self._ensure_connected()
+        stmt = (
+            update(Chat)
+            .where(col(Chat.id) == chat_id)
+            .where(col(Chat.status) != "processing")
+            .values(status="processing", updated_at=datetime.now(UTC))
+        )
+        result = self.session.exec(stmt)
+        self._maybe_commit()
+        return int(result.rowcount or 0) == 1
 
     def delete_chat(self, chat_id: str) -> bool:
         """Delete chat."""

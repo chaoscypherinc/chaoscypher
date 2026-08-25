@@ -70,7 +70,8 @@ class LexiconClientError(ExternalServiceError):
             message: Error message.
             details: Additional error details.
         """
-        error_details = details or {}
+        # Copy so the caller's dict is not mutated by the status_code insert.
+        error_details = dict(details) if details else {}
         error_details["status_code"] = status_code
         super().__init__(service_name="Lexicon", reason=message, details=error_details)
         # Preserve the raw message for callers that use e.message directly.
@@ -330,10 +331,10 @@ class LexiconClient:
     def __init__(
         self,
         base_url: str | None = None,
-        timeout: float = 30.0,
-        upload_timeout: float = 300.0,
-        max_retries: int = 4,
-        retry_backoff: tuple[float, ...] = (2.0, 4.0, 8.0, 16.0),
+        timeout: float | None = None,
+        upload_timeout: float | None = None,
+        max_retries: int | None = None,
+        retry_backoff: tuple[float, ...] | None = None,
         auth: AuthConfig | None = None,
     ) -> None:
         """Initialize lexicon API client.
@@ -344,16 +345,28 @@ class LexiconClient:
                 (e.g., https://lexicon.chaoscypher.com/api/v1). The API path will
                 be appended automatically if not present. ``None``
                 (default) reads ``settings.lexicon.url``.
-            timeout: Default request timeout in seconds.
-            upload_timeout: Timeout for upload operations in seconds.
-            max_retries: Maximum retry attempts for failed requests.
+            timeout: Default request timeout in seconds. ``None`` (default)
+                reads ``settings.lexicon.timeout``.
+            upload_timeout: Timeout for upload/download operations in seconds.
+                ``None`` (default) reads ``settings.lexicon.upload_timeout``.
+            max_retries: Total request attempts for failed requests. ``None``
+                (default) reads ``settings.lexicon.max_retries``.
             retry_backoff: Exponential backoff delays in seconds for each retry.
+                ``None`` (default) reads ``settings.lexicon.retry_backoff``.
             auth: Optional authentication configuration.
         """
-        if base_url is None:
-            from chaoscypher_core.app_config import get_settings
+        from chaoscypher_core.app_config import get_settings
 
+        if base_url is None:
             base_url = get_settings().lexicon.url
+        if timeout is None:
+            timeout = float(get_settings().lexicon.timeout)
+        if upload_timeout is None:
+            upload_timeout = float(get_settings().lexicon.upload_timeout)
+        if max_retries is None:
+            max_retries = get_settings().lexicon.max_retries
+        if retry_backoff is None:
+            retry_backoff = tuple(get_settings().lexicon.retry_backoff)
         url = base_url.rstrip("/")
         # Ensure URL includes API path - append if not present
         if not url.endswith(_API_PATH.rstrip("/")):
@@ -376,10 +389,12 @@ class LexiconClient:
         return self
 
     async def __aexit__(self, *args: object) -> None:
-        """Async context manager exit."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """Async context manager exit — closes every cached client."""
+        for attr in ("_client", "_download_client", "_upload_client"):
+            client = getattr(self, attr)
+            if client is not None:
+                await client.aclose()
+                setattr(self, attr, None)
 
     def _get_general_client(self) -> httpx.AsyncClient:
         """Return a cached httpx client for general JSON API requests.
@@ -705,7 +720,7 @@ class LexiconClient:
         Args:
             device_code: Device code from request_device_code().
             client_id: OAuth client identifier.
-            timeout: Maximum seconds to poll (None = use expires_in).
+            timeout: Maximum seconds to poll (None = 900-second default).
             interval: Seconds between poll attempts.
             on_pending: Optional callback called on each pending poll.
 
@@ -1039,6 +1054,7 @@ class LexiconClient:
 
 __all__ = [
     "AuthConfig",
+    "DeviceCodeResponse",
     "LexiconClient",
     "LexiconClientError",
     "PackageInfo",

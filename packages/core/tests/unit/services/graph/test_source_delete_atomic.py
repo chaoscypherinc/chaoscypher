@@ -119,7 +119,7 @@ class TestSuccessfulDelete:
         graph_repo.delete_nodes_batch.assert_called_once_with(node_ids=["node1", "node2"])
 
     def test_search_nodes_deleted_post_transaction(self) -> None:
-        """search_repo.delete_node is called after transaction commits."""
+        """search_repo.delete_nodes_batch is called after transaction commits."""
         repo = _make_repo(orphaned_uris=["ns/entity/node1"])
         search_repo = _make_search_repo()
         service = _service(repo)
@@ -132,7 +132,7 @@ class TestSuccessfulDelete:
             call_order.append("transaction_committed")
 
         repo.transaction.side_effect = _tracking_transaction
-        search_repo.delete_node.side_effect = lambda *a, **kw: call_order.append(
+        search_repo.delete_nodes_batch.side_effect = lambda *a, **kw: call_order.append(
             "search_delete_node"
         )
 
@@ -281,7 +281,7 @@ class TestAtomicRollback:
             service.delete_source("src1", search_repo=search_repo)
 
         # Post-transaction steps must NOT run
-        search_repo.delete_node.assert_not_called()
+        search_repo.delete_nodes_batch.assert_not_called()
         search_repo.remove_embeddings_batch.assert_not_called()
         repo.delete_source_files.assert_not_called()
 
@@ -300,7 +300,7 @@ class TestBestEffortCleanup:
 
         repo = _make_repo(orphaned_uris=["ns/entity/node1"])
         search_repo = _make_search_repo()
-        search_repo.delete_node.side_effect = RuntimeError("search unavailable")
+        search_repo.delete_nodes_batch.side_effect = RuntimeError("search unavailable")
         service = _service(repo)
 
         with caplog.at_level(logging.WARNING):
@@ -312,7 +312,7 @@ class TestBestEffortCleanup:
         """SQL is already committed before search cleanup; failure is independent."""
         repo = _make_repo(orphaned_uris=["ns/entity/node1"])
         search_repo = _make_search_repo()
-        search_repo.delete_node.side_effect = RuntimeError("search unavailable")
+        search_repo.delete_nodes_batch.side_effect = RuntimeError("search unavailable")
         service = _service(repo)
 
         result = service.delete_source("src1", search_repo=search_repo)
@@ -361,7 +361,7 @@ class TestBestEffortCleanup:
             filepath="/data/sources/src1/file.txt",
         )
         search_repo = _make_search_repo()
-        search_repo.delete_node.side_effect = RuntimeError("fail")
+        search_repo.delete_nodes_batch.side_effect = RuntimeError("fail")
         search_repo.remove_embeddings_batch.side_effect = RuntimeError("fail")
         repo.delete_source_files.side_effect = OSError("fail")
         service = _service(repo)
@@ -406,7 +406,7 @@ class TestNoOpCases:
         service.delete_source("src1", graph_repo=graph_repo, search_repo=search_repo)
 
         graph_repo.delete_nodes_batch.assert_not_called()
-        search_repo.delete_node.assert_not_called()
+        search_repo.delete_nodes_batch.assert_not_called()
 
     def test_no_chunks_skips_embedding_cleanup(self) -> None:
         """Zero chunks → remove_embeddings_batch never called."""

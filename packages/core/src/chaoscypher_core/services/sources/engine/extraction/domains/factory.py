@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from chaoscypher_core.plugins.factory import register_registry_cache
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
@@ -35,7 +37,9 @@ if TYPE_CHECKING:
 # that receive a fresh Settings instance per request still hit the cache.
 # Prior id()-based key caused a full 16-file domain jsonld re-scan on
 # every handler invocation.
-_registry_cache: dict[tuple[str, str], DomainRegistry] = {}
+_registry_cache: dict[tuple[str, str], DomainRegistry] = register_registry_cache(
+    "DomainRegistry", {}
+)
 
 
 def _cache_key(settings: EngineSettings | None, database_name: str) -> tuple[str, str]:
@@ -87,9 +91,11 @@ def clear_domain_registry_cache() -> None:
     """Clear the registry cache.
 
     Useful for testing or when domains are added/removed at runtime.
+
+    Clears in place (never rebinds) so the reference registered with the
+    plugins factory's invalidate_all_caches stays live.
     """
-    global _registry_cache
-    _registry_cache = {}
+    _registry_cache.clear()
 
 
 __all__ = ["clear_domain_registry_cache", "get_domain_registry"]

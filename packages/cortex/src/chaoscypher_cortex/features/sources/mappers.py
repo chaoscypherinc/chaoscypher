@@ -183,14 +183,15 @@ def attach_quality_scores(
         database_name: Current database name for domain config lookup.
 
     """
-    from chaoscypher_core.services.quality import QualityScorer
+    from chaoscypher_core.services.quality import QualityScorer, build_entity_chunk_mentions
 
     domain = file_info.get("extraction_domain")
     quality_config = get_quality_config_for_domain(domain, database_name)
     scorer = QualityScorer(quality_config)
 
-    for entity in entities:
-        chunks = entity.get("source_chunks", []) or entity.get("chunks", [])
-        chunk_mentions = len(chunks) if chunks else 1
-        score = scorer.score_entity(entity, chunk_mentions=chunk_mentions)
+    # Canonical chunk-mention map (handles the table rows'
+    # ``source_chunk_indices`` key as well as the legacy aliases).
+    mentions = build_entity_chunk_mentions(entities)
+    for idx, entity in enumerate(entities):
+        score = scorer.score_entity(entity, chunk_mentions=mentions.get(idx, 1))
         entity["quality_score"] = round(score.total_score, 1)

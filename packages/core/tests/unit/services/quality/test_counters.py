@@ -369,7 +369,8 @@ def test_phase5b_loader_pdf_pages_failed_enum_present() -> None:
     assert QualityCounter.LOADER_PDF_PAGES_FAILED.value == "loader_pdf_pages_failed"
 
 
-def test_phase5b_image_only_pdf_warning_routed_via_loader_warnings_counter(
+@pytest.mark.asyncio
+async def test_phase5b_image_only_pdf_warning_routed_via_loader_warnings_counter(
     sqlite_adapter: SqliteAdapter, prepared_source_id: str
 ) -> None:
     """Image-only PDFs append to ``loader_warnings``; the LOADER_WARNINGS counter
@@ -381,18 +382,14 @@ def test_phase5b_image_only_pdf_warning_routed_via_loader_warnings_counter(
     ``increment_quality_counter(..., counter=QualityCounter.LOADER_WARNINGS, n=N)``.
     The counter must therefore be present in both the enum and _RESET_DEFAULTS.
     """
-    import asyncio
-
     # Increment LOADER_WARNINGS to simulate what the indexing handler does
     # after detecting an image-only PDF (1 warning entry).
-    asyncio.run(
-        increment_quality_counter(
-            adapter=sqlite_adapter,
-            source_id=prepared_source_id,
-            database_name="default",
-            counter=QualityCounter.LOADER_WARNINGS,
-            n=1,
-        )
+    await increment_quality_counter(
+        adapter=sqlite_adapter,
+        source_id=prepared_source_id,
+        database_name="default",
+        counter=QualityCounter.LOADER_WARNINGS,
+        n=1,
     )
 
     row = sqlite_adapter.get_source(prepared_source_id, "default")

@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from chaoscypher_core.app_config import get_settings
+from chaoscypher_core.app_config import get_settings, reload_settings
 from chaoscypher_core.services.tls.service import generate_self_signed_cert
+from chaoscypher_core.utils.secure_write import atomic_secret_write
 
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ class TLSService:
             hostname=hostname,
         )
         self._switch_nginx_config(https=True)
+        await self._refresh_settings("v1:tls_enabled")
         logger.info("tls_enabled", mode="self-signed", hostname=hostname)
 
     async def enable_custom(self, cert_pem: bytes, key_pem: bytes) -> None:
@@ -85,11 +87,13 @@ class TLSService:
             key_pem: PEM-encoded private key bytes.
 
         """
-        await asyncio.to_thread(self._cert_dir.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(self._cert_dir.mkdir, parents=True, exist_ok=True, mode=0o700)
         await asyncio.to_thread(self._cert_path.write_bytes, cert_pem)
-        await asyncio.to_thread(self._key_path.write_bytes, key_pem)
-        await asyncio.to_thread(self._key_path.chmod, 0o600)
+        # The unencrypted key goes through the atomic 0600 helper — the old
+        # write_bytes + post-hoc chmod left it umask-readable in between.
+        await asyncio.to_thread(atomic_secret_write, self._key_path, key_pem, prefix=".server_key_")
         self._switch_nginx_config(https=True)
+        await self._refresh_settings("v1:tls_enabled")
         logger.info("tls_enabled", mode="custom")
 
     async def disable(self) -> None:
@@ -104,7 +108,25 @@ class TLSService:
         if self._key_path.exists():
             await asyncio.to_thread(self._key_path.unlink)
         self._switch_nginx_config(https=False)
+        await self._refresh_settings("v1:tls_disabled")
         logger.info("tls_disabled")
+
+    async def _refresh_settings(self, reason: str) -> None:
+        """Re-resolve settings after a TLS change and notify workers.
+
+        ``cookie_secure`` is auto-detected from the cert files at ``Settings``
+        construction, so the cache must be invalidated once the certs are
+        written or removed — otherwise session cookies keep the stale
+        ``Secure`` flag until restart. Mirrors the reload + publish pattern
+        used by the sibling databases and settings services.
+
+        Args:
+            reason: A short ``v1:<event>`` tag for the published message.
+        """
+        reload_settings()
+        from chaoscypher_cortex.shared.worker_notify import publish_settings_change
+
+        await publish_settings_change(reason)
 
     def _switch_nginx_config(self, *, https: bool) -> None:
         """Swap active Nginx config symlink and reload.

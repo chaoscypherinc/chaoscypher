@@ -1108,19 +1108,21 @@ class RecoveryEventResponse(BaseModel):
         description=(
             'Operation dispatched. One of "extract_chunk", "import_commit", '
             '"index_document", "import_analysis", "finalize_extraction", '
-            'or "compound" (multi-task dispatch).'
+            '"compound" (multi-task dispatch), or "mark_failed" (terminal, '
+            "nothing enqueued)."
         ),
     )
     reason: str = Field(
         description=(
             'Why the classifier fired. Today: "stalled" (default bulk '
-            'reconcile path) or "compound" (multi-chunk dispatch).'
+            'reconcile path), "compound" (multi-chunk dispatch), or the '
+            'failure cause for "mark_failed" (e.g. "abandoned").'
         ),
     )
     enqueued_count: int = Field(
         description=(
             "Number of queue tasks actually enqueued by this dispatch. 1 "
-            "for single-task actions; >1 for compound."
+            'for single-task actions; >1 for compound; 0 for "mark_failed".'
         ),
     )
 

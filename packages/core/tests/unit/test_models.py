@@ -309,21 +309,20 @@ class TestBatchEmbedResult:
         result = BatchEmbedResult(
             embeddings=[[0.1, 0.2], [0.3, 0.4]],
             total=2,
-            failed=0,
             provider="openai",
         )
         assert len(result.embeddings) == 2
         assert result.total == 2
-        assert result.failed == 0
 
-    def test_with_failures(self):
-        result = BatchEmbedResult(
-            embeddings=[[0.1], []],
-            total=2,
-            failed=1,
-            provider="ollama",
-        )
-        assert result.failed == 1
+    def test_failed_field_removed(self):
+        """The port is all-or-nothing: any failure raises, so no adapter ever
+        reported a per-text failure count. ``failed`` must not reappear as a
+        silent, always-zero field — assert it is gone from the schema and
+        that constructing with it is rejected (``extra="forbid"``).
+        """
+        assert "failed" not in BatchEmbedResult.model_fields
+        with pytest.raises(ValidationError):
+            BatchEmbedResult(embeddings=[], total=0, provider="openai", failed=0)
 
 
 @pytest.mark.unit

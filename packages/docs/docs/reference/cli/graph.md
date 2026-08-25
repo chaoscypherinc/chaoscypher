@@ -589,7 +589,7 @@ chaoscypher graph template get TEMPLATE_ID [OPTIONS]
 **Examples:**
 
 ```bash
-chaoscypher graph template get Person
+chaoscypher graph template get tmpl_a1b2c3d4e5
 chaoscypher graph template get tmpl_a1b2c3d4e5 --format json
 ```
 
@@ -632,20 +632,20 @@ chaoscypher graph template update TEMPLATE_ID [OPTIONS]
 
 ```bash
 # Rename a template
-chaoscypher graph template update Person --name "Individual"
+chaoscypher graph template update tmpl_a1b2c3d4e5 --name "Individual"
 
 # Update description
-chaoscypher graph template update Person --description "A person entity"
+chaoscypher graph template update tmpl_a1b2c3d4e5 --description "A person entity"
 
 # Add new properties
-chaoscypher graph template update Person \
+chaoscypher graph template update tmpl_a1b2c3d4e5 \
   -a phone:string -a address:text
 
 # Remove a property
-chaoscypher graph template update Person -r obsolete_field
+chaoscypher graph template update tmpl_a1b2c3d4e5 -r obsolete_field
 
 # Combine operations
-chaoscypher graph template update Person \
+chaoscypher graph template update tmpl_a1b2c3d4e5 \
   --name "Person v2" -a linkedin:url -r old_field
 ```
 
@@ -663,13 +663,13 @@ chaoscypher graph template delete TEMPLATE_ID [OPTIONS]
 **Examples:**
 
 ```bash
-chaoscypher graph template delete Person
+chaoscypher graph template delete tmpl_a1b2c3d4e5
 chaoscypher graph template delete tmpl_a1b2c3d4e5 --force
 ```
 
 :::warning
 
-Deleting a template does not delete nodes created from it, but those nodes will no longer have a valid template reference.
+Deletion is blocked while nodes or edges still use the template — remove those items first. The `--force` flag only skips the confirmation prompt; it does not override the in-use check. (The API's `force=true` query parameter does override it, by **deleting every node and edge that uses the template**.)
 
 :::
 

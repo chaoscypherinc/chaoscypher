@@ -42,15 +42,27 @@ class TestImportedGraphVisibility:
         assert rows.count() > 0
 
     def test_graph_canvas_renders_with_data(self, authenticated_page: Page) -> None:
-        """Graph canvas renders the visualization (canvas + SVG)."""
+        """Graph canvas renders the visualization (Sigma.js canvas)."""
         page = authenticated_page
         page.goto("/graph")
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(2000)  # Sigma.js needs render time
 
-        canvas_count = page.locator("canvas").count()
-        svg_count = page.locator("svg").count()
-        assert canvas_count > 0 or svg_count > 0
+        # A page-wide `svg` count is satisfied by the app shell's own
+        # icons (Sidebar.tsx's MUI ChevronLeftIcon/ChevronRightIcon at
+        # :27-28/:306-308 and lucide nav icons at :81-98), which render
+        # on every route via Layout.tsx's <Box component="nav"> -- that
+        # made the canvas half of the old `or` unreachable as a failure
+        # mode. Layout.tsx's <Box component="main"> (:244) renders as a
+        # real <main> element and exclusively wraps the routed page's own
+        # content (the Sidebar's <nav> is a separate sibling, not nested
+        # inside it), so scoping to `main canvas` excludes the sidebar
+        # without needing a new data-testid. GraphCanvasPage.tsx mounts
+        # Sigma (WebGL-only, canvas-based -- see its own webglSupported
+        # comment) inside that <main>, so this asserts the canvas itself,
+        # not any page-wide svg.
+        canvas_count = page.locator("main canvas").count()
+        assert canvas_count > 0, "No canvas rendered inside the page's <main> content area"
 
     def test_relationships_page_loads(self, authenticated_page: Page) -> None:
         """Relationships (edges) page loads with content."""
@@ -59,5 +71,9 @@ class TestImportedGraphVisibility:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(1000)
 
-        # Page should have loaded
-        assert "edges" in page.url.lower() or "relationship" in page.url.lower()
+        # EdgesPage (packages/interface/src/pages/EdgesPage/index.tsx:248)
+        # renders an <h4>Relationships</h4> heading unconditionally once
+        # loading finishes -- assert on that page-specific content
+        # instead of the URL the test itself just navigated to.
+        heading = page.locator("h4", has_text="Relationships")
+        assert heading.count() > 0, "Relationships heading not found on /edges"

@@ -223,6 +223,7 @@ class CcxExporter:
                 self._statistics_graph(
                     knowledge_nodes,
                     knowledge_edges,
+                    templates=templates,
                     source_records=source_records,
                     lens_nodes=lens_nodes,
                     workflow_nodes=workflow_nodes,
@@ -692,6 +693,7 @@ class CcxExporter:
         knowledge_nodes: list[dict[str, Any]],
         knowledge_edges: list[dict[str, Any]],
         *,
+        templates: list[dict[str, Any]] | None = None,
         source_records: list[dict[str, Any]] | None = None,
         lens_nodes: list[dict[str, Any]] | None = None,
         workflow_nodes: list[dict[str, Any]] | None = None,
@@ -714,9 +716,11 @@ class CcxExporter:
             settings=self.settings,
             include_embeddings=include_embeddings,
         )
-        template_stats = calculate_template_stats(
-            [tmpl.model_dump(mode="json") for tmpl in self.graph.list_templates()]
-        )
+        # Reuse the export's already-filtered user-template list — a fresh
+        # list_templates() here described system templates (and templates
+        # outside the source_ids scope) that are not in the package, and was
+        # a second full fetch besides.
+        template_stats = calculate_template_stats(templates or [])
         members: list[dict[str, Any]] = [
             {"@type": "chaoscypher:KnowledgeStats", **knowledge_stats.model_dump(mode="json")},
             {"@type": "chaoscypher:TemplateStats", **template_stats.model_dump(mode="json")},

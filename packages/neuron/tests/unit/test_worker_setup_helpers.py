@@ -538,6 +538,23 @@ class TestSetupHealthMonitor:
 # ============================================================================
 
 
+def _make_scoped_adapter() -> tuple[MagicMock, list[str]]:
+    """Fake adapter whose session_scope records enter/exit events."""
+    events: list[str] = []
+    adapter = MagicMock()
+
+    @contextlib.asynccontextmanager
+    async def _scope():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    adapter.session_scope = _scope
+    return adapter, events
+
+
 class TestHealthMonitorLoop:
     @pytest.mark.asyncio
     async def test_tick_called_repeatedly(self) -> None:
@@ -545,12 +562,42 @@ class TestHealthMonitorLoop:
 
         evaluator = MagicMock()
         evaluator.tick = AsyncMock()
+        adapter, _events = _make_scoped_adapter()
 
-        task = asyncio.create_task(_health_monitor_loop(evaluator, interval=0.02))
+        task = asyncio.create_task(_health_monitor_loop(evaluator, adapter, interval=0.02))
         await asyncio.sleep(0.08)
         await _cancel(task)
 
         assert evaluator.tick.await_count >= 2
+
+    @pytest.mark.asyncio
+    async def test_each_tick_runs_inside_session_scope(self) -> None:
+        """Every pass enters (and exits) adapter.session_scope around tick()."""
+        from chaoscypher_neuron.worker import _health_monitor_loop
+
+        adapter, events = _make_scoped_adapter()
+        scope_depth_at_tick: list[int] = []
+        two_ticks = asyncio.Event()
+
+        async def _tick() -> None:
+            scope_depth_at_tick.append(events.count("enter") - events.count("exit"))
+            if len(scope_depth_at_tick) >= 2:
+                two_ticks.set()
+
+        evaluator = MagicMock()
+        evaluator.tick = AsyncMock(side_effect=_tick)
+
+        task = asyncio.create_task(_health_monitor_loop(evaluator, adapter, interval=0.01))
+        try:
+            await asyncio.wait_for(two_ticks.wait(), timeout=5.0)
+        finally:
+            await _cancel(task)
+
+        # Each tick observed exactly one open scope, and one scope was
+        # entered (and closed) per tick — not one shared scope for the loop.
+        assert all(depth == 1 for depth in scope_depth_at_tick)
+        assert events.count("enter") >= 2
+        assert events.count("enter") == events.count("exit")
 
     @pytest.mark.asyncio
     async def test_tick_exception_swallowed(
@@ -572,8 +619,9 @@ class TestHealthMonitorLoop:
 
         evaluator = MagicMock()
         evaluator.tick = AsyncMock(side_effect=flaky_tick)
+        adapter, _events = _make_scoped_adapter()
 
-        task = asyncio.create_task(_health_monitor_loop(evaluator, interval=0.01))
+        task = asyncio.create_task(_health_monitor_loop(evaluator, adapter, interval=0.01))
         try:
             with caplog.at_level(logging.ERROR):
                 await asyncio.wait_for(recovered.wait(), timeout=5.0)
@@ -589,8 +637,9 @@ class TestHealthMonitorLoop:
 
         evaluator = MagicMock()
         evaluator.tick = AsyncMock()
+        adapter, _events = _make_scoped_adapter()
 
-        task = asyncio.create_task(_health_monitor_loop(evaluator, interval=3600))
+        task = asyncio.create_task(_health_monitor_loop(evaluator, adapter, interval=3600))
         await asyncio.sleep(0.01)
         await _cancel(task)
         assert task.done()

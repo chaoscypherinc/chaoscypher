@@ -12,8 +12,8 @@ that ``_process_task`` and ``run()`` delegate to:
 - ``_payload_version_supported`` — supported vs. unsupported (terminal mark +
   best-effort upgrade recovery dispatch).
 - ``_mark_task_failed_terminal`` — routed vs. bare-HSET fallback.
-- ``_retry_task`` — status=queued + retry_after write, PERSIST, future-biased
-  re-add to pending.
+- ``_retry_task`` — status=queued + retry_after write, PERSIST, re-add to
+  pending at the current tail of its priority tier (fresh seq draw).
 - ``_startup_reconcile`` / ``_reconcile_loop`` — no-op without client; per-queue
   exception isolation.
 - ``_drain_active_tasks`` — empty-return + cancel-pending.
@@ -29,12 +29,13 @@ sibling queue tests.
 from __future__ import annotations
 
 import asyncio
+from itertools import count
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from chaoscypher_core.constants import QUEUE_OPERATIONS
+from chaoscypher_core.constants import QUEUE_LLM, QUEUE_OPERATIONS
 from chaoscypher_core.queue.worker import QueueWorker, _run_with_heartbeat
 
 
@@ -50,6 +51,9 @@ def _make_valkey() -> MagicMock:
     valkey.hget = AsyncMock(return_value=b"50")
     valkey.hincrby = AsyncMock(return_value=1)
     valkey.zadd = AsyncMock(return_value=1)
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15) — QueueWorker
+    # ._retry_task draws a fresh seq per retry re-add.
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
     valkey.persist = AsyncMock(return_value=True)
     valkey.sadd = AsyncMock(return_value=1)
     valkey.srem = AsyncMock(return_value=1)
@@ -77,6 +81,25 @@ def _make_worker(
         queue_client=queue_client,
     )
     return worker, valkey
+
+
+def _make_multi_queue_worker() -> QueueWorker:
+    """A worker with TWO queues, so per-queue isolation is observable.
+
+    ``_make_worker`` above configures a single queue; a test that claims
+    "a failure on one queue does not stop the others" cannot observe
+    anything with only one configured. Insertion order is llm-then-
+    operations so the failing queue is attempted first.
+    """
+    return QueueWorker(
+        client=_make_valkey(),
+        queues_config={
+            QUEUE_LLM: {"concurrency": 1, "max_tries": 3, "timeout": 60},
+            QUEUE_OPERATIONS: {"concurrency": 1, "max_tries": 3, "timeout": 60},
+        },
+        handlers={QUEUE_LLM: {}, QUEUE_OPERATIONS: {"test_op": lambda *a, **k: None}},
+        queue_client=MagicMock(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -268,11 +291,79 @@ async def test_retry_task_writes_queued_status_and_reads_priority() -> None:
     # Defensive PERSIST against a stray dead-letter TTL.
     valkey.persist.assert_awaited_once_with("queue:task:t-r")
 
-    # Re-added to the pending sorted set with a future-biased score.
+    # Re-added to the pending sorted set at the current tail of its tier
+    # (a fresh seq draw — see compose_pending_score in queue/client.py).
     valkey.zadd.assert_awaited_once()
     add_args = valkey.zadd.call_args.args
     assert add_args[0] == f"queue:{QUEUE_OPERATIONS}:pending"
     assert "t-r" in add_args[1]
+
+
+@pytest.mark.asyncio
+async def test_retry_task_refuses_cancelled_task() -> None:
+    """A task cancelled while running is not resurrected by _retry_task.
+
+    The transient-failure write clobbers the cancel CAS's ``cancelled``
+    status to ``failed`` before ``_retry_task`` runs, so the durable
+    cancel flag is the authority: when it is set, the retry repairs the
+    status back to ``cancelled`` and never requeues.
+    """
+    qc = MagicMock()
+    qc.is_task_cancelled = AsyncMock(return_value=True)
+    qc.guarded_status_write = AsyncMock()
+    worker, valkey = _make_worker(queue_client=qc)
+
+    await worker._retry_task("t-c", QUEUE_OPERATIONS, attempt=1, max_tries=3)
+
+    cancelled_writes = [
+        c
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("status") == "cancelled"
+    ]
+    assert cancelled_writes, "clobbered status must be repaired to cancelled"
+    qc.guarded_status_write.assert_not_awaited()
+    valkey.persist.assert_not_awaited()
+    valkey.zadd.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_task_guarded_requeue_refusal_skips_requeue() -> None:
+    """A cancel landing between the failure write and the requeue wins.
+
+    The requeue is a guarded CAS from ``failed``; any other observed
+    status refuses the write and the task must not re-enter pending.
+    """
+    qc = MagicMock()
+    qc.is_task_cancelled = AsyncMock(return_value=False)
+    qc.guarded_status_write = AsyncMock(return_value="cancelled")
+    worker, valkey = _make_worker(queue_client=qc)
+
+    await worker._retry_task("t-c2", QUEUE_OPERATIONS, attempt=1, max_tries=3)
+
+    qc.guarded_status_write.assert_awaited_once()
+    valkey.persist.assert_not_awaited()
+    valkey.zadd.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_retry_task_guarded_requeue_success_requeues() -> None:
+    """With the cancel flag clear and the CAS won, the retry requeues."""
+    from chaoscypher_core.queue.client import GUARDED_OK
+
+    qc = MagicMock()
+    qc.is_task_cancelled = AsyncMock(return_value=False)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    worker, valkey = _make_worker(queue_client=qc)
+    valkey.hget = AsyncMock(return_value=b"77")
+
+    await worker._retry_task("t-r2", QUEUE_OPERATIONS, attempt=1, max_tries=3)
+
+    write = qc.guarded_status_write.call_args
+    assert write.kwargs["new_status"] == "queued"
+    assert write.kwargs["allowed_from"] == ("failed",)
+    assert "retry_after" in write.kwargs["extra_fields"]
+    valkey.persist.assert_awaited_once_with("queue:task:t-r2")
+    valkey.zadd.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -292,19 +383,51 @@ async def test_startup_reconcile_noop_without_queue_client() -> None:
 async def test_startup_reconcile_isolates_per_queue_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A per-queue reconcile exception is logged and does not propagate."""
+    """A failing queue is logged and the REMAINING queues still reconcile.
+
+    worker.py:914-952 promises "each queue is reconciled independently;
+    per-queue errors are logged and do not stop reconciliation of the
+    remaining queues". Observing that needs two queues and a record of
+    which ones were attempted — with a single queue the isolation claim
+    is unobservable by construction, and "does not raise" alone is also
+    satisfied by a `break` in place of the per-queue `except`.
+    """
+    import structlog.testing
+
     import chaoscypher_core.queue.worker as worker_mod
 
-    async def _boom(**_kwargs: Any) -> Any:
-        raise RuntimeError("reconcile blew up")
+    stats = MagicMock()
+    stats.total.return_value = 0
+    stats.to_dict.return_value = {}
 
-    monkeypatch.setattr(worker_mod, "reconcile_queue", _boom)
+    called: list[str] = []
 
-    qc = MagicMock()
-    worker, _ = _make_worker(queue_client=qc)
+    async def _boom_on_llm(*, queue_name: str, **_kwargs: Any) -> Any:
+        called.append(queue_name)
+        if queue_name == QUEUE_LLM:
+            msg = "reconcile blew up"
+            raise RuntimeError(msg)
+        return stats
 
-    # Exception is swallowed inside the per-queue try/except.
-    await worker._startup_reconcile()
+    monkeypatch.setattr(worker_mod, "reconcile_queue", _boom_on_llm)
+
+    worker = _make_multi_queue_worker()
+
+    with structlog.testing.capture_logs() as captured:
+        # Exception is swallowed inside the per-queue try/except.
+        await worker._startup_reconcile()
+
+    # The failing queue did NOT stop the healthy one behind it.
+    assert called == [QUEUE_LLM, QUEUE_OPERATIONS], (
+        f"a per-queue failure stopped the remaining queues; attempted={called}"
+    )
+    errors = [e for e in captured if e["event"] == "startup_reconcile_error"]
+    assert len(errors) == 1, f"failure not logged; events={[e['event'] for e in captured]}"
+    assert errors[0]["queue"] == QUEUE_LLM
+    assert "reconcile blew up" in errors[0]["error"]
+    # ...and the healthy queue still reported its clean pass.
+    clean = [e for e in captured if e["event"] == "startup_reconcile_clean"]
+    assert [e["queue"] for e in clean] == [QUEUE_OPERATIONS]
 
 
 @pytest.mark.asyncio
@@ -329,6 +452,43 @@ async def test_startup_reconcile_runs_clean(monkeypatch: pytest.MonkeyPatch) -> 
     await worker._startup_reconcile()
 
     assert called == [QUEUE_OPERATIONS]
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_cutoff_clears_the_workers_own_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reconcile cutoff must sit BEYOND the deadline this worker enforces.
+
+    ``_process_task`` stamps ``started_at`` immediately before
+    ``asyncio.wait_for(..., timeout=config["timeout"])``, so a cutoff equal to
+    ``config["timeout"]`` fires at the same instant the worker's own timeout
+    does — and the reconciler wins, resetting a task the worker is still
+    cancelling to ``queued`` (``requeue_atomic.lua`` refuses only
+    completed/cancelled). The safety margin gives the worker's failure path
+    room to land first.
+    """
+    import chaoscypher_core.queue.worker as worker_mod
+    from chaoscypher_core.queue.worker_timeouts import RECONCILER_SAFETY_MARGIN_SECONDS
+
+    stats = MagicMock()
+    stats.total.return_value = 0
+    stats.to_dict.return_value = {}
+    seen: list[int | None] = []
+
+    async def _capture(*, timeout_seconds: int | None, **_kwargs: Any) -> Any:
+        """Record the absolute cutoff the reconciler was handed."""
+        seen.append(timeout_seconds)
+        return stats
+
+    monkeypatch.setattr(worker_mod, "reconcile_queue", _capture)
+
+    worker, _ = _make_worker(
+        queue_client=MagicMock(), config={"concurrency": 1, "max_tries": 3, "timeout": 60}
+    )
+    await worker._startup_reconcile()
+
+    assert seen == [60 + RECONCILER_SAFETY_MARGIN_SECONDS]
 
 
 @pytest.mark.asyncio

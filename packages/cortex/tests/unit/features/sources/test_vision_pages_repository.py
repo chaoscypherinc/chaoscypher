@@ -32,7 +32,20 @@ def test_list_pages_with_status_filter_delegates() -> None:
     repo.list_pages("s1", statuses=[VisionPageStatus.FAILED])
 
     storage.list_vision_page_descriptions.assert_called_once_with(
-        "s1", statuses=[VisionPageStatus.FAILED]
+        "s1", statuses=[VisionPageStatus.FAILED], include_content=True
+    )
+
+
+def test_list_pages_can_skip_description_content() -> None:
+    """include_content=False threads through to the storage projection."""
+    storage = MagicMock()
+    storage.list_vision_page_descriptions.return_value = []
+
+    repo = VisionPagesRepository(storage=storage, database_name="test")
+    repo.list_pages("s1", include_content=False)
+
+    storage.list_vision_page_descriptions.assert_called_once_with(
+        "s1", statuses=None, include_content=False
     )
 
 

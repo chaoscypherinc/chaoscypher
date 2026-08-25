@@ -398,7 +398,11 @@ def _calculate_embedding_and_rag_metrics(
         if model := chunk.get("embedding_model"):
             embedding_models_set.add(model)
 
-    rag_ready = total_chunks > 0 and embedding_coverage_pct == 100.0 and empty_chunk_count == 0
+    # Compare counts, not the rounded percentage — with enough chunks a
+    # single missing embedding still rounds to 100.0.
+    rag_ready = (
+        total_chunks > 0 and chunks_with_embeddings == total_chunks and empty_chunk_count == 0
+    )
 
     indexed_statuses = {
         SourceStatus.INDEXED,

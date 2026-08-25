@@ -13,6 +13,7 @@ from rich.table import Table
 
 from chaoscypher_cli.context import get_context
 from chaoscypher_cli.utils.console import print_json
+from chaoscypher_core.exceptions import NotFoundError
 
 
 console = Console()
@@ -32,20 +33,17 @@ console = Console()
 def get(template_id: str, output_format: str, database: str) -> None:
     """Show details of a specific template.
 
-    TEMPLATE_ID is the unique identifier of the template.
+    TEMPLATE_ID is the unique identifier of the template
+    (from `chaoscypher graph template list`).
 
     Example:
-        chaoscypher graph template get Person
-        chaoscypher graph template get tmpl-123 --format json
+        chaoscypher graph template get tmpl_a1b2c3d4e5
+        chaoscypher graph template get tmpl_a1b2c3d4e5 --format json
     """
     try:
         ctx = get_context(database_name=database)
 
         template = ctx.template_service.get_template(template_id)
-
-        if not template:
-            console.print(f"[red]Template not found:[/red] {template_id}")
-            sys.exit(1)
 
         # Convert to dict if needed
         if hasattr(template, "model_dump"):
@@ -131,6 +129,9 @@ def get(template_id: str, output_format: str, database: str) -> None:
                 for constraint in constraints:
                     console.print(f"  • {constraint}")
 
+    except NotFoundError:
+        console.print(f"[red]Template not found:[/red] {template_id}")
+        sys.exit(1)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

@@ -33,15 +33,21 @@ graph LR
     style F fill:#12121e,stroke:#ff6d00,color:#e0e0f0
 ```
 
-## Package Types
+## What a Package Can Contain
 
-| Type | Description | Use Case |
-|------|-------------|----------|
+A package can carry any combination of these components (chosen at export
+time — this is a description of contents, not a hub filter):
+
+| Contents | Description | Use Case |
+|----------|-------------|----------|
 | **Full** | Complete knowledge graph — templates, entities, relationships | Share a fully extracted knowledge base |
 | **Templates** | Node and edge type definitions only | Share domain schemas (medical, legal, technical) |
 | **Knowledge** | Graph entities and relationships | Share extracted data without schema definitions |
 | **Workflows** | Automation definitions and triggers | Share processing pipelines |
-| **Mixed** | Any combination of the above | Flexible packaging for partial shares |
+
+Packages advertise **conformance classes** (e.g. `ccx-core`) describing which
+parts of the CCX spec they satisfy; the hub's search filters on
+`conformance_class`.
 
 ## Quick Start
 
@@ -125,16 +131,23 @@ A CCX (Chaos Cypher eXchange) package is a compressed archive with a flat layout
 
 ```
 my-package.ccx
-├── manifest.json           # Package metadata and checksums
-├── templates.jsonld        # Node and edge type definitions
-├── knowledge.jsonld        # Graph nodes and edges (JSON-LD)
-├── workflows.jsonld        # Automation definitions
-├── sources.jsonl           # Source records
-├── graph_preview.png       # Graph thumbnail (optional)
-└── README.txt              # Human-readable summary
+├── mimetype                              # CCX media-type marker
+├── manifest.json                         # Package metadata and checksums
+├── context.jsonld                        # JSON-LD vocabulary/context
+├── knowledge.jsonld                      # Graph nodes and edges (default graph)
+├── graphs/
+│   ├── chaoscypher.templates.jsonld      # Node and edge type definitions
+│   ├── chaoscypher.workflows.jsonld      # Automation definitions
+│   └── chaoscypher.statistics.jsonld     # Cached package statistics
+├── sources.jsonl                         # Source records
+├── shapes.ttl                            # SHACL shapes (optional)
+├── assets/graph_preview.png              # Graph thumbnail (optional)
+└── signatures/                           # Package signatures (optional)
 ```
 
-Only non-empty files are included — a templates-only export, for example, contains just `manifest.json`, `templates.jsonld`, and `README.txt`. Packages are versioned, checksummed, and can be public or private. The manifest includes metadata like author, description, tags, and compatibility information.
+The default `knowledge.jsonld` graph is always present (empty for an
+à-la-carte export), and app-specific named graphs under `graphs/` are included
+only when their component is in the export. Packages are versioned, checksummed, and can be public or private. The manifest includes metadata like author, description, tags, and compatibility information.
 
 ## Authentication
 

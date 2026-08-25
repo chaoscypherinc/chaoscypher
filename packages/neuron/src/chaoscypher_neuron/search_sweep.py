@@ -139,6 +139,18 @@ def _reindex_chunks_for_source(
         )
 
 
+def _source_has_remaining_pending(session: Any, source_id: str) -> bool:
+    """Return True while any pending_search_index row still references source_id.
+
+    A failed commit enqueues one pending row per node (plus one for chunks),
+    all sharing the same ``source_id`` — the source is only fully recovered
+    once the LAST of them drains, so the sweep probes for survivors before
+    flipping ``vector_indexing_status`` to ``"indexed"``.
+    """
+    stmt = select(PendingSearchIndex).where(PendingSearchIndex.source_id == source_id).limit(1)
+    return session.exec(stmt).first() is not None
+
+
 def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index types in sequence; refactor out-of-scope
     adapter: SqliteAdapter,
     search_repo: SearchRepository,
@@ -216,7 +228,9 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
                     session.delete(entry)
                     session.commit()
                     stats["pending_drained"] += 1
-                    if entry_source_id:
+                    if entry_source_id and not _source_has_remaining_pending(
+                        session, entry_source_id
+                    ):
                         mark_search_indexing_indexed(
                             adapter=adapter,
                             source_id=entry_source_id,
@@ -239,8 +253,10 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
             session.commit()
             stats["pending_drained"] += 1
             # Recovered: the owning source moves from 'degraded' back to
-            # 'indexed' so the UI badge clears.
-            if entry_source_id:
+            # 'indexed' so the UI badge clears — but only once its LAST
+            # pending row drains (the deleted entry is already committed,
+            # so the probe sees only surviving siblings).
+            if entry_source_id and not _source_has_remaining_pending(session, entry_source_id):
                 mark_search_indexing_indexed(
                     adapter=adapter,
                     source_id=entry_source_id,

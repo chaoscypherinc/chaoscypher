@@ -29,10 +29,22 @@ async def test_reconcile_loop_calls_reconciler_periodically(
     monkeypatch,
 ) -> None:
     """The loop invokes reconcile_queue every interval until cancelled."""
+    target_per_queue = 2
     call_log: list[str] = []
+    # Signalled once BOTH configured queues have been reconciled the target
+    # number of times. Waiting on this event (instead of asserting counts
+    # after a fixed sleep) makes the test deterministic on slow/parallel CI
+    # runners where wall-clock timing would otherwise yield too few
+    # iterations — the same fix already applied to the third test below.
+    reached_target = asyncio.Event()
 
     async def fake_reconcile(client, queue_name, *, max_tries, timeout_seconds=None):
         call_log.append(queue_name)
+        if (
+            call_log.count("llm") >= target_per_queue
+            and call_log.count("operations") >= target_per_queue
+        ):
+            reached_target.set()
         return ReconcileStats()
 
     monkeypatch.setattr(
@@ -42,22 +54,24 @@ async def test_reconcile_loop_calls_reconciler_periodically(
 
     worker = _build_worker()
     worker._queue_client = MagicMock()
-    worker._reconcile_interval_seconds = 0.05  # 50ms for test
+    # Near-zero interval so iterations are bounded by event delivery, not the
+    # sleep; the assertion below waits on the event rather than the clock.
+    worker._reconcile_interval_seconds = 0
     worker._running = True
 
     loop_task = asyncio.create_task(worker._reconcile_loop())
-
-    # Let the loop run ~4 iterations (200ms at 50ms interval)
-    await asyncio.sleep(0.2)
-
-    worker._running = False
-    loop_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await loop_task
+    try:
+        # Generous timeout guards against a genuine hang on any runner.
+        await asyncio.wait_for(reached_target.wait(), timeout=5.0)
+    finally:
+        worker._running = False
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
 
     # Should have seen both queues multiple times
-    assert call_log.count("llm") >= 2
-    assert call_log.count("operations") >= 2
+    assert call_log.count("llm") >= target_per_queue
+    assert call_log.count("operations") >= target_per_queue
 
 
 @pytest.mark.asyncio

@@ -142,7 +142,7 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
       {
         title: "Plugin System",
         description:
-          "Extend Chaos Cypher with custom document loaders, extraction domains, and workflow tools. Drop a Python file into the plugins directory — no registration needed.",
+          "Extend Chaos Cypher with custom document loaders, extraction domains, and workflow tools. Drop a Python or JSON-LD file into the plugins directory — no registration needed.",
         linkTo: "/docs/user-guide/domains",
       },
     ],

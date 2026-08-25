@@ -75,6 +75,58 @@ async def test_cancelled_queued_waiter_does_not_leak_slot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_cleared_waiter_does_not_release_phantom_slot() -> None:
+    """A waiter cancelled after ``clear_waiting_queues`` woke it holds no slot.
+
+    ``clear_waiting_queues`` sets the waiter's event without granting a slot.
+    If the task is cancelled before it resumes, ``_handle_cancelled_wait``
+    used to see the set event and release a slot never held, driving
+    ``active_count`` below reality and over-admitting past ``max_concurrent``.
+    """
+    sem = PrioritySemaphore(max_concurrent=1, reserved_high_priority=0)
+
+    holder_acquired = asyncio.Event()
+    holder_release = asyncio.Event()
+
+    async def holder() -> None:
+        async with sem.acquire():
+            holder_acquired.set()
+            await holder_release.wait()
+
+    holder_task = asyncio.create_task(holder())
+    await holder_acquired.wait()  # the single slot is now held
+    assert sem.active_count == 1
+
+    async def waiter() -> None:
+        async with sem.acquire():
+            pass
+
+    waiter_task = asyncio.create_task(waiter())
+    await _wait_until(lambda: sem.get_stats()["waiting_low_priority"] == 1)
+
+    # Clear-wake the parked waiter (event set, no slot granted), then cancel
+    # it before the event loop lets it resume.
+    await sem.clear_waiting_queues()
+    waiter_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter_task
+
+    # The holder still owns the only slot — no phantom release happened.
+    assert sem.active_count == 1
+    assert not sem._cleared  # tombstone consumed, no leak
+
+    # No extra admission: a fresh request must wait until the holder releases.
+    fresh_task = asyncio.create_task(waiter())
+    await _wait_until(lambda: sem.get_stats()["waiting_low_priority"] == 1)
+    assert sem.active_count == 1
+
+    holder_release.set()
+    await holder_task
+    await asyncio.wait_for(fresh_task, timeout=1.0)
+    assert sem.active_count == 0
+
+
+@pytest.mark.asyncio
 async def test_repeated_cancellations_do_not_exhaust_slots() -> None:
     """N waiters cancelled while queued must not permanently consume the slots."""
     sem = PrioritySemaphore(max_concurrent=2, reserved_high_priority=0)

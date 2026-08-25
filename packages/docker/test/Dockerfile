@@ -72,6 +72,34 @@ RUN mkdir -p /app/packages/neuron/src \
     /app/scripts \
     /app/tests
 
+# Semgrep project root — load-bearing, not a convenience. semgrep locates
+# its project root via `git rev-parse --show-toplevel` and anchors BOTH
+# .semgrepignore (mounted in docker-compose.yml, see that file's comment)
+# AND any root-anchored `paths.exclude`/`paths.include` pattern (e.g.
+# CC005's "/packages/core/src/chaoscypher_core/adapters/**", CC019's
+# ".../utils/id.py") to that root. This container receives the tree
+# entirely via bind mounts and .dockerignore excludes .git/, so with no
+# discoverable root those root-anchored patterns silently miss and
+# `make lint-claude` both under-runs rules whose root-anchored `include`
+# can't resolve and reports phantom CC005/CC019 findings on files the
+# host-side run correctly excludes (measured on 2026-08-14: 14/26 rules
+# effectively enforced over 850 targets, 6 phantom findings, vs. the
+# host's 26/26 over 1995 targets, 0 findings). See commit 69093b455 and
+# packages/core/tests/unit/scripts/test_semgrep_rule_selftests.py's
+# _semgrep_project_root_is_discoverable for the same root cause hitting
+# the CC040/CC041 self-tests.
+#
+# A bare `git init` is sufficient: semgrep only needs
+# `git rev-parse --show-toplevel` to succeed, not real history, a remote,
+# or tracked commits (69093b455's manual repro: Targets scanned 0 -> 2
+# across that same before/after). A real bind-mounted worktree checkout
+# points its `.git` at an external gitdir living outside the mounted
+# tree (a *file*, not a directory) that would need mounting too and
+# differs per host machine; a throwaway init sidesteps that fragility
+# entirely and is safe because nothing else in this image or the mounted
+# source trees expects /app to be a real, history-bearing git checkout.
+RUN git init --quiet /app
+
 # Run as non-root user
 RUN groupadd -g 1000 appuser && \
     useradd -u 1000 -g appuser -m -s /bin/bash appuser && \

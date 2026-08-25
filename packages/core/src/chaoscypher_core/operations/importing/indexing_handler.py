@@ -1886,6 +1886,7 @@ async def _apply_vision_processing(
             },
             metadata={
                 "source_id": file_id,
+                "database_name": database_name,
                 "page_id": row["id"],
                 "page_number": row["page_number"],
                 "operation_type": OP_VISION_PAGE,

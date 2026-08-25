@@ -167,27 +167,10 @@ jobs:
         working-directory: packages/interface
         run: npm ci
 
-      - name: Python dependency audit
-        # PYSEC-2022-42969: ReDoS in `py.path.svnwc`. `py` is a transitive dev
-        # dep via `interrogate` (docstring coverage). Neither interrogate nor
-        # this project use svnwc, so the affected code path is unreachable and
-        # the package has no upstream fix. Re-evaluate when interrogate drops
-        # its `py` dependency. Mirror of the Makefile `security` target.
-        run: uv run pip-audit --ignore-vuln PYSEC-2022-42969
-
-      - name: Frontend dependency audit
-        run: npm audit --audit-level=high
-        working-directory: packages/interface
-
-      - name: Docs dependency audit
-        # Audits the lockfile only — no npm ci needed in packages/docs.
-        # Blocks on high+ advisories that HAVE a published fix and reports the
-        # ones that do not, because packages/docs is a build-only tree whose
-        # ~1000 transitive Docusaurus packages produce unfixable upstream
-        # advisories regularly (image-size GHSA-w3rx-r6r6-pgpr /
-        # GHSA-5p2g-fcmc-qvqq report fixAvailable:false on every published
-        # version). Blocking on those halts all work while mitigating nothing.
-        # Self-clearing: a published fix makes it blocking again.
-        # Mirrors the `security` step in scripts/run_ci.py — keep the two in
-        # sync; they encode the same policy in two places.
-        run: uv run python scripts/npm_audit_gate.py packages/docs
+      - name: Dependency audits (Python + frontend + docs)
+        # Single source of truth: the `security` step of scripts/run_ci.py
+        # (pip-audit ignore-list, interface strict high+ audit, docs
+        # fixable-only gate). This job used to restate that policy inline and
+        # drifted from it twice in one day (#402/#404/#405) — invoke the
+        # runner instead of mirroring it.
+        run: uv run python scripts/run_ci.py --steps security

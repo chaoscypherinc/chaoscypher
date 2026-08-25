@@ -15,10 +15,18 @@ from chaoscypher_cortex.lifespan import _cortex_reconcile_safety_net_loop
 @pytest.mark.asyncio
 async def test_safety_net_loop_fires_periodically() -> None:
     """The loop invokes force_reconcile repeatedly until shutdown."""
+    target_calls = 2
     calls: list[str] = []
+    # Signalled once the loop has driven force_reconcile the target number of
+    # times. Waiting on this event (instead of asserting a count after a fixed
+    # real sleep) makes the test deterministic on slow/parallel CI runners
+    # where wall-clock timing would otherwise yield too few iterations.
+    reached_target = asyncio.Event()
 
     async def fake_force_reconcile(queue_name=None):
         calls.append(queue_name or "all")
+        if len(calls) >= target_calls:
+            reached_target.set()
         return {
             "recovered_orphans": 0,
             "recovered_crashed": 0,
@@ -36,19 +44,23 @@ async def test_safety_net_loop_fires_periodically() -> None:
     loop_task = asyncio.create_task(
         _cortex_reconcile_safety_net_loop(
             service=service,
-            interval_seconds=0.05,
+            # Near-zero interval so iterations are bounded by event delivery,
+            # not the clock; the wait below is on the event, not a sleep.
+            interval_seconds=0,
             should_shutdown=should_shutdown,
         )
     )
-
-    await asyncio.sleep(0.2)
-    shutdown["value"] = True
-    loop_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await loop_task
+    try:
+        # Generous ceiling: it only bites if the loop is genuinely broken.
+        await asyncio.wait_for(reached_target.wait(), timeout=5.0)
+    finally:
+        shutdown["value"] = True
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
 
     # Should have invoked force_reconcile multiple times
-    assert len(calls) >= 2
+    assert len(calls) >= target_calls
     assert all(c == "all" for c in calls)
 
 
@@ -57,12 +69,20 @@ async def test_safety_net_survives_errors(
     structlog_for_caplog: None,  # pytest fixture, side-effect only
 ) -> None:
     """A transient error in force_reconcile does not kill the loop."""
+    target_calls = 3
     call_count = 0
+    # Signalled once the loop has driven force_reconcile through the two
+    # error-raising calls AND a subsequent success. Waiting on this event
+    # (instead of asserting a count after a fixed real sleep) makes the test
+    # deterministic on slow/parallel CI runners.
+    reached_target = asyncio.Event()
 
     async def flaky_force_reconcile(queue_name=None):
         nonlocal call_count
         call_count += 1
-        if call_count < 3:
+        if call_count >= target_calls:
+            reached_target.set()
+        if call_count < target_calls:
             msg = "transient"
             raise RuntimeError(msg)
         return {
@@ -82,15 +102,18 @@ async def test_safety_net_survives_errors(
     loop_task = asyncio.create_task(
         _cortex_reconcile_safety_net_loop(
             service=service,
-            interval_seconds=0.05,
+            # Near-zero interval: iterations are bounded by event delivery.
+            interval_seconds=0,
             should_shutdown=should_shutdown,
         )
     )
+    try:
+        # Generous ceiling: it only bites if the loop dies on the first error.
+        await asyncio.wait_for(reached_target.wait(), timeout=5.0)
+    finally:
+        shutdown["value"] = True
+        loop_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await loop_task
 
-    await asyncio.sleep(0.3)
-    shutdown["value"] = True
-    loop_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await loop_task
-
-    assert call_count >= 3
+    assert call_count >= target_calls

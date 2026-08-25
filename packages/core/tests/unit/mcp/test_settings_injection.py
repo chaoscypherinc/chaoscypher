@@ -142,7 +142,7 @@ async def test_get_tasks_autodetect_branch_samples_from_engine_settings() -> Non
         "extraction_depth": "full",
         "forced_domain": None,
         "extraction_domain": None,
-        "extraction_chunk_indices": None,
+        "_test_expected_chunk_indices": None,
         "stage_progress": {},
     }
     engine.storage_adapter.transition_source_status.return_value = True

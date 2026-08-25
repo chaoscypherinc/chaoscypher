@@ -791,13 +791,18 @@ class EmbedResult(BaseModel):
 
 
 class BatchEmbedResult(BaseModel):
-    """Result from LLMProvider.batch_embed()."""
+    """Result from LLMProvider.batch_embed().
+
+    The embedding port is all-or-nothing: ``batch_embed`` either returns a
+    full batch of vectors or raises ``LLMError`` — it never partially
+    succeeds. There is no per-text failure count to report; a caller either
+    has ``total`` embeddings or an exception, never a fractional result.
+    """
 
     embeddings: list[list[float]] = Field(
         description="Embedding vectors (same order as input, empty list for failures)"
     )
     total: int = Field(description="Total texts processed")
-    failed: int = Field(description="Number of failed embeddings")
     provider: str = Field(description="Embedding provider name")
 
     model_config = ConfigDict(extra="forbid")

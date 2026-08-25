@@ -130,6 +130,35 @@ def _safe_filename_from_title(title: str, fallback: str = "web_import") -> str:
     return re.sub(r"\s+", " ", cleaned)[:100] or fallback
 
 
+# A fetched page's <title> is remote-controlled and, until this point, is
+# only `.strip()`ed before being persisted verbatim as `SourceRow.title`
+# (see adapters/sqlite/mixins/source_files.py) and later interpolated into
+# the chat system prompt's `<source_list>` fence (entry 584). The
+# authoritative guard lives at that interpolation point
+# (streaming/chat/messages.py:_sanitize_source_title), which every source
+# feeder (not just URL imports) passes through. This is defense in depth:
+# neutralizing here too means the persisted title itself never carries the
+# raw fence-significant (`<`/`>`) or control characters harvested from a
+# page this process does not control.
+_PAGE_TITLE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
+_PAGE_TITLE_FENCE_CHARS_RE = re.compile(r"[<>]+")
+
+
+def _sanitize_page_title(title: str) -> str:
+    """Strip control and fence-significant characters from a scraped page title.
+
+    Args:
+        title: Raw ``<title>`` text extracted from a fetched page.
+
+    Returns:
+        A single-line, `<`/`>`-free title with whitespace collapsed.
+
+    """
+    cleaned = _PAGE_TITLE_CONTROL_CHARS_RE.sub(" ", title)
+    cleaned = _PAGE_TITLE_FENCE_CHARS_RE.sub("", cleaned)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 async def handle_fetch_url(  # noqa: PLR0911, PLR0915
     data: dict[str, Any],
     source_processing_service: SourceProcessingService,
@@ -232,7 +261,12 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
         # Branch on text vs binary. Both paths funnel into the standard
         # upload pipeline via ``staged_file_path``; only the staged
         # contents and filename differ.
-        page_title = (result.title or "Untitled Page").strip()
+        # The `or "Untitled Page"` fallback is applied both before AND after
+        # sanitizing: a title that is non-empty but consists entirely of
+        # control/fence characters (e.g. a page whose <title> is just "<>")
+        # would pass the pre-sanitize truthiness check yet sanitize down to
+        # an empty string, silently persisting an empty SourceRow.title.
+        page_title = _sanitize_page_title(result.title or "Untitled Page") or "Untitled Page"
         safe_title = _safe_filename_from_title(page_title)
 
         if result.is_binary:

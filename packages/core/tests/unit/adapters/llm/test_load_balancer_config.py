@@ -362,13 +362,13 @@ async def test_drain_not_present_returns_early() -> None:
 
 @pytest.mark.asyncio
 async def test_drain_waits_until_active_zero_then_removes() -> None:
-    """The drain loop sleeps while active_count > 0, then removes the instance."""
+    """The drain loop sleeps while requests remain, then removes the instance."""
     bal = _bare_balancer()
     bal._drain_max_wait = 5
 
-    sem = MagicMock()
+    sem = _fake_semaphore()  # no parked waiters
     # active_count: 2, 1, 0 — drains over two iterations then removes.
-    type(sem).active_count = property(lambda self, vals=iter([2, 1, 0, 0]): next(vals))
+    type(sem).active_count = property(lambda self, vals=iter([2, 2, 1, 1, 0, 0]): next(vals))
     bal._semaphores = {"a": sem}
     bal._providers = {"a": MagicMock()}
     bal._instances = {"a": {"healthy": True}}

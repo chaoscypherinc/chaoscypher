@@ -1,7 +1,7 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Contract tests for queue dead-letter retention (failed-task TTL).
+"""Contract tests for queue task-hash retention (terminal-state TTLs).
 
 Covers the P2 reliability item from the 2026-05-18 production-launch audit:
 failed task hashes used to live only as long as ``result_ttl=3600`` (1 hour)
@@ -18,6 +18,13 @@ Tested fail sites:
 - Reconciler abandonment when retry policy denies retry.
 - ``_retry_task`` PERSIST defensive: a re-queued task gets its TTL cleared
   so a long EXPIRE doesn't auto-delete a healthy in-flight task.
+
+Also covers the 2026-08-06 P1 performance finding on the *other* terminal
+states: success and cancellation left the hash immortal (only
+``queue:result:{id}`` was bounded, by ``setex``), so ``queue:task:*`` grew
+forever and the six full-keyspace ``scan_iter`` + ``HGETALL`` paths got
+proportionally slower. Both now EXPIRE the hash at ``result_ttl``, matching
+the lifetime of the result the success path already writes.
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from chaoscypher_core.constants import QUEUE_OPERATIONS
-from chaoscypher_core.queue.client import QueueClient
+from chaoscypher_core.queue.client import GUARDED_OK, QueueClient
 from chaoscypher_core.queue.service import _execute_handler
 
 
@@ -217,6 +224,161 @@ async def test_execute_handler_legacy_no_failed_ttl_still_writes_status() -> Non
 
 
 # ---------------------------------------------------------------------------
+# _execute_handler — success and cancellation bound the task hash too
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_handler_expires_task_hash_on_success() -> None:
+    """A completed task's hash expires with its result instead of living forever."""
+
+    async def ok_handler(*args: Any, **kwargs: Any) -> Any:
+        return {"ok": True}
+
+    valkey = _make_handler_client()
+    result = await _execute_handler(
+        handler=ok_handler,
+        task_id="t-ok",
+        queue=QUEUE_OPERATIONS,
+        operation="test_op",
+        data={},
+        metadata={},
+        result_ttl=3600,
+        client=valkey,
+    )
+
+    assert result == {"ok": True}
+
+    mapping = valkey.hset.call_args.kwargs["mapping"]
+    assert mapping["status"] == "completed"
+
+    # The result key was already bounded; the task hash now matches it, so
+    # neither key outlives the other.
+    assert valkey.setex.await_args.args[0] == "queue:result:t-ok"
+    assert valkey.setex.await_args.args[1] == 3600
+    valkey.expire.assert_awaited_once_with("queue:task:t-ok", 3600)
+
+
+@pytest.mark.asyncio
+async def test_execute_handler_expires_task_hash_on_cancel() -> None:
+    """A cancelled task's hash gets the same bounded retention, then re-raises."""
+
+    async def cancelled_handler(*args: Any, **kwargs: Any) -> Any:
+        raise asyncio.CancelledError
+
+    valkey = _make_handler_client()
+    with pytest.raises(asyncio.CancelledError):
+        await _execute_handler(
+            handler=cancelled_handler,
+            task_id="t-cancel",
+            queue=QUEUE_OPERATIONS,
+            operation="test_op",
+            data={},
+            metadata={},
+            result_ttl=3600,
+            client=valkey,
+        )
+
+    mapping = valkey.hset.call_args.kwargs["mapping"]
+    assert mapping["status"] == "cancelled"
+    valkey.expire.assert_awaited_once_with("queue:task:t-cancel", 3600)
+
+    # Cancellation writes no result key — only the hash needs bounding.
+    valkey.setex.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_handler_writes_result_before_flipping_status_to_completed() -> None:
+    """The result key lands before status flips to "completed" (P1 entry 772).
+
+    ``LLMQueueService.wait_for_result`` (llm_queue/queue_service.py) only
+    calls ``get_result`` once it observes ``status == "completed"`` on the
+    task hash, and returns whatever ``get_result`` gives it — including
+    ``None`` — with no re-poll. If the status HSET landed before the result
+    SETEX, a cross-process poll racing that window could read "completed"
+    with no result yet, and callers (e.g. the chat executor) discard the
+    ``None`` as a permanent "Empty response from LLM" error even though the
+    handler finished successfully.
+
+    This pins the write order directly against ``_execute_handler`` rather
+    than through ``wait_for_result``, whose ``get_task``/``get_result``
+    mocks are independently stubbed and can't observe production ordering
+    at all (see test_queue_service_coverage.py::
+    test_wait_for_result_completed_returns_result).
+    """
+
+    async def ok_handler(*args: Any, **kwargs: Any) -> Any:
+        return {"content": "hi"}
+
+    valkey = _make_handler_client()
+    call_order: list[str] = []
+    valkey.hset.side_effect = lambda *a, **k: call_order.append("hset") or True
+    valkey.setex.side_effect = lambda *a, **k: call_order.append("setex") or True
+
+    await _execute_handler(
+        handler=ok_handler,
+        task_id="t-order",
+        queue=QUEUE_OPERATIONS,
+        operation="test_op",
+        data={},
+        metadata={},
+        result_ttl=3600,
+        client=valkey,
+    )
+
+    # Exactly one hset (the status flip) and one setex (the result write)
+    # fire on the success path; the result write must be recorded first.
+    assert call_order.index("setex") < call_order.index("hset"), (
+        f"result key written after status flip to completed: {call_order}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_success_retention_uses_the_caller_supplied_result_ttl() -> None:
+    """The TTL tracks ``result_ttl``, not a hard-coded constant."""
+
+    async def ok_handler(*args: Any, **kwargs: Any) -> Any:
+        return "done"
+
+    valkey = _make_handler_client()
+    await _execute_handler(
+        handler=ok_handler,
+        task_id="t-ttl",
+        queue=QUEUE_OPERATIONS,
+        operation="test_op",
+        data={},
+        metadata={},
+        result_ttl=7200,
+        client=valkey,
+    )
+
+    valkey.expire.assert_awaited_once_with("queue:task:t-ttl", 7200)
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_keeps_the_longer_dead_letter_ttl() -> None:
+    """Success/cancel retention must not shorten the permanent-failure window."""
+
+    async def boom_handler(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("bad input")
+
+    valkey = _make_handler_client()
+    await _execute_handler(
+        handler=boom_handler,
+        task_id="t-perm-ttl",
+        queue=QUEUE_OPERATIONS,
+        operation="test_op",
+        data={},
+        metadata={},
+        result_ttl=3600,
+        client=valkey,
+        failed_result_ttl=_TEST_FAILED_TTL,
+    )
+
+    valkey.expire.assert_awaited_once_with("queue:task:t-perm-ttl", _TEST_FAILED_TTL)
+
+
+# ---------------------------------------------------------------------------
 # Worker fail sites — TTL applied when terminal
 # ---------------------------------------------------------------------------
 
@@ -243,6 +405,7 @@ def _build_worker_with_queue_client(
     queue_client.complete_task_atomic = AsyncMock(return_value=None)
     queue_client.set_heartbeat = AsyncMock(return_value=None)
     queue_client.refresh_heartbeat = AsyncMock(return_value=None)
+    queue_client.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
 
     valkey = qc_valkey
     valkey.sadd = AsyncMock(return_value=1)
@@ -510,6 +673,9 @@ async def test_retry_task_persists_ttl_for_safety() -> None:
     valkey.hget = AsyncMock(return_value=b"50")
     valkey.zadd = AsyncMock(return_value=1)
     valkey.persist = AsyncMock(return_value=True)
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15) — QueueWorker
+    # ._retry_task draws a fresh seq per retry re-add.
+    valkey.incr = AsyncMock(return_value=1)
 
     worker = QueueWorker(
         client=valkey,

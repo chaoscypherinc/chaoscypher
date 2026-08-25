@@ -775,22 +775,41 @@ curl http://localhost/api/v1/settings/ollama/models
 
 ```json
 {
-  "models": [
+  "instances": [
     {
-      "name": "qwen3:30b-instruct",
-      "size": 18200000000,
-      "modified_at": "2026-03-01T12:00:00Z",
-      "digest": "sha256:abc123..."
-    },
-    {
-      "name": "snowflake-arctic-embed2",
-      "size": 1200000000,
-      "modified_at": "2026-02-15T08:00:00Z",
-      "digest": "sha256:def456..."
+      "instance_id": "default",
+      "instance_name": "Default",
+      "base_url": "http://ollama:11434",
+      "healthy": true,
+      "models": [
+        {
+          "name": "qwen3:30b-instruct",
+          "size": 18200000000,
+          "modified_at": "2026-03-01T12:00:00Z",
+          "digest": "sha256:abc123..."
+        },
+        {
+          "name": "snowflake-arctic-embed2",
+          "size": 1200000000,
+          "modified_at": "2026-02-15T08:00:00Z",
+          "digest": "sha256:def456..."
+        }
+      ]
     }
   ]
 }
 ```
+
+The response is a list of *instances*, not a flat list of models — one
+entry per configured Ollama instance, each carrying its own model list.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `instance_id` | string | Configured Ollama instance identifier |
+| `instance_name` | string | Display name for the instance |
+| `base_url` | string | Instance base URL |
+| `healthy` | bool | Whether the instance responded to the list request |
+| `models` | object[] | Models on this instance — `name`, `size`, `modified_at`, `digest` |
 
 ---
 
@@ -860,15 +879,41 @@ curl -X DELETE http://localhost/api/v1/settings/ollama/models/remove \
 ```json
 {
   "success": true,
-  "message": "Model 'qwen3:8b-instruct' removed"
+  "results": [
+    { "instance_id": "default", "success": true }
+  ]
 }
 ```
 
-#### Errors
+`success` is `true` only when the removal succeeded on every targeted
+instance; `results` carries one entry per instance (`instance_id`,
+`success`, and an `error` message on some failures — see below). A model
+that Ollama doesn't recognize is **not** a 404 — Ollama's delete call
+returns a non-200 status, that instance's `results` entry reports
+`"success": false` with **no** `error` key, and the endpoint still
+returns `200 OK`:
 
-| Status | Reason |
-|--------|--------|
-| `404` | Model not found on Ollama instance |
+```json
+{
+  "success": false,
+  "results": [
+    { "instance_id": "default", "success": false }
+  ]
+}
+```
+
+A connection/network failure while reaching the Ollama instance is a
+separate case: that instance's entry additionally carries an `error`
+message:
+
+```json
+{
+  "success": false,
+  "results": [
+    { "instance_id": "default", "success": false, "error": "Model removal failed" }
+  ]
+}
+```
 
 ---
 
@@ -1098,7 +1143,7 @@ curl -X POST http://localhost/api/v1/settings/reset/knowledge
 }
 ```
 
-The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`import_history_deleted`, `graph_nodes_deleted`, `graph_edges_deleted`, `graph_templates_deleted`, `sources_deleted`, `chunks_deleted`, `search_indices_cleared`).
+The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`status`, `message`, `sources_deleted`, `chunks_deleted`, `nodes_deleted`, `edges_deleted`, `templates_deleted`, `imports_directory_deleted` — a boolean for whether the imports directory was removed — and `search_indices_cleared`, a boolean).
 
 **Deletes:** Import history and file records, discovery sessions and AI suggestions, knowledge graph (nodes, edges, templates), document sources (sources, chunks, citations, tags), search indices (full-text and vector).
 
@@ -1141,7 +1186,7 @@ curl -X POST http://localhost/api/v1/settings/reset/all \
 }
 ```
 
-The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`app_db_deleted`, `graphs_deleted`, `search_indices_deleted`, `imports_deleted`, `queue_cleared`, `database_recreated`, `system_tools_created`, `default_workflows_created`, `default_triggers_created`).
+The reset runs on the background worker. Poll `GET /api/v1/queue/tasks/{task_id}/result` for the statistics payload (`status`, `action`, `workflows_created`, `system_tools_created`, `triggers_created`).
 
 **Deletes:** Entire `app.db` file (including all knowledge graph nodes, edges, templates, search indices, queue history), and uploaded import files.
 

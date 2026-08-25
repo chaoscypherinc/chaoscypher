@@ -24,14 +24,25 @@ Discovery contract:
   it runs in an isolated environment (matches the ``make lint-claude``
   invocation; semgrep pins ``click<8.2`` which conflicts with
   ``chaoscypher-cli``'s ``click>=8.3``).
+
+Second backstop — the CI *shape*:
+``semgrep test`` passes the fixture as an EXPLICIT FILE PATH, which
+bypasses semgrep's ignore lists entirely. That blindness let CC040 and
+CC041 sit dead for months: with no repo ``.semgrepignore``, semgrep's
+built-in default dropped every ``tests/`` path, so the two test-scoped
+rules matched zero targets in ``make lint-claude`` while the per-rule
+self-tests above stayed green. ``test_ci_shape_scan_reaches_test_paths``
+closes that hole by scanning a DIRECTORY the way the Makefile does.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -39,6 +50,12 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 _RULES_DIR = _REPO_ROOT / "tools" / "semgrep" / "rules"
 _FIXTURES_DIR = _REPO_ROOT / "tools" / "semgrep" / "tests"
+# Fixture tree for the CI-shape scan. Its violations live one level down
+# in a directory literally named ``tests`` — the path component semgrep's
+# built-in ignore list drops — so the scan only reaches them while the
+# repo-root .semgrepignore is present and keeps test paths in scope.
+_CI_SHAPE_DIR = _REPO_ROOT / "tools" / "semgrep" / "ci-shape"
+_SEMGREPIGNORE = _REPO_ROOT / ".semgrepignore"
 
 
 def _rule_yamls() -> list[Path]:
@@ -114,6 +131,8 @@ def _warm_semgrep_env() -> None:
             cwd=str(_REPO_ROOT),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=_SEMGREP_TIMEOUT_SECONDS,
         )
@@ -175,11 +194,16 @@ def _run_semgrep_test(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     """
 
     def _once() -> subprocess.CompletedProcess[str]:
+        # encoding/errors pinned explicitly: semgrep's rule messages contain
+        # non-ASCII (em dashes), and Windows' default cp1252 locale decoding
+        # raises UnicodeDecodeError mid-read on the reader thread.
         return subprocess.run(  # noqa: S603 — cmd is a hardcoded list (no shell, no untrusted input)
             cmd,
             cwd=str(_REPO_ROOT),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
             timeout=_SEMGREP_TIMEOUT_SECONDS,
         )
@@ -251,3 +275,155 @@ def test_semgrep_rule_self_test(rule_yaml: Path) -> None:
             f"  stdout:\n{proc.stdout}\n"
             f"  stderr:\n{proc.stderr}"
         )
+
+
+# ---------------------------------------------------------------------------
+# CI-shape scan — the blind spot the per-rule `semgrep test` above cannot see
+# ---------------------------------------------------------------------------
+
+# (rule stem, violations planted in the CI-shape fixture tree).
+# Only the two test-scoped rules need this: CC040 and CC041 are the only
+# rules whose `paths.include` is confined to `**/tests/**`, which is exactly
+# what semgrep's built-in ignore list filters out.
+_CI_SHAPE_CASES = (
+    ("cc-040-memory-sqlite-in-tests", 1),
+    ("cc-041-asyncio-run-in-tests", 1),
+)
+
+
+def test_repo_semgrepignore_exists() -> None:
+    """A repo-root ``.semgrepignore`` must exist.
+
+    Without one, semgrep falls back to its built-in default list, which
+    contains ``test/`` and ``tests/`` — silently zeroing out every target
+    CC040 and CC041 can match. See the file's own header comment.
+    """
+    assert _SEMGREPIGNORE.is_file(), (
+        f"{_SEMGREPIGNORE.relative_to(_REPO_ROOT)} is missing. Semgrep then applies "
+        "its BUILT-IN default ignore list, which drops every `tests/` path — and "
+        "CC040/CC041 (paths.include: '**/tests/**') go back to scanning zero targets "
+        "in `make lint-claude` while reporting success."
+    )
+
+
+def _semgrep_project_root_is_discoverable() -> bool:
+    """True when semgrep can anchor repo-root config for a subdirectory scan.
+
+    Semgrep locates the *project root* via git and anchors both
+    ``.semgrepignore`` and root-anchored ``paths.exclude`` patterns
+    (e.g. CC005's ``"/packages/core/src/chaoscypher_core/adapters/**"``) to
+    it. In a checkout with no ``.git`` — notably the
+    ``packages/docker/test`` container, which receives the tree as bind
+    mounts and excludes ``.git/`` via .dockerignore — a scan rooted at a
+    subdirectory never sees ``<root>/.semgrepignore``, so semgrep's
+    BUILT-IN default (which drops every ``tests/`` path) applies instead.
+
+    Measured in that container on 2026-08-13: the identical
+    ``semgrep --config <rule> tools/semgrep/ci-shape`` command reported
+    ``Targets scanned: 0`` before ``git init /app`` and ``Targets scanned: 2,
+    Findings: 1`` immediately after — root discovery is the whole mechanism.
+    (The same missing root also makes CC005/CC019's absolute excludes miss,
+    which is why the containerized ``lint-claude`` reports findings the
+    host-side run does not. The host-side gate is the authoritative one.)
+    """
+    return (_REPO_ROOT / ".git").exists()
+
+
+def _semgrep_json(rule_yaml: Path, target: Path) -> dict[str, Any]:
+    """Run the `make lint-claude` invocation shape and return parsed JSON.
+
+    Deliberately mirrors Makefile's ``lint-claude`` target: a DIRECTORY
+    argument (not an explicit file path), run from the repo root so the
+    repo ``.semgrepignore`` applies. ``--json`` replaces ``--error`` so
+    findings don't turn into a nonzero exit that the retry helper would
+    have to disambiguate from a spawn failure.
+    """
+    cmd = [
+        "uv",
+        "run",
+        "--with",
+        "semgrep",
+        "--no-project",
+        "semgrep",
+        "--config",
+        str(rule_yaml),
+        target.relative_to(_REPO_ROOT).as_posix(),
+        "--metrics",
+        "off",
+        "--json",
+    ]
+    proc = _run_semgrep_test(cmd)
+    if proc.returncode != 0:
+        pytest.fail(
+            f"CI-shape semgrep scan failed for {rule_yaml.name}\n"
+            f"  cmd: {' '.join(cmd)}\n"
+            f"  exit: {proc.returncode}\n"
+            f"  stdout:\n{proc.stdout}\n"
+            f"  stderr:\n{proc.stderr}"
+        )
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        pytest.fail(
+            f"semgrep --json emitted unparseable output for {rule_yaml.name}: {exc}\n"
+            f"  stdout:\n{proc.stdout}\n  stderr:\n{proc.stderr}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("rule_stem", "expected_findings"),
+    _CI_SHAPE_CASES,
+    ids=[stem for stem, _ in _CI_SHAPE_CASES],
+)
+def test_ci_shape_scan_reaches_test_paths(rule_stem: str, expected_findings: int) -> None:
+    """The CI invocation shape must actually reach ``tests/`` files.
+
+    The sibling ``test_semgrep_rule_self_test`` passes its fixture as an
+    explicit file path, which bypasses ignore lists — so it reports green
+    even when the rule scans nothing in CI. This test scans a *directory*
+    from the repo root, exactly like ``make lint-claude``, and fails if
+    either the target count drops to zero (the ignore list swallowed the
+    tree again) or the planted violations stop being reported (the rule
+    itself regressed).
+    """
+    if not _uv_available():
+        pytest.skip("uv not available; semgrep self-tests require uv run")
+    if not _semgrep_project_root_is_discoverable():
+        # NOT a soft-pedalled failure: without a git project root semgrep
+        # cannot apply <root>/.semgrepignore to a subdirectory scan at all,
+        # so this assertion would be measuring semgrep's root discovery
+        # rather than the repo's ignore list. The deletion regression is
+        # still caught here by test_repo_semgrepignore_exists (unconditional),
+        # and the behavioural assertion runs for real in every host-side
+        # `make lint-claude` / `make ci` / pre-commit invocation.
+        pytest.skip(
+            f"no git project root at {_REPO_ROOT} (e.g. the packages/docker/test "
+            "container, which bind-mounts the tree and excludes .git/). Semgrep "
+            "anchors .semgrepignore to the git project root, so a subdirectory "
+            "scan cannot reach it here — see _semgrep_project_root_is_discoverable. "
+            "The authoritative CC040/CC041 gate is the HOST-SIDE `make lint-claude`, "
+            "where this test executes for real."
+        )
+
+    rule_yaml = _RULES_DIR / f"{rule_stem}.yml"
+    assert rule_yaml.is_file(), f"missing rule {rule_yaml.relative_to(_REPO_ROOT)}"
+
+    payload = _semgrep_json(rule_yaml, _CI_SHAPE_DIR)
+    scanned = payload.get("paths", {}).get("scanned", [])
+    findings = payload.get("results", [])
+
+    assert len(scanned) > 0, (
+        f"{rule_stem}: 'Targets scanned' is 0 for a directory scan of "
+        f"{_CI_SHAPE_DIR.relative_to(_REPO_ROOT).as_posix()}. The rule is DEAD in "
+        "`make lint-claude` — every candidate file was filtered out before the rule "
+        "ran. Almost certainly the repo-root .semgrepignore was deleted or stopped "
+        "re-including test paths, letting semgrep's built-in default (which ignores "
+        "`tests/`) take over again.\n"
+        f"  semgrep errors: {payload.get('errors')}"
+    )
+    assert len(findings) == expected_findings, (
+        f"{rule_stem}: expected {expected_findings} finding(s) from a CI-shape "
+        f"directory scan of {_CI_SHAPE_DIR.relative_to(_REPO_ROOT).as_posix()}, got "
+        f"{len(findings)}. Scanned {len(scanned)} target(s): {scanned}\n"
+        f"  findings: {[(f.get('path'), f.get('start', {}).get('line')) for f in findings]}"
+    )

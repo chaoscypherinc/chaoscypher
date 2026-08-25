@@ -44,7 +44,10 @@ def create(
     properties, types, and validation rules.
 
     Property format: name:type[:required]
-    Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME, URL, EMAIL, JSON
+    Valid types: STRING, TEXT, INTEGER, FLOAT, BOOLEAN, DATE, DATETIME,
+    URL, EMAIL, ENUM, JSON, NODE_REFERENCE, NODE_REFERENCE_LIST.
+    (ENUM values and NODE_REFERENCE allowed types cannot be set from this
+    syntax — use the web UI or API for those.)
 
     Example:
         chaoscypher graph template create --interactive

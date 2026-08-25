@@ -47,39 +47,37 @@ def _make_full_source(
     domain: str | None = "technical",
     entity_count: int = 5,
     relationship_count: int = 3,
-) -> dict[str, Any]:
-    """Minimal full source record with extraction_results."""
+) -> tuple[list[dict], list[dict]]:
+    """Per-source table rows: ``(entities, relationships)``.
+
+    Shaped like ``list_source_entities`` / ``list_source_relationships``
+    output — relationship refs carry entity-ID strings.
+    """
     entities = [
         {
+            "id": f"{source_id}_ent_{i}",
             "name": f"Entity{i}",
             "type": "Person",
             "description": "A detailed description of the entity that is long enough to score well in the quality assessment criteria and more text.",
             "confidence": 0.9,
             "properties": {"role": "CEO", "age": 45},
             "aliases": ["Alias1"],
-            "source_chunks": ["chunk1", "chunk2"],
+            "source_chunk_indices": [0, 1],
         }
         for i in range(entity_count)
     ]
     relationships = [
         {
+            "id": f"{source_id}_rel_{i}",
             "type": "KNOWS",
-            "source": i % entity_count,
-            "target": (i + 1) % entity_count,
+            "source": f"{source_id}_ent_{i % entity_count}",
+            "target": f"{source_id}_ent_{(i + 1) % entity_count}",
             "justification": "They have worked together on multiple projects and share a long history of collaboration.",
             "confidence": 0.85,
         }
         for i in range(relationship_count)
     ]
-    return {
-        "id": source_id,
-        "title": title,
-        "extraction_domain": domain,
-        "extraction_results": {
-            "entities": entities,
-            "relationships": relationships,
-        },
-    }
+    return entities, relationships
 
 
 def _make_mock_score(
@@ -109,12 +107,27 @@ def _make_mock_score(
 
 def _make_context_and_adapter(
     source_summaries: list[dict],
-    full_sources: dict[str, dict | None],
+    extraction_map: dict[str, tuple[list[dict], list[dict]] | None],
 ) -> MagicMock:
-    """Build a mock CLIContext with list_files / get_file configured."""
+    """Build a mock CLIContext with the table-backed extraction reads wired.
+
+    ``extraction_map`` maps source_id → ``(entities, relationships)``; a
+    missing/None entry reads back as empty tables (the source has no
+    extraction rows).
+    """
     adapter = MagicMock()
     adapter.list_files.return_value = source_summaries
-    adapter.get_file.side_effect = lambda sid, dbname: full_sources.get(sid)
+
+    def _entities(sid: str, dbname: str) -> list[dict]:
+        rows = extraction_map.get(sid)
+        return rows[0] if rows else []
+
+    def _relationships(sid: str, dbname: str) -> list[dict]:
+        rows = extraction_map.get(sid)
+        return rows[1] if rows else []
+
+    adapter.list_source_entities.side_effect = _entities
+    adapter.list_source_relationships.side_effect = _relationships
 
     ctx = MagicMock()
     ctx.storage_adapter = adapter
@@ -144,15 +157,7 @@ class TestEmptyGraph:
         """Sources that have no entities or relationships are skipped → no results."""
         runner = CliRunner()
         summaries = [_make_source_summary("if_empty")]
-        full = {
-            "if_empty": {
-                "id": "if_empty",
-                "title": "Empty",
-                "extraction_domain": "technical",
-                "extraction_results": {"entities": [], "relationships": []},
-            }
-        }
-        ctx = _make_context_and_adapter(summaries, full)
+        ctx = _make_context_and_adapter(summaries, {"if_empty": ([], [])})
 
         with patch("chaoscypher_cli.context.get_context", return_value=ctx):
             with patch("chaoscypher_core.services.quality.QualityScorer"):
@@ -162,7 +167,7 @@ class TestEmptyGraph:
         assert "No sources found" in result.output
 
     def test_source_not_found_in_adapter_is_skipped(self) -> None:
-        """If get_file returns None the source is silently skipped."""
+        """A source with no extraction rows is silently skipped."""
         runner = CliRunner()
         summaries = [_make_source_summary("if_missing")]
         ctx = _make_context_and_adapter(summaries, {"if_missing": None})

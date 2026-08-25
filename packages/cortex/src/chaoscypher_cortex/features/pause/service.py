@@ -46,6 +46,7 @@ class PauseService:
         *,
         repository: PauseRepository,
         source_recovery: Any,
+        adapter: Any,
     ) -> None:
         """Initialize the service.
 
@@ -54,9 +55,15 @@ class PauseService:
             source_recovery: A SourceRecovery-compatible object with
                 an async ``recover_source(source_id, database_name)``
                 method. Tests typically use AsyncMock here.
+            adapter: The SqliteAdapter the recovery runs against. Each
+                concurrent bulk-resume recovery is wrapped in
+                ``adapter.session_scope()`` so gathered recoveries never
+                interleave on the shared fallback session (the
+                2026-05-20 silent-data-loss race).
         """
         self.repository = repository
         self.source_recovery = source_recovery
+        self.adapter = adapter
 
     # --- Per-source --------------------------------------------------------
 
@@ -144,9 +151,14 @@ class PauseService:
         async def _recover_one(sid: str) -> None:
             """Recover a single source, logging and swallowing per-source failures."""
             try:
-                await self.source_recovery.recover_source(
-                    source_id=sid, database_name=database_name
-                )
+                # Per-task session scope: the gathered recoveries would
+                # otherwise all resolve adapter.session to the shared
+                # fallback SafeSession and interleave ORM state on it
+                # (mirrors the neuron reconcile loops' pattern).
+                async with self.adapter.session_scope():
+                    await self.source_recovery.recover_source(
+                        source_id=sid, database_name=database_name
+                    )
             except Exception as err:
                 # Per-source failures are logged but do not block the rest.
                 logger.exception(

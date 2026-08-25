@@ -613,6 +613,10 @@ class SourceLifecycleMixin(SqliteMixinBase):
                     SourceRow.cached_density_ratio,
                     SourceRow.cached_density_score,
                     SourceRow.cached_pollution_penalty,
+                    SourceRow.cached_structural_penalty,
+                    SourceRow.cached_hub_skew,
+                    SourceRow.cached_reciprocal_rate,
+                    SourceRow.cached_coverage_score,
                     SourceRow.cached_low_quality_entity_count,
                     SourceRow.cached_low_quality_relationship_count,
                     SourceRow.cached_scores_at,
@@ -735,9 +739,17 @@ class SourceLifecycleMixin(SqliteMixinBase):
         from chaoscypher_core.exceptions import NotFoundError
 
         self._ensure_connected()
-        statement = select(SourceRow).where(
-            SourceRow.id == source_id,
-            SourceRow.database_name == database_name,
+        # Write path: only hydrate the key columns. Setting a deferred
+        # attribute emits no SELECT, and flush updates only changed columns —
+        # so the whole full_text / commit_payload payload never leaves disk
+        # for a two-field status flip.
+        statement = (
+            select(SourceRow)
+            .where(
+                SourceRow.id == source_id,
+                SourceRow.database_name == database_name,
+            )
+            .options(load_only(SourceRow.id, SourceRow.database_name))
         )
         source = self.session.exec(statement).first()
 
@@ -748,7 +760,9 @@ class SourceLifecycleMixin(SqliteMixinBase):
         for field, value in updates.items():
             if field in immutable_fields:
                 continue
-            if not hasattr(source, field):
+            # Class-level hasattr: an instance-level check on a deferred
+            # attribute would trigger a per-column lazy SELECT.
+            if not hasattr(SourceRow, field):
                 msg = f"update_file: unknown field {field!r} for source {source_id}"
                 raise ValueError(msg)
             _validate_field_type(SourceRow, field, value)
@@ -871,15 +885,24 @@ class SourceLifecycleMixin(SqliteMixinBase):
         from chaoscypher_core.exceptions import NotFoundError
 
         self._ensure_connected()
-        statement = select(SourceRow).where(
-            SourceRow.id == source_id,
-            SourceRow.database_name == database_name,
+        # Write path: only hydrate the key columns (see update_file) — the
+        # quality-counter helpers call this at high frequency and must not
+        # drag full_text / commit_payload off disk per increment.
+        statement = (
+            select(SourceRow)
+            .where(
+                SourceRow.id == source_id,
+                SourceRow.database_name == database_name,
+            )
+            .options(load_only(SourceRow.id, SourceRow.database_name))
         )
         source = self.session.exec(statement).one_or_none()
         if source is None:
             raise NotFoundError("source", source_id)
         for col, value in updates.items():
-            if not hasattr(source, col):
+            # Class-level hasattr: an instance-level check on a deferred
+            # attribute would trigger a per-column lazy SELECT.
+            if not hasattr(SourceRow, col):
                 msg = f"update_source_columns: unknown field {col!r} for source {source_id}"
                 raise ValueError(msg)
             setattr(source, col, value)

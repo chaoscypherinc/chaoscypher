@@ -94,25 +94,25 @@ This finds the matching `pre-<revision>-<timestamp>.db` for the failed migration
 
 Do not use `alembic downgrade -1` as a recovery path. The baseline revision is the schema floor — its `downgrade()` is an intentional no-op (it does not drop tables), so downgrading below it cannot recover an earlier state. Restore from the auto-backup instead.
 
-### Upgrading a database created before the migration squash
+### Databases created before the migration squash are not supported
 
 On 2026-06-02 the Alembic migration chain was squashed into a single consolidated `0001` baseline (see [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md#2026-06-02--migration-chain-squashed-for-the-public-launch)). Databases created before that change recorded a higher revision (for example `0050_chunk_job_finalize_claimed`) that the package no longer ships.
 
-These databases **auto-recover on the next startup** — no operator action is needed:
+The squash predates ChaosCypher's first public release (v0.1.0), so **no released build ever produced such a database.** They are unsupported, and startup refuses them instead of trying to upgrade them:
 
-- The self-healing migrator detects that the recorded revision is unknown to the current script directory and re-stamps the database to the `0001` baseline.
-- The on-disk schema is unchanged by the squash (the consolidated baseline reproduces exactly the same tables), so **no data is lost** and nothing is re-applied destructively.
-
-To inspect the state manually:
-
-```bash
-# Shows the revision the database is currently stamped at.
-chaoscypher db migrate status
+```
+This database is stamped at migration revision '0050_chunk_job_finalize_claimed',
+which is not part of this build's migration history ...
 ```
 
-If a database is somehow left at an unrecognized revision, simply restart Cortex (or run `chaoscypher upgrade`) — startup re-runs the migrator, which re-stamps it to the baseline.
+**First, check whether you downgraded.** The same message appears when a database is stamped *ahead* of the running build — for example after rolling an image back. In that case the database is healthy and nothing needs recovering: re-install the newer version of ChaosCypher and it will start normally. The revision id in the message tells you which case you are in; a pre-squash id is a high number from the retired chain, such as `0050_…`.
 
-**In plain English:** if you have an existing ChaosCypher database, you don't need to do anything special for this upgrade. The app notices the old version label, quietly relabels it to match the new single baseline, and keeps all your data exactly as it was.
+If the database really is from before the squash, back up the database file, then either:
+
+- **Re-create the database** — move the old file aside and let ChaosCypher build a fresh one, or
+- **Export and re-import** — export your data from a build that still opens the old database, then import it into a current install.
+
+**In plain English:** the database doesn't match this version of ChaosCypher. If you just downgraded, put the newer version back. If not, the database is older than the first public release and is too old to upgrade — ChaosCypher tells you so at startup rather than silently mangling it, so save a copy, start a new database, and bring your data across.
 
 ## Operator-grade upgrade: chaoscypher upgrade
 

@@ -132,6 +132,11 @@ Example:
 - `session`: `SafeSession | None` — Active session: per-task scope if entered, else fallback.
 
 Inside `session_scope()` returns the ContextVar-bound session
-unique to the current async task. Outside any scope (tests,
+unique to the current async task — but only when that session is
+bound to THIS adapter's engine. An adapter created for a
+different database inside someone else's scope (the task-database
+rebind pattern in the queue handlers) must resolve to its own
+`_fallback_session`, or every query it runs silently lands in
+the scope owner's database file. Outside any scope (tests,
 startup, Cortex per-request adapters) returns the connection-time
 `_fallback_session`.

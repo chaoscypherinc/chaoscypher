@@ -19,7 +19,8 @@ export function useDashboard(): UseDashboardDataResult {
   if (ctx === null) {
     throw new Error(
       'useDashboard must be used within a <DashboardProvider>. ' +
-        'Wrap the app (or the relevant subtree) in <DashboardProvider> in main.tsx.',
+        'Wrap the app (or the relevant subtree) in <DashboardProvider> — ' +
+        'App.tsx mounts it in LayoutWrapper.',
     );
   }
   return ctx;

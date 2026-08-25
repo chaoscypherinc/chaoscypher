@@ -209,11 +209,12 @@ async def _embed_unembedded_chunks(
                 database_name=database_name,
             )
 
-            # Tick once per embedded chunk. StageProgress._safe swallows
-            # individual tick failures so the pipeline never stalls on
-            # progress reporting.
-            for _ in range(count):
-                await stage_progress.tick()
+            # ONE tick for the whole wave. The wave's real write is already
+            # batched (``mark_chunks_embedded`` above); ticking ``count``
+            # times handed that win straight back as one UPDATE + one COMMIT
+            # per chunk. StageProgress._safe swallows tick failures so the
+            # pipeline never stalls on progress reporting.
+            await stage_progress.tick(n=count)
 
             embedded_total += count
             after_chunk_index = wave[-1]["chunk_index"]

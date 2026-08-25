@@ -65,8 +65,10 @@ def report(
         chaoscypher source quality report --include-domains
     """
     from chaoscypher_cli.commands.quality.utils import (
+        SOURCE_FETCH_LIMIT,
         build_entity_chunk_mentions,
         get_quality_config,
+        load_source_extraction,
     )
     from chaoscypher_core.services.quality import QualityScorer
 
@@ -74,8 +76,10 @@ def report(
     database_name = ctx.database_name
 
     try:
-        # Get all sources (list_files excludes extraction_results for performance)
-        source_list = adapter.list_files(database_name)
+        # Get all sources. list_files uses a narrow load_only projection, and
+        # its default limit=100 would silently truncate the report — pass the
+        # bulk ceiling so the whole source set is covered.
+        source_list = adapter.list_files(database_name, limit=SOURCE_FETCH_LIMIT)
 
         # Score all sources
         results = []
@@ -87,14 +91,9 @@ def report(
             if domain and source_domain != domain:
                 continue
 
-            # Fetch full source data to get extraction_results
-            source = adapter.get_file(source_id, database_name)
-            if not source:
-                continue
-
-            extraction_results = source.get("extraction_results") or {}
-            entities = extraction_results.get("entities", [])
-            relationships = extraction_results.get("relationships", [])
+            # Per-source extraction rows live in dedicated tables — the old
+            # ``extraction_results`` JSON column no longer exists.
+            entities, relationships = load_source_extraction(adapter, source_id, database_name)
 
             if not entities and not relationships:
                 continue
@@ -107,15 +106,15 @@ def report(
             entity_chunk_mentions = build_entity_chunk_mentions(entities)
 
             score = scorer.score_source(
-                source_id=source.get("id"),
+                source_id=source_id,
                 entities=entities,
                 relationships=relationships,
                 entity_chunk_mentions=entity_chunk_mentions,
             )
 
             result = {
-                "source_id": source.get("id"),
-                "title": source.get("title", "Untitled"),
+                "source_id": source_id,
+                "title": source_summary.get("title") or "Untitled",
                 "domain": source_domain or "unknown",
                 "quality_grade": round(score.quality_grade, 1),
                 "quality_label": score.quality_label,

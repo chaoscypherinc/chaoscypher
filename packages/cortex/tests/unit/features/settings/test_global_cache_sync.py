@@ -14,7 +14,6 @@ These tests pin the contract.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -42,7 +41,8 @@ def isolated_settings(tmp_path: Path) -> Path:
     set_settings(Settings())
 
 
-def test_update_settings_propagates_to_global_get_settings(
+@pytest.mark.asyncio
+async def test_update_settings_propagates_to_global_get_settings(
     isolated_settings: Path,
 ) -> None:
     """PATCH-equivalent flow must invalidate the module-global cache.
@@ -65,7 +65,7 @@ def test_update_settings_propagates_to_global_get_settings(
     baseline = get_settings()
     assert baseline.security.allow_external_access is False
 
-    asyncio.run(service.update_settings({"security": {"allow_external_access": True}}))
+    await service.update_settings({"security": {"allow_external_access": True}})
 
     after = get_settings()
     assert after.security.allow_external_access is True, (

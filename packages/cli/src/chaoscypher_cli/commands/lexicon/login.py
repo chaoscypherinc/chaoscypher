@@ -240,7 +240,7 @@ def login(url: str | None, token: str | None, no_browser: bool) -> None:
         # Show available commands
         console.print("\n[dim]You can now use:[/dim]")
         console.print("  chaoscypher pull <package>           - Download packages")
-        console.print("  chaoscypher push                     - Upload packages")
+        console.print("  chaoscypher push <file.ccx>          - Upload a package")
         console.print("  chaoscypher lexicon search <query>   - Search packages")
 
     except LexiconClientError as e:

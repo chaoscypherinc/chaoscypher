@@ -54,6 +54,7 @@ def score(ctx: Any, source_id: str, details: bool, output_json: bool) -> None:
     from chaoscypher_cli.commands.quality.utils import (
         build_entity_chunk_mentions,
         get_quality_config,
+        load_source_extraction,
     )
     from chaoscypher_core.services.quality import QualityScorer
 
@@ -67,9 +68,9 @@ def score(ctx: Any, source_id: str, details: bool, output_json: bool) -> None:
             console.print(f"[red]Source {source_id} not found[/red]")
             raise click.Abort
 
-        extraction_results = source.get("extraction_results") or {}
-        entities = extraction_results.get("entities", [])
-        relationships = extraction_results.get("relationships", [])
+        # Per-source extraction rows live in dedicated tables — the old
+        # ``extraction_results`` JSON column no longer exists.
+        entities, relationships = load_source_extraction(adapter, source_id, database_name)
 
         if not entities and not relationships:
             console.print(f"[yellow]Source {source_id} has no extraction data[/yellow]")
@@ -90,6 +91,7 @@ def score(ctx: Any, source_id: str, details: bool, output_json: bool) -> None:
             entities=entities,
             relationships=relationships,
             entity_chunk_mentions=entity_chunk_mentions,
+            chunk_count=source.get("chunk_count", 0) or 0,
         )
 
         # Output

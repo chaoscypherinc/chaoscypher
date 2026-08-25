@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import structlog
 
+from chaoscypher_core.constants import QUEUE_LLM, QUEUE_OPERATIONS
 from chaoscypher_core.exceptions import (
     ExternalServiceError,
     NotFoundError,
@@ -21,6 +22,10 @@ from chaoscypher_core.queue import queue_client
 from chaoscypher_core.queue.reconciler import (
     ReconcileStats,
     reconcile_queue,
+)
+from chaoscypher_core.queue.worker_timeouts import (
+    reconciler_cutoff_seconds,
+    resolve_effective_worker_timeout,
 )
 from chaoscypher_cortex.features.queue.models import (
     CancelAllResponse,
@@ -298,12 +303,31 @@ class QueueService:
             "llm": settings.retries.llm_worker_max_tries,
             "operations": settings.retries.operations_worker_max_tries,
         }
-        timeout_map = {
+        # The reconciler's absolute cutoff must clear the deadline the WORKER
+        # enforces — which is the workers.yaml override, not the settings
+        # default. A shorter cutoff resets still-running tasks to "queued"
+        # (the absolute branch is heartbeat-blind and requeue_atomic.lua
+        # refuses only completed/cancelled), handing live work to a second
+        # worker. See chaoscypher_core.queue.worker_timeouts.
+        default_timeouts = {
             "llm": settings.timeouts.llm_worker_default,
             "operations": settings.timeouts.operations_worker_default,
         }
+        timeout_map = {
+            q: reconciler_cutoff_seconds(
+                resolve_effective_worker_timeout(q, default=default_timeout)
+            )
+            for q, default_timeout in default_timeouts.items()
+        }
 
-        queues = [queue_name] if queue_name else list(self.queue_client.queues)
+        # The registry behind queue_client.queues is populated only by
+        # register_handlers, which Cortex never calls — fall back to the
+        # canonical queues so the safety net actually reconciles something.
+        queues = (
+            [queue_name]
+            if queue_name
+            else (list(self.queue_client.queues) or [QUEUE_LLM, QUEUE_OPERATIONS])
+        )
         merged = ReconcileStats()
         for q in queues:
             stats = await reconcile_queue(

@@ -1890,7 +1890,8 @@ class ImportOperationsService:
             this call. Zero is a valid result — it means every group
             already has a terminal task row (commonly hit on the second
             attempt of a job whose tasks all completed before an
-            unrelated crash).
+            unrelated crash), or the job reached a terminal status before
+            the dispatch (a re-extract cancelling it mid-flight).
         """
         # UPSERT task rows — skips indices that already have one, which
         # preserves work from any previous attempt on this same job.
@@ -1909,7 +1910,20 @@ class ImportOperationsService:
         # sets the initial (0/N) state, causing the user to never see
         # "chunk 1/N". On resume this is a no-op write of the same
         # status, which is fine.
-        adapter.start_extraction_job(job_id)
+        #
+        # A refusal means the job went terminal under us — a re-extract
+        # cancelling it inside this dispatch window is the case that
+        # matters. Dispatching anyway would enqueue chunk tasks for an
+        # abandoned job and overwrite the just-reset source's progress
+        # text, so bail out the same way the finalizer does.
+        if not adapter.start_extraction_job(job_id):
+            logger.info(
+                "chunk_tasks_enqueue_skipped_job_gone",
+                job_id=job_id,
+                file_id=file_id,
+                total_groups=len(hierarchical_groups),
+            )
+            return 0
         total = len(hierarchical_groups)
         adapter.update_step_progress(file_id, 0, total, f"Analyzing chunk 1/{total}")
 
@@ -1971,6 +1985,14 @@ class ImportOperationsService:
                         "chunk_task_id": task["id"],
                         "chunk_index": idx,
                         "operation_type": OP_EXTRACT_CHUNK,
+                        # source_id/database_name are what
+                        # QueueClient.in_flight_chunk_task_ids filters on
+                        # (see services/sources/recovery.py's _dispatch for
+                        # the matching shape). Without them the in-flight
+                        # guard can never match this task, so SourceRecovery
+                        # can re-dispatch a chunk that's already running.
+                        "source_id": file_id,
+                        "database_name": settings.current_database,
                     },
                 }
             )

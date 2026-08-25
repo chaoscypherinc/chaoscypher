@@ -101,3 +101,70 @@ OPERATION_QUEUE_ROUTING: dict[str, str] = {
     OP_BUILD_GRAPH_SNAPSHOT: QUEUE_OPERATIONS,
     OP_VISION_FINALIZE: QUEUE_OPERATIONS,
 }
+
+
+# -----------------------------------------------------------------------------
+# Retry-on-crash policy — single source of truth for op-name -> retry_on_crash,
+# correct in ANY process, including one that never registered a single
+# handler.
+#
+# QueueClient._retry_policy was historically populated only as a side effect
+# of register_handlers(), which only Neuron ever calls (see
+# chaoscypher_neuron.setup). Cortex holds the same shared queue_client
+# singleton and drives POST /queue/reconcile from it, but never registers
+# handlers, so QueueClient.get_retry_policy() always answered False in the
+# Cortex process — permanently failing every task abandoned by a crashed
+# worker regardless of the handler's actual policy (entry 566, fixed
+# 2026-08-15). QueueClient.get_retry_policy() now falls back to this table
+# for any (queue, operation) it has no in-process registration for.
+#
+# QueueClient.register_handlers() also validates every incoming HandlerSpec's
+# retry_on_crash against this table whenever the operation is present here:
+# a contradicting value raises TypeError at registration time, so drift
+# between a service's HandlerSpec and this table fails loudly at Neuron
+# startup instead of silently corrupting reconcile decisions later.
+#
+# Decision rule: True only for handlers whose work is safe to re-run —
+# idempotent via a DB checkpoint, an id-keyed upsert, or a terminal-status
+# guard. See each True handler's own HandlerSpec call site for its specific
+# idempotency argument. Every operation in OPERATION_QUEUE_ROUTING must have
+# an entry here (enforced by
+# test_retry_policy_canonical_table.test_canonical_table_covers_every_routed_operation);
+# operations absent from both tables (ad hoc/test op names) keep the safe
+# False default.
+# -----------------------------------------------------------------------------
+OPERATION_RETRY_ON_CRASH: dict[str, bool] = {
+    # QUEUE_LLM
+    "chat_completion": False,  # user-facing chat turn, not idempotent
+    "tool_execution": False,  # LLM tool-call dispatch, not idempotent
+    OP_EXTRACT_CHUNK: True,  # DB short-circuit makes re-running safe
+    OP_FINALIZE_EXTRACTION: True,  # status short-circuit makes re-running safe
+    OP_VISION_PAGE: True,  # row-status guard + single-terminal-observation guarantee
+    OP_EMBED_CHUNKS: True,  # embedded_at checkpoint
+    OP_INDEX_IMPORTED_SOURCE: True,  # embedded_at checkpoint + id-keyed vector upserts
+    OP_INDEX_IMPORTED_NODES: True,  # right-dim-vector skip + id-keyed upserts
+    OP_CHAT_BACKGROUND: False,  # not idempotent
+    "regenerate_template_embeddings": False,  # not idempotent
+    # QUEUE_OPERATIONS
+    "bulk_nodes": False,  # bare-callable registration; no idempotency guard declared
+    "bulk_edges": False,  # bare-callable registration; no idempotency guard declared
+    "bulk_templates": False,  # bare-callable registration; no idempotency guard declared
+    "export_graph": True,  # pure read, no database writes or side effects
+    "export_by_sources": True,  # pure read, no database writes or side effects
+    OP_IMPORT_CCX: False,  # bare-callable registration; no idempotency guard declared
+    OP_IMPORT_COMMIT: True,  # resumable commit pipeline
+    OP_IMPORT_ANALYSIS: True,  # resumable analysis pipeline
+    OP_INDEX_DOCUMENT: True,  # resumable indexing pipeline
+    "lexicon_import": False,  # bare-callable registration; no idempotency guard declared
+    OP_FETCH_URL: False,  # bare-callable registration; no idempotency guard declared
+    "execute_workflow": True,  # completed/failed executions skip re-execution
+    "execute_step": True,  # stateless step handler, safe to re-run
+    "recalculate_quality_scores": False,  # bare-callable registration; no idempotency guard declared
+    OP_REBUILD_SEARCH_INDEXES: False,  # bare-callable registration; no idempotency guard declared
+    OP_RESET_KNOWLEDGE_BASE: False,  # bare-callable registration; no idempotency guard declared
+    OP_RESET_ALL: False,  # bare-callable registration; no idempotency guard declared
+    OP_GRAPH_CLEANUP: False,  # bare-callable registration; no idempotency guard declared
+    OP_CLEANUP_ORPHANS: False,  # bare-callable registration; no idempotency guard declared
+    OP_BUILD_GRAPH_SNAPSHOT: False,  # bare-callable registration; no idempotency guard declared
+    OP_VISION_FINALIZE: True,  # aggregation + terminal state transition only
+}

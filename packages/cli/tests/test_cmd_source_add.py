@@ -602,7 +602,7 @@ class TestQuietOutput:
         assert result.exit_code == 1
         assert "AWAITING" in result.output
         assert "if_park12345678" in result.output
-        assert "cc source confirm" in result.output
+        assert "chaoscypher source confirm" in result.output
 
 
 class TestJsonOutput:

@@ -45,7 +45,7 @@ def _unwrap_handler(registered_value: object) -> object:
 
 
 @pytest.fixture
-def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
+async def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
     """Yield the harness after running both setup helpers.
 
     Configures the stub llm_service so that its register_handlers() side
@@ -56,8 +56,11 @@ def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
 
     Also patches create_embedding_provider (called inside
     setup_operations_handlers) to avoid needing a real embedding backend.
+
+    Async (rather than a sync fixture wrapping ``asyncio.run``) per CC041:
+    a nested event loop detaches anything the setup helpers bind to the
+    loop pytest-asyncio manages for the test.
     """
-    import asyncio
     from unittest.mock import MagicMock, patch
 
     from chaoscypher_core.constants import QUEUE_LLM
@@ -98,18 +101,19 @@ def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
         "chaoscypher_core.adapters.embedding.create_embedding_provider",
         return_value=MagicMock(name="embedding_provider"),
     ):
-        asyncio.run(setup_llm_handlers(worker_harness.ctx))
-        asyncio.run(setup_operations_handlers(worker_harness.ctx))
+        await setup_llm_handlers(worker_harness.ctx)
+        await setup_operations_handlers(worker_harness.ctx)
 
     return worker_harness
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("op_name", "expected_queue"),
     sorted(OPERATION_QUEUE_ROUTING.items()),
     ids=sorted(OPERATION_QUEUE_ROUTING.keys()),
 )
-def test_routing_entry_is_registered(
+async def test_routing_entry_is_registered(
     op_name: str,
     expected_queue: str,
     setup_done: WorkerHarness,
@@ -128,7 +132,8 @@ def test_routing_entry_is_registered(
     )
 
 
-def test_total_registered_ops_matches_routing_table(setup_done: WorkerHarness) -> None:
+@pytest.mark.asyncio
+async def test_total_registered_ops_matches_routing_table(setup_done: WorkerHarness) -> None:
     """No op is registered that's not in OPERATION_QUEUE_ROUTING; no entry is unregistered."""
     registered = setup_done.queue.all_registered_ops()
     declared = set(OPERATION_QUEUE_ROUTING.keys())
@@ -140,15 +145,14 @@ def test_total_registered_ops_matches_routing_table(setup_done: WorkerHarness) -
     assert not extra, f"Registered handlers NOT in OPERATION_QUEUE_ROUTING: {sorted(extra)}"
 
 
-def test_setup_llm_handlers_idempotent(worker_harness: WorkerHarness) -> None:
+@pytest.mark.asyncio
+async def test_setup_llm_handlers_idempotent(worker_harness: WorkerHarness) -> None:
     """Calling setup_llm_handlers twice produces the same registered op set.
 
     Pinned because chaoscypher_neuron.settings_sync.listen_for_settings_changes
     re-runs the setup helpers on every config change at runtime. A second call
     must not duplicate, drop, or otherwise mutate the registered-op set.
     """
-    import asyncio
-
     from chaoscypher_core.constants import QUEUE_LLM
     from chaoscypher_neuron.setup import setup_llm_handlers
 
@@ -181,10 +185,10 @@ def test_setup_llm_handlers_idempotent(worker_harness: WorkerHarness) -> None:
         "llm_service"
     ].register_handlers.side_effect = _llm_service_register_handlers_side_effect
 
-    asyncio.run(setup_llm_handlers(worker_harness.ctx))
+    await setup_llm_handlers(worker_harness.ctx)
     after_first = set(worker_harness.queue.registered_on("llm").keys())
 
-    asyncio.run(setup_llm_handlers(worker_harness.ctx))
+    await setup_llm_handlers(worker_harness.ctx)
     after_second = set(worker_harness.queue.registered_on("llm").keys())
 
     assert after_first == after_second, (
@@ -193,12 +197,12 @@ def test_setup_llm_handlers_idempotent(worker_harness: WorkerHarness) -> None:
     )
 
 
-def test_setup_operations_handlers_idempotent(worker_harness: WorkerHarness) -> None:
+@pytest.mark.asyncio
+async def test_setup_operations_handlers_idempotent(worker_harness: WorkerHarness) -> None:
     """Calling setup_operations_handlers twice produces the same registered op set.
 
     Same hot-reload rationale as test_setup_llm_handlers_idempotent.
     """
-    import asyncio
     from unittest.mock import MagicMock, patch
 
     from chaoscypher_neuron.setup import setup_operations_handlers
@@ -209,10 +213,10 @@ def test_setup_operations_handlers_idempotent(worker_harness: WorkerHarness) -> 
         "chaoscypher_core.adapters.embedding.create_embedding_provider",
         return_value=MagicMock(name="embedding_provider"),
     ):
-        asyncio.run(setup_operations_handlers(worker_harness.ctx))
+        await setup_operations_handlers(worker_harness.ctx)
         after_first = set(worker_harness.queue.registered_on("operations").keys())
 
-        asyncio.run(setup_operations_handlers(worker_harness.ctx))
+        await setup_operations_handlers(worker_harness.ctx)
         after_second = set(worker_harness.queue.registered_on("operations").keys())
 
     assert after_first == after_second, (

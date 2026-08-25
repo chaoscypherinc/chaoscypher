@@ -450,27 +450,23 @@ def test_fail_handler_reraises_on_db_exception(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_timing_from_start_not_end() -> None:
+async def test_heartbeat_timing_from_start_not_end(monkeypatch: Any) -> None:
     """Heartbeat measures interval from start of beat, not end.
 
     A slow ``_beat()`` (80ms DB write) with a 100ms interval must not
     drift the subsequent beats past the reconciler's stall threshold.
 
-    Arrange: interval=0.1s (100ms), beat takes 0.08s (80ms).
-    Run for ~0.35s.
-
-    If timing is measured from START of each iteration (correct), beats
-    are scheduled at ~t=0.1, 0.2, 0.3 from entry — four beats inside
-    the window (including the immediate __aenter__ beat = 5 total, but
-    we only care that the background loop fires ~3+ times).
-
-    If timing is measured from END (old behaviour: sleep I then beat d
-    → next sleep starts at I+d), beats land at ~0.18s, ~0.36s from
-    entry — only two background beats in 0.35s.
+    Discriminator: the loop's REQUESTED sleep durations, not wall-clock
+    beat counts (which red under CI load). Start-anchored timing
+    compensates for the 80ms beat by requesting ~20ms sleeps; the old
+    end-anchored behaviour always requested the full 100ms interval.
+    Scheduler delays only shrink a compensated request further
+    (``max(0, deadline - now)``), so load cannot flip the assertion.
     """
     from datetime import datetime
 
-    beat_timestamps: list[float] = []
+    beat_count = 0
+    enough_beats = asyncio.Event()
 
     class SlowAdapter:
         """Simulates a DB adapter whose write takes 80ms."""
@@ -482,45 +478,44 @@ async def test_heartbeat_timing_from_start_not_end() -> None:
             database_name: str,
             at_time: datetime,
         ) -> None:
-            """Record timestamp and block for 80ms to simulate slow write."""
-            beat_timestamps.append(time.monotonic())
+            """Count the beat and block for 80ms to simulate slow write."""
+            nonlocal beat_count
+            beat_count += 1
             time.sleep(0.08)  # synchronous — blocks event loop for 80ms
+            if beat_count >= 4:  # entry bookend + 3 background beats
+                enough_beats.set()
+
+    requested: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def recording_sleep(delay: float, *args: Any, **kwargs: Any) -> Any:
+        requested.append(delay)
+        return await real_sleep(delay, *args, **kwargs)
+
+    from chaoscypher_core.services.sources import heartbeat as hb_mod
+
+    monkeypatch.setattr(hb_mod.asyncio, "sleep", recording_sleep)
 
     from chaoscypher_core.services.sources.heartbeat import source_heartbeat
 
-    start = time.monotonic()
     async with source_heartbeat(
         adapter=SlowAdapter(),
         source_id="s1",
         database_name="default",
         interval_seconds=0.1,
     ):
-        await asyncio.sleep(0.35)
+        # Deterministic exit: leave once 3 background beats have fired,
+        # however long the scheduler takes to get there (bounded at 5s).
+        await asyncio.wait_for(enough_beats.wait(), timeout=5)
 
-    # Strip the entry and exit bookend beats; focus on background-loop beats.
-    # Entry beat fires at t~=0, exit beat fires after ~0.35s.
-    # Background loop beats are everything in between.
-    background_beats = [ts - start for ts in beat_timestamps[1:-1]]
-
-    # With interval=0.1s and beat_duration=0.08s over 0.35s:
-    # - Correct (start-anchored):  ~0.1, ~0.2, ~0.3  →  3 background beats
-    # - Broken (end-anchored): ~0.18, ~0.36         →  1-2 background beats
-    assert len(background_beats) >= 3, (
-        f"Expected >=3 background beats in 0.35s with 0.1s interval and "
-        f"80ms-slow beats, got {len(background_beats)}: {background_beats}"
+    assert beat_count >= 4
+    # After each 80ms beat a start-anchored loop asks for ~20ms — never a
+    # full interval. The end-anchored bug requested ~0.1 every time.
+    compensated = [r for r in requested if r < 0.09]
+    assert len(compensated) >= 2, (
+        f"Expected compensated (<90ms) sleep requests after 80ms-slow "
+        f"beats with a 100ms interval; requested={requested}"
     )
-
-    # Verify consecutive spacing is close to the 0.1s interval, not 0.18s+.
-    all_beats = [ts - start for ts in beat_timestamps]
-    loop_beats = all_beats[1:-1]  # exclude entry and exit bookends
-    if len(loop_beats) >= 2:
-        intervals = [loop_beats[i + 1] - loop_beats[i] for i in range(len(loop_beats) - 1)]
-        for idx, interval in enumerate(intervals):
-            assert interval < 0.18, (
-                f"Inter-beat interval {idx} too wide: {interval:.3f}s "
-                f"(expected ~0.1s, threshold 0.18s). "
-                f"Full beat times: {all_beats}"
-            )
 
 
 # ============================================================

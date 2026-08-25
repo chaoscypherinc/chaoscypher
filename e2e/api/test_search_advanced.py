@@ -10,15 +10,23 @@ class TestSearchModes:
     """Test different search modes."""
 
     def test_semantic_search(self, client: httpx.Client) -> None:
-        """Semantic search endpoint returns results or empty list."""
+        """Semantic search endpoint returns results or empty list.
+
+        The e2e stack's default embedding.provider is "local"
+        (settings.py:2748-2751, sentence-transformers, no external
+        service dependency), so this endpoint doesn't share the
+        LLM-unconfigured skip condition the sources/extraction tests
+        do. 400 only fires for an invalid search_type literal (not
+        reachable here — "semantic" is valid), and 503 only comes from
+        the app-wide upgrade-gate middleware (middleware.py:190-197),
+        not from anything semantic-search-specific.
+        """
         resp = client.get(
             "/api/v1/search",
             params={"q": "technology", "search_type": "semantic"},
         )
-        # Semantic may return 200 with data, or 400/503 if embeddings not set up
-        assert resp.status_code in (200, 400, 503)
-        if resp.status_code == 200:
-            assert "data" in resp.json()
+        assert resp.status_code == 200
+        assert "data" in resp.json()
 
     def test_hybrid_search(self, client: httpx.Client) -> None:
         """Hybrid search endpoint returns results."""
@@ -26,7 +34,8 @@ class TestSearchModes:
             "/api/v1/search",
             params={"q": "test", "search_type": "hybrid"},
         )
-        assert resp.status_code in (200, 400, 503)
+        assert resp.status_code == 200
+        assert "data" in resp.json()
 
 
 class TestSearchIndexStatus:

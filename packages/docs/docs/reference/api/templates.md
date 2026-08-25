@@ -324,7 +324,7 @@ DELETE /api/v1/templates/{template_id}
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `force` | boolean | No | `false` | Delete even if nodes or edges are using this template |
+| `force` | boolean | No | `false` | Cascade delete: **also deletes every node and edge using this template**. Without it, deleting an in-use template returns `409 TEMPLATE_IN_USE`. |
 
 ### Example Request
 
@@ -480,7 +480,7 @@ The standard response object returned for all template endpoints.
 | `name` | string | Template name |
 | `description` | string \| null | Human-readable description |
 | `template_type` | string | Type: `node` or `edge` |
-| `icon` | string \| null | Icon identifier for visual display (e.g. `person`, `building`, `document`) |
+| `icon` | string \| null | MUI icon name for visual display (e.g. `Person`, `Business`, `Description`) |
 | `color` | string \| null | Color hex code for visual display (e.g. `#4dabf5`) |
 | `properties` | [PropertyDefinition](#propertydefinition)[] | Property definitions for this template |
 | `is_system` | boolean | Whether this is a built-in system template |

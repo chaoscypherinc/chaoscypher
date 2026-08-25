@@ -101,11 +101,15 @@ class RehydrationSpec:
             in one of these are candidates for re-enqueue. Terminal states
             (``completed``, ``failed``, ``cancelled``, ``orphaned``) are
             skipped.
-        build_payload: Callable mapping a fetched task row onto the
-            ``(data, metadata)`` tuple passed to ``queue_client.enqueue``.
-            Returning fresh metadata lets the rehydrator stamp
-            ``rehydrated=True`` and ``prior_status`` on every re-enqueued
-            task for observability.
+        build_payload: Callable mapping a fetched task row and the active
+            session onto the ``(data, metadata)`` tuple passed to
+            ``queue_client.enqueue``. Returning fresh metadata lets the
+            rehydrator stamp ``rehydrated=True`` and ``prior_status`` on
+            every re-enqueued task for observability. The session is
+            passed through so a spec can resolve fields the row itself
+            doesn't carry (e.g. ``ChunkExtractionTask`` has no
+            ``source_id`` column -- it must be looked up via the parent
+            ``ChunkExtractionJob``).
         reset_row: Callable taking ``(row, new_queue_task_id)`` that
             mutates the row to reflect the fresh enqueue -- typically
             ``status = "queued"``, ``started_at = None``, and
@@ -115,7 +119,7 @@ class RehydrationSpec:
     operation: str
     table_factory: Callable[[], type]
     non_terminal_statuses: tuple[str, ...]
-    build_payload: Callable[[Any], tuple[dict[str, Any], dict[str, Any]]]
+    build_payload: Callable[[Any, Any], tuple[dict[str, Any], dict[str, Any]]]
     reset_row: Callable[[Any, str], None]
 
 
@@ -126,13 +130,26 @@ def _chunk_extraction_task_factory() -> type:
     return ChunkExtractionTask
 
 
-def _build_extract_chunk_payload(task: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+def _build_extract_chunk_payload(task: Any, session: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """Construct the ``OP_EXTRACT_CHUNK`` enqueue payload from a task row.
 
     The chunk handler reads chunk content out of the DB at execution time
     (the queue payload carries only IDs), so ``chunk_content``
     is intentionally empty.
+
+    ``source_id`` is resolved via a primary-key lookup on the parent
+    ``ChunkExtractionJob`` -- ``ChunkExtractionTask`` has no ``source_id``
+    column of its own. Without it, the re-enqueued task's metadata would
+    be invisible to ``QueueClient.in_flight_chunk_task_ids`` (it filters
+    on ``metadata.source_id`` + ``metadata.database_name``), letting
+    SourceRecovery's next reconcile tick duplicate a chunk this rehydrate
+    pass just brought back to life.
     """
+    from chaoscypher_core.adapters.sqlite.models import ChunkExtractionJob
+
+    job = session.get(ChunkExtractionJob, task.job_id)
+    source_id = job.source_id if job is not None else None
+
     data: dict[str, Any] = {
         "chunk_task_id": task.id,
         "job_id": task.job_id,
@@ -149,6 +166,8 @@ def _build_extract_chunk_payload(task: Any) -> tuple[dict[str, Any], dict[str, A
         "operation_type": OP_EXTRACT_CHUNK,
         "rehydrated": True,
         "prior_status": task.status,
+        "source_id": source_id,
+        "database_name": task.database_name,
     }
     return data, metadata
 
@@ -229,7 +248,7 @@ async def _rehydrate_spec(
             queue_task_id=existing_qtid,
         )
 
-        data, metadata = spec.build_payload(row)
+        data, metadata = spec.build_payload(row, session)
         new_queue_task_id = await queue_client.enqueue(
             queue=queue_name,
             operation=spec.operation,

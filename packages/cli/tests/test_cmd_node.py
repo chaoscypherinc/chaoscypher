@@ -188,7 +188,11 @@ class TestNodeGet:
                 result = runner.invoke(get, ["node-xyz", "--format", "yaml"])
 
         assert result.exit_code == 0, result.output
-        assert "JSON" in result.output or "node" in result.output
+        # The fallback warning proves the ImportError path actually fired —
+        # a bare "node" check is also true on the normal YAML path, so the
+        # previous disjunction could not detect a silently-dead patch.
+        assert "YAML output requires PyYAML" in result.output
+        assert '"id": "node-xyz"' in result.output
 
     def test_get_include_links(self) -> None:
         """--include-links fetches edges and shows links table."""
@@ -891,7 +895,13 @@ class TestNodeGetMissingBranches:
             result = runner.invoke(get, ["node-xyz", "--format", "yaml", "--include-links"])
 
         assert result.exit_code == 0, result.output
-        assert "links" in result.output or "node" in result.output
+        # Pin the links key AND its edge content — the previous disjunction
+        # ("links" in output or "node" in output) was unconditionally true
+        # because the YAML dump always starts with "node:", so silently
+        # dropping --include-links kept it green.
+        assert "node:" in result.output
+        assert "links:" in result.output
+        assert "edge-yml" in result.output
 
 
 # ===========================================================================

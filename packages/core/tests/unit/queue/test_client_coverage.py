@@ -20,6 +20,7 @@ Covered surfaces:
 - ``retry_task`` — ValueError when not failed, re-enqueue with retried_from.
 - ``task_exists_for_source`` — match + scan-exception re-raise.
 - ``in_flight_chunk_task_ids`` — populated set + empty-on-error.
+- ``in_flight_vision_page_ids`` — populated set + filtering + empty-on-error.
 - Heartbeat primitives — QueueUnavailableError when client None.
 - ``complete_task_atomic`` — lazy script_load → evalsha + SHA caching.
 - ``_decode_record`` — bytes/str + error masking.
@@ -31,12 +32,13 @@ from __future__ import annotations
 
 import contextlib
 import json
+from itertools import count
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from chaoscypher_core.constants import QUEUE_LLM, QUEUE_OPERATIONS
+from chaoscypher_core.constants import OP_CHAT_BACKGROUND, QUEUE_LLM, QUEUE_OPERATIONS
 from chaoscypher_core.exceptions import QueueFullError
 from chaoscypher_core.queue.client import QueueClient, QueueUnavailableError
 
@@ -101,6 +103,11 @@ def _make_queue_client() -> tuple[QueueClient, MagicMock, list[dict[str, Any]]]:
     valkey.zcard = AsyncMock(return_value=0)
     valkey.pipeline = MagicMock(return_value=pipeline)
     valkey.hgetall = AsyncMock(return_value={})
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15): a
+    # plain per-call sequence is enough here since these tests assert on
+    # ids/recorded hashes, not exact scores.
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
+    valkey.incrby = AsyncMock(side_effect=lambda _key, amount: amount)
     valkey.get = AsyncMock(return_value=None)
     valkey.set = AsyncMock(return_value=True)
     valkey.exists = AsyncMock(return_value=0)
@@ -398,6 +405,86 @@ async def test_get_recent_tasks_specific_queue_empty_ids() -> None:
     assert await client.get_recent_tasks(queues=[QUEUE_OPERATIONS]) == []
 
 
+def _make_multi_queue_recent_client() -> Any:
+    """QueueClient over two fake per-queue recent lists with hydration.
+
+    Six tasks with interleaved created_at across the ``llm`` and
+    ``operations`` recent lists; global recency order (desc) is
+    l3, o3, l2, o2, o1, l1.
+    """
+    client, valkey, _ = _make_queue_client()
+
+    recent: dict[str, list[bytes]] = {
+        "queue:llm:recent": [b"l3", b"l2", b"l1"],
+        "queue:operations:recent": [b"o3", b"o2", b"o1"],
+    }
+    payloads = {
+        "l3": _hash_payload(task_id="l3", queue="llm", created_at="2026-05-23T00:00:06Z"),
+        "l2": _hash_payload(task_id="l2", queue="llm", created_at="2026-05-23T00:00:04Z"),
+        "l1": _hash_payload(task_id="l1", queue="llm", created_at="2026-05-23T00:00:01Z"),
+        "o3": _hash_payload(task_id="o3", created_at="2026-05-23T00:00:05Z"),
+        "o2": _hash_payload(task_id="o2", created_at="2026-05-23T00:00:03Z"),
+        "o1": _hash_payload(task_id="o1", created_at="2026-05-23T00:00:02Z"),
+    }
+
+    async def _lrange(key: str, start: int, end: int) -> list[bytes]:
+        return recent[key][start : end + 1]
+
+    valkey.lrange = AsyncMock(side_effect=_lrange)
+
+    requested: list[str] = []
+    pipeline = MagicMock()
+
+    def _hgetall(key: str) -> MagicMock:
+        requested.append(key.removeprefix("queue:task:"))
+        return pipeline
+
+    async def _execute() -> list[dict[str, str]]:
+        out = [payloads[tid] for tid in requested]
+        requested.clear()
+        return out
+
+    pipeline.hgetall.side_effect = _hgetall
+    pipeline.execute = AsyncMock(side_effect=_execute)
+    valkey.pipeline = MagicMock(return_value=pipeline)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_get_recent_tasks_multi_queue_respects_limit_and_recency() -> None:
+    """Two-queue call returns exactly ``limit`` rows, globally recency-sorted.
+
+    Regression: per-queue windowing used to concatenate up to
+    ``len(queues) x limit`` rows with no merge or re-sort.
+    """
+    client = _make_multi_queue_recent_client()
+
+    tasks = await client.get_recent_tasks(limit=2, offset=0, queues=["llm", "operations"])
+
+    assert [t["task_id"] for t in tasks] == ["l3", "o3"]
+
+
+@pytest.mark.asyncio
+async def test_get_recent_tasks_multi_queue_pagination_no_overlap_or_skip() -> None:
+    """Consecutive pages tile the merged list — no duplicates, nothing skipped."""
+    client = _make_multi_queue_recent_client()
+
+    page1 = await client.get_recent_tasks(limit=2, offset=0, queues=["llm", "operations"])
+    page2 = await client.get_recent_tasks(limit=2, offset=2, queues=["llm", "operations"])
+    page3 = await client.get_recent_tasks(limit=2, offset=4, queues=["llm", "operations"])
+
+    ids1 = [t["task_id"] for t in page1]
+    ids2 = [t["task_id"] for t in page2]
+    ids3 = [t["task_id"] for t in page3]
+
+    assert ids1 == ["l3", "o3"]
+    assert ids2 == ["l2", "o2"]
+    assert ids3 == ["o1", "l1"]
+    # Pages partition the union of both queues' recent entries.
+    all_ids = ids1 + ids2 + ids3
+    assert len(all_ids) == len(set(all_ids)) == 6
+
+
 @pytest.mark.asyncio
 async def test_get_result_none_when_missing() -> None:
     """get_result returns None when the payload key is absent."""
@@ -636,6 +723,75 @@ async def test_task_exists_for_source_scan_exception_reraises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# task_exists_for_chat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_exists_for_chat_match() -> None:
+    """A queued/running chat_background task matching the chat returns True.
+
+    Matches via ``data.chat_id`` / ``data.database_name`` rather than
+    ``metadata`` — the three chat_background enqueue call sites in
+    cortex only put ``chat_id`` in metadata (no ``database_name`` there),
+    while ``data`` always carries both.
+    """
+    client, valkey, _ = _make_queue_client()
+    valkey.scan_iter = _scan_iter([b"queue:task:t-chat-match"])
+    valkey.hgetall = AsyncMock(
+        return_value=_hash_payload(
+            task_id="t-chat-match",
+            operation=OP_CHAT_BACKGROUND,
+            status="running",
+            data=json.dumps({"chat_id": "c1", "database_name": "default"}),
+            metadata=json.dumps({"chat_id": "c1"}),
+        )
+    )
+
+    result = await client.task_exists_for_chat(chat_id="c1", database_name="default")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_task_exists_for_chat_no_client_raises_queue_unavailable() -> None:
+    """No client raises QueueUnavailableError — deliberately NOT a silent False.
+
+    Unlike ``task_exists_for_source`` (returns False for "no info" when
+    disconnected — a pre-existing sibling behavior left unchanged here),
+    a disconnected client for the chat sweeper must be distinguishable
+    from a genuine "no such task" miss: Cortex's ``connect_with_retry``
+    runs once at startup with ``required=False`` and there is no
+    reconnect loop, so a Valkey outage at boot leaves ``self.client`` as
+    ``None`` for the process's entire lifetime. A plain ``False`` here
+    would make every future sweep look like a clean miss and silently
+    revert to timestamp-only flipping — reviving entry 812. Raising
+    forces the caller (``_worker_alive_for_chat``) to apply its
+    fail-toward-alive default instead.
+    """
+    client = _bare_client()
+    with pytest.raises(QueueUnavailableError):
+        await client.task_exists_for_chat(chat_id="c1", database_name="default")
+
+
+@pytest.mark.asyncio
+async def test_task_exists_for_chat_scan_exception_reraises() -> None:
+    """A scan failure re-raises so the sweeper can skip this chat this pass."""
+    client, valkey, _ = _make_queue_client()
+
+    def _boom_factory(*_a: Any, **_k: Any) -> Any:
+        async def _gen() -> Any:
+            raise RuntimeError("scan blip")
+            yield  # pragma: no cover
+
+        return _gen()
+
+    valkey.scan_iter = _boom_factory
+
+    with pytest.raises(RuntimeError, match="scan blip"):
+        await client.task_exists_for_chat(chat_id="c1", database_name="d")
+
+
+# ---------------------------------------------------------------------------
 # in_flight_chunk_task_ids
 # ---------------------------------------------------------------------------
 
@@ -683,6 +839,135 @@ async def test_in_flight_chunk_task_ids_no_client_empty() -> None:
     client = _bare_client()
     ids = await client.in_flight_chunk_task_ids(source_id="s1", database_name="d")
     assert ids == set()
+
+
+# ---------------------------------------------------------------------------
+# in_flight_vision_page_ids
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_in_flight_vision_page_ids_collects_set() -> None:
+    """Collects page_id from each matching queued/running vision_page task."""
+    client, valkey, _ = _make_queue_client()
+    valkey.scan_iter = _scan_iter([b"queue:task:t-vp"])
+    valkey.hgetall = AsyncMock(
+        return_value=_hash_payload(
+            task_id="t-vp",
+            operation="vision_page",
+            status="queued",
+            data=json.dumps({"page_id": "page-7"}),
+            metadata=json.dumps({"source_id": "s1", "database_name": "default"}),
+        )
+    )
+
+    ids = await client.in_flight_vision_page_ids(source_id="s1", database_name="default")
+    assert ids == {"page-7"}
+
+
+@pytest.mark.asyncio
+async def test_in_flight_vision_page_ids_ignores_other_ops_sources_and_databases() -> None:
+    """Only ``vision_page`` tasks matching both source_id AND database_name count.
+
+    Three tasks land in the same scan: a same-source ``extract_chunk`` task
+    (wrong operation), a same-database ``vision_page`` task for a different
+    source (wrong source_id), and a matching ``vision_page`` task in a
+    different database_name (wrong db) — none should contribute a page_id.
+    Only the fourth, fully-matching task should.
+    """
+    client, valkey, _ = _make_queue_client()
+    valkey.scan_iter = _scan_iter(
+        [
+            b"queue:task:t-wrong-op",
+            b"queue:task:t-wrong-source",
+            b"queue:task:t-wrong-db",
+            b"queue:task:t-match",
+        ]
+    )
+
+    payloads = {
+        "t-wrong-op": _hash_payload(
+            task_id="t-wrong-op",
+            operation="extract_chunk",
+            status="queued",
+            data=json.dumps({"page_id": "page-a"}),
+            metadata=json.dumps({"source_id": "s1", "database_name": "default"}),
+        ),
+        "t-wrong-source": _hash_payload(
+            task_id="t-wrong-source",
+            operation="vision_page",
+            status="queued",
+            data=json.dumps({"page_id": "page-b"}),
+            metadata=json.dumps({"source_id": "other-source", "database_name": "default"}),
+        ),
+        "t-wrong-db": _hash_payload(
+            task_id="t-wrong-db",
+            operation="vision_page",
+            status="queued",
+            data=json.dumps({"page_id": "page-c"}),
+            metadata=json.dumps({"source_id": "s1", "database_name": "other-db"}),
+        ),
+        "t-match": _hash_payload(
+            task_id="t-match",
+            operation="vision_page",
+            status="running",
+            data=json.dumps({"page_id": "page-d"}),
+            metadata=json.dumps({"source_id": "s1", "database_name": "default"}),
+        ),
+    }
+
+    async def _hgetall(key: Any) -> dict[str, Any]:
+        raw = key.decode() if isinstance(key, bytes) else key
+        task_id = raw.removeprefix("queue:task:")
+        return payloads[task_id]
+
+    valkey.hgetall = AsyncMock(side_effect=_hgetall)
+
+    ids = await client.in_flight_vision_page_ids(source_id="s1", database_name="default")
+    assert ids == {"page-d"}
+
+
+@pytest.mark.asyncio
+async def test_in_flight_vision_page_ids_reraises_on_error() -> None:
+    """A scan exception RE-RAISES (2026-08-15 review) instead of swallowing to an empty set.
+
+    Deliberate divergence from ``in_flight_chunk_task_ids`` (see
+    ``test_in_flight_chunk_task_ids_empty_on_error`` above, unchanged): a
+    vision page pays a billable LLM call before its CAS can reject a
+    duplicate, so this method's caller (``SourceRecovery.
+    _classify_vision_pending``) needs the exception to actually reach its
+    except-suppress-the-whole-dispatch handler. Swallowing here (the old
+    behavior) made that handler dead code — every scan failure silently
+    degraded to "assume nothing in flight, dispatch every pending page,"
+    which is the exact duplicate-billing bug the filter exists to close.
+    """
+    client, valkey, _ = _make_queue_client()
+
+    def _boom_factory(*_a: Any, **_k: Any) -> Any:
+        async def _gen() -> Any:
+            raise RuntimeError("scan down")
+            yield  # pragma: no cover
+
+        return _gen()
+
+    valkey.scan_iter = _boom_factory
+
+    with pytest.raises(RuntimeError, match="scan down"):
+        await client.in_flight_vision_page_ids(source_id="s1", database_name="default")
+
+
+@pytest.mark.asyncio
+async def test_in_flight_vision_page_ids_no_client_raises() -> None:
+    """No client → QueueUnavailableError (2026-08-15 review, matches the scan-failure path).
+
+    A disconnected client is a stronger form of "cannot determine
+    in-flight status" than a mid-scan failure, so it gets the same
+    fail-safe treatment: raise, don't silently report zero in-flight
+    pages.
+    """
+    client = _bare_client()
+    with pytest.raises(QueueUnavailableError):
+        await client.in_flight_vision_page_ids(source_id="s1", database_name="d")
 
 
 # ---------------------------------------------------------------------------

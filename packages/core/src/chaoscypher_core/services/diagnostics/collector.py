@@ -43,15 +43,19 @@ _VALID_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 # ---------------------------------------------------------------------------
 
 _SECRET_PATTERNS: list[re.Pattern[str]] = [
-    # HTTP Authorization header: "Authorization: Bearer TOKEN" or key=value form
-    re.compile(r"(authorization\s*[:=]\s*Bearer\s+)(\S+)", re.IGNORECASE),
-    # api_key / api-key as query param or structured field (word boundary prevents
-    # matching "xapi_keyring", etc.)
-    re.compile(r"(\bapi[_-]?key\s*[:=]\s*)([\w.\-+/=]+)", re.IGNORECASE),
+    # HTTP Authorization header: "Authorization: Bearer TOKEN", key=value form,
+    # or the production JSON log rendering '"authorization": "Bearer TOKEN"'
+    # (USE_JSON_LOGGING=true → structlog JSONRenderer quotes both key and value;
+    # the value class excludes quotes so the closing quote survives the mask).
+    re.compile(r"(authorization[\"']?\s*[:=]\s*[\"']?Bearer\s+)([^\s\"']+)", re.IGNORECASE),
+    # api_key / api-key as query param or structured field, plain or JSON-quoted
+    # (word boundary prevents matching "xapi_keyring", etc.)
+    re.compile(r"(\bapi[_-]?key[\"']?\s*[:=]\s*[\"']?)([\w.\-+/=]+)", re.IGNORECASE),
     # URL query string: ?api_key=VALUE
     re.compile(r"(\?api_key=)([\w.\-+/=]+)", re.IGNORECASE),
-    # token as a standalone keyword (word boundary avoids "tokenizer", "tokenization")
-    re.compile(r"(\btoken\s*[:=]\s*)([\w.\-+/=]{16,})", re.IGNORECASE),
+    # token as a standalone keyword, plain or JSON-quoted (word boundary avoids
+    # "tokenizer", "tokenization")
+    re.compile(r"(\btoken[\"']?\s*[:=]\s*[\"']?)([\w.\-+/=]{16,})", re.IGNORECASE),
 ]
 
 

@@ -416,3 +416,27 @@ class TestStartServer:
             await service._start_server(config, detach=False)
 
         child.wait.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# ComposeConfig YAML round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_compose_config_to_yaml_round_trips_through_from_yaml(tmp_path: Path) -> None:
+    """to_yaml output must be readable by from_yaml.
+
+    A python-mode model_dump left merge_strategy as an enum member, which
+    yaml.dump serialized as a !!python/object/apply tag that safe_load
+    rejects — the reference axiomatize.yaml the build writes was unloadable.
+    """
+    config = _config(tmp_path)
+    out = tmp_path / "roundtrip.yaml"
+    config.to_yaml(out)
+
+    loaded = ComposeConfig.from_yaml(out)
+
+    assert loaded.name == config.name
+    assert loaded.settings.merge_strategy == config.settings.merge_strategy
+    assert loaded.packages == config.packages

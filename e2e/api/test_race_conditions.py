@@ -126,24 +126,38 @@ def test_delete_source_mid_extraction_leaves_no_orphans(
             assert count == 0, f"orphan rows under {path}: {body}"
 
 
-def _wait_until_extracting(
-    client: httpx.Client, source_id: str, timeout: int = 15
-) -> None:
-    """Wait for a source to enter the extracting phase (or finish).
+def _wait_until_extracting(client: httpx.Client, source_id: str, timeout: int = 15) -> None:
+    """Wait for a source to enter the extracting phase.
 
     With a delay-slowed fake-ollama, the source will sit in
     ``extracting`` for at least ``delay`` seconds — long enough to
     interleave a delete.
+
+    Only ``"extracting"`` opens the race window this test depends on.
+    The previously-accepted ``"indexed"``, ``"committing"``,
+    ``"committed"``, and ``"error"`` statuses all mean extraction is
+    *not* in flight (four of them mean it already finished or never
+    started), so returning on any of those made the race window
+    unfalsifiable — the caller could reach its DELETE without ever
+    interleaving it with a live extraction call, and the test would
+    still pass. If the window never opens within ``timeout``, fail
+    loudly with the last observed status rather than silently
+    returning.
     """
     start = time.time()
+    last_status = "<no 200 response observed>"
     while time.time() - start < timeout:
         resp = client.get(f"/api/v1/sources/{source_id}")
         if resp.status_code != 200:
             time.sleep(0.2)
             continue
         data = resp.json()
-        status = data.get("processing_status") or data.get("status", "")
-        if status in ("extracting", "indexed", "committing", "committed", "error"):
+        last_status = data.get("processing_status") or data.get("status", "")
+        if last_status == "extracting":
             return
         time.sleep(0.2)
-    raise TimeoutError(f"source {source_id} never entered extracting phase")
+    msg = (
+        f"source {source_id} never entered extracting phase within {timeout}s "
+        f"(last observed status: {last_status!r})"
+    )
+    raise TimeoutError(msg)

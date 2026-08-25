@@ -33,7 +33,7 @@ def _make_committed_source(source_id: str = "src_committed") -> dict:
         "status": SourceStatus.COMMITTED,
         "extraction_depth": "full",
         "extraction_domain": None,
-        "extraction_chunk_indices": None,
+        "_test_expected_chunk_indices": None,
         "stage_progress": {},
     }
 

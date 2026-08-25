@@ -33,8 +33,15 @@ class TestEmbeddingModels:
         resp = client.get("/api/v1/settings/embedding/models")
         assert resp.status_code == 200
         data = resp.json()
-        # Should have curated and cloud keys
-        assert "curated" in data or "cloud" in data
+        # EmbeddingModelsResponse always serializes both keys, populated
+        # from the static registry — pin both, non-empty.
+        assert "curated" in data
+        assert "cloud" in data
+        assert isinstance(data["curated"], list)
+        assert data["curated"]
+        assert isinstance(data["cloud"], dict)
+        assert data["cloud"]
+        assert all("name" in m and "dimensions" in m for m in data["curated"])
 
     def test_list_local_embedding_models(self, client: httpx.Client) -> None:
         """Listing local embedding models returns list."""
@@ -52,7 +59,15 @@ class TestCloudModels:
         resp = client.get("/api/v1/settings/cloudmodels")
         assert resp.status_code == 200
         data = resp.json()
-        assert "providers" in data or isinstance(data, dict)
+        # CloudModelsResponse: {"providers": {name: {display_name, models}}},
+        # always non-empty (packaged model registry data).
+        assert "providers" in data
+        providers = data["providers"]
+        assert isinstance(providers, dict)
+        assert providers
+        for info in providers.values():
+            assert "display_name" in info
+            assert isinstance(info["models"], list)
 
     def test_nonexistent_provider(self, client: httpx.Client) -> None:
         """Nonexistent cloud provider returns 404."""

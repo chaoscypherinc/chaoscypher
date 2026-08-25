@@ -35,7 +35,6 @@ dispatches without substitution.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -56,12 +55,17 @@ import chaoscypher_neuron.worker  # noqa: F401
 
 
 @pytest.fixture
-def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
+async def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
     """Yield the harness after running both setup helpers.
 
     Mirrors the fixture from test_handler_registration.py: wires the stub
     llm_service and patches create_embedding_provider so setup can complete
     without real adapters.
+
+    Async (rather than a sync fixture wrapping ``asyncio.run``) per CC041 —
+    the consuming tests already run on pytest-asyncio's loop, and a nested
+    ``asyncio.run`` would register the handlers against a loop that is
+    closed before the first ``dispatch``.
     """
     from chaoscypher_core.constants import QUEUE_LLM
     from chaoscypher_neuron.setup import setup_llm_handlers, setup_operations_handlers
@@ -97,8 +101,8 @@ def setup_done(worker_harness: WorkerHarness) -> WorkerHarness:
         "chaoscypher_core.adapters.embedding.create_embedding_provider",
         return_value=MagicMock(name="embedding_provider"),
     ):
-        asyncio.run(setup_llm_handlers(worker_harness.ctx))
-        asyncio.run(setup_operations_handlers(worker_harness.ctx))
+        await setup_llm_handlers(worker_harness.ctx)
+        await setup_operations_handlers(worker_harness.ctx)
 
     return worker_harness
 

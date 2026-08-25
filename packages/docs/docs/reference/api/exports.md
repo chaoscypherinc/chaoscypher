@@ -1,11 +1,11 @@
 ---
 title: Exports API
-description: Export and import knowledge graph data as CCX v2.0 packages — async endpoints with task polling to download nodes, edges, templates, sources, and workflows.
+description: Export and import knowledge graph data as CCX 3.0 packages — async endpoints with task polling to download nodes, edges, templates, sources, and workflows.
 ---
 
 # Exports
 
-Export and import knowledge graph data using the CCX v2.0 package format.
+Export and import knowledge graph data using the CCX 3.0 package format.
 
 All endpoints are prefixed with `/api/v1/exports`. Every operation is
 asynchronous -- the server returns `202 Accepted` with a `task_id` you can poll
@@ -110,14 +110,17 @@ curl -X POST http://localhost/api/v1/exports/import \
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `file` | file | **Yes** | -- | `.ccx` package file to import |
-| `merge` | bool | No | `false` | Merge with existing data (`true`) or replace (`false`) |
+| `merge` | bool | No | `false` | Template handling only: reuse a local template that shares a name (`true`) or always create fresh, self-contained templates (`false`). Import is always additive — existing data is never cleared. |
 
-### Merge vs Replace
+### Template Handling
 
 | Mode | Behavior |
 |------|----------|
-| **Replace** (`merge=false`) | Clears existing data before importing |
-| **Merge** (`merge=true`) | Adds imported data alongside existing graph data |
+| `merge=false` (default) | Always creates fresh, self-contained templates |
+| `merge=true` | Reuses a local template that shares a name |
+
+Import is **always additive**: entities, edges, and sources upsert by their
+CCX IRI, and existing data is never cleared.
 
 ### Response `202 Accepted` -- ImportResponse
 
@@ -145,6 +148,7 @@ statistics about the import:
 | Status | Cause |
 |--------|-------|
 | `400` | Invalid CCX file format |
+| `413` | Upload exceeds the configured `max_upload_bytes` size limit |
 | `503` | Operations service unavailable |
 
 ---

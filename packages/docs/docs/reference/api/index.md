@@ -300,7 +300,7 @@ Request-body validation failures return `422` with:
 | [Tools](tools.md) | `/tools` | Tool registry for workflow steps |
 | [Triggers](triggers.md) | `/triggers` | Event-based workflow triggers |
 | [Templates](templates.md) | `/templates` | Knowledge graph node and edge schema templates |
-| [Lexicon](lexicon.md) | `/lexicon` | Domain vocabulary and term management |
+| [Lexicon](lexicon.md) | `/lexicon` | Lexicon Hub package registry — auth, search, package info, import, upload |
 | [Quality](quality.md) | `/quality` | Source and extraction quality scoring |
 | [Databases](databases.md) | `/databases` | Multi-database management |
 | [Queue](queue.md) | `/queue` | Task queue management and monitoring |

@@ -76,8 +76,12 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 # Scoring algorithm version - bump this when the scoring formula changes
-# This triggers automatic recalculation of cached scores on startup
-SCORING_VERSION = 7
+# This triggers automatic recalculation of cached scores on startup.
+# v8 keeps the v7 formula but fixes score_source's handling of the
+# relational per-source rows (string entity-ID relationship refs and
+# ``source_chunk_indices`` chunk mentions were silently ignored), so
+# every cache written from those rows needs recomputing.
+SCORING_VERSION = 8
 
 
 # Default scores when domain/template doesn't specify
@@ -196,6 +200,80 @@ def _label_by_threshold(value: float, thresholds: Sequence[tuple[float, str]], d
         if value >= threshold:
             return label
     return default
+
+
+def build_entity_chunk_mentions(entities: Sequence[dict[str, Any]]) -> dict[int, int]:
+    """Build the entity-index → chunk-mention-count map the scorer consumes.
+
+    Canonical helper for every scoring call site. Entity dicts carry their
+    chunk provenance under ``source_chunk_indices`` (the pipeline's key,
+    also what the per-source table rows round-trip through ``attributes``),
+    with ``source_chunks`` / ``chunks`` as legacy aliases and a bare
+    ``chunk_index`` meaning a single mention.
+
+    Args:
+        entities: Entity dicts in extraction order.
+
+    Returns:
+        Mapping of entity index to chunk-mention count (minimum 1).
+    """
+    mentions: dict[int, int] = {}
+    for idx, entity in enumerate(entities):
+        chunks = (
+            entity.get("source_chunk_indices")
+            or entity.get("source_chunks")
+            or entity.get("chunks")
+        )
+        mentions[idx] = len(chunks) if chunks else 1
+    return mentions
+
+
+def resolve_relationship_refs(
+    entities: Sequence[dict[str, Any]],
+    relationships: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Normalize relationship ``source`` / ``target`` refs to integer indices.
+
+    The chunk extractor emits integer indices into the entities list, but
+    the per-source relational rows (``source_relationships``) store the
+    generated ``source_entities.id`` strings instead. Scoring, connectivity
+    and the structural signals all validate refs with ``isinstance(idx, int)``,
+    so string refs must be resolved back to indices before scoring —
+    otherwise every relationship reads as having invalid refs.
+
+    String refs are resolved via each entity dict's ``id`` key; a ref that
+    cannot be resolved becomes ``-1`` so it keeps failing the range check
+    (same semantics as a dangling index). Integer refs pass through
+    untouched, so legacy in-memory extraction dicts are unaffected.
+
+    Args:
+        entities: Entity dicts in extraction order (``id`` keys used for lookup).
+        relationships: Relationship dicts with int or str ``source``/``target``.
+
+    Returns:
+        Relationship list with all refs as integers. Dicts are copied only
+        when a ref actually needs rewriting.
+    """
+    id_to_index: dict[str, int] = {}
+    for idx, entity in enumerate(entities):
+        entity_id = entity.get("id")
+        if isinstance(entity_id, str):
+            id_to_index[entity_id] = idx
+
+    resolved: list[dict[str, Any]] = []
+    for rel in relationships:
+        src = rel.get("source")
+        tgt = rel.get("target")
+        if isinstance(src, str) or isinstance(tgt, str):
+            rewritten = dict(rel)
+            if isinstance(src, str):
+                rewritten["source"] = id_to_index.get(src, -1)
+            if isinstance(tgt, str):
+                rewritten["target"] = id_to_index.get(tgt, -1)
+            resolved.append(rewritten)
+        else:
+            resolved.append(rel)
+    return resolved
 
 
 def calculate_density_score(density_ratio: float, target_density: float) -> float:
@@ -712,10 +790,13 @@ class QualityScorer:
         Returns:
             EntityQualityScore with breakdown.
         """
-        name = entity.get("name", "Unknown")
-        entity_type = entity.get("type", "")
-        description = entity.get("description", "")
-        confidence = entity.get("confidence", 0.0)
+        # ``or``-defaults throughout: the per-source table rows surface
+        # nullable columns as explicit ``None`` values, which ``.get()``
+        # defaults don't catch.
+        name = entity.get("name") or "Unknown"
+        entity_type = entity.get("type") or ""
+        description = entity.get("description") or ""
+        confidence = entity.get("confidence") or 0.0
         properties = entity.get("properties", {}) or {}
         aliases = entity.get("aliases", []) or []
 
@@ -770,20 +851,21 @@ class QualityScorer:
         Returns:
             RelationshipQualityScore with breakdown.
         """
-        rel_type = relationship.get("type", "")
+        # ``or``-defaults: nullable table columns arrive as explicit None.
+        rel_type = relationship.get("type") or ""
         source_idx = relationship.get("source")
         target_idx = relationship.get("target")
-        justification = relationship.get("justification", "")
-        confidence = relationship.get("confidence", 0.0)
+        justification = relationship.get("justification") or ""
+        confidence = relationship.get("confidence") or 0.0
 
         # Get entity names if entities provided
         source_name = "Unknown"
         target_name = "Unknown"
         if entities:
             if isinstance(source_idx, int) and 0 <= source_idx < len(entities):
-                source_name = entities[source_idx].get("name", "Unknown")
+                source_name = entities[source_idx].get("name") or "Unknown"
             if isinstance(target_idx, int) and 0 <= target_idx < len(entities):
-                target_name = entities[target_idx].get("name", "Unknown")
+                target_name = entities[target_idx].get("name") or "Unknown"
 
         # Justification score (0-35)
         just_len = len(justification)
@@ -841,6 +923,13 @@ class QualityScorer:
             SourceQualityScore with full breakdown.
         """
         entity_chunk_mentions = entity_chunk_mentions or {}
+
+        # Normalize relationship refs first: rows read back from the
+        # per-source tables carry string entity IDs where the chunk
+        # extractor emits integer indices. Everything below — per-rel
+        # scoring, connectivity, hub-skew, reciprocal-rate — validates
+        # refs as integer indices, so resolve once up front.
+        relationships = resolve_relationship_refs(entities, relationships)
 
         # Score all entities
         entity_scores: list[EntityQualityScore] = []
@@ -974,27 +1063,42 @@ class QualityScorer:
         score = self.score_source(
             source_id, entities, relationships, entity_chunk_mentions, chunk_count
         )
+        return cacheable_scores_from(score)
 
-        return {
-            "cached_quality_grade": round(score.quality_grade, 2),
-            "cached_quality_label": score.quality_label,
-            "cached_richness_score": round(score.total_score, 2),
-            "cached_avg_entity_quality": round(score.avg_entity_quality, 2),
-            "cached_avg_relationship_quality": round(score.avg_relationship_quality, 2),
-            "cached_connectivity_ratio": round(score.connectivity_ratio, 4),
-            "cached_topology_score": round(score.topology_score, 2),
-            "cached_density_ratio": round(score.density_ratio, 4),
-            "cached_density_score": round(score.density_score, 2),
-            "cached_pollution_penalty": round(score.pollution_penalty, 2),
-            "cached_structural_penalty": round(score.structural_penalty, 2),
-            "cached_hub_skew": round(score.hub_skew, 4),
-            "cached_reciprocal_rate": round(score.reciprocal_rate, 4),
-            "cached_low_quality_entity_count": score.low_quality_entity_count,
-            "cached_low_quality_relationship_count": score.low_quality_relationship_count,
-            "cached_coverage_score": round(score.coverage_score, 2),
-            "cached_scores_at": datetime.now(tz=UTC),
-            "cached_scores_version": SCORING_VERSION,
-        }
+
+def cacheable_scores_from(score: SourceQualityScore) -> dict[str, Any]:
+    """Project an already-computed :class:`SourceQualityScore` to cached_* fields.
+
+    Split out of ``QualityScorer.get_cacheable_scores`` so callers that have
+    just scored a source (e.g. to serve the API response) can persist the
+    cache without scoring the whole source a second time.
+
+    Args:
+        score: The computed source score.
+
+    Returns:
+        Dict with all cached_* field values ready for database update.
+    """
+    return {
+        "cached_quality_grade": round(score.quality_grade, 2),
+        "cached_quality_label": score.quality_label,
+        "cached_richness_score": round(score.total_score, 2),
+        "cached_avg_entity_quality": round(score.avg_entity_quality, 2),
+        "cached_avg_relationship_quality": round(score.avg_relationship_quality, 2),
+        "cached_connectivity_ratio": round(score.connectivity_ratio, 4),
+        "cached_topology_score": round(score.topology_score, 2),
+        "cached_density_ratio": round(score.density_ratio, 4),
+        "cached_density_score": round(score.density_score, 2),
+        "cached_pollution_penalty": round(score.pollution_penalty, 2),
+        "cached_structural_penalty": round(score.structural_penalty, 2),
+        "cached_hub_skew": round(score.hub_skew, 4),
+        "cached_reciprocal_rate": round(score.reciprocal_rate, 4),
+        "cached_low_quality_entity_count": score.low_quality_entity_count,
+        "cached_low_quality_relationship_count": score.low_quality_relationship_count,
+        "cached_coverage_score": round(score.coverage_score, 2),
+        "cached_scores_at": datetime.now(tz=UTC),
+        "cached_scores_version": SCORING_VERSION,
+    }
 
 
 def calculate_entity_score(
@@ -1080,6 +1184,8 @@ __all__ = [
     "QualityScorer",
     "RelationshipQualityScore",
     "SourceQualityScore",
+    "build_entity_chunk_mentions",
+    "cacheable_scores_from",
     "calculate_density_score",
     "calculate_entity_score",
     "calculate_hub_skew",
@@ -1089,4 +1195,5 @@ __all__ = [
     "calculate_relationship_score",
     "calculate_source_score",
     "calculate_structural_penalty",
+    "resolve_relationship_refs",
 ]

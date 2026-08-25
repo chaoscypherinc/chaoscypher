@@ -16,6 +16,30 @@ from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter
 )
 
 
+UNTRUSTED_FENCE_OPEN = "<untrusted_document>"
+UNTRUSTED_FENCE_CLOSE = "</untrusted_document>"
+_DEFANGED_FENCE_CLOSE = "<\\/untrusted_document>"
+
+
+def neutralize_untrusted_fence(text: str) -> str:
+    r"""Defang literal closing fence tags inside document-derived text.
+
+    A document that itself contains the literal ``</untrusted_document>``
+    string could otherwise terminate the fence early, letting the rest of
+    its text read as out-of-band content. Replaces every occurrence with
+    a defanged form (``<\\/untrusted_document>``) so exactly one closing
+    fence — the one appended by the wrapper — survives.
+
+    Args:
+        text: Document-derived text about to be fenced.
+
+    Returns:
+        ``text`` with all literal closing fence tags defanged.
+
+    """
+    return text.replace(UNTRUSTED_FENCE_CLOSE, _DEFANGED_FENCE_CLOSE)
+
+
 def format_chunk_content(content: str, filename: str, alias: str) -> tuple[str, int]:
     """Format raw chunk content into a numbered, headed block for LLM consumption.
 
@@ -23,9 +47,11 @@ def format_chunk_content(content: str, filename: str, alias: str) -> tuple[str, 
     prepends a chunk header of the form ``[CHUNK {alias} | {filename}]``.
     The full block is wrapped in ``<untrusted_document>`` / ``</untrusted_document>``
     fence tags to signal the LLM that the body is data retrieved from a
-    user-supplied document (not instructions). The system prompt instructs
-    the model to treat text inside these tags as untrusted data; the fence
-    gives it an unambiguous boundary to key off.
+    user-supplied document (not instructions). The chat system prompt names
+    this fence and instructs the model to treat text inside it as untrusted
+    data; any literal closing tag inside the body is defanged first (see
+    :func:`neutralize_untrusted_fence`) so the document cannot forge an
+    early end of the fence.
 
     Args:
         content: Raw text content of the chunk.
@@ -43,7 +69,8 @@ def format_chunk_content(content: str, filename: str, alias: str) -> tuple[str, 
     sentence_lines = "\n".join(f"[S{i + 1}] {s}" for i, s in enumerate(sentences))
     header = f"[CHUNK {alias} | {filename}]"
     body = f"{header}\n{sentence_lines}" if sentence_lines else header
-    numbered_content = f"<untrusted_document>\n{body}\n</untrusted_document>"
+    body = neutralize_untrusted_fence(body)
+    numbered_content = f"{UNTRUSTED_FENCE_OPEN}\n{body}\n{UNTRUSTED_FENCE_CLOSE}"
     return numbered_content, len(sentences)
 
 
@@ -104,7 +131,10 @@ def clean_chunk_metadata(chunk_metadata: dict[str, Any] | None) -> dict[str, Any
 
 
 __all__: list[str] = [
+    "UNTRUSTED_FENCE_CLOSE",
+    "UNTRUSTED_FENCE_OPEN",
     "assign_chunk_aliases",
     "clean_chunk_metadata",
     "format_chunk_content",
+    "neutralize_untrusted_fence",
 ]

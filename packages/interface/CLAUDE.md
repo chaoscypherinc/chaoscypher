@@ -6,7 +6,7 @@ Developer guidance for the React/TypeScript frontend (`packages/interface/`). Ro
 
 - React 19.2, TypeScript 6 (`strict: true`), Vite 8
 - MUI 9 + Emotion (MUI's default styling engine)
-- React Router 7
+- React Router 8
 - `@tanstack/react-query` — **server state**
 - Context API — **UI state only**
 - Vitest 4 + React Testing Library — tests colocated at `src/**/__tests__/*.test.tsx`
@@ -41,7 +41,7 @@ Developer guidance for the React/TypeScript frontend (`packages/interface/`). Ro
 
 ## Routing
 
-- React Router v7. Routes defined in `App.tsx`.
+- React Router v8. Routes defined in `App.tsx`.
 - Auth gate via `<AuthGuard>` component. Layout via `<LayoutWrapper>`.
 - Pages lazy-loaded via `React.lazy`.
 

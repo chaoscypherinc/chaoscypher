@@ -105,7 +105,41 @@ class TestFiltering:
     def test_node_list_by_template(self, client: httpx.Client) -> None:
         """Filtering nodes by template_id returns only matching nodes."""
         template_id = _setup_template(client, "E2E_FilterPerson")
+        other_template_id = _setup_template(client, "E2E_FilterOtherPerson")
+
+        # Negative control: a node under a different template must
+        # never show up in the E2E_FilterPerson-filtered results.
+        other_resp = client.post(
+            "/api/v1/nodes",
+            json={
+                "template_id": other_template_id,
+                "label": "Filter Negative Control",
+                "properties": {"name": "Filter Negative Control"},
+            },
+        )
+        other_node_id = other_resp.json()["id"]
+
+        created_ids = set()
+        for i in range(2):
+            create_resp = client.post(
+                "/api/v1/nodes",
+                json={
+                    "template_id": template_id,
+                    "label": f"Filter Person {i}",
+                    "properties": {"name": f"Filter Person {i}"},
+                },
+            )
+            created_ids.add(create_resp.json()["id"])
+
         resp = client.get("/api/v1/nodes", params={"template_id": template_id})
         assert resp.status_code == 200
-        for n in resp.json()["data"]:
+        data = resp.json()["data"]
+        # Guarantee the filter under test actually has matching rows to
+        # return, so the per-item loop below is not vacuous.
+        assert len(data) >= 2
+
+        returned_ids = {n["id"] for n in data}
+        assert created_ids <= returned_ids
+        assert other_node_id not in returned_ids
+        for n in data:
             assert n["template_id"] == template_id

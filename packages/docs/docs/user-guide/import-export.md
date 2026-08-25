@@ -70,8 +70,12 @@ curl -X POST "http://localhost:8080/api/v1/exports/import?merge=false" \
 
 | Mode | Behavior |
 |------|----------|
-| `merge=false` (default) | Replace existing data with package contents |
-| `merge=true` | Merge package data with existing data |
+| `merge=false` (default) | Always creates fresh, self-contained templates |
+| `merge=true` | Reuses a local template that shares a name |
+
+The `merge` flag controls **template handling only**. Import is always
+additive — entities, edges, and sources upsert by their CCX IRI, and existing
+data is never cleared.
 
 Import runs asynchronously — poll `GET /api/v1/queue/tasks/{task_id}` and fetch the outcome from `GET /api/v1/queue/tasks/{task_id}/result` when complete. The result includes counts of imported templates, nodes, edges, and workflows, plus any errors or warnings.
 

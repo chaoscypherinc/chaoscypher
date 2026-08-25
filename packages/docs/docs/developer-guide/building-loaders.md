@@ -47,7 +47,7 @@ class MyLoader:
 
 :::tip[Plugin metadata]
 
-Loaders can optionally define a `metadata` property returning a `PluginMetadata` object with `id`, `name`, `version`, and `description`. This is recommended for new loaders as it enables better identification in the plugin registry, but is not required for backwards compatibility.
+Loaders can optionally define a `metadata` property returning a `PluginMetadata` object with `plugin_id`, `name`, `version`, and `description`. This is recommended for new loaders as it enables better identification in the plugin registry, but is not required for backwards compatibility.
 
 :::
 

@@ -114,7 +114,7 @@ Select file to resume:
 
  #  Filename              ID                Status      Chunks
  1  research-paper.pdf    if_a1b2c3d4e5f6   indexed        42
- 2  quarterly-report.pdf  if_f6e5d4c3b2a1   uploaded       --
+ 2  quarterly-report.pdf  if_f6e5d4c3b2a1   pending        --
 
 Enter number to resume (or 'q' to quit):
 ```
@@ -241,8 +241,8 @@ chaoscypher source list
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--status STATUS` | `-s` | Filter by status (`uploaded`, `indexed`, `extracted`, `committed`, `failed`) |
-| `--pending` | `-p` | Show only files not yet committed (excludes committed and failed) |
+| `--status STATUS` | `-s` | Filter by status (`pending`, `indexing`, `indexed`, `extracted`, `committed`, `error`) |
+| `--pending` | `-p` | Show only files not yet committed (excludes committed and errored) |
 | `--awaiting` | `-a` | Show only sources awaiting domain confirmation |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json`, `yaml` |
 | `--database DATABASE` | `-d` | Database name (default: the current database) |
@@ -256,9 +256,9 @@ chaoscypher source list
 ``` { .text .no-copy }
                          Ingested Files
  ID                Filename              Type   Size   Status      Quality  Created
- if_a1b2c3d4e5f6   research-paper.pdf    pdf    2.4 MB committed   92 A    2026-03-08 14:22
- if_f6e5d4c3b2a1   quarterly-report.pdf  pdf    1.1 MB indexed      -     2026-03-08 15:10
- if_c3d4e5f6a1b2   meeting-notes.md      md     12.3 KB committed  78 B    2026-03-07 09:45
+ if_a1b2c3d4e5f6   research-paper.pdf    pdf    2.4 MB committed   92 Outstanding  2026-03-08 14:22
+ if_f6e5d4c3b2a1   quarterly-report.pdf  pdf    1.1 MB indexed      -            2026-03-08 15:10
+ if_c3d4e5f6a1b2   meeting-notes.md      md     12.3 KB committed  78 Excellent   2026-03-07 09:45
 
 Total: 3 file(s)
 ```
@@ -276,8 +276,8 @@ chaoscypher source list --pending
 
 Total: 1 file(s)
 
-To resume: cc source add <ID>
-Or use:    cc source add --resume
+To resume: chaoscypher source add <ID>
+Or use:    chaoscypher source add --resume
 ```
 
 ### Sample JSON Output
@@ -295,7 +295,7 @@ chaoscypher source list --format json
     "file_size": 2457600,
     "status": "committed",
     "cached_quality_grade": 92,
-    "cached_quality_label": "A",
+    "cached_quality_label": "Outstanding",
     "created_at": "2026-03-08T14:22:30Z",
     "updated_at": "2026-03-08T14:25:12Z"
   },

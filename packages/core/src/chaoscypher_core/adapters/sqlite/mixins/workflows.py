@@ -270,6 +270,32 @@ class WorkflowsMixin(SqliteMixinBase, WorkflowStorageProtocol):
         stats = self.session.get(WorkflowStatistics, workflow_id)
         return self._entity_to_dict(stats) if stats else None
 
+    def get_workflow_statistics_totals(self, *, database_name: str) -> dict[str, int]:
+        """Sum execution counters across every workflow in one database.
+
+        Single aggregate query replacing the per-workflow
+        ``get_workflow_statistics`` round-trips ``get_global_stats``
+        used to issue (the 2-second dashboard poll path).
+        """
+        self._ensure_connected()
+        stmt = (
+            select(
+                func.coalesce(func.sum(WorkflowStatistics.total_executions), 0),
+                func.coalesce(func.sum(WorkflowStatistics.successful_executions), 0),
+                func.coalesce(func.sum(WorkflowStatistics.failed_executions), 0),
+                func.coalesce(func.sum(WorkflowStatistics.cancelled_executions), 0),
+            )
+            .join(Workflow, Workflow.id == WorkflowStatistics.workflow_id)
+            .where(Workflow.database_name == database_name)
+        )
+        total, successful, failed, cancelled = self.session.exec(stmt).one()
+        return {
+            "total_executions": total,
+            "successful_executions": successful,
+            "failed_executions": failed,
+            "cancelled_executions": cancelled,
+        }
+
     def create_workflow_statistics(self, stats_data: dict[str, Any]) -> dict[str, Any]:
         """Create workflow statistics."""
         self._ensure_connected()

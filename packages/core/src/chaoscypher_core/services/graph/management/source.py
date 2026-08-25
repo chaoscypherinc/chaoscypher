@@ -335,14 +335,18 @@ class SourceService:
 
         # === POST-TRANSACTION (best-effort) ===
         if search_repo:
-            for uri in orphaned_uris:
-                node_id = uri.split("/")[-1] if "/" in uri else uri
+            if orphaned_uris:
+                # One batched DELETE instead of a pooled connection + commit
+                # per orphan. Best-effort: a failure aborts the remaining
+                # orphans in the batch (index sweeps reconcile later) but
+                # never the delete itself.
+                node_ids = [uri.split("/")[-1] if "/" in uri else uri for uri in orphaned_uris]
                 try:
-                    search_repo.delete_node(node_id)
+                    search_repo.delete_nodes_batch(node_ids)
                 except Exception:
                     logger.warning(
                         "search_orphan_delete_failed",
-                        node_id=node_id,
+                        node_count=len(node_ids),
                         source_id=source_id,
                     )
 

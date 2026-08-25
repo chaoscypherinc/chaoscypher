@@ -941,11 +941,24 @@ class SourceCommitService:
                     count=len(nodes_to_index),
                     file_id=file_id,
                 )
-                self._enqueue_search_retry(
-                    [n.id for n in nodes_to_index],
-                    source_id=source_id,
-                    kind="node",
-                )
+                # The enqueue opens a fresh transaction right after a
+                # rollback, under the same lock contention that just broke
+                # indexing — if it raises, the exception would escape
+                # _commit_impl, the DbLockRetryPolicy retry would hit the
+                # commit_complete early-return, and the retry row (plus the
+                # degraded mark below) would be lost forever, leaving the
+                # source stuck at vector_indexing_status="pending".
+                try:
+                    self._enqueue_search_retry(
+                        [n.id for n in nodes_to_index],
+                        source_id=source_id,
+                        kind="node",
+                    )
+                except Exception:
+                    logger.exception(
+                        "node_search_retry_enqueue_failed",
+                        file_id=file_id,
+                    )
                 indexing_failed = True
 
         try:
@@ -958,11 +971,19 @@ class SourceCommitService:
                 "chunks_vector_indexing_failed_enqueuing_retry",
                 file_id=file_id,
             )
-            self._enqueue_search_retry(
-                [file_id],
-                source_id=source_id,
-                kind="chunk",
-            )
+            # Same guard as the node block above — a failed enqueue must
+            # not escape past the commit_complete point.
+            try:
+                self._enqueue_search_retry(
+                    [file_id],
+                    source_id=source_id,
+                    kind="chunk",
+                )
+            except Exception:
+                logger.exception(
+                    "chunk_search_retry_enqueue_failed",
+                    file_id=file_id,
+                )
             indexing_failed = True
 
         if indexing_failed:
@@ -1121,11 +1142,21 @@ class SourceCommitService:
                 "commit_empty_chunk_vector_indexing_failed_enqueuing_retry",
                 file_id=file_id,
             )
-            self._enqueue_search_retry(
-                [file_id],
-                source_id=source_id,
-                kind="chunk",
-            )
+            # Same guard as _commit_impl's indexing blocks — a failed
+            # enqueue must not escape past the commit_complete point, or
+            # the retrying commit() hits the early-return and the source
+            # is stuck at vector_indexing_status="pending" forever.
+            try:
+                self._enqueue_search_retry(
+                    [file_id],
+                    source_id=source_id,
+                    kind="chunk",
+                )
+            except Exception:
+                logger.exception(
+                    "commit_empty_search_retry_enqueue_failed",
+                    file_id=file_id,
+                )
             mark_search_indexing_degraded(
                 adapter=self.sources_repository,
                 source_id=source_id,

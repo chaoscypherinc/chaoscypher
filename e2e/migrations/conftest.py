@@ -1,13 +1,14 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Conftest for the migration-roundtrip e2e tier.
+"""Conftest for the migration-snapshot e2e tier.
 
 Intentionally separate from ``e2e/api/conftest.py`` because the
 migration test brings up its own isolated stack on port 8889 with a
 pre-seeded snapshot. The api conftest's autouse fixtures (cookie
 auth, requires_llm skip) would otherwise pull in the default
-``http://localhost:8888`` stack and fail with Connection refused.
+``http://localhost:8888`` stack and fail with Connection refused —
+and this tier's stack is expected never to serve a healthy API at all.
 """
 
 import pytest

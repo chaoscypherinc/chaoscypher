@@ -390,7 +390,6 @@ class TestIndexFileHappyPath:
             return BatchEmbedResult(
                 embeddings=[[0.5, 0.6] for _ in texts],
                 total=len(texts),
-                failed=0,
                 provider="mock",
             )
 
@@ -398,6 +397,7 @@ class TestIndexFileHappyPath:
         mock_cli_context.embedding_service = embedding_service
         mock_cli_context.settings.batching.embedding_api_batch_size = 8
         mock_cli_context.storage_adapter.update_chunk_embedding = MagicMock()
+        mock_cli_context.storage_adapter.update_chunk_embeddings_batch = MagicMock(return_value=[])
         # Vision ON but no chat_provider -> _apply_vision_processing returns the
         # docs unchanged, exercising the enable_vision call site in index_file.
         mock_cli_context.settings.llm = MagicMock()
@@ -453,7 +453,9 @@ class TestIndexFileHappyPath:
         # Normalizer was actually consulted, chunks were stored, embeddings written.
         normalizer_instance.normalize.assert_called_once()
         chunking_instance.store_chunks.assert_called_once()
-        assert mock_cli_context.storage_adapter.update_chunk_embedding.call_count == 2
+        # 2 chunks fit in one wave (batch_size=8) -> one bulk write call.
+        assert mock_cli_context.storage_adapter.update_chunk_embeddings_batch.call_count == 1
+        mock_cli_context.storage_adapter.update_chunk_embedding.assert_not_called()
 
     def test_skip_embeddings_and_page_texts_location_index(
         self, mock_cli_context: MagicMock, sample_text_file: Path
@@ -507,6 +509,7 @@ class TestIndexFileHappyPath:
         assert result["embedding_model"] == "none"
         # skip_embeddings -> the chunk-embedding adapter is never touched.
         mock_cli_context.storage_adapter.update_chunk_embedding.assert_not_called()
+        mock_cli_context.storage_adapter.update_chunk_embeddings_batch.assert_not_called()
 
 
 class TestLoadDocumentText:
@@ -558,7 +561,6 @@ class TestGenerateEmbeddings:
                 return BatchEmbedResult(
                     embeddings=[[0.1, 0.2, 0.3, 0.4] for _ in texts],
                     total=len(texts),
-                    failed=0,
                     provider="mock",
                 )
 
@@ -572,8 +574,10 @@ class TestGenerateEmbeddings:
         self, mock_cli_context: MagicMock
     ) -> None:
         ctx = self._ctx_with_embedding(mock_cli_context)
-        update_spy = MagicMock()
-        ctx.storage_adapter.update_chunk_embedding = update_spy
+        single_row_spy = MagicMock()
+        ctx.storage_adapter.update_chunk_embedding = single_row_spy
+        batch_spy = MagicMock(return_value=[])
+        ctx.storage_adapter.update_chunk_embeddings_batch = batch_spy
 
         service = CLISourceProcessingService(ctx)
         chunks = [{"id": f"c{i}", "content": f"text {i}"} for i in range(3)]
@@ -585,17 +589,25 @@ class TestGenerateEmbeddings:
         assert model == "fake-embed"
         assert dims == 4
         assert failed == 0
-        # One persistence call per chunk.
-        assert update_spy.call_count == 3
-        # Each call writes model_name + "embedded" status.
-        first_call = update_spy.call_args_list[0]
-        assert first_call.args[2] == "fake-embed"
-        assert first_call.args[4] == "embedded"
+        # embedding_api_batch_size=2 over 3 chunks -> two waves ([2, 1]),
+        # one bulk write per wave instead of one write per chunk.
+        assert batch_spy.call_count == 2
+        first_call = batch_spy.call_args_list[0]
+        assert set(first_call.args[0].keys()) == {"c0", "c1"}
+        assert first_call.kwargs["embedding_model"] == "fake-embed"
+        assert first_call.kwargs["embedding_dimensions"] == 4
+        assert first_call.kwargs["status"] == "embedded"
+        second_call = batch_spy.call_args_list[1]
+        assert set(second_call.args[0].keys()) == {"c2"}
+        # The deprecated single-row port method is never touched.
+        single_row_spy.assert_not_called()
 
     def test_batch_failure_counts_failed_chunks(self, mock_cli_context: MagicMock) -> None:
         ctx = self._ctx_with_embedding(mock_cli_context, fail=True)
-        update_spy = MagicMock()
-        ctx.storage_adapter.update_chunk_embedding = update_spy
+        single_row_spy = MagicMock()
+        ctx.storage_adapter.update_chunk_embedding = single_row_spy
+        batch_spy = MagicMock(return_value=[])
+        ctx.storage_adapter.update_chunk_embeddings_batch = batch_spy
 
         service = CLISourceProcessingService(ctx)
         chunks = [{"id": f"c{i}", "content": f"t{i}"} for i in range(3)]
@@ -604,10 +616,90 @@ class TestGenerateEmbeddings:
         finally:
             service.close()
 
-        # 3 chunks, batch_size 2 -> batches of [2, 1]; both fail.
+        # 3 chunks, batch_size 2 -> batches of [2, 1]; both fail before any
+        # persistence call is attempted.
         assert failed == 3
         assert dims == 0
-        update_spy.assert_not_called()
+        batch_spy.assert_not_called()
+        single_row_spy.assert_not_called()
+
+    def test_missing_chunk_ids_from_batch_counted_as_failed(
+        self, mock_cli_context: MagicMock
+    ) -> None:
+        """Ids the batch write reports missing (e.g. deleted mid-flight) count as failed."""
+        ctx = self._ctx_with_embedding(mock_cli_context)
+        ctx.storage_adapter.update_chunk_embedding = MagicMock()
+        # Wave 1 ([c0, c1]) reports c0 as missing; wave 2 ([c2]) reports none.
+        batch_spy = MagicMock(side_effect=[["c0"], []])
+        ctx.storage_adapter.update_chunk_embeddings_batch = batch_spy
+
+        service = CLISourceProcessingService(ctx)
+        chunks = [{"id": f"c{i}", "content": f"text {i}"} for i in range(3)]
+        try:
+            model, dims, failed = service._generate_embeddings("file-1", chunks)
+        finally:
+            service.close()
+
+        assert model == "fake-embed"
+        assert failed == 1
+        assert batch_spy.call_count == 2
+
+    def test_mixed_wave_excludes_empty_embeddings_from_batch_write(
+        self, mock_cli_context: MagicMock
+    ) -> None:
+        """A wave with some empty (failed) embeddings never borrows another chunk's dims.
+
+        embedding_dimensions is applied batch-wide by update_chunk_embeddings_batch,
+        so a chunk whose embedding came back empty (BatchEmbedResult.embeddings:
+        "empty list for failures") must be excluded from the write entirely rather
+        than written with a nonzero dimensions value borrowed from a sibling chunk
+        in the same wave.
+        """
+        from chaoscypher_core.models import BatchEmbedResult
+
+        embedding_service = MagicMock()
+        embedding_service.model_name = "fake-embed"
+
+        async def _batch_embed(texts: list[str], batch_size: int = 50) -> BatchEmbedResult:
+            # c0's embedding failed (empty list); c1 succeeded.
+            return BatchEmbedResult(
+                embeddings=[[], [0.1, 0.2, 0.3, 0.4]],
+                total=2,
+                provider="mock",
+            )
+
+        embedding_service.batch_embed = _batch_embed
+        mock_cli_context.embedding_service = embedding_service
+        # Both chunks fit in a single wave.
+        mock_cli_context.settings.batching.embedding_api_batch_size = 8
+
+        ctx = mock_cli_context
+        single_row_spy = MagicMock()
+        ctx.storage_adapter.update_chunk_embedding = single_row_spy
+        batch_spy = MagicMock(return_value=[])
+        ctx.storage_adapter.update_chunk_embeddings_batch = batch_spy
+
+        service = CLISourceProcessingService(ctx)
+        chunks = [
+            {"id": "c0", "content": "will fail"},
+            {"id": "c1", "content": "will succeed"},
+        ]
+        try:
+            model, dims, failed = service._generate_embeddings("file-1", chunks)
+        finally:
+            service.close()
+
+        assert model == "fake-embed"
+        assert dims == 4
+        # c0's empty embedding counts as failed instead of being persisted.
+        assert failed == 1
+        assert batch_spy.call_count == 1
+        call = batch_spy.call_args_list[0]
+        # Only c1 (the real embedding) reaches the batch write; c0 is
+        # excluded rather than written with c1's borrowed dimensions.
+        assert set(call.args[0].keys()) == {"c1"}
+        assert call.kwargs["embedding_dimensions"] == 4
+        single_row_spy.assert_not_called()
 
 
 # ===========================================================================

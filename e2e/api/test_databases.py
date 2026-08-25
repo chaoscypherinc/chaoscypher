@@ -3,6 +3,8 @@
 
 """E2E tests for database management endpoints."""
 
+import uuid
+
 import httpx
 
 
@@ -19,12 +21,16 @@ class TestDatabases:
         assert "default" in names
 
     def test_create_database(self, client: httpx.Client) -> None:
-        """Creating a new database returns 201 (or 400 if already exists)."""
-        resp = client.post("/api/v1/databases", json={"name": "e2e-test-db"})
-        # Either created fresh or already exists
-        assert resp.status_code in (201, 400)
-        if resp.status_code == 201:
-            assert resp.json()["name"] == "e2e-test-db"
+        """Creating a new database returns 201.
+
+        A uuid-suffixed name keeps the create fresh even in the resume
+        phase (where a fixed name persists from the prior run and the
+        old (201, 400) set let a broken create pass as "exists").
+        """
+        name = f"e2e-test-db-{uuid.uuid4().hex[:8]}"
+        resp = client.post("/api/v1/databases", json={"name": name})
+        assert resp.status_code == 201, f"Create failed: {resp.text}"
+        assert resp.json()["name"] == name
 
     def test_switch_database(self, client: httpx.Client) -> None:
         """Switching databases changes the current one."""

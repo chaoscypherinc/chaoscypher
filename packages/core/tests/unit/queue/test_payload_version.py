@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from itertools import count
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -65,6 +66,9 @@ def _make_queue_client_with_pipeline() -> tuple[QueueClient, list[dict[str, Any]
     valkey = MagicMock()
     valkey.zcard = AsyncMock(return_value=0)
     valkey.pipeline = MagicMock(return_value=pipeline)
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15).
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
+    valkey.incrby = AsyncMock(side_effect=lambda _key, amount: amount)
 
     client.client = valkey
     return client, recorded

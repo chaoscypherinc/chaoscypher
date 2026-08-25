@@ -314,7 +314,6 @@ def mock_cli_context_with_llm(mock_cli_context: MagicMock) -> MagicMock:
         return BatchEmbedResult(
             embeddings=[[0.1, 0.2, 0.3] for _ in texts],
             total=len(texts),
-            failed=0,
             provider="mock",
         )
 

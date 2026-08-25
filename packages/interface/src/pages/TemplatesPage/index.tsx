@@ -15,15 +15,14 @@ import {
 import AddIcon from '@mui/icons-material/Add';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import { templateApi } from '../../services/api/templates';
-import { settingsApi } from '../../services/api/settings';
-import type { Template, Settings } from '../../types';
+import type { Template } from '../../types';
 import type { PropertyDefinition } from '../../components/PropertyEditor';
 import { useCRUDPage } from '../../hooks/useCRUDPage';
 import { LoadingState } from '../../components/LoadingState';
 import { filterNonSystemTemplates } from '../../constants/templates';
 import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import ConfirmDialog from '../../components/ConfirmDialog';
-import { getApiErrorMessage } from '../../utils/errors';
+import { getApiErrorMessage, isTemplateInUseError } from '../../utils/errors';
 import GhostPagination from '../../components/GhostPagination';
 import { TemplateTable } from './TemplateTable';
 import { TemplateFormDialog } from './TemplateFormDialog';
@@ -33,7 +32,6 @@ export default function TemplatesPage() {
   const navigate = useNavigate();
 
   // Additional state not managed by useCRUDPage
-  const [, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSystemTemplates, setShowSystemTemplates] = useState(false);
   const [page, setPage] = useState(1);
@@ -51,8 +49,6 @@ export default function TemplatesPage() {
 
   // Stable load function for useCRUDPage
   const loadDataFn = useCallback(async () => {
-    const settingsData = await settingsApi.get();
-    setSettings(settingsData);
     const data = await templateApi.list();
     return data;
   }, []);
@@ -173,8 +169,9 @@ export default function TemplatesPage() {
         logger.error('Failed to delete template:', error);
         const errorMessage = getApiErrorMessage(error);
 
-        // Check if error is about nodes using the template
-        if (errorMessage.includes('currently used by') || errorMessage.includes('force=True')) {
+        // 409 TEMPLATE_IN_USE: offer force delete (matched on status + code,
+        // not the reworded human-readable message)
+        if (isTemplateInUseError(error)) {
           setConfirmForceDelete({
             open: true,
             template,

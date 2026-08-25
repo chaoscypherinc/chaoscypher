@@ -13,8 +13,8 @@ and adapters.
 CONTRACT: This module must NOT import from `chaoscypher_core.services.*` or
 `chaoscypher_core.adapters.*`.
 
-Provides default icon and color suggestions for template types using a hybrid
-approach: keyword matching first, then embedding similarity for novel types.
+Provides default icon and color suggestions for template types via keyword
+matching, with a universal fallback icon for unmatched types.
 """
 
 from typing import Any
@@ -33,7 +33,6 @@ __all__ = [
     "NODE_VISUAL_DEFAULTS",
     "resolve_edge_visuals",
     "resolve_node_visuals",
-    "resolve_node_visuals_with_embedding",
 ]
 
 # Universal fallback icons for unmatched types — ensures everything has an icon
@@ -548,7 +547,7 @@ def resolve_node_visuals(entity_type: str) -> dict[str, str | None]:
     """Resolve icon and color for a node entity type.
 
     Uses keyword matching first, then falls back to the universal default
-    (Label icon). Embedding-based matching is handled separately when available.
+    (Label icon).
 
     Args:
         entity_type: The entity type name (e.g., "Person", "Protagonist")
@@ -590,77 +589,3 @@ def resolve_edge_visuals(rel_type: str) -> dict[str, str | None]:
         return {"icon": config["icon"], "color": config["color"]}
 
     return {"icon": DEFAULT_EDGE_ICON, "color": DEFAULT_EDGE_COLOR}
-
-
-async def resolve_node_visuals_with_embedding(
-    entity_type: str,
-    get_embedding: Any = None,
-    threshold: float = 0.75,
-) -> dict[str, str | None]:
-    """Resolve visuals with embedding fallback for novel types.
-
-    Tries keyword match first. If no match and an embedding function is provided,
-    uses cosine similarity against the mapping table keys.
-
-    Args:
-        entity_type: The entity type name
-        get_embedding: Async callable that returns an embedding vector for text
-        threshold: Minimum cosine similarity to accept an embedding match
-
-    Returns:
-        Dict with 'icon' and 'color' keys (values may be None)
-
-    """
-    # Try keyword match first
-    result = resolve_node_visuals(entity_type)
-    if result["icon"] is not None:
-        return result
-
-    # Embedding fallback
-    if get_embedding is None:
-        return result
-
-    try:
-        import numpy as np
-
-        query_embedding = await get_embedding(entity_type)
-        if query_embedding is None:
-            return result
-
-        query_vec = np.array(query_embedding, dtype=np.float32)
-        query_norm = np.linalg.norm(query_vec)
-        if query_norm == 0:
-            return result
-
-        best_score = 0.0
-        best_type = None
-
-        for type_name in NODE_VISUAL_DEFAULTS:
-            type_embedding = await get_embedding(type_name)
-            if type_embedding is None:
-                continue
-
-            type_vec = np.array(type_embedding, dtype=np.float32)
-            type_norm = np.linalg.norm(type_vec)
-            if type_norm == 0:
-                continue
-
-            similarity = float(np.dot(query_vec, type_vec) / (query_norm * type_norm))
-            if similarity > best_score:
-                best_score = similarity
-                best_type = type_name
-
-        if best_type and best_score >= threshold:
-            config = NODE_VISUAL_DEFAULTS[best_type]
-            logger.debug(
-                "visual_embedding_match",
-                entity_type=entity_type,
-                matched=best_type,
-                score=round(best_score, 3),
-            )
-            return {"icon": config["icon"], "color": config["color"]}
-
-    except Exception:
-        logger.debug("visual_embedding_fallback_failed", entity_type=entity_type, exc_info=True)
-
-    return result

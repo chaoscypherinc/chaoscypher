@@ -44,10 +44,6 @@ def run(command: tuple[str, ...], config: str) -> None:
     """
     console = get_console()
 
-    if not command:
-        print_error("No command specified")
-        sys.exit(1)
-
     # Load configuration
     try:
         compose_config = ComposeConfig.from_yaml(Path(config))

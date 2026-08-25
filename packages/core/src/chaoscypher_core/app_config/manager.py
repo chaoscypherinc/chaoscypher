@@ -6,7 +6,6 @@
 Uses dynaconf-powered Settings with YAML persistence.
 """
 
-import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -16,6 +15,7 @@ import structlog
 import yaml
 
 from chaoscypher_core.app_config import Settings
+from chaoscypher_core.utils.secure_write import atomic_secret_write
 
 
 logger = structlog.get_logger(__name__)
@@ -122,26 +122,22 @@ class ConfigManager:
             f.write(header)
 
     def _write_settings_to_file(self, settings_dict: dict[str, Any]) -> None:
-        """Write settings dictionary to YAML file atomically (tmp + replace).
+        """Write settings dictionary to YAML file atomically and owner-only.
 
-        The file can hold plaintext provider API keys, so it is written
-        owner-only (0600 — effectively a no-op on Windows). ``os.replace``
-        is atomic on POSIX and Windows, so concurrent readers (Cortex on
-        the same data_dir, a second CLI invocation) never observe a torn
-        file.
+        The file can hold plaintext provider API keys, so it must be
+        owner-only from the moment it exists: ``atomic_secret_write``
+        creates the tempfile at 0600 via ``mkstemp`` — no umask window
+        between the secrets landing on disk and a later ``chmod`` — and
+        renames atomically, so concurrent readers (Cortex on the same
+        data_dir, a second CLI invocation) never observe a torn or
+        world-readable file.
         """
-        settings_path = Path(self.settings_path)
-        tmp_path = settings_path.with_name(f"{settings_path.name}.tmp")
         try:
-            with tmp_path.open("w") as f:
-                yaml.safe_dump(settings_dict, f, default_flow_style=False, sort_keys=False)
-            tmp_path.chmod(0o600)
-            tmp_path.replace(settings_path)
+            content = yaml.safe_dump(settings_dict, default_flow_style=False, sort_keys=False)
+            atomic_secret_write(Path(self.settings_path), content, prefix=".settings_")
             logger.debug("settings_written_to_file", settings_path=self.settings_path)
 
         except Exception as e:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink()
             logger.exception(
                 "settings_write_failed",
                 error_type=type(e).__name__,

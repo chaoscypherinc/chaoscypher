@@ -62,15 +62,19 @@ def analyze(
         chaoscypher source quality analyze --json
     """
     from chaoscypher_cli.commands.quality.utils import (
+        SOURCE_FETCH_LIMIT,
         build_entity_chunk_mentions,
         get_quality_config,
+        load_source_extraction,
     )
     from chaoscypher_core.services.quality import QualityScorer
 
     ctx = get_context(database_name=database)
 
-    # Get all sources (list_files uses load_only, excludes extraction_results)
-    sources = ctx.storage_adapter.list_files(ctx.database_name)
+    # Get all sources. list_files uses a narrow load_only projection, and its
+    # default limit=100 would silently truncate the analysis — pass the bulk
+    # ceiling so the whole source set is covered.
+    sources = ctx.storage_adapter.list_files(ctx.database_name, limit=SOURCE_FETCH_LIMIT)
 
     # Filter and score sources
     results = []
@@ -85,14 +89,15 @@ def analyze(
         if domain and source_domain != domain:
             continue
 
-        # Fetch full record to get extraction_results (excluded from list_files)
-        full = ctx.storage_adapter.get_file(source["id"], ctx.database_name)
-        if not full:
+        # Cheap pre-filter on the projected row before loading extraction rows.
+        if (source.get("extraction_entities_count") or 0) < min_entities:
             continue
 
-        extraction_results = full.get("extraction_results") or {}
-        entities = extraction_results.get("entities", [])
-        relationships = extraction_results.get("relationships", [])
+        # Per-source extraction rows live in dedicated tables — the old
+        # ``extraction_results`` JSON column no longer exists.
+        entities, relationships = load_source_extraction(
+            ctx.storage_adapter, source["id"], ctx.database_name
+        )
 
         # Filter by entity count
         if len(entities) < min_entities:

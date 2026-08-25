@@ -30,9 +30,17 @@ from chaoscypher_core.adapters.llm.limit import (
     PrioritySemaphore,
     update_llm_semaphore_config,
 )
+from chaoscypher_core.exceptions import LLMError
 
 
 logger = structlog.get_logger(__name__)
+
+# How many times acquire_instance re-selects when the instance it captured is
+# retired (drained, or its semaphore replaced by a URL change) while the
+# request sat parked on that instance's semaphore. Each attempt costs one
+# semaphore round-trip, so the ceiling keeps a reconfiguring pool from
+# retrying forever.
+_ACQUIRE_MAX_ATTEMPTS = 3
 
 
 class OllamaLoadBalancer:
@@ -233,23 +241,56 @@ class OllamaLoadBalancer:
             base_url=inst_config.get("base_url"),
         )
 
+    @staticmethod
+    def _pending_requests(sem: PrioritySemaphore) -> int:
+        """Count what an instance still owes: granted slots plus parked waiters.
+
+        ``active_count`` alone only sees slots already granted. A request queued
+        behind the current holder is invisible to it — and with
+        ``max_concurrent=1`` per instance, queueing is the normal state, not an
+        edge case. Draining on ``active_count`` alone therefore removes
+        instances that still have live requests attached to them.
+        """
+        return (
+            sem.active_count + sem.high_priority_waiters.qsize() + sem.low_priority_waiters.qsize()
+        )
+
     async def _drain_and_remove_instance(self, instance_id: str) -> None:
-        """Wait for in-flight requests then remove instance."""
+        """Wait for in-flight *and* queued requests, then remove the instance.
+
+        The poll counts parked waiters alongside granted slots so a request
+        queued behind the current holder keeps the instance alive until it has
+        had its turn. If the budget runs out with work still attached, the
+        instance is removed anyway — ``reload_config`` must not be blockable by
+        a stuck request — and ``acquire_instance`` detects the retirement when
+        the waiter is woken and re-selects instead of failing.
+        """
         if instance_id not in self._semaphores:
             return
 
         sem = self._semaphores[instance_id]
 
-        # Wait for in-flight requests to complete (configurable timeout)
+        # Wait for in-flight + queued requests to complete (configurable timeout)
         for _ in range(self._drain_max_wait):
-            if sem.active_count == 0:
+            if self._pending_requests(sem) == 0:
                 break
             logger.info(
                 "load_balancer_draining_instance",
                 instance_id=instance_id,
                 active_count=sem.active_count,
+                waiting_high=sem.high_priority_waiters.qsize(),
+                waiting_low=sem.low_priority_waiters.qsize(),
             )
             await asyncio.sleep(self._drain_check_interval)
+
+        stranded = self._pending_requests(sem)
+        if stranded:
+            logger.warning(
+                "load_balancer_drain_budget_exhausted",
+                instance_id=instance_id,
+                pending=stranded,
+                action="removing_anyway_waiters_reselect_on_wake",
+            )
 
         # Remove instance
         self._providers.pop(instance_id, None)
@@ -258,11 +299,36 @@ class OllamaLoadBalancer:
 
         logger.info("load_balancer_instance_removed", instance_id=instance_id)
 
+    @staticmethod
+    def _unavailable_error(reason: str) -> LLMError:
+        """Build the classifiable error raised when acquisition cannot be resolved.
+
+        Requests that lose their instance mid-wait must surface an ``LLMError``
+        the provider error classifier understands, never the bare ``KeyError``
+        that indexing a popped ``_providers`` entry used to raise into a live
+        chat turn or extraction chunk.
+        """
+        return LLMError(
+            message=f"No Ollama instance available: {reason}",
+            code="LLM_INSTANCE_UNAVAILABLE",
+            provider="ollama",
+            is_retryable=True,
+            suggested_action="Retry shortly — the instance pool was reconfigured mid-request.",
+        )
+
     @asynccontextmanager
     async def acquire_instance(self, high_priority: bool = False) -> Any:
         """Get an available instance based on load balancing strategy.
 
         Blocks until an instance slot is available. Use as async context manager.
+
+        A request can sit parked on an instance's semaphore for as long as the
+        current holder runs, and ``reload_config`` may drain (or, on a URL
+        change, drain and re-add) that instance meanwhile. On wake we therefore
+        re-check that the captured instance is still registered *and* still
+        governed by the semaphore whose slot we hold; otherwise the slot is
+        handed back and selection is retried, bounded by
+        ``_ACQUIRE_MAX_ATTEMPTS``.
 
         Args:
             high_priority: If True, jumps ahead in queue
@@ -272,6 +338,8 @@ class OllamaLoadBalancer:
 
         Raises:
             RuntimeError: If no instances are configured
+            LLMError: If the pool emptied, or every attempt landed on an
+                instance retired while the request waited.
 
         Example:
             >>> async with balancer.acquire_instance(high_priority=True) as (inst_id, provider):
@@ -280,28 +348,67 @@ class OllamaLoadBalancer:
         if not self._providers:
             raise RuntimeError("No Ollama instances configured")
 
-        # Select instance based on strategy
-        instance_id = await self._select_instance()
-        sem = self._semaphores[instance_id]
-
-        # Use the semaphore's context manager
-        async with sem.acquire(high_priority=high_priority):
-            logger.debug(
-                "load_balancer_instance_acquired",
-                instance_id=instance_id,
-                strategy=self._strategy,
-                high_priority=high_priority,
-            )
+        for attempt in range(1, _ACQUIRE_MAX_ATTEMPTS + 1):
+            # Select instance based on strategy
             try:
-                yield instance_id, self._providers[instance_id]
-            except Exception as e:
-                # Mark instance as unhealthy if connection error
-                error_str = str(e).lower()
-                if "connect" in error_str or "connection" in error_str or "timeout" in error_str:
-                    await self.mark_instance_unhealthy(instance_id, str(e))
-                raise
-            finally:
-                logger.debug("load_balancer_instance_released", instance_id=instance_id)
+                instance_id = await self._select_instance()
+            except RuntimeError as exc:
+                # The pool drained to empty while we waited — classify it.
+                raise self._unavailable_error(str(exc)) from exc
+
+            sem = self._semaphores.get(instance_id)
+            if sem is None:
+                # Removed between selection and lookup; never index blind.
+                logger.warning(
+                    "load_balancer_instance_retired_before_acquire",
+                    instance_id=instance_id,
+                    attempt=attempt,
+                )
+                continue
+
+            # Use the semaphore's context manager
+            async with sem.acquire(high_priority=high_priority):
+                # Re-validate after the wait: the slot we now hold is only
+                # meaningful if this semaphore still governs this instance.
+                provider = self._providers.get(instance_id)
+                if provider is None or self._semaphores.get(instance_id) is not sem:
+                    logger.warning(
+                        "load_balancer_instance_retired_while_waiting",
+                        instance_id=instance_id,
+                        attempt=attempt,
+                        reason="removed" if provider is None else "semaphore_replaced",
+                    )
+                    # Exiting the block releases the slot on the retired
+                    # semaphore before we re-select.
+                    continue
+
+                logger.debug(
+                    "load_balancer_instance_acquired",
+                    instance_id=instance_id,
+                    strategy=self._strategy,
+                    high_priority=high_priority,
+                )
+                try:
+                    yield instance_id, provider
+                except Exception as e:
+                    # Mark instance as unhealthy if connection error
+                    error_str = str(e).lower()
+                    if (
+                        "connect" in error_str
+                        or "connection" in error_str
+                        or "timeout" in error_str
+                    ):
+                        await self.mark_instance_unhealthy(instance_id, str(e))
+                    raise
+                finally:
+                    logger.debug("load_balancer_instance_released", instance_id=instance_id)
+                return
+
+        exhausted = (
+            f"every instance selected across {_ACQUIRE_MAX_ATTEMPTS} attempts was retired "
+            "while the request waited"
+        )
+        raise self._unavailable_error(exhausted)
 
     async def _select_instance(self) -> str:
         """Select instance based on configured strategy.
@@ -336,11 +443,7 @@ class OllamaLoadBalancer:
                 # Pick instance with fewest active + waiting requests
                 return min(
                     healthy_ids,
-                    key=lambda i: (
-                        self._semaphores[i].active_count
-                        + self._semaphores[i].high_priority_waiters.qsize()
-                        + self._semaphores[i].low_priority_waiters.qsize()
-                    ),
+                    key=lambda i: self._pending_requests(self._semaphores[i]),
                 )
 
             if self._strategy == "random":

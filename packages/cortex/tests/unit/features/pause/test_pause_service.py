@@ -9,6 +9,8 @@ pause, repository delegation PLUS immediate recovery on resume
 system-state shape returned to the API layer.
 """
 
+import contextlib
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,13 +19,25 @@ from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_cortex.features.pause.service import PauseService
 
 
+def _adapter_stub() -> MagicMock:
+    """Adapter stand-in whose session_scope is a working async CM."""
+    adapter = MagicMock()
+
+    @contextlib.asynccontextmanager
+    async def _scope() -> AsyncIterator[MagicMock]:
+        yield MagicMock()
+
+    adapter.session_scope = _scope
+    return adapter
+
+
 @pytest.mark.asyncio
 async def test_pause_source_delegates() -> None:
     repo = MagicMock()
     repo.pause_source = MagicMock(return_value=1)
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     await service.pause_source(source_id="s-1", database_name="default", reason="x")
 
     repo.pause_source.assert_called_once_with(source_id="s-1", database_name="default", reason="x")
@@ -37,7 +51,7 @@ async def test_pause_source_missing_raises_not_found() -> None:
     repo.pause_source = MagicMock(return_value=0)
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     with pytest.raises(NotFoundError):
         await service.pause_source(source_id="nope", database_name="default", reason=None)
 
@@ -50,7 +64,7 @@ async def test_resume_source_triggers_recovery() -> None:
     recovery = AsyncMock()
     recovery.recover_source = AsyncMock(return_value=True)
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     await service.resume_source(source_id="s-1", database_name="default")
 
     repo.resume_source.assert_called_once_with(source_id="s-1", database_name="default")
@@ -64,7 +78,7 @@ async def test_resume_source_missing_raises_not_found_without_recovery() -> None
     repo.resume_source = MagicMock(return_value=0)
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     with pytest.raises(NotFoundError):
         await service.resume_source(source_id="nope", database_name="default")
     recovery.recover_source.assert_not_awaited()
@@ -76,7 +90,7 @@ async def test_pause_sources_bulk_returns_count() -> None:
     repo.pause_sources = MagicMock(return_value=5)
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     count = await service.pause_sources(
         source_ids=["a", "b", "c", "d", "e"],
         database_name="default",
@@ -92,7 +106,7 @@ async def test_resume_sources_triggers_recovery_per_source() -> None:
     recovery = AsyncMock()
     recovery.recover_source = AsyncMock(return_value=True)
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     count = await service.resume_sources(source_ids=["a", "b", "c"], database_name="default")
 
     assert count == 3
@@ -107,7 +121,7 @@ async def test_resume_sources_continues_on_per_source_error() -> None:
     recovery = AsyncMock()
     recovery.recover_source = AsyncMock(side_effect=[True, RuntimeError("boom"), True])
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     count = await service.resume_sources(source_ids=["a", "b", "c"], database_name="default")
 
     assert count == 3
@@ -119,7 +133,7 @@ async def test_pause_system() -> None:
     repo = MagicMock()
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     await service.pause_system(reason="deploy")
 
     repo.pause_system.assert_called_once_with(reason="deploy", paused_by="user")
@@ -134,7 +148,7 @@ async def test_resume_system_does_not_trigger_per_source_recovery() -> None:
     repo = MagicMock()
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     await service.resume_system()
 
     repo.resume_system.assert_called_once()
@@ -153,7 +167,7 @@ async def test_get_system_status_shape() -> None:
     )
     recovery = AsyncMock()
 
-    service = PauseService(repository=repo, source_recovery=recovery)
+    service = PauseService(repository=repo, source_recovery=recovery, adapter=_adapter_stub())
     status = await service.get_system_status()
 
     assert status == {

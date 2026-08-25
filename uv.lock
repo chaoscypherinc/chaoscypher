@@ -293,7 +293,7 @@ wheels = [
 
 [[package]]
 name = "chaoscypher-cli"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "chaoscypher-core" },
@@ -341,7 +341,7 @@ provides-extras = ["server", "dev"]
 
 [[package]]
 name = "chaoscypher-core"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "alembic" },
@@ -400,6 +400,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "detect-secrets" },
     { name = "diff-cover" },
     { name = "hypothesis" },
     { name = "import-linter" },
@@ -429,6 +430,7 @@ requires-dist = [
     { name = "chardet", specifier = ">=5.2.0" },
     { name = "charset-normalizer", specifier = ">=3.3,<4" },
     { name = "cryptography", specifier = ">=50.0.0,<51" },
+    { name = "detect-secrets", marker = "extra == 'dev'", specifier = ">=1.5.0,<2" },
     { name = "diff-cover", marker = "extra == 'dev'", specifier = ">=9.6.0,<10" },
     { name = "docutils", specifier = ">=0.20,<1" },
     { name = "dynaconf", specifier = ">=3.2.13,<4" },
@@ -492,7 +494,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "chaoscypher-cortex"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/cortex" }
 dependencies = [
     { name = "chaoscypher-core" },
@@ -546,7 +548,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "chaoscypher-neuron"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "packages/neuron" }
 dependencies = [
     { name = "chaoscypher-core" },
@@ -815,6 +817,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/0f/d5/c66da9b79e5bdb124974bfe172b4daf3c984ebd9c2a06e2b8a4dc7331c72/defusedxml-0.7.1.tar.gz", hash = "sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69", size = 75520, upload-time = "2021-03-08T10:59:26.269Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/07/6c/aa3f2f849e01cb6a001cd8554a88d4c77c5c1a31c95bdf1cf9301e6d9ef4/defusedxml-0.7.1-py2.py3-none-any.whl", hash = "sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61", size = 25604, upload-time = "2021-03-08T10:59:24.45Z" },
+]
+
+[[package]]
+name = "detect-secrets"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/67/382a863fff94eae5a0cf05542179169a1c49a4c8784a9480621e2066ca7d/detect_secrets-1.5.0.tar.gz", hash = "sha256:6bb46dcc553c10df51475641bb30fd69d25645cc12339e46c824c1e0c388898a", size = 97351, upload-time = "2024-05-06T17:46:19.721Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4e/5e/4f5fe4b89fde1dc3ed0eb51bd4ce4c0bca406246673d370ea2ad0c58d747/detect_secrets-1.5.0-py3-none-any.whl", hash = "sha256:e24e7b9b5a35048c313e983f76c4bd09dad89f045ff059e354f9943bf45aa060", size = 120341, upload-time = "2024-05-06T17:46:16.628Z" },
 ]
 
 [[package]]
@@ -2174,11 +2189,11 @@ wheels = [
 
 [[package]]
 name = "pip"
-version = "26.1.2"
+version = "26.2"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/01/91/47e7d486260f618783899587af63ccf7980fb60245c3e63dd4571c6b57ad/pip-26.1.2.tar.gz", hash = "sha256:f49cd134c61cf2fd75e0ce2676db03e4054504a5a4986d00f8299ae632dc4605", size = 1840799, upload-time = "2026-05-31T17:33:58.56Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/db/96/e6f8e9d9d7b9cc4457092712a7e919c3186aa2c2fa9ffed2c5d29cc947e8/pip-26.2.tar.gz", hash = "sha256:2d8542afcc84cdd8e846c2b36b2861fad1da376dd98f8e7113e9108a3c331690", size = 1848845, upload-time = "2026-07-29T21:57:56.407Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/95/6b5cb3461ea5673ba0995989746db58eb18b91b54dbf331e72f569540946/pip-26.1.2-py3-none-any.whl", hash = "sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab", size = 1813144, upload-time = "2026-05-31T17:33:56.772Z" },
+    { url = "https://files.pythonhosted.org/packages/62/36/a3aed958d60531cb442b7ab4596cda7b3621cfb916f8ae1d6769795c7dc1/pip-26.2-py3-none-any.whl", hash = "sha256:931c303696af6fa3417112103b1cad26890e5a07eccb5b99783700e33f2b8aad", size = 1816475, upload-time = "2026-07-29T21:57:54.763Z" },
 ]
 
 [[package]]

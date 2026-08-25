@@ -177,11 +177,24 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             Summary with counts by status, total entities/relationships
         """
         self._ensure_connected()
-        statement = select(ChunkExtractionTask).where(ChunkExtractionTask.job_id == job_id)
-        tasks = list(self.session.exec(statement).all())
+        # Single GROUP BY aggregate (the sources_citations.py precedent) —
+        # hydrating full ORM rows here dragged raw_entities /
+        # raw_entity_embeddings / llm_response_json across the wire just to
+        # count statuses and sum two integers.
+        statement = (
+            select(
+                ChunkExtractionTask.status,
+                func.count(),
+                func.coalesce(func.sum(ChunkExtractionTask.entity_count), 0),
+                func.coalesce(func.sum(ChunkExtractionTask.relationship_count), 0),
+            )
+            .where(ChunkExtractionTask.job_id == job_id)
+            .group_by(ChunkExtractionTask.status)
+        )
+        rows = self.session.exec(statement).all()
 
-        summary = {
-            "total": len(tasks),
+        summary: dict[str, Any] = {
+            "total": 0,
             "by_status": {
                 "pending": 0,
                 "queued": 0,
@@ -193,12 +206,12 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             "total_relationships": 0,
         }
 
-        for task in tasks:
-            status = task.status
-            by_status = cast("dict[str, int]", summary["by_status"])
-            by_status[status] = by_status.get(status, 0) + 1
-            summary["total_entities"] += task.entity_count
-            summary["total_relationships"] += task.relationship_count
+        by_status = cast("dict[str, int]", summary["by_status"])
+        for status, count, entity_sum, relationship_sum in rows:
+            summary["total"] += count
+            by_status[status] = by_status.get(status, 0) + count
+            summary["total_entities"] += entity_sum
+            summary["total_relationships"] += relationship_sum
 
         return summary
 

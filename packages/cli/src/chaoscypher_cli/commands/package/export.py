@@ -95,9 +95,11 @@ def export(
         # Generate output filename if not provided
         output_path = Path(output) if output else Path(service.get_export_filename())
 
-        # Ensure .ccx extension
-        if output_path.suffix != ".ccx":
-            output_path = output_path.with_suffix(".ccx")
+        # Ensure .ccx extension. Append rather than with_suffix() — a dotted
+        # name like "backup.v2" has suffix ".v2", and with_suffix would
+        # silently write "backup.ccx" instead of "backup.v2.ccx".
+        if output_path.suffix.lower() != ".ccx":
+            output_path = output_path.with_name(output_path.name + ".ccx")
 
         console.print(f"[cyan]Exporting to:[/cyan] {output_path}")
 

@@ -198,6 +198,81 @@ class SchemaIntegrityError(ChaosCypherException):
         super().__init__(message=message, code="SCHEMA_INTEGRITY_ERROR", details=details or {})
 
 
+class UnsupportedDatabaseLineageError(ChaosCypherException):
+    """Database is stamped at a revision this build's migration chain lacks.
+
+    Raised by :func:`chaoscypher_core.database.migrations.runner.ensure_stamped`
+    when ``alembic_version`` names a revision the shipped script directory
+    cannot resolve. Two different situations reach this one check, and the
+    message must not pick a side:
+
+    * **Older than this build.** The 2026-06-02 squash collapsed the original
+      ``0001``-``0050`` chain into a single consolidated ``0001`` baseline, so a
+      database recorded against the old lineage carries a schema no shipped
+      migration can reconcile. Unsupported by design — the squash predates
+      every public release, so no released build ever wrote one.
+    * **Newer than this build.** The operator downgraded (rolled an image
+      back), leaving a healthy, current database stamped ahead of the code.
+      Here the database is fine and the fix is to re-install the newer build;
+      telling this operator to re-create or export/re-import would destroy
+      live data.
+
+    Refusing at startup replaces the previous behaviour, which silently
+    re-stamped the unknown revision at the baseline and then replayed
+    ``0002``→HEAD against a mismatched schema — booting into an opaque
+    :class:`SchemaIntegrityError` restart loop instead of an actionable
+    message.
+
+    Maps to HTTP 500. This is an operator/deployment condition, not a client
+    error.
+
+    Example:
+        raise UnsupportedDatabaseLineageError("0050_chunk_job_finalize_claimed")
+
+    """
+
+    def __init__(self, revision: str, db_path: str | None = None):
+        """Initialize the error with a guided, operator-facing message.
+
+        The message deliberately leads with the recoverable, non-destructive
+        cause (a downgrade) before the destructive advice, because we cannot
+        tell the two apart from an unresolvable revision id alone.
+
+        Args:
+            revision: The ``alembic_version`` revision id found on the
+                database — the one this build cannot resolve.
+            db_path: Path to the offending database file, when known, so an
+                operator running several databases knows which one to move.
+
+        """
+        where = f" (database file: {db_path})" if db_path else ""
+        super().__init__(
+            message=(
+                f"This database is stamped at migration revision {revision!r}, which "
+                f"is not part of this build's migration history{where}. It is either "
+                "from the retired pre-2026-06-02 lineage (pre-v0.1.0), whose "
+                "migrations this build no longer ships, or from a NEWER build of "
+                "ChaosCypher than this one.\n\n"
+                "If you recently downgraded ChaosCypher, re-install the newer version "
+                "before doing anything else — the database is healthy and nothing "
+                "needs to be re-created.\n\n"
+                "Otherwise the database predates the first public release and has no "
+                "upgrade path: back up the database file, then either re-create the "
+                "database (move the old file aside and let ChaosCypher build a fresh "
+                "one) or export your data from a build that still opens it and "
+                "re-import it here.\n\n"
+                "In plain English: this database does not match this version of "
+                "ChaosCypher. If you just downgraded, put the newer version back. If "
+                "not, the database is older than the first public release — save a "
+                "copy, start a new database, and import your data into it."
+            ),
+            code="UNSUPPORTED_DATABASE_LINEAGE",
+            details={"revision": revision, "db_path": db_path},
+        )
+        self.revision = revision
+        self.db_path = db_path
+
+
 class InvalidStateError(ChaosCypherException):
     """Operation attempted on an entity in an incompatible state.
 

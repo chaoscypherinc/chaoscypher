@@ -20,7 +20,7 @@ from datetime import UTC
 from typing import TYPE_CHECKING
 
 import structlog
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphSnapshot
 from chaoscypher_core.ports.storage_graph_snapshot import SnapshotStalenessInfo
@@ -126,16 +126,24 @@ class GraphSnapshotRepository:
 
         """
         with Session(self._engine) as session:
-            row = session.get(GraphSnapshot, database_name)
+            # Tuple-select the three scalar columns so payload_json never
+            # leaves the database (session.get() would load the full row).
+            row = session.exec(
+                select(
+                    GraphSnapshot.generated_at,
+                    GraphSnapshot.node_count,
+                    GraphSnapshot.edge_count,
+                ).where(GraphSnapshot.database_name == database_name)
+            ).first()
             if row is None:
                 return None
+            generated_at, node_count, edge_count = row
             # SQLite stores datetimes without tz info; reattach UTC so callers
             # receive an aware datetime consistent with the stored breakdown.
-            generated_at = row.generated_at
             if generated_at.tzinfo is None:
                 generated_at = generated_at.replace(tzinfo=UTC)
             return SnapshotStalenessInfo(
                 generated_at=generated_at,
-                node_count=row.node_count,
-                edge_count=row.edge_count,
+                node_count=node_count,
+                edge_count=edge_count,
             )

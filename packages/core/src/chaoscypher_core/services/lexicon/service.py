@@ -23,7 +23,7 @@ Example:
     # Search packages
     results = await service.search(LexiconSearchRequest(query="medical"))
     for pkg in results.packages:
-        print(f"{pkg.name} v{pkg.version}")
+        print(f"{pkg.full_name}: {pkg.description}")
 """
 
 from __future__ import annotations
@@ -299,7 +299,23 @@ class LexiconService:
                         lexicon_url=request.lexicon_url,
                         message="Slow down - poll less frequently",
                     )
-                # Re-raise for expired/denied errors
+                # Remap the RFC 8628 terminal errors to distinct HTTP statuses,
+                # mirroring client.poll_device_token — the raw upstream status
+                # is 400, which the API layer would collapse to 503 and the UI
+                # would keep polling forever instead of surfacing expiry.
+                if error_code == "expired_token":
+                    raise LexiconClientError(
+                        status_code=410,
+                        message="Device code expired. Please restart login.",
+                        details={"error": error_code},
+                    ) from e
+                if error_code == "access_denied":
+                    raise LexiconClientError(
+                        status_code=403,
+                        message="Access denied by user.",
+                        details={"error": error_code},
+                    ) from e
+                # Unknown error - re-raise
                 raise
 
     async def poll_device_token_blocking(

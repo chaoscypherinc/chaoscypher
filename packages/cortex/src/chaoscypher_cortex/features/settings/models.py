@@ -249,7 +249,15 @@ class SettingsWarning(BaseModel):
 # the full settings object on save, so these are silently stripped, not 422'd.
 _PROTECTED_TOP_LEVEL_KEYS = frozenset({"dev_mode"})
 _PROTECTED_LOCAL_AUTH_FIELDS = frozenset(
-    {"edge_auth_token", "edge_auth_token_path", "session_secret_path", "credentials_path"}
+    {
+        "edge_auth_token",
+        "edge_auth_token_path",
+        # The nginx->Cortex trust-header NAME: renaming it via PATCH would
+        # 401 every /api/ route — including the PATCH needed to undo it.
+        "edge_auth_header",
+        "session_secret_path",
+        "credentials_path",
+    }
 )
 
 
@@ -282,6 +290,23 @@ class SettingsUpdateRequest(BaseModel):
         unknown = sorted(set(data) - allowed)
         if unknown:
             msg = f"Unknown settings keys: {unknown}. Allowed top-level keys: {sorted(allowed)}"
+            raise ValueError(msg)
+
+        # current_database is joined as a raw path segment by every
+        # database/backup/MCP path helper. The core Settings validator is
+        # the authoritative guard (mirroring create_database's name rule);
+        # duplicating the check here turns a traversal attempt into a
+        # clean 422 instead of a 500 from the service layer.
+        current_database = data.get("current_database")
+        if isinstance(current_database, str) and (
+            not current_database
+            or len(current_database) > 64
+            or not current_database.replace("_", "").replace("-", "").isalnum()
+        ):
+            msg = (
+                "current_database must be a valid database name "
+                "(alphanumeric, underscores and hyphens allowed, max 64 chars)"
+            )
             raise ValueError(msg)
 
         # Drop protected keys so PATCH can never change them.

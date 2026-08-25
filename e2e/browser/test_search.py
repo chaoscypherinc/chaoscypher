@@ -37,14 +37,20 @@ class TestOmnibar:
         page.keyboard.press("Control+k")
         page.wait_for_timeout(500)
 
+        # Locate the omnibar's own input specifically (same selector the
+        # sibling test_ctrl_k_opens_omnibar uses to confirm it opened) --
+        # MUI's InputBase defaults its `type` prop to 'text'
+        # (Omnibar.tsx's <InputBase inputRef={inputRef} .../>), so this
+        # resolves to that one element, not <body>.
+        omnibar_input = page.locator("input[type='text']:visible")
+        expect(omnibar_input).to_be_visible()
+
         # Type a search query
         page.keyboard.type("alice")
         page.wait_for_timeout(500)
 
-        # The input should contain our text
-        # (some inputs may not show value via standard locator, just verify no crash)
-        body = page.locator("body")
-        expect(body).to_be_visible()
+        # The input should actually contain the typed text.
+        assert omnibar_input.input_value() == "alice"
 
     def test_escape_closes_omnibar(self, authenticated_page: Page) -> None:
         """Escape key closes the omnibar."""
@@ -55,10 +61,17 @@ class TestOmnibar:
         page.keyboard.press("Control+k")
         page.wait_for_timeout(500)
         before = page.locator("input[type='text']:visible").count()
+        assert before >= 1, "Omnibar did not open after Ctrl+K"
 
         page.keyboard.press("Escape")
         page.wait_for_timeout(500)
         after = page.locator("input[type='text']:visible").count()
 
-        # After escape, fewer text inputs should be visible
-        assert after <= before
+        # Omnibar.tsx unmounts entirely when closed (`if (!isOpen ||
+        # !anchorEl) return null`), so the input should be fully gone,
+        # not merely "fewer than before" -- `after <= before` would also
+        # pass if Escape did nothing (before == after) or if Ctrl+K never
+        # opened anything at all (before == after == 0).
+        assert after == 0, (
+            f"Omnibar input still visible after Escape (before={before}, after={after})"
+        )

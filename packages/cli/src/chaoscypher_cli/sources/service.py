@@ -372,7 +372,7 @@ class CLISourceProcessingService:
             # PDF / image loader instead. Surface the misuse loudly.
             msg = (
                 f"URL returned binary content ({result.content_type}); "
-                "use 'cc source add <url>' which routes binary URLs "
+                "use 'chaoscypher source add <url>' which routes binary URLs "
                 "through the staging pipeline."
             )
             raise ValueError(msg)
@@ -918,27 +918,58 @@ class CLISourceProcessingService:
                         embeddings_count=batch_result.total,
                     )
 
+                    # embedding_dimensions is applied batch-wide by the batch
+                    # write (one UPDATE for the whole wave), so a chunk whose
+                    # embedding came back empty (BatchEmbedResult.embeddings:
+                    # "empty list for failures") must never enter the dict —
+                    # otherwise it would be written with someone else's
+                    # borrowed nonzero dimensions instead of an honest 0.
+                    # Excluded chunks get the same "not persisted, counts as
+                    # failed" treatment as missing_ids below.
+                    embeddings_by_chunk: dict[str, str] = {}
+                    wave_dimensions = 0
+                    empty_count = 0
                     for j, embedding in enumerate(batch_result.embeddings):
                         chunk = batch[j]
                         chunk_id = chunk["id"]
-                        embedding_dims = len(embedding) if embedding else 0
-                        embedding_str = (
-                            base64.b64encode(
-                                np.array(embedding, dtype=np.float32).tobytes()
-                            ).decode("utf-8")
-                            if embedding
-                            else ""
-                        )
-                        self.ctx.storage_adapter.update_chunk_embedding(
-                            chunk_id,
-                            embedding_str,
-                            model_name,
-                            embedding_dims,
-                            "embedded",
+                        if not embedding:
+                            empty_count += 1
+                            continue
+
+                        embedding_str = base64.b64encode(
+                            np.array(embedding, dtype=np.float32).tobytes()
+                        ).decode("utf-8")
+                        embeddings_by_chunk[chunk_id] = embedding_str
+
+                        if wave_dimensions == 0:
+                            wave_dimensions = len(embedding)
+                        if dimensions == 0:
+                            dimensions = len(embedding)
+
+                    if empty_count:
+                        failed_chunks += empty_count
+                        logger.warning(
+                            "embedding_chunk_empty_skipped",
+                            batch=batch_num,
+                            empty_count=empty_count,
                         )
 
-                        if dimensions == 0 and embedding:
-                            dimensions = len(embedding)
+                    # One bulk UPDATE + one commit for the wave (up to
+                    # batching.embedding_api_batch_size chunks) instead of a
+                    # full-row SELECT plus a real COMMIT per chunk.
+                    missing_ids = self.ctx.storage_adapter.update_chunk_embeddings_batch(
+                        embeddings_by_chunk,
+                        embedding_model=model_name,
+                        embedding_dimensions=wave_dimensions,
+                        status="embedded",
+                    )
+                    if missing_ids:
+                        failed_chunks += len(missing_ids)
+                        logger.warning(
+                            "embedding_chunk_missing_skipped",
+                            batch=batch_num,
+                            missing_count=len(missing_ids),
+                        )
 
                 except Exception as e:
                     failed_chunks += len(batch)

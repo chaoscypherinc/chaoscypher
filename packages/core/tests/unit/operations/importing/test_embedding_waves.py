@@ -175,3 +175,46 @@ async def test_stage_progress_total_is_full_count(adapter: SqliteAdapter) -> Non
     assert progress["embedding"]["total"] == 5
     assert progress["embedding"]["processed"] == 5
     assert progress["embedding"]["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_stage_progress_ticks_once_per_wave(
+    adapter: SqliteAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One progress write per wave, not one per embedded chunk.
+
+    The wave's real write is already batched (one ``mark_chunks_embedded``
+    for the whole wave); ticking ``count`` times immediately after handed
+    that win straight back as one UPDATE + one COMMIT per chunk.
+    """
+    from chaoscypher_core.operations.importing.embedding_handler import (
+        _embed_unembedded_chunks,
+    )
+
+    _seed_chunks(adapter, 5)
+
+    processed_seen: list[int] = []
+    real_tick_stage = adapter.tick_stage
+
+    async def _recording_tick_stage(**kwargs):
+        processed_seen.append(kwargs["processed"])
+        return await real_tick_stage(**kwargs)
+
+    monkeypatch.setattr(adapter, "tick_stage", _recording_tick_stage)
+
+    fake_indexing_service = MagicMock()
+    fake_indexing_service.settings.search.vector_dimensions = 384
+    fake_indexing_service.embed_chunks = AsyncMock(side_effect=lambda *, chunks, **_k: len(chunks))
+
+    await _embed_unembedded_chunks(
+        source_id="src-wave",
+        database_name="default",
+        adapter=adapter,
+        indexing_service=fake_indexing_service,
+        wave_size=2,
+    )
+
+    # Waves of 2, 2, 1 -> three ticks carrying the running total, NOT five.
+    assert processed_seen == [2, 4, 5]
+    assert adapter._fetch_stage_progress("src-wave")["embedding"]["processed"] == 5

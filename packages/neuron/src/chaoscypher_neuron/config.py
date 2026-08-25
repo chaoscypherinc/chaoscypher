@@ -44,9 +44,12 @@ logger = structlog.get_logger(__name__)
 # Expand only after verifying the higher bound has been load-tested.
 # ============================================================================
 _MAX_CONCURRENT_HARD_CAP = 64
-_MAX_TIMEOUT_HARD_CAP_SECONDS = policy.SECONDS_PER_DAY  # 86400
 _MAX_TRIES_HARD_CAP = 20
-_MIN_TIMEOUT_FLOOR_SECONDS = 60
+# Timeout bounds live in core.policy so the deadline this worker enforces and
+# the reconciler cutoff derived from the same workers.yaml override clamp
+# identically — see chaoscypher_core.queue.worker_timeouts.
+_MAX_TIMEOUT_HARD_CAP_SECONDS = policy.WORKER_TIMEOUT_MAX_SECONDS  # 86400
+_MIN_TIMEOUT_FLOOR_SECONDS = policy.WORKER_TIMEOUT_MIN_SECONDS
 
 
 # ============================================================================

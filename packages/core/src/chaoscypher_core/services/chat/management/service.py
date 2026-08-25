@@ -9,13 +9,14 @@ Uses storage protocol for backend-independent data access.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.ports.storage_chats import ChatStorageProtocol
+    from chaoscypher_core.ports.transactional import TransactionalAdapterProtocol
     from chaoscypher_core.ports.types import ChatDict, MessageDict
 
 logger = structlog.get_logger(__name__)
@@ -110,6 +111,23 @@ class ChatService:
             scoped=scoped,
             search=search,
         )
+
+    def get_chat_summary(self, chat_id: str) -> dict[str, Any] | None:
+        """Get chat row by ID without loading its messages.
+
+        The message-free sibling of :meth:`get_chat` for existence and
+        status checks — ``get_chat`` always eager-loads up to 500 message
+        rows with their content, which the checking callers never read.
+
+        Args:
+            chat_id: Chat ID
+
+        Returns:
+            Chat dictionary (no ``messages`` key) or None
+
+        """
+        chat = self.storage.get_chat(chat_id, self.database_name)
+        return dict(chat) if chat else None
 
     def get_chat(self, chat_id: str) -> dict[str, Any] | None:
         """Get chat by ID with all messages.
@@ -211,6 +229,29 @@ class ChatService:
 
         """
         return self.update_chat(chat_id, {"status": status})
+
+    def try_begin_processing(self, chat_id: str) -> bool:
+        """Atomically claim the chat for processing.
+
+        Compare-and-swap through the storage layer: the transition to
+        ``processing`` only succeeds when the chat is not already
+        processing, so two concurrent retry/regenerate requests cannot
+        both enqueue a turn.
+
+        Args:
+            chat_id: Chat ID
+
+        Returns:
+            True when this call won the claim, False when the chat is
+            unknown or a turn is already in progress.
+
+        """
+        claimed = self.storage.claim_chat_processing(chat_id)
+        if claimed:
+            logger.info("chat_processing_claimed", chat_id=chat_id)
+        else:
+            logger.info("chat_processing_claim_rejected", chat_id=chat_id)
+        return claimed
 
     def delete_chat(self, chat_id: str) -> bool:
         """Delete chat and all its messages.
@@ -352,8 +393,18 @@ class ChatService:
         Args:
             messages: Message dicts produced by ``build_message``.
         """
-        for message in messages:
-            self.storage.create_message(message)
+        # One transaction for the whole turn — create_message commits per
+        # row at transaction depth 0, so a bare loop half-writes the turn
+        # on a mid-loop failure and the handler's retry then duplicates
+        # the committed rows (fresh IDs, no dedup). At all production
+        # call sites self.storage IS the SqliteAdapter, which implements
+        # TransactionalAdapterProtocol; mypy cannot infer that from the
+        # ChatStorageProtocol annotation, hence cast (same pattern as
+        # services/graph/management/source.py delete_source).
+        adapter = cast("TransactionalAdapterProtocol", self.storage)
+        with adapter.transaction():
+            for message in messages:
+                self.storage.create_message(message)
 
     def truncate_from_message(
         self,

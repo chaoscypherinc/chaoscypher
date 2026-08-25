@@ -517,6 +517,7 @@ export const sourceProcessingApi = {
         params: {
           search: params?.search,
           source_type: params?.source_type,
+          status: params?.status,
           page_size: DEFAULT_PUBLIC_SETTINGS.batch_graph_source_page_size,
         },
       });

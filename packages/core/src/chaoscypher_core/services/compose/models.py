@@ -278,7 +278,10 @@ class ComposeConfig(BaseModel):
         """
         import yaml
 
-        data = self.model_dump(exclude={"_package_specs", "_config_path"})
+        # mode="json" so enum members (merge_strategy) dump as plain strings —
+        # python-mode dumps make yaml.dump emit a !!python/object/apply tag
+        # that from_yaml's safe_load then refuses to read back.
+        data = self.model_dump(mode="json", exclude={"_package_specs", "_config_path"})
         # Convert Path to string for YAML
         data["settings"]["output_dir"] = str(data["settings"]["output_dir"])
 

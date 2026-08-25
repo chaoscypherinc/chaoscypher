@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from chaoscypher_core.models import BatchEmbedResult
 from chaoscypher_cortex.features.search.models import (
     GenerateEmbeddingsResponse,
     RebuildIndexResponse,
@@ -35,6 +36,7 @@ def _make_service(
     engine_mock: MagicMock | None = None,
     graph_repository: MagicMock | None = None,
     search_repository: MagicMock | None = None,
+    settings: Any = None,
 ) -> tuple[SearchService, MagicMock]:
     """Return a SearchService with a mocked engine service.
 
@@ -62,10 +64,17 @@ def _make_service(
             indexing_repository=MagicMock(),
             source_repository=MagicMock(),
             sources_repository=MagicMock(),
-            settings=None,
+            settings=settings,
         )
 
     return service, engine_mock
+
+
+def _settings_with_wave_size(size: int) -> MagicMock:
+    """Settings mock whose batching.embedding_batch_size drives the wave slice."""
+    settings = MagicMock()
+    settings.batching.embedding_batch_size = size
+    return settings
 
 
 def _chunk_result_dict(chunk_id: str = "chunk-1", score: float = 0.9) -> dict[str, Any]:
@@ -112,6 +121,36 @@ def _fake_node(
     node.properties = {"role": "engineer"} if properties is None else properties
     node.embedding = embedding
     return node
+
+
+def _batch_result(vectors: list[list[float]]) -> BatchEmbedResult:
+    """Build a BatchEmbedResult carrying the given vectors."""
+    return BatchEmbedResult(
+        embeddings=vectors,
+        total=len(vectors),
+        provider="fake",
+    )
+
+
+def _fake_embedding_service(
+    embeddings: list[list[float]] | None = None,
+    *,
+    error: Exception | None = None,
+) -> MagicMock:
+    """Return a mock embedding provider that records embed vs batch_embed calls.
+
+    ``embed`` is stubbed too so a test can prove the per-node path is never
+    taken (call_count == 0) rather than merely erroring out.
+    """
+    service = MagicMock()
+    service.embed = AsyncMock(return_value=MagicMock(embedding=[0.1, 0.2, 0.3]))
+    if error is not None:
+        service.batch_embed = AsyncMock(side_effect=error)
+        return service
+    service.batch_embed = AsyncMock(
+        return_value=_batch_result(embeddings if embeddings is not None else [])
+    )
+    return service
 
 
 # ---------------------------------------------------------------------------
@@ -374,24 +413,19 @@ class TestGenerateEmbeddings:
 
     @pytest.mark.asyncio
     async def test_generates_embeddings_for_nodes_without_them(self) -> None:
-        """generate_embeddings processes each node, updates it, and indexes it."""
+        """generate_embeddings embeds every pending node, writes once, indexes once."""
         node_a = _fake_node("n-1", label="Alice")
         node_b = _fake_node("n-2", label="Bob")
 
         graph_repo = MagicMock()
         graph_repo.count_nodes.return_value = 2
         graph_repo.list_nodes_without_embeddings.return_value = [node_a, node_b]
-
-        updated_node = MagicMock()
-        updated_node.id = "n-1"
-        updated_node.embedding = [0.1, 0.2, 0.3]
-        graph_repo.update_node.return_value = updated_node
+        graph_repo.update_node_embeddings_batch.return_value = 2
 
         search_repo = MagicMock()
         service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
 
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(return_value=MagicMock(embedding=[0.1, 0.2, 0.3]))
+        embedding_service = _fake_embedding_service([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
 
         with patch(
             "chaoscypher_core.repo_factories.get_embedding_service",
@@ -402,47 +436,24 @@ class TestGenerateEmbeddings:
         assert response.success is True
         assert response.total_nodes == 2
         assert response.processed_count == 2
-        assert graph_repo.update_node.call_count == 2
-        assert search_repo.index_node_embedding.call_count == 2
+        graph_repo.update_node_embeddings_batch.assert_called_once_with(
+            {"n-1": [0.1, 0.2, 0.3], "n-2": [0.4, 0.5, 0.6]}
+        )
+        search_repo.index_nodes_batch.assert_called_once_with([node_a, node_b])
 
     @pytest.mark.asyncio
-    async def test_counts_failures_when_embedding_empty(self) -> None:
-        """generate_embeddings increments failed_count when embedding is empty."""
-        node = _fake_node("n-1")
+    async def test_uses_one_batch_call_regardless_of_node_count(self) -> None:
+        """N pending nodes cost one batch_embed + one batch write, never N of each."""
+        nodes = [_fake_node(f"n-{i}") for i in range(5)]
         graph_repo = MagicMock()
-        graph_repo.count_nodes.return_value = 1
-        graph_repo.list_nodes_without_embeddings.return_value = [node]
-
-        service, _ = _make_service(graph_repository=graph_repo)
-
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(return_value=MagicMock(embedding=[]))
-
-        with patch(
-            "chaoscypher_core.repo_factories.get_embedding_service",
-            return_value=embedding_service,
-        ):
-            response = await service.generate_embeddings()
-
-        assert response.success is True
-        assert response.processed_count == 0
-        assert "1 failed" in response.message
-        graph_repo.update_node.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_counts_failures_when_update_returns_none(self) -> None:
-        """generate_embeddings increments failed_count when update_node returns None."""
-        node = _fake_node("n-1")
-        graph_repo = MagicMock()
-        graph_repo.count_nodes.return_value = 1
-        graph_repo.list_nodes_without_embeddings.return_value = [node]
-        graph_repo.update_node.return_value = None
+        graph_repo.count_nodes.return_value = 5
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+        graph_repo.update_node_embeddings_batch.return_value = 5
 
         search_repo = MagicMock()
         service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
 
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(return_value=MagicMock(embedding=[0.1, 0.2]))
+        embedding_service = _fake_embedding_service([[0.1, 0.2] for _ in nodes])
 
         with patch(
             "chaoscypher_core.repo_factories.get_embedding_service",
@@ -450,22 +461,26 @@ class TestGenerateEmbeddings:
         ):
             response = await service.generate_embeddings()
 
-        assert response.processed_count == 0
-        assert "1 failed" in response.message
-        search_repo.index_node_embedding.assert_not_called()
+        assert response.processed_count == 5
+        assert embedding_service.batch_embed.call_count == 1
+        assert embedding_service.embed.call_count == 0
+        assert graph_repo.update_node_embeddings_batch.call_count == 1
+        assert graph_repo.update_node.call_count == 0
+        assert search_repo.index_nodes_batch.call_count == 1
+        assert search_repo.index_node_embedding.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_exception_during_embed_is_counted_as_failure(self) -> None:
-        """generate_embeddings catches embed exceptions and marks the node failed."""
+    async def test_counts_failures_when_embedding_empty(self) -> None:
+        """An empty vector inside the batch result counts as a per-node failure."""
         node = _fake_node("n-1")
         graph_repo = MagicMock()
         graph_repo.count_nodes.return_value = 1
         graph_repo.list_nodes_without_embeddings.return_value = [node]
 
-        service, _ = _make_service(graph_repository=graph_repo)
+        search_repo = MagicMock()
+        service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
 
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(side_effect=RuntimeError("boom"))
+        embedding_service = _fake_embedding_service([[]])
 
         with patch(
             "chaoscypher_core.repo_factories.get_embedding_service",
@@ -476,30 +491,70 @@ class TestGenerateEmbeddings:
         assert response.success is True
         assert response.processed_count == 0
         assert "1 failed" in response.message
+        graph_repo.update_node_embeddings_batch.assert_not_called()
+        search_repo.index_nodes_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_counts_failures_when_batch_write_misses_rows(self) -> None:
+        """Rows the batch write could not find (node deleted mid-request) count failed."""
+        node = _fake_node("n-1")
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 1
+        graph_repo.list_nodes_without_embeddings.return_value = [node]
+        graph_repo.update_node_embeddings_batch.return_value = 0
+
+        search_repo = MagicMock()
+        service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
+
+        embedding_service = _fake_embedding_service([[0.1, 0.2]])
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.processed_count == 0
+        assert "1 failed" in response.message
+        search_repo.index_nodes_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exception_during_batch_embed_is_counted_as_failure(self) -> None:
+        """A provider failure is reported, not raised, with every node counted failed."""
+        nodes = [_fake_node("n-1"), _fake_node("n-2")]
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 2
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+
+        service, _ = _make_service(graph_repository=graph_repo)
+
+        embedding_service = _fake_embedding_service(error=RuntimeError("boom"))
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.success is True
+        assert response.processed_count == 0
+        assert "2 failed" in response.message
+        graph_repo.update_node_embeddings_batch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_mixed_success_and_failure(self) -> None:
-        """generate_embeddings reports both processed_count and failed_count together."""
+        """Per-text failures inside one batch still persist the good nodes."""
         node_ok = _fake_node("n-ok")
         node_bad = _fake_node("n-bad")
         graph_repo = MagicMock()
         graph_repo.count_nodes.return_value = 2
         graph_repo.list_nodes_without_embeddings.return_value = [node_ok, node_bad]
+        graph_repo.update_node_embeddings_batch.return_value = 1
 
-        updated = MagicMock()
-        updated.id = "n-ok"
-        updated.embedding = [0.1, 0.2]
-        graph_repo.update_node.return_value = updated
+        search_repo = MagicMock()
+        service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
 
-        service, _ = _make_service(graph_repository=graph_repo)
-
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(
-            side_effect=[
-                MagicMock(embedding=[0.1, 0.2]),
-                RuntimeError("boom"),
-            ]
-        )
+        embedding_service = _fake_embedding_service([[0.1, 0.2], []])
 
         with patch(
             "chaoscypher_core.repo_factories.get_embedding_service",
@@ -510,6 +565,172 @@ class TestGenerateEmbeddings:
         assert response.processed_count == 1
         assert "1 failed" in response.message
         assert response.total_nodes == 2
+        graph_repo.update_node_embeddings_batch.assert_called_once_with({"n-ok": [0.1, 0.2]})
+        search_repo.index_nodes_batch.assert_called_once_with([node_ok])
+
+    @pytest.mark.asyncio
+    async def test_waves_slice_the_run_by_embedding_batch_size(self) -> None:
+        """The run is sliced into waves so no single call carries every node."""
+        nodes = [_fake_node(f"n-{i}") for i in range(5)]
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 5
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+        graph_repo.update_node_embeddings_batch.side_effect = [2, 2, 1]
+
+        search_repo = MagicMock()
+        service, _ = _make_service(
+            graph_repository=graph_repo,
+            search_repository=search_repo,
+            settings=_settings_with_wave_size(2),
+        )
+
+        embedding_service = MagicMock()
+        embedding_service.embed = AsyncMock()
+        embedding_service.batch_embed = AsyncMock(
+            side_effect=[
+                _batch_result([[0.1], [0.2]]),
+                _batch_result([[0.3], [0.4]]),
+                _batch_result([[0.5]]),
+            ]
+        )
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.processed_count == 5
+        # 5 nodes / wave of 2 -> 3 waves, each one batch_embed + one write + one index
+        assert embedding_service.batch_embed.await_count == 3
+        assert embedding_service.embed.await_count == 0
+        assert graph_repo.update_node_embeddings_batch.call_count == 3
+        assert search_repo.index_nodes_batch.call_count == 3
+        assert graph_repo.update_node.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_wave_failure_keeps_earlier_waves_persisted(self) -> None:
+        """A provider failure loses only its own wave — earlier writes survive.
+
+        Every shipped provider raises out of batch_embed rather than returning
+        an empty vector for a bad text, so this (not the empty-vector branch) is
+        the live partial-failure path: a transient 429 mid-run must not discard
+        the vectors already computed and written.
+        """
+        nodes = [_fake_node(f"n-{i}") for i in range(4)]
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 4
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+        graph_repo.update_node_embeddings_batch.return_value = 2
+
+        search_repo = MagicMock()
+        service, _ = _make_service(
+            graph_repository=graph_repo,
+            search_repository=search_repo,
+            settings=_settings_with_wave_size(2),
+        )
+
+        embedding_service = MagicMock()
+        embedding_service.embed = AsyncMock()
+        embedding_service.batch_embed = AsyncMock(
+            side_effect=[
+                _batch_result([[0.1], [0.2]]),
+                RuntimeError("429 rate limited"),
+            ]
+        )
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.success is True
+        assert response.processed_count == 2
+        assert "2 failed" in response.message
+        assert embedding_service.batch_embed.await_count == 2
+        graph_repo.update_node_embeddings_batch.assert_called_once_with(
+            {"n-0": [0.1], "n-1": [0.2]}
+        )
+        search_repo.index_nodes_batch.assert_called_once_with([nodes[0], nodes[1]])
+
+    @pytest.mark.asyncio
+    async def test_batch_write_failure_fails_only_its_wave(self) -> None:
+        """A raising batch write loses its wave, not the waves already committed."""
+        nodes = [_fake_node(f"n-{i}") for i in range(4)]
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 4
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+        graph_repo.update_node_embeddings_batch.side_effect = [2, RuntimeError("db locked")]
+
+        search_repo = MagicMock()
+        service, _ = _make_service(
+            graph_repository=graph_repo,
+            search_repository=search_repo,
+            settings=_settings_with_wave_size(2),
+        )
+
+        embedding_service = _fake_embedding_service([[0.1], [0.2]])
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.success is True
+        assert response.processed_count == 2
+        assert "2 failed" in response.message
+        assert search_repo.index_nodes_batch.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_partial_write_indexes_only_confirmed_nodes(self) -> None:
+        """Nodes the write could not find are not pushed into the search index."""
+        node_a = _fake_node("n-1")
+        node_b = _fake_node("n-2")
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 2
+        graph_repo.list_nodes_without_embeddings.return_value = [node_a, node_b]
+        # Only n-1 still exists; n-2 was deleted between the list and the write.
+        graph_repo.update_node_embeddings_batch.return_value = 1
+        graph_repo.get_nodes_batch.return_value = [node_a]
+
+        search_repo = MagicMock()
+        service, _ = _make_service(graph_repository=graph_repo, search_repository=search_repo)
+
+        embedding_service = _fake_embedding_service([[0.1, 0.2], [0.3, 0.4]])
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.processed_count == 1
+        assert "1 failed" in response.message
+        search_repo.index_nodes_batch.assert_called_once_with([node_a])
+
+    @pytest.mark.asyncio
+    async def test_short_batch_result_counts_tail_nodes_as_failed(self) -> None:
+        """A provider returning fewer vectors than texts leaves the tail nodes failed."""
+        nodes = [_fake_node("n-1"), _fake_node("n-2"), _fake_node("n-3")]
+        graph_repo = MagicMock()
+        graph_repo.count_nodes.return_value = 3
+        graph_repo.list_nodes_without_embeddings.return_value = nodes
+        graph_repo.update_node_embeddings_batch.return_value = 2
+
+        service, _ = _make_service(graph_repository=graph_repo)
+
+        embedding_service = _fake_embedding_service([[0.1], [0.2]])
+
+        with patch(
+            "chaoscypher_core.repo_factories.get_embedding_service",
+            return_value=embedding_service,
+        ):
+            response = await service.generate_embeddings()
+
+        assert response.processed_count == 2
+        assert "1 failed" in response.message
 
 
 # ---------------------------------------------------------------------------

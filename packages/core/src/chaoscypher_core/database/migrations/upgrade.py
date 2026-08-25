@@ -30,6 +30,8 @@ from chaoscypher_core.database.migrations.runner import (
 from chaoscypher_core.database.migrations.state import (
     clear_upgrade_state,
     get_upgrade_state,
+    record_successful_upgrade,
+    set_upgrade_state,
 )
 from chaoscypher_core.database.migrations.tiers import MigrationTier, read_migration_info
 
@@ -132,9 +134,40 @@ class UpgradeService:
         if backup_path is None and revisions:
             result = backup_database(self.db_path, label=f"pre-{revisions[0]}")
             backup_path = str(result.backup_path)
+            # Persist the fresh backup path BEFORE running the upgrade: if
+            # upgrade_to_head raises, rollback() reads only the durable
+            # state row — a path held in this local variable would be lost
+            # and the operator told "No backup available" while the backup
+            # sits on disk.
+            set_upgrade_state(
+                self.db_path,
+                ready=state.ready,
+                blocked_on=state.blocked_on,
+                last_backup=backup_path,
+                message=state.message,
+                last_applied=state.last_applied,
+                data_changing=state.data_changing,
+            )
 
         upgrade_to_head(self.db_path)
-        clear_upgrade_state(self.db_path)
+
+        # Mirror the startup runner: a data-changing apply keeps the backup
+        # path (and applied revisions) in the state row so rollback stays
+        # possible right after the operator confirmed it — clear_upgrade_state
+        # would null last_backup the moment the upgrade succeeded.
+        data_changing = any(
+            info.tier is not MigrationTier.SAFE_AUTO
+            for info in (read_migration_info(r) for r in revisions)
+        )
+        if data_changing:
+            record_successful_upgrade(
+                self.db_path,
+                applied=revisions,
+                last_backup=backup_path,
+                data_changing=True,
+            )
+        else:
+            clear_upgrade_state(self.db_path)
 
         logger.info(
             "upgrade_applied",

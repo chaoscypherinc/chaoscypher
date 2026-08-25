@@ -72,8 +72,10 @@ _STEPS: dict[str, list[Command] | str] = {
         ),
         ("uv run python scripts/lint_claude_rules.py packages/", None),
     ],
+    # Prefers the gitleaks binary; falls back to detect-secrets where the
+    # binary cannot exist (the cloud routine sandbox). See the script header.
     "lint-secrets": [
-        ("gitleaks detect --redact --verbose --no-banner", None),
+        ("uv run python scripts/secrets_scan.py", None),
     ],
     "lint-internal-refs": [
         ("uv run python scripts/check_no_internal_refs.py", None),
@@ -149,10 +151,33 @@ _STEPS: dict[str, list[Command] | str] = {
     "docker-image-build": [
         ("docker build -f packages/docker/Dockerfile -t chaoscypher-ci-verify:latest .", None),
     ],
+    # The no-Docker E2E tier (the nightly e2e.yml workflow's cli-e2e job runs
+    # the same tests with report plugins). Added 2026-08-08: the scheduled
+    # workflow stopped executing on this repo 2026-05-08, which left e2e/
+    # exercised by nothing — this step puts it back in every full sweep.
+    # The Docker-dependent e2e tiers (`make e2e`) still require a daemon and
+    # stay outside both default plans, like docker-image-build.
+    "e2e-cli": [
+        (
+            "uv run python -m pytest e2e/cli/ --import-mode=importlib -m cli -q",
+            None,
+        ),
+    ],
     "security": [
         ("uv run pip-audit --ignore-vuln PYSEC-2022-42969", None),
-        # interface compiles into the shipped bundle, so it stays strict.
-        ("npm audit --audit-level=high", INTERFACE),
+        # interface compiles into the shipped bundle, so its production deps
+        # stay strict via --omit=dev. The full tree (incl. devDependencies-only
+        # tooling) runs through the actionability gate instead of the plain
+        # audit, mirroring the packages/docs split below. The advisory that
+        # motivated the split — GHSA-jmr9-qjv8-65gv (extract-zip symlink path
+        # traversal), reached via @size-limit/preset-app -> @size-limit/time ->
+        # estimo -> find-chrome-bin -> @puppeteer/browsers -> extract-zip — is
+        # gone as of #426: preset-app was replaced by @size-limit/file, which
+        # has no dependencies. The gate stays because the same shape recurs
+        # (packages/docs carries one today) and it self-clears when a fix
+        # publishes.
+        ("npm audit --omit=dev --audit-level=high", INTERFACE),
+        ("uv run python scripts/npm_audit_gate.py packages/interface", None),
         # packages/docs has its own lockfile (wrangler/docusaurus chain);
         # CVEs there were invisible to the gate until 2026-07 (issue #328).
         # It is a build-only tree that renders to static assets, and its ~1000
@@ -182,8 +207,8 @@ _COMMON = [
 # `make ci`: tests run in Docker + advisory diff-cover. `make ci-local`: tests
 # run on the host (used inside the Docker container, which has make).
 _MODE_SUFFIX = {
-    "docker": ["docker-test", "coverage-diff-advisory", "security"],
-    "local": ["test-cov-internal", "security"],
+    "docker": ["docker-test", "coverage-diff-advisory", "e2e-cli", "security"],
+    "local": ["test-cov-internal", "e2e-cli", "security"],
 }
 
 

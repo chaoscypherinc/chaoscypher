@@ -141,10 +141,9 @@ async def create_database(
     - `name`: Database name (alphanumeric, underscores, hyphens)
 
     **Creates:**
-    - Database directory structure
-    - graphs/ directory with .ttl files (knowledge, templates, lenses)
-    - app.db with default system data
-    - search/ directory for search indices
+    - Database directory
+    - app.db (SQLModel database with graph tables), via `init_database`
+    - Default node/edge templates, via `seed_default_templates`
 
     **Returns:**
     - Created database metadata
@@ -183,8 +182,7 @@ async def delete_database(
     - All search indexes
 
     **Errors:**
-    - 400: Trying to delete current database or invalid operation
-    - 404: Database not found
+    - 400: Trying to delete current database, invalid operation, or database not found
     """
     databases_service.delete_database(name)
     event_bus.emit(

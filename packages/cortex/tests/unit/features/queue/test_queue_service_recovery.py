@@ -3,11 +3,13 @@
 
 """Tests for QueueService recovery counters + force_reconcile."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from chaoscypher_core.queue.reconciler import ReconcileStats
+from chaoscypher_core.queue.worker_timeouts import RECONCILER_SAFETY_MARGIN_SECONDS
 from chaoscypher_cortex.features.queue.service import QueueService
 
 
@@ -36,6 +38,10 @@ async def test_force_reconcile_single_queue_returns_stats() -> None:
 
 @pytest.mark.asyncio
 async def test_force_reconcile_all_queues_merges_stats() -> None:
+    """With an empty handler registry (the real Cortex condition — Cortex
+    never calls register_handlers), force_reconcile must fall back to the
+    canonical queues instead of silently reconciling nothing.
+    """
     fake_llm = ReconcileStats(recovered_orphans=1)
     fake_ops = ReconcileStats(recovered_crashed=2)
     calls: list[str] = []
@@ -51,13 +57,13 @@ async def test_force_reconcile_all_queues_merges_stats() -> None:
         service = QueueService()
         service.queue_client = MagicMock()
         service.queue_client.is_available = True
-        service.queue_client.queues = {"llm", "operations"}
+        service.queue_client.queues = set()
         service.queue_client.client = MagicMock()
         service.queue_client.client.hincrby = AsyncMock(return_value=1)
 
         result = await service.force_reconcile(queue_name=None)
 
-        assert len(calls) == 2
+        assert sorted(calls) == ["llm", "operations"]
         assert result["recovered_orphans"] == 1
         assert result["recovered_crashed"] == 2
 
@@ -97,6 +103,53 @@ async def test_get_recovery_counters_returns_zero_when_absent() -> None:
         "recovered_crashed": 0,
         "failed_unrecoverable": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_force_reconcile_cutoff_tracks_workers_yaml_not_settings_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The safety net's cutoff must come from the worker's EFFECTIVE timeout.
+
+    Cortex's ``_cortex_reconcile_safety_net_loop`` runs ``force_reconcile`` on a
+    timer. It used to derive its absolute cutoff from
+    ``settings.timeouts.*_worker_default`` while the worker's real deadline comes
+    from ``/data/workers.yaml``. Because the reconciler's absolute-timeout branch
+    is heartbeat-blind and ``requeue_atomic.lua`` refuses only
+    completed/cancelled, an operator who raised the worker timeout got every long
+    task reset to ``queued`` and dispatched to a second worker at the old default.
+    """
+    from chaoscypher_core.app_config import get_settings
+
+    monkeypatch.setenv("CHAOSCYPHER_DATA_DIR", str(tmp_path))
+    raised = 7200
+    (tmp_path / "workers.yaml").write_text(f"llm_worker:\n  timeout: {raised}\n", encoding="utf-8")
+
+    captured: dict[str, int | None] = {}
+
+    async def fake_reconcile(client, queue_name, *, max_tries, timeout_seconds=None):
+        """Record the cutoff each queue was reconciled with."""
+        captured[queue_name] = timeout_seconds
+        return ReconcileStats()
+
+    with patch(
+        "chaoscypher_cortex.features.queue.service.reconcile_queue",
+        new=fake_reconcile,
+    ):
+        service = QueueService()
+        service.queue_client = MagicMock()
+        service.queue_client.is_available = True
+        service.queue_client.queues = {"llm", "operations"}
+        service.queue_client.client = MagicMock()
+        service.queue_client.client.hincrby = AsyncMock(return_value=1)
+
+        await service.force_reconcile(queue_name=None)
+
+    assert captured["llm"] == raised + RECONCILER_SAFETY_MARGIN_SECONDS, (
+        "the llm cutoff ignored the workers.yaml override — live tasks get requeued"
+    )
+    ops_default = get_settings().timeouts.operations_worker_default
+    assert captured["operations"] == ops_default + RECONCILER_SAFETY_MARGIN_SECONDS
 
 
 @pytest.mark.asyncio

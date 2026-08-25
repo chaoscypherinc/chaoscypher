@@ -257,7 +257,7 @@ After the database transaction commits, nodes and document chunks are indexed in
 3. Each chunk is indexed with a `"chunk:"` prefix to distinguish chunk vectors from node vectors
 4. All embeddings are batch-indexed in a single disk write
 
-**Template embedding:** Newly created templates (node + edge) are embedded by the LLM so they are immediately semantically searchable after commit.
+**Template embedding:** Newly created templates (node + edge) are embedded by the configured embedding provider (local sentence-transformers by default, not an LLM provider) so they are immediately semantically searchable after commit.
 
 :::note[Error recovery]
 

@@ -139,6 +139,7 @@ async def _enqueue_finalize(*, source_id: str, job_id: str, database_name: str) 
         },
         metadata={
             "source_id": source_id,
+            "database_name": database_name,
             "job_id": job_id,
             "operation_type": OP_VISION_FINALIZE,
         },

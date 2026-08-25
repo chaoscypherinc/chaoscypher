@@ -16,9 +16,11 @@ Verified by ``test_baseline_matches_metadata`` and
 ``test_no_undeclared_changes``.
 
 Databases created before the squash (stamped at a now-deleted revision
-such as ``0050_...``) auto-recover on the next startup: ``ensure_stamped``
-re-stamps any unrecognized revision to this baseline (the schema is
-unchanged, so no data is lost).
+such as ``0050_...``) are unsupported — the squash predates every public
+release, so no released build ever wrote one. ``ensure_stamped`` refuses
+any unrecognized revision with ``UnsupportedDatabaseLineageError`` rather
+than re-stamping it here, which would only relabel the row and leave the
+0002+ migrations replaying against a schema they were never written for.
 """
 from __future__ import annotations
 

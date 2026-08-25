@@ -402,3 +402,52 @@ class TestUserPresetProvenance:
         # source — the losing duplicate did not clobber it.
         winner_config = json.loads((user_dir / source.rsplit("/", 1)[-1]).read_text())
         assert winner.vram_gb == winner_config["vram_gb"]
+
+
+# ----------------------------------------------------------------------
+# get_preset_registry cache keying (value-based, not id(settings))
+# ----------------------------------------------------------------------
+class TestPresetFactoryCacheKey:
+    """The factory cache keys on data_dir, so fresh settings objects hit it."""
+
+    def test_fresh_settings_with_same_data_dir_hit_cache(self, tmp_path: Any) -> None:
+        from chaoscypher_core.services.presets.factory import (
+            clear_preset_registry_cache,
+            get_preset_registry,
+        )
+
+        clear_preset_registry_cache()
+        try:
+            first = get_preset_registry(SimpleNamespace(data_dir=str(tmp_path)))
+            second = get_preset_registry(SimpleNamespace(data_dir=str(tmp_path)))
+            assert first is second
+        finally:
+            clear_preset_registry_cache()
+
+    def test_different_data_dirs_get_distinct_registries(self, tmp_path: Any) -> None:
+        from chaoscypher_core.services.presets.factory import (
+            clear_preset_registry_cache,
+            get_preset_registry,
+        )
+
+        clear_preset_registry_cache()
+        try:
+            (tmp_path / "a").mkdir()
+            (tmp_path / "b").mkdir()
+            first = get_preset_registry(SimpleNamespace(data_dir=str(tmp_path / "a")))
+            second = get_preset_registry(SimpleNamespace(data_dir=str(tmp_path / "b")))
+            assert first is not second
+        finally:
+            clear_preset_registry_cache()
+
+    def test_none_settings_share_the_default_entry(self) -> None:
+        from chaoscypher_core.services.presets.factory import (
+            clear_preset_registry_cache,
+            get_preset_registry,
+        )
+
+        clear_preset_registry_cache()
+        try:
+            assert get_preset_registry(None) is get_preset_registry(None)
+        finally:
+            clear_preset_registry_cache()

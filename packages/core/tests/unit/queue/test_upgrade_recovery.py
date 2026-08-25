@@ -202,6 +202,64 @@ def test_source_bound_recovery_picks_up_database_name_from_metadata(
         assert row.status == SourceStatus.ERROR
 
 
+@pytest.mark.parametrize(
+    ("operation", "data"),
+    [
+        # queue_import_indexing (queue_utils.py) — same shape as
+        # OP_IMPORT_ANALYSIS / OP_IMPORT_COMMIT: source_id in metadata only.
+        (OP_INDEX_DOCUMENT, {"file_id": "src_producer", "file_info": {"filename": "d.pdf"}}),
+        # queue_chunk_extraction (chunk_extraction_service.py).
+        (OP_EXTRACT_CHUNK, {"chunk_task_id": "ct_1", "job_id": "job_1", "chunk_index": 0}),
+    ],
+)
+def test_source_bound_recovery_producer_payload_metadata_source_id(
+    db_adapter: SqliteAdapter,
+    patched_adapter_factory: None,
+    operation: str,
+    data: dict[str, object],
+) -> None:
+    """Real producer payloads carry source_id in metadata only.
+
+    Recovery must fall back to metadata and still flip the source to ERROR
+    with the retry message.
+    """
+    src_id = "src_producer"
+    with db_adapter.transaction():
+        session = db_adapter.session
+        assert session is not None
+        session.add(
+            SourceRow(
+                id=src_id,
+                database_name="default",
+                filename="d.pdf",
+                filepath="/tmp/d.pdf",
+                file_type="pdf",
+                status=SourceStatus.EXTRACTING,
+            )
+        )
+
+    apply_upgrade_recovery(
+        operation=operation,
+        data=data,
+        metadata={
+            "database_name": "default",
+            "operation_type": operation,
+            "source_id": src_id,
+        },
+        task_id="tsk_producer",
+        payload_version=0,
+    )
+
+    with db_adapter.transaction():
+        session = db_adapter.session
+        assert session is not None
+        row = session.get(SourceRow, src_id)
+        assert row is not None
+        assert row.status == SourceStatus.ERROR
+        assert row.error_message is not None
+        assert "Retry" in row.error_message
+
+
 def test_source_bound_recovery_missing_source_id_does_not_raise(
     patched_adapter_factory: None,
 ) -> None:

@@ -6,10 +6,19 @@
 All four methods are scoped to (source_id, stage_name) — v1 ``parent_id``
 IS a source id. Future parent types get their own mixin against their
 own table.
+
+Every write here is blocking SQLite I/O (a statement plus a commit) behind
+an ``async def``, and they are awaited from the worker's event loop —
+``tick_stage`` once per progress step of a stage that can run to thousands
+of steps. So each body runs via ``asyncio.to_thread`` (repo rule: never call
+blocking I/O inside an async function). ``to_thread`` copies the caller's
+context, so the worker thread resolves the SAME ContextVar-scoped session —
+the pattern neuron's ``search_sweep`` uses for this adapter.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -41,30 +50,35 @@ class StageProgressMixin(SqliteMixinBase, StageProgressStorageProtocol):
     ) -> None:
         """UPSERT — idempotent re-start zeros processed/avg_ms/completed_at."""
         self._ensure_connected()
-        self.session.execute(
-            text("""
-            INSERT INTO llm_stage_progress (
-                source_id, stage_name, total, processed, avg_ms,
-                started_at, last_activity, completed_at
-            ) VALUES (
-                :sid, :stage, :total, 0, NULL, :started, :started, NULL
+
+        def _upsert() -> None:
+            """Sync UPSERT + commit body — handed to ``asyncio.to_thread``."""
+            self.session.execute(
+                text("""
+                INSERT INTO llm_stage_progress (
+                    source_id, stage_name, total, processed, avg_ms,
+                    started_at, last_activity, completed_at
+                ) VALUES (
+                    :sid, :stage, :total, 0, NULL, :started, :started, NULL
+                )
+                ON CONFLICT (source_id, stage_name) DO UPDATE SET
+                    total = excluded.total,
+                    processed = 0,
+                    avg_ms = NULL,
+                    started_at = excluded.started_at,
+                    last_activity = excluded.last_activity,
+                    completed_at = NULL
+            """),
+                {
+                    "sid": parent_id,
+                    "stage": stage_name,
+                    "total": total,
+                    "started": started_at,
+                },
             )
-            ON CONFLICT (source_id, stage_name) DO UPDATE SET
-                total = excluded.total,
-                processed = 0,
-                avg_ms = NULL,
-                started_at = excluded.started_at,
-                last_activity = excluded.last_activity,
-                completed_at = NULL
-        """),
-            {
-                "sid": parent_id,
-                "stage": stage_name,
-                "total": total,
-                "started": started_at,
-            },
-        )
-        self._maybe_commit()
+            self._maybe_commit()
+
+        await asyncio.to_thread(_upsert)
 
     async def tick_stage(
         self,
@@ -75,23 +89,33 @@ class StageProgressMixin(SqliteMixinBase, StageProgressStorageProtocol):
         avg_ms: int | None,
         last_activity: datetime,
     ) -> None:
-        """UPDATE. No-op if the row doesn't exist (best-effort)."""
+        """UPDATE. No-op if the row doesn't exist (best-effort).
+
+        ``processed`` is the ABSOLUTE running count, so a caller that
+        completes several units per storage round trip reports them with one
+        call rather than one per unit.
+        """
         self._ensure_connected()
-        self.session.execute(
-            text("""
-            UPDATE llm_stage_progress SET
-                processed = :p, avg_ms = :a, last_activity = :la
-            WHERE source_id = :sid AND stage_name = :stage
-        """),
-            {
-                "p": processed,
-                "a": avg_ms,
-                "la": last_activity,
-                "sid": parent_id,
-                "stage": stage_name,
-            },
-        )
-        self._maybe_commit()
+
+        def _update() -> None:
+            """Sync UPDATE + commit body — handed to ``asyncio.to_thread``."""
+            self.session.execute(
+                text("""
+                UPDATE llm_stage_progress SET
+                    processed = :p, avg_ms = :a, last_activity = :la
+                WHERE source_id = :sid AND stage_name = :stage
+            """),
+                {
+                    "p": processed,
+                    "a": avg_ms,
+                    "la": last_activity,
+                    "sid": parent_id,
+                    "stage": stage_name,
+                },
+            )
+            self._maybe_commit()
+
+        await asyncio.to_thread(_update)
 
     async def complete_stage(
         self,
@@ -102,15 +126,20 @@ class StageProgressMixin(SqliteMixinBase, StageProgressStorageProtocol):
     ) -> None:
         """Set completed_at and update last_activity on the progress row."""
         self._ensure_connected()
-        self.session.execute(
-            text("""
-            UPDATE llm_stage_progress SET
-                completed_at = :ct, last_activity = :ct
-            WHERE source_id = :sid AND stage_name = :stage
-        """),
-            {"ct": completed_at, "sid": parent_id, "stage": stage_name},
-        )
-        self._maybe_commit()
+
+        def _complete() -> None:
+            """Sync UPDATE + commit body — handed to ``asyncio.to_thread``."""
+            self.session.execute(
+                text("""
+                UPDATE llm_stage_progress SET
+                    completed_at = :ct, last_activity = :ct
+                WHERE source_id = :sid AND stage_name = :stage
+            """),
+                {"ct": completed_at, "sid": parent_id, "stage": stage_name},
+            )
+            self._maybe_commit()
+
+        await asyncio.to_thread(_complete)
 
     async def update_stage_extras(
         self,
@@ -126,20 +155,25 @@ class StageProgressMixin(SqliteMixinBase, StageProgressStorageProtocol):
         """
         self._ensure_connected()
         payload = json.dumps(extras) if extras is not None else None
-        self.session.execute(
-            text("""
-            UPDATE llm_stage_progress SET
-                extras_json = :ej, last_activity = :la
-            WHERE source_id = :sid AND stage_name = :stage
-        """),
-            {
-                "ej": payload,
-                "la": last_activity,
-                "sid": parent_id,
-                "stage": stage_name,
-            },
-        )
-        self._maybe_commit()
+
+        def _update_extras() -> None:
+            """Sync UPDATE + commit body — handed to ``asyncio.to_thread``."""
+            self.session.execute(
+                text("""
+                UPDATE llm_stage_progress SET
+                    extras_json = :ej, last_activity = :la
+                WHERE source_id = :sid AND stage_name = :stage
+            """),
+                {
+                    "ej": payload,
+                    "la": last_activity,
+                    "sid": parent_id,
+                    "stage": stage_name,
+                },
+            )
+            self._maybe_commit()
+
+        await asyncio.to_thread(_update_extras)
 
     def _fetch_stage_progress(self, source_id: str) -> dict[str, StageProgressDict]:
         """Read all stage rows for one source. Used by get_source()."""

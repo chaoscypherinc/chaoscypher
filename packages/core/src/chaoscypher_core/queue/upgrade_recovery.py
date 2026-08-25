@@ -23,8 +23,8 @@ The contract for adding a new ``OP_*``:
    category. Unknown ops fall through to ``drop_and_log`` (safe default,
    but the user gets no signal — explicit categorization is required by
    CC044-style discipline for queue ops; see lint rule CC044).
-2. ``source_bound`` ops MUST carry ``data["source_id"]``.
-3. ``chat_bound`` ops MUST carry ``data["chat_id"]``.
+2. ``source_bound`` ops MUST carry ``source_id`` in ``data`` or ``metadata``.
+3. ``chat_bound`` ops MUST carry ``chat_id`` in ``data`` or ``metadata``.
 4. Both MUST carry ``data["database_name"]`` (or fall back to the
    ``metadata`` dict; both conventions are honored).
 
@@ -75,7 +75,7 @@ OperationCategory = Literal["source_bound", "chat_bound", "drop_and_log"]
 # gets no retry prompt, so adding a new OP_* without registering its
 # category is a soft regression.
 OPERATION_RECOVERY_CATEGORY: dict[str, OperationCategory] = {
-    # ---------- source_bound: data["source_id"] required ----------
+    # ---------- source_bound: source_id required in data or metadata ----------
     OP_IMPORT_INDEXING: "source_bound",
     OP_IMPORT_ANALYSIS: "source_bound",
     OP_EXTRACT_CHUNK: "source_bound",
@@ -89,7 +89,7 @@ OPERATION_RECOVERY_CATEGORY: dict[str, OperationCategory] = {
     # data["source_id"], so recovery marks that source for retry like any other
     # source-indexing op.
     OP_INDEX_IMPORTED_SOURCE: "source_bound",
-    # ---------- chat_bound: data["chat_id"] required ----------
+    # ---------- chat_bound: chat_id required in data or metadata ----------
     OP_CHAT_BACKGROUND: "chat_bound",
     "chat_completion": "chat_bound",
     "tool_execution": "chat_bound",
@@ -143,7 +143,7 @@ def _recover_source_bound(
     data: dict[str, Any], metadata: dict[str, Any], operation: str, task_id: str
 ) -> None:
     """Mark the owning source as ERROR with an upgrade-interruption message."""
-    source_id = data.get("source_id")
+    source_id = data.get("source_id") or metadata.get("source_id")
     database_name = _resolve_database_name(data, metadata)
     if not isinstance(source_id, str) or not source_id:
         logger.warning(

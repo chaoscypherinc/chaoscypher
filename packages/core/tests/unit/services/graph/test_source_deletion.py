@@ -158,7 +158,7 @@ class TestSearchCleanup:
         mock_repo.get_orphaned_entity_uris.return_value = ["uri/node1"]
         mock_repo.get_chunks_by_source.return_value = ([], 0)
         service.delete_source("src1", search_repo=mock_search_repo)
-        mock_search_repo.delete_node.assert_called_once_with("node1")
+        mock_search_repo.delete_nodes_batch.assert_called_once_with(["node1"])
 
     def test_removes_chunk_embeddings(self, service, mock_repo, mock_search_repo) -> None:
         mock_repo.get_chunks_by_source.return_value = (
@@ -183,7 +183,7 @@ class TestSearchCleanup:
             [{"id": "c1"}],
             1,
         )
-        mock_search_repo.delete_node.side_effect = [Exception("fail"), None]
+        mock_search_repo.delete_nodes_batch.side_effect = Exception("fail")
         mock_search_repo.remove_embedding.side_effect = Exception("fail")
         # Should not raise — search is best-effort post-transaction
         result = service.delete_source("src1", search_repo=mock_search_repo)

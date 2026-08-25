@@ -22,13 +22,13 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 import structlog
 
 from chaoscypher_core.services.lexicon.models import LexiconAuthConfig
+from chaoscypher_core.utils.secure_write import atomic_secret_write
 
 
 logger = structlog.get_logger(__name__)
@@ -105,20 +105,18 @@ class FileLexiconStorage:
         self.auth_file = self.config_dir / "auth.json"
 
     def _ensure_config_dir(self) -> None:
-        """Ensure config directory exists with proper permissions."""
-        if not self.config_dir.exists():
-            self.config_dir.mkdir(parents=True, mode=0o700)
-            logger.debug("config_dir_created", path=str(self.config_dir))
+        """Ensure config directory exists with owner-only permissions.
 
-    def _set_file_permissions(self, path: Path) -> None:
-        """Set restrictive permissions on credential file.
-
-        Args:
-            path: File path to secure.
+        The mode is (re-)applied on every call, not only on first
+        creation — a pre-existing directory with loose permissions would
+        otherwise keep them forever.
         """
-        # Only set permissions on Unix-like systems
-        if os.name != "nt":
-            path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600
+        created = not self.config_dir.exists()
+        self.config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            self.config_dir.chmod(0o700)
+        if created:
+            logger.debug("config_dir_created", path=str(self.config_dir))
 
     def load_credentials(self) -> LexiconAuthConfig | None:
         """Load credentials from ``auth.json``.
@@ -164,8 +162,9 @@ class FileLexiconStorage:
             "username": auth.username,
         }
 
-        self.auth_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        self._set_file_permissions(self.auth_file)
+        # Atomic 0600 write — the old write_text + post-hoc chmod left the
+        # OAuth token umask-readable between the two calls.
+        atomic_secret_write(self.auth_file, json.dumps(data, indent=2), prefix=".lexicon_auth_")
 
         logger.info(
             "credentials_saved",

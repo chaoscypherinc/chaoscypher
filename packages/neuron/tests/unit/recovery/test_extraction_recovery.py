@@ -3,7 +3,7 @@
 
 """Tests for orphaned extraction task recovery."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -125,6 +125,7 @@ class TestRecoverOrphanedExtractionTasks:
             mock_adapter.list_orphaned_chunk_tasks.return_value[0],
             job,
             mock_settings,
+            groups_by_source=ANY,
         )
 
     @pytest.mark.asyncio
@@ -215,3 +216,138 @@ class TestRecoverOrphanedExtractionTasks:
         assert result["skipped"] == 1
         assert result["failed"] == 1
         assert result["recovered"] == 1
+
+
+class TestRecoveryDerivesGroupsAndJobOnce:
+    """Startup recovery must not re-derive per-source work once per task.
+
+    ``get_hierarchical_groups`` reads every DocumentChunk row of the source,
+    JSON-parses each row's metadata and materialises each group's whole
+    ``combined_content`` — then the caller keeps ONE group and discards the
+    rest. Recovering K orphaned tasks of one source used to pay that K times
+    (plus one identical ``get_extraction_job`` PK lookup per task), inside the
+    blocking worker-startup hook.
+    """
+
+    @staticmethod
+    def _tasks(count: int, *, job_id: str = "j1", db: str = "db1") -> list[dict]:
+        return [
+            {
+                "id": f"t{i}",
+                "queue_task_id": None,
+                "job_id": job_id,
+                "database_name": db,
+                "retry_count": 0,
+                "max_retries": 3,
+                "chunk_index": i,
+            }
+            for i in range(count)
+        ]
+
+    @staticmethod
+    def _groups(count: int) -> list[dict]:
+        return [
+            {"id": f"grp-{i}", "group_index": i, "small_chunk_ids": [f"c{i}"]} for i in range(count)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_groups_and_job_derived_once_per_source(
+        self, mock_adapter, mock_settings
+    ) -> None:
+        """Five orphaned tasks of one source → ONE groups call, ONE job lookup."""
+        mock_adapter.list_orphaned_chunk_tasks.return_value = self._tasks(5)
+        mock_adapter.get_extraction_job.return_value = {"status": "running", "source_id": "src1"}
+        mock_adapter.get_hierarchical_groups.return_value = self._groups(5)
+
+        mock_service = MagicMock()
+        mock_service.queue_extract_chunk = AsyncMock(return_value="new-qt")
+
+        with (
+            patch("chaoscypher_neuron.recovery.extraction.queue_client") as mock_qc,
+            patch(
+                "chaoscypher_core.operations.extraction.ChunkExtractionOperationsService",
+                return_value=mock_service,
+            ),
+        ):
+            mock_qc.client = None
+            result = await recover_orphaned_extraction_tasks(mock_adapter, "db1", mock_settings)
+
+        assert result["recovered"] == 5
+        assert mock_adapter.get_hierarchical_groups.call_count == 1
+        assert mock_adapter.get_extraction_job.call_count == 1
+        # Every task still resolved its OWN group (the cache is a lookup, not a
+        # shortcut): each requeue carries the group whose index matches.
+        queued = [
+            c.kwargs["hierarchical_group_id"]
+            for c in mock_service.queue_extract_chunk.call_args_list
+        ]
+        assert queued == [f"grp-{i}" for i in range(5)]
+
+    @pytest.mark.asyncio
+    async def test_cache_is_keyed_per_source_and_job(self, mock_adapter, mock_settings) -> None:
+        """Two sources/jobs each derive their own groups exactly once."""
+        mock_adapter.list_orphaned_chunk_tasks.return_value = [
+            *self._tasks(2, job_id="j1", db="db1"),
+            *self._tasks(2, job_id="j2", db="db1"),
+        ]
+        mock_adapter.get_extraction_job.side_effect = lambda job_id: {
+            "j1": {"status": "running", "source_id": "src1"},
+            "j2": {"status": "running", "source_id": "src2"},
+        }[job_id]
+        mock_adapter.get_hierarchical_groups.return_value = self._groups(2)
+
+        mock_service = MagicMock()
+        mock_service.queue_extract_chunk = AsyncMock(return_value="new-qt")
+
+        with (
+            patch("chaoscypher_neuron.recovery.extraction.queue_client") as mock_qc,
+            patch(
+                "chaoscypher_core.operations.extraction.ChunkExtractionOperationsService",
+                return_value=mock_service,
+            ),
+        ):
+            mock_qc.client = None
+            result = await recover_orphaned_extraction_tasks(mock_adapter, "db1", mock_settings)
+
+        assert result["recovered"] == 4
+        assert mock_adapter.get_hierarchical_groups.call_count == 2
+        assert mock_adapter.get_extraction_job.call_count == 2
+        sources_derived = [
+            c.kwargs["source_id"] for c in mock_adapter.get_hierarchical_groups.call_args_list
+        ]
+        assert sources_derived == ["src1", "src2"]
+
+    @pytest.mark.asyncio
+    async def test_mark_queued_failure_cancels_the_enqueued_task(
+        self, mock_adapter, mock_settings
+    ) -> None:
+        """A persist failure after enqueue must cancel the live queue task.
+
+        Regression: ``queue_extract_chunk`` succeeded, then
+        ``mark_chunk_task_queued`` raised — the caller marked the chunk task
+        terminally failed in SQLite while the queue still held (and would
+        execute) the new task. The compensating ``cancel_task`` keeps the
+        two stores in agreement.
+        """
+        from chaoscypher_neuron.recovery.extraction import requeue_extraction_task
+
+        task = self._tasks(1)[0]
+        job = {"status": "running", "source_id": "src1"}
+        mock_adapter.get_hierarchical_groups.return_value = self._groups(1)
+        mock_adapter.mark_chunk_task_queued.side_effect = RuntimeError("db locked")
+
+        mock_service = MagicMock()
+        mock_service.queue_extract_chunk = AsyncMock(return_value="new-qt")
+
+        with (
+            patch("chaoscypher_neuron.recovery.extraction.queue_client") as mock_qc,
+            patch(
+                "chaoscypher_core.operations.extraction.ChunkExtractionOperationsService",
+                return_value=mock_service,
+            ),
+        ):
+            mock_qc.cancel_task = AsyncMock(return_value=True)
+            with pytest.raises(RuntimeError, match="db locked"):
+                await requeue_extraction_task(mock_adapter, task, job, mock_settings)
+
+        mock_qc.cancel_task.assert_awaited_once_with("new-qt")

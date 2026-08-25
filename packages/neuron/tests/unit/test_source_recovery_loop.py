@@ -67,13 +67,21 @@ async def test_source_recovery_loop_continues_on_timeout() -> None:
     """A TimeoutError inside the wrapped reconcile is caught + the loop continues."""
     recovery = MagicMock()
     call_count = 0
+    # Signalled once a SECOND reconcile call happens, i.e. once the loop has
+    # survived the first call's TimeoutError. Waiting on this event instead of
+    # a fixed 1.0s wall-clock sleep keeps the test deterministic under loaded
+    # xdist workers — the same fix the first test in this file already carries.
+    second_call = asyncio.Event()
 
     async def slow_or_normal(database_name: str) -> MagicMock:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            # First call: take longer than the timeout to trigger TimeoutError.
-            await asyncio.sleep(0.2)
+            # First call: never completes, so the wrapping asyncio.timeout is
+            # guaranteed to fire regardless of runner speed.
+            await asyncio.Event().wait()
+        if call_count >= 2:
+            second_call.set()
         return MagicMock(recovered=0, skipped_paused=0)
 
     recovery.reconcile_database = AsyncMock(side_effect=slow_or_normal)
@@ -83,18 +91,19 @@ async def test_source_recovery_loop_continues_on_timeout() -> None:
             recovery=recovery,
             adapter=MagicMock(),
             database_name="test_db",
-            interval_seconds=0.01,  # type: ignore[arg-type]
+            interval_seconds=0,  # type: ignore[arg-type]
             reconcile_timeout_seconds=0.05,  # type: ignore[arg-type]
         )
     )
-
-    # Wait long enough for the timeout to fire + subsequent successful iterations.
-    await asyncio.sleep(1.0)
-    task.cancel()
     try:
-        await task
-    except asyncio.CancelledError:
-        pass
+        # The 5s ceiling only bites if the loop died on the TimeoutError.
+        await asyncio.wait_for(second_call.wait(), timeout=5.0)
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     # We expect at least 2 calls (one that timed out, one or more that succeeded).
     assert call_count >= 2, f"Loop did not continue after timeout; got {call_count} calls"

@@ -20,6 +20,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
+from rich.console import Console
 
 from chaoscypher_cli.commands.template.create import create
 from chaoscypher_cli.commands.template.delete import delete
@@ -27,6 +28,7 @@ from chaoscypher_cli.commands.template.get import get
 from chaoscypher_cli.commands.template.list import list_templates
 from chaoscypher_cli.commands.template.update import update
 from chaoscypher_cli.commands.template.utils import PROPERTY_TYPES, parse_property
+from chaoscypher_core.exceptions import NotFoundError
 
 
 # ---------------------------------------------------------------------------
@@ -68,7 +70,9 @@ def _mock_ctx(template: dict[str, Any] | None = None) -> MagicMock:
         ts.delete_template.return_value = True
         ts.list_templates.return_value = {"data": [template], "pagination": {"total": 1}}
     else:
-        ts.get_template.return_value = None
+        # The real TemplateService raises NotFoundError (it never returns
+        # None) — mock the raise, not an impossible falsy return.
+        ts.get_template.side_effect = NotFoundError("Template", "tmpl-999")
         ts.list_templates.return_value = {"data": [], "pagination": {"total": 0}}
     return ctx
 
@@ -334,12 +338,37 @@ class TestListCommand:
         assert "more" in result.output
 
     def test_list_filter_type(self) -> None:
+        from chaoscypher_core.app_config import get_settings
+
         runner = CliRunner()
         ctx = _mock_ctx(_tmpl())
         with patch("chaoscypher_cli.commands.template.list.get_context", return_value=ctx):
             result = runner.invoke(list_templates, ["--type", "node", "--database", "test"])
         assert result.exit_code == 0, result.output
-        ctx.template_service.list_templates.assert_called_once_with(template_type="node")
+        ctx.template_service.list_templates.assert_called_once_with(
+            template_type="node",
+            page=1,
+            page_size=get_settings().cli.list_page_size,
+        )
+
+    def test_list_pagination_flags(self) -> None:
+        """--page/--limit reach the service; the footer shows page position."""
+        runner = CliRunner()
+        ctx = _mock_ctx(_tmpl())
+        ctx.template_service.list_templates.return_value = {
+            "data": [_tmpl()],
+            "pagination": {"total": 120, "page": 2, "page_size": 50, "total_pages": 3},
+        }
+        with patch("chaoscypher_cli.commands.template.list.get_context", return_value=ctx):
+            result = runner.invoke(
+                list_templates, ["--page", "2", "--limit", "50", "--database", "test"]
+            )
+        assert result.exit_code == 0, result.output
+        ctx.template_service.list_templates.assert_called_once_with(
+            template_type=None, page=2, page_size=50
+        )
+        assert "Page 2/3" in result.output
+        assert "--page 3" in result.output
 
     def test_list_yaml_format(self) -> None:
         runner = CliRunner()
@@ -378,15 +407,28 @@ class TestListCommand:
         assert "Error" in result.output
 
     def test_list_verbose_long_description(self) -> None:
-        """Descriptions > 40 chars are truncated (either '...' or unicode ellipsis)."""
+        """Descriptions > 40 chars are truncated to 40 chars + '...'."""
         long_desc = "A" * 50
         runner = CliRunner()
         ctx = _mock_ctx(_tmpl(description=long_desc))
-        with patch("chaoscypher_cli.commands.template.list.get_context", return_value=ctx):
+        # Widen the console: at the default 80 columns Rich re-truncates the
+        # cell itself (35 chars + unicode ellipsis), hiding whether the
+        # production code truncated. An explicit Console width is the only
+        # deterministic control — COLUMNS is ignored wherever the test runner
+        # allocates a tty (docker-test), because Rich then reads the real
+        # terminal size instead of the environment.
+        with (
+            patch("chaoscypher_cli.commands.template.list.get_context", return_value=ctx),
+            # width AND height: with both pinned, Console.size short-circuits
+            # before the dumb-terminal and tty-detection branches entirely.
+            patch("chaoscypher_cli.commands.template.list.console", Console(width=200, height=50)),
+        ):
             result = runner.invoke(list_templates, ["--verbose", "--database", "test"])
         assert result.exit_code == 0, result.output
-        # The production code appends "..." but Rich may render it as the unicode ellipsis …
-        assert "..." in result.output or "…" in result.output or "AAA" in result.output
+        # Strip whitespace so borders/padding cannot split the run.
+        flat = "".join(result.output.split())
+        assert "A" * 40 + "..." in flat, result.output  # truncated to exactly 40 + "..."
+        assert "A" * 41 not in flat, result.output  # full description never appears
 
 
 # ---------------------------------------------------------------------------

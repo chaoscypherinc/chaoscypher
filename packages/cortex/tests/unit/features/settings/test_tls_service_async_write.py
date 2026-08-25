@@ -15,9 +15,10 @@ deterministic and fails the moment any write is made synchronous again.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -52,8 +53,9 @@ async def test_enable_custom_offloads_every_disk_op_to_thread(
     thresholds involved.
     """
     service = _make_tls_service(tmp_path)
-    # Stub the nginx swap so the test focuses on disk I/O.
+    # Stub the nginx swap and settings refresh so the test focuses on disk I/O.
     service._switch_nginx_config = MagicMock()  # type: ignore[method-assign]
+    service._refresh_settings = AsyncMock()  # type: ignore[method-assign]
 
     offloaded: list[str] = []
     real_to_thread = asyncio.to_thread
@@ -69,8 +71,7 @@ async def test_enable_custom_offloads_every_disk_op_to_thread(
     assert offloaded == [
         "Path.mkdir",
         "Path.write_bytes",
-        "Path.write_bytes",
-        "Path.chmod",
+        "atomic_secret_write",
     ]
 
     # And the offloaded calls really performed the writes.
@@ -78,5 +79,47 @@ async def test_enable_custom_offloads_every_disk_op_to_thread(
     key_path = tmp_path / "certs" / "server.key"
     assert cert_path.read_bytes() == b"-fake-cert-"
     assert key_path.read_bytes() == b"-fake-key-"
-    assert key_path.stat().st_mode & 0o777 == 0o600
+    if sys.platform != "win32":
+        # POSIX file modes are unrepresentable on Windows: os.chmod there can
+        # only toggle the read-only bit, so the key stats as 0o666 whatever the
+        # code does. Guarding this one line rather than skipping the test keeps
+        # the offload sequence above — the actual subject — asserted on every
+        # platform. Same guard as
+        # packages/core/tests/unit/services/tls/test_service.py::test_key_file_created_with_0600.
+        assert key_path.stat().st_mode & 0o777 == 0o600
     service._switch_nginx_config.assert_called_once_with(https=True)
+
+
+@pytest.mark.asyncio
+async def test_tls_changes_trigger_settings_reload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """enable_custom and disable must re-resolve settings and notify workers.
+
+    ``cookie_secure`` is auto-detected from the cert files at Settings
+    construction, so a TLS flip that does not invalidate the settings cache
+    leaves session cookies with a stale Secure flag until restart.
+    """
+    import chaoscypher_cortex.features.settings.tls_service as tls_module
+    from chaoscypher_cortex.shared import worker_notify
+
+    service = _make_tls_service(tmp_path)
+    service._switch_nginx_config = MagicMock()  # type: ignore[method-assign]
+
+    reload_calls: list[bool] = []
+    monkeypatch.setattr(tls_module, "reload_settings", lambda: reload_calls.append(True))
+
+    published: list[str] = []
+
+    async def fake_publish(reason: str) -> None:
+        published.append(reason)
+
+    monkeypatch.setattr(worker_notify, "publish_settings_change", fake_publish)
+
+    await service.enable_custom(cert_pem=b"-fake-cert-", key_pem=b"-fake-key-")
+    assert len(reload_calls) == 1
+    assert published == ["v1:tls_enabled"]
+
+    await service.disable()
+    assert len(reload_calls) == 2
+    assert published == ["v1:tls_enabled", "v1:tls_disabled"]

@@ -100,7 +100,11 @@ class GraphRepository(
         from chaoscypher_core.adapters.sqlite.adapter import _current_session
 
         scoped = _current_session.get()
-        if scoped is not None:
+        if scoped is not None and scoped.bind is self._fallback_session.bind:
+            # Adopt the scoped session only when it targets the same
+            # engine as this repo's own session — a repo built for a
+            # different database (task-database rebind) must not read
+            # or write through the scope owner's engine.
             return scoped
         return self._fallback_session
 

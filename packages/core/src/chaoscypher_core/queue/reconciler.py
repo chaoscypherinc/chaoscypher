@@ -125,6 +125,12 @@ async def reconcile_queue(
             is still present. Pass ``None`` (default) to disable the check
             and rely solely on heartbeat liveness.
 
+            This is a *cutoff*, not the worker's timeout: it must clear the
+            deadline the worker actually enforces, or this heartbeat-blind
+            branch requeues live tasks into a second worker. Build it with
+            ``worker_timeouts.reconciler_cutoff_seconds`` over the effective
+            (``workers.yaml``-aware) timeout — never a bare settings default.
+
     Returns:
         ReconcileStats with per-category counters.
     """

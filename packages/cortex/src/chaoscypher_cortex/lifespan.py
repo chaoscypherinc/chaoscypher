@@ -219,8 +219,9 @@ async def _cortex_chat_reconcile_loop(
     Args:
         list_databases: Zero-arg callable returning a list of active
             database names.
-        chat_recovery_fn: Callable taking a database_name and returning
-            the number of chats recovered.
+        chat_recovery_fn: Async callable taking a database_name and
+            returning the number of chats recovered (awaited so it can
+            consult the queue for worker liveness before recovering).
         interval_seconds: Sleep between passes (float so tests can run
             sub-second ticks).
         should_shutdown: Zero-arg async callable returning True when the
@@ -233,12 +234,12 @@ async def _cortex_chat_reconcile_loop(
         except asyncio.CancelledError:
             return
         try:
-            dbs = list_databases()
+            dbs = await asyncio.to_thread(list_databases)
             for db in dbs:
                 # Chat status sweep: find "processing" chats with no
                 # active worker and move them to "error".
                 try:
-                    chat_recovered = chat_recovery_fn(db)
+                    chat_recovered = await chat_recovery_fn(db)
                     if chat_recovered:
                         loop_logger.warning(
                             "cortex_chat_recovery_acted",
@@ -262,6 +263,7 @@ async def _cortex_chat_reconcile_loop(
 async def _health_evaluator_loop(
     *,
     evaluator: Any,
+    adapter: Any,
     interval_seconds: float,
     should_shutdown: Any,
 ) -> None:
@@ -274,6 +276,7 @@ async def _health_evaluator_loop(
 
     Args:
         evaluator: A HealthPauseEvaluator instance.
+        adapter: The SqliteAdapter the evaluator writes through.
         interval_seconds: Cadence between ticks.
         should_shutdown: Zero-arg async callable returning True when the
             loop should exit.
@@ -284,7 +287,18 @@ async def _health_evaluator_loop(
         except asyncio.CancelledError:
             return
         try:
-            await evaluator.tick()
+            # Per-tick session scope (matching the neuron sibling,
+            # worker.py _health_monitor_loop): the evaluator's adapter
+            # calls run via asyncio.to_thread, whose context copy
+            # inherits this scope — so a tick never drives the singleton
+            # _fallback_session from a worker thread while request
+            # handlers emit system events through the same adapter on
+            # the event loop (the 2026-05-20 silent-data-loss race).
+            # Loop-thread emitters keep using _fallback_session, which
+            # stays safe only while no cortex code calls event_bus.emit
+            # from inside to_thread — keep it that way.
+            async with adapter.session_scope():
+                await evaluator.tick()
         except Exception:
             logger.exception("health_evaluator_tick_failed")
 
@@ -321,7 +335,17 @@ def _start_chat_recovery_loop(
         db_repo = DatabaseRepository(data_root=str(settings.paths.data_dir))
         return [d.name for d in db_repo.list_databases()]
 
-    def _recover_stuck_chats(db_name: str) -> int:
+    async def _recover_stuck_chats(db_name: str) -> int:
+        """Sweep one database's stuck chats, consulting queue liveness.
+
+        Passes the process-wide queue_client singleton so the sweeper
+        can confirm a stuck-processing candidate has no live worker
+        task before flipping it to "error" (entry 812) — without it,
+        healthy in-flight turns longer than the 300s candidate
+        threshold get killed even with a 3600s worker budget.
+        """
+        from chaoscypher_core.queue import queue_client
+
         db_repo = DatabaseRepository(data_root=str(settings.paths.data_dir))
         db_path = db_repo.get_database_path(db_name)
         if db_path is None:
@@ -331,11 +355,13 @@ def _start_chat_recovery_loop(
             db_path=db_path,
             database_name=db_name,
         )
-        adapter.connect()
+        # connect/disconnect are blocking SQLite I/O — keep them off the
+        # API event loop (matches llm_queue/queue_service.py).
+        await asyncio.to_thread(adapter.connect)
         try:
-            return reconcile_stuck_chats(adapter, db_name)
+            return await reconcile_stuck_chats(adapter, db_name, queue_client=queue_client)
         finally:
-            adapter.disconnect()
+            await asyncio.to_thread(adapter.disconnect)
 
     task = asyncio.create_task(
         _cortex_chat_reconcile_loop(
@@ -418,6 +444,7 @@ def _start_health_monitor(
     task = asyncio.create_task(
         _health_evaluator_loop(
             evaluator=_h_evaluator,
+            adapter=_h_adapter,
             interval_seconds=_hm.check_interval_seconds,
             should_shutdown=_should_shutdown,
         )

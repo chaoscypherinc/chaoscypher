@@ -367,6 +367,7 @@ async def _orphan_task_cleanup_loop(
 
 async def _health_monitor_loop(
     evaluator: Any,
+    adapter: Any,
     interval: float,
 ) -> None:
     """Periodic health evaluation loop.
@@ -376,6 +377,7 @@ async def _health_monitor_loop(
 
     Args:
         evaluator: A HealthPauseEvaluator instance.
+        adapter: SqliteAdapter the evaluator writes through.
         interval: Seconds between ticks.
     """
     while True:
@@ -384,7 +386,15 @@ async def _health_monitor_loop(
         except asyncio.CancelledError:
             return
         try:
-            await evaluator.tick()
+            # Per-tick session scope (matching the sibling loops): the
+            # evaluator's adapter calls run via asyncio.to_thread, whose
+            # context copy inherits this scope — so a tick never shares
+            # the singleton _fallback_session with the trigger dispatcher
+            # or queue handlers (the 2026-05-20 silent-data-loss race).
+            async with adapter.session_scope():
+                await evaluator.tick()
+        except asyncio.CancelledError:
+            return
         except Exception:
             logger.exception("health_monitor_tick_failed")
 
@@ -738,6 +748,7 @@ def _setup_health_monitor(ctx: WorkerContext) -> asyncio.Task[None] | None:
     task = asyncio.create_task(
         _health_monitor_loop(
             evaluator=_health_evaluator,
+            adapter=storage_adapter,
             interval=hm.check_interval_seconds,
         )
     )

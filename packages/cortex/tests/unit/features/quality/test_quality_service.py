@@ -141,6 +141,43 @@ def _cacheable_scores() -> dict[str, Any]:
     return {"cached_quality_grade": 72.0}
 
 
+def _truncating_adapter(sources: list[dict[str, Any]]) -> MagicMock:
+    """Return a MagicMock adapter whose ``list_files`` truncates like the real one.
+
+    ``SqliteAdapter.list_files`` declares ``limit: int = 100`` and applies it
+    as a SQL ``LIMIT``. A plain ``list_files.return_value`` mock hands back
+    every row regardless of the argument, which would hide exactly the silent
+    truncation these tests exist to catch — so mirror the real signature and
+    slice on it.
+    """
+    adapter = MagicMock()
+
+    def _list_files(
+        database_name: str, status: str | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return sources[:limit]
+
+    adapter.list_files.side_effect = _list_files
+    return adapter
+
+
+def _stale_source(source_id: str, **kwargs: Any) -> dict[str, Any]:
+    """Return a source row whose cached scores are missing (forces a rescore)."""
+    return _cached_source(source_id, version=1, cached_at=None, **kwargs)
+
+
+def _calculated_score(source_id: str, total_score: float = 90.0) -> dict[str, Any]:
+    """Return the subset of ``score_source``'s payload that aggregation reads."""
+    return {
+        "source_id": source_id,
+        "total_score": total_score,
+        "entity_count": 4,
+        "relationship_count": 2,
+        "avg_entity_quality": 70.0,
+        "avg_relationship_quality": 60.0,
+    }
+
+
 def _patch_scorer(score: SimpleNamespace | None = None) -> Any:
     """Patch QualityScorer in the service module to return a stub scorer."""
     scorer_instance = MagicMock()
@@ -542,6 +579,194 @@ class TestAnalyzeSources:
         mock_score.assert_called_once_with("a", include_details=False)
         assert result["total_sources"] == 1
         assert result["avg_score"] == 90.0
+
+
+# ---------------------------------------------------------------------------
+# analyze_sources — full-table reads and pagination push-down
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAnalyzeSourcesReadsEverySource:
+    """``list_files``' default ``limit=100`` must never silently truncate."""
+
+    def test_analyzes_more_than_one_hundred_sources(self) -> None:
+        """A workspace with >100 sources is analysed in full, not to the first 100."""
+        rows = [_cached_source(f"s{i:03d}") for i in range(150)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.analyze_sources()
+
+        assert result["total_sources"] == 150
+        assert len(result["sources"]) == 150
+
+    def test_passes_explicit_limit_to_list_files(self) -> None:
+        """The limit is passed explicitly rather than left to the 100-row default."""
+        adapter = _truncating_adapter([_cached_source(f"s{i:03d}") for i in range(150)])
+        service = _make_service(adapter)
+
+        service.analyze_sources()
+
+        assert adapter.list_files.call_args.kwargs["limit"] >= 150
+
+    def test_compare_domains_reads_every_source(self) -> None:
+        """compare_domains shares the call path and must not truncate either."""
+        rows = [_cached_source(f"s{i:03d}", domain="med") for i in range(150)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.compare_domains()
+
+        assert result["domains"][0]["source_count"] == 150
+
+    def test_get_outdated_sources_reads_every_source(self) -> None:
+        """get_outdated_sources must see past row 100 or it under-reports."""
+        rows = [_cached_source(f"s{i:03d}", version=1) for i in range(150)]
+        service = _make_service(_truncating_adapter(rows))
+
+        assert len(service.get_outdated_sources()) == 150
+
+    def test_recalculate_all_scores_reads_every_source(self) -> None:
+        """recalculate_all_scores must reach every stale source, not the newest 100."""
+        rows = [_cached_source(f"s{i:03d}", version=1) for i in range(150)]
+        service = _make_service(_truncating_adapter(rows))
+
+        with patch.object(service, "recalculate_source_scores", return_value={}):
+            result = service.recalculate_all_scores()
+
+        assert result["recalculated_count"] == 150
+
+
+@pytest.mark.unit
+class TestAnalyzeSourcesPagination:
+    """``analyze_sources`` selects the page BEFORE scoring anything."""
+
+    def test_page_two_does_not_rescore_page_one(self) -> None:
+        """Requesting page 2 must not run the expensive scorer over page 1."""
+        rows = [_stale_source(f"s{i}") for i in range(6)]
+        service = _make_service(_truncating_adapter(rows))
+
+        with patch.object(
+            service,
+            "score_source",
+            side_effect=lambda sid, **_kw: _calculated_score(sid),
+        ) as mock_score:
+            result = service.analyze_sources(page=2, page_size=2)
+
+        scored_ids = [call.args[0] for call in mock_score.call_args_list]
+        assert scored_ids == ["s2", "s3"], (
+            "page 2 must score only its own rows — scoring page 1 again is the "
+            "per-page rescoring this push-down removes"
+        )
+        assert [s["source_id"] for s in result["sources"]] == ["s2", "s3"]
+
+    def test_total_counts_every_match_not_just_the_page(self) -> None:
+        """``total_sources`` reports the full match count so pagination math is right."""
+        rows = [_cached_source(f"s{i:03d}") for i in range(150)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.analyze_sources(page=1, page_size=20)
+
+        assert result["total_sources"] == 150
+        assert len(result["sources"]) == 20
+
+    def test_sorts_before_slicing(self) -> None:
+        """Ordering is applied across all matches, not within the page."""
+        rows = [_cached_source(f"s{i}") for i in range(4)]
+        for index, row in enumerate(rows):
+            row["cached_richness_score"] = float(index * 10)
+        service = _make_service(_truncating_adapter(rows))
+
+        top = service.analyze_sources(page=1, page_size=2, sort_by="total_score")
+        assert [s["source_id"] for s in top["sources"]] == ["s3", "s2"]
+
+        ascending = service.analyze_sources(
+            page=1, page_size=2, sort_by="total_score", sort_order="asc"
+        )
+        assert [s["source_id"] for s in ascending["sources"]] == ["s0", "s1"]
+
+    def test_last_page_is_short(self) -> None:
+        """A partial final page returns only the remaining rows."""
+        rows = [_cached_source(f"s{i}") for i in range(5)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.analyze_sources(page=3, page_size=2)
+
+        assert [s["source_id"] for s in result["sources"]] == ["s4"]
+        assert result["total_sources"] == 5
+
+    def test_averages_span_all_matches_not_just_the_page(self) -> None:
+        """Cached off-page rows still feed the aggregate — averages stay global."""
+        rows = [_cached_source(f"s{i}") for i in range(4)]
+        rows[0]["cached_richness_score"] = 100.0
+        rows[1]["cached_richness_score"] = 0.0
+        rows[2]["cached_richness_score"] = 100.0
+        rows[3]["cached_richness_score"] = 0.0
+        service = _make_service(_truncating_adapter(rows))
+
+        page = service.analyze_sources(page=1, page_size=2)
+
+        # Page holds the two 100.0 rows, but the average covers all four.
+        assert [s["total_score"] for s in page["sources"]] == [100.0, 0.0]
+        assert page["avg_score"] == 50.0
+
+    def test_filters_apply_before_pagination(self) -> None:
+        """Domain / min_entities filtering happens before the page is cut."""
+        rows = [_cached_source(f"med-{i}", domain="med") for i in range(3)]
+        rows += [_cached_source(f"law-{i}", domain="law") for i in range(3)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.analyze_sources(domain="law", page=1, page_size=2)
+
+        assert result["total_sources"] == 3
+        assert [s["source_id"] for s in result["sources"]] == ["law-0", "law-1"]
+
+    def test_page_is_ordered_by_the_scores_it_returns(self) -> None:
+        """On a cold cache the page is re-sorted by its fresh scores.
+
+        The page is selected on cached columns, which are empty for a stale
+        row, so the pre-scoring order can disagree with the values actually
+        returned. The within-page ordering must match what the caller sees.
+        """
+        rows = [_stale_source(f"s{i}") for i in range(3)]
+        fresh = {"s0": 10.0, "s1": 90.0, "s2": 50.0}
+        service = _make_service(_truncating_adapter(rows))
+
+        with patch.object(
+            service,
+            "score_source",
+            side_effect=lambda sid, **_kw: _calculated_score(sid, total_score=fresh[sid]),
+        ):
+            result = service.analyze_sources(page=1, page_size=3, sort_by="total_score")
+
+        assert [s["source_id"] for s in result["sources"]] == ["s1", "s2", "s0"]
+        assert [s["total_score"] for s in result["sources"]] == [90.0, 50.0, 10.0]
+
+    def test_page_re_sort_honours_ascending_order(self) -> None:
+        """The post-scoring re-sort respects sort_order."""
+        rows = [_stale_source(f"s{i}") for i in range(3)]
+        fresh = {"s0": 10.0, "s1": 90.0, "s2": 50.0}
+        service = _make_service(_truncating_adapter(rows))
+
+        with patch.object(
+            service,
+            "score_source",
+            side_effect=lambda sid, **_kw: _calculated_score(sid, total_score=fresh[sid]),
+        ):
+            result = service.analyze_sources(
+                page=1, page_size=3, sort_by="total_score", sort_order="asc"
+            )
+
+        assert [s["total_score"] for s in result["sources"]] == [10.0, 50.0, 90.0]
+
+    def test_unpaginated_call_still_returns_every_match(self) -> None:
+        """The POST path and get_summary pass no page params and must be unchanged."""
+        rows = [_cached_source(f"s{i}") for i in range(7)]
+        service = _make_service(_truncating_adapter(rows))
+
+        result = service.analyze_sources()
+
+        assert len(result["sources"]) == 7
+        assert result["total_sources"] == 7
 
 
 # ---------------------------------------------------------------------------

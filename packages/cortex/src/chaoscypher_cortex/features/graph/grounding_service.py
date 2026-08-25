@@ -93,8 +93,15 @@ class GroundingService:
         effective_page_size = min(effective_page_size, self.settings.pagination.max_page_size)
         skip = (page - 1) * effective_page_size
 
+        # List views never render the embedding vector, so skip loading/serializing
+        # it — otherwise the non-minimal path lazy-loads one embedding per row (N+1)
+        # and ships them all to the client. That payload is paid for twice on an
+        # endpoint built for LLM tool calls: once on the wire, once in context.
         nodes = self.graph_repository.list_nodes(
-            template_id=template_id, skip=skip, limit=effective_page_size
+            template_id=template_id,
+            skip=skip,
+            limit=effective_page_size,
+            include_embedding=False,
         )
 
         # Apply text search filter if query provided

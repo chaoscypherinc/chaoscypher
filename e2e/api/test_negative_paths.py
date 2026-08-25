@@ -35,12 +35,13 @@ class TestNotFoundErrors:
         assert resp.status_code == 404
 
     def test_get_nonexistent_chat(self, client: httpx.Client) -> None:
-        """Getting a nonexistent chat returns 404 or similar."""
+        """Getting a nonexistent chat returns 404."""
         resp = client.get("/api/v1/chats/nonexistent-chat-id-12345")
-        # Chat get returns None->404 based on implementation
-        assert resp.status_code in (404, 200)
-        if resp.status_code == 200:
-            assert resp.json() is None
+        # get_chat pipes chat_service.get_chat() through
+        # raise_if_not_found (chats/api.py:228), which raises 404 on
+        # any falsy result — there is no code path back to 200 for a
+        # missing chat.
+        assert resp.status_code == 404
 
 
 class TestValidationErrors:

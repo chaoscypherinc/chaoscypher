@@ -45,8 +45,13 @@ class TestExtractionControl:
         """Cancelling extraction when no job is active returns 404."""
         source_id = self._upload_indexed(client, sample_data_dir, "cancel_test.txt")
         resp = client.delete(f"/api/v1/sources/{source_id}/extraction")
-        # No active job - 404 expected
-        assert resp.status_code in (204, 404)
+        # SourceService.cancel_extraction raises ValueError("No active
+        # extraction job for this source") whenever current_extraction
+        # _job_id is unset (service.py:903-906), which is guaranteed
+        # here since the source was uploaded with extract_entities=false
+        # and never entered extraction. extraction_api.py:327-328 maps
+        # that ValueError to 404 unconditionally; 204 is unreachable.
+        assert resp.status_code == 404
 
     def test_extraction_charts_endpoint(self, client: httpx.Client, sample_data_dir: str) -> None:
         """Extraction charts endpoint returns a list (possibly empty)."""
@@ -61,8 +66,14 @@ class TestExtractionControl:
         """Abort processing endpoint responds to indexed source."""
         source_id = self._upload_indexed(client, sample_data_dir, "abort_test.txt")
         resp = client.delete(f"/api/v1/sources/{source_id}/processing")
-        # Either successfully aborts or says nothing to abort
-        assert resp.status_code in (200, 204, 404, 400)
+        # The source is already "indexed" (not one of the processing
+        # statuses SourceService.abort_processing checks for), so it
+        # always raises RuntimeError("Source is not currently
+        # processing...") (service.py:935-989), which extraction_api.py
+        # :559-567 maps to 400. 204 (success) requires an active
+        # processing status this test never reaches; 404 requires a
+        # missing source, which this test never creates.
+        assert resp.status_code == 400
 
 
 class TestSourceImages:
@@ -80,5 +91,7 @@ class TestSourceImages:
         _poll_indexed(client, source_id)
 
         resp = client.get(f"/api/v1/sources/{source_id}/images")
-        # 200 with empty list, or 404 if no images exist
-        assert resp.status_code in (200, 404)
+        # A text source has no images dir: the route returns 200 with an
+        # empty list (404 is only raised for structurally invalid ids).
+        assert resp.status_code == 200
+        assert resp.json() == []

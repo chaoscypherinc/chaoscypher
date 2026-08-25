@@ -90,7 +90,22 @@ def test_search_nodes_no_filter_uses_total_count() -> None:
     assert result.pagination.has_prev is False
     repo.count_nodes.assert_called_once()
     repo.count_nodes_by_template.assert_not_called()
-    repo.list_nodes.assert_called_once_with(template_id=None, skip=0, limit=20)
+    repo.list_nodes.assert_called_once_with(
+        template_id=None, skip=0, limit=20, include_embedding=False
+    )
+
+
+def test_search_nodes_never_loads_embeddings() -> None:
+    """The MCP listing never renders vectors, so it must not load or ship them."""
+    repo = MagicMock()
+    repo.list_nodes.return_value = [_make_node("n1")]
+    repo.count_nodes.return_value = 1
+    service = _make_service(repo=repo)
+
+    result = service.search_nodes()
+
+    assert repo.list_nodes.call_args.kwargs["include_embedding"] is False
+    assert all(node.embedding is None for node in result.data)
 
 
 def test_search_nodes_with_template_id_uses_template_count() -> None:
@@ -136,7 +151,9 @@ def test_search_nodes_page_size_clamped_to_max() -> None:
 
     assert result.pagination.page_size == 10
     # skip = (page-1) * clamped_size = 2 * 10
-    repo.list_nodes.assert_called_once_with(template_id=None, skip=20, limit=10)
+    repo.list_nodes.assert_called_once_with(
+        template_id=None, skip=20, limit=10, include_embedding=False
+    )
     # total==0 -> total_pages defaults to 1
     assert result.pagination.total_pages == 1
 

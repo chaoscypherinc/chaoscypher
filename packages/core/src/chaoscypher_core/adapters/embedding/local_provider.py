@@ -221,7 +221,6 @@ class LocalEmbeddingProvider:
         return BatchEmbedResult(
             embeddings=embeddings,
             total=len(embeddings),
-            failed=0,
             provider="local",
         )
 

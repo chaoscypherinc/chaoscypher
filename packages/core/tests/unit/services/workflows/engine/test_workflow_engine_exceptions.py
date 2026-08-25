@@ -127,7 +127,7 @@ class TestExecutorUserToolResolverNotProvided:
         result = await node(state)
         assert "s1" in result.step_errors
         # The message from the ValidationError should mention the resolver
-        assert "resolver" in result.step_errors["s1"].lower() or result.step_errors["s1"]
+        assert "resolver" in result.step_errors["s1"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +159,7 @@ class TestExecutorUserToolNotFound:
         assert result.error is not None or "s2" in result.step_errors
         # Error message must reference the tool_id
         err_text = result.step_errors.get("s2", result.error or "")
-        assert "missing-tool" in err_text or err_text  # message captured
+        assert "missing-tool" in err_text  # message captured
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +189,7 @@ class TestExecutorNestedWorkflowNoExecutor:
         result = await node(state)
         assert result.error is not None or "s3" in result.step_errors
         err_text = result.step_errors.get("s3", result.error or "")
-        assert "nested" in err_text.lower() or "workflow" in err_text.lower() or err_text
+        assert "nested" in err_text.lower() or "workflow" in err_text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +218,7 @@ class TestExecutorUnknownToolType:
         result = await node(state)
         assert result.error is not None or "s4" in result.step_errors
         err_text = result.step_errors.get("s4", result.error or "")
-        assert "totally_unknown" in err_text or err_text
+        assert "totally_unknown" in err_text
 
 
 # ---------------------------------------------------------------------------

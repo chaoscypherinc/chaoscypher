@@ -135,6 +135,46 @@ describe('TemplateDetailPage', () => {
     expect(await screen.findByText('Templates List')).toBeTruthy();
   });
 
+  it('offers force delete when the delete returns 409 TEMPLATE_IN_USE', async () => {
+    mockTemplate(TEMPLATE);
+    // Shape thrown by the real api client for a blocked delete: status +
+    // unified {error, message} envelope. The force-delete dialog must key
+    // off status/code, not message substrings.
+    mockedApiClient.delete.mockRejectedValueOnce({
+      isApiError: true,
+      status: 409,
+      message: 'Template cannot be deleted because it is in use',
+      response: {
+        status: 409,
+        data: {
+          error: 'TEMPLATE_IN_USE',
+          message: 'Template cannot be deleted because it is in use',
+        },
+      },
+    });
+    mockedApiClient.delete.mockResolvedValueOnce({ data: {} });
+    renderPage();
+
+    await screen.findByText('Person');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    // The 409 must escalate to the force-delete confirmation…
+    const forceDialog = await screen.findByRole('dialog', { name: /force delete template/i });
+    fireEvent.click(within(forceDialog).getByRole('button', { name: /force delete/i }));
+
+    // …and confirming retries with force=true, then navigates back.
+    await waitFor(() => {
+      expect(mockedApiClient.delete).toHaveBeenLastCalledWith(
+        '/templates/t1',
+        expect.objectContaining({ params: { force: true } }),
+      );
+    });
+    expect(await screen.findByText('Templates List')).toBeTruthy();
+  });
+
   it('hides edit and delete actions for system templates', async () => {
     mockTemplate(SYSTEM_TEMPLATE);
     renderPage();

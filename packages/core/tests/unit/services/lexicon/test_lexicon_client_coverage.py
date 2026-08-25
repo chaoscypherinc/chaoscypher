@@ -851,3 +851,147 @@ class TestUpload:
             await client.upload(b"bad")
         assert exc_info.value.status_code == 500
         assert exc_info.value.message == "Upload failed"
+
+
+# ---------------------------------------------------------------------------
+# cached-client cleanup + settings-driven defaults
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestAexitClosesAllCachedClients:
+    @pytest.mark.asyncio
+    async def test_aexit_closes_download_and_upload_clients(self, monkeypatch) -> None:
+        """__aexit__ must close every cached client, not just the general one.
+
+        The download/upload clients are lazily created per operation; leaving
+        them open leaked one connection pool per LexiconService call in Cortex.
+        """
+        import chaoscypher_core.services.lexicon.client as mod
+
+        fakes: list[AsyncMock] = []
+
+        def _make_fake(*args: Any, **kwargs: Any) -> AsyncMock:
+            fake = AsyncMock(name=f"ctx-client-{len(fakes)}")
+            fakes.append(fake)
+            return fake
+
+        monkeypatch.setattr(mod.httpx, "AsyncClient", MagicMock(side_effect=_make_fake))
+
+        client = LexiconClient(base_url="http://x")
+        async with client:
+            client._get_download_client()
+            client._get_upload_client()
+            assert len(fakes) == 3  # general + download + upload
+
+        for fake in fakes:
+            fake.aclose.assert_awaited_once()
+        assert client._client is None
+        assert client._download_client is None
+        assert client._upload_client is None
+
+
+@pytest.mark.unit
+class TestSettingsDefaults:
+    def test_omitted_args_resolve_from_lexicon_settings(self, monkeypatch) -> None:
+        """timeout/upload_timeout/max_retries/retry_backoff default from settings.
+
+        These knobs (env: CHAOSCYPHER_LEXICON_TIMEOUT etc.) were previously
+        dead — the constructor hardcoded its own values.
+        """
+        from chaoscypher_core import app_config
+
+        fake_settings = MagicMock()
+        fake_settings.lexicon.url = "http://settings-hub/api/v1"
+        fake_settings.lexicon.timeout = 77
+        fake_settings.lexicon.upload_timeout = 550
+        fake_settings.lexicon.max_retries = 2
+        fake_settings.lexicon.retry_backoff = [1.5, 3.0]
+        monkeypatch.setattr(app_config, "get_settings", MagicMock(return_value=fake_settings))
+
+        client = LexiconClient()
+
+        assert client.base_url == "http://settings-hub/api/v1"
+        assert client.timeout == 77.0
+        assert client.upload_timeout == 550.0
+        assert client.max_retries == 2
+        assert client.retry_backoff == (1.5, 3.0)
+
+    def test_explicit_args_win_over_settings(self, monkeypatch) -> None:
+        from chaoscypher_core import app_config
+
+        get_settings_mock = MagicMock()
+        monkeypatch.setattr(app_config, "get_settings", get_settings_mock)
+
+        client = LexiconClient(
+            base_url="http://explicit",
+            timeout=5.0,
+            upload_timeout=10.0,
+            max_retries=1,
+            retry_backoff=(0.1,),
+        )
+
+        get_settings_mock.assert_not_called()
+        assert client.timeout == 5.0
+        assert client.upload_timeout == 10.0
+        assert client.max_retries == 1
+        assert client.retry_backoff == (0.1,)
+
+
+# ---------------------------------------------------------------------------
+# LexiconService single-poll terminal-error remap
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestServicePollTerminalErrors:
+    """The single-poll service path must remap RFC 8628 terminal errors.
+
+    Upstream returns them as HTTP 400; without the remap the API layer
+    collapses 400 to 503 and the web UI polls a dead device code forever
+    instead of surfacing expiry (the blocking client helper already mapped
+    them — this pins the non-blocking path Cortex actually uses).
+    """
+
+    @staticmethod
+    def _service_with_poll_error(monkeypatch, error_code: str):
+        import chaoscypher_core.services.lexicon.service as service_mod
+        from chaoscypher_core.services.lexicon.models import LexiconPollRequest
+        from chaoscypher_core.services.lexicon.service import LexiconService
+
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        client.post = AsyncMock(
+            side_effect=LexiconClientError(
+                status_code=400, message="oauth error", details={"error": error_code}
+            )
+        )
+        monkeypatch.setattr(service_mod, "LexiconClient", MagicMock(return_value=client))
+
+        service = LexiconService(storage=MagicMock())
+        request = LexiconPollRequest(
+            lexicon_url="http://hub.test", device_code="dev-code", client_id="cli"
+        )
+        return service, request
+
+    @pytest.mark.asyncio
+    async def test_expired_token_remapped_to_410(self, monkeypatch) -> None:
+        service, request = self._service_with_poll_error(monkeypatch, "expired_token")
+        with pytest.raises(LexiconClientError) as exc_info:
+            await service.poll_device_token(request)
+        assert exc_info.value.status_code == 410
+
+    @pytest.mark.asyncio
+    async def test_access_denied_remapped_to_403(self, monkeypatch) -> None:
+        service, request = self._service_with_poll_error(monkeypatch, "access_denied")
+        with pytest.raises(LexiconClientError) as exc_info:
+            await service.poll_device_token(request)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_authorization_pending_still_returns_pending(self, monkeypatch) -> None:
+        service, request = self._service_with_poll_error(monkeypatch, "authorization_pending")
+        response = await service.poll_device_token(request)
+        assert response.success is False
+        assert "pending" in response.message.lower()

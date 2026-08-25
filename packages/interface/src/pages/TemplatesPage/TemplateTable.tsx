@@ -95,7 +95,7 @@ export function TemplateTable({
         <TableBody>
           {templates.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} align="center">
+              <TableCell colSpan={5} align="center">
                 <Typography variant="body2" color="textSecondary" sx={{ py: 3 }}>
                   No templates available. {!showSystemTemplates && 'Enable "Show system templates" or '}Create custom templates to get started.
                 </Typography>

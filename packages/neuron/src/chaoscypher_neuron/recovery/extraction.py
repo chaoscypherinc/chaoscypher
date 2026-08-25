@@ -58,6 +58,13 @@ async def recover_orphaned_extraction_tasks(
     logger.info("recovery_scan_found_orphaned_tasks", count=len(orphaned_tasks))
 
     recovered = skipped = failed = 0
+    # Per-run memos. A crash mid-extraction of one large source yields one
+    # orphaned task per hierarchical group (hundreds for a large PDF), and
+    # every one of them used to re-derive the SAME per-source group list (a
+    # full chunk-table read + JSON parse + whole-text assembly per group) and
+    # re-issue the SAME job PK lookup — all inside the blocking startup hook.
+    job_cache: dict[str, dict[str, Any] | None] = {}
+    groups_by_source: dict[tuple[str, str], dict[Any, dict[str, Any]]] = {}
 
     for task in orphaned_tasks:
         queue_task_id = task.get("queue_task_id")
@@ -92,7 +99,9 @@ async def recover_orphaned_extraction_tasks(
             )
             skipped += 1
             continue
-        job = adapter.get_extraction_job(job_id)
+        if job_id not in job_cache:
+            job_cache[job_id] = adapter.get_extraction_job(job_id)
+        job = job_cache[job_id]
         if not job or job.get("status") not in ("running", "pending"):
             logger.debug(
                 "recovery_skip_inactive_job",
@@ -129,7 +138,9 @@ async def recover_orphaned_extraction_tasks(
             continue
 
         try:
-            await requeue_extraction_task(adapter, task, job, settings)
+            await requeue_extraction_task(
+                adapter, task, job, settings, groups_by_source=groups_by_source
+            )
             recovered += 1
             logger.info(
                 "recovery_task_requeued",
@@ -171,6 +182,7 @@ async def requeue_extraction_task(
     task: dict[str, Any],
     job: dict[str, Any],
     settings: Settings,
+    groups_by_source: dict[tuple[str, str], dict[Any, dict[str, Any]]] | None = None,
 ) -> str:
     """Re-queue an orphaned extraction task.
 
@@ -179,6 +191,12 @@ async def requeue_extraction_task(
         task: Task dictionary from list_running_chunk_tasks.
         job: Parent extraction job dictionary.
         settings: Application settings.
+        groups_by_source: Optional caller-owned memo of
+            ``(source_id, database_name) -> {group_index: group}``, so a batch
+            of tasks belonging to one source derives its hierarchical groups
+            ONCE instead of per task (``get_hierarchical_groups`` re-reads
+            every chunk row and re-materialises every group's full
+            ``combined_content``). Omit it and this call derives its own.
 
     Returns:
         New queue task ID.
@@ -195,12 +213,21 @@ async def requeue_extraction_task(
     chunk_index = task["chunk_index"]
     source_id = job["source_id"]
 
-    groups = adapter.get_hierarchical_groups(
-        source_id=source_id,
-        database_name=task["database_name"],
-    )
+    cache_key = (source_id, task["database_name"])
+    groups_by_index = groups_by_source.get(cache_key) if groups_by_source is not None else None
+    if groups_by_index is None:
+        groups_by_index = {}
+        for candidate in adapter.get_hierarchical_groups(
+            source_id=source_id,
+            database_name=task["database_name"],
+        ):
+            # setdefault keeps the FIRST group per index, matching the
+            # ``next(g for g in groups if ...)`` scan this replaced.
+            groups_by_index.setdefault(candidate.get("group_index"), candidate)
+        if groups_by_source is not None:
+            groups_by_source[cache_key] = groups_by_index
 
-    group = next((g for g in groups if g.get("group_index") == chunk_index), None)
+    group = groups_by_index.get(chunk_index)
     if not group:
         msg = f"Could not find hierarchical group for chunk {chunk_index}"
         raise ValueError(msg)
@@ -226,6 +253,7 @@ async def requeue_extraction_task(
     new_queue_task_id = await extraction_service.queue_extract_chunk(
         chunk_task_id=task_id,
         job_id=task["job_id"],
+        source_id=source_id,
         database_name=task["database_name"],
         chunk_index=chunk_index,
         hierarchical_group_id=group["id"],
@@ -233,5 +261,17 @@ async def requeue_extraction_task(
         priority=settings.priorities.background,
     )
 
-    adapter.mark_chunk_task_queued(task_id, new_queue_task_id)
+    try:
+        adapter.mark_chunk_task_queued(task_id, new_queue_task_id)
+    except Exception:
+        # The task is already live in the queue. If the SQLite persist fails
+        # here, the caller marks the chunk task terminally failed while the
+        # queue still executes it — a split-brain the stale-task guard never
+        # skips ("failed" is not a skip status). Best-effort cancel the
+        # just-enqueued task so DB and queue agree, then let the caller's
+        # failure handling proceed.
+        with contextlib.suppress(Exception):
+            await queue_client.cancel_task(str(new_queue_task_id))
+        raise
+
     return str(new_queue_task_id)

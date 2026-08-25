@@ -81,6 +81,80 @@ class TestQueueOutdatedRecalculation:
         assert call_kwargs["priority"] == 5
 
     @pytest.mark.asyncio
+    async def test_warms_every_stale_source_not_just_the_newest_hundred(self) -> None:
+        """``list_files`` defaults to 100 rows; the cache warmer needs them all.
+
+        Anything this pass misses stays stale until a request recalculates it
+        inline, so a truncated warm-up shifts that cost onto the first
+        ``/quality/summary`` or ``/quality/analyze`` call.
+        """
+        rows = [
+            {"id": f"s{i:03d}", "extraction_complete": True, "cached_scores_version": 1}
+            for i in range(150)
+        ]
+        adapter = MagicMock()
+        adapter.list_files.side_effect = lambda database_name, status=None, limit=100: rows[:limit]
+        queue = MagicMock()
+        queue.is_available = True
+        queue.enqueue_task = AsyncMock()
+
+        p1, p2, p3 = _patches(adapter, queue)
+        with p1, p2, p3:
+            await queue_outdated_quality_score_recalculation(_settings())
+
+        queued = queue.enqueue_task.await_args.kwargs["data"]["source_ids"]
+        assert len(queued) == 150
+
+    @pytest.mark.asyncio
+    async def test_chunks_large_batches_across_multiple_tasks(self) -> None:
+        """Stale sources are split into tasks the handler will not truncate.
+
+        The neuron handler silently drops everything past
+        ``max_quality_score_batch`` (default 500) in a single request, and a
+        one-shot payload of every source ID would also make the
+        ``queue:task:{id}`` hash's ``data`` field multi-megabyte.
+        """
+        rows = [
+            {"id": f"s{i:04d}", "extraction_complete": True, "cached_scores_version": 1}
+            for i in range(1250)
+        ]
+        adapter = MagicMock()
+        adapter.list_files.side_effect = lambda database_name, status=None, limit=100: rows[:limit]
+        queue = MagicMock()
+        queue.is_available = True
+        queue.enqueue_task = AsyncMock()
+
+        p1, p2, p3 = _patches(adapter, queue)
+        with p1, p2, p3:
+            await queue_outdated_quality_score_recalculation(_settings())
+
+        batches = [call.kwargs["data"]["source_ids"] for call in queue.enqueue_task.await_args_list]
+        assert len(batches) == 3, "1250 stale sources must fan out across several tasks"
+        assert all(len(batch) <= 500 for batch in batches)
+        # Every stale source is covered exactly once, in order.
+        assert [sid for batch in batches for sid in batch] == [row["id"] for row in rows]
+
+    @pytest.mark.asyncio
+    async def test_single_batch_still_enqueues_one_task(self) -> None:
+        """A workspace under the chunk size keeps the original single-task shape."""
+        rows = [
+            {"id": f"s{i}", "extraction_complete": True, "cached_scores_version": 1}
+            for i in range(10)
+        ]
+        adapter = MagicMock()
+        adapter.list_files.side_effect = lambda database_name, status=None, limit=100: rows[:limit]
+        queue = MagicMock()
+        queue.is_available = True
+        queue.enqueue_task = AsyncMock()
+
+        p1, p2, p3 = _patches(adapter, queue)
+        with p1, p2, p3:
+            await queue_outdated_quality_score_recalculation(_settings())
+
+        queue.enqueue_task.assert_awaited_once()
+        assert len(queue.enqueue_task.await_args.kwargs["data"]["source_ids"]) == 10
+
+    @pytest.mark.asyncio
     async def test_no_op_when_all_up_to_date(self) -> None:
         """No enqueue happens when every source is already current."""
         adapter = MagicMock()

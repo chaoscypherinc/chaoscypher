@@ -17,6 +17,20 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Source IDs per enqueued recalculation task.
+#
+# Two ceilings force the fan-out. The neuron handler silently truncates any
+# single request above ``NeuronSettings.max_quality_score_batch`` (default
+# 500, quality_scores.py:64-72), so a one-shot enqueue of every stale source
+# would warm only the first 500 and log a warning nobody reads. And the task
+# payload is JSON-serialised into the ``data`` field of the
+# ``queue:task:{id}`` hash, so a six-figure ID list would put megabytes into
+# a single hash field that six full-keyspace scans then HGETALL.
+#
+# Cortex must not import neuron config (package boundary), so this tracks
+# that ceiling by value; keep the two in step.
+_RECALC_CHUNK_SIZE = 500
+
 
 async def queue_outdated_quality_score_recalculation(settings: Settings) -> None:
     """Check for outdated quality scores and queue recalculation.
@@ -33,9 +47,14 @@ async def queue_outdated_quality_score_recalculation(settings: Settings) -> None
     from chaoscypher_core.database import get_sqlite_adapter
     from chaoscypher_core.queue import queue_client
     from chaoscypher_core.services.quality import SCORING_VERSION
+    from chaoscypher_cortex.features.quality.service import SOURCE_FETCH_LIMIT
 
     adapter = get_sqlite_adapter(database_name=settings.current_database)
-    sources = adapter.list_files(settings.current_database)
+    # Every stale source this pass misses stays stale until some request
+    # recalculates it inline, so the warm-up has to see past ``list_files``'
+    # 100-row default. One projection query; the enqueue below is a single
+    # background task regardless of how many IDs it carries.
+    sources = adapter.list_files(settings.current_database, limit=SOURCE_FETCH_LIMIT)
 
     # Find sources needing score recalculation
     outdated_source_ids = []
@@ -58,22 +77,28 @@ async def queue_outdated_quality_score_recalculation(settings: Settings) -> None
 
     # Queue background recalculation if queue is connected
     if queue_client.is_available:
-        await queue_client.enqueue_task(
-            queue=QUEUE_OPERATIONS,
-            operation="recalculate_quality_scores",
-            data={
-                "source_ids": outdated_source_ids,
-                "database_name": settings.current_database,
-            },
-            priority=settings.priorities.background,
-            metadata={
-                "operation_type": "recalculate_quality_scores",
-                "triggered_by": "startup_version_check",
-            },
-        )
+        batches = [
+            outdated_source_ids[start : start + _RECALC_CHUNK_SIZE]
+            for start in range(0, len(outdated_source_ids), _RECALC_CHUNK_SIZE)
+        ]
+        for batch in batches:
+            await queue_client.enqueue_task(
+                queue=QUEUE_OPERATIONS,
+                operation="recalculate_quality_scores",
+                data={
+                    "source_ids": batch,
+                    "database_name": settings.current_database,
+                },
+                priority=settings.priorities.background,
+                metadata={
+                    "operation_type": "recalculate_quality_scores",
+                    "triggered_by": "startup_version_check",
+                },
+            )
         logger.info(
             "quality_score_recalculation_queued",
             source_count=len(outdated_source_ids),
+            task_count=len(batches),
         )
     else:
         logger.warning(

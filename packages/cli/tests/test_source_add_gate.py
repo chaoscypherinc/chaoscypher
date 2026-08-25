@@ -5,7 +5,7 @@
 
 Covered:
 - Non-TTY (CliRunner default) + auto domain + no --no-confirm -> park + exit 1,
-  hint at 'cc source confirm', extract never runs, no hang.
+  hint at 'chaoscypher source confirm', extract never runs, no hang.
 - --no-confirm bypass + auto domain -> proceeds to extract, recommendation surfaced.
 - TTY prompt path: ranking[0] shown as default; entering a domain forces it.
 """
@@ -71,7 +71,7 @@ def test_non_tty_auto_no_confirm_flag_parks_and_exits_nonzero() -> None:
                     result = runner.invoke(add, [_FILE_ID, "--skip-index", "--extract-only"])
 
     assert result.exit_code == 1
-    assert "cc source confirm" in result.output
+    assert "chaoscypher source confirm" in result.output
     park.assert_called_once()
     svc.extract_entities.assert_not_called()
 
@@ -141,7 +141,7 @@ def test_quiet_park_prints_awaiting_hint_exactly_once() -> None:
 
     assert result.exit_code == 1, f"Expected exit 1, got {result.exit_code}"
     # The hint must appear exactly once — not duplicated by pipeline + add.py quiet block.
-    assert result.output.count("cc source confirm") == 1, (
-        f"Expected 'cc source confirm' exactly once, got:\n{result.output}"
+    assert result.output.count("chaoscypher source confirm") == 1, (
+        f"Expected 'chaoscypher source confirm' exactly once, got:\n{result.output}"
     )
     assert _FILE_ID in result.output

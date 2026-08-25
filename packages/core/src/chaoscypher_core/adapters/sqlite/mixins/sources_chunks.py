@@ -82,6 +82,30 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
             return self._entity_to_dict(chunk)
         return None
 
+    def get_chunks_by_ids_batch(self, chunk_ids: list[str]) -> list[dict[str, Any]]:
+        """Fetch multiple chunks by UUID in one query (database-agnostic).
+
+        Batch sibling of ``get_chunk_by_id`` with the identical per-chunk
+        dict shape — used by SearchService to hydrate a page of chunk
+        results in one round trip instead of one SELECT per chunk.
+        (Distinct from ``get_chunks_by_ids``, which is database-scoped
+        and projects the extraction-handler subset of columns.)
+
+        Args:
+            chunk_ids: Chunk UUIDs.
+
+        Returns:
+            Chunk dictionaries (``get_chunk_by_id`` shape) for every id
+            that exists, in input order. Missing ids are silently absent.
+        """
+        if not chunk_ids:
+            return []
+        self._ensure_connected()
+        statement = select(DocumentChunk).where(col(DocumentChunk.id).in_(chunk_ids))
+        rows = self.session.exec(statement).all()
+        by_id = {chunk.id: chunk for chunk in rows}
+        return [self._entity_to_dict(by_id[cid]) for cid in chunk_ids if cid in by_id]
+
     def list_chunks(
         self,
         database_name: str,

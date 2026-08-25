@@ -24,6 +24,7 @@ from rich.panel import Panel
 
 from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
 from chaoscypher_cli.utils.console import get_console, print_error
+from chaoscypher_core.exceptions import ExternalServiceError
 from chaoscypher_core.services.lexicon import LexiconClient, LexiconClientError
 from chaoscypher_core.services.package import get_archive_info
 
@@ -167,4 +168,15 @@ def _show_hub_info(package: str, version: str | None, console: Console) -> None:
             print_error(f"Package not found: {package}")
         else:
             print_error(f"Hub error: {e.message}")
+        sys.exit(1)
+    except ExternalServiceError as e:
+        # LexiconClient wraps httpx.ConnectError into ExternalServiceError when
+        # the hub isn't reachable — turn it into a one-line operator hint
+        # instead of a raw traceback (same handler as pull/push/login).
+        print_error(f"Cannot reach Lexicon Hub at {lexicon_url}: {e}")
+        console.print(
+            "  [dim]Set LEXICON_URL or run a local hub. "
+            "Check connectivity with [cyan]curl -I "
+            f"{lexicon_url}[/cyan].[/dim]",
+        )
         sys.exit(1)

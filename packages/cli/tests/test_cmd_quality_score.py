@@ -22,7 +22,9 @@ import json
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
+from rich.table import Table
 
 from chaoscypher_cli.commands.quality.score import score
 
@@ -36,41 +38,56 @@ def _make_source(
     source_id: str = "if_src1",
     title: str = "Test Document",
     domain: str | None = "technical",
-    entity_count: int = 5,
-    relationship_count: int = 3,
 ) -> dict[str, Any]:
-    """Return a full source record with extraction_results."""
-    entities = [
+    """Return a source row dict as ``get_file`` projects it.
+
+    The row carries no extraction data — per-source entities and
+    relationships live in dedicated tables, read through
+    ``list_source_entities`` / ``list_source_relationships``.
+    """
+    return {
+        "id": source_id,
+        "title": title,
+        "extraction_domain": domain,
+        "chunk_count": 4,
+    }
+
+
+def _make_entities(entity_count: int = 5) -> list[dict[str, Any]]:
+    """Entity dicts shaped like ``list_source_entities`` rows."""
+    return [
         {
+            "id": f"ent_{i}",
             "name": f"Entity{i}",
             "type": "Person",
             "description": "A detailed description of the entity for quality test purposes, long enough.",
             "confidence": 0.9,
             "properties": {"role": "CEO"},
             "aliases": ["Alias1"],
-            "source_chunks": ["chunk1", "chunk2"],
+            "source_chunk_indices": [0, 1],
         }
         for i in range(entity_count)
     ]
-    relationships = [
+
+
+def _make_relationships(relationship_count: int = 3, entity_count: int = 5) -> list[dict[str, Any]]:
+    """Relationship dicts shaped like ``list_source_relationships`` rows.
+
+    ``source`` / ``target`` carry ``source_entities.id`` strings, matching
+    what the adapter returns from the per-source tables.
+    """
+    return [
         {
+            "id": f"rel_{i}",
             "type": "KNOWS",
-            "source": i % entity_count if entity_count else 0,
-            "target": (i + 1) % entity_count if entity_count else 0,
+            "predicate": "KNOWS",
+            "source": f"ent_{i % entity_count if entity_count else 0}",
+            "target": f"ent_{(i + 1) % entity_count if entity_count else 0}",
             "justification": "They have worked together and share a long history of collaboration.",
             "confidence": 0.85,
         }
         for i in range(relationship_count)
     ]
-    return {
-        "id": source_id,
-        "title": title,
-        "extraction_domain": domain,
-        "extraction_results": {
-            "entities": entities,
-            "relationships": relationships,
-        },
-    }
 
 
 def _make_mock_score(
@@ -144,6 +161,8 @@ def _invoke_score(
     source_id: str = "if_src1",
     mock_score_obj: MagicMock | None = None,
     source_record: dict | None = None,
+    entities: list[dict] | None = None,
+    relationships: list[dict] | None = None,
     extra_args: list[str] | None = None,
 ) -> Any:
     """Invoke the score command with mocked context/scorer."""
@@ -153,6 +172,10 @@ def _invoke_score(
 
     adapter = MagicMock()
     adapter.get_file.return_value = source_record
+    adapter.list_source_entities.return_value = _make_entities() if entities is None else entities
+    adapter.list_source_relationships.return_value = (
+        _make_relationships() if relationships is None else relationships
+    )
 
     ctx = MagicMock()
     ctx.storage_adapter = adapter
@@ -218,60 +241,36 @@ class TestSourceNotFound:
 class TestNoExtractionData:
     """score aborts with warning when source has no entities or relationships."""
 
-    def test_exits_1_when_no_extraction_data(self) -> None:
-        runner = CliRunner()
+    @staticmethod
+    def _empty_ctx(source_id: str) -> MagicMock:
         adapter = MagicMock()
         adapter.get_file.return_value = {
-            "id": "if_empty",
+            "id": source_id,
             "title": "Empty",
             "extraction_domain": "technical",
-            "extraction_results": {"entities": [], "relationships": []},
+            "chunk_count": 0,
         }
+        adapter.list_source_entities.return_value = []
+        adapter.list_source_relationships.return_value = []
         ctx = MagicMock()
         ctx.storage_adapter = adapter
         ctx.database_name = "default"
+        return ctx
 
-        with patch("chaoscypher_cli.context.get_context", return_value=ctx):
+    def test_exits_1_when_no_extraction_data(self) -> None:
+        runner = CliRunner()
+        with patch("chaoscypher_cli.context.get_context", return_value=self._empty_ctx("if_empty")):
             result = runner.invoke(score, ["if_empty"])
 
         assert result.exit_code != 0
 
     def test_warning_message_shown_when_no_extraction_data(self) -> None:
         runner = CliRunner()
-        adapter = MagicMock()
-        adapter.get_file.return_value = {
-            "id": "if_empty",
-            "title": "Empty",
-            "extraction_domain": "technical",
-            "extraction_results": {},
-        }
-        ctx = MagicMock()
-        ctx.storage_adapter = adapter
-        ctx.database_name = "default"
-
-        with patch("chaoscypher_cli.context.get_context", return_value=ctx):
+        with patch("chaoscypher_cli.context.get_context", return_value=self._empty_ctx("if_empty")):
             result = runner.invoke(score, ["if_empty"])
 
         assert result.exit_code != 0
         assert "if_empty" in result.output
-
-    def test_null_extraction_results_treated_as_empty(self) -> None:
-        runner = CliRunner()
-        adapter = MagicMock()
-        adapter.get_file.return_value = {
-            "id": "if_nullext",
-            "title": "Null",
-            "extraction_domain": "technical",
-            "extraction_results": None,
-        }
-        ctx = MagicMock()
-        ctx.storage_adapter = adapter
-        ctx.database_name = "default"
-
-        with patch("chaoscypher_cli.context.get_context", return_value=ctx):
-            result = runner.invoke(score, ["if_nullext"])
-
-        assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +425,51 @@ class TestQualityLabels:
 # ---------------------------------------------------------------------------
 
 
+# Boundary-inclusive tier cases. 60.0 and 40.0 are the exact thresholds, and
+# 59.9 / 39.9 sit one step below them, so inverting either comparison (or
+# collapsing both to a single colour) fails at least one case.
+_COLOUR_TIER_CASES = [
+    (75.0, "green"),
+    (60.0, "green"),
+    (59.9, "yellow"),
+    (50.0, "yellow"),
+    (40.0, "yellow"),
+    (39.9, "red"),
+    (30.0, "red"),
+]
+
+
+def _rendered_rows(*, mock_score_obj: MagicMock) -> list[tuple[str, ...]]:
+    """Run ``score --details`` and return every table row the command rendered.
+
+    Rich consumes the ``[green]…[/green]`` markup while rendering — with no
+    TTY the captured ``result.output`` contains neither the tags nor ANSI
+    codes, only the bare number — so the colour tier is not observable from
+    the CliRunner output at all. Recording ``Table.add_row`` captures the
+    exact cell string the production ternary produced, while the real table
+    still renders through the real console.
+    """
+    rows: list[tuple[str, ...]] = []
+
+    class _RecordingTable(Table):
+        def add_row(self, *cells: Any, **kwargs: Any) -> None:
+            rows.append(tuple(str(c) for c in cells))
+            return super().add_row(*cells, **kwargs)
+
+    with patch("chaoscypher_cli.commands.quality.score.Table", _RecordingTable):
+        result = _invoke_score(mock_score_obj=mock_score_obj, extra_args=["--details"])
+
+    assert result.exit_code == 0, result.output
+    return rows
+
+
+def _score_cell(rows: list[tuple[str, ...]], key: str) -> str:
+    """The score cell (last column) of the row whose first cell is ``key``."""
+    matches = [r for r in rows if r and r[0] == key]
+    assert len(matches) == 1, f"expected one row keyed {key!r}, got {rows!r}"
+    return matches[0][-1]
+
+
 class TestDetailsFlag:
     """--details shows per-entity and per-relationship breakdown tables."""
 
@@ -454,32 +498,22 @@ class TestDetailsFlag:
         assert result.exit_code == 0
         assert "Relationship Scores" in result.output
 
-    def test_details_entity_colour_green_tier(self) -> None:
-        """Entity score >= 60 renders green."""
-        entity_scores = [_make_entity_score("Alice", "Person", 75.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(entity_scores=entity_scores),
-            extra_args=["--details"],
+    @pytest.mark.parametrize(
+        ("score_value", "expected_colour"),
+        _COLOUR_TIER_CASES,
+        ids=[f"{v}->{c}" for v, c in _COLOUR_TIER_CASES],
+    )
+    def test_details_entity_colour_tier(self, score_value: float, expected_colour: str) -> None:
+        """Entity scores render green >= 60, yellow in [40, 60), red below 40."""
+        rows = _rendered_rows(
+            mock_score_obj=_make_mock_score(
+                entity_scores=[_make_entity_score("Alice", "Person", score_value)]
+            )
         )
-        assert result.exit_code == 0
-
-    def test_details_entity_colour_yellow_tier(self) -> None:
-        """Entity score in [40, 60) renders yellow."""
-        entity_scores = [_make_entity_score("Bob", "Person", 50.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(entity_scores=entity_scores),
-            extra_args=["--details"],
+        cell = _score_cell(rows, "Alice")
+        assert cell == f"[{expected_colour}]{score_value:.1f}[/{expected_colour}]", (
+            f"entity score {score_value} rendered {cell!r}, expected {expected_colour}"
         )
-        assert result.exit_code == 0
-
-    def test_details_entity_colour_red_tier(self) -> None:
-        """Entity score < 40 renders red."""
-        entity_scores = [_make_entity_score("Charlie", "Person", 30.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(entity_scores=entity_scores),
-            extra_args=["--details"],
-        )
-        assert result.exit_code == 0
 
     def test_details_no_entity_scores_skips_table(self) -> None:
         """If entity_scores list is empty, entity table is not shown."""
@@ -499,29 +533,22 @@ class TestDetailsFlag:
         assert result.exit_code == 0
         assert "Relationship Scores" not in result.output
 
-    def test_details_rel_colour_green_tier(self) -> None:
-        rel_scores = [_make_rel_score("KNOWS", "A", "B", 75.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(relationship_scores=rel_scores),
-            extra_args=["--details"],
+    @pytest.mark.parametrize(
+        ("score_value", "expected_colour"),
+        _COLOUR_TIER_CASES,
+        ids=[f"{v}->{c}" for v, c in _COLOUR_TIER_CASES],
+    )
+    def test_details_rel_colour_tier(self, score_value: float, expected_colour: str) -> None:
+        """Relationship scores use the same tiers as entity scores."""
+        rows = _rendered_rows(
+            mock_score_obj=_make_mock_score(
+                relationship_scores=[_make_rel_score("KNOWS", "A", "B", score_value)]
+            )
         )
-        assert result.exit_code == 0
-
-    def test_details_rel_colour_yellow_tier(self) -> None:
-        rel_scores = [_make_rel_score("OWNS", "A", "B", 50.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(relationship_scores=rel_scores),
-            extra_args=["--details"],
+        cell = _score_cell(rows, "KNOWS")
+        assert cell == f"[{expected_colour}]{score_value:.1f}[/{expected_colour}]", (
+            f"relationship score {score_value} rendered {cell!r}, expected {expected_colour}"
         )
-        assert result.exit_code == 0
-
-    def test_details_rel_colour_red_tier(self) -> None:
-        rel_scores = [_make_rel_score("USES", "A", "B", 30.0)]
-        result = _invoke_score(
-            mock_score_obj=_make_mock_score(relationship_scores=rel_scores),
-            extra_args=["--details"],
-        )
-        assert result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------

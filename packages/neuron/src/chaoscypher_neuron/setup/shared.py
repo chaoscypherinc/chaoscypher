@@ -44,6 +44,7 @@ def rebuild_database_bound_context(ctx: WorkerContext, settings: Settings) -> No
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
     from chaoscypher_core.database.engine import get_engine
     from chaoscypher_core.queue.service import register_worker_adapter
+    from chaoscypher_core.services.events import event_bus
 
     current_database = settings.current_database
 
@@ -80,6 +81,14 @@ def rebuild_database_bound_context(ctx: WorkerContext, settings: Settings) -> No
     ctx["graph_repository"] = graph_repository
     ctx["worker_session"] = worker_session
     ctx["storage_adapter"] = storage_adapter
+
+    # Re-point the singleton event bus at the new adapter. The bus routes
+    # ``emit()`` through the adapter it was configured with; the adapter's
+    # engine-guarded session resolution means an old-database adapter keeps
+    # writing system events into the OLD file after a database switch —
+    # exactly the stale binding this rebuild exists to prevent. (Idempotent
+    # with the boot-time configure in ``worker._setup_source_recovery``.)
+    event_bus.configure(storage_adapter)
 
 
 async def setup_shared(ctx: WorkerContext) -> None:

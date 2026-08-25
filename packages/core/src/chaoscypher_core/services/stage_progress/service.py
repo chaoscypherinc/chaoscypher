@@ -59,6 +59,7 @@ class StageProgress:
             for page in image_pages:
                 await vision_service.describe_image(page)
                 await progress.tick()    # auto-measures wall-clock since last tick
+                # ...or once per batch: await progress.tick(n=len(wave))
 
     Best-effort: storage write failures log a warning and return.
     The underlying work never blocks on progress reporting.
@@ -119,24 +120,36 @@ class StageProgress:
             )
         )
 
-    async def tick(self, *, duration_ms: int | None = None) -> None:
-        """Record one unit of work complete and update the EMA.
+    async def tick(self, *, n: int = 1, duration_ms: int | None = None) -> None:
+        """Record ``n`` units of work complete and update the EMA.
 
-        ``duration_ms`` is optional — when omitted, computed from monotonic
-        clock since the previous tick (or stage start). Pass explicitly
-        when you already have a precise measurement.
+        ``n`` lets a stage that completes a whole batch per round trip (the
+        embedding wave) report it with ONE storage write instead of one per
+        unit — the port's ``processed`` is an absolute count, so nothing
+        downstream changes. ``n <= 0`` is a no-op.
+
+        ``duration_ms`` is the elapsed time for those ``n`` units — optional;
+        when omitted, computed from the monotonic clock since the previous
+        tick (or stage start). Pass explicitly when you already have a
+        precise measurement. The EMA always observes the PER-UNIT figure
+        (``duration_ms // n``): consumers derive their ETA as
+        ``(total - processed) * avg_ms``, so a per-batch figure there would
+        inflate every estimate ``n``-fold.
         """
+        if n <= 0:
+            return
         now = time.monotonic()
         if duration_ms is None and self._last_tick_monotonic is not None:
             duration_ms = int((now - self._last_tick_monotonic) * 1000)
         self._last_tick_monotonic = now
-        self._processed += 1
+        self._processed += n
 
-        if duration_ms is not None and duration_ms > 0:
+        per_unit_ms = duration_ms // n if duration_ms is not None else None
+        if per_unit_ms is not None and per_unit_ms > 0:
             if self._avg_ms is None:
-                self._avg_ms = duration_ms  # first observation IS the EMA
+                self._avg_ms = per_unit_ms  # first observation IS the EMA
             else:
-                self._avg_ms = int(EMA_ALPHA * duration_ms + (1 - EMA_ALPHA) * self._avg_ms)
+                self._avg_ms = int(EMA_ALPHA * per_unit_ms + (1 - EMA_ALPHA) * self._avg_ms)
 
         await self._safe(
             self._storage.tick_stage(

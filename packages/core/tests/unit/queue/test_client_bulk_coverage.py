@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -339,7 +339,12 @@ async def test_cancel_by_metadata_no_match_returns_zero() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_by_metadata_queued_deletes() -> None:
-    """A matching queued task is deleted from the keyspace."""
+    """A matching queued task is deleted from the keyspace and persisted.
+
+    The guarded delete destroys the ``queue:task:*`` hash, so the durable
+    SQLite ``cancelled_at`` stamp is the only record stopping rehydration
+    from re-enqueueing the chunk rows on the next worker start.
+    """
     client, valkey, recorded = _make_client()
     valkey.scan_iter = _scan_iter([b"queue:task:t-q"])
     valkey.hgetall = AsyncMock(
@@ -347,9 +352,11 @@ async def test_cancel_by_metadata_queued_deletes() -> None:
             task_id="t-q", status="queued", metadata=json.dumps({"source_id": "s1"})
         )
     )
+    client._persist_cancellation_to_db = MagicMock()
 
     cancelled = await client.cancel_by_metadata({"source_id": "s1"})
     assert cancelled == 1
+    client._persist_cancellation_to_db.assert_called_once_with("t-q", ANY)
     # Guarded delete (Lua) — never an unguarded pipeline delete that could
     # destroy a task that raced queued -> running.
     valkey.evalsha.assert_awaited_once()
@@ -361,7 +368,7 @@ async def test_cancel_by_metadata_queued_deletes() -> None:
 
 @pytest.mark.asyncio
 async def test_cancel_by_metadata_running_sets_flag() -> None:
-    """A matching running task gets the cancel flag + SREM + cancelled mark."""
+    """A matching running task gets the cancel flag + durable persist + SREM."""
     client, valkey, recorded = _make_client()
     valkey.scan_iter = _scan_iter([b"queue:task:t-r"])
     valkey.hgetall = AsyncMock(
@@ -369,10 +376,12 @@ async def test_cancel_by_metadata_running_sets_flag() -> None:
             task_id="t-r", status="running", metadata=json.dumps({"source_id": "s1"})
         )
     )
+    client._persist_cancellation_to_db = MagicMock()
 
     cancelled = await client.cancel_by_metadata({"source_id": "s1"})
     assert cancelled == 1
     valkey.set.assert_awaited_once_with("queue:cancel:t-r", "1", ex=300)
+    client._persist_cancellation_to_db.assert_called_once_with("t-r", ANY)
     args = valkey.evalsha.await_args.args
     assert args[6] == "srem"  # guarded write removed it from the running set
 

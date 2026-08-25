@@ -414,11 +414,15 @@ curl http://localhost/api/v1/sources/stats
     "indexed": 3,
     "error": 2
   },
-  "total_chunks": 1042,
-  "total_entities": 850,
-  "total_relationships": 1200
+  "total_size_bytes": 104857600
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_files` | int | Total number of sources in the database |
+| `by_status` | object | Count of sources grouped by lifecycle status |
+| `total_size_bytes` | int | Sum of `file_size` across all sources, in bytes |
 
 ---
 
@@ -1034,7 +1038,7 @@ Returns the updated source record after the re-extraction job has been queued.
 
 **Rejected source states:**
 
-- `pending` / `indexing` — Returns `422`; the source has not yet produced extraction
+- `pending` / `indexing` — Returns `400`; the source has not yet produced extraction
   artifacts. Wait for indexing to complete, then retry.
 
 :::info[Persisted settings carry over]
@@ -1063,7 +1067,9 @@ override had been dropped.
 | Status | Description |
 |--------|-------------|
 | `404` | Source not found |
-| `422` | Source is in `pending` or `indexing` state (not yet indexable) |
+| `400` | Source is in `pending` or `indexing` state (not yet indexable) |
+| `409` | Source or system processing is paused |
+| `503` | No LLM provider is configured |
 
 ---
 
@@ -1103,10 +1109,12 @@ external API consumers accordingly. The web UI ships already migrated.
     {
       "id": "rev_001",
       "source_id": "src_abc123",
-      "event_type": "recovery",
-      "created_at": "2026-03-09T10:05:00",
-      "reason": "Stalled extraction detected",
-      "dispatched_operation": "OP_EXTRACT_SOURCE"
+      "database_name": "default",
+      "attempt_at": "2026-03-09T10:05:00",
+      "from_status": "extracting",
+      "action_taken": "extract_chunk",
+      "reason": "stalled",
+      "enqueued_count": 1
     }
   ],
   "pagination": {
@@ -1119,6 +1127,17 @@ external API consumers accordingly. The web UI ships already migrated.
   }
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Event row identifier |
+| `source_id` | string | Source whose recovery this event records |
+| `database_name` | string | Database scope |
+| `attempt_at` | datetime | When the recovery dispatch fired |
+| `from_status` | string | Source status when the recovery classifier fired |
+| `action_taken` | string | Operation dispatched: `extract_chunk`, `import_commit`, `index_document`, `import_analysis`, `finalize_extraction`, `compound` (multi-task dispatch), or `mark_failed` (terminal, nothing enqueued) |
+| `reason` | string | Why the classifier fired: `stalled`, `compound`, or the failure cause for `mark_failed` (e.g. `abandoned`) |
+| `enqueued_count` | int | Queue tasks enqueued by this dispatch (1 for single-task actions, more for compound, 0 for `mark_failed`) |
 
 | Status | Description |
 |--------|-------------|
@@ -1216,7 +1235,7 @@ curl "http://localhost/api/v1/sources/src_abc123/chunks?page=1&page_size=20"
 
 ```json
 {
-  "chunks": [
+  "data": [
     {
       "id": "chunk_001",
       "source_id": "src_abc123",
@@ -1229,9 +1248,14 @@ curl "http://localhost/api/v1/sources/src_abc123/chunks?page=1&page_size=20"
       "created_at": "2026-03-09T10:00:05"
     }
   ],
-  "total": 42,
-  "page": 1,
-  "page_size": 20
+  "pagination": {
+    "total": 42,
+    "page": 1,
+    "page_size": 20,
+    "total_pages": 3,
+    "has_next": true,
+    "has_prev": false
+  }
 }
 ```
 
@@ -1368,7 +1392,28 @@ curl http://localhost/api/v1/sources/src_abc123/chunks/0/attempts
 | `source_id` | string (path) | **Yes** | Source ID |
 | `chunk_index` | int (path) | **Yes** | Zero-based chunk index |
 
-**Response** `200 OK` — list of attempt summaries.
+**Response** `200 OK` — list of attempt summaries (`ChunkAttemptSummary`).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Attempt ID |
+| `chunk_task_id` | string | Parent chunk task ID |
+| `attempt_number` | int | 1-indexed rerun count for this chunk |
+| `snapshotted_at` | datetime | When this attempt's result was snapshotted |
+| `started_at` | datetime? | When the attempt's LLM call started |
+| `completed_at` | datetime? | When the attempt finished |
+| `entity_count` | int | Entities extracted by this attempt |
+| `relationship_count` | int | Relationships extracted |
+| `invalid_relationship_count` | int | Invalid relationships filtered out |
+| `finish_reason` | string? | Normalized provider finish reason: `stop`, `length`, `content_filter`, `tool_calls`, `error`, `unknown`. |
+| `aborted_by_loop` | bool? | `true` when the streaming loop detector aborted the LLM mid-response. |
+| `llm_duration_ms` | int? | LLM call duration in ms |
+| `input_tokens` | int? | Actual input token count from LLM API |
+| `output_tokens` | int? | Actual output token count from LLM API |
+| `input_text_length` | int? | Input text character count |
+| `llm_response_length` | int? | LLM response character count |
+| `error_message` | string? | Error message if the attempt failed |
+| `error_type` | string? | Error classification |
 
 | Status | Description |
 |--------|-------------|
@@ -1467,14 +1512,37 @@ curl http://localhost/api/v1/sources/src_abc123/stats
 
 ```json
 {
-  "chunk_count": 42,
-  "citation_count": 85,
+  "total_chunks": 42,
+  "total_content_length": 52000,
+  "committed_chunks": 40,
+  "staged_chunks": 2,
+  "rejected_chunks": 0,
+  "total_citations": 85,
   "entity_count": 65,
   "relationship_count": 120,
-  "total_content_length": 52000,
-  "avg_chunk_length": 1238
+  "entity_type_distribution": { "Person": 30, "Organization": 20, "Location": 15 },
+  "relationship_type_distribution": { "worksFor": 40, "locatedIn": 25 },
+  "top_entities": [
+    { "label": "Ada Lovelace", "type": "Person", "count": 12 }
+  ],
+  "avg_confidence": 0.91
 }
 ```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_chunks` | int | Total document chunks for this source |
+| `total_content_length` | int | Sum of chunk content lengths, in characters |
+| `committed_chunks` | int | Chunks with status `committed` |
+| `staged_chunks` | int | Chunks with status `staged` |
+| `rejected_chunks` | int | Chunks with status `rejected` |
+| `total_citations` | int | Total entity citations generated from this source |
+| `entity_count` | int | Unique entities cited in this source |
+| `relationship_count` | int | Total relationship citations from this source |
+| `entity_type_distribution` | object | Citation count grouped by entity template/type |
+| `relationship_type_distribution` | object | Relationship-citation count grouped by edge label |
+| `top_entities` | object[] | Up to 10 most-cited entities (`label`, `type`, `count`) |
+| `avg_confidence` | float | Average citation confidence (0.0–1.0), rounded to 2 decimals |
 
 | Status | Description |
 |--------|-------------|
@@ -2159,8 +2227,6 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `title` | string? | Display title |
 | `source_type` | string? | Source type (e.g. `pdf`, `webpage`) |
 | `origin_url` | string? | Original URL for web imports |
-| `version` | int | Version number (default `1`) |
-| `parent_id` | string? | Parent source ID |
 | `status` | string | Lifecycle status: `pending` \| `indexing` \| `vision_pending` \| `indexed` \| `awaiting_confirmation` \| `extracting` \| `mcp_extracting` \| `extracted` \| `committing` \| `committed` \| `error` |
 | `enabled` | bool | Whether the source is active |
 | `error_message` | string? | Error description if status is `error` |
@@ -2210,8 +2276,16 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `user_metadata` | object? | User-defined metadata |
 | `upload_options` | object | Persisted upload settings — see [UploadOptions](#uploadoptions) |
 | `quality_metrics` | object | Per-stage quality counters and loader/search status — see [QualityMetrics](#qualitymetrics). Full reference: [Quality Metrics API](quality-metrics.md). |
-| `vector_indexing_status` | string | One of `pending`, `indexed`, `degraded`, `failed`. Mirrored at the top level for convenience; also lives inside `quality_metrics`. See [Search Status](../../user-guide/search-status.md). |
-| `stage_progress` | object | Per-LLM-stage live progress map keyed by stage name (`vision`, `embedding`, `mcp_extraction`). Empty `{}` when the source has no in-flight or completed LLM stages. Each value is a [StageProgressRecord](#stageprogressrecord). Replaces the six `extraction_chunks_*` fields removed in migration 0030. |
+| `stage_progress` | object | Per-LLM-stage live progress map keyed by stage name (`embedding`, `mcp_extraction`; a `vision` key can still appear on rows persisted before the queue-driven vision refactor — nothing writes new vision stage-progress rows today). Empty `{}` when the source has no in-flight or completed LLM stages. Each value is a [StageProgressRecord](#stageprogressrecord). Replaces the six `extraction_chunks_*` fields removed in migration 0030. |
+
+`vector_indexing_status` (and `vector_indexed_at`) are **not** top-level
+fields on this detail response — the field is excluded from
+`SourceResponse` serialization and appears only inside `quality_metrics`
+(see [Quality Metrics API](quality-metrics.md#field-reference)). They are
+surfaced flat only on source *list* items
+([SourceSummaryResponse](#sourcesummaryresponse), `GET /api/v1/sources`)
+so the list view can render the search-status badge without loading
+quality metrics. See also [Search Status](../../user-guide/search-status.md).
 
 ---
 
@@ -2239,11 +2313,13 @@ The settings the user (or default) supplied at upload time, persisted on the sou
 
 One row from `SourceResponse.stage_progress` — live progress for a single LLM-bound stage of the import pipeline. The stage processes a known total of items (pages, chunks) and writes one record per source-id + stage-name pair. The `avg_ms` field is an exponentially-weighted moving average (α=0.3) updated on every tick, which the UI converts into a live remaining-time estimate.
 
-Active stages today: `vision` (per-page), `embedding` (per-batch), `mcp_extraction` (per-chunk).
+Active stages today: `embedding` (per-batch), `mcp_extraction` (per-chunk). A `vision` key can still be present, but only on rows persisted before the queue-driven per-page `OP_VISION_PAGE` hand-off replaced the old per-page vision ticks — nothing in the current vision path opens a `StageProgress` for new rows.
+
+The stage name itself is not a field on the record — it is the dict key
+under `SourceResponse.stage_progress` (see above).
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `stage_name` | string | One of `vision` / `embedding` / `mcp_extraction`. |
 | `total` | int | Total items to process for this stage (e.g. PDF page count). |
 | `processed` | int | Items finished so far. UI surfaces `processed / total`. |
 | `avg_ms` | int? | EMA-smoothed milliseconds per item. `null` until the first tick. |
@@ -2309,10 +2385,8 @@ Pagination wrapper for source list responses.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `chunks` | ChunkResponse[] | Page of chunks |
-| `total` | int | Total chunks for this source |
-| `page` | int | Current page number |
-| `page_size` | int | Items per page |
+| `data` | ChunkResponse[] | Page of chunks |
+| `pagination` | object | Pagination metadata (`total`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`) |
 
 ---
 
@@ -2372,8 +2446,6 @@ Pagination wrapper for source list responses.
 | `input_text` | string? | Full input text (only in detail view or when `include_content=true`) |
 | `llm_response_json` | string? | Raw LLM JSON response (only in detail view or when `include_content=true`) |
 | `filtering_log` | object? | Per-chunk filtering diagnostics (detail view only) |
-| `finish_reason` | string? | Normalized provider finish reason: `stop`, `length`, `content_filter`, `tool_calls`, `error`, `unknown`. `null` for tasks that predate the field (migration 0022). |
-| `aborted_by_loop` | bool? | `true` when the streaming loop detector aborted the LLM mid-response. Tasks predating migration 0022 carry `null`. |
 | `error_message` | string? | Error message if failed |
 | `error_type` | string? | Error classification |
 

@@ -197,7 +197,7 @@ curl -X POST http://localhost:8080/api/v1/edges \
 
 ## Templates
 
-Templates define the schema for nodes and edges. They specify what properties an entity type should have. Browse, search, and edit templates from the **Templates** page in the sidebar.
+Templates define the schema for nodes and edges. They specify what properties an entity type should have. Browse and edit templates from the **Templates** page in the sidebar.
 
 ![Templates page listing node and edge templates with type badges](/img/screenshots/templates-list.png)
 
@@ -238,7 +238,7 @@ An edge template defines a relationship type:
 
 - Templates are created automatically during entity extraction (based on detected entity types)
 - You can also create templates manually before extraction to guide the schema
-- Deleting a template requires confirmation if nodes or edges are using it (use `force=true` to override)
+- Deleting a template is blocked while nodes or edges are using it. `force=true` overrides the block by **also deleting every node and edge that uses the template** — it is a cascade delete, not just a confirmation skip
 - Template embeddings can be regenerated for improved semantic matching
 
 Templates also support `icon` and `color` fields for visual identification. The icon and color are displayed on graph nodes, entity cards, distribution charts, and extraction views, making it easy to distinguish entity types at a glance.

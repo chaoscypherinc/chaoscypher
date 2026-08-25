@@ -162,10 +162,24 @@ class TestGraphLinkCrud:
     def test_list_links(self, run_cli: Callable, cli_env: dict[str, str]) -> None:
         """Listing links shows created relationships."""
         src_id, tgt_id, edge_tmpl_id = self._setup_two_nodes(run_cli, cli_env)
-        run_cli(
-            ["graph", "link", "create", src_id, tgt_id, "--type", edge_tmpl_id],
+        create_result = run_cli(
+            [
+                "graph",
+                "link",
+                "create",
+                src_id,
+                tgt_id,
+                "--type",
+                edge_tmpl_id,
+                "--label",
+                "ListLinkTest",
+            ],
             env=cli_env,
         )
+        assert create_result.exit_code == 0, f"Failed: {create_result.output}"
 
         result = run_cli(["graph", "link", "list"], env=cli_env)
         assert result.exit_code == 0, f"Failed: {result.output}"
+        assert "ListLinkTest" in result.output, (
+            f"Created link not found in listing: {result.output}"
+        )

@@ -392,7 +392,7 @@ class TestGateBeforeExtract:
         assert proceed is False
         assert result.parked_for_confirmation is True
         assert result.status == "awaiting_confirmation"
-        assert "cc source confirm fid" in result.error
+        assert "chaoscypher source confirm fid" in result.error
         mock_park.assert_called_once()
 
     def test_tty_prompt_confirms_and_persists(self) -> None:
@@ -905,11 +905,16 @@ class TestPrintHeader:
 
     def test_header_truncates_long_filename(self) -> None:
         service = _make_service()
-        console = Console(file=StringIO(), force_terminal=False, width=40, no_color=True)
+        out_buf = StringIO()
+        console = Console(file=out_buf, force_terminal=False, width=40, no_color=True)
         pipeline = SourcePipeline(service, console)
         long_url = "https://example.com/" + "a" * 200
-        # Should not raise; truncation path executes.
         pipeline._print_header(None, None, "full", url=long_url)
+        out = out_buf.getvalue()
+        # width=40 -> max_width=30: the name is cut to 27 chars + "..."
+        # and the full 200-char run must not survive into the panel.
+        assert "..." in out
+        assert "a" * 100 not in out
 
 
 # ----------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 ---
 id: data-quality
 title: Pipeline Flow & Quality Counters
-description: How to read the Pipeline flow section on a source's Overview tab — the 45 counters that track silent drops at every pipeline stage, when to use them, and how they reset.
+description: How to read the Pipeline flow section on a source's Overview tab — the quality counters that track silent drops at every pipeline stage, when to use them, and how they reset.
 ---
 
 # Pipeline flow & quality counters
 
 When you open a source, the collapsible **Pipeline flow** section on its
-**Overview** tab shows forty-five counters
+**Overview** tab surfaces the quality counters
 that record what the pipeline dropped, deduplicated, or merged on its
 way from your file to the knowledge graph. The counters live alongside
 the [Quality Analysis](quality.md) grade — but they answer a different
@@ -26,9 +26,10 @@ Below the stat tiles sits a collapsible **Pipeline flow** panel:
 - **Collapsed** (the default), it shows a muted strip of stat cards
   summarizing the run.
 - **Expanded**, it reveals the full pipeline funnel with a per-stage stats
-  board — every counter that's non-zero for this source, grouped by the
-  stage that incremented it (loading, normalization, chunking, LLM
-  extraction, post-extraction, commit).
+  board — a curated selection of the most diagnostically useful counters
+  (not the complete field set — see below), shown only when non-zero for
+  this source, grouped by the stage that incremented it (loading,
+  normalization, chunking, LLM extraction, post-extraction, commit).
 
 ## What do the counters record?
 
@@ -46,7 +47,7 @@ exist for visibility, never for control flow.
 
 ## The counters
 
-The table below shows the most frequently-consulted counters. The full set (45 fields spanning every silent-drop site in the pipeline) is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics; the Pipeline flow board in the UI renders every counter that's non-zero for the current source, grouped by stage.
+The table below shows the most frequently-consulted counters. The complete field set (46 as of this writing — the `QualityCounter` enum, `chaoscypher_core.services.quality.counters`, is the source of truth) spans every silent-drop site in the pipeline and is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics. The Pipeline flow board in the UI does not render the complete field set — it surfaces a curated subset of these counters, grouped by stage and shown only when non-zero for the current source.
 
 | Counter | What it measures | Stage |
 |---------|------------------|-------|

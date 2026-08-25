@@ -181,3 +181,47 @@ async def test_retry_after_transient_failure_yields_no_duplicates(
         f"retry must not duplicate or orphan messages; got {[m['role'] for m in messages]}"
     )
     assert messages[0]["content"] == "Final answer"
+
+
+@pytest.mark.asyncio
+async def test_persist_messages_is_atomic_on_mid_loop_failure(
+    chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure between rows must leave ZERO rows — the docstring's own contract.
+
+    ``create_message`` commits per row at transaction depth 0, so before
+    ``persist_messages`` opened a transaction, a mid-loop failure durably
+    half-wrote the turn and the handler's retry (fresh IDs from
+    ``build_message``, no dedup) duplicated the committed rows.
+    """
+    messages = [
+        chat_service.build_message("chat-1", "user", "hello"),
+        chat_service.build_message("chat-1", "assistant", "world"),
+    ]
+
+    adapter = chat_service.storage
+    real_create = adapter.create_message
+    calls = {"n": 0}
+
+    def failing_second_create(message_data: dict[str, Any]) -> dict[str, Any]:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            msg = "disk error between rows"
+            raise RuntimeError(msg)
+        return real_create(message_data)
+
+    monkeypatch.setattr(adapter, "create_message", failing_second_create)
+
+    with pytest.raises(RuntimeError, match="disk error between rows"):
+        chat_service.persist_messages(messages)
+
+    monkeypatch.setattr(adapter, "create_message", real_create)
+    assert adapter.get_messages("chat-1") == [], (
+        "a mid-loop failure durably committed the first row — persist_messages "
+        "is not atomic and a retry will duplicate it"
+    )
+
+    # And the retry path now lands cleanly with exactly the two rows.
+    chat_service.persist_messages(messages)
+    persisted = adapter.get_messages("chat-1")
+    assert [m["content"] for m in persisted] == ["hello", "world"]

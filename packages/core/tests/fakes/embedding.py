@@ -84,7 +84,6 @@ class FakeEmbeddingProvider:
         return BatchEmbedResult(
             embeddings=embeddings,
             total=len(embeddings),
-            failed=0,
             provider=self.provider_type,
         )
 

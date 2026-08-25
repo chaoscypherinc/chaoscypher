@@ -147,6 +147,7 @@ const sidebars: SidebarsConfig = {
     "reference/extraction-benchmark",
     "reference/model-cards",
     "reference/filtering-modes",
+    "reference/ccx-format",
     {
       type: "category",
       label: "API",

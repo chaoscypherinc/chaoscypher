@@ -22,12 +22,68 @@ relevant: the CLI's commit_to_graph must build a transient
 session) participate in the SAME SQLite transaction. Without that
 wiring, the second writer raises SQLITE_BUSY and the commit cascades
 with PendingRollbackError.
+
+2026-08-12: this test used to grep
+``inspect.getsourcelines(CLISourceProcessingService.commit_to_graph)``
+for ``"GraphRepository("`` and ``"storage_adapter.session"``, which the
+span satisfies without the wiring being correct. ``storage_adapter.
+session`` occurs six times in that span (four comments plus an unrelated
+``.rollback()``), so it survives the construction being deleted outright.
+And the truer form of the Bug 9 regression — keeping the construction but
+binding it to the Engine-managed session, ``GraphRepository(self.ctx.
+graph_repository.session, ...)`` — satisfies BOTH greps while
+reintroducing the SQLITE_BUSY cascade, contradicting the old test's claim
+that "both checks fail simultaneously". (Verified by replay: assigning
+``self.ctx.graph_repository`` outright *does* trip the first grep, since
+the paren form only ever appeared at the construction site — so that one
+mutation was caught, and only that one.) The test now inspects the
+repository object the CLI actually hands to ``SourceCommitService``.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock, MagicMock, patch
 
-def test_commit_to_graph_uses_storage_adapter_session_for_graph_repository() -> None:
+from chaoscypher_cli.sources.service import CLISourceProcessingService
+from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+
+
+if TYPE_CHECKING:
+    from typing import Any
+
+
+def _seed_extracted_source(ctx: MagicMock, source_id: str = "src-commit-1") -> str:
+    """Put one committable source on the fake adapter and stub the commit reads."""
+    ctx.storage_adapter._files[source_id] = {
+        "id": source_id,
+        "filename": "doc.txt",
+        "status": "extracted",
+    }
+    ctx.storage_adapter.get_source_commit_payload = MagicMock(
+        return_value={"entities": [], "relationships": []}
+    )
+    return source_id
+
+
+def _capture_commit_service() -> tuple[Any, Any]:
+    """Patch SourceCommitService and hand back the class mock + its instance."""
+    commit_service = MagicMock()
+    commit_service.commit = AsyncMock(
+        return_value={"created_nodes": [], "created_edges": [], "created_templates": []}
+    )
+    return (
+        patch(
+            "chaoscypher_core.services.sources.engine.commit.service.SourceCommitService",
+            return_value=commit_service,
+        ),
+        commit_service,
+    )
+
+
+def test_commit_to_graph_uses_storage_adapter_session_for_graph_repository(
+    mock_cli_context: MagicMock,
+) -> None:
     """Bug 9 regression: dual-session lock conflict during commit.
 
     ``Engine`` creates ``storage_adapter.session`` AND a separate
@@ -48,26 +104,68 @@ def test_commit_to_graph_uses_storage_adapter_session_for_graph_repository() -> 
     so both writers participate in the SAME transaction.
 
     The test makes sure that wiring is intact: the GraphRepository the
-    CLI hands to ``SourceCommitService`` shares a session with the
-    storage adapter. If a future refactor restores the default
-    Engine-managed _graph_session, the assertion below fails before
-    anyone tries to run a real commit.
+    CLI hands to ``SourceCommitService`` is a fresh one bound to the
+    storage adapter's own session. If a future refactor restores the
+    default Engine-managed _graph_session (by passing
+    ``ctx.graph_repository`` straight through), the assertions below fail
+    before anyone tries to run a real commit.
     """
-    import inspect
+    adapter_session = MagicMock()
+    mock_cli_context.storage_adapter.session = adapter_session
+    file_id = _seed_extracted_source(mock_cli_context)
 
-    from chaoscypher_cli.sources.service import CLISourceProcessingService
+    service = CLISourceProcessingService(mock_cli_context)
+    patch_commit_service, _ = _capture_commit_service()
+    with patch_commit_service as commit_service_cls:
+        try:
+            service.commit_to_graph(file_id)
+        finally:
+            service.close()
 
-    src_lines, _ = inspect.getsourcelines(CLISourceProcessingService.commit_to_graph)
-    body = "".join(src_lines)
+    graph_repository = commit_service_cls.call_args.kwargs["graph_repository"]
 
-    # Two halves of the wiring contract. If a future cleanup tries to
-    # "simplify" by using ctx.graph_repository directly, both checks
-    # fail simultaneously and point at the right docstring.
-    assert "GraphRepository(" in body, (
+    # Not the Engine-managed repo off the context — a transient one.
+    assert graph_repository is not mock_cli_context.graph_repository, (
         "commit_to_graph must instantiate a session-shared GraphRepository "
         "rather than reuse ctx.graph_repository — see header docstring."
     )
-    assert "storage_adapter.session" in body, (
+    assert isinstance(graph_repository, GraphRepository)
+    # ...bound to the storage adapter's session, so both writers land in
+    # the one transaction ``adapter.transaction()`` manages.
+    # ``_fallback_session`` is the constructor arg itself. The public
+    # ``.session`` property can adopt a per-task ContextVar session when one
+    # is active, so it would not prove WHICH session this repo was built
+    # with — which is exactly the wiring under test.
+    assert graph_repository._fallback_session is adapter_session, (
         "commit_to_graph's transient GraphRepository must bind to "
         "``storage_adapter.session`` so both writers share one transaction."
     )
+    assert graph_repository.database_name == mock_cli_context.database_name
+
+
+def test_commit_to_graph_passes_the_storage_adapter_as_the_source_repositories(
+    mock_cli_context: MagicMock,
+) -> None:
+    """The other half of the one-transaction contract.
+
+    Sharing a session only helps if the commit service's source /
+    indexing writers are the same adapter that opened the transaction.
+    Pinning this alongside the GraphRepository binding means a refactor
+    that splits either side is caught here rather than at SQLITE_BUSY
+    time in a real commit.
+    """
+    mock_cli_context.storage_adapter.session = MagicMock()
+    file_id = _seed_extracted_source(mock_cli_context, "src-commit-2")
+
+    service = CLISourceProcessingService(mock_cli_context)
+    patch_commit_service, _ = _capture_commit_service()
+    with patch_commit_service as commit_service_cls:
+        try:
+            service.commit_to_graph(file_id)
+        finally:
+            service.close()
+
+    kwargs = commit_service_cls.call_args.kwargs
+    for role in ("source_repository", "sources_repository", "indexing_repository"):
+        assert kwargs[role] is mock_cli_context.storage_adapter, f"{role} is not the CLI adapter"
+    assert kwargs["search_repository"] is mock_cli_context.search_repository

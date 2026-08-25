@@ -48,6 +48,8 @@ from chaoscypher_cortex.shared.api.responses import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from chaoscypher_cortex.features.local_auth.service import LocalAuthService
 
 
@@ -58,7 +60,7 @@ def build_router(  # noqa: C901, PLR0915
     service: LocalAuthService,
     *,
     cookie_name: str,
-    cookie_secure: bool,
+    cookie_secure_provider: Callable[[], bool],
 ) -> APIRouter:
     """Return the configured APIRouter for the local-auth feature.
 
@@ -69,7 +71,11 @@ def build_router(  # noqa: C901, PLR0915
     Args:
         service: The ``LocalAuthService`` orchestrator to wire into routes.
         cookie_name: Name of the session cookie to set/read.
-        cookie_secure: Whether to mark the cookie ``Secure`` (HTTPS-only).
+        cookie_secure_provider: Callable returning whether to mark the cookie
+            ``Secure`` (HTTPS-only). Called on every cookie write so that
+            enabling TLS at runtime takes effect without an app rebuild
+            (mirrors the ``settings_provider`` pattern used by
+            ``HostHeaderCheckMiddleware``).
 
     Returns:
         An ``APIRouter`` mounted at ``/api/v1/auth`` with all auth routes.
@@ -82,7 +88,7 @@ def build_router(  # noqa: C901, PLR0915
             key=cookie_name,
             value=value,
             httponly=True,
-            secure=cookie_secure,
+            secure=cookie_secure_provider(),
             samesite="strict",
             path="/",
         )
@@ -93,7 +99,7 @@ def build_router(  # noqa: C901, PLR0915
             key=cookie_name,
             path="/",
             httponly=True,
-            secure=cookie_secure,
+            secure=cookie_secure_provider(),
             samesite="strict",
         )
 

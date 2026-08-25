@@ -687,3 +687,88 @@ class TestUploadPackage:
             )
 
         assert exc_info.value.status_code == 503
+
+
+class TestSearchLimitClamp:
+    """The dependency-clamped limit (max_page_size, 1000) must not 500."""
+
+    @pytest.mark.asyncio
+    async def test_limit_above_hub_cap_is_clamped_to_100(self) -> None:
+        """limit=500 previously raised a pydantic ValidationError inside the
+        handler (surfacing as a 500); it must clamp to the hub's 100 cap.
+        """
+        mock_service = AsyncMock()
+        mock_service.search.return_value = MagicMock()
+
+        await search_packages(
+            _="test-user",
+            service=mock_service,
+            limit=500,
+            query="",
+            page=1,
+            sort_by="downloads",
+            is_public=None,
+            owner_id=None,
+            conformance_class=None,
+        )
+
+        call_args = mock_service.search.call_args[0][0]
+        assert call_args.limit == 100
+
+
+class TestRateLimitMapping:
+    """Upstream 429 must surface as 429, not collapse to 503."""
+
+    @pytest.mark.asyncio
+    async def test_search_upstream_429_maps_to_429(self) -> None:
+        mock_service = AsyncMock()
+        mock_service.search.side_effect = LexiconClientError(
+            status_code=429, message="rate limited"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await search_packages(
+                _="test-user",
+                service=mock_service,
+                limit=20,
+                query="q",
+                page=1,
+                sort_by="downloads",
+                is_public=None,
+                owner_id=None,
+                conformance_class=None,
+            )
+
+        assert exc_info.value.status_code == 429
+
+
+class TestImportPackage:
+    """Tests for the import_package handler's enqueue payload."""
+
+    @pytest.mark.asyncio
+    async def test_enqueue_metadata_carries_database_name(self, monkeypatch) -> None:
+        """The reindex handler + cancel-by-database scoping read database_name
+        from task METADATA (falling back to "default") — data= alone is not
+        enough for a non-default current database.
+        """
+        from chaoscypher_core.queue import queue_client
+        from chaoscypher_cortex.features.lexicon.api import LexiconImportRequest, import_package
+
+        enqueue = AsyncMock(return_value="task-123")
+        monkeypatch.setattr(queue_client, "enqueue_task", enqueue)
+
+        settings = MagicMock()
+        settings.current_database = "research-db"
+        settings.priorities.background = 5
+
+        response = await import_package(
+            _="test-user",
+            request=LexiconImportRequest(owner_username="john", repo_name="pkg"),
+            settings=settings,
+        )
+
+        assert response.task_id == "task-123"
+        kwargs = enqueue.call_args.kwargs
+        assert kwargs["data"]["database_name"] == "research-db"
+        assert kwargs["metadata"]["database_name"] == "research-db"
+        assert kwargs["metadata"]["operation_type"] == "lexicon_import"

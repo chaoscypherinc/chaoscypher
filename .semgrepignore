@@ -1,0 +1,59 @@
+# Repo-level semgrep ignore list.
+#
+# WHY THIS FILE EXISTS (do not delete it):
+# semgrep's BUILT-IN default ignore list contains `test/` and `tests/`.
+# With no `.semgrepignore` at the repo root, every `packages/*/tests/**`
+# path was filtered out *before* the rules ran, so CC040 and CC041 —
+# the two rules scoped exclusively to test paths via
+# `paths.include: ["**/tests/**"]` — scanned ZERO targets and enforced
+# nothing while ten real CC041 violations accumulated behind them
+# (`make lint-claude`, Makefile `lint-claude` target).
+#
+# Semgrep REPLACES its whole default list with this file, so everything
+# that should stay ignored is enumerated below. Test paths are
+# deliberately absent — that is the entire point of the file. Patterns
+# use .gitignore syntax and match at any depth.
+#
+# The regression backstop lives in
+# packages/core/tests/unit/scripts/test_semgrep_rule_selftests.py
+# (`test_ci_shape_scan_reaches_test_paths`): it runs semgrep the way
+# `make lint-claude` does — a DIRECTORY target, not explicit file paths —
+# and fails if `Targets scanned` ever drops back to 0.
+
+# --- Version control + tooling caches -------------------------------------
+.git/
+.hg/
+.svn/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.tox/
+__pycache__/
+
+# --- Python environments --------------------------------------------------
+.venv/
+venv/
+env/
+.env/
+*.egg-info/
+
+# --- Node / frontend ------------------------------------------------------
+node_modules/
+.npm/
+.yarn/
+*.min.js
+*.min.css
+
+# --- Build + generated output ---------------------------------------------
+build/
+dist/
+vendor/
+generated/
+.docusaurus/
+coverage_html/
+htmlcov/
+test-reports/
+
+# --- semgrep's own scratch space ------------------------------------------
+.semgrep/
+.semgrep_logs/

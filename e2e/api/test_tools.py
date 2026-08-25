@@ -13,7 +13,11 @@ class TestTools:
         """Listing system tools returns available tools."""
         resp = client.get("/api/v1/tools/system")
         assert resp.status_code == 200
-        assert isinstance(resp.json(), list)
+        sys_tools = resp.json()
+        assert isinstance(sys_tools, list)
+        # seed_system_tools() runs unconditionally at init — an empty list
+        # means seeding regressed, never a legitimate environment state.
+        assert sys_tools, "system tools not seeded"
 
     def test_list_user_tools(self, client: httpx.Client) -> None:
         """Listing user tools returns paginated response."""
@@ -27,9 +31,7 @@ class TestTools:
         """Creating a user tool requires a valid system tool."""
         # First get a system tool to reference
         sys_tools = client.get("/api/v1/tools/system").json()
-        if not sys_tools:
-            # No system tools available - skip
-            return
+        assert sys_tools, "system tools not seeded"
 
         system_tool_id = sys_tools[0]["id"]
         resp = client.post(
@@ -47,8 +49,7 @@ class TestTools:
     def test_get_system_tool(self, client: httpx.Client) -> None:
         """Getting a system tool by ID returns its details."""
         sys_tools = client.get("/api/v1/tools/system").json()
-        if not sys_tools:
-            return
+        assert sys_tools, "system tools not seeded"
 
         tool_id = sys_tools[0]["id"]
         resp = client.get(f"/api/v1/tools/system/{tool_id}")

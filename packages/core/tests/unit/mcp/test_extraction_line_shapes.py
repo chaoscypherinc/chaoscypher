@@ -20,7 +20,7 @@ def _make_source(chunk_indices: list[int] | None = None) -> dict:
         "database_name": "default",
         "filename": "t.pdf",
         "status": "mcp_extracting",
-        "extraction_chunk_indices": chunk_indices or [0],
+        "_test_expected_chunk_indices": chunk_indices or [0],
         "stage_progress": {
             "mcp_extraction": {
                 "total": chunks_total,

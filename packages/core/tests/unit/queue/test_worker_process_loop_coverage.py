@@ -28,12 +28,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from itertools import count
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from chaoscypher_core.constants import QUEUE_OPERATIONS
+from chaoscypher_core.queue.client import GUARDED_OK
 from chaoscypher_core.queue.worker import QueueWorker
 
 
@@ -51,6 +53,9 @@ def _make_valkey() -> MagicMock:
     valkey.hincrby = AsyncMock(return_value=1)
     valkey.zadd = AsyncMock(return_value=1)
     valkey.zpopmax = AsyncMock(return_value=[])
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15) — QueueWorker
+    # ._retry_task draws a fresh seq per retry re-add.
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
     valkey.setex = AsyncMock(return_value=True)
     valkey.persist = AsyncMock(return_value=True)
     valkey.sadd = AsyncMock(return_value=1)
@@ -183,6 +188,8 @@ async def test_process_task_success_with_queue_client_atomic_path() -> None:
     qc.complete_task_atomic = AsyncMock(return_value=None)
     qc.failed_result_ttl = 1209600
     qc.get_transient_retry_policy = MagicMock(return_value=True)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    qc.is_task_cancelled = AsyncMock(return_value=False)
 
     worker, valkey = _make_worker(
         handlers={QUEUE_OPERATIONS: {"test_op": handler}}, queue_client=qc
@@ -198,8 +205,83 @@ async def test_process_task_success_with_queue_client_atomic_path() -> None:
     assert result == "ok"
     qc.set_heartbeat.assert_awaited_once()
     qc.complete_task_atomic.assert_awaited_once_with(QUEUE_OPERATIONS, "t-qc")
+    # Running claim went through the guarded CAS write, not a bare HSET.
+    qc.guarded_status_write.assert_awaited_once()
+    claim = qc.guarded_status_write.await_args
+    assert claim.args == ("t-qc",)
+    assert claim.kwargs["new_status"] == "running"
+    assert claim.kwargs["allowed_from"] == ("queued",)
+    assert "started_at" in claim.kwargs["extra_fields"]
     # bare SREM NOT used when qc present.
     valkey.srem.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_task_cancelled_at_claim_skips_handler() -> None:
+    """A cancel landing in the ZPOPMAX→dispatch window refuses the claim.
+
+    The guarded running-write loses its CAS (task hash already reads
+    ``cancelled``), so the handler must never run and no ``running`` or
+    ``completed`` write may overwrite the cancellation.
+    """
+    handler = AsyncMock(return_value="should-not-run")
+    qc = MagicMock()
+    qc.set_heartbeat = AsyncMock(return_value=None)
+    qc.refresh_heartbeat = AsyncMock(return_value=None)
+    qc.complete_task_atomic = AsyncMock(return_value=None)
+    qc.failed_result_ttl = 1209600
+    qc.get_transient_retry_policy = MagicMock(return_value=True)
+    # CAS lost: guarded write reports the task's current status (cancelled).
+    qc.guarded_status_write = AsyncMock(return_value="cancelled")
+
+    worker, valkey = _make_worker(
+        handlers={QUEUE_OPERATIONS: {"test_op": handler}}, queue_client=qc
+    )
+    worker._heartbeat_refresh_interval_seconds = 60
+    valkey.hgetall = AsyncMock(return_value={**_task_hash(), b"status": b"cancelled"})
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-cancelled", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result is None
+    handler.assert_not_awaited()
+    # No status write ever touched the hash (the cancellation survives).
+    status_writes = [
+        c for c in valkey.hset.call_args_list if "status" in c.kwargs.get("mapping", {})
+    ]
+    assert status_writes == []
+    # finally cleanup still ran: atomic complete + semaphore released.
+    qc.complete_task_atomic.assert_awaited_once_with(QUEUE_OPERATIONS, "t-cancelled")
+    assert sem.locked() is False
+
+
+@pytest.mark.asyncio
+async def test_process_task_queued_claim_still_dispatches() -> None:
+    """A normal queued→running claim wins the guarded CAS and dispatches."""
+    handler = AsyncMock(return_value="ok")
+    qc = MagicMock()
+    qc.set_heartbeat = AsyncMock(return_value=None)
+    qc.refresh_heartbeat = AsyncMock(return_value=None)
+    qc.complete_task_atomic = AsyncMock(return_value=None)
+    qc.failed_result_ttl = 1209600
+    qc.get_transient_retry_policy = MagicMock(return_value=True)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    qc.is_task_cancelled = AsyncMock(return_value=False)
+
+    worker, valkey = _make_worker(
+        handlers={QUEUE_OPERATIONS: {"test_op": handler}}, queue_client=qc
+    )
+    worker._heartbeat_refresh_interval_seconds = 60
+    valkey.hgetall = AsyncMock(return_value={**_task_hash(), b"status": b"queued"})
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-queued", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result == "ok"
+    handler.assert_awaited_once()
+    qc.guarded_status_write.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +375,8 @@ async def test_process_task_transient_terminal_applies_ttl() -> None:
     qc.complete_task_atomic = AsyncMock(return_value=None)
     qc.failed_result_ttl = 1209600
     qc.get_transient_retry_policy = MagicMock(return_value=True)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    qc.is_task_cancelled = AsyncMock(return_value=False)
 
     worker, valkey = _make_worker(handlers={QUEUE_OPERATIONS: {"test_op": _boom}}, queue_client=qc)
     worker._heartbeat_refresh_interval_seconds = 60
@@ -448,6 +532,8 @@ async def test_process_task_ack_failure_still_releases_semaphore_and_retries() -
     qc.complete_task_atomic = AsyncMock(side_effect=ConnectionError("valkey down"))
     qc.failed_result_ttl = 1209600
     qc.get_transient_retry_policy = MagicMock(return_value=True)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    qc.is_task_cancelled = AsyncMock(return_value=False)
 
     worker, valkey = _make_worker(handlers={QUEUE_OPERATIONS: {"test_op": _boom}}, queue_client=qc)
     worker._heartbeat_refresh_interval_seconds = 60

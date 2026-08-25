@@ -60,6 +60,7 @@ def _make_source(
     domain: str | None = "technical",
     extraction_complete: bool = True,
     cached_scores_version: int | None = None,
+    extraction_entities_count: int = 5,
 ) -> dict[str, Any]:
     """Return a minimal source record as returned by list_files."""
     return {
@@ -69,30 +70,33 @@ def _make_source(
         "extraction_domain": domain,
         "extraction_complete": extraction_complete,
         "cached_scores_version": cached_scores_version,
+        "extraction_entities_count": extraction_entities_count,
+        "chunk_count": 4,
     }
 
 
-def _make_full_source(
-    source_id: str = "if_src0000001",
+def _wire_extraction(
+    mock_ctx: MagicMock,
     entities: list[dict] | None = None,
     relationships: list[dict] | None = None,
-) -> dict[str, Any]:
-    """Return a full source record that includes extraction_results."""
+) -> tuple[list[dict], list[dict]]:
+    """Wire per-source table reads on the mocked adapter.
+
+    Extraction rows live in the ``source_entities`` / ``source_relationships``
+    tables and are read via ``list_source_entities`` /
+    ``list_source_relationships`` — the old ``extraction_results`` JSON column
+    no longer exists. Relationship refs carry entity-ID strings, matching the
+    real adapter's row shape.
+    """
     if entities is None:
-        entities = [{"id": f"e{i}", "name": f"Entity{i}"} for i in range(5)]
+        entities = [{"id": f"ent_{i}", "name": f"Entity{i}"} for i in range(5)]
     if relationships is None:
-        relationships = [{"id": f"r{i}"} for i in range(3)]
-    return {
-        "id": source_id,
-        "title": "Test Source",
-        "filename": f"{source_id}.pdf",
-        "extraction_domain": "technical",
-        "extraction_complete": True,
-        "extraction_results": {
-            "entities": entities,
-            "relationships": relationships,
-        },
-    }
+        relationships = [
+            {"id": f"rel_{i}", "source": f"ent_{i}", "target": f"ent_{i + 1}"} for i in range(3)
+        ]
+    mock_ctx.storage_adapter.list_source_entities.return_value = entities
+    mock_ctx.storage_adapter.list_source_relationships.return_value = relationships
+    return entities, relationships
 
 
 def _make_mock_score(
@@ -169,7 +173,7 @@ class TestAnalyzeHappyPath:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         mock_score = _make_mock_score()
         mock_scorer = MagicMock()
@@ -188,7 +192,7 @@ class TestAnalyzeHappyPath:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -201,8 +205,7 @@ class TestAnalyzeHappyPath:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        full = _make_full_source()
-        mock_ctx.storage_adapter.get_file.return_value = full
+        entities, relationships = _wire_extraction(mock_ctx)
 
         mock_score = _make_mock_score()
         mock_scorer = MagicMock()
@@ -216,8 +219,8 @@ class TestAnalyzeHappyPath:
 
         mock_scorer.score_source.assert_called_once_with(
             source_id="if_src0000001",
-            entities=full["extraction_results"]["entities"],
-            relationships=full["extraction_results"]["relationships"],
+            entities=entities,
+            relationships=relationships,
             entity_chunk_mentions=mock_mentions,
         )
 
@@ -242,8 +245,7 @@ class TestAnalyzeEmptyGraph:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        full = _make_full_source(entities=[], relationships=[])
-        mock_ctx.storage_adapter.get_file.return_value = full
+        _wire_extraction(mock_ctx, entities=[], relationships=[])
 
         with patch(_GET_CTX_ANALYZE, return_value=mock_ctx):
             result = runner.invoke(analyze, [])
@@ -251,18 +253,28 @@ class TestAnalyzeEmptyGraph:
         assert result.exit_code == 0, result.output
         assert "No sources found" in result.output
 
-    def test_get_file_returns_none_skipped(self) -> None:
+    def test_reads_extraction_from_tables_not_get_file(self) -> None:
+        """Extraction data comes from the per-source tables, never get_file.
+
+        Regression guard: the command used to read the (long-removed)
+        ``extraction_results`` JSON off a ``get_file`` round trip, which
+        made every source look extraction-less.
+        """
         runner = CliRunner()
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = None
+        _wire_extraction(mock_ctx)
 
-        with patch(_GET_CTX_ANALYZE, return_value=mock_ctx):
+        p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
+        with p1, p2, p3, p4:
             result = runner.invoke(analyze, [])
 
         assert result.exit_code == 0, result.output
-        assert "No sources found" in result.output
+        mock_ctx.storage_adapter.get_file.assert_not_called()
+        mock_ctx.storage_adapter.list_source_entities.assert_called_once_with(
+            "if_src0000001", "default"
+        )
 
 
 class TestAnalyzeDomainFilter:
@@ -285,7 +297,7 @@ class TestAnalyzeDomainFilter:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source(domain="technical")]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -304,7 +316,11 @@ class TestAnalyzeMinEntitiesFilter:
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
         # Only 2 entities, but min-entities=10
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source(
+        mock_ctx.storage_adapter.list_files.return_value = [
+            _make_source(extraction_entities_count=2)
+        ]
+        _wire_extraction(
+            mock_ctx,
             entities=[{"id": "e0"}, {"id": "e1"}],
             relationships=[{"id": "r0"}],
         )
@@ -324,7 +340,7 @@ class TestAnalyzeJsonOutput:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -342,7 +358,7 @@ class TestAnalyzeJsonOutput:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         mock_score = _make_mock_score(entity_count=5, relationship_count=3, total_score=750.0)
         mock_scorer = MagicMock()
@@ -368,7 +384,7 @@ class TestAnalyzeSortOptions:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -390,7 +406,7 @@ class TestAnalyzeScoreColorBranches:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         mock_score = _make_mock_score(
             total_score=total_score,
@@ -432,10 +448,7 @@ class TestAnalyzeScoreColorBranches:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source()]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source(
-            entities=[{"id": "e0"}],
-            relationships=[],
-        )
+        _wire_extraction(mock_ctx, entities=[{"id": "e0"}], relationships=[])
 
         mock_score = _make_mock_score(
             entity_count=1,
@@ -460,10 +473,7 @@ class TestAnalyzeScoreColorBranches:
             _make_source(source_id="if_src0000001"),
             _make_source(source_id="if_src0000002"),
         ]
-        mock_ctx.storage_adapter.get_file.side_effect = [
-            _make_full_source("if_src0000001"),
-            _make_full_source("if_src0000002"),
-        ]
+        _wire_extraction(mock_ctx)
 
         mock_score = _make_mock_score()
         mock_scorer = MagicMock()
@@ -488,9 +498,7 @@ class TestAnalyzeLimitOption:
         mock_ctx.storage_adapter.list_files.return_value = [
             _make_source(source_id=f"if_src{i:07d}") for i in range(3)
         ]
-        mock_ctx.storage_adapter.get_file.side_effect = [
-            _make_full_source(f"if_src{i:07d}") for i in range(3)
-        ]
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_analyze_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -530,7 +538,7 @@ class TestRecalculateHappyPath:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source(extraction_complete=True)]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_recalc_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -545,7 +553,7 @@ class TestRecalculateHappyPath:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source(extraction_complete=True)]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         mock_cacheable = _make_cacheable_scores()
         mock_scorer = MagicMock()
@@ -637,7 +645,7 @@ class TestRecalculateOutdatedOnly:
         mock_ctx.storage_adapter.list_files.return_value = [
             _make_source(extraction_complete=True, cached_scores_version=1)
         ]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_recalc_patches(mock_ctx)
         with p1, p2, p3, p4, patch(_SCORING_VERSION, 7):
@@ -654,7 +662,7 @@ class TestRecalculateOutdatedOnly:
         mock_ctx.storage_adapter.list_files.return_value = [
             _make_source(extraction_complete=True, cached_scores_version=None)
         ]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         p1, p2, p3, p4 = _make_recalc_patches(mock_ctx)
         with p1, p2, p3, p4:
@@ -676,7 +684,7 @@ class TestRecalculateSourceIdFilter:
             _make_source(source_id="if_src0000002", extraction_complete=True),
         ]
         # Only if_src0000001 should be processed
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source("if_src0000001")
+        _wire_extraction(mock_ctx)
 
         mock_cacheable = _make_cacheable_scores()
         mock_scorer = MagicMock()
@@ -699,7 +707,7 @@ class TestRecalculateErrorHandling:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source(extraction_complete=True)]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source()
+        _wire_extraction(mock_ctx)
 
         mock_scorer = MagicMock()
         mock_scorer.get_cacheable_scores.side_effect = RuntimeError("scoring failed")
@@ -708,7 +716,7 @@ class TestRecalculateErrorHandling:
         with p1, p2, p3, p4:
             result = runner.invoke(recalculate, [])
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 1, result.output
         assert "Errors: 1" in result.output
         assert "scoring failed" in result.output
 
@@ -721,9 +729,7 @@ class TestRecalculateErrorHandling:
             _make_source(source_id=f"if_src{i:07d}", extraction_complete=True) for i in range(8)
         ]
         mock_ctx.storage_adapter.list_files.return_value = sources
-        mock_ctx.storage_adapter.get_file.side_effect = [
-            _make_full_source(f"if_src{i:07d}") for i in range(8)
-        ]
+        _wire_extraction(mock_ctx)
 
         mock_scorer = MagicMock()
         mock_scorer.get_cacheable_scores.side_effect = RuntimeError("boom")
@@ -732,24 +738,34 @@ class TestRecalculateErrorHandling:
         with p1, p2, p3, p4:
             result = runner.invoke(recalculate, [])
 
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == 1, result.output
         assert "Errors: 8" in result.output
         assert "more errors" in result.output
 
-    def test_get_file_returns_none_skipped(self) -> None:
-        """Sources where get_file returns None are silently skipped."""
+    def test_partial_failure_exits_nonzero(self) -> None:
+        """One success plus one failure still exits 1 (source add convention)."""
         runner = CliRunner()
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
-        mock_ctx.storage_adapter.list_files.return_value = [_make_source(extraction_complete=True)]
-        mock_ctx.storage_adapter.get_file.return_value = None
+        mock_ctx.storage_adapter.list_files.return_value = [
+            _make_source(source_id="if_src0000001", extraction_complete=True),
+            _make_source(source_id="if_src0000002", extraction_complete=True),
+        ]
+        _wire_extraction(mock_ctx)
 
-        p1, p2, p3, p4 = _make_recalc_patches(mock_ctx)
+        mock_scorer = MagicMock()
+        mock_scorer.get_cacheable_scores.side_effect = [
+            _make_cacheable_scores(),
+            RuntimeError("boom"),
+        ]
+
+        p1, p2, p3, p4 = _make_recalc_patches(mock_ctx, mock_scorer)
         with p1, p2, p3, p4:
             result = runner.invoke(recalculate, [])
 
-        assert result.exit_code == 0, result.output
-        assert "Successfully processed: 0" in result.output
+        assert result.exit_code == 1, result.output
+        assert "Successfully processed: 1" in result.output
+        assert "Errors: 1" in result.output
 
     def test_no_entities_no_relationships_skipped(self) -> None:
         """Empty extraction results are silently skipped."""
@@ -757,9 +773,7 @@ class TestRecalculateErrorHandling:
         mock_ctx = MagicMock()
         mock_ctx.database_name = "default"
         mock_ctx.storage_adapter.list_files.return_value = [_make_source(extraction_complete=True)]
-        mock_ctx.storage_adapter.get_file.return_value = _make_full_source(
-            entities=[], relationships=[]
-        )
+        _wire_extraction(mock_ctx, entities=[], relationships=[])
 
         p1, p2, p3, p4 = _make_recalc_patches(mock_ctx)
         with p1, p2, p3, p4:

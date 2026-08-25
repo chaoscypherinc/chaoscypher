@@ -146,8 +146,10 @@ class TestReloadLockTimeout:
                 "chaoscypher_neuron.settings_sync.asyncio.wait_for",
                 new=AsyncMock(side_effect=TimeoutError),
             ):
-                await reload_llm_provider(ctx)
+                result = await reload_llm_provider(ctx)
 
+            # A lock-timeout reload reports failure, not success.
+            assert result is False
             # Timed out before touching config_manager — no reload work happened.
             ctx["config_manager"].invalidate_cache.assert_not_called()
         finally:

@@ -198,8 +198,8 @@ def list_files(
 
             # Show resume hint for pending files
             if pending and files:
-                console.print("\n[dim]To resume: cc source add <ID>[/dim]")
-                console.print("[dim]Or use:    cc source add --resume[/dim]")
+                console.print("\n[dim]To resume: chaoscypher source add <ID>[/dim]")
+                console.print("[dim]Or use:    chaoscypher source add --resume[/dim]")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

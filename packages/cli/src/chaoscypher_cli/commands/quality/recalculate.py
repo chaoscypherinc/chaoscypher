@@ -3,6 +3,8 @@
 
 """Recalculate command - Batch recalculate and cache quality scores."""
 
+import sys
+
 import click
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -48,15 +50,19 @@ def recalculate(
         chaoscypher source quality recalculate -s if_abc123 -s if_xyz789
     """
     from chaoscypher_cli.commands.quality.utils import (
+        SOURCE_FETCH_LIMIT,
         build_entity_chunk_mentions,
         get_quality_config,
+        load_source_extraction,
     )
     from chaoscypher_core.services.quality import SCORING_VERSION, QualityScorer
 
     ctx = get_context(database_name=database)
 
-    # Get sources to recalculate (list_files uses load_only, excludes extraction_results)
-    all_sources = ctx.storage_adapter.list_files(ctx.database_name)
+    # Get sources to recalculate. list_files uses a narrow load_only
+    # projection, and its default limit=100 would silently skip everything
+    # but the newest 100 sources — pass the bulk ceiling.
+    all_sources = ctx.storage_adapter.list_files(ctx.database_name, limit=SOURCE_FETCH_LIMIT)
 
     # Filter sources
     sources_to_process = []
@@ -107,15 +113,11 @@ def recalculate(
             progress.update(task, description=f"Processing: {title}...")
 
             try:
-                # Fetch full record for extraction_results
-                full = ctx.storage_adapter.get_file(source_id_str, ctx.database_name)
-                if not full:
-                    progress.advance(task)
-                    continue
-
-                extraction_results = full.get("extraction_results") or {}
-                entities = extraction_results.get("entities", [])
-                relationships = extraction_results.get("relationships", [])
+                # Per-source extraction rows live in dedicated tables — the
+                # old ``extraction_results`` JSON column no longer exists.
+                entities, relationships = load_source_extraction(
+                    ctx.storage_adapter, source_id_str, ctx.database_name
+                )
 
                 if not entities and not relationships:
                     progress.advance(task)
@@ -134,6 +136,7 @@ def recalculate(
                     entities=entities,
                     relationships=relationships,
                     entity_chunk_mentions=entity_chunk_mentions,
+                    chunk_count=source.get("chunk_count", 0) or 0,
                 )
 
                 ctx.storage_adapter.update_file(
@@ -157,3 +160,4 @@ def recalculate(
             console.print(f"  - {err['source_id']}: {err['error']}")
         if len(errors) > 5:
             console.print(f"  ... and {len(errors) - 5} more errors")
+        sys.exit(1)

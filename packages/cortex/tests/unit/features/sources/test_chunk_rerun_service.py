@@ -10,11 +10,14 @@ increment is best-effort.
 
 from __future__ import annotations
 
+from itertools import count
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from chaoscypher_core.exceptions import ConflictError, NotFoundError
+from chaoscypher_core.queue.client import QueueClient
 from chaoscypher_cortex.features.sources.chunk_rerun_service import ChunkRerunService
 
 
@@ -189,3 +192,92 @@ async def test_rerun_chunk_increments_quality_counter(
     args = mock_adapter.increment_source_counter.call_args.kwargs
     assert args["column"] == "chunks_rerun_total"
     assert args["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Producer -> consumer coupling (entry 764)
+#
+# QueueClient.in_flight_chunk_task_ids filters on metadata.source_id AND
+# metadata.database_name. rerun_chunk already wrote source_id but was
+# missing database_name, so this producer's tasks were invisible to the
+# in-flight guard too. This test drives the REAL rerun_chunk against a
+# REAL (store-backed, not mocked) QueueClient and calls the REAL consumer
+# afterward -- unlike the mock-based tests above, it can't pass by
+# asserting on call_args alone.
+# ---------------------------------------------------------------------------
+
+
+def _make_store_backed_queue_client() -> QueueClient:
+    """Build a minimal QueueClient whose enqueue path writes into an in-memory store."""
+    store: dict[str, dict[str, Any]] = {}
+
+    client = QueueClient.__new__(QueueClient)
+    client._connected = True
+    client._max_pending_queue_depth = 10000
+    client._operations_result_ttl = 7200
+    client._llm_result_ttl = 3600
+
+    pipeline = MagicMock()
+
+    def _hset(key: str, mapping: dict[str, Any]) -> MagicMock:
+        task_id = key.removeprefix("queue:task:")
+        store[task_id] = dict(mapping)
+        return pipeline
+
+    pipeline.hset.side_effect = _hset
+    pipeline.zadd.return_value = pipeline
+    pipeline.lpush.return_value = pipeline
+    pipeline.ltrim.return_value = pipeline
+    pipeline.execute = AsyncMock(return_value=[])
+
+    valkey = MagicMock()
+    valkey.zcard = AsyncMock(return_value=0)
+    valkey.pipeline = MagicMock(return_value=pipeline)
+    valkey.exists = AsyncMock(return_value=0)
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15).
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
+    valkey.incrby = AsyncMock(side_effect=lambda _key, amount: amount)
+
+    def _scan_iter_factory(*_args: Any, **_kwargs: Any) -> Any:
+        async def _gen() -> Any:
+            for task_id in list(store):
+                yield f"queue:task:{task_id}".encode()
+
+        return _gen()
+
+    valkey.scan_iter = _scan_iter_factory
+
+    async def _hgetall(key: Any) -> dict[str, Any]:
+        raw = key.decode() if isinstance(key, bytes) else key
+        task_id = raw.removeprefix("queue:task:")
+        return store.get(task_id, {})
+
+    valkey.hgetall = AsyncMock(side_effect=_hgetall)
+
+    client.client = valkey
+    return client
+
+
+@pytest.mark.asyncio
+async def test_rerun_chunk_metadata_satisfies_in_flight_guard(
+    mock_adapter: MagicMock,
+) -> None:
+    """rerun_chunk's metadata matches QueueClient.in_flight_chunk_task_ids' predicate.
+
+    Regression for the missing ``database_name`` key: with only
+    ``source_id`` stamped, the consumer's second filter
+    (``meta.get("database_name") != database_name``) always missed and the
+    task stayed invisible to the in-flight guard.
+    """
+    real_queue_client = _make_store_backed_queue_client()
+    service = ChunkRerunService(
+        adapter=mock_adapter,
+        queue_client=real_queue_client,
+        database_name="test",
+    )
+
+    result = await service.rerun_chunk(source_id="src-1", chunk_index=0)
+
+    ids = await real_queue_client.in_flight_chunk_task_ids(source_id="src-1", database_name="test")
+    assert ids == {"tsk-1"}
+    assert result["chunk_task_id"] == "tsk-1"

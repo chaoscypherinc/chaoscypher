@@ -98,6 +98,20 @@ class WorkflowStorageProtocol(Protocol):
         """Get statistics for a workflow."""
         ...
 
+    def get_workflow_statistics_totals(self, *, database_name: str) -> dict[str, int]:
+        """Sum execution counters across every workflow in one database.
+
+        Single aggregate SELECT (SUM over total/successful/failed/cancelled
+        executions). Use instead of per-workflow ``get_workflow_statistics``
+        round-trips when only the global totals are needed.
+
+        Returns:
+            Dict with ``total_executions``, ``successful_executions``,
+            ``failed_executions``, ``cancelled_executions`` — all 0 when
+            the database has no statistics rows.
+        """
+        ...
+
     def create_workflow_statistics(self, stats: dict[str, Any]) -> dict[str, Any]:
         """Create workflow statistics."""
         ...

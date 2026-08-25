@@ -33,6 +33,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
 from chaoscypher_core.adapters.sqlite.engine import get_engine
+from chaoscypher_core.exceptions import UnsupportedDatabaseLineageError
 
 
 logger = structlog.get_logger(__name__)
@@ -151,7 +152,15 @@ def _schema_has_non_alembic_tables(db_path: Path) -> bool:
 
 
 def _revision_is_known(revision: str) -> bool:
-    """True if ``revision`` is resolvable in our script directory."""
+    """True if ``revision`` is resolvable in our script directory.
+
+    Blind spot: resolution is by id, so a pre-squash database stamped at an
+    old ``0002``-``0006`` collides with the post-squash chain's same-named
+    revisions and is classified healthy rather than refused — inherent to
+    bare-numeral revision ids. Exposure is dev-only: the squash predates
+    v0.1.0, and the pre-squash chain reached ``0050``, so a real-world
+    pre-squash database is overwhelmingly likely to sit outside that window.
+    """
     cfg = Config(str(_config_path()))
     script = ScriptDirectory.from_config(cfg)
     try:
@@ -174,12 +183,15 @@ def ensure_stamped(db_path: Path) -> None:
        migrations in the chain still run on this DB. Running the baseline
        upgrade would otherwise fail on ``CREATE TABLE`` of already-existing
        tables, which is why we stamp instead of applying.
-    2. **Stale stamp from a deleted Alembic chain:** a previous Alembic
-       setup (later removed) left an ``alembic_version`` row referencing a
-       revision that our current script dir doesn't know about. Without
-       this recovery, ``upgrade_to_head`` would crash with
-       ``Can't locate revision identified by '<stale_id>'``. We detect the
-       orphan and re-stamp at the baseline so 0002+ migrations still run.
+    2. **Stamp from a lineage we don't ship:** the ``alembic_version`` row
+       names a revision our script dir can't resolve — in practice a
+       database from the pre-2026-06-02 chain that the squash deleted.
+       Raise :class:`UnsupportedDatabaseLineageError`. We deliberately do
+       NOT re-stamp at the baseline: that only relabels the row, leaving a
+       schema the shipped 0002+ migrations were never written for, so the
+       boot dies further downstream in the drift gate with an opaque
+       ``SchemaIntegrityError`` and restarts forever. Failing here, loudly
+       and once, is what an operator can actually act on.
     3. **Healthy stamp:** revision is known to our script dir — no-op.
 
     No-op on fresh DBs (no user tables, no version row) so the normal
@@ -192,23 +204,23 @@ def ensure_stamped(db_path: Path) -> None:
 
     Args:
         db_path: Path to the SQLite database file.
+
+    Raises:
+        UnsupportedDatabaseLineageError: The DB is stamped at a revision
+            this build's script directory does not contain.
     """
     current = current_revision(db_path)
 
-    purge = False
     if current is None:
         if not _schema_has_non_alembic_tables(db_path):
             return
-        reason = "preexisting_schema"
     elif not _revision_is_known(current):
-        reason = "orphan_stamp"
-        purge = True  # Clear the orphan row before re-stamping; stamp()
-        # otherwise fails resolving the old→new path.
-        logger.warning(
-            "alembic_orphan_stamp_detected",
+        logger.error(
+            "alembic_unsupported_database_lineage",
             db_path=str(db_path),
-            orphan_revision=current,
+            unknown_revision=current,
         )
+        raise UnsupportedDatabaseLineageError(current, db_path=str(db_path))
     else:
         return
 
@@ -216,12 +228,12 @@ def ensure_stamped(db_path: Path) -> None:
     cfg = _make_config(db_path)
     with engine.begin() as connection:
         cfg.attributes["connection"] = connection
-        command.stamp(cfg, _BASELINE_REVISION, purge=purge)
+        command.stamp(cfg, _BASELINE_REVISION)
     logger.info(
         "alembic_stamped_at_baseline",
         db_path=str(db_path),
         revision=_BASELINE_REVISION,
-        reason=reason,
+        reason="preexisting_schema",
     )
 
 

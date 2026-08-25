@@ -60,8 +60,9 @@ class TestSourceData:
         source_id = self._upload_and_index(client, sample_data_dir, "single_chunk.txt")
         chunks_resp = client.get(f"/api/v1/sources/{source_id}/chunks")
         chunks = chunks_resp.json()["data"]
-        if not chunks:
-            return
+        # The source polled to "indexed" above — zero chunks here means the
+        # chunking pipeline broke, not a legitimate empty state.
+        assert chunks, "indexing produced no chunks"
         chunk_id = chunks[0]["id"]
 
         resp = client.get(f"/api/v1/sources/{source_id}/chunks/{chunk_id}")

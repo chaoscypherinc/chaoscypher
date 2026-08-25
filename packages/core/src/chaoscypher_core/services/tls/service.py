@@ -9,39 +9,29 @@ Generates RSA 4096-bit certificates with SAN for localhost and optional hostname
 from __future__ import annotations
 
 import ipaddress
-import os
-import tempfile
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
+from chaoscypher_core.utils.secure_write import atomic_secret_write
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def _write_private_key(key_path: Path, data: bytes) -> None:
     """Write the private key atomically with owner-only permissions.
 
-    Mirrors ``credentials.py::_atomic_write``: ``mkstemp`` creates the
-    tempfile with mode 0600 from the start, so the unencrypted key is never
-    world-readable — not even for the window between file creation and a
-    later ``chmod`` (the previous ``write_bytes`` + ``chmod`` sequence
-    created the file under the process umask, typically 0644). The rename
-    is atomic, so a concurrent reader never sees a partial key file.
+    Thin wrapper over the shared ``atomic_secret_write`` helper (this
+    function was one of its two extraction sources); kept so cert-path
+    callers read domain language.
     """
-    fd, tmp_path_str = tempfile.mkstemp(prefix=".server_key_", dir=str(key_path.parent))
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        if os.name == "posix":
-            tmp_path.chmod(0o600)
-        tmp_path.replace(key_path)
-    except Exception:
-        if tmp_path.exists():
-            tmp_path.unlink()
-        raise
+    atomic_secret_write(key_path, data, prefix=".server_key_")
 
 
 def generate_self_signed_cert(

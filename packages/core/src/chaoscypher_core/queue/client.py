@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -44,7 +43,11 @@ from valkey.exceptions import ConnectionError as ValkeyConnectionError
 from valkey.exceptions import NoScriptError
 
 from chaoscypher_core.adapters.sqlite.models import ChunkExtractionTask
-from chaoscypher_core.constants import QUEUE_OPERATIONS
+from chaoscypher_core.constants import (
+    OP_CHAT_BACKGROUND,
+    OPERATION_RETRY_ON_CRASH,
+    QUEUE_OPERATIONS,
+)
 from chaoscypher_core.exceptions import ExternalServiceError, QueueFullError
 from chaoscypher_core.queue.handler_spec import (
     HandlerLike,
@@ -83,6 +86,123 @@ logger = structlog.get_logger(__name__)
 # worker is backwards-compatible with that older version.
 CURRENT_PAYLOAD_VERSION = 1
 SUPPORTED_PAYLOAD_VERSIONS: frozenset[int] = frozenset({1})
+
+# ---------------------------------------------------------------------------
+# Pending-ZSET score composition (queue FIFO tiebreaker restore, 2026-08-15;
+# retry-decay fix + coherence writeup 2026-08-15 review round)
+# ---------------------------------------------------------------------------
+#
+# The composed score is priority minus seq divided by
+# _PENDING_SCORE_SEQ_SCALE (see ``compose_pending_score`` below).
+#
+# `seq` comes from a per-queue Valkey INCR/INCRBY counter
+# (``queue:{queue}:seq``), so it is exact and monotonic across every
+# process sharing that Valkey instance. It replaces the previous
+# ``time.time() / 1e10`` tiebreaker, which relied on the OS wall clock
+# advancing far enough between two enqueues to survive floating-point
+# subtraction from ``priority`` -- it usually didn't.
+#
+# Bound (verified 2026-08-15 under ``uv run python``):
+#   math.ulp(100.0) is 1.4210854715202004e-14.
+# ``100.0 - x`` only resolves changes in ``x`` larger than that ULP, so
+# the old scheme needed ``delta_time > ulp * 1e10 ~= 142.1us`` between two
+# enqueues to avoid an identical score -- confirmed empirically: two
+# ``time.time()`` calls 50us apart produced bit-identical scores, 200us
+# apart did not. A tight synchronous loop (``enqueue_tasks_batch``) or two
+# closely-timed ``enqueue()`` calls routinely land under 142us.
+#
+# ``seq / _PENDING_SCORE_SEQ_SCALE`` must stay (a) far enough above that
+# same ULP for adjacent integers to be distinguishable, and (b) strictly
+# under 1.0 so the fraction can never cross a priority-tier boundary.
+# ``_PENDING_SCORE_SEQ_SCALE = 2**40`` (1_099_511_627_776) satisfies both
+# with wide margin AT THE VALIDATED [0, 100] PRIORITY RANGE
+# (``QueueTaskRequest``/``PrioritySettings``):
+#   - adjacent-seq delta = 1 / 2**40 ~= 9.09e-13, ~64x the 1.42e-14 ULP
+#     ceiling at priority=100 (dividing by a power of two is itself exact
+#     in IEEE754, so that margin is the only rounding source that
+#     matters). This is WHY the [0, 100] bound matters, not just a nice
+#     round number: ULP doubles every time the score's magnitude crosses
+#     a power-of-two boundary, so the 64x margin halves each octave --
+#     it reaches parity (1x, i.e. an adjacent seq step and the ULP are
+#     the same size) around priority=4096 and drops below 1x -- adjacent
+#     seq values collide again -- at priority>=8192. Raising the
+#     priority ceiling without revisiting this scale would silently
+#     reintroduce the exact bug this fix closes.
+#   - ``seq`` must stay under 2**40 for the counter's lifetime to avoid
+#     crossing a tier. At a sustained 10,000 enqueues/second to one queue
+#     (far above this system's realistic throughput), reaching 2**40
+#     takes ~3.5 years of continuous enqueuing without a Valkey restart
+#     or data reset.
+#
+# Reset semantics: a full Valkey reset (FLUSHALL/FLUSHDB, or a data-dir
+# wipe) clears ``queue:{queue}:seq`` and ``queue:{queue}:pending``
+# together (same keyspace), so a low post-reset seq can never collide
+# with a stale high-seq score -- there is nothing left to collide with.
+# The app-level ``reset_queue_stats()`` operation is the one path that
+# clears ``queue:{queue}:pending`` WITHOUT touching ``queue:{queue}:seq``;
+# that is safe in the other direction too -- the pending ZSET is emptied
+# and the counter just keeps counting up, so there is no stale entry for
+# a resumed counter to misorder against. The inverse direction -- an
+# operator (or a targeted key eviction) deleting just ``:seq`` while
+# ``:pending`` entries survive -- is a real but bounded exposure: the
+# counter restarts near zero, so it hands out small seq values that
+# initially score BELOW the surviving old entries (a transient LIFO
+# inversion), self-healing once the counter counts back up past them.
+# ``:seq`` deliberately carries no TTL so ordinary expiry can't trigger
+# this; it would take an explicit ``DEL`` or an eviction policy configured
+# to reclaim non-expiring keys under memory pressure.
+#
+# Coherence with the other pending-ZSET writers:
+#   - ``QueueWorker._retry_task`` draws its OWN fresh seq from this SAME
+#     per-queue counter at schedule time (via ``compose_pending_score``,
+#     identically to a fresh enqueue) -- a retry rejoins its tier at the
+#     CURRENT TAIL of the line, not a synthetic "due position". This
+#     replaced an earlier design that reused the retired
+#     ``time.time()``-based fraction (~0.18 at any 2026-era epoch): that
+#     fraction is CONSTANT once written, while fresh enqueues' seq-based
+#     fraction keeps growing, so the two would cross -- silently
+#     flipping every outstanding retry to the FRONT of its tier, ahead
+#     of all fresh same-tier work -- once the per-queue counter passed
+#     ~1.965e11 (0.18 * 2**40). That is deep inside the 2**40
+#     tier-crossing ceiling above, not a multi-year-away edge case, so
+#     it was a real defect, not a documentable one. Actual dispatch
+#     timing is unaffected either way: `_get_retry_after` still gates
+#     whether a popped task is truly due; this score only decides queue
+#     position among items that already are.
+#   - ``requeue_task_atomic`` (reconciler recovery) is the one
+#     deliberate exception: it passes the raw priority integer
+#     (fraction == 0), the tier's ceiling, so a recovered/abandoned task
+#     always jumps to the FRONT of its tier ahead of both fresh and
+#     retried work. Unlike the retry case above, this does not decay:
+#     0 is a fixed floor that no positive fraction (fresh or retried)
+#     can ever cross, rather than a static value being overtaken by a
+#     growing one.
+_PENDING_SCORE_SEQ_SCALE = 2**40
+
+
+def compose_pending_score(priority: float, seq: int) -> float:
+    """Compose a ``queue:{queue}:pending`` ZSET score from priority and sequence.
+
+    Shared by every writer that should take a fresh position in the
+    queue's FIFO order: ``QueueClient.enqueue``, ``QueueClient.
+    enqueue_tasks_batch``, and ``QueueWorker._retry_task``. See the
+    module comment above ``_PENDING_SCORE_SEQ_SCALE`` for the full
+    precision bound, the seq-wraparound/reset reasoning, and why
+    ``requeue_task_atomic`` deliberately does NOT use this helper.
+
+    Args:
+        priority: Task priority tier (higher pops first under
+            ZPOPMAX). Validated to [0, 100] by callers; not
+            re-validated here -- see the module comment for why
+            raising that ceiling would need this scale revisited.
+        seq: Monotonic sequence number from a per-queue Valkey
+            INCR/INCRBY counter. Smaller values sort higher (pop
+            sooner), giving FIFO order within a tier.
+
+    Returns:
+        The ZSET score: ``priority - seq / _PENDING_SCORE_SEQ_SCALE``.
+    """
+    return float(priority) - seq / _PENDING_SCORE_SEQ_SCALE
 
 
 @contextmanager
@@ -399,6 +519,18 @@ class QueueClient:
                 )
                 raise TypeError(msg)
             validate_handler_signature(handler_fn, queue=queue, operation=op)
+            canonical_retry = OPERATION_RETRY_ON_CRASH.get(op)
+            if canonical_retry is not None and canonical_retry != spec.retry_on_crash:
+                msg = (
+                    f"Handler for {queue}:{op} registers retry_on_crash="
+                    f"{spec.retry_on_crash!r}, which contradicts "
+                    f"chaoscypher_core.constants.OPERATION_RETRY_ON_CRASH"
+                    f"[{op!r}] = {canonical_retry!r}. Fix the HandlerSpec at "
+                    f"the registration site, or update the canonical table "
+                    f"if the operation's idempotency semantics genuinely "
+                    f"changed — they must agree."
+                )
+                raise TypeError(msg)
             normalized.append((op, spec, handler_fn))
 
         self._handlers.setdefault(queue, {})
@@ -423,20 +555,35 @@ class QueueClient:
         return self._handlers.get(queue, {}).get(operation)
 
     def get_retry_policy(self, queue: str, operation: str) -> bool:
-        """Look up retry_on_crash for a registered handler.
+        """Look up retry_on_crash for an operation.
 
-        Returns False for unknown (queue, operation) pairs — the safe
-        default. The queue reconciler consults this to decide whether
-        an abandoned task should be requeued or marked failed.
+        Prefers the value recorded by an in-process ``register_handlers()``
+        call. Falls back to the process-independent
+        ``chaoscypher_core.constants.OPERATION_RETRY_ON_CRASH`` table for
+        any operation this process never registered a handler for — the
+        case for Cortex, which shares the same Valkey-backed task metadata
+        via this client but never calls ``register_handlers`` (that's a
+        Neuron-only call; see ``chaoscypher_neuron.setup``). Without this
+        fallback, Cortex's ``POST /queue/reconcile`` always saw an empty
+        in-process registry and terminally failed every abandoned task
+        regardless of its handler's actual policy.
+
+        The queue reconciler consults this to decide whether an abandoned
+        task should be requeued or marked failed.
 
         Args:
             queue: Queue name.
             operation: Operation name.
 
         Returns:
-            True if the handler opted into retry-on-crash; False otherwise.
+            True if the operation is registered/declared retry-on-crash;
+            False for operations unknown to both the in-process registry
+            and the canonical table — the safe default.
         """
-        return self._retry_policy.get(queue, {}).get(operation, False)
+        registered = self._retry_policy.get(queue, {})
+        if operation in registered:
+            return registered[operation]
+        return OPERATION_RETRY_ON_CRASH.get(operation, False)
 
     def get_transient_retry_policy(self, queue: str, operation: str) -> bool:
         """Look up retry_on_transient for a registered handler.
@@ -825,12 +972,12 @@ class QueueClient:
         )
 
         # Add to pending queue (sole job queue — worker pops from here).
-        # Score encodes priority minus a small fraction of enqueue time so
-        # that ZPOPMAX dequeues by priority first (highest pops first),
-        # then FIFO within the same priority level (earlier enqueue =
-        # larger score). time.time()/1e10 is always < 1, so the time
-        # component never crosses priority boundaries.
-        score = float(priority) - time.time() / 1e10
+        # One extra round trip draws an exact, monotonic per-queue seq
+        # before the pipeline so the score can be computed client-side;
+        # see _PENDING_SCORE_SEQ_SCALE for why this replaced a
+        # time.time()-derived fraction (it collided under ~142us).
+        seq = await self.client.incr(f"queue:{queue}:seq")
+        score = compose_pending_score(priority, seq)
         pipeline.zadd(f"queue:{queue}:pending", {task_id: score})
 
         # Add to recent lists
@@ -926,7 +1073,20 @@ class QueueClient:
         _ctx = _get_contextvars()
         _ctx_request_id: str | None = _ctx.get("request_id")
 
-        for task_spec in tasks:
+        # Reserve a contiguous block of len(tasks) sequence numbers in ONE
+        # round trip (INCRBY returns the counter's value AFTER the
+        # increment, so the block is [end - len(tasks) + 1, end]), then
+        # hand out one distinct seq per task below in insertion order.
+        # Without this, the old code computed a fresh time.time()-derived
+        # score per loop iteration; successive calls inside a tight
+        # synchronous loop routinely land under the ~142us collision
+        # window (see _PENDING_SCORE_SEQ_SCALE), so the whole batch
+        # shared one score and fell back to Valkey's lexicographic
+        # task-id tiebreak instead of enqueue order.
+        seq_block_end = await self.client.incrby(f"queue:{queue}:seq", len(tasks))
+        seq_block_start = seq_block_end - len(tasks) + 1
+
+        for batch_index, task_spec in enumerate(tasks):
             task_id = generate_id()
             task_ids.append(task_id)
 
@@ -958,9 +1118,12 @@ class QueueClient:
             )
 
             # Add to pending sorted set (ZPOPMAX convention — higher score
-            # pops first; subtract a time fraction so earlier enqueues
-            # pop first within the same priority tier).
-            score = float(priority) - time.time() / 1e10
+            # pops first). Each task draws its own seq from the block
+            # reserved above, ascending in insertion order, so an earlier
+            # task in the batch always scores higher (pops first) than a
+            # later one at the same priority.
+            seq = seq_block_start + batch_index
+            score = compose_pending_score(priority, seq)
             pipeline.zadd(f"queue:{queue}:pending", {task_id: score})
 
             # Add to per-queue recent list
@@ -1002,16 +1165,23 @@ class QueueClient:
         offset: int = 0,
         queues: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Get recent tasks from specified queues."""
+        """Get recent tasks from specified queues.
+
+        Multi-queue calls merge the per-queue recent lists into one
+        globally recency-sorted window: each queue contributes its first
+        ``offset + limit`` entries, the merged records are sorted by
+        ``created_at`` descending, and the global ``[offset, offset+limit)``
+        slice is returned — applying ``offset`` per queue and concatenating
+        would return up to ``len(queues) x limit`` rows and skip/duplicate
+        entries across pages.
+        """
         if not self.client:
             return []
 
         task_ids_raw: list[bytes] = []
         if queues:
             for queue in queues:
-                lrange_result = self.client.lrange(
-                    f"queue:{queue}:recent", offset, offset + limit - 1
-                )
+                lrange_result = self.client.lrange(f"queue:{queue}:recent", 0, offset + limit - 1)
                 range_data = (
                     await lrange_result if not isinstance(lrange_result, list) else lrange_result
                 )
@@ -1032,7 +1202,12 @@ class QueueClient:
             pipeline.hgetall(f"queue:task:{task_id}")
 
         results = await pipeline.execute()
-        return [self._decode_record(record) for record in results if record]
+        records = [self._decode_record(record) for record in results if record]
+
+        if queues:
+            records.sort(key=lambda record: record["created_at"], reverse=True)
+            return records[offset : offset + limit]
+        return records
 
     async def get_recent_tasks_count(self, queues: list[str] | None = None) -> int:
         """Get total count of recent tasks (for pagination)."""
@@ -1414,6 +1589,7 @@ class QueueClient:
                     removal="zrem",
                 )
                 if outcome == GUARDED_OK:
+                    self._persist_cancellation_to_db(task_id, task)
                     cancelled += 1
                     continue
                 if outcome != "running":
@@ -1426,6 +1602,7 @@ class QueueClient:
             # outlives the handler's worst-case run time. The status write
             # is guarded: completion in the window wins (cancel loses).
             await self.client.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
+            self._persist_cancellation_to_db(task_id, task)
             outcome = await self.guarded_status_write(
                 task_id,
                 new_status="cancelled",
@@ -1464,6 +1641,17 @@ class QueueClient:
         Performance: O(n) over all task hashes, mirroring
         ``task_exists_for_source``. Acceptable for the ~60s reconcile
         interval at current scale.
+
+        DELIBERATE DIVERGENCE from ``in_flight_vision_page_ids`` (2026-08-15
+        review): that sibling RE-RAISES scan errors instead of swallowing
+        them, because its caller pays a billable LLM call before its CAS
+        can reject a duplicate dispatch. This method keeps swallowing and
+        returning an empty set on error, because the extract_chunk callers'
+        dispatch-all-on-uncertainty fallback is idempotent-safe — chunk
+        extraction has a documented pre-work DB short-circuit, so a
+        redundant dispatch costs a wasted queue hop, not a billable
+        duplicate. Do not change this method's error handling without
+        re-auditing that safety argument.
 
         Args:
             source_id: Source whose chunks to enumerate.
@@ -1508,6 +1696,93 @@ class QueueClient:
                 error_message=str(exc),
             )
             return set()
+        return in_flight
+
+    async def in_flight_vision_page_ids(
+        self,
+        *,
+        source_id: str,
+        database_name: str,
+    ) -> set[str]:
+        """Return page_ids with queued/running OP_VISION_PAGE Valkey tasks.
+
+        Used by ``SourceRecovery`` to filter the per-page vision recovery
+        dispatch list: a page that already has a live Valkey task does not
+        need to be re-dispatched on this reconcile pass. Mirrors
+        ``in_flight_chunk_task_ids`` at the vision page granularity —
+        ``vision_page`` tasks for a source are enqueued as one N-page batch
+        and drained one at a time (QUEUE_LLM concurrency is 1), so a
+        source-level "any task live" check would block recovery of a
+        genuinely lost page (worker crash / Valkey eviction) for as long as
+        ANY sibling page in the batch is still live — most of the job's
+        duration in the common case. Filtering by page identity instead
+        recovers only the pages that are actually missing.
+
+        Performance: O(n) over all task hashes, mirroring
+        ``in_flight_chunk_task_ids`` / ``task_exists_for_source``.
+        Acceptable for the ~60s reconcile interval at current scale.
+
+        DELIBERATE DIVERGENCE from ``in_flight_chunk_task_ids`` (2026-08-15
+        review): that sibling swallows scan errors and returns an empty
+        set, because its caller's dispatch-all-on-uncertainty fallback is
+        idempotent-safe (extract_chunk has a documented pre-work DB
+        short-circuit). This method instead RE-RAISES — a vision page pays
+        a billable LLM call BEFORE its CAS rejects a duplicate, so
+        dispatching on uncertainty here would reopen the exact
+        duplicate-billing bug the filter exists to close. The caller,
+        ``SourceRecovery._classify_vision_pending``, catches this and
+        suppresses the WHOLE dispatch on any exception rather than falling
+        back to "assume nothing is in flight" — that suppress branch is
+        unreachable unless this method actually lets the failure through.
+
+        Args:
+            source_id: Source whose vision pages to enumerate.
+            database_name: Database scope (multi-DB isolation).
+
+        Returns:
+            Set of page_id strings drawn from each ``vision_page`` task's
+            ``data.page_id`` payload.
+
+        Raises:
+            QueueUnavailableError: The queue client is not connected.
+            Exception: Any error encountered while scanning or decoding
+                task hashes propagates unchanged (logged at warning first)
+                so the caller's suppress-on-uncertainty handler can act on
+                it — see the divergence note above.
+        """
+        if self.client is None:
+            raise QueueUnavailableError("Queue server is not connected")
+
+        in_flight: set[str] = set()
+        try:
+            async for key in self.client.scan_iter(match="queue:task:*"):
+                key_str = _decode_bytes(key)
+                task_id = key_str.split(":")[-1]
+                task = await self.get_task(task_id)
+                if not task:
+                    continue
+                if task.get("operation") != "vision_page":
+                    continue
+                if task.get("status") not in ("queued", "running"):
+                    continue
+                meta = task.get("metadata") or {}
+                if meta.get("source_id") != source_id:
+                    continue
+                if meta.get("database_name") != database_name:
+                    continue
+                data = task.get("data") or {}
+                page_id = data.get("page_id")
+                if isinstance(page_id, str):
+                    in_flight.add(page_id)
+        except Exception as exc:
+            logger.warning(
+                "in_flight_vision_page_ids_scan_failed",
+                source_id=source_id,
+                database_name=database_name,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
         return in_flight
 
     async def task_exists_for_source(
@@ -1577,6 +1852,91 @@ class QueueClient:
             logger.warning(
                 "task_exists_for_source_scan_failed_reraising",
                 source_id=source_id,
+                database_name=database_name,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        return False
+
+    async def task_exists_for_chat(
+        self,
+        *,
+        chat_id: str,
+        database_name: str,
+    ) -> bool:
+        """Check whether a live queue task backs this chat's in-flight turn.
+
+        Scans the ``queue:task:*`` hash keyspace for an ``OP_CHAT_BACKGROUND``
+        task that is still ``queued`` or ``running`` for this chat, matched
+        via ``data.chat_id`` / ``data.database_name`` (chat-turn tasks don't
+        put ``database_name`` in ``metadata`` the way source tasks do, so
+        ``data`` — always present — is the reliable source for both fields).
+
+        Used by ``reconcile_stuck_chats`` as the primary liveness signal: a
+        chat's ``updated_at`` is never bumped mid-turn, so a stale timestamp
+        alone can't distinguish a healthy long-running turn from a crashed
+        one. A live matching task means the worker is still on it.
+
+        Performance: O(n) over all task hashes, mirroring
+        ``task_exists_for_source``. Acceptable at the sweeper's scan cadence
+        and current scale.
+
+        Args:
+            chat_id: Chat whose in-flight turn to check.
+            database_name: Database scope (multi-DB isolation).
+
+        Returns:
+            True if a matching queued-or-running task exists. False ONLY
+            when the queue backend is connected, the scan completed, and
+            no such task was found — a genuine miss.
+
+        Raises:
+            QueueUnavailableError: If the queue backend isn't connected
+                (``self.client is None``). This is a "we don't know" state,
+                not "no task": Cortex's ``connect_with_retry`` runs once at
+                startup with ``required=False`` and there is no reconnect
+                loop, so a Valkey outage at boot leaves ``self.client`` as
+                ``None`` for the process's entire lifetime. Returning a
+                plain ``False`` here would make every future sweep silently
+                fall back to a stale-looking "no task" for chats that may
+                well still be running — reviving the exact bug this method
+                exists to fix. Raising (instead of swallowing to False)
+                forces callers to apply their own fail-safe default, same
+                as the scan-exception path below.
+            Exception: Whatever the underlying scan raised, if a scan is in
+                progress when the error occurs. Callers must treat this as
+                "unknown" rather than "no task" — re-raising (instead of
+                swallowing to False) lets the caller apply its own
+                fail-safe default, mirroring ``task_exists_for_source``.
+        """
+        if self.client is None:
+            raise QueueUnavailableError(
+                "Queue server is not connected",
+                details={"chat_id": chat_id, "database_name": database_name},
+            )
+
+        try:
+            async for key in self.client.scan_iter(match="queue:task:*"):
+                key_str = _decode_bytes(key)
+                task_id = key_str.split(":")[-1]
+                task = await self.get_task(task_id)
+                if not task:
+                    continue
+                if task.get("operation") != OP_CHAT_BACKGROUND:
+                    continue
+                if task.get("status") not in ("queued", "running"):
+                    continue
+                data = task.get("data") or {}
+                if data.get("chat_id") != chat_id:
+                    continue
+                if data.get("database_name") != database_name:
+                    continue
+                return True
+        except Exception as exc:
+            logger.warning(
+                "task_exists_for_chat_scan_failed_reraising",
+                chat_id=chat_id,
                 database_name=database_name,
                 error_type=type(exc).__name__,
                 error_message=str(exc),

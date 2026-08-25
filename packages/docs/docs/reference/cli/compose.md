@@ -61,7 +61,7 @@ Built composition: my-knowledge-base
     • ./local/custom-entities
   Entities:      4,821
   Relationships: 9,304
-  Database:      ./output/my-knowledge-base/app.db
+  Database:      ./output/my-knowledge-base
 
 Next steps:
   chaoscypher compose up -c axiomatize.yaml
@@ -123,10 +123,10 @@ Starting composition: my-knowledge-base
 
 Built composition: my-knowledge-base
   ...
-
-Server running at http://localhost:8081
-Press Ctrl+C to stop
 ```
+
+The foreground server then blocks until stopped (Ctrl+C); on exit the CLI
+prints `Composition stopped`.
 
 **Start in the background:**
 

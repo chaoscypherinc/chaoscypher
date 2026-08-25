@@ -81,7 +81,13 @@ class RecordingQueueClient:
 
         Mirrors how QueueWorker._execute_handler invokes the handler — passes
         data, metadata, task_id positionally so HandlerSpec-style handlers
-        receive them correctly.
+        receive them correctly. It does NOT replicate _execute_handler's
+        error handling: there, permanent errors are classified and returned
+        as failure envelopes rather than raised, and CancelledError is
+        re-raised after marking the task hash. Tests pinning propagation
+        semantics must drive the real _execute_handler (see
+        packages/core/tests/unit/queue/test_failed_task_retention.py and
+        test_worker_process_loop_coverage.py), not this fixture.
 
         Raises:
             KeyError: if no handler is registered for (queue_name, op).

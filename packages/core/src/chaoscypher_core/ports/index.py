@@ -87,6 +87,14 @@ class IndexingProtocol(Protocol):
             - 'indexed' means has embedding but not yet in vector search index
             - 'committed' means indexed in sqlite-vec and searchable
 
+        Deprecated:
+            Prefer :meth:`update_chunk_embeddings_batch` for multi-chunk
+            writes — this single-row method costs one full-row SELECT plus
+            one real COMMIT per call. No production multi-chunk caller
+            remains (the CLI's ``index_file`` embedding wave was the last
+            and now uses the batch form); kept for isolated single-chunk
+            writers.
+
         """
         ...
 
@@ -136,6 +144,26 @@ class IndexingProtocol(Protocol):
         Notes:
             - Used by SearchService to hydrate chunk results
             - Returns None if chunk not found
+
+        """
+        ...
+
+    def get_chunks_by_ids_batch(self, chunk_ids: list[str]) -> list[dict[str, Any]]:
+        """Fetch multiple chunks by UUID in one query.
+
+        Batch sibling of ``get_chunk_by_id`` with the identical per-chunk
+        dict shape.
+
+        Args:
+            chunk_ids: Chunk UUIDs.
+
+        Returns:
+            Chunk dictionaries for every id that exists, in input order;
+            missing ids are silently absent.
+
+        Notes:
+            - Used by SearchService to hydrate a page of chunk results in
+              one round trip instead of one SELECT per chunk.
 
         """
         ...

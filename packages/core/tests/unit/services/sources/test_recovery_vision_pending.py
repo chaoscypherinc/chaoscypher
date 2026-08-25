@@ -15,6 +15,14 @@ Guard cases:
 - source with no vision_job row → skip (healthy).
 - source recently active → skip (heartbeat debounce).
 - source with pending rows but queue task already in flight → debounce.
+
+The mid-flight debounce is PAGE-scoped (``QueueClient.in_flight_vision_page_ids``),
+not source-scoped: vision pages are enqueued as one N-page batch and drained
+one at a time (QUEUE_LLM concurrency=1), so a coarse "any task live for this
+source" check would suppress recovery of a genuinely lost page for as long as
+ANY sibling page in the batch is still live. Mirrors ``in_flight_chunk_task_ids``,
+the filter ``_classify_extracting`` uses for its own compound (per-chunk)
+dispatch for the same reason.
 """
 
 from __future__ import annotations
@@ -126,6 +134,13 @@ async def test_vision_pending_source_re_enqueues_pending_pages(
     queue = AsyncMock()
     queue.enqueue = AsyncMock(return_value={"task_id": "t-vp"})
     queue.task_exists_for_source = AsyncMock(return_value=False)
+    # No live tasks -> the page-scoped filter passes every PENDING row
+    # through unchanged. Set explicitly rather than relying on AsyncMock's
+    # auto-attribute default (a bare AsyncMock() would still evaluate
+    # truthy/degrade in a way that happens to dispatch everything here, but
+    # that's an accident of the mock library, not an assertion this test
+    # should depend on).
+    queue.in_flight_vision_page_ids = AsyncMock(return_value=set())
 
     _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-1")
     _create_vision_job_and_pages(
@@ -162,6 +177,7 @@ async def test_vision_pending_all_pages_pending_gets_all_re_enqueued(
     queue = AsyncMock()
     queue.enqueue = AsyncMock(return_value={"task_id": "t"})
     queue.task_exists_for_source = AsyncMock(return_value=False)
+    queue.in_flight_vision_page_ids = AsyncMock(return_value=set())
 
     _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-allpending")
     _create_vision_job_and_pages(
@@ -314,6 +330,125 @@ async def test_vision_pending_queue_task_in_flight_is_debounced(
 
 
 @pytest.mark.asyncio
+async def test_vision_pending_mid_flight_only_dispatches_missing_pages(
+    in_memory_adapter,
+) -> None:
+    """A MIXED live/lost wave dispatches ONLY the genuinely missing pages.
+
+    Regression test for entry 920 (fix-round follow-up): the mid-flight
+    sub-branch previously had NO debounce at all, then briefly had a
+    source-level ``_queue_has_task_for`` debounce that fixed the billable-
+    duplicate bug but introduced a coarser regression of its own — on a
+    5-page job where 1 page is still live and 2 were lost (worker crash /
+    Valkey eviction), a source-level "any task live" check would suppress
+    the WHOLE compound dispatch until the live page drains, which at
+    QUEUE_LLM concurrency=1 can be most of the job's duration. The fix is
+    page-scoped, mirroring ``in_flight_chunk_task_ids``
+    (``_classify_extracting``'s per-chunk filter): only pages NOT in the
+    in-flight set get re-dispatched.
+
+    3 PENDING pages; page 1 is reported live, pages 2-3 are not -> exactly
+    2 enqueues, for pages 2 and 3 only.
+    """
+    queue = AsyncMock()
+    queue.enqueue = AsyncMock(return_value={"task_id": "t"})
+    queue.task_exists_for_source = AsyncMock(return_value=False)
+
+    _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-mixed")
+    _create_vision_job_and_pages(
+        in_memory_adapter,
+        source_id="src-vp-mixed",
+        page_count=3,
+    )
+    pending_rows = in_memory_adapter.list_vision_page_descriptions("src-vp-mixed")
+    live_page_id = pending_rows[0]["id"]
+    lost_page_ids = {row["id"] for row in pending_rows[1:]}
+
+    # Only page 1's task is still live on the queue.
+    queue.in_flight_vision_page_ids = AsyncMock(return_value={live_page_id})
+
+    recovery = SourceRecovery(adapter=in_memory_adapter, queue_client=queue)
+    stats = await recovery.reconcile_database(database_name="default")
+
+    assert stats.recovered == 1
+    assert queue.enqueue.await_count == 2
+    dispatched_page_ids = {c.kwargs["data"]["page_id"] for c in queue.enqueue.await_args_list}
+    assert dispatched_page_ids == lost_page_ids, (
+        f"expected only the 2 lost pages {lost_page_ids}, got {dispatched_page_ids}"
+    )
+    assert live_page_id not in dispatched_page_ids
+
+
+@pytest.mark.asyncio
+async def test_vision_pending_mid_flight_all_pages_in_flight_skips_entirely(
+    in_memory_adapter,
+) -> None:
+    """Every PENDING page already has a live task -> skip the whole dispatch.
+
+    Boundary of the page-scoped filter: when the in-flight set covers every
+    remaining pending page, the compound dispatch list empties out and the
+    branch must return None (counted skipped_healthy), not an empty
+    compound dispatch.
+    """
+    queue = AsyncMock()
+    queue.enqueue = AsyncMock()
+    queue.task_exists_for_source = AsyncMock(return_value=False)
+
+    _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-page-inflight")
+    _create_vision_job_and_pages(
+        in_memory_adapter,
+        source_id="src-vp-page-inflight",
+        page_count=3,
+        completed=1,  # 2 PENDING remain -> mid-flight, not terminal
+    )
+    pending_rows = in_memory_adapter.list_vision_page_descriptions(
+        "src-vp-page-inflight", statuses=[VisionPageStatus.PENDING]
+    )
+    queue.in_flight_vision_page_ids = AsyncMock(return_value={row["id"] for row in pending_rows})
+
+    recovery = SourceRecovery(adapter=in_memory_adapter, queue_client=queue)
+    stats = await recovery.reconcile_database(database_name="default")
+
+    assert stats.recovered == 0
+    assert stats.skipped_healthy == 1
+    queue.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_vision_pending_mid_flight_in_flight_check_failure_suppresses_dispatch(
+    in_memory_adapter,
+) -> None:
+    """A queue-side error checking in-flight pages must suppress this pass entirely.
+
+    Deliberately the OPPOSITE polarity from ``_classify_extracting``'s
+    per-chunk fallback (which degrades to "dispatch everything" on a scan
+    exception): that idiom is only safe for chunks because extract_chunk
+    has a documented pre-work DB short-circuit. A vision page pays the
+    billable LLM call BEFORE its CAS in ``update_vision_page_description``
+    rejects a duplicate, so "assume nothing is in flight, dispatch
+    everything" on a transient Valkey blip would re-open the exact
+    money bug this filter exists to close. Mirrors
+    ``_queue_has_task_for``'s assume-in-flight-on-error polarity
+    (``queue_check_failed_assuming_in_flight``) instead: suppress, log,
+    and let the ~60s reconcile pass retry.
+    """
+    queue = AsyncMock()
+    queue.enqueue = AsyncMock(return_value={"task_id": "t"})
+    queue.task_exists_for_source = AsyncMock(return_value=False)
+    queue.in_flight_vision_page_ids = AsyncMock(side_effect=RuntimeError("valkey blip"))
+
+    _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-check-failed")
+    _create_vision_job_and_pages(in_memory_adapter, source_id="src-vp-check-failed", page_count=2)
+
+    recovery = SourceRecovery(adapter=in_memory_adapter, queue_client=queue)
+    stats = await recovery.reconcile_database(database_name="default")
+
+    assert stats.recovered == 0
+    assert stats.skipped_healthy == 1
+    queue.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_vision_pending_stale_source_gets_redispatched(
     in_memory_adapter,
 ) -> None:
@@ -325,6 +460,7 @@ async def test_vision_pending_stale_source_gets_redispatched(
     queue = AsyncMock()
     queue.enqueue = AsyncMock(return_value={"task_id": "t"})
     queue.task_exists_for_source = AsyncMock(return_value=False)
+    queue.in_flight_vision_page_ids = AsyncMock(return_value=set())
 
     _seed_vision_pending_source(in_memory_adapter, source_id="src-vp-stale")
     _create_vision_job_and_pages(in_memory_adapter, source_id="src-vp-stale", page_count=2)

@@ -5,12 +5,17 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
 
 from chaoscypher_core.services.events.health.models import ProbeResult
-from chaoscypher_core.services.events.health.pause_evaluator import HealthPauseEvaluator
+from chaoscypher_core.services.events.health.pause_evaluator import (
+    HealthPauseEvaluator,
+    _format_pause_reason,
+    _parse_pause_reason,
+)
 from chaoscypher_core.services.events.health.registry import HealthRegistry
 
 
@@ -104,6 +109,47 @@ class TestHealthPauseEvaluator:
         await evaluator.tick()
 
         adapter.set_system_paused.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_adapter_calls_run_off_the_event_loop(self) -> None:
+        """tick() offloads blocking adapter calls via asyncio.to_thread.
+
+        The health-monitor loop shares the neuron event loop with the
+        poller/heartbeat/pubsub tasks, so synchronous SQLite calls must
+        never run directly on it.
+        """
+        import threading
+
+        loop_thread = threading.current_thread()
+        call_threads: list[threading.Thread] = []
+
+        def _record_state() -> dict[str, object]:
+            call_threads.append(threading.current_thread())
+            return {
+                "id": 1,
+                "processing_paused": False,
+                "processing_paused_at": None,
+                "processing_paused_reason": None,
+                "paused_by": None,
+            }
+
+        def _record_pause(**_kwargs: object) -> None:
+            call_threads.append(threading.current_thread())
+
+        probe = _StubProbe("blocking")
+        probe.set_status("error")
+        evaluator, adapter = _make_evaluator([probe], trip=1)
+        adapter.get_system_state.side_effect = _record_state
+        adapter.set_system_paused.side_effect = _record_pause
+
+        # trip=1 → the first tick reads state AND writes the pause.
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_called_once()
+        assert len(call_threads) == 2
+        assert all(t is not loop_thread for t in call_threads), (
+            "adapter calls must run in a worker thread, not on the event loop"
+        )
 
     @pytest.mark.asyncio
     async def test_trips_after_threshold(self) -> None:
@@ -218,3 +264,207 @@ class TestHealthPauseEvaluator:
             await evaluator.tick()
 
         adapter.set_system_paused.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_restart_recovers_and_clears_owned_probe_trip(self) -> None:
+        """A fresh evaluator (empty in-memory witness) against an
+        already-paused adapter re-derives the tripped-probe set from the
+        persisted reason and clears the pause once its own probe -- which
+        it can observe and is green -- satisfies the clear threshold.
+
+        This is the restart scenario from entry 804: the process that
+        caused the pause restarted, losing `_tripped_probes`, but the
+        persisted pause state still names the probe that tripped it.
+        """
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        # Starts "ok" -- simulates the probe having recovered by the time
+        # this fresh evaluator instance starts ticking after restart.
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: disk_space",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_called_once()
+        call_kwargs = adapter.set_system_paused.call_args[1]
+        assert call_kwargs["is_paused"] is False
+
+    @pytest.mark.asyncio
+    async def test_restart_leaves_foreign_trip_alone(self) -> None:
+        """A fresh evaluator must never clear a persisted pause whose
+        reason names only probes it does not itself register -- e.g. a
+        Cortex process restarting into a pause that Neuron's QueueProbe
+        caused. Disjoint-probe-set correctness: this evaluator has no way
+        to vouch for a probe it cannot check.
+        """
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: queue",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_restart_leaves_alone_on_partial_ownership(
+        self,
+        structlog_for_caplog: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A fresh evaluator must NOT clear a pause when it owns only
+        SOME of the persisted tripped probes -- e.g. Cortex (DiskSpaceProbe
+        only) restarting into a pause that Neuron jointly tripped via
+        DiskSpaceProbe *and* QueueProbe. Accepting a partial match would
+        let this process authorize a GLOBAL clear while blind to whether
+        the probe it can't check (``queue``) is still failing. Partial
+        coverage must be treated exactly like zero coverage, and the
+        decision must be logged (naming the unowned probe) rather than
+        silently doing nothing.
+        """
+        caplog.set_level(logging.DEBUG)
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: disk_space, queue",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_not_called()
+        assert "foreign_auto_pause_trip" in caplog.text
+        assert "queue" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_restart_recovers_and_clears_when_own_probes_fully_cover(self) -> None:
+        """When this process's own registered probes are a SUPERSET of the
+        persisted tripped names (e.g. a Neuron-shaped evaluator that
+        registers both DiskSpaceProbe and QueueProbe, matching a pause
+        jointly tripped by both), the evaluator can fully vouch for the
+        pause and clears it once every persisted probe is green for the
+        clear threshold.
+        """
+        disk_probe = _StubProbe("disk_space", auto_recoverable=True)
+        queue_probe = _StubProbe("queue", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([disk_probe, queue_probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: disk_space, queue",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_called_once()
+        call_kwargs = adapter.set_system_paused.call_args[1]
+        assert call_kwargs["is_paused"] is False
+
+    @pytest.mark.asyncio
+    async def test_restart_leaves_pause_alone_on_unparseable_reason(self) -> None:
+        """A missing or unparseable persisted reason must never be treated
+        as a zero-probe trip. The evaluator leaves the pause alone rather
+        than guessing, so a human-readable reason format change (or a
+        genuinely missing reason) fails safe instead of auto-clearing.
+        """
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": None,
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_restart_leaves_pause_alone_on_corrupted_reason(
+        self,
+        structlog_for_caplog: None,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A non-``None`` but corrupted/legacy reason (present, but not
+        carrying the ``"Auto-paused: "`` prefix this evaluator writes --
+        e.g. left over from a prior reason format, or a manual note that
+        happens to be sitting in a ``health_monitor``-attributed row) must
+        also fail safe rather than clearing, with a warning logged.
+        """
+        caplog.set_level(logging.WARNING)
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Legacy pause note",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+
+        await evaluator.tick()
+
+        adapter.set_system_paused.assert_not_called()
+        assert "unparseable_auto_pause_reason" in caplog.text
+
+
+class TestPauseReasonFormatParse:
+    """Round-trip contract between the auto-pause reason writer and the
+    restart-recovery parser -- both must agree on the same format so a
+    process restart can re-derive the tripped-probe set (see entry 804).
+    """
+
+    def test_round_trip_single_probe(self) -> None:
+        """A single probe name formats and parses back losslessly."""
+        reason = _format_pause_reason({"disk_space"})
+        assert reason == "Auto-paused: disk_space"
+        assert _parse_pause_reason(reason) == {"disk_space"}
+
+    def test_round_trip_multiple_probes_sorted(self) -> None:
+        """Multiple probe names are sorted, comma-joined, and round-trip
+        regardless of the input set's iteration order.
+        """
+        reason = _format_pause_reason({"queue", "disk_space"})
+        assert reason == "Auto-paused: disk_space, queue"
+        assert _parse_pause_reason(reason) == {"disk_space", "queue"}
+
+    def test_parse_returns_none_for_missing_reason(self) -> None:
+        """A ``None`` reason is unparseable, not a zero-probe trip."""
+        assert _parse_pause_reason(None) is None
+
+    def test_parse_returns_none_for_wrong_prefix(self) -> None:
+        """A reason without the auto-pause prefix (e.g. a manual-pause
+        message) is never treated as parseable probe data.
+        """
+        assert _parse_pause_reason("Manual maintenance") is None
+
+    def test_parse_returns_none_for_empty_probe_list(self) -> None:
+        """A reason carrying the auto-pause prefix but no probe names
+        after it must fail safe rather than parsing to an empty set.
+        """
+        assert _parse_pause_reason("Auto-paused: ") is None

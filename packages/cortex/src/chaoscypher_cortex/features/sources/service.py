@@ -1787,10 +1787,11 @@ class SourceService:
             # so we route through the dedicated state-machine method
             # introduced in Phase 5 Task E (see
             # ``SourceIndexingMixin.reset_to_indexed_for_re_extract``).
-            # F53 will add proper ChunkExtractionJob row cancellation here;
-            # for now the method only NULLs current_extraction_job_id so
-            # any running handler discovers its slot has been reassigned
-            # and exits on its next checkpoint. The
+            # The method also cancels every still-active ChunkExtractionJob
+            # for this source (audit fix #F53): dispatched chunk handlers
+            # skip a cancelled job at their next checkpoint, and the
+            # re-dispatch below finds no active job so it starts a fresh
+            # one rather than resuming the run being replaced. The
             # ``clear_source_commit_payload`` call nulls the heavy column
             # without rewriting the row twice.
             self.storage_adapter.reset_to_indexed_for_re_extract(source_id)

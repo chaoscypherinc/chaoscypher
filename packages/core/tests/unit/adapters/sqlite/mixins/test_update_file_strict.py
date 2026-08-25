@@ -111,3 +111,78 @@ def test_missing_source_raises_not_found(adapter: _StubAdapter) -> None:
         adapter.update_file(
             "nonexistent_source", database_name=DB_NAME, updates={"status": "indexed"}
         )
+
+
+# ---------------------------------------------------------------------------
+# Narrow write projection (2026-08-18): the update SELECT must not hydrate
+# heavy columns, and applying an update must not clobber unloaded ones.
+# ---------------------------------------------------------------------------
+
+
+def _capture_statements(session: Session) -> list[str]:
+    """Attach an event listener recording every SQL statement on the session's engine."""
+    from sqlalchemy import event
+
+    captured: list[str] = []
+
+    def _record(_conn, _cursor, statement, _params, _context, _executemany) -> None:
+        captured.append(statement)
+
+    event.listen(session.get_bind(), "before_cursor_execute", _record)
+    return captured
+
+
+def test_update_file_select_excludes_full_text(adapter: _StubAdapter) -> None:
+    """The row-lookup SELECT projects only the key columns — never full_text."""
+    captured = _capture_statements(adapter.session)
+
+    adapter.update_file("src_1", database_name=DB_NAME, updates={"status": "indexed"})
+
+    selects = [s for s in captured if s.lstrip().upper().startswith("SELECT")]
+    assert selects, "update_file should have issued a lookup SELECT"
+    for stmt in selects:
+        assert "full_text" not in stmt, f"lookup SELECT must not hydrate full_text: {stmt}"
+        assert "commit_payload" not in stmt
+
+
+def test_update_source_columns_select_excludes_full_text(adapter: _StubAdapter) -> None:
+    """update_source_columns' lookup SELECT likewise skips heavy columns."""
+    captured = _capture_statements(adapter.session)
+
+    adapter.update_source_columns(
+        source_id="src_1", database_name=DB_NAME, updates={"status": "indexed"}
+    )
+
+    selects = [s for s in captured if s.lstrip().upper().startswith("SELECT")]
+    assert selects, "update_source_columns should have issued a lookup SELECT"
+    for stmt in selects:
+        assert "full_text" not in stmt, f"lookup SELECT must not hydrate full_text: {stmt}"
+        assert "commit_payload" not in stmt
+
+
+def test_update_does_not_clobber_full_text(adapter: _StubAdapter) -> None:
+    """A two-field update leaves the unloaded full_text column untouched."""
+    adapter.update_file(
+        "src_1", database_name=DB_NAME, updates={"full_text": "the whole document body"}
+    )
+    adapter.session.expire_all()
+
+    adapter.update_file("src_1", database_name=DB_NAME, updates={"status": "indexed"})
+    adapter.update_source_columns(
+        source_id="src_1", database_name=DB_NAME, updates={"chunk_count": 3}
+    )
+    adapter.session.expire_all()
+
+    row = adapter.session.get(SourceRow, "src_1")
+    assert row is not None
+    assert row.full_text == "the whole document body"
+    assert row.status == "indexed"
+    assert row.chunk_count == 3
+
+
+def test_unknown_field_raises_without_lazy_loads(adapter: _StubAdapter) -> None:
+    """update_source_columns' unknown-field guard still fails loudly."""
+    with pytest.raises(ValueError, match="unknown field"):
+        adapter.update_source_columns(
+            source_id="src_1", database_name=DB_NAME, updates={"cleaner_chars_remoevd": 1}
+        )

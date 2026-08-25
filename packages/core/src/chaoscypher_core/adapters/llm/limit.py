@@ -58,7 +58,7 @@ class PrioritySemaphore:
         >>>
         >>> # Initialize semaphore (usually done once at startup)
         >>> semaphore = get_llm_semaphore(
-        ...     max_concurrent=1,
+        ...     max_concurrent=2,
         ...     reserved_high_priority=1
         ... )
         >>>
@@ -95,7 +95,7 @@ class PrioritySemaphore:
 
         """
         self.max_concurrent = max_concurrent
-        self.reserved_high_priority = min(reserved_high_priority, max_concurrent)
+        self.reserved_high_priority = self._clamp_reserved(reserved_high_priority, max_concurrent)
 
         # Waiting queues (each entry is an Event to signal when slot is granted)
         self.high_priority_waiters: asyncio.Queue[asyncio.Event] = asyncio.Queue()
@@ -129,9 +129,22 @@ class PrioritySemaphore:
         logger.info(
             "llm_semaphore_initialized",
             max_concurrent=max_concurrent,
-            reserved_high_priority=reserved_high_priority,
-            low_priority_limit=max_concurrent - reserved_high_priority,
+            reserved_high_priority=self.reserved_high_priority,
+            low_priority_limit=max_concurrent - self.reserved_high_priority,
         )
+
+    @staticmethod
+    def _clamp_reserved(reserved_high_priority: int, max_concurrent: int) -> int:
+        """Clamp reserved high-priority slots below ``max_concurrent``.
+
+        Reserving *all* slots for high priority (``reserved == max_concurrent``)
+        drives ``available_for_low`` to 0 in ``_try_grant_slots``, permanently
+        starving every low-priority request behind the untimed
+        ``await my_event.wait()`` in ``acquire``. At least one slot must
+        always be reachable by the low tier, matching the UI's own clamp
+        (``VRAMPresets.tsx``, ``maxReserved = maxConcurrent - 1``).
+        """
+        return min(reserved_high_priority, max(max_concurrent - 1, 0))
 
     @asynccontextmanager
     async def acquire(self, high_priority: bool = False) -> AsyncGenerator[None]:
@@ -245,7 +258,13 @@ class PrioritySemaphore:
                     # (total - reserved for high priority)
                     available_for_low = self.max_concurrent - self.reserved_high_priority
 
-                    if self.active_count < available_for_low:
+                    # Gate on the low tier's OWN usage (active_low_priority),
+                    # not total active_count. Active high-priority requests
+                    # occupy slots outside the low tier's allowance and must
+                    # not count against it — otherwise slots the low tier is
+                    # entitled to can sit idle while a waiter starves forever
+                    # (acquire()'s wait has no timeout).
+                    if self.active_low_priority < available_for_low:
                         event = await self.low_priority_waiters.get()
                         if event in self._abandoned:
                             # Cancelled waiter — skip without consuming a slot.
@@ -305,10 +324,14 @@ class PrioritySemaphore:
     async def _handle_cancelled_wait(self, my_event: asyncio.Event, high_priority: bool) -> None:
         """Clean up slot accounting when a waiter is cancelled mid-``acquire``.
 
-        Two cases, distinguished under the lock so they stay consistent with
+        Three cases, distinguished under the lock so they stay consistent with
         ``_try_grant_slots`` (which sets the event + increments under the same
         lock):
 
+        * Force-woken by ``clear_waiting_queues`` (``my_event`` in
+          ``_cleared``): the event is set but no slot was ever granted, so
+          drop the tombstone and do nothing — releasing here would drive
+          ``active_count`` below reality and over-admit.
         * Slot already granted to us (``my_event`` is set): we will never run
           the ``finally`` that releases it, so release it here and hand the
           freed slot to the next waiter.
@@ -317,6 +340,9 @@ class PrioritySemaphore:
         """
         regrant = False
         async with self.lock:
+            if my_event in self._cleared:
+                self._cleared.discard(my_event)
+                return
             if my_event.is_set():
                 self._release_slot_locked(high_priority)
                 regrant = True
@@ -370,11 +396,21 @@ class PrioritySemaphore:
 
             if reserved_high_priority is not None:
                 old_reserved = self.reserved_high_priority
-                self.reserved_high_priority = min(reserved_high_priority, self.max_concurrent)
+                self.reserved_high_priority = self._clamp_reserved(
+                    reserved_high_priority, self.max_concurrent
+                )
                 logger.info(
                     "llm_reserved_high_priority_updated",
                     old_value=old_reserved,
                     new_value=self.reserved_high_priority,
+                )
+            elif max_concurrent is not None:
+                # max_concurrent shrank (or grew) without an accompanying
+                # reserved_high_priority update: re-clamp the existing value
+                # so it can't be left >= the new max_concurrent, which would
+                # drive available_for_low negative and starve the low tier.
+                self.reserved_high_priority = self._clamp_reserved(
+                    self.reserved_high_priority, self.max_concurrent
                 )
 
         # Try to grant slots with new config

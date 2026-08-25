@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -138,6 +138,9 @@ dev = [
     "pre-commit>=4.5.0,<5",
     # Security scanning
     "pip-audit>=2.10.0,<3",
+    # Secret-scan fallback for environments that cannot run the gitleaks
+    # binary (the cloud routine sandbox) — see scripts/secrets_scan.py.
+    "detect-secrets>=1.5.0,<2",
     # License scanning (runtime closure only — see scripts/license_check_python.py)
     "pip-licenses>=5.0.0,<6",
     # Docstring coverage

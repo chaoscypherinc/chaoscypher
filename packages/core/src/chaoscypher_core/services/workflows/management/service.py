@@ -575,21 +575,14 @@ class WorkflowService:
         # Initialize aggregated stats
         total_workflows = len(workflows)
         active_workflows = sum(1 for w in workflows if w.get("is_active", False))
-        total_executions = 0
-        successful_executions = 0
-        failed_executions = 0
-        cancelled_executions = 0
 
-        # Aggregate from individual workflow statistics
-        for workflow_dict in workflows:
-            workflow_id = workflow_dict["id"]
-            stats = self.storage.get_workflow_statistics(workflow_id)
-            if stats:
-                # Storage layer returns dict - use dict access
-                total_executions += stats.get("total_executions", 0)
-                successful_executions += stats.get("successful_executions", 0)
-                failed_executions += stats.get("failed_executions", 0)
-                cancelled_executions += stats.get("cancelled_executions", 0)
+        # One aggregate SELECT instead of a per-workflow statistics
+        # round-trip — this method sits on the 2-second dashboard poll.
+        totals = self.storage.get_workflow_statistics_totals(database_name=self.database_name)
+        total_executions = totals["total_executions"]
+        successful_executions = totals["successful_executions"]
+        failed_executions = totals["failed_executions"]
+        cancelled_executions = totals["cancelled_executions"]
 
         # Calculate success rate
         success_rate = (

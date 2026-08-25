@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 /**
- * Test render helper that mirrors `App.tsx`'s provider stack so tests
- * exercise the same context wiring as production.
+ * Test render helper that wraps children in the core subset of `App.tsx`'s
+ * provider stack.
  *
  * Wraps children in:
  *   MemoryRouter → ThemeProvider (minimal dark theme) → AuthProvider
  *     → NotificationProvider → SettingsProvider (fake settings)
+ *
+ * Deliberately EXCLUDES the live-polling providers `DashboardProvider` and
+ * `PublicSettingsProvider` (both fire network requests on mount). Components
+ * that read `useDashboard()` / `usePublicSettings()` — e.g. `MiniSystemStatus`
+ * and anything rendering it — must mock those hooks (or supply the provider
+ * themselves) rather than rely on this helper.
  *
  * Usage:
  *   render(

@@ -3,11 +3,10 @@
 
 import { lazy, Suspense, useCallback, useContext, useEffect, useState, useMemo } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, Outlet } from 'react-router';
-import { ThemeProvider, createTheme, CssBaseline, alpha } from '@mui/material';
+import { ThemeProvider, CssBaseline } from '@mui/material';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
-import { ChaosCypherPalette, ChaosCypherBackground, ChaosCypherNeutrals } from './theme/palette';
-import { getComponentOverrides } from './theme/componentOverrides';
+import { createAppTheme } from './theme/appTheme';
 import Layout from './components/Layout';
 import { ConnectionErrorScreen } from './components/ConnectionErrorScreen';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -257,40 +256,7 @@ function AppContent() {
   // Once settings loads, the user's saved `dark_mode` wins.
   const darkMode = settings?.dark_mode ?? true;
   const theme = useMemo(
-    () =>
-      createTheme({
-        palette: {
-          mode: darkMode ? 'dark' : 'light',
-          primary: {
-            main: ChaosCypherPalette.primary,
-          },
-          secondary: {
-            main: ChaosCypherPalette.secondary,
-          },
-          error: {
-            main: ChaosCypherPalette.error,
-          },
-          warning: {
-            main: ChaosCypherPalette.warning,
-          },
-          info: {
-            main: ChaosCypherPalette.info,
-          },
-          success: {
-            main: ChaosCypherPalette.success,
-          },
-          background: darkMode
-            ? ChaosCypherBackground.dark
-            : ChaosCypherBackground.light,
-          text: {
-            primary:   ChaosCypherNeutrals.textPrimary,
-            secondary: ChaosCypherNeutrals.textSecondary,
-            disabled:  ChaosCypherNeutrals.textTertiary,
-          },
-          divider: alpha(ChaosCypherNeutrals.borderDivider, 0.4),
-        },
-        components: getComponentOverrides(),
-      }),
+    () => createAppTheme(darkMode),
     [darkMode]
   );
 

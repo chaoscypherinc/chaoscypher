@@ -84,6 +84,7 @@ async def setup_llm_handlers(ctx: WorkerContext) -> None:
         settings,
         current_database,
         engine_settings=ctx.get("engine_settings"),
+        storage_adapter=ctx["storage_adapter"],
     )
 
     # Initialize Ollama load balancer if applicable

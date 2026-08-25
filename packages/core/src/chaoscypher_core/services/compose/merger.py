@@ -192,6 +192,13 @@ class NamespaceMerger:
                     errors.append(error_msg)
                     logger.exception("merger_package_failed", package=pkg.name)
 
+            # Derive totals from the merged structures, not the per-package
+            # counters: under REPLACE (or same-namespace collisions) a
+            # duplicate id increments the counter once per package while the
+            # dict keeps a single entry, overstating CompositionResult totals.
+            total_entities = len(merged_entities)
+            total_relationships = len(merged_relationships)
+
             # Write merged data to database files
             if not errors:
                 await self._write_database(

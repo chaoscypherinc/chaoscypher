@@ -1210,3 +1210,87 @@ class TestPackagesDirResolution:
         resolved = list_module.get_packages_dir()
         assert resolved == remove_module.get_packages_dir()
         assert resolved == tmp_path / "data" / "packages"
+
+
+# ---------------------------------------------------------------------------
+# hub-unreachable hints (search) + resolved-owner download (pull)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchHubUnreachable:
+    """search must print the operator hint on a plain ExternalServiceError."""
+
+    def test_search_hub_unreachable_prints_hint_not_traceback(self) -> None:
+        runner = CliRunner()
+        from chaoscypher_core.exceptions import ExternalServiceError
+
+        client_mock = MagicMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=False)
+        client_mock.search = AsyncMock(
+            side_effect=ExternalServiceError("Lexicon", "Connection refused")
+        )
+
+        with (
+            patch(
+                "chaoscypher_cli.commands.lexicon.search.get_auth_config",
+                return_value=None,
+            ),
+            patch(
+                "chaoscypher_cli.commands.lexicon.search.get_lexicon_url",
+                return_value="https://lexicon.test",
+            ),
+            patch(
+                "chaoscypher_cli.commands.lexicon.search.get_settings",
+            ) as mock_settings,
+            patch(
+                "chaoscypher_cli.commands.lexicon.search.LexiconClient",
+                return_value=client_mock,
+            ),
+        ):
+            mock_settings.return_value.cli.search_default_limit = 20
+            result = runner.invoke(search, ["anything"])
+
+        assert result.exit_code == 1
+        assert "Cannot reach Lexicon Hub" in result.output
+        assert "lexicon.test" in result.output
+        assert "Traceback" not in result.output
+
+
+class TestPullResolvedOwner:
+    """pull with a bare package name must download with the RESOLVED owner."""
+
+    def test_pull_bare_name_downloads_with_resolved_owner(self, tmp_path: Path) -> None:
+        runner = CliRunner()
+
+        client_mock = MagicMock()
+        client_mock.__aenter__ = AsyncMock(return_value=client_mock)
+        client_mock.__aexit__ = AsyncMock(return_value=False)
+        pkg_info = MagicMock()
+        pkg_info.version = "1.0.0"
+        pkg_info.owner_username = "john"
+        client_mock.get_package_info = AsyncMock(return_value=pkg_info)
+        client_mock.download = AsyncMock(return_value=b"PKG_DATA")
+
+        with (
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_auth_config",
+                return_value=MagicMock(token="tok"),
+            ),
+            patch(
+                "chaoscypher_cli.commands.lexicon.login.get_lexicon_url",
+                return_value="https://lexicon.test",
+            ),
+            patch(
+                "chaoscypher_core.services.lexicon.LexiconClient",
+                return_value=client_mock,
+            ),
+        ):
+            result = runner.invoke(pull, ["test-pkg", "--output", str(tmp_path)])
+
+        assert result.exit_code == 0, result.output
+        # get_package_info is called with the raw (empty) owner; download must
+        # use the owner the info lookup resolved — not the empty string, which
+        # produced a malformed …/packages//test-pkg/… URL.
+        client_mock.get_package_info.assert_awaited_once_with("", "test-pkg", None)
+        client_mock.download.assert_awaited_once_with("john", "test-pkg", "latest")

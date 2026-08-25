@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.services.vision.prompts import STANDALONE_IMAGE_PROMPT
 
 
@@ -33,9 +34,11 @@ logger = structlog.get_logger(__name__)
 class VisionResult:
     """Result of one ``describe_image`` call.
 
-    description: Text content of the LLM response, or None on hard
-                 failure (LLM raised, empty content with no thinking,
-                 etc.). Callers should treat None as FAILED.
+    description: Text content of the LLM response, or None on permanent
+                 failure (non-retryable LLM error, empty content with no
+                 thinking, etc.). Callers should treat None as FAILED.
+                 Retryable provider errors are NOT converted to None —
+                 they propagate to the queue's retry machinery.
     finish_reason: Provider-normalised reason. Common values:
                  'stop'   — model completed naturally.
                  'length' — hit max_tokens cap. Caller should mark
@@ -94,10 +97,16 @@ class VisionService:
 
         Returns:
             VisionResult(description, finish_reason). description is
-            None on hard failure (exception, empty content). On
-            finish_reason='length', description is the partial content
-            the model produced before being cut off — caller marks the
-            row TRUNCATED.
+            None on permanent failure (non-retryable provider error,
+            empty content). On finish_reason='length', description is
+            the partial content the model produced before being cut
+            off — caller marks the row TRUNCATED.
+
+        Raises:
+            LLMError: Retryable provider errors (rate limits, transient
+                5xx) propagate so the queue's retry machinery handles
+                them; retry exhaustion leaves the page row PENDING for
+                SourceRecovery to re-dispatch.
         """
         b64 = base64.b64encode(image_bytes).decode("utf-8")
         messages: list[dict[str, Any]] = [
@@ -118,6 +127,14 @@ class VisionService:
                 messages=messages,
                 max_tokens=max_tokens,
             )
+        except LLMError as exc:
+            if exc.is_retryable:
+                # Let the queue's retry machinery see transient provider
+                # errors (429s, 5xx) instead of burying them as a permanent
+                # per-page FAILED with a misleading "no content" message.
+                raise
+            logger.warning("vision_description_failed", exc_info=True)
+            return VisionResult(description=None, finish_reason=None)
         except Exception:
             logger.warning("vision_description_failed", exc_info=True)
             return VisionResult(description=None, finish_reason=None)

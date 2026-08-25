@@ -328,7 +328,7 @@ async def add_message(
     """
     # Existence check: the FK on chat_messages would otherwise surface a
     # missing chat as an IntegrityError 500 instead of a 404.
-    raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    raise_if_not_found(chat_service.get_chat_summary(chat_id), f"Chat {chat_id} not found")
     return chat_service.add_message(
         chat_id=chat_id,
         role=message_create.role,
@@ -356,7 +356,7 @@ async def get_chat_messages(
 
     - Single-user mode: the local operator owns everything.
     """
-    raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    raise_if_not_found(chat_service.get_chat_summary(chat_id), f"Chat {chat_id} not found")
     return chat_service.get_chat_messages(chat_id)
 
 
@@ -480,7 +480,7 @@ async def cancel_chat_turn(
     """
     from chaoscypher_core.streaming.chat.cancellation import request_cancel
 
-    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    chat = raise_if_not_found(chat_service.get_chat_summary(chat_id), f"Chat {chat_id} not found")
     if chat.get("status") != ChatStatus.PROCESSING:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -527,11 +527,6 @@ async def retry_chat_turn(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
-    if chat.get("status") == ChatStatus.PROCESSING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A turn is already in progress",
-        )
     if not any(m.get("role") == "user" for m in chat.get("messages") or []):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -539,7 +534,13 @@ async def retry_chat_turn(
         )
     await require_extraction_ready(settings)
 
-    chat_service.update_chat_status(chat_id, "processing")
+    # Atomic claim (CAS on status) — a plain read-check + write let two
+    # concurrent retries both pass the guard and double-enqueue the turn.
+    if not chat_service.try_begin_processing(chat_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A turn is already in progress",
+        )
     task_id = await queue_client.enqueue_task(
         queue=QUEUE_LLM,
         operation=OP_CHAT_BACKGROUND,
@@ -579,11 +580,6 @@ async def regenerate_chat_turn(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
-    if chat.get("status") == ChatStatus.PROCESSING:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A turn is already in progress",
-        )
     last_user = next(
         (m for m in reversed(chat.get("messages") or []) if m.get("role") == "user"),
         None,
@@ -595,8 +591,15 @@ async def regenerate_chat_turn(
         )
     await require_extraction_ready(settings)
 
+    # Atomic claim (CAS on status) BEFORE the destructive truncate — a plain
+    # read-check + write let two concurrent regenerates both pass the guard
+    # and double-enqueue the turn.
+    if not chat_service.try_begin_processing(chat_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A turn is already in progress",
+        )
     chat_service.truncate_from_message(chat_id, last_user["id"], inclusive=False)
-    chat_service.update_chat_status(chat_id, "processing")
     task_id = await queue_client.enqueue_task(
         queue=QUEUE_LLM,
         operation=OP_CHAT_BACKGROUND,
@@ -699,14 +702,6 @@ async def send_message(
     # Edit-and-resend: replace an existing user message (and everything
     # after it) with this content, atomically before the new row is added.
     if message.replace_from_message_id:
-        # The truncate is destructive: guard it like /retry and /regenerate
-        # so an in-flight worker turn can't flush buffered messages against
-        # a history edited out from under it.
-        if chat.get("status") == ChatStatus.PROCESSING:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A turn is already in progress",
-            )
         anchor = next(
             (
                 m
@@ -720,10 +715,20 @@ async def send_message(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="replace_from_message_id must be a user message in this chat",
             )
+        # The truncate is destructive: guard it like /retry and /regenerate
+        # so an in-flight worker turn can't flush buffered messages against
+        # a history edited out from under it. Atomic claim (CAS on status)
+        # — a plain read-check + write left a double-enqueue window.
+        if not chat_service.try_begin_processing(chat_id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A turn is already in progress",
+            )
         chat_service.truncate_from_message(chat_id, message.replace_from_message_id, inclusive=True)
 
     chat_service.add_message(chat_id, role="user", content=message.content)
-    chat_service.update_chat_status(chat_id, "processing")
+    if not message.replace_from_message_id:
+        chat_service.update_chat_status(chat_id, "processing")
 
     task_id = await queue_client.enqueue_task(
         queue=QUEUE_LLM,
@@ -773,7 +778,7 @@ async def chat_events(
 
     async def event_generator() -> AsyncIterator[bytes]:
         """Generate SSE events for the chat session."""
-        chat = chat_service.get_chat(chat_id)
+        chat = chat_service.get_chat_summary(chat_id)
         if chat is None:
             yield format_sse_event("error", {"error": f"Chat {chat_id} not found"})
             return
@@ -800,6 +805,29 @@ async def chat_events(
                     break
 
                 event_type = event.get("type", "unknown")
+
+                # Sentinel: the subscription is now live. Re-fetch the chat
+                # and reconcile — a terminal done/error published between the
+                # pre-subscribe status check above and the SUBSCRIBE landing
+                # was delivered to nobody, and without this the stream would
+                # hang on a chat that already finished. Never forwarded.
+                if event_type == "__subscribed__":
+                    current = chat_service.get_chat_summary(chat_id)
+                    current_status = (current or {}).get("status", ChatStatus.ACTIVE)
+                    if current_status in (ChatStatus.ACTIVE, ChatStatus.COMPLETED):
+                        yield format_sse_event("done", {"status": current_status})
+                        break
+                    if current_status == ChatStatus.ERROR:
+                        yield format_sse_event(
+                            "error",
+                            {
+                                "error": "Chat processing failed. Please try again.",
+                                "error_code": "CHAT_PROCESSING_FAILED",
+                            },
+                        )
+                        break
+                    continue
+
                 event_data = event.get("data", {})
                 yield format_sse_event(event_type, event_data)
 

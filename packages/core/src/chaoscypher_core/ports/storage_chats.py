@@ -38,6 +38,21 @@ class ChatStorageProtocol(Protocol):
         """Update chat."""
         ...
 
+    def claim_chat_processing(self, chat_id: str) -> bool:
+        """Atomically claim a chat for processing (compare-and-swap on status).
+
+        Must be a single guarded UPDATE (``WHERE status != 'processing'``)
+        so concurrent claims cannot both succeed.
+
+        Args:
+            chat_id: Chat to claim.
+
+        Returns:
+            True when this call transitioned the chat to ``processing``;
+            False when the chat is unknown or already processing.
+        """
+        ...
+
     def delete_chat(self, chat_id: str) -> bool:
         """Delete chat."""
         ...

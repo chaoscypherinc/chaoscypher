@@ -30,7 +30,11 @@ class TestDocumentProcessorQueue:
     @pytest.mark.asyncio
     async def test_add_first_document_starts_processing(self, processor):
         result = await processor.add_document(processor._test_file)
-        assert result["status"] in ("processing", "queued")
+        # A fresh processor has no live worker, so the first add always
+        # takes the start-worker branch — "queued" is only reachable while
+        # a worker is already running (see test_add_while_busy_queues).
+        assert result["status"] == "processing"
+        assert result["position"] == 0
         assert "file_id" in result
         processor.cancel()
 
@@ -78,9 +82,9 @@ class TestDocumentProcessorQueue:
 
     @pytest.mark.asyncio
     async def test_processing_completes_and_moves_to_completed(self, processor):
-        await processor.add_document(processor._test_file)
-        # Wait for processing to complete
-        await asyncio.sleep(0.1)
+        result = await processor.add_document(processor._test_file)
+        # Deterministic sync point instead of a fixed sleep.
+        await processor.wait_for_completion(result["file_id"], timeout=5)
         status = processor.get_status()
         assert status["current"] is None
         assert len(status["completed"]) == 1
@@ -89,8 +93,8 @@ class TestDocumentProcessorQueue:
     @pytest.mark.asyncio
     async def test_failed_processing_captured(self, processor):
         processor.pipeline_callback = AsyncMock(side_effect=RuntimeError("boom"))
-        await processor.add_document(processor._test_file)
-        await asyncio.sleep(0.1)
+        result = await processor.add_document(processor._test_file)
+        await processor.wait_for_completion(result["file_id"], timeout=5)
         status = processor.get_status()
         assert status["current"] is None
         assert len(status["completed"]) == 1
@@ -132,7 +136,7 @@ class TestWaitForCompletion:
         result = await processor.add_document(processor._test_file)
         file_id = result["file_id"]
         # Wait for it to actually complete
-        await asyncio.sleep(0.1)
+        await processor.wait_for_completion(file_id, timeout=5)
         # Now wait again — should return immediately from completed list
         wait_result = await processor.wait_for_completion(file_id, timeout=1)
         assert wait_result["status"] == "committed"
@@ -160,16 +164,17 @@ class TestWaitForCompletion:
     @pytest.mark.asyncio
     async def test_add_document_without_wait(self, processor):
         result = await processor.add_document(processor._test_file, wait=False)
-        assert result["status"] in ("processing", "queued")
+        # First add on a fresh processor: the worker always starts.
+        assert result["status"] == "processing"
         assert result["file_id"]
-        # Wait for cleanup
-        await asyncio.sleep(0.1)
+        # Deterministic cleanup barrier instead of a fixed sleep.
+        await processor.wait_for_completion(result["file_id"], timeout=5)
 
     @pytest.mark.asyncio
     async def test_get_completed(self, processor):
         result = await processor.add_document(processor._test_file)
         file_id = result["file_id"]
-        await asyncio.sleep(0.1)
+        await processor.wait_for_completion(file_id, timeout=5)
         completed = processor.get_completed(file_id)
         assert completed is not None
         assert completed["status"] == "committed"

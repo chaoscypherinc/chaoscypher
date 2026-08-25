@@ -18,6 +18,7 @@ satisfy the TaskHandler protocol (data, metadata=, task_id=).
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -125,6 +126,39 @@ class VisionOperationsService:
     # Operation handler
     # ------------------------------------------------------------------
 
+    def _bump_vision_activity(self, source_id: str) -> None:
+        """Checkpoint the source's ``last_activity_at`` after a page transitions terminal.
+
+        ``indexing_handler.py`` wraps only the load/vision-enqueue/chunk
+        stage in ``source_heartbeat`` — that context exits the instant the
+        per-page ``OP_VISION_PAGE`` tasks are enqueued, so ``last_activity_at``
+        freezes for the rest of the (potentially long) vision job. QUEUE_LLM
+        concurrency is 1, so a multi-page PDF routinely takes longer than the
+        reconciler's stall threshold to drain even though it is making
+        steady, healthy progress. Called from every per-page completion path
+        (success, truncated, failed-from-LLM, and the pre-LLM-call failure
+        paths in ``_mark_page_failed_and_advance_job``) so the reconciler
+        never mistakes a live vision job for a stalled one.
+
+        Mirrors the per-chunk checkpoint in
+        ``ChunkExtractionOperationsService`` — best-effort, swallows write
+        errors so a heartbeat hiccup never fails the page handler.
+        """
+        try:
+            self.adapter.update_source_last_activity(
+                source_id=source_id,
+                database_name=self.database_name,
+                at_time=datetime.now(UTC),
+            )
+        except Exception as exc:
+            logger.warning(
+                "vision_page_activity_checkpoint_failed",
+                source_id=source_id,
+                database_name=self.database_name,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
     async def _mark_page_failed_and_advance_job(
         self,
         *,
@@ -153,6 +187,7 @@ class VisionOperationsService:
             job_id=job_id,
             outcome=VisionPageStatus.FAILED,
         )
+        self._bump_vision_activity(source_id)
         if progress["is_terminal"]:
             await _enqueue_finalize(
                 source_id=source_id,
@@ -288,7 +323,11 @@ class VisionOperationsService:
         from chaoscypher_core.services.llm.spend import get_llm_spend_tracker
 
         try:
-            get_llm_spend_tracker().check_and_raise(
+            # The spend check runs blocking SQLite; offload it like every
+            # other storage touch in this method so it cannot stall the
+            # QUEUE_LLM event loop (to_thread propagates the cap error).
+            await asyncio.to_thread(
+                get_llm_spend_tracker().check_and_raise,
                 source_id=source_id,
                 settings=settings,
                 adapter=adapter,
@@ -317,7 +356,9 @@ class VisionOperationsService:
 
         # Record vision token usage so the daily/per-source spend cap observes
         # this call. Best-effort: record() never raises into the handler.
-        get_llm_spend_tracker().record(
+        # Offloaded — the write runs blocking SQLite (see check above).
+        await asyncio.to_thread(
+            get_llm_spend_tracker().record,
             source_id,
             result.input_tokens + result.output_tokens,
             adapter=adapter,
@@ -383,6 +424,8 @@ class VisionOperationsService:
             total=progress["total"],
             is_terminal=progress["is_terminal"],
         )
+
+        self._bump_vision_activity(source_id)
 
         if progress["is_terminal"]:
             await _enqueue_finalize(

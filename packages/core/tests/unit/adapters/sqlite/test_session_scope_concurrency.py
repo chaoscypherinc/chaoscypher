@@ -293,3 +293,101 @@ async def test_session_scope_clears_contextvar_on_exit(
         "exception exit must still reset the ContextVar — otherwise the next "
         "handler dispatch on this task would inherit a stale scope"
     )
+
+
+@pytest.fixture
+def other_adapter(tmp_path: Path) -> Generator[SqliteAdapter]:
+    """Second file-backed adapter simulating a task-database rebind target."""
+    db_path = tmp_path / "other" / "test.db"
+    db_path.parent.mkdir()
+    engine = get_engine(str(db_path))
+    SQLModel.metadata.create_all(engine, checkfirst=True)
+    a = SqliteAdapter(str(db_path), database_name="other")
+    a.connect()
+    try:
+        yield a
+    finally:
+        a.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_scoped_session_is_not_adopted_by_foreign_database_adapter(
+    adapter: SqliteAdapter, other_adapter: SqliteAdapter
+) -> None:
+    """An adapter for a DIFFERENT database must keep its own session inside a scope.
+
+    Pins the task-database rebind contract: queue handlers whose task
+    targets a database other than the worker's build a replacement
+    adapter via ``get_sqlite_adapter(task_db)`` *inside* the worker's
+    ``session_scope()``. Before the engine-ownership check, that
+    replacement resolved ``.session`` to the ContextVar session — bound
+    to the WORKER's engine — so every "rebound" read and write silently
+    landed in the worker's database file (source lookups returned None,
+    resets deleted the wrong database's rows).
+    """
+    async with adapter.session_scope() as scoped:
+        assert adapter.session is scoped, "scope owner must see the scoped session"
+        assert other_adapter.session is not scoped, (
+            "foreign-database adapter must NOT adopt a scoped session bound "
+            "to another adapter's engine"
+        )
+        assert other_adapter.session is other_adapter._fallback_session
+        assert other_adapter.session is not None
+        assert other_adapter.session.bind is other_adapter._engine, (
+            "the rebound adapter's queries must run on its own engine/file"
+        )
+
+
+@pytest.mark.asyncio
+async def test_scoped_session_is_shared_by_same_database_adapter(
+    adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """A second adapter for the SAME database still shares the scoped session.
+
+    Engines are cached per database path, so same-database adapters
+    share one engine — and must keep sharing the per-task session, which
+    is what stops the commit handler from self-deadlocking against the
+    SQLite writer lock (adapter + graph repo on one session per task).
+    """
+    peer = SqliteAdapter(str(tmp_path / "test.db"), database_name="default")
+    peer.connect()
+    try:
+        async with adapter.session_scope() as scoped:
+            assert peer.session is scoped, (
+                "same-engine adapters must share the per-task scoped session"
+            )
+    finally:
+        peer.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_graph_repository_does_not_adopt_foreign_scoped_session(
+    adapter: SqliteAdapter, other_adapter: SqliteAdapter
+) -> None:
+    """``GraphRepository.session`` applies the same engine-ownership check.
+
+    A graph repository built for a different database (the rebind path
+    hands one a session on the task database's engine) must not resolve
+    to the worker's scoped session; one built on the scope owner's
+    engine must keep sharing it.
+    """
+    from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+    from chaoscypher_core.adapters.sqlite.safe_session import SafeSession
+
+    assert other_adapter._engine is not None
+    assert adapter._engine is not None
+    foreign_session = SafeSession(other_adapter._engine)
+    same_session = SafeSession(adapter._engine)
+    try:
+        async with adapter.session_scope() as scoped:
+            foreign_repo = GraphRepository(foreign_session, "other")
+            assert foreign_repo.session is foreign_session, (
+                "foreign-engine graph repo must keep its own session"
+            )
+            same_repo = GraphRepository(same_session, "default")
+            assert same_repo.session is scoped, (
+                "same-engine graph repo must share the per-task scoped session"
+            )
+    finally:
+        foreign_session.close()
+        same_session.close()

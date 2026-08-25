@@ -24,7 +24,9 @@ def app(tmp_path: Path) -> FastAPI:
         session_secret=b"y" * 32,
         cookie_ttl_seconds=60,
     )
-    fastapi_app.include_router(build_router(service, cookie_name="cc_session", cookie_secure=False))
+    fastapi_app.include_router(
+        build_router(service, cookie_name="cc_session", cookie_secure_provider=lambda: False)
+    )
     return fastapi_app
 
 
@@ -292,6 +294,47 @@ def test_username_change_issues_new_cookie(client: TestClient) -> None:
     # New cookie should have been set on the response; /me reflects the new name.
     r = client.get("/api/v1/auth/me")
     assert r.json() == {"username": "newname"}
+
+
+def test_cookie_secure_provider_resolved_per_request(tmp_path: Path) -> None:
+    """Flipping the provider's return flips the Secure cookie attribute.
+
+    The router must call the provider on every cookie write instead of
+    freezing the boolean at construction, so enabling TLS at runtime
+    upgrades cookies without an app rebuild.
+    """
+    fastapi_app = FastAPI()
+    service = LocalAuthService(
+        credentials=CredentialsFile(tmp_path / "creds.json"),
+        session_secret=b"y" * 32,
+        cookie_ttl_seconds=60,
+    )
+    secure_flag = {"value": False}
+    fastapi_app.include_router(
+        build_router(
+            service,
+            cookie_name="cc_session",
+            cookie_secure_provider=lambda: secure_flag["value"],
+        )
+    )
+    client = TestClient(fastapi_app)
+
+    r = client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    assert r.status_code == 201
+    assert "secure" not in r.headers["set-cookie"].lower()
+
+    # Simulate TLS being enabled at runtime — same router, no rebuild.
+    secure_flag["value"] = True
+    client.cookies.clear()
+    r = client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    assert r.status_code == 200
+    assert "secure" in r.headers["set-cookie"].lower()
 
 
 def test_logout_invalidates_existing_session_cookie(app: FastAPI) -> None:

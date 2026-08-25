@@ -15,7 +15,7 @@ console = Console()
 
 
 @click.command(name="list")
-@click.option("--all", "show_all", is_flag=True, help="Show all cached versions")
+@click.option("--all", "show_all", is_flag=True, help="Show each package's file path")
 @click.option(
     "--format",
     "-f",
@@ -31,9 +31,9 @@ def list_packages(show_all: bool, output_format: str) -> None:
     or loaded from local .ccx files.
 
     Example:
-        chaoscypher list
-        chaoscypher list --all
-        chaoscypher list --format json
+        chaoscypher lexicon list
+        chaoscypher lexicon list --all
+        chaoscypher lexicon list --format json
     """
     packages_dir = get_packages_dir()
 

@@ -19,7 +19,7 @@ import {
   useUpdateTemplate,
   useDeleteTemplate,
 } from '../../services/api/useTemplates';
-import { getApiErrorMessage } from '../../utils/errors';
+import { getApiErrorMessage, isTemplateInUseError } from '../../utils/errors';
 import type { Template } from '../../types';
 import type { PropertyDefinition } from '../../components/PropertyEditor';
 import ConfirmDialog from '../../components/ConfirmDialog';
@@ -130,7 +130,9 @@ export default function TemplateDetailPage() {
     } catch (err) {
       logger.error('Failed to delete template:', err);
       const errorMessage = getApiErrorMessage(err);
-      if (errorMessage.includes('currently used by') || errorMessage.includes('force=True')) {
+      // 409 TEMPLATE_IN_USE: offer force delete (matched on status + code,
+      // not the reworded human-readable message)
+      if (isTemplateInUseError(err)) {
         setConfirmForceDelete({
           open: true,
           message: `${errorMessage}\n\nWould you like to FORCE DELETE this template?\n\nWARNING: This will also delete all items using this template!`,

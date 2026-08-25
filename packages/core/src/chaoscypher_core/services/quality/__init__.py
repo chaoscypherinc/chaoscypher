@@ -19,10 +19,13 @@ from chaoscypher_core.services.quality.scoring import (
     QualityScorer,
     RelationshipQualityScore,
     SourceQualityScore,
+    build_entity_chunk_mentions,
+    cacheable_scores_from,
     calculate_entity_score,
     calculate_quality_grade,
     calculate_relationship_score,
     calculate_source_score,
+    resolve_relationship_refs,
 )
 
 
@@ -32,8 +35,11 @@ __all__ = [
     "QualityScorer",
     "RelationshipQualityScore",
     "SourceQualityScore",
+    "build_entity_chunk_mentions",
+    "cacheable_scores_from",
     "calculate_entity_score",
     "calculate_quality_grade",
     "calculate_relationship_score",
     "calculate_source_score",
+    "resolve_relationship_refs",
 ]

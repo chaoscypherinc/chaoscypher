@@ -39,9 +39,10 @@ class TestGrounding:
         """Grounding list edges returns edges response."""
         resp = client.get("/api/v1/graph/grounding/edges", params={"limit": 10})
         assert resp.status_code == 200
-        # EdgeListResponse has a specific shape
+        # GroundingEdgeListResponse is {data: [...], pagination: {...}}
         data = resp.json()
-        assert "edges" in data or "data" in data or isinstance(data, list)
+        assert isinstance(data["data"], list)
+        assert "pagination" in data
 
     def test_get_node_not_found(self, client: httpx.Client) -> None:
         """Getting a nonexistent node via grounding returns 404."""

@@ -55,6 +55,30 @@ def test_audit_log_emits_warning_with_hash(tmp_path: Path) -> None:
     assert warnings[0]["registry"] == "LoaderRegistry"
 
 
+def test_audit_log_returns_true_when_allowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("CHAOSCYPHER_ALLOW_USER_PLUGINS", raising=False)
+    f = tmp_path / "domain.jsonld"
+    f.write_bytes(b"{}")
+
+    assert audit_log_user_plugin_file(f, registry="DomainRegistry") is True
+
+
+def test_audit_log_respects_kill_switch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHAOSCYPHER_ALLOW_USER_PLUGINS", "0")
+    f = tmp_path / "domain.jsonld"
+    f.write_bytes(b"{}")
+
+    with capture_logs() as logs:
+        result = audit_log_user_plugin_file(f, registry="DomainRegistry")
+
+    assert result is False
+    events = [e.get("event") for e in logs]
+    assert "user_plugin_disabled_skip" in events
+    assert "user_plugin_loaded" not in events
+
+
 def test_load_user_python_plugin_respects_kill_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

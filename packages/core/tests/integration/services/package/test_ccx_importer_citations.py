@@ -256,6 +256,16 @@ async def test_ccx_importer_round_trips_citation_with_entity_link(
     assert imported_templates, "expected at least one imported template"
     assert all(t.source_id == src["id"] for t in imported_templates)
 
+    # Idempotency: re-importing the SAME bytes must not duplicate citations.
+    # Citation ids are content-derived (chunk + node + ordinal), so the
+    # create_citations_batch id-dedup lands the re-import on the same row —
+    # a random id per import previously inserted a full duplicate set.
+    stats_again = await importer.import_from_bytes(data, ImportOptions(database_name=target_db))
+    assert not stats_again.errors, stats_again.errors
+    citations_after_reimport = integration_adapter.list_citations(database_name=target_db)
+    assert len(citations_after_reimport) == 1, citations_after_reimport
+    assert citations_after_reimport[0]["id"] == citation["id"]
+
 
 @pytest.mark.asyncio
 async def test_ccx_importer_restores_embeddings_when_model_matches(

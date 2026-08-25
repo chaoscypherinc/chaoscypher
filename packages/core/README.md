@@ -232,7 +232,7 @@ chaoscypher_core/
 │   ├── export/              # Graph data export
 │   ├── quality/             # Entity quality scoring + per-source quality counters (counters.py)
 │   ├── compose/             # Graph merge/resolve
-│   ├── lexicon/             # Vocabulary management
+│   ├── lexicon/             # Lexicon Hub client, auth, credential storage
 │   ├── presets/             # Preset configurations
 │   └── package/             # Import/export packages
 │

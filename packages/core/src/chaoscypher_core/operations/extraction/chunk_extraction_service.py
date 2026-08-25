@@ -193,6 +193,7 @@ class ChunkExtractionOperationsService:
         self,
         chunk_task_id: str,
         job_id: str,
+        source_id: str | None,
         database_name: str,
         chunk_index: int,
         hierarchical_group_id: str | None = None,
@@ -214,6 +215,16 @@ class ChunkExtractionOperationsService:
         Args:
             chunk_task_id: Unique task ID (stored in ChunkExtractionTask).
             job_id: Parent extraction job ID.
+            source_id: Source under extraction. Stamped into metadata (not
+                just data) so ``QueueClient.in_flight_chunk_task_ids`` can
+                match this task against a source/database scope — see
+                ``services/sources/recovery.py``'s ``_dispatch`` for the
+                matching shape. Required (every caller must decide the
+                value explicitly — that's the contract this method exists
+                to enforce) but nullable: a caller that genuinely has no
+                source_id in scope passes ``None`` rather than fabricating
+                one, and the in-flight guard just treats this task as "no
+                info" like it does on any other lookup miss.
             database_name: Database context.
             chunk_index: Index of this chunk in the document.
             hierarchical_group_id: Reference to hierarchical chunk group.
@@ -243,6 +254,8 @@ class ChunkExtractionOperationsService:
                 "chunk_task_id": chunk_task_id,
                 "chunk_index": chunk_index,
                 "operation_type": OP_EXTRACT_CHUNK,
+                "source_id": source_id,
+                "database_name": database_name,
             },
         )
 
@@ -827,6 +840,7 @@ class ChunkExtractionOperationsService:
                 database_name,
                 chunk_index,
                 settings,
+                source_id=source_id,
             )
 
         except Exception as exc:
@@ -839,6 +853,7 @@ class ChunkExtractionOperationsService:
                 chunk_index,
                 settings,
                 data=data,
+                source_id=source_id,
             )
 
     async def _finalize_extraction_handler(
@@ -961,6 +976,7 @@ class ChunkExtractionOperationsService:
         database_name: str,
         chunk_index: int,
         settings: Settings,
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """Handle CancelledError for chunk extraction (retry or fail permanently).
 
@@ -972,6 +988,12 @@ class ChunkExtractionOperationsService:
             database_name: Database context.
             chunk_index: Chunk index.
             settings: Application settings.
+            source_id: Source under extraction, forwarded to the requeue's
+                ``queue_extract_chunk`` call so the fresh task's metadata
+                keeps satisfying ``QueueClient.in_flight_chunk_task_ids``.
+                Optional (default ``None``) only so direct unit tests of
+                this method don't all need updating; the real caller
+                (``_extract_chunk_handler``) always supplies it.
 
         Returns:
             Result dictionary.
@@ -1016,6 +1038,7 @@ class ChunkExtractionOperationsService:
                 await self.queue_extract_chunk(
                     chunk_task_id=chunk_task_id,
                     job_id=job_id,
+                    source_id=source_id,
                     database_name=database_name,
                     chunk_index=chunk_index,
                     hierarchical_group_id=data.get("hierarchical_group_id"),
@@ -1135,6 +1158,7 @@ class ChunkExtractionOperationsService:
         chunk_index: int,
         settings: Settings,
         data: dict[str, Any] | None = None,
+        source_id: str | None = None,
     ) -> dict[str, Any]:
         """Handle general exception during chunk extraction.
 
@@ -1149,6 +1173,12 @@ class ChunkExtractionOperationsService:
             data: Original handler data dict; used to forward
                 ``hierarchical_group_id`` and ``small_chunk_ids`` when
                 requeuing a retryable failure.
+            source_id: Source under extraction, forwarded to the requeue's
+                ``queue_extract_chunk`` call so the fresh task's metadata
+                keeps satisfying ``QueueClient.in_flight_chunk_task_ids``.
+                Optional (default ``None``) only so direct unit tests of
+                this method don't all need updating; the real caller
+                (``_extract_chunk_handler``) always supplies it.
 
         Returns:
             Result dictionary.
@@ -1229,6 +1259,7 @@ class ChunkExtractionOperationsService:
                     await self.queue_extract_chunk(
                         chunk_task_id=chunk_task_id,
                         job_id=job_id,
+                        source_id=source_id,
                         database_name=database_name,
                         chunk_index=chunk_index,
                         hierarchical_group_id=_data.get("hierarchical_group_id"),

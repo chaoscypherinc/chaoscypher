@@ -695,6 +695,31 @@ describe('sourceProcessingApi.listUnified', () => {
     });
   });
 
+  it('forwards status into request params when provided', async () => {
+    mockGet.mockResolvedValue(makeResponse({ data: [], total: 0 }));
+
+    await sourceProcessingApi.listUnified({ status: 'error' });
+
+    expect(mockGet).toHaveBeenCalledWith('/sources', {
+      params: {
+        search: undefined,
+        source_type: undefined,
+        status: 'error',
+        page_size: 200,
+      },
+    });
+  });
+
+  it('omits status from request params when unset', async () => {
+    mockGet.mockResolvedValue(makeResponse({ data: [], total: 0 }));
+
+    await sourceProcessingApi.listUnified();
+
+    expect(mockGet).toHaveBeenCalledWith('/sources', {
+      params: expect.not.objectContaining({ status: expect.anything() }),
+    });
+  });
+
   it('returns empty array and calls logger.error when the request throws', async () => {
     const err = new Error('Network failure');
     mockGet.mockRejectedValue(err);

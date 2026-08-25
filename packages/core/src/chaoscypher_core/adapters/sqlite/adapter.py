@@ -73,10 +73,15 @@ _current_session: ContextVar[SafeSession | None] = ContextVar("_current_session"
 
 When ``SqliteAdapter.session_scope()`` is entered, a fresh ``SafeSession``
 is installed here and ``SqliteAdapter.session`` (a property) reads it
-preferentially. Outside any scope, ``SqliteAdapter.session`` falls back
-to ``self._fallback_session`` so non-worker callers (tests, startup
-paths, Cortex via ``adapter_factory``) keep their existing single-session
-semantics.
+preferentially — but only for adapters bound to the same engine as the
+scoped session (``session.bind is self._engine``). Engines are cached
+per database path, so every adapter for the scope owner's database
+shares the scoped session, while an adapter for a DIFFERENT database
+(the task-database rebind pattern) resolves to its own fallback session
+instead of silently querying the wrong file. Outside any scope,
+``SqliteAdapter.session`` falls back to ``self._fallback_session`` so
+non-worker callers (tests, startup paths, Cortex via
+``adapter_factory``) keep their existing single-session semantics.
 
 The 2026-05-20 incident — parallel imports losing extraction jobs +
 chunk tasks because the singleton ``SafeSession`` was shared across
@@ -174,12 +179,17 @@ class SqliteAdapter(
         """Active session: per-task scope if entered, else fallback.
 
         Inside ``session_scope()`` returns the ContextVar-bound session
-        unique to the current async task. Outside any scope (tests,
+        unique to the current async task — but only when that session is
+        bound to THIS adapter's engine. An adapter created for a
+        different database inside someone else's scope (the task-database
+        rebind pattern in the queue handlers) must resolve to its own
+        ``_fallback_session``, or every query it runs silently lands in
+        the scope owner's database file. Outside any scope (tests,
         startup, Cortex per-request adapters) returns the connection-time
         ``_fallback_session``.
         """
         scoped = _current_session.get()
-        if scoped is not None:
+        if scoped is not None and self._engine is not None and scoped.bind is self._engine:
             return scoped
         return self._fallback_session
 

@@ -214,6 +214,43 @@ async def test_vision_page_handler_failed_bumps_failed_counter(
 
 
 @pytest.mark.asyncio
+async def test_vision_page_handler_retryable_llm_error_propagates(
+    adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """A retryable LLMError from describe_image leaves the handler unhandled.
+
+    The queue's retry machinery must see transient provider errors; the page
+    row stays PENDING (no terminal FAILED write) so a later attempt — or
+    SourceRecovery — can re-dispatch it.
+    """
+    from chaoscypher_core.exceptions import LLMError
+
+    img = tmp_path / "p.png"
+    img.write_bytes(b"\x89PNG-fake")
+    source_id, job_id, page_id = _create_source_with_pending_page(adapter, img)
+
+    fake_vision = MagicMock()
+    fake_vision.describe_image = AsyncMock(side_effect=LLMError("rate limited", is_retryable=True))
+    settings = _vision_settings(tmp_path)
+
+    service = _make_service(adapter, settings, vision_service=fake_vision)
+
+    with pytest.raises(LLMError):
+        await service._handle_vision_page(
+            data={"page_id": page_id, "job_id": job_id, "source_id": source_id},
+            metadata={},
+            task_id="test-task",
+        )
+
+    # The page row was NOT marked FAILED — it stays PENDING for the retry.
+    row = adapter.list_vision_page_descriptions(source_id)[0]
+    assert row["status"] == VisionPageStatus.PENDING
+    job = adapter.get_vision_job(job_id)
+    assert job is not None
+    assert job["failed"] == 0
+
+
+@pytest.mark.asyncio
 async def test_vision_page_handler_stale_dispatch_bails_gracefully(
     adapter: SqliteAdapter, tmp_path: Path
 ) -> None:
@@ -430,6 +467,105 @@ async def test_vision_page_handler_persists_page_image_to_disk(
     )
     assert expected_path.exists(), f"expected {expected_path} to exist"
     assert expected_path.read_bytes() == expected_bytes
+
+
+@pytest.mark.asyncio
+async def test_vision_page_handler_success_bumps_source_last_activity(
+    adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """A successful page completion checkpoints the source's ``last_activity_at``.
+
+    Regression test for entry 920: ``source_heartbeat`` (indexing_handler.py)
+    exits the instant the per-page OP_VISION_PAGE tasks are enqueued, so
+    ``last_activity_at`` freezes for the rest of the vision job. QUEUE_LLM
+    concurrency is 1, so multi-page PDFs routinely take longer than the
+    stall threshold to drain -- without a per-page checkpoint here, the
+    reconciler sees a stale timestamp and treats a healthy, still-running
+    vision job as stalled.
+    """
+    img = tmp_path / "p.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+    source_id, job_id, page_id = _create_source_with_pending_page(adapter, img)
+
+    # Freshly created source has no activity timestamp yet.
+    assert adapter.get_source(source_id, "test")["last_activity_at"] is None
+
+    fake_vision = MagicMock()
+    fake_vision.describe_image = AsyncMock(
+        return_value=VisionResult(description="A cat sitting on a mat.", finish_reason="stop")
+    )
+    settings = _vision_settings(tmp_path)
+    service = _make_service(adapter, settings, vision_service=fake_vision)
+
+    with patch(
+        "chaoscypher_core.operations.importing.vision_operations_service._enqueue_finalize",
+        new_callable=AsyncMock,
+    ):
+        result = await service._handle_vision_page(
+            data={"page_id": page_id, "job_id": job_id, "source_id": source_id},
+            metadata={},
+            task_id="test-task",
+        )
+
+    assert result["status"] == "success"
+    assert adapter.get_source(source_id, "test")["last_activity_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_vision_page_handler_render_failed_bumps_source_last_activity(
+    adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """A pre-LLM-call failure (render_failed) also checkpoints ``last_activity_at``.
+
+    ``_mark_page_failed_and_advance_job`` is a second, separate completion
+    path (render/no-model/spend-cap failures never reach the main success
+    body) -- it needs its own checkpoint so a run of early per-page
+    failures doesn't look like a stall either.
+    """
+    img_missing = tmp_path / "missing.png"
+
+    source_id = generate_id("src")
+    adapter.create_source(
+        {
+            "id": source_id,
+            "database_name": "test",
+            "filename": "test.pdf",
+            "filepath": str(img_missing),
+            "status": "vision_pending",
+        }
+    )
+    job_id = adapter.create_vision_job_with_pages(
+        source_id=source_id,
+        pages=[
+            {
+                "page_number": 1,
+                "kind": VisionPageKind.STANDALONE_IMAGE,
+                "image_path": str(img_missing),
+            }
+        ],
+    )
+    page_id = adapter.list_vision_page_descriptions(source_id)[0]["id"]
+
+    assert adapter.get_source(source_id, "test")["last_activity_at"] is None
+
+    settings = MagicMock()
+    settings.llm.chat_provider = "ollama"
+    settings.llm.ollama_vision_max_output_tokens = 8192
+
+    service = _make_service(adapter, settings)
+
+    with patch(
+        "chaoscypher_core.operations.importing.vision_operations_service._enqueue_finalize",
+        new_callable=AsyncMock,
+    ):
+        result = await service._handle_vision_page(
+            data={"page_id": page_id, "job_id": job_id, "source_id": source_id},
+            metadata={},
+            task_id="test-task",
+        )
+
+    assert result["status"] == "render_failed"
+    assert adapter.get_source(source_id, "test")["last_activity_at"] is not None
 
 
 @pytest.mark.asyncio

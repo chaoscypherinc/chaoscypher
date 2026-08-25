@@ -226,7 +226,8 @@ class TestResolveArchive:
         extract.assert_called_once()
         assert resolved.name == "thing"
         assert resolved.version == "2.0.0"
-        assert resolved.dependencies == ["dep-a"]
+        # Dependencies carry the manifest-pinned version (name:version spec).
+        assert resolved.dependencies == ["dep-a:1.0"]
         # extract target is cache/extracted/<stem>
         assert resolved.path.parent.name == "extracted"
 
@@ -293,7 +294,8 @@ class TestResolveDirectory:
 
         resolved = await resolver._resolve_local(spec)
 
-        assert resolved.dependencies == ["dep-a"]
+        # Dependencies carry the manifest-pinned version (name:version spec).
+        assert resolved.dependencies == ["dep-a:1.0"]
 
     @pytest.mark.asyncio
     async def test_missing_manifest_raises(self, tmp_path: Path) -> None:
@@ -329,7 +331,7 @@ class TestResolveHub:
         client.download.assert_not_awaited()
         assert resolved.name == "hubpkg"
         assert resolved.version == "1.0.0"
-        assert resolved.dependencies == ["d"]
+        assert resolved.dependencies == ["d:1"]
 
     @pytest.mark.asyncio
     async def test_download_validates_and_extracts(self, tmp_path: Path) -> None:
@@ -540,3 +542,21 @@ class TestResolveAll:
 
         # Second spec is skipped via the _resolved cache check.
         assert [p.name for p in result] == ["dup"]
+
+
+# ---------------------------------------------------------------------------
+# dependency version pinning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_dependency_specs_pin_manifest_versions() -> None:
+    """Manifest dependencies queue as name:version specs, not bare names.
+
+    Bare names made every transitive dependency resolve to hub "latest"
+    instead of the version the manifest pinned.
+    """
+    from chaoscypher_core.services.compose.resolver import _dependency_specs
+
+    assert _dependency_specs({"medical": "2.1.0", "legal": ""}) == ["medical:2.1.0", "legal"]
+    assert _dependency_specs({}) == []

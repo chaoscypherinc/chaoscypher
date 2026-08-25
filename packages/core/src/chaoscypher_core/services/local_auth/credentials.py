@@ -9,13 +9,10 @@ Atomic writes via tempfile + os.replace so the file is never partially written.
 from __future__ import annotations
 
 import json
-import os
 import secrets
-import tempfile
 import threading
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 
 from passlib.hash import bcrypt  # type: ignore[import-untyped]
 
@@ -27,6 +24,11 @@ from chaoscypher_core.services.local_auth.errors import (
     InvalidPassword,
     UsernameMismatch,
 )
+from chaoscypher_core.utils.secure_write import atomic_secret_write
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ApiKeyRecord(TypedDict):
@@ -334,21 +336,4 @@ class CredentialsFile:
     def _atomic_write(self, data: CredentialsData) -> None:
         """Write ``data`` atomically: tempfile -> chmod 0600 -> os.replace."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp_path_str = tempfile.mkstemp(
-            prefix=".credentials_", suffix=".json", dir=str(self._path.parent)
-        )
-        tmp_path = Path(tmp_path_str)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
-            if os.name == "posix":
-                tmp_path.chmod(0o600)
-            # ``os.replace`` is intentional here: tests monkeypatch it to
-            # simulate a failed rename, and swapping it for ``Path.replace``
-            # would bypass those patches (``Path.replace`` calls the
-            # already-resolved C-level replacement).
-            os.replace(tmp_path, self._path)  # noqa: PTH105 — see comment above
-        except Exception:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            raise
+        atomic_secret_write(self._path, json.dumps(data, indent=2), prefix=".credentials_")

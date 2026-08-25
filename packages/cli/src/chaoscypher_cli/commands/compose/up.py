@@ -23,6 +23,7 @@ import click
 
 from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
 from chaoscypher_cli.utils.console import get_console, print_error, print_success
+from chaoscypher_core.exceptions import ExternalServiceError
 from chaoscypher_core.services.compose import ComposeConfig, ComposeError, ComposeService
 
 
@@ -82,8 +83,9 @@ def up(
         print_error(f"Failed to load config: {e}")
         sys.exit(1)
 
-    # Override port if specified
-    if port:
+    # Override port if specified ("is not None" so --port 0 — bind an
+    # ephemeral port — is not silently ignored)
+    if port is not None:
         compose_config.settings.port = port
 
     console.print(f"[cyan]Starting composition:[/cyan] {compose_config.name}")
@@ -136,6 +138,17 @@ def up(
         if e.details:
             for key, value in e.details.items():
                 console.print(f"  [dim]{key}:[/dim] {value}")
+        sys.exit(1)
+    except ExternalServiceError as e:
+        # A connection failure to the hub surfaces as a plain
+        # ExternalServiceError (the resolver only wraps LexiconClientError)
+        # — print the operator hint instead of a raw traceback.
+        print_error(f"Cannot reach Lexicon Hub at {lexicon_url}: {e}")
+        console.print(
+            "  [dim]Set LEXICON_URL or run a local hub. "
+            "Check connectivity with [cyan]curl -I "
+            f"{lexicon_url}[/cyan].[/dim]",
+        )
         sys.exit(1)
 
     except KeyboardInterrupt:

@@ -321,6 +321,46 @@ to satisfy this interface (structural typing).
 
 **Methods:**
 
+#### `assign_source_to_nodes(node_ids: list[str], source_id: str, database_name: str) -> int`
+
+Back-fill `source_id` on nodes that lack one; return rows changed.
+
+The CCX importer creates nodes before it knows their source (the
+node->source link lives in the citation records, imported last), so it
+stamps `graph_nodes.source_id` here once citations resolve. Nodes
+that already carry a source id are left untouched (first link wins).
+
+Args:
+    node_ids: Node ids to link.
+    source_id: Source id to assign to those nodes.
+    database_name: Database that owns the nodes.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_ids` | `list[str]` |  |
+| `source_id` | `str` |  |
+| `database_name` | `str` |  |
+
+#### `assign_source_to_templates(template_ids: list[str], source_id: str, database_name: str) -> int`
+
+Back-fill `source_id` on templates that lack one; return rows changed.
+
+Templates are source-owned and cascade-delete with their source. The CCX
+importer creates templates before the source exists (FK order), so it
+links them here once the source lands. Templates that already carry a
+source id are left untouched.
+
+Args:
+    template_ids: Template ids to link.
+    source_id: Source id to assign.
+    database_name: Database that owns the templates.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `template_ids` | `list[str]` |  |
+| `source_id` | `str` |  |
+| `database_name` | `str` |  |
+
 #### `count_edges(source_node_id: str | None = None, target_node_id: str | None = None, source_ids: list[str] | None = None, include_disabled_sources: bool = True) -> int`
 
 Count edges, optionally filtered by source/target node or source document.
@@ -670,6 +710,27 @@ Returns:
 |---|---|---|
 | `max_items` | `int` |  |
 
+#### `export_graph_records(source_ids: list[str] | None = None, max_items: int = 100000) -> dict[str, list[dict[str, Any]]]`
+
+Export graph nodes + edges as dicts carrying the persisted `ccx_iri`.
+
+Unlike `export_graph` (which returns Pydantic-model dumps that
+drop the `ccx_iri` stable-identity column), this projects the ORM
+rows directly so the CCX 3.0 exporter can key identity on `ccx_iri`.
+
+Args:
+    source_ids: When given, restrict to nodes/edges of these sources;
+        edges survive only when BOTH endpoints survive the node filter.
+    max_items: Maximum nodes/edges to export per entity type.
+
+Returns:
+    `{"nodes": [node dicts], "edges": [edge dicts]}` including `ccx_iri`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `list[str] \| None` |  |
+| `max_items` | `int` |  |
+
 #### `find_orphaned_edges_by_source_node(database_name: str) -> list[str]`
 
 Return IDs of edges whose source_node_id has no matching GraphNode.
@@ -744,6 +805,23 @@ Returns:
 |---|---|---|
 | `edge_id` | `str` |  |
 
+#### `get_edge_by_ccx_iri(ccx_iri: str, database_name: str) -> dict[str, Any] | None`
+
+Look up an edge by its stable CCX IRI.
+
+Returns the ORM-row dict (so `ccx_iri` survives — the `Edge` model
+has no such field) or `None` when no row in `database_name` carries
+that IRI. Lookup primitive for the CCX 3.0 importer's upsert-by-IRI.
+
+Args:
+    ccx_iri: The CCX 3.0 stable IRI to match.
+    database_name: Database that owns the edge.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `database_name` | `str` |  |
+
 #### `get_node(node_id: str) -> Node | None`
 
 Get a node by ID.
@@ -762,6 +840,24 @@ Example:
 | Parameter | Type | Description |
 |---|---|---|
 | `node_id` | `str` |  |
+
+#### `get_node_by_ccx_iri(ccx_iri: str, database_name: str) -> dict[str, Any] | None`
+
+Look up a node by its stable CCX IRI.
+
+Returns the ORM-row dict (so the `ccx_iri` column survives — the
+`Node` model has no such field) or `None` when no row in
+`database_name` carries that IRI. The lookup primitive the CCX 3.0
+importer uses for upsert-by-IRI.
+
+Args:
+    ccx_iri: The CCX 3.0 stable IRI to match.
+    database_name: Database that owns the node.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `database_name` | `str` |  |
 
 #### `get_nodes_batch(node_ids: list[str]) -> list[Node]`
 
@@ -931,6 +1027,19 @@ Returns:
 | `node_id` | `str` |  |
 | `node_update` | `NodeUpdate` |  |
 
+#### `update_node_embeddings_batch(embeddings: dict[str, list[float]]) -> int`
+
+Persist embeddings for many nodes in one transaction; return rows changed.
+
+Used to re-embed an imported source's nodes without N per-node writes.
+
+Args:
+    embeddings: Mapping of node id to its embedding vector (list[float]).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `embeddings` | `dict[str, list[float]]` |  |
+
 #### `update_node_position(node_id: str, x: float, y: float) -> Node | None`
 
 Update only the node's position.
@@ -965,6 +1074,32 @@ Returns:
 | `template_id` | `str` |  |
 | `template_update` | `TemplateUpdate` |  |
 
+#### `upsert_edge_by_ccx_iri(ccx_iri: str, edge_create: EdgeCreate, database_name: str, source_id: str | None = None) -> dict[str, Any]`
+
+Idempotently create or update an edge keyed by CCX IRI.
+
+SELECT by `(database_name, ccx_iri)`; update the existing row's
+label / properties / endpoints when found (incoming-wins, no
+duplicate), else create a new edge carrying the given `ccx_iri`.
+`EdgeCreate` has no `ccx_iri` field, so the IRI is set on the ORM
+row directly. Used by the CCX 3.0 importer for idempotent re-import.
+
+Args:
+    ccx_iri: Stable CCX IRI used as the merge key.
+    edge_create: Edge payload (template_id, endpoints, label, ...).
+    database_name: Database to scope the upsert to.
+    source_id: Optional source id override for the created/updated row.
+
+Returns:
+    The created or updated edge row dict (including `ccx_iri`).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `edge_create` | `EdgeCreate` |  |
+| `database_name` | `str` |  |
+| `source_id` | `str \| None` |  |
+
 #### `upsert_edges_batch(edge_creates: list[EdgeCreate]) -> tuple[list[Edge], int]`
 
 Idempotently create or reuse edges by stable content key.
@@ -982,6 +1117,32 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `edge_creates` | `list[EdgeCreate]` |  |
+
+#### `upsert_node_by_ccx_iri(ccx_iri: str, node_create: NodeCreate, database_name: str, source_id: str | None = None) -> dict[str, Any]`
+
+Idempotently create or update a node keyed by CCX IRI.
+
+SELECT by `(database_name, ccx_iri)`; update the existing row's
+label / properties / entity_type when found (incoming-wins, no
+duplicate), else create a new node carrying the given `ccx_iri`.
+`NodeCreate` has no `ccx_iri` field, so the IRI is set on the ORM
+row directly. Used by the CCX 3.0 importer for idempotent re-import.
+
+Args:
+    ccx_iri: Stable CCX IRI used as the merge key.
+    node_create: Node payload (template_id, label, entity_type, ...).
+    database_name: Database to scope the upsert to.
+    source_id: Optional source id override for the created/updated row.
+
+Returns:
+    The created or updated node row dict (including `ccx_iri`).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `node_create` | `NodeCreate` |  |
+| `database_name` | `str` |  |
+| `source_id` | `str \| None` |  |
 
 #### `upsert_nodes_batch(node_creates: list[NodeCreate]) -> tuple[list[Node], int]`
 
@@ -1080,6 +1241,28 @@ Notes:
 |---|---|---|
 | `chunk_id` | `str` |  |
 
+#### `get_chunks_by_ids_batch(chunk_ids: list[str]) -> list[dict[str, Any]]`
+
+Fetch multiple chunks by UUID in one query.
+
+Batch sibling of `get_chunk_by_id` with the identical per-chunk
+dict shape.
+
+Args:
+    chunk_ids: Chunk UUIDs.
+
+Returns:
+    Chunk dictionaries for every id that exists, in input order;
+    missing ids are silently absent.
+
+Notes:
+    - Used by SearchService to hydrate a page of chunk results in
+      one round trip instead of one SELECT per chunk.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `chunk_ids` | `list[str]` |  |
+
 #### `get_chunks_by_source(source_id: str, page: int = 1, page_size: int = 50, status: str | None = None, include_embeddings: bool = False) -> tuple[list[dict[str, Any]], int]`
 
 Get all chunks for a source with pagination, ordered by chunk_index.
@@ -1156,6 +1339,35 @@ Notes:
 |---|---|---|
 | `chunk_id` | `str` |  |
 | `embedding` | `str` |  |
+| `embedding_model` | `str` |  |
+| `embedding_dimensions` | `int` |  |
+| `status` | `str` |  |
+
+#### `update_chunk_embeddings_batch(embeddings_by_chunk: dict[str, str], embedding_model: str, embedding_dimensions: int, status: str) -> list[str]`
+
+Batch form of `update_chunk_embedding` — one UPDATE, one commit.
+
+Args:
+    embeddings_by_chunk: Mapping of chunk UUID → base64-encoded
+        embedding bytes.
+    embedding_model: Model name that generated the embeddings.
+    embedding_dimensions: Vector dimensions (e.g., 1024).
+    status: New status for every updated chunk.
+
+Returns:
+    The subset of chunk ids that do not exist (skipped) — callers
+    keep the per-chunk accounting `update_chunk_embedding`
+    expressed by raising `NotFoundError`.
+
+Notes:
+    - Chunk-side sibling of `update_node_embeddings_batch`: an
+      embedding wave is up to `batching.embedding_wave_size`
+      (default 2,000) chunks, so per-chunk single-row writes cost
+      one wide SELECT plus one COMMIT each.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `embeddings_by_chunk` | `dict[str, str]` |  |
 | `embedding_model` | `str` |  |
 | `embedding_dimensions` | `int` |  |
 | `status` | `str` |  |
@@ -2295,6 +2507,26 @@ Returns:
 | `source_id` | `str` |  |
 | `database_name` | `str` |  |
 
+#### `get_source_by_ccx_iri(ccx_iri: str, database_name: str) -> dict[str, Any] | None`
+
+Look up a source by its stable CCX IRI.
+
+The lookup primitive the CCX 3.0 importer uses for upsert-by-IRI.
+Scoped to `(database_name, ccx_iri)`.
+
+Args:
+    ccx_iri: The CCX 3.0 stable IRI to match.
+    database_name: Database that owns the source.
+
+Returns:
+    The source row dict (including `ccx_iri` and `full_text`), or
+    `None` if no row in `database_name` carries that IRI.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `database_name` | `str` |  |
+
 #### `get_stats(database_name: str) -> dict[str, Any]`
 
 Get source statistics for database (counts by status).
@@ -2487,6 +2719,29 @@ Creates source with status='pending'. Returns created Source as dict.
 | `enable_inverse_relationships` | `bool \| None` |  |
 | `max_entity_degree_override` | `int \| None` |  |
 | `confirmation_required` | `bool` |  |
+
+#### `upsert_source_by_ccx_iri(ccx_iri: str, source_dict: dict[str, Any], database_name: str) -> dict[str, Any]`
+
+Idempotently create or update a source keyed by CCX IRI.
+
+SELECT by `(database_name, ccx_iri)`; update the existing row's
+mutable columns when found (incoming-wins, no duplicate), else create a
+new source carrying the given `ccx_iri`. Used by the CCX 3.0 importer
+so re-importing the same package does not duplicate sources.
+
+Args:
+    ccx_iri: Stable CCX IRI used as the merge key.
+    source_dict: Source column values.
+    database_name: Database to scope the upsert to.
+
+Returns:
+    The created or updated source row dict (including `ccx_iri`).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `ccx_iri` | `str` |  |
+| `source_dict` | `dict[str, Any]` |  |
+| `database_name` | `str` |  |
 
 ## `chaoscypher_core.ports.storage_tools`
 

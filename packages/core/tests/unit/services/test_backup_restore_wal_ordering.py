@@ -19,6 +19,7 @@ Two defects, one ordering bug (hunt queue 2026-07-31):
 from __future__ import annotations
 
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,8 +51,25 @@ def _rows(db_path: Path) -> set[str]:
         conn.close()
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "needs POSIX unlink-while-open: the scenario requires a live "
+        "connection holding app.db-wal across restore_backup's sidecar "
+        "unlink, which Windows refuses with WinError 32"
+    ),
+)
 def test_safety_backup_captures_wal_resident_transactions(tmp_path: Path) -> None:
-    """The pre-restore safety copy must include commits still in the WAL."""
+    """The pre-restore safety copy must include commits still in the WAL.
+
+    Windows-skipped, not Windows-broken: the ``holder`` connection is
+    deliberately left open to keep the commit WAL-resident, and Windows
+    cannot unlink a file another handle holds. Product code disposes its
+    pooled engines before unlinking, so this is the test's holder, not a
+    reachable product path — the companion
+    ``test_engines_disposed_before_db_overwrite`` closes its holder first and
+    runs everywhere.
+    """
     service = BackupService(str(tmp_path))
     db_path = tmp_path / "databases" / "db1" / "app.db"
     holder = _make_wal_db(db_path)

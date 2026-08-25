@@ -59,12 +59,26 @@ class DatabaseRepository:
         databases.sort(key=lambda x: x.name)
         return databases
 
+    def _is_strict_child(self, db_path: str) -> bool:
+        """Return True only if ``db_path`` resolves to a direct child of ``databases_dir``.
+
+        ``Path.is_relative_to`` is reflexive (a path is relative to itself),
+        so a name of ``"."`` resolves to ``databases_dir`` itself and would
+        pass a plain containment check while pointing at the databases
+        directory instead of a database inside it (entry 827). Comparing
+        ``resolved.parent`` to ``databases_dir`` rejects that reflexive case
+        along with any traversal (``".."``, nested ``"a/b"`` segments)
+        without weakening the boundary check for ordinary names.
+        """
+        resolved = Path(db_path).resolve()
+        return resolved.parent == Path(self.databases_dir).resolve()
+
     def get_database(self, name: str) -> DatabaseInfo | None:
         """Get information about a specific database."""
+        if name.lower() in _RESERVED_DB_NAMES:
+            return None
         db_path = os.path.join(self.databases_dir, name)
-        # Path-boundary containment (not a string prefix, which would let a
-        # sibling like ``databases_evil`` pass the ``databases`` prefix test).
-        if not Path(db_path).resolve().is_relative_to(Path(self.databases_dir).resolve()):
+        if not self._is_strict_child(db_path):
             return None
         if not os.path.exists(db_path):
             return None
@@ -125,11 +139,15 @@ class DatabaseRepository:
             msg = "Cannot delete default database"
             raise ValidationError(msg, field="name")
 
+        if name.lower() in _RESERVED_DB_NAMES:
+            msg = "Invalid database name"
+            raise ValidationError(msg, field="name")
+
         db_path = os.path.join(self.databases_dir, name)
 
-        # Path traversal protection
-        resolved = Path(db_path).resolve()
-        if not resolved.is_relative_to(Path(self.databases_dir).resolve()):
+        # Path traversal protection (strict-child, not a reflexive
+        # containment check — see ``_is_strict_child``).
+        if not self._is_strict_child(db_path):
             msg = "Invalid database name"
             raise ValidationError(msg, field="name")
 
@@ -148,8 +166,9 @@ class DatabaseRepository:
 
         Uses centralized PathSettings for filename.
         """
-        db_path = os.path.join(self.databases_dir, name, self.path_settings.app_db_filename)
-        # Path-boundary containment (see get_database) — not a string prefix.
-        if not Path(db_path).resolve().is_relative_to(Path(self.databases_dir).resolve()):
+        if name.lower() in _RESERVED_DB_NAMES:
             return None
-        return db_path
+        db_dir = os.path.join(self.databases_dir, name)
+        if not self._is_strict_child(db_dir):
+            return None
+        return os.path.join(db_dir, self.path_settings.app_db_filename)

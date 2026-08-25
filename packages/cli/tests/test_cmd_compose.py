@@ -1061,3 +1061,63 @@ class TestDownCommandMeta:
         runner = CliRunner()
         result = runner.invoke(down, ["--help"])
         assert "config" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# hub-unreachable hints (build / up)
+# ---------------------------------------------------------------------------
+
+
+class TestComposeHubUnreachable:
+    """A plain ExternalServiceError from resolution prints the hint, not a traceback."""
+
+    def _write_config(self, tmp_path: Path) -> Path:
+        cfg = tmp_path / "axiomatize.yaml"
+        cfg.write_text("name: test\n")
+        return cfg
+
+    def test_build_hub_unreachable_prints_hint(self, tmp_path: Path) -> None:
+        from chaoscypher_core.exceptions import ExternalServiceError
+
+        cfg_path = self._write_config(tmp_path)
+        mock_service_instance = MagicMock()
+        mock_service_instance.build = AsyncMock(
+            side_effect=ExternalServiceError("Lexicon", "Connection refused")
+        )
+
+        runner = CliRunner()
+        with (
+            patch(_BUILD_CONFIG) as mock_cfg_cls,
+            patch(_BUILD_SERVICE, return_value=mock_service_instance),
+            patch(_BUILD_AUTH, return_value=None),
+            patch(_BUILD_LEXICON, return_value="https://lexicon.example.com"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = _make_compose_config()
+            result = runner.invoke(build, ["--config", str(cfg_path)])
+
+        assert result.exit_code == 1
+        assert "Cannot reach Lexicon Hub" in result.output
+        assert "Traceback" not in result.output
+
+    def test_up_hub_unreachable_prints_hint(self, tmp_path: Path) -> None:
+        from chaoscypher_core.exceptions import ExternalServiceError
+
+        cfg_path = self._write_config(tmp_path)
+        mock_service_instance = MagicMock()
+        mock_service_instance.up = AsyncMock(
+            side_effect=ExternalServiceError("Lexicon", "Connection refused")
+        )
+
+        runner = CliRunner()
+        with (
+            patch(_UP_CONFIG) as mock_cfg_cls,
+            patch(_UP_SERVICE, return_value=mock_service_instance),
+            patch(_UP_AUTH, return_value=None),
+            patch(_UP_LEXICON, return_value="https://lexicon.example.com"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = _make_compose_config()
+            result = runner.invoke(up, ["--config", str(cfg_path)])
+
+        assert result.exit_code == 1
+        assert "Cannot reach Lexicon Hub" in result.output
+        assert "Traceback" not in result.output

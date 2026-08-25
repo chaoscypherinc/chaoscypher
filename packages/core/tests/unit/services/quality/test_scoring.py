@@ -10,18 +10,24 @@ import pytest
 from chaoscypher_core.services.quality.scoring import (
     DEFAULT_TARGET_DENSITY,
     SCORING_VERSION,
+    QualityScorer,
+    build_entity_chunk_mentions,
+    cacheable_scores_from,
     calculate_density_score,
     calculate_hub_skew,
     calculate_quality_grade,
     calculate_reciprocal_rate,
+    calculate_source_score,
     calculate_structural_penalty,
 )
 
 
 @pytest.mark.unit
 class TestScoringVersion:
-    def test_scoring_version_is_v7(self) -> None:
-        assert SCORING_VERSION == 7
+    def test_scoring_version_is_v8(self) -> None:
+        # v8 = v7 formula + string-ID relationship-ref resolution and
+        # source_chunk_indices chunk mentions for per-source table rows.
+        assert SCORING_VERSION == 8
 
 
 @pytest.mark.unit
@@ -256,3 +262,174 @@ class TestCalculateQualityGradeV7:
         # would produce ~90*0.5 + 90*0.35 + T*0.15 = ~80+
         # Here structural penalty pulls it down at least 10 points
         assert grade < 80.0
+
+
+def _table_entities() -> list[dict]:
+    """Entity dicts shaped like ``SqliteAdapter.list_source_entities`` rows."""
+    return [
+        {
+            "id": "ent_a",
+            "name": "Alice",
+            "type": "Person",
+            "confidence": 0.9,
+            "description": "A" * 120,
+            "properties": {"role": "captain"},
+            "aliases": ["Al"],
+            "source_chunk_indices": [0, 1, 2],
+        },
+        {
+            "id": "ent_b",
+            "name": "Bob",
+            "type": "Person",
+            "confidence": 0.8,
+            "description": "B" * 60,
+            "source_chunk_indices": [1],
+        },
+    ]
+
+
+def _table_relationships() -> list[dict]:
+    """Relationship dicts shaped like ``list_source_relationships`` rows."""
+    return [
+        {
+            "id": "rel_1",
+            "source": "ent_a",
+            "target": "ent_b",
+            "predicate": "knows",
+            "type": "knows",
+            "confidence": 0.85,
+            "justification": "They are described as long-time crewmates.",
+            "from": "Alice",
+            "to": "Bob",
+        }
+    ]
+
+
+@pytest.mark.unit
+class TestBuildEntityChunkMentions:
+    def test_prefers_source_chunk_indices(self) -> None:
+        entities = [{"source_chunk_indices": [0, 1, 2], "source_chunks": [9]}]
+        assert build_entity_chunk_mentions(entities) == {0: 3}
+
+    def test_falls_back_to_legacy_keys(self) -> None:
+        entities = [
+            {"source_chunks": [0, 1]},
+            {"chunks": [4]},
+            {"name": "no provenance"},
+        ]
+        assert build_entity_chunk_mentions(entities) == {0: 2, 1: 1, 2: 1}
+
+    def test_none_values_default_to_one(self) -> None:
+        entities = [{"source_chunk_indices": None, "source_chunks": None, "chunks": None}]
+        assert build_entity_chunk_mentions(entities) == {0: 1}
+
+
+@pytest.mark.unit
+class TestScoreSourceWithTableRows:
+    """score_source must handle per-source table rows (string entity-ID refs).
+
+    Regression tests for the post-migration scoring paths (Cortex quality
+    service, Neuron recalculation handler, CLI): relationships read back from
+    ``source_relationships`` carry ``source``/``target`` as ``source_entities.id``
+    strings, not integer indices.
+    """
+
+    def test_string_refs_are_valid_and_connect(self) -> None:
+        score = calculate_source_score("src-1", _table_entities(), _table_relationships())
+
+        # Both refs resolve → full valid-refs credit, both entities connected.
+        assert score.relationship_scores[0].valid_refs_score == 15.0
+        assert score.connectivity_ratio == pytest.approx(1.0)
+        assert score.connectivity_bonus == pytest.approx(20.0)
+        # Names resolve through the id → index map.
+        assert score.relationship_scores[0].source_entity == "Alice"
+        assert score.relationship_scores[0].target_entity == "Bob"
+
+    def test_string_refs_match_integer_refs_exactly(self) -> None:
+        entities = _table_entities()
+        int_rels = [dict(_table_relationships()[0], source=0, target=1)]
+
+        by_id = calculate_source_score("src-1", entities, _table_relationships())
+        by_index = calculate_source_score("src-1", entities, int_rels)
+
+        assert by_id.quality_grade == pytest.approx(by_index.quality_grade)
+        assert by_id.total_score == pytest.approx(by_index.total_score)
+        assert by_id.connectivity_ratio == pytest.approx(by_index.connectivity_ratio)
+        assert by_id.hub_skew == pytest.approx(by_index.hub_skew)
+        assert by_id.reciprocal_rate == pytest.approx(by_index.reciprocal_rate)
+
+    def test_dangling_string_ref_is_invalid(self) -> None:
+        rels = [dict(_table_relationships()[0], target="ent_deleted")]
+        score = calculate_source_score("src-1", _table_entities(), rels)
+
+        # One resolvable side → partial credit; only that side connects.
+        assert score.relationship_scores[0].valid_refs_score == 8.0
+        assert score.connectivity_ratio == pytest.approx(0.5)
+
+    def test_structural_signals_see_string_refs(self) -> None:
+        # Hub-and-spoke with symmetric duplicates, all via string IDs.
+        entities = [
+            {"id": f"ent_{i}", "name": f"E{i}", "type": "Thing", "confidence": 0.9}
+            for i in range(11)
+        ]
+        rels = []
+        for i in range(1, 11):
+            rels.append({"source": "ent_0", "target": f"ent_{i}", "type": "t"})
+            rels.append({"source": f"ent_{i}", "target": "ent_0", "type": "t"})
+        score = calculate_source_score("src-1", entities, rels)
+
+        assert score.hub_skew > 3.0
+        assert score.reciprocal_rate > 0.5
+        assert score.structural_penalty == pytest.approx(15.0)
+
+
+@pytest.mark.unit
+class TestNoneSafeScoring:
+    """Nullable table columns arrive as explicit None — scoring must not raise."""
+
+    def test_entity_with_none_fields(self) -> None:
+        entities = [
+            {"id": "ent_a", "name": None, "type": None, "confidence": None, "description": None}
+        ]
+        score = calculate_source_score("src-1", entities, [])
+        assert score.entity_count == 1
+        assert score.entity_scores[0].confidence_score == 0.0
+
+    def test_relationship_with_none_fields(self) -> None:
+        entities = _table_entities()
+        rels = [
+            {
+                "id": "rel_1",
+                "source": "ent_a",
+                "target": "ent_b",
+                "type": None,
+                "confidence": None,
+                "justification": None,
+            }
+        ]
+        score = calculate_source_score("src-1", entities, rels)
+        assert score.relationship_count == 1
+        assert score.relationship_scores[0].valid_refs_score == 15.0
+
+
+@pytest.mark.unit
+class TestCacheableScoresFrom:
+    def test_matches_get_cacheable_scores(self) -> None:
+        scorer = QualityScorer()
+        entities = _table_entities()
+        relationships = _table_relationships()
+
+        via_method = scorer.get_cacheable_scores(
+            source_id="src-1",
+            entities=entities,
+            relationships=relationships,
+            chunk_count=3,
+        )
+        via_function = cacheable_scores_from(
+            scorer.score_source("src-1", entities, relationships, chunk_count=3)
+        )
+
+        # Timestamps are stamped at call time; everything else must agree.
+        via_method.pop("cached_scores_at")
+        via_function.pop("cached_scores_at")
+        assert via_function == via_method

@@ -221,7 +221,26 @@ def _json_default(value: Any) -> Any:
     return value
 
 
-async def _execute_handler(  # noqa: PLR0912 — linear error-classification flow, each branch is a distinct outcome
+async def _resolve(result: Any) -> Any:
+    """Resolve a queue command result that may be sync or awaitable.
+
+    ``client`` is annotated as an async ``Valkey``, but the sync client (and
+    the fakes in the test suite) return immediate values, so every command
+    site has to tolerate both shapes. Mirrors ``worker._await_result``; kept
+    local because ``worker`` imports from this module.
+
+    Args:
+        result: Return value from a queue command.
+
+    Returns:
+        The resolved value.
+    """
+    if isinstance(result, (int, bool, str, bytes, list, dict, type(None))):
+        return result
+    return await result
+
+
+async def _execute_handler(
     handler: Any,
     task_id: str,
     queue: str,
@@ -299,17 +318,22 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
             # ``TimeoutError`` (worker retries / dead-letters) and a genuine
             # cancel propagates to the worker's CancelledError branch.
             logger.info("task_cancelled", task_id=task_id, queue=queue, operation=operation)
-            hset_result = client.hset(
-                f"queue:task:{task_id}",
-                mapping={
-                    "status": "cancelled",
-                    "completed_at": _iso_now(),
-                },
+            await _resolve(
+                client.hset(
+                    f"queue:task:{task_id}",
+                    mapping={
+                        "status": "cancelled",
+                        "completed_at": _iso_now(),
+                    },
+                )
             )
-            if isinstance(hset_result, int):
-                pass  # Sync result
-            else:
-                await hset_result  # Async result
+
+            # Bound the cancelled hash on the same window as a completed one
+            # (see the success path below). Safe for the timeout-cancel case
+            # that lands here on its way to the worker's TimeoutError branch:
+            # ``_retry_task`` PERSISTs the hash before re-queueing, so a
+            # retried task never inherits this TTL.
+            await _resolve(client.expire(f"queue:task:{task_id}", result_ttl))
             raise
         except Exception as exc:
             error_type = classify_error(exc)
@@ -349,20 +373,18 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
                 )
 
             # Update task metadata with error details
-            hset_result = client.hset(
-                f"queue:task:{task_id}",
-                mapping={
-                    "status": "failed",
-                    "error": error_msg,
-                    "error_type": error_type,
-                    "error_code": error_details.get("error_code", "UNKNOWN"),
-                    "completed_at": _iso_now(),
-                },
+            await _resolve(
+                client.hset(
+                    f"queue:task:{task_id}",
+                    mapping={
+                        "status": "failed",
+                        "error": error_msg,
+                        "error_type": error_type,
+                        "error_code": error_details.get("error_code", "UNKNOWN"),
+                        "completed_at": _iso_now(),
+                    },
+                )
             )
-            if isinstance(hset_result, int):
-                pass  # Sync result
-            else:
-                await hset_result  # Async result
 
             # For permanent errors, return failure result (no retry)
             if error_type == "permanent":
@@ -371,11 +393,7 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
                 # of either disappearing or persisting forever. Skipped when
                 # no TTL is configured (legacy / test paths).
                 if failed_result_ttl is not None:
-                    expire_result = client.expire(f"queue:task:{task_id}", failed_result_ttl)
-                    if isinstance(expire_result, bool):
-                        pass  # Sync result
-                    else:
-                        await expire_result  # Async result
+                    await _resolve(client.expire(f"queue:task:{task_id}", failed_result_ttl))
                 return {
                     "status": "failed",
                     "error": error_msg,
@@ -386,22 +404,40 @@ async def _execute_handler(  # noqa: PLR0912 — linear error-classification flo
             # Transient error — re-raise so the worker can retry
             raise
 
-        hset_result = client.hset(
-            f"queue:task:{task_id}",
-            mapping={"status": "completed", "completed_at": _iso_now()},
+        # Write the result BEFORE flipping status to "completed". A
+        # cross-process ``wait_for_result`` poller (llm_queue/queue_service.py)
+        # only calls ``get_result`` once it observes status=="completed", and
+        # returns whatever comes back — including ``None`` — with no re-poll.
+        # If the status HSET landed first, a poll racing the window between
+        # the two writes could read "completed" with no result yet, and the
+        # caller would discard a finished handler result as a permanent
+        # "Empty response from LLM" error. Writing the result first means
+        # that window instead reads "still running" — never "completed, no
+        # result" (2026-08-14 P1 drain pass, entry 772).
+        await _resolve(
+            client.setex(
+                f"queue:result:{task_id}", result_ttl, json.dumps(result, default=_json_default)
+            )
         )
-        if isinstance(hset_result, int):
-            pass  # Sync result
-        else:
-            await hset_result  # Async result
 
-        setex_result = client.setex(
-            f"queue:result:{task_id}", result_ttl, json.dumps(result, default=_json_default)
+        await _resolve(
+            client.hset(
+                f"queue:task:{task_id}",
+                mapping={"status": "completed", "completed_at": _iso_now()},
+            )
         )
-        if isinstance(setex_result, bool):
-            pass  # Sync result
-        else:
-            await setex_result  # Async result
+
+        # Expire the task hash on the same window as the result written above.
+        # ``enqueue`` creates ``queue:task:{id}`` with no expiry and only
+        # terminal *failures* ever EXPIRE it, so completed hashes accumulated
+        # forever — and the six ``scan_iter(match="queue:task:*")`` paths that
+        # HGETALL every key got proportionally slower with them. TTL rather
+        # than DELETE because ``LLMQueueService.wait_for_result`` polls
+        # ``get_task`` after completion and raises "not found" on a missing
+        # hash (llm_queue/queue_service.py:264); matching
+        # ``result_ttl`` keeps that observation window exactly as wide as the
+        # result it reads, no wider.
+        await _resolve(client.expire(f"queue:task:{task_id}", result_ttl))
 
         logger.debug("task_completed", task_id=task_id, queue=queue, operation=operation)
         return result

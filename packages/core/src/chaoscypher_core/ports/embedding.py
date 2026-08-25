@@ -109,13 +109,17 @@ class EmbeddingProviderProtocol(Protocol):
     async def batch_embed(self, texts: list[str], batch_size: int = 64) -> BatchEmbedResult:
         """Generate embedding vectors for multiple texts.
 
+        All-or-nothing: every implementation embeds the full batch or raises.
+        There is no partial-success return — a caller either gets one vector
+        per input text or an ``LLMError``, never a mix of the two.
+
         Args:
             texts: List of input texts to embed.
             batch_size: Number of texts to process per batch.
 
         Returns:
-            BatchEmbedResult with embedding vectors, total count, failure count,
-            and provider name.
+            BatchEmbedResult with embedding vectors, total count, and
+            provider name.
 
         Raises:
             LLMError: If the batch embedding request fails.

@@ -219,6 +219,10 @@ class CcxImporter:
         # 3. Default knowledge graph → nodes (+ buffered edges).
         node_iri_to_id: dict[str, str] = {}
         node_iri_to_label: dict[str, str] = {}
+        # entity_iri -> entity_type, filled by the same node pass. Citations
+        # read the cited node's type from here instead of issuing a full-row
+        # ``get_node_by_ccx_iri`` SELECT per citation.
+        node_iri_to_type: dict[str, str | None] = {}
         chunk_iri_to_id: dict[str, str] = {}
         relationship_edges: list[dict[str, Any]] = []
         plain_triple_edges: list[dict[str, Any]] = []
@@ -230,6 +234,7 @@ class CcxImporter:
                 template_name_to_id,
                 node_iri_to_id,
                 node_iri_to_label,
+                node_iri_to_type,
                 relationship_edges,
                 plain_triple_edges,
             )
@@ -261,6 +266,7 @@ class CcxImporter:
             template_name_to_id,
             node_iri_to_id,
             node_iri_to_label,
+            node_iri_to_type,
         )
 
         # 4b. Workflows app graph (triggers). The current export shape is
@@ -274,7 +280,13 @@ class CcxImporter:
         # 5. Sources / chunks / citations.
         if options.import_sources and self.sources is not None:
             self._import_sources(
-                pkg, database_name, stats, node_iri_to_id, node_iri_to_label, chunk_iri_to_id
+                pkg,
+                database_name,
+                stats,
+                node_iri_to_id,
+                node_iri_to_label,
+                node_iri_to_type,
+                chunk_iri_to_id,
             )
             # 6. Own this import's templates by its source so they cascade-delete
             #    with it (mirrors extraction's source-scoped templates).
@@ -401,6 +413,7 @@ class CcxImporter:
         template_name_to_id: dict[str, str],
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
         relationship_edges: list[dict[str, Any]],
         plain_triple_edges: list[dict[str, Any]],
     ) -> None:
@@ -421,7 +434,12 @@ class CcxImporter:
                 continue
 
             self._upsert_jsonld_node(
-                member, database_name, template_name_to_id, node_iri_to_id, node_iri_to_label
+                member,
+                database_name,
+                template_name_to_id,
+                node_iri_to_id,
+                node_iri_to_label,
+                node_iri_to_type,
             )
             stats.nodes_imported += 1
 
@@ -434,8 +452,9 @@ class CcxImporter:
         template_name_to_id: dict[str, str],
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
     ) -> str:
-        """Upsert one JSON-LD node member by IRI; record id + label maps.
+        """Upsert one JSON-LD node member by IRI; record id + label + type maps.
 
         Shared by the default-knowledge-graph and ``chaoscypher.lenses``
         importers so a lens node is reconstructed exactly like a knowledge
@@ -456,6 +475,10 @@ class CcxImporter:
         local_id: str = row["id"]
         node_iri_to_id[ccx_iri] = local_id
         node_iri_to_label[ccx_iri] = label
+        # Recorded from the persisted row (not the payload) so it is exactly
+        # what a ``get_node_by_ccx_iri`` read-back would have returned — the
+        # citation importer reads its ``entity_type`` from here.
+        node_iri_to_type[ccx_iri] = row.get("entity_type")
         return local_id
 
     def _resolve_node_template(
@@ -515,6 +538,7 @@ class CcxImporter:
         template_name_to_id: dict[str, str],
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
     ) -> None:
         """Import lens nodes from the ``chaoscypher.lenses`` named graph.
 
@@ -535,7 +559,12 @@ class CcxImporter:
                 stats.warnings.append(f"Skipping malformed lens member: {member!r}")
                 continue
             self._upsert_jsonld_node(
-                member, database_name, template_name_to_id, node_iri_to_id, node_iri_to_label
+                member,
+                database_name,
+                template_name_to_id,
+                node_iri_to_id,
+                node_iri_to_label,
+                node_iri_to_type,
             )
             stats.nodes_imported += 1
 
@@ -748,6 +777,7 @@ class CcxImporter:
         stats: ImportStats,
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
         chunk_iri_to_id: dict[str, str],
     ) -> None:
         """Upsert sources, then their chunks and citations.
@@ -793,6 +823,7 @@ class CcxImporter:
                 stats,
                 node_iri_to_id,
                 node_iri_to_label,
+                node_iri_to_type,
                 node_source_links,
                 chunk_iri_to_id,
             )
@@ -993,6 +1024,7 @@ class CcxImporter:
         stats: ImportStats,
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
         node_source_links: dict[str, str],
         chunk_iri_to_id: dict[str, str],
     ) -> None:
@@ -1034,6 +1066,7 @@ class CcxImporter:
                 stats,
                 node_iri_to_id,
                 node_iri_to_label,
+                node_iri_to_type,
                 node_source_links,
             )
             return
@@ -1048,6 +1081,7 @@ class CcxImporter:
             stats,
             node_iri_to_id,
             node_iri_to_label,
+            node_iri_to_type,
             node_source_links,
         )
 
@@ -1169,6 +1203,23 @@ class CcxImporter:
         digest = hashlib.sha256(ccx_iri.encode("utf-8")).hexdigest()[:24]
         return f"chunk_{digest}"
 
+    @staticmethod
+    def _citation_id(chunk_id: str, local_node_id: str, ordinal: int) -> str:
+        """Derive a stable citation id for a chunk's citation entry.
+
+        ``create_citations_batch`` dedups by id ("content-addressed stable
+        IDs") — a random id per row made every re-import insert a full
+        duplicate citation set, violating the importer's idempotency
+        contract. Hash the chunk, cited node, and the entry's position in
+        the chunk's citation list so identical package bytes always land on
+        the same rows while distinct citations (even duplicates of the same
+        entity within one chunk) keep distinct ids.
+        """
+        import hashlib
+
+        digest = hashlib.sha256(f"{chunk_id}|{local_node_id}|{ordinal}".encode()).hexdigest()[:24]
+        return f"citation_{digest}"
+
     def _import_citations(
         self,
         citations: list[dict[str, Any]],
@@ -1178,6 +1229,7 @@ class CcxImporter:
         stats: ImportStats,
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
+        node_iri_to_type: dict[str, str | None],
         node_source_links: dict[str, str],
     ) -> None:
         """Create entity citations attached to a chunk.
@@ -1194,9 +1246,15 @@ class CcxImporter:
         ids) resolve against the graph's local ids, not the package IRIs.
         ``entity_label`` is recovered from the imported node's label, falling
         back to the IRI.
+
+        Written with ONE ``create_citations_batch`` call per chunk rather than
+        the single-row ``create_citation`` (which commits per row — the
+        importer opens no ``transaction()``, so that was one COMMIT per
+        citation across the whole package).
         """
         assert self.sources is not None
-        for citation in citations:
+        citation_rows: list[dict[str, Any]] = []
+        for ordinal, citation in enumerate(citations):
             entity_ref = citation.get("ccx:citation")
             entity_iri = entity_ref.get("@id") if isinstance(entity_ref, dict) else None
             local_node_id = node_iri_to_id.get(entity_iri) if entity_iri else None
@@ -1217,13 +1275,13 @@ class CcxImporter:
             # source's Entity Distribution panel groups citations by
             # ``entity_type``; without this every imported entity falls into a
             # single "Unknown" bucket even though the node itself is typed.
-            cited_node = self.graph.get_node_by_ccx_iri(entity_iri, database_name)
-            entity_type = cited_node.get("entity_type") if cited_node else None
-
-            from chaoscypher_core.utils.id import generate_id
+            # Read from the map the node pass filled — a per-citation
+            # ``get_node_by_ccx_iri`` was a full-row SELECT (embedding vector +
+            # properties JSON) to fetch this one scalar.
+            entity_type = node_iri_to_type.get(entity_iri)
 
             citation_data: dict[str, Any] = {
-                "id": generate_id("citation"),
+                "id": self._citation_id(chunk_id, local_node_id, ordinal),
                 "database_name": database_name,
                 "entity_uri": local_node_id,
                 "entity_label": node_iri_to_label.get(entity_iri) or entity_iri,
@@ -1233,8 +1291,11 @@ class CcxImporter:
                 "confidence": citation.get("ccx:confidence", 1.0),
                 "extraction_method": citation.get("ccx:extractionMethod") or "imported",
             }
-            self.sources.create_citation(citation_data)
-            stats.citations_imported += 1
+            citation_rows.append(citation_data)
+
+        if citation_rows:
+            self.sources.create_citations_batch(citation_rows)
+            stats.citations_imported += len(citation_rows)
 
     # ------------------------------------------------------------------
     # Named-graph lookup helpers

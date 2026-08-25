@@ -88,19 +88,22 @@ class TestWorkflowCascades:
         del_resp = client.delete(f"/api/v1/workflows/{workflow_id}")
         assert del_resp.status_code == 204
 
-        # Trigger may be cascaded or orphaned - both are valid
-        # If cascaded: 404; if orphaned: 200 but workflow_id invalid
+        # Cascade is the specified behavior, not merely one of two
+        # valid outcomes: Trigger.workflow_id is declared with
+        # ForeignKey("workflows.id", ondelete="CASCADE")
+        # (adapters/sqlite/models.py:261-264) and SQLite FK enforcement
+        # is genuinely on — engine.py:152 runs PRAGMA foreign_keys=ON
+        # per connection — so the trigger row is deleted along with the
+        # workflow and GET must 404.
         trig_check = client.get(f"/api/v1/triggers/{trigger_id}")
-        assert trig_check.status_code in (200, 404)
+        assert trig_check.status_code == 404
 
 
 class TestTemplateConstraints:
     """Test template deletion with in-use constraint + force-cascade."""
 
     @staticmethod
-    def _create_template_and_node(
-        client: httpx.Client, name_suffix: str
-    ) -> tuple[str, str]:
+    def _create_template_and_node(client: httpx.Client, name_suffix: str) -> tuple[str, str]:
         """Create a node-type template + one node that uses it.
 
         Returns ``(template_id, node_id)``. Uniquifies the template name
@@ -108,6 +111,7 @@ class TestTemplateConstraints:
         collide on the unique-name 500 (separate product bug).
         """
         import uuid
+
         suffix = f"{name_suffix}-{uuid.uuid4().hex[:8]}"
         create_resp = client.post(
             "/api/v1/templates",
@@ -138,11 +142,9 @@ class TestTemplateConstraints:
         node_id = node_resp.json()["id"]
         return template_id, node_id
 
-    def test_delete_in_use_template_without_force_returns_409(
-        self, client: httpx.Client
-    ) -> None:
+    def test_delete_in_use_template_without_force_returns_409(self, client: httpx.Client) -> None:
         """``DELETE /templates/{id}`` (no force) on an in-use template is 409."""
-        template_id, node_id = self._create_template_and_node(client, "no_force")
+        template_id, _node_id = self._create_template_and_node(client, "no_force")
         try:
             resp = client.delete(f"/api/v1/templates/{template_id}")
             assert resp.status_code == 409, resp.text

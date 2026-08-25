@@ -20,6 +20,21 @@ import pytest
 from click.testing import CliRunner
 
 
+# (Click parameter name, the flags it must expose). Asserted against
+# ``serve.params`` rather than ``--help`` text: the help output cannot fail
+# these checks, because the command's own docstring Example block already
+# contains "--port", "--database" and "--reload", and Click's always-present
+# "--help  Show this message and exit." line contains the substring "-h".
+# Rebuilding serve with EVERY option deleted still satisfied all four of the
+# old text assertions.
+_EXPECTED_SERVE_OPTIONS = [
+    ("port", ("--port", "-p")),
+    ("host_addr", ("--host", "-h")),
+    ("database", ("--database", "-d")),
+    ("reload", ("--reload",)),
+]
+
+
 @pytest.mark.integration
 class TestCliServeCommand:
     """Test CLI serve command configuration."""
@@ -34,45 +49,35 @@ class TestCliServeCommand:
         assert result.exit_code == 0
         assert "Start the local API server" in result.output
 
-    def test_serve_has_port_option(self):
-        """Serve command has --port option."""
+    @pytest.mark.parametrize(
+        ("param_name", "flags"),
+        _EXPECTED_SERVE_OPTIONS,
+        ids=[flags[0] for _, flags in _EXPECTED_SERVE_OPTIONS],
+    )
+    def test_serve_declares_option(self, param_name, flags):
+        """Serve declares each documented option as a real Click parameter."""
         from chaoscypher_cli.commands.runtime.serve import serve
 
-        runner = CliRunner()
-        result = runner.invoke(serve, ["--help"])
+        params = {p.name: p for p in serve.params}
+        assert param_name in params, (
+            f"serve does not declare {flags[0]}; declared params: {sorted(params)}"
+        )
+        assert set(params[param_name].opts) == set(flags)
 
-        assert result.exit_code == 0
-        assert "--port" in result.output or "-p" in result.output
+    def test_serve_options_are_usable(self):
+        """Each option carries the type / default that makes it work.
 
-    def test_serve_has_host_option(self):
-        """Serve command has --host option."""
+        A declared-but-mistyped option is as broken as a missing one, so
+        the shapes the docstring's examples rely on are pinned here.
+        """
         from chaoscypher_cli.commands.runtime.serve import serve
 
-        runner = CliRunner()
-        result = runner.invoke(serve, ["--help"])
+        params = {p.name: p for p in serve.params}
 
-        assert result.exit_code == 0
-        assert "--host" in result.output or "-h" in result.output
-
-    def test_serve_has_database_option(self):
-        """Serve command has --database option."""
-        from chaoscypher_cli.commands.runtime.serve import serve
-
-        runner = CliRunner()
-        result = runner.invoke(serve, ["--help"])
-
-        assert result.exit_code == 0
-        assert "--database" in result.output or "-d" in result.output
-
-    def test_serve_has_reload_option(self):
-        """Serve command has --reload option for development."""
-        from chaoscypher_cli.commands.runtime.serve import serve
-
-        runner = CliRunner()
-        result = runner.invoke(serve, ["--help"])
-
-        assert result.exit_code == 0
-        assert "--reload" in result.output
+        assert params["port"].type.name == "integer"
+        assert params["host_addr"].default == "localhost"
+        assert params["database"].default == "default"
+        assert params["reload"].is_flag is True
 
     def test_serve_help_mentions_local_server(self):
         """Serve command help mentions a local API server."""

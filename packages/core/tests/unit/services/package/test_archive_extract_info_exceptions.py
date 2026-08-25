@@ -52,3 +52,22 @@ class TestGetArchiveInfoExceptions:
         assert exc.code == "NOT_FOUND"
         assert exc.resource_type == "Archive"
         assert str(missing) in exc.identifier
+
+
+@pytest.mark.unit
+def test_get_archive_info_file_count_excludes_directories(tmp_path: Path) -> None:
+    """file_count counts files only; contents still lists directory entries."""
+    import zipfile
+
+    from chaoscypher_core.services.package.archive.info import get_archive_info
+
+    archive = tmp_path / "with-dirs.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("data/", "")
+        zf.writestr("data/a.txt", "aaa")
+        zf.writestr("b.txt", "bb")
+
+    info = get_archive_info(archive)
+    assert info.file_count == 2
+    assert "data/" in info.contents
+    assert info.uncompressed_size == 5

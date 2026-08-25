@@ -188,6 +188,36 @@ def test_start_registers_health_filter(main_module) -> None:
         access_logger.removeFilter(f)
 
 
+def test_start_refuses_pre_squash_database_lineage(main_module) -> None:
+    """A pre-squash database exits with the guided message, never a traceback.
+
+    ``init_database`` raises ``UnsupportedDatabaseLineageError`` when the
+    database is stamped at a revision from the retired pre-2026-06-02
+    lineage. ``start`` must print that guidance and exit non-zero *cleanly*
+    — uvicorn must never be reached, and the operator must not have to read
+    a stack trace to learn what to do.
+    """
+    from chaoscypher_core.exceptions import UnsupportedDatabaseLineageError
+
+    settings = _make_settings()
+    exc = UnsupportedDatabaseLineageError("0044")
+
+    with (
+        patch("chaoscypher_core.app_config.get_settings", return_value=settings),
+        patch("chaoscypher_core.database.engine.init_database", side_effect=exc),
+        patch.object(main_module.uvicorn, "run") as mock_run,
+    ):
+        result = CliRunner().invoke(main_module.cli, ["start"])
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"start leaked a traceback instead of exiting cleanly: {result.exception!r}"
+    )
+    mock_run.assert_not_called()
+    assert "0044" in result.output
+    assert "2026-06-02" in result.output
+
+
 # ---------------------------------------------------------------------------
 # status command
 # ---------------------------------------------------------------------------

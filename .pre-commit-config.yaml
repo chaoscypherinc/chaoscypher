@@ -145,7 +145,11 @@ repos:
         name: CLAUDE.md rule self-tests
         entry: uv run pytest packages/core/tests/unit/scripts/ -q
         language: system
-        files: ^(scripts/lint_claude_rules\.py|tools/semgrep/rules/cc-.*\.yml|tools/semgrep/tests/cc-.*\.py|packages/core/tests/unit/scripts/.*\.py)$
+        # .semgrepignore and tools/semgrep/ci-shape/ are in scope because the
+        # self-tests now assert the CI *invocation shape* too: deleting the
+        # ignore file (or the CI-shape fixtures) is what silently kills
+        # CC040/CC041, so those edits must re-run this suite.
+        files: ^(\.semgrepignore|scripts/lint_claude_rules\.py|tools/semgrep/rules/cc-.*\.yml|tools/semgrep/tests/cc-.*\.py|tools/semgrep/ci-shape/.*\.py|packages/core/tests/unit/scripts/.*\.py)$
         pass_filenames: false
 
   # ==========================================================================

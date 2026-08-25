@@ -210,12 +210,43 @@ class SourceExtractionJobsMixin(ExtractionJobQueryBase, SqliteMixinBase):
         self._maybe_commit()
         self.session.refresh(job)
 
-    def start_extraction_job(self, job_id: str) -> None:
-        """Mark extraction job as running.
+    def start_extraction_job(self, job_id: str) -> bool:
+        """Mark extraction job as running, unless it is already terminal.
+
+        A ``completed``/``failed``/``cancelled`` job is never restarted:
+        a finalize task that was queued just before a re-extract cancelled
+        the job would otherwise flip it back to ``running``, putting it
+        back in ``get_active_extraction_job``'s answer so the fresh
+        analysis resumes the very run the user asked to replace.
 
         Args:
             job_id: Job identifier
+
+        Returns:
+            True when the job is running after this call; False when the
+            transition was refused because the job is terminal or its row
+            no longer exists.
         """
+        self._ensure_connected()
+
+        # Expire session cache to see terminal transitions from other processes
+        self.session.expire_all()
+
+        statement = select(ChunkExtractionJob).where(ChunkExtractionJob.id == job_id)
+        job = self.session.exec(statement).first()
+
+        if job is None:
+            logger.warning("extraction_job_not_found_on_start", job_id=job_id)
+            return False
+
+        if job.status in ("completed", "failed", "cancelled"):
+            logger.info(
+                "extraction_job_start_refused_terminal",
+                job_id=job_id,
+                status=job.status,
+            )
+            return False
+
         self.update_extraction_job(
             job_id,
             {
@@ -223,6 +254,7 @@ class SourceExtractionJobsMixin(ExtractionJobQueryBase, SqliteMixinBase):
                 "started_at": datetime.now(UTC),
             },
         )
+        return True
 
     def complete_extraction_job(self, job_id: str) -> None:
         """Mark extraction job as completed and cascade non-terminal tasks to orphaned.

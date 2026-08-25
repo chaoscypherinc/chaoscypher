@@ -16,5 +16,7 @@ class TestLexiconAuth:
     def test_auth_status(self, client: httpx.Client) -> None:
         """Lexicon auth status returns current state."""
         resp = client.get("/api/v1/lexicon/auth/status")
-        # May return 200 or 503 depending on config
-        assert resp.status_code in (200, 503)
+        # Auth status is a pure local read of stored credentials — no
+        # network path, so 503 is not a reachable outcome here.
+        assert resp.status_code == 200
+        assert "authenticated" in resp.json()

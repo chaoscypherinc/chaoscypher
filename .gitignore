@@ -13,9 +13,15 @@
 .playwright-mcp/
 
 # ============================================================================
-# CLAUDE CODE / MCP (local config, not tracked)
+# CLAUDE CODE / MCP (local config, not tracked — carve-outs below are the
+# repo-shared SessionStart hook that pins main on fresh cloud clones, the
+# #356 stale-base class; precedent for the carve-out pattern: #344)
 # ============================================================================
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/session-start.sh
 .mcp.json
 
 # ============================================================================

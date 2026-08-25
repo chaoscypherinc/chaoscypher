@@ -98,7 +98,9 @@ async def list_nodes(
 
     **Returns:**
     Paginated nodes envelope:
-    - `data`: list of node objects
+    - `data`: list of node objects — `embedding` is always null here, since
+      the listing never loads vectors (a full page of them would be tens of
+      MB of JSON, paid for again in agent context)
     - `pagination`: `{total, page, page_size, total_pages, has_next, has_prev}`
 
     **Example Use Cases:**
@@ -116,7 +118,6 @@ async def list_nodes(
                 "label": "Albert Einstein",
                 "properties": {"birth_year": 1879, "field": "Physics"},
                 "position": {"x": 100, "y": 200},
-                "embedding": [0.1, 0.2],
                 "created_at": "2024-01-01T00:00:00Z",
                 "updated_at": "2024-01-01T00:00:00Z"
             }

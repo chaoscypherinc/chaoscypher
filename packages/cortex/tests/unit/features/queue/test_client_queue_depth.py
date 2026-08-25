@@ -3,6 +3,7 @@
 
 """Tests for queue depth backpressure on QueueClient."""
 
+from itertools import count
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +24,9 @@ def _build_client(max_depth: int = 100) -> tuple[QueueClient, MagicMock]:
     """
     client = QueueClient()
     valkey = MagicMock()
+    # Pending-ZSET seq counter (queue FIFO tiebreaker, 2026-08-15).
+    valkey.incr = AsyncMock(side_effect=lambda _key, _c=count(1): next(_c))
+    valkey.incrby = AsyncMock(side_effect=lambda _key, amount: amount)
     client.client = valkey
     client._connected = True
     client._max_pending_queue_depth = max_depth

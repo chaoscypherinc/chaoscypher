@@ -328,7 +328,7 @@ Search for packages on the Lexicon registry. An empty query returns all packages
 |----------------|-------------|----------|-------------|--------------------------------------------------------------------|
 | `query`        | string      | No       | `""`        | Search query string (empty returns all)                            |
 | `page`         | int         | No       | `1`         | Page number (1-indexed, minimum: 1)                                |
-| `limit`        | int/null    | No       | server default (50) | Results per page (minimum: 1, maximum: 100 — values above 100 are rejected) |
+| `limit`        | int/null    | No       | server default (50) | Results per page (minimum: 1, maximum: 100 — higher values are clamped to 100) |
 | `sort_by`      | string      | No       | `downloads` | Sort field: `relevance`, `stars`, `downloads`, `newest`, `updated`, `name` |
 | `is_public`    | bool/null   | No       | `null`      | Filter by visibility (`true` or `false`)                           |
 | `owner_id`     | string/null | No       | `null`      | Filter by owner ID                                                 |
@@ -565,24 +565,14 @@ curl -X POST "http://localhost/api/v1/lexicon/upload?public=true&message=Initial
 
 #### Response
 
-`201 Created`
+`202 Accepted` — the upload is processed asynchronously, so the response is
+the queued job envelope (job id + status), not the finished package metadata:
 
 ```json
 {
-  "id": "repo-def456",
-  "name": "my-package",
-  "description": "My knowledge package",
-  "owner_username": "johndoe",
-  "owner_name": "John Doe",
-  "owner_id": "user-xyz789",
-  "is_public": true,
-  "conformance_classes": ["ccx-core"],
-  "is_signed": false,
-  "star_count": 0,
-  "version_count": 1,
-  "download_count": 0,
-  "created_at": 1709251200000,
-  "updated_at": 1709251200000
+  "job_id": "job_1a2b3c",
+  "status": "queued",
+  "message": "Upload queued for processing"
 }
 ```
 

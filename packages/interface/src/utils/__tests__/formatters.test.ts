@@ -447,19 +447,22 @@ describe('truncateUrl', () => {
   it('truncates when url exceeds maxLength', () => {
     const long = 'https://example.com/' + 'a'.repeat(60);
     const result = truncateUrl(long, 50);
-    // The function may use domain + truncated path or plain substring.
-    // Either way the result must be shorter than the original.
-    expect(result.length).toBeLessThan(long.length);
-    // And it must contain something from the original (domain or prefix).
-    expect(long.startsWith('https://example.com') || result.includes('example.com')).toBe(true);
+    // Domain-preserving format: hostname, '/...', then the path tail that
+    // fits (maxLength - domain.length - 6 = 33 chars).
+    expect(result).toBe('example.com/...' + 'a'.repeat(33));
+    expect(result.length).toBe(48);
   });
 
   it('shows domain + truncated path when path is long enough', () => {
     const long =
       'https://my.host.io/some/very/long/path/segment/that/overflows/the/limit/here';
     const result = truncateUrl(long, 50);
-    // Either the domain appears or the string is capped at maxLength + '...'
-    expect(result.length).toBeLessThanOrEqual(53);
+    // remainingLength = 50 - 'my.host.io'.length - 6 = 34; the tail is the
+    // last 34 chars of the pathname. Deleting the domain-preserving branch
+    // yields 'https://my.host.io/some/very/long/path/segment/...' instead
+    // and fails here.
+    expect(result).toBe('my.host.io/...ment/that/overflows/the/limit/here');
+    expect(result.startsWith('my.host.io/...')).toBe(true);
   });
 
   it('truncates a non-URL string plain-style', () => {

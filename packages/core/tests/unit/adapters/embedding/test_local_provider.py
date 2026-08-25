@@ -69,7 +69,6 @@ class TestLocalEmbeddingProvider:
 
         assert isinstance(result, BatchEmbedResult)
         assert result.total == 2
-        assert result.failed == 0
         assert len(result.embeddings) == 2
         assert len(result.embeddings[0]) == 4  # Truncated
         assert result.provider == "local"

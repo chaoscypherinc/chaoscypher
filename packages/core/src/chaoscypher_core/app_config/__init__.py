@@ -32,6 +32,7 @@ from pydantic import (
     Field,
     SecretStr,
     field_serializer,
+    field_validator,
     model_validator,
 )
 from pydantic_settings import BaseSettings
@@ -1451,6 +1452,27 @@ class Settings(BaseSettings):
 
     # Custom settings (extensible)
     custom_settings: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("current_database")
+    @classmethod
+    def _validate_current_database(cls, v: str) -> str:
+        """Reject database names that cannot have been created.
+
+        ``current_database`` is writable through ``PATCH /api/v1/settings``
+        and is joined as a raw path segment by every database/backup/MCP
+        path helper, so it must never carry a traversal form. Mirror
+        ``DatabaseRepository.create_database``'s unicode-aware name rule
+        exactly (alnum after stripping ``_``/``-``, ≤64 chars) — an ASCII
+        regex here could brick a legitimately created non-ASCII database
+        on the next settings load.
+        """
+        if not v or len(v) > 64 or not v.replace("_", "").replace("-", "").isalnum():
+            msg = (
+                "current_database must be a valid database name "
+                "(alphanumeric, underscores and hyphens allowed, max 64 chars)"
+            )
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def _derive_local_auth_paths(self) -> Settings:

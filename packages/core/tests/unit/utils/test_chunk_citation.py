@@ -177,6 +177,27 @@ class TestRecomputeChunkOffsets:
         assert content[so[0]["start"] : so[0]["end"]] == "The first sentence."
         assert content[so[1]["start"] : so[1]["end"]] == "The second sentence."
 
+    def test_repeated_boilerplate_anchors_to_later_occurrence(self) -> None:
+        """Level 1 searches forward from the previous chunk's start (like
+        levels 2/3), so a later chunk of repeated boilerplate anchors to
+        the later occurrence instead of re-anchoring to the first one.
+        """
+        original = "BOILERPLATE Alpha section text. BOILERPLATE Beta section text."
+        chunks = [
+            _make_chunk("BOILERPLATE", char_start=0),
+            _make_chunk("Alpha section text.", char_start=0),
+            _make_chunk("BOILERPLATE", char_start=0),
+            _make_chunk("Beta section text.", char_start=0),
+        ]
+        _recompute_chunk_offsets(chunks, original)
+
+        for chunk in chunks:
+            assert chunk["citation_offset_method"] == "exact"
+            assert original[chunk["char_start"] : chunk["char_end"]] == chunk["content"]
+        assert chunks[0]["char_start"] == 0
+        # The second BOILERPLATE chunk anchors to the second occurrence.
+        assert chunks[2]["char_start"] == original.index("BOILERPLATE", 1)
+
     def test_sentence_offsets_unchanged_when_none_method(self) -> None:
         """Sentence offsets not touched when method is 'none'."""
         original = "Some text."

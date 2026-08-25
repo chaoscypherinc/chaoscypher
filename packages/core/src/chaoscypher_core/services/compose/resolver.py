@@ -99,6 +99,19 @@ class ResolverError(ChaosCypherException):
         self.package = package
 
 
+def _dependency_specs(dependencies: dict[str, str]) -> list[str]:
+    """Render a manifest dependency dict as version-pinned spec strings.
+
+    The manifest maps ``name -> version``; queueing bare names made every
+    transitive dependency resolve to hub "latest" instead of the pinned
+    version. Emit ``name:version`` specs (``PackageSpec.parse`` format),
+    falling back to the bare name when the manifest omits a version.
+    """
+    if not dependencies:
+        return []
+    return [f"{name}:{version}" if version else name for name, version in dependencies.items()]
+
+
 class PackageResolver:
     """Resolves packages from hub, local files, and dependencies.
 
@@ -182,7 +195,9 @@ class PackageResolver:
         resolution_order: list[str] = []
 
         async with LexiconClient(
-            base_url=self.lexicon_url or "",
+            # None (not "") so an unset URL falls through to the client's
+            # settings.lexicon.url default instead of a relative "/api/v1".
+            base_url=self.lexicon_url,
             auth=self.auth,
         ) as client:
             while to_resolve:
@@ -326,7 +341,7 @@ class PackageResolver:
             version=manifest.package_version,
             path=extract_dir,
             manifest=manifest.to_dict(),
-            dependencies=list(manifest.dependencies.keys()) if manifest.dependencies else [],
+            dependencies=_dependency_specs(manifest.dependencies),
         )
 
     async def _resolve_directory(
@@ -355,7 +370,7 @@ class PackageResolver:
             version=manifest.package_version,
             path=dir_path,
             manifest=manifest.to_dict(),
-            dependencies=list(manifest.dependencies.keys()) if manifest.dependencies else [],
+            dependencies=_dependency_specs(manifest.dependencies),
         )
 
     async def _resolve_hub(
@@ -444,7 +459,7 @@ class PackageResolver:
                 version=actual_version,
                 path=version_dir,
                 manifest=manifest.to_dict(),
-                dependencies=list(manifest.dependencies.keys()) if manifest.dependencies else [],
+                dependencies=_dependency_specs(manifest.dependencies),
             )
 
         except LexiconClientError as e:

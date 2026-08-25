@@ -77,10 +77,9 @@ async def test_call_count_increments_per_call() -> None:
 
 
 @pytest.mark.asyncio
-async def test_batch_embed_returns_failed_zero() -> None:
+async def test_batch_embed_returns_total() -> None:
     fake = FakeEmbeddingProvider()
     result = await fake.batch_embed(["a", "b", "c"])
-    assert result.failed == 0
     assert result.total == 3
 
 

@@ -45,18 +45,19 @@ _COMMON = [
 
 
 def test_docker_mode_matches_make_ci():
-    """`--mode docker` mirrors `make ci`: shared checks + Docker tests + advisory diff + security."""
+    """`--mode docker` mirrors `make ci`: shared checks + Docker tests + advisory diff + e2e-cli + security."""
     assert _RUN_CI.build_plan("docker") == [
         *_COMMON,
         "docker-test",
         "coverage-diff-advisory",
+        "e2e-cli",
         "security",
     ]
 
 
 def test_local_mode_matches_make_ci_local():
-    """`--mode local` mirrors `make ci-local`: shared checks + host tests + security."""
-    assert _RUN_CI.build_plan("local") == [*_COMMON, "test-cov-internal", "security"]
+    """`--mode local` mirrors `make ci-local`: shared checks + host tests + e2e-cli + security."""
+    assert _RUN_CI.build_plan("local") == [*_COMMON, "test-cov-internal", "e2e-cli", "security"]
 
 
 def test_unknown_mode_raises():

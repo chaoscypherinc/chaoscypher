@@ -713,7 +713,7 @@ class SourcePipeline:
         result.status = "awaiting_confirmation"
         result.error = (
             f"Domain not confirmed (detected: {rec['detected_domain']}). "
-            f"Run: cc source confirm {file_id}  (or re-run with --no-confirm to accept)"
+            f"Run: chaoscypher source confirm {file_id}  (or re-run with --no-confirm to accept)"
         )
         # In quiet mode, add.py's quiet output block owns the AWAITING line.
         # Only print here on the UI (non-quiet) path so it appears exactly once
@@ -722,7 +722,7 @@ class SourcePipeline:
             self.console.print(
                 f"[yellow]AWAITING[/yellow] {file_id} "
                 f"(detected: {rec['detected_domain']}) — "
-                f"cc source confirm {file_id}"
+                f"chaoscypher source confirm {file_id}"
             )
 
     def _prompt_for_domain(self, rec: dict[str, Any]) -> str | None:

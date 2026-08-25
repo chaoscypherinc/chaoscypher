@@ -47,18 +47,34 @@ def user_plugins_allowed() -> bool:
     return os.environ.get("CHAOSCYPHER_ALLOW_USER_PLUGINS", "1") != "0"
 
 
-def audit_log_user_plugin_file(path: Path, *, registry: str) -> None:
-    """Emit a WARNING-level audit log for a user plugin file.
+def audit_log_user_plugin_file(path: Path, *, registry: str) -> bool:
+    """Gate on the kill switch and audit-log a user plugin file.
 
     Call this for every user-space file a registry ingests, including
-    pure-data files like ``*.jsonld`` configs. The event name is
+    pure-data files like ``*.jsonld`` configs, and skip the file when it
+    returns ``False``. When user plugins are disabled via the
+    ``CHAOSCYPHER_ALLOW_USER_PLUGINS`` kill switch, this logs
+    ``user_plugin_disabled_skip`` and returns ``False`` without touching
+    the file. Otherwise it emits the WARNING-level audit event
     ``user_plugin_loaded`` with fields ``path`` (absolute) and
     ``sha256`` (hex digest of the file contents).
 
     Args:
         path: Path to the file being loaded.
         registry: Name of the registry loading the file (for grep-ability).
+
+    Returns:
+        True when the file may be loaded, False when user plugins are
+        disabled and the file must be skipped.
     """
+    if not user_plugins_allowed():
+        logger.info(
+            "user_plugin_disabled_skip",
+            path=str(path),
+            registry=registry,
+        )
+        return False
+
     resolved = path.resolve()
     try:
         digest = hashlib.sha256(resolved.read_bytes()).hexdigest()
@@ -77,6 +93,7 @@ def audit_log_user_plugin_file(path: Path, *, registry: str) -> None:
         sha256=digest,
         registry=registry,
     )
+    return True
 
 
 def load_user_python_plugin(path: Path, *, module_name: str, registry: str) -> ModuleType | None:
@@ -101,15 +118,8 @@ def load_user_python_plugin(path: Path, *, module_name: str, registry: str) -> M
         exception propagates to the caller so the registry can log with
         its own event name.
     """
-    if not user_plugins_allowed():
-        logger.info(
-            "user_plugin_disabled_skip",
-            path=str(path),
-            registry=registry,
-        )
+    if not audit_log_user_plugin_file(path, registry=registry):
         return None
-
-    audit_log_user_plugin_file(path, registry=registry)
 
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:

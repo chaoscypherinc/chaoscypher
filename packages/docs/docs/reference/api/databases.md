@@ -186,7 +186,7 @@ curl http://localhost/api/v1/databases/research-project
 POST /api/v1/databases
 ```
 
-Create a new database with a fully initialized directory structure including `app.db` (with default seed data, search indices, and knowledge graph tables).
+Create a new database directory with `app.db` initialized (default seed data and knowledge graph tables). Search indices (the FTS5 keyword index and sqlite-vec embedding tables) are not created at this point — they are created lazily inside `app.db` on first use.
 
 ```bash
 curl -X POST http://localhost/api/v1/databases \

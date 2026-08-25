@@ -82,6 +82,10 @@ class TestDeleteDatabaseExceptions:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         repo = _make_repo(tmp_path)
-        monkeypatch.setattr(Path, "is_relative_to", lambda self, other: False)
+        # Force the strict-child containment guard to fail regardless of the
+        # requested name, exercising delete_database's rejection branch.
+        # (The guard itself is a resolved-parent comparison, not
+        # ``Path.is_relative_to`` — see ``DatabaseRepository._is_strict_child``.)
+        monkeypatch.setattr(type(repo), "_is_strict_child", lambda self, db_path: False)
         with pytest.raises(ValidationError, match="Invalid database name"):
             repo.delete_database("sneaky")

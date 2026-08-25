@@ -269,19 +269,24 @@ class ArchiveExtractor:
             ArchiveSecurityError: If archive contains unsafe paths.
             ArchiveExtractionError: If extraction fails or limits exceeded.
         """
-        with tarfile.open(archive_path, "r:gz") as tarf:
-            members = tarf.getmembers()
-            total_members = len(members)
+        # First pass: STREAMING open ("r|gz") so members are enumerated
+        # incrementally as each header is read. Limits are enforced per
+        # member, aborting the moment a cap is crossed instead of inflating
+        # the whole gzip stream upfront (as getmembers() on a seekable
+        # "r:gz" handle would).
+        total_members = 0
+        total_size = 0
+        with tarfile.open(archive_path, "r|gz") as tarf:
+            for member in tarf:
+                total_members += 1
+                if total_members > self.max_files:
+                    msg = f"Archive exceeds file limit: {total_members} > {self.max_files}"
+                    raise ArchiveExtractionError(msg)
 
-            # Check file count limit
-            if total_members > self.max_files:
-                msg = f"Archive exceeds file limit: {total_members} > {self.max_files}"
-                raise ArchiveExtractionError(msg)
-
-            # Check total size and validate all members first
-            total_size = 0
-            for member in members:
                 total_size += member.size
+                if total_size > self.max_size:
+                    msg = f"Archive exceeds size limit: {total_size} > {self.max_size}"
+                    raise ArchiveExtractionError(msg)
 
                 # Skip directories for validation
                 if member.isdir():
@@ -290,12 +295,9 @@ class ArchiveExtractor:
                 # Validate member
                 self._validate_tar_member(member, dest_dir)
 
-            if total_size > self.max_size:
-                msg = f"Archive exceeds size limit: {total_size} > {self.max_size}"
-                raise ArchiveExtractionError(msg)
-
-            # Extract validated members
-            for idx, member in enumerate(members):
+        # Second pass: extract the validated members.
+        with tarfile.open(archive_path, "r:gz") as tarf:
+            for idx, member in enumerate(tarf.getmembers()):
                 tarf.extract(member, dest_dir, filter="data")
 
                 if progress_callback and not member.isdir():

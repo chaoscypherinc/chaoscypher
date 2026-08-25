@@ -45,10 +45,25 @@ def test_health_auth_with_header(client: TestClient) -> None:
     assert response.json()["x_auth_user_present"] is True
 
 
-def test_health_auth_last_failure_at_none_initially(client: TestClient) -> None:
+def test_health_auth_last_failure_at_none_initially(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """last_failure_at is None when no failures have been recorded."""
+    from chaoscypher_cortex.features.local_auth import auth_failure_tracker as aft
+
+    # The tracker is a process-global singleton; earlier tests in the
+    # session record real 401s into it. Swap in a fresh tracker so
+    # "initially" is well-defined regardless of test order.
+    monkeypatch.setattr(aft, "tracker", aft.AuthFailureTracker())
+
     response = client.get("/health/auth")
     assert response.status_code == 200
-    # last_failure_at is None or a string — both are valid
     body = response.json()
-    assert body["last_failure_at"] is None or isinstance(body["last_failure_at"], str)
+    assert body["last_failure_at"] is None
+    assert body["recent_failed_attempts"] == 0
+
+    # And after a failure is recorded, it becomes an ISO-8601 string.
+    aft.tracker.record_failure()
+    body = client.get("/health/auth").json()
+    assert isinstance(body["last_failure_at"], str)
+    assert body["recent_failed_attempts"] == 1

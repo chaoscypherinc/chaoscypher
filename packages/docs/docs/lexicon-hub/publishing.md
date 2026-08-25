@@ -72,14 +72,16 @@ Package: my-knowledge.ccx
 │ Uncompressed: 1.2 MB                   │
 ╰────────────────────────────────────────╯
 
-Files: (7 total)
-  - templates.jsonld
-  - knowledge.jsonld
-  - workflows.jsonld
-  - sources.jsonl
-  - graph_preview.png
+Files: (9 total)
+  - mimetype
   - manifest.json
-  - README.txt
+  - context.jsonld
+  - knowledge.jsonld
+  - graphs/chaoscypher.templates.jsonld
+  - graphs/chaoscypher.statistics.jsonld
+  - sources.jsonl
+  - shapes.ttl
+  - assets/graph_preview.png
 
 Archive size: 245.3 KB
 ```
@@ -114,10 +116,11 @@ Proceed with upload? [Y/n]: y
 
 Uploading my-knowledge... ━━━━━━━━━━━━━━━━━━━━━ 245.3 KB
 
-✓ Published my-knowledge v1.0.0
-  URL: https://lexicon.example.com/packages/my-knowledge
+✓ Upload queued for my-knowledge v1.0.0
+  Status: queued
+  Job ID: job_1a2b3c
 
-Share with:
+Once processing completes, share with:
   chaoscypher pull my-knowledge
 ```
 

@@ -273,7 +273,10 @@ class VisionPagesService:
                 "updated_at": job_row["updated_at"],
             }
 
-        page_rows = self._repository.list_pages(source_id)
+        # include_content=False: this endpoint is polled every few seconds
+        # during vision processing, and no frontend consumer reads the
+        # per-page LLM description — skip the Text column entirely.
+        page_rows = self._repository.list_pages(source_id, include_content=False)
         pages: list[dict[str, Any]] = [
             {
                 "id": p["id"],

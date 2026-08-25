@@ -212,7 +212,6 @@ class GeminiEmbeddingProvider:
         return BatchEmbedResult(
             embeddings=all_embeddings,
             total=len(all_embeddings),
-            failed=0,
             provider="gemini",
         )
 

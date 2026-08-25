@@ -140,8 +140,8 @@ Searches the Lexicon Hub for packages matching the query. The search covers pack
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--limit` | `-n` | Maximum results to show (default: `20`) |
-| `--tag` | `-t` | Filter by tag (can be repeated) |
-| `--author` | `-a` | Filter by author username |
+| `--tag` | `-t` | Add tag terms to the search query (can be repeated) |
+| `--author` | `-a` | Filter the returned results by author username (applied after `--limit`) |
 | `--sort` | `-s` | Sort results: `relevance` (default), `downloads`, `updated`, `name` |
 
 #### Examples
@@ -283,12 +283,13 @@ Package: john/medical-ontology
 ╰────────────────────────────────────────────────╯
 
 Details:
-  Package Type: ontology
+  Conformance: ccx-core
+  Signed: no
   Downloads: 3,200
   Stars: 48
   Versions: 5
-  Created: 2025-06-15T10:30:00Z
-  Updated: 2026-01-20T14:22:00Z
+  Created: 1750415400000
+  Updated: 1768918920000
 
 To install:
   chaoscypher pull john/medical-ontology
@@ -313,11 +314,11 @@ Package: my-package.ccx
 ╰────────────────────────────────────────╯
 
 Files: (12 total)
+  - mimetype
   - manifest.json
-  - graph/entities.jsonld
-  - graph/relationships.jsonld
-  - templates/person.json
-  - templates/organization.json
+  - context.jsonld
+  - knowledge.jsonld
+  - graphs/chaoscypher.templates.jsonld
   ... and 7 more
 
 Archive size: 245.3 KB
@@ -397,7 +398,7 @@ Use --force to overwrite
 chaoscypher lexicon push <PATH>
 ```
 
-Uploads a package to the Lexicon Hub. `PATH` should be a `.ccx` archive file or a directory containing a `manifest.json`.
+Uploads a package to the Lexicon Hub. `PATH` must be a pre-built `.ccx` archive file (build one with `chaoscypher graph package export`). Directories are not accepted.
 
 Requires authentication. Run `chaoscypher lexicon login` first.
 
@@ -424,22 +425,20 @@ Proceed with upload? [Y/n]: y
 
 Uploading my-package... ━━━━━━━━━━━━━━━━━━━━━ 245.3 KB
 
-✓ Published my-package v1.0.0
-  URL: https://lexicon.example.com/packages/my-package
+✓ Upload queued for my-package v1.0.0
+  Status: queued
+  Job ID: job_1a2b3c
 
-Share with:
+Once processing completes, share with:
   chaoscypher pull my-package
 ```
 
-Upload a directory with a release message:
+Upload with a release message:
 
 ```bash
-chaoscypher lexicon push ./my-package --message "Major update" --private
-Building package archive...
-✓ Built my-package-1.0.0.ccx
-
+chaoscypher lexicon push ./my-package.ccx --message "Major update" --private
 Pushing package: my-package
-  File: my-package-1.0.0.ccx
+  File: my-package.ccx
   Size: 312.7 KB
   Visibility: Private
   Message: Major update
@@ -448,12 +447,16 @@ Proceed with upload? [Y/n]: y
 
 Uploading my-package... ━━━━━━━━━━━━━━━━━━━━━ 312.7 KB
 
-✓ Published my-package v1.0.0
-  URL: https://lexicon.example.com/packages/my-package
+✓ Upload queued for my-package v1.0.0
+  Status: queued
+  Job ID: job_4d5e6f
 
-Share with:
+Once processing completes, share with:
   chaoscypher pull my-package
 ```
+
+The hub processes uploads asynchronously — the push returns as soon as the
+upload is queued, and the package becomes visible once processing completes.
 
 ---
 

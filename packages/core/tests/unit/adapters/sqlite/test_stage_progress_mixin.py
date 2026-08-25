@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -132,6 +134,71 @@ async def test_update_stage_extras_writes_json(adapter: SqliteAdapter) -> None:
         "entities_preview": 312,
         "relationships_preview": 198,
     }
+
+
+_OFF_LOOP_CALLS: dict[str, dict[str, Any]] = {
+    "start_stage": {"total": 5, "started_at": None},
+    "tick_stage": {"processed": 1, "avg_ms": 10, "last_activity": None},
+    "complete_stage": {"completed_at": None},
+    "update_stage_extras": {"extras": {"entities_preview": 1}, "last_activity": None},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method_name", list(_OFF_LOOP_CALLS))
+async def test_write_methods_run_off_the_event_loop(
+    adapter: SqliteAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+) -> None:
+    """Every write in this mixin is sync SQLite I/O and must be offloaded.
+
+    These are ``async def`` methods whose bodies are a blocking ``execute``
+    plus a ``_maybe_commit()``. ``tick_stage`` in particular is awaited once
+    per embedded chunk on the worker's event loop, so a 5,000-chunk document
+    used to land 5,000 blocking commits on it. Repo rule: never call blocking
+    I/O inside an async function; use ``asyncio.to_thread()``.
+    """
+    now = datetime.now(UTC)
+    kwargs = {
+        key: (now if value is None else value)
+        for key, value in _OFF_LOOP_CALLS[method_name].items()
+    }
+
+    # The row must exist for the UPDATE-shaped methods to have work to do.
+    await adapter.start_stage(parent_id="src-1", stage_name="vision", total=5, started_at=now)
+
+    loop_thread = threading.get_ident()
+    execute_threads: list[int] = []
+    commit_threads: list[int] = []
+    to_thread_calls: list[Any] = []
+    real_to_thread = asyncio.to_thread
+    real_execute = adapter.session.execute
+    real_maybe_commit = adapter._maybe_commit
+
+    async def _recording_to_thread(func, /, *args, **kw):
+        to_thread_calls.append(func)
+        # Nothing may have touched the DB before the offload starts.
+        assert not execute_threads, "DB work ran on the event loop before to_thread"
+        return await real_to_thread(func, *args, **kw)
+
+    def _recording_execute(*args, **kw):
+        execute_threads.append(threading.get_ident())
+        return real_execute(*args, **kw)
+
+    def _recording_maybe_commit():
+        commit_threads.append(threading.get_ident())
+        return real_maybe_commit()
+
+    monkeypatch.setattr(asyncio, "to_thread", _recording_to_thread)
+    monkeypatch.setattr(adapter.session, "execute", _recording_execute)
+    monkeypatch.setattr(adapter, "_maybe_commit", _recording_maybe_commit)
+
+    await getattr(adapter, method_name)(parent_id="src-1", stage_name="vision", **kwargs)
+
+    assert len(to_thread_calls) == 1, f"{method_name} did not offload its write"
+    assert execute_threads and all(t != loop_thread for t in execute_threads)
+    assert commit_threads and all(t != loop_thread for t in commit_threads)
 
 
 @pytest.mark.asyncio

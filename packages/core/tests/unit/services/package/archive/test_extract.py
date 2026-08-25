@@ -45,3 +45,46 @@ def test_extract_rejects_sibling_prefix_path(tmp_path: Path) -> None:
     # must fire — both mean the attack is blocked.
     with pytest.raises(ArchiveSecurityError, match="traversal|escapes"):
         extract_archive(archive, dest)
+
+
+@pytest.mark.unit
+def test_extract_rejects_symlink_member(tmp_path: Path) -> None:
+    """A Unix symlink member must be rejected before anything is written.
+
+    The blocked-file-type check lives in the first-pass validation loop; a
+    symlink extracted from a malicious archive can leak host files via the
+    RAG indexer.
+    """
+    import stat
+
+    archive = tmp_path / "evil-symlink.zip"
+    dest = tmp_path / "out"
+    dest.mkdir()
+
+    with zipfile.ZipFile(archive, "w") as zf:
+        info = zipfile.ZipInfo("innocuous.txt")
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(info, "/etc/passwd")
+
+    with pytest.raises(ArchiveSecurityError, match="Unsafe file type"):
+        extract_archive(archive, dest)
+
+    assert not (dest / "innocuous.txt").exists()
+
+
+@pytest.mark.unit
+def test_extract_rejects_symlink_member_with_strip_components(tmp_path: Path) -> None:
+    """The file-type check is name-independent — stripping must not bypass it."""
+    import stat
+
+    archive = tmp_path / "evil-symlink-nested.zip"
+    dest = tmp_path / "out"
+    dest.mkdir()
+
+    with zipfile.ZipFile(archive, "w") as zf:
+        info = zipfile.ZipInfo("pkg/inner.txt")
+        info.external_attr = (stat.S_IFLNK | 0o777) << 16
+        zf.writestr(info, "/etc/passwd")
+
+    with pytest.raises(ArchiveSecurityError, match="Unsafe file type"):
+        extract_archive(archive, dest, strip_components=1)

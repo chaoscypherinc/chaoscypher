@@ -96,6 +96,27 @@ def _enabled_sources(*ids: str) -> list[dict[str, str]]:
     return [{"id": i} for i in ids]
 
 
+def _batch_embedding_service(
+    embeddings: list[list[float]] | None = None,
+    *,
+    error: Exception | None = None,
+) -> MagicMock:
+    """Return a mock embedding provider recording embed vs batch_embed calls.
+
+    ``embed`` is stubbed as well so a test can prove the per-node path is
+    never taken (await_count == 0) rather than merely erroring out.
+    """
+    service = MagicMock()
+    service.embed = AsyncMock(return_value=SimpleNamespace(embedding=[9.9, 9.9]))
+    if error is not None:
+        service.batch_embed = AsyncMock(side_effect=error)
+        return service
+    service.batch_embed = AsyncMock(
+        return_value=SimpleNamespace(embeddings=embeddings if embeddings is not None else [])
+    )
+    return service
+
+
 # ---------------------------------------------------------------------------
 # _get_enabled_source_ids
 # ---------------------------------------------------------------------------
@@ -185,32 +206,58 @@ class TestHydrateChunks:
 
     def test_enriches_filename_from_source(self) -> None:
         svc = _make_search_service()
-        svc.indexing_repository.get_chunk_by_id.return_value = _chunk("c1")
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [_chunk("c1")]
         svc.source_repository.get_source.return_value = {"filename": "doc.pdf"}
         result = svc._hydrate_chunks(["c1"], None)
         assert result["c1"]["filename"] == "doc.pdf"
 
     def test_missing_chunk_skipped(self) -> None:
         svc = _make_search_service()
-        svc.indexing_repository.get_chunk_by_id.return_value = None
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = []
         assert svc._hydrate_chunks(["c1"], None) == {}
 
     def test_missing_source_reference_uses_unknown(self) -> None:
         svc = _make_search_service()
         # No source_id / database_name → warning branch, filename "Unknown"
-        svc.indexing_repository.get_chunk_by_id.return_value = _chunk(
-            "c1", source_id=None, database_name=None
-        )
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [
+            _chunk("c1", source_id=None, database_name=None)
+        ]
         result = svc._hydrate_chunks(["c1"], None)
         assert result["c1"]["filename"] == "Unknown"
         svc.source_repository.get_source.assert_not_called()
 
     def test_filters_disabled_source(self) -> None:
         svc = _make_search_service()
-        svc.indexing_repository.get_chunk_by_id.return_value = _chunk("c1", source_id="disabled")
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [
+            _chunk("c1", source_id="disabled")
+        ]
         svc.source_repository.get_source.return_value = {"filename": "doc.pdf"}
         result = svc._hydrate_chunks(["c1"], {"enabled"})
         assert result == {}
+
+    def test_batches_chunk_fetch_and_dedupes_source_lookups(self) -> None:
+        """One batch SELECT for the page, one get_source per DISTINCT source.
+
+        Pins the N+1 fix: hydration used to issue get_chunk_by_id plus
+        get_source once PER CHUNK on every search request, while the
+        sibling _hydrate_nodes batched. Three chunks across two sources
+        must cost exactly one chunk fetch and two source fetches.
+        """
+        svc = _make_search_service()
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [
+            _chunk("c1", source_id="src-a"),
+            _chunk("c2", source_id="src-a"),
+            _chunk("c3", source_id="src-b"),
+        ]
+        svc.source_repository.get_source.side_effect = lambda sid, db: {"filename": f"{sid}.pdf"}
+
+        result = svc._hydrate_chunks(["c1", "c2", "c3"], None)
+
+        assert set(result.keys()) == {"c1", "c2", "c3"}
+        assert result["c1"]["filename"] == "src-a.pdf"
+        assert result["c3"]["filename"] == "src-b.pdf"
+        svc.indexing_repository.get_chunks_by_ids_batch.assert_called_once_with(["c1", "c2", "c3"])
+        assert svc.source_repository.get_source.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +272,7 @@ class TestBuildSearchResults:
         # Disable source filtering for simplicity
         svc.graph_repository.get_nodes_batch.return_value = [_node("n1")]
         svc.graph_repository.count_edges_per_node.return_value = {"n1": 3}
-        svc.indexing_repository.get_chunk_by_id.return_value = _chunk("cuid")
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [_chunk("cuid")]
         svc.source_repository.get_source.return_value = {"filename": "f.pdf"}
 
         results = [
@@ -514,18 +561,127 @@ class TestRebuildWithRegeneration:
         node.properties = {"name": "Alice", "age": 30}  # only str values joined
         svc.graph_repository.list_nodes.return_value = [node]
         svc.search_repository.reindex_all_nodes.return_value = None
-        svc.graph_repository.update_node.return_value = None
+        svc.graph_repository.update_node_embeddings_batch.return_value = 1
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        embedding_service = _batch_embedding_service([[0.1, 0.2]])
+        indexing_service.embedding_service = embedding_service
+
+        out = await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+        # node re-embed happened → one batched write, no per-node write
+        svc.graph_repository.update_node_embeddings_batch.assert_called_once_with(
+            {"n1": [0.1, 0.2]}
+        )
+        svc.graph_repository.update_node.assert_not_called()
+        embedding_service.batch_embed.assert_awaited_once_with(["label-n1 Alice"])
+        assert out["regenerated"] is True
+
+    @pytest.mark.asyncio
+    async def test_node_reembed_uses_one_batch_call_regardless_of_node_count(self) -> None:
+        """N nodes cost one batch_embed + one batch write, never one call per node."""
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = ([], 0)
+
+        nodes = [_node(f"n{i}") for i in range(4)]
+        svc.graph_repository.list_nodes.return_value = nodes
+        svc.search_repository.reindex_all_nodes.return_value = None
+        svc.graph_repository.update_node_embeddings_batch.return_value = 4
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        embedding_service = _batch_embedding_service([[0.1, float(i)] for i in range(4)])
+        indexing_service.embedding_service = embedding_service
+
+        await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        assert embedding_service.batch_embed.await_count == 1
+        assert embedding_service.embed.await_count == 0
+        assert svc.graph_repository.update_node_embeddings_batch.call_count == 1
+        assert svc.graph_repository.update_node.call_count == 0
+        svc.graph_repository.update_node_embeddings_batch.assert_called_once_with(
+            {f"n{i}": [0.1, float(i)] for i in range(4)}
+        )
+
+    @pytest.mark.asyncio
+    async def test_node_reembed_skips_empty_vectors(self) -> None:
+        """A per-text failure (empty vector) drops just that node from the write."""
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = ([], 0)
+
+        svc.graph_repository.list_nodes.return_value = [_node("n1"), _node("n2")]
+        svc.search_repository.reindex_all_nodes.return_value = None
+        svc.graph_repository.update_node_embeddings_batch.return_value = 1
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        embedding_service = _batch_embedding_service([[0.1, 0.2], []])
+        indexing_service.embedding_service = embedding_service
+
+        out = await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        svc.graph_repository.update_node_embeddings_batch.assert_called_once_with(
+            {"n1": [0.1, 0.2]}
+        )
+        assert out["regenerated"] is True
+
+    @pytest.mark.asyncio
+    async def test_node_reembed_waves_keep_earlier_waves_on_failure(self) -> None:
+        """A provider failure loses only its own wave — earlier writes survive.
+
+        Every shipped provider raises out of batch_embed rather than returning
+        an empty vector for a bad text, so this is the live partial-failure
+        path: one transient error must not discard a whole graph's re-embed.
+        """
+        svc = _make_search_service()
+        svc.settings.batching.embedding_batch_size = 16
+        svc.sources_repository.list_sources.return_value = ([], 0)
+
+        nodes = [_node(f"n{i}") for i in range(20)]
+        svc.graph_repository.list_nodes.return_value = nodes
+        svc.search_repository.reindex_all_nodes.return_value = None
+        svc.graph_repository.update_node_embeddings_batch.return_value = 16
 
         indexing_service = MagicMock()
         indexing_service.create_index = AsyncMock()
         embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(return_value=SimpleNamespace(embedding=[0.1, 0.2]))
+        embedding_service.embed = AsyncMock()
+        embedding_service.batch_embed = AsyncMock(
+            side_effect=[
+                SimpleNamespace(embeddings=[[0.1, float(i)] for i in range(16)]),
+                RuntimeError("429 rate limited"),
+            ]
+        )
         indexing_service.embedding_service = embedding_service
 
         out = await svc.rebuild_with_regeneration(indexing_service=indexing_service)
-        # node re-embed happened → update_node called once
-        svc.graph_repository.update_node.assert_called_once()
-        embedding_service.embed.assert_awaited_once()
+
+        # 20 nodes / wave of 16 -> 2 waves; the second fails, the first stays written.
+        assert embedding_service.batch_embed.await_count == 2
+        svc.graph_repository.update_node_embeddings_batch.assert_called_once_with(
+            {f"n{i}": [0.1, float(i)] for i in range(16)}
+        )
+        svc.graph_repository.update_node.assert_not_called()
+        assert out["regenerated"] is True
+
+    @pytest.mark.asyncio
+    async def test_node_reembed_no_nodes_skips_provider_call(self) -> None:
+        """An empty graph never reaches the provider or the batch write."""
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = ([], 0)
+        svc.graph_repository.list_nodes.return_value = []
+        svc.search_repository.reindex_all_nodes.return_value = None
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        embedding_service = _batch_embedding_service([])
+        indexing_service.embedding_service = embedding_service
+
+        out = await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        assert embedding_service.batch_embed.await_count == 0
+        assert embedding_service.embed.await_count == 0
+        svc.graph_repository.update_node_embeddings_batch.assert_not_called()
         assert out["regenerated"] is True
 
     @pytest.mark.asyncio
@@ -539,11 +695,11 @@ class TestRebuildWithRegeneration:
 
         indexing_service = MagicMock()
         indexing_service.create_index = AsyncMock()
-        embedding_service = MagicMock()
-        embedding_service.embed = AsyncMock(side_effect=RuntimeError("embed fail"))
+        embedding_service = _batch_embedding_service(error=RuntimeError("embed fail"))
         indexing_service.embedding_service = embedding_service
 
         # Should not raise despite embed failure
         out = await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+        svc.graph_repository.update_node_embeddings_batch.assert_not_called()
         svc.graph_repository.update_node.assert_not_called()
         assert out["regenerated"] is True
