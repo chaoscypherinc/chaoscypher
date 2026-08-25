@@ -80,7 +80,12 @@ def test_delete_source_mid_extraction_leaves_no_orphans(
         upload = client.post(
             "/api/v1/sources",
             files={"file": ("race_test.txt", f, "text/plain")},
-            data={"extract_entities": "true"},
+            # auto_confirm bypasses the domain-confirmation gate — without it
+            # the source parks as 'awaiting_confirmation' and the race window
+            # never opens. Masked until the 2026-08-12 blitz (#431) made
+            # _wait_until_extracting fail loudly instead of silently timing
+            # out; first surfaced on the v0.4.1 public E2E dispatch.
+            data={"extract_entities": "true", "auto_confirm": "true"},
         )
     assert upload.status_code == 202, upload.text
     source_id = upload.json()["id"]
