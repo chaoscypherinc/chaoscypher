@@ -108,3 +108,72 @@ class TestInactiveWorkflow:
 
         assert exc_info.value.code == "VALIDATION_ERROR"
         assert "not active" in exc_info.value.message
+
+
+class TestAdapterCleanupOnEarlyExit:
+    """The exec adapter session must not leak on pre-execution exit paths.
+
+    The ``finally: exec_adapter.disconnect()`` guards only the execution
+    block; validation raises exit earlier and previously leaked the
+    adapter's session (workers never take the request-context cleanup
+    branch in ``get_sqlite_adapter``).
+    """
+
+    @pytest.mark.asyncio
+    async def test_disconnects_when_workflow_missing(self) -> None:
+        from unittest.mock import patch
+
+        adapter = MagicMock()
+        workflow_service = _make_workflow_service(workflow=None)
+
+        with (
+            patch(
+                "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+                return_value=adapter,
+            ),
+            pytest.raises(NotFoundError),
+        ):
+            await execute_workflow_task(
+                workflow_id="wf-missing",
+                inputs={},
+                workflow_service=workflow_service,
+                tool_service=None,
+                llm_service=AsyncMock(),
+                graph_repository=_make_graph_repo(),
+                search_repository=MagicMock(),
+                database_name="test_db",
+            )
+
+        adapter.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_disconnects_when_workflow_inactive(self) -> None:
+        from unittest.mock import patch
+
+        adapter = MagicMock()
+        workflow = {
+            "id": "wf-1",
+            "name": "wf",
+            "is_active": False,
+        }
+        workflow_service = _make_workflow_service(workflow=workflow)
+
+        with (
+            patch(
+                "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+                return_value=adapter,
+            ),
+            pytest.raises(ValidationError),
+        ):
+            await execute_workflow_task(
+                workflow_id="wf-1",
+                inputs={},
+                workflow_service=workflow_service,
+                tool_service=None,
+                llm_service=AsyncMock(),
+                graph_repository=_make_graph_repo(),
+                search_repository=MagicMock(),
+                database_name="test_db",
+            )
+
+        adapter.disconnect.assert_called_once()

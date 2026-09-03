@@ -84,7 +84,7 @@ Click a citation and it jumps straight to the exact chunk in the source document
 
 That's the whole loop: install, upload, extract, ask, verify. A few directions once you're comfortable with it:
 
-- **Bigger documents, bigger graphs.** Batch-upload a folder of related documents and the graph starts connecting entities across sources, not just within one.
+- **Bigger documents, bigger graphs.** Upload a set of related documents as a single archive (a zip) and the graph connects entities across everything inside it. Today each separate upload builds its own graph; cross-source entity resolution is on the roadmap, not in the box.
 - **Tune for your hardware.** The VRAM preset table and multi-instance GPU setup in the [privacy-first deep dive](/blog/local-ai-knowledge-graph) cover getting the most out of local hardware.
 - **Mix local and cloud.** Keep chat and search local for privacy, and switch just the extraction pass to a cloud provider if you want maximum quality on a hard document -- it's a single settings change, same pipeline either way.
 

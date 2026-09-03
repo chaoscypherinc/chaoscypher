@@ -56,7 +56,7 @@ Toggle individual components to export exactly what you need. The four component
 
 ### Web UI
 
-- **Full-graph export** — open **Settings** → **General** → **Import & Export** and click **Export**. Choose which components to include (templates, knowledge, workflows, sources, embeddings) and the browser downloads a `.ccx` file. Exporting requires a Package Name, set under **Settings** → **Export Defaults**.
+- **Full-graph export** — open **Settings** → **General** → **Import & Export** and click **Export**. Choose which components to include (templates, knowledge, workflows, sources, embeddings) and the browser downloads a `.ccx` file. Exporting requires a Package Name, set under **Settings** → **General** → **Import & Export** → **Export Defaults**.
 - **Per-source export** — on the **Sources** page, open a source's action menu and choose **Export Source** to download a `.ccx` scoped to that source.
 
 ## Importing

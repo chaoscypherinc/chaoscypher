@@ -135,6 +135,20 @@ def make_chunk(
     }
 
 
+def batch_lookup(*chunks: dict[str, Any]) -> Any:
+    """side_effect emulating get_chunks_by_ids_batch over the given chunks.
+
+    Mirrors the adapter contract: results follow input order and missing
+    ids are silently absent.
+    """
+    by_id = {c["id"]: c for c in chunks}
+
+    def _fetch(chunk_ids: list[str], **_kwargs: Any) -> list[dict[str, Any]]:
+        return [by_id[cid] for cid in chunk_ids if cid in by_id]
+
+    return _fetch
+
+
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
@@ -168,7 +182,7 @@ def search_repo() -> MagicMock:
 def indexing_repo() -> MagicMock:
     """Mock indexing repository."""
     repo = MagicMock()
-    repo.get_chunk_by_id.return_value = None
+    repo.get_chunks_by_ids_batch.return_value = []
     repo.get_source.return_value = None
     return repo
 
@@ -493,7 +507,7 @@ class TestSearchChunks:
         """Basic chunk search returns hydrated chunk data."""
         chunk = make_chunk("c1", "Alice went to the market.")
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -533,14 +547,9 @@ class TestSearchChunks:
 
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9), ("chunk:c2", 0.85)])
 
-        def chunk_side_effect(chunk_id: str) -> dict[str, Any] | None:
-            if chunk_id == "c1":
-                return allowed_chunk
-            if chunk_id == "c2":
-                return blocked_chunk
-            return None
-
-        indexing_repo.get_chunk_by_id.side_effect = chunk_side_effect
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(
+            allowed_chunk, blocked_chunk
+        )
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -576,14 +585,9 @@ class TestSearchChunks:
 
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9), ("chunk:c2", 0.85)])
 
-        def chunk_side_effect(chunk_id: str) -> dict[str, Any] | None:
-            if chunk_id == "c1":
-                return allowed_chunk
-            if chunk_id == "c2":
-                return blocked_chunk
-            return None
-
-        indexing_repo.get_chunk_by_id.side_effect = chunk_side_effect
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(
+            allowed_chunk, blocked_chunk
+        )
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -695,7 +699,7 @@ class TestSearchChunks:
         }
         chunk = make_chunk("c1", "Content.", chunk_metadata=raw_meta)
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -731,14 +735,7 @@ class TestSearchChunks:
 
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9), ("chunk:c2", 0.85)])
 
-        def chunk_side_effect(chunk_id: str) -> dict[str, Any] | None:
-            if chunk_id == "c1":
-                return c1
-            if chunk_id == "c2":
-                return c2
-            return None
-
-        indexing_repo.get_chunk_by_id.side_effect = chunk_side_effect
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(c1, c2)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -800,7 +797,7 @@ class TestSearchChunks:
         """Source filename is resolved via indexing.get_source for citations."""
         chunk = make_chunk("c1", "Content.", source_id="src1")
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
         indexing_repo.get_source.return_value = {"filename": "document.pdf"}
 
         with (
@@ -1356,7 +1353,7 @@ class TestGetNodeContext:
         # Mock search_chunks to return a chunk
         chunk = make_chunk("c1", "Alice content.", source_id="src1")
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,

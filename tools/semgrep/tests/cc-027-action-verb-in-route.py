@@ -35,7 +35,8 @@ async def create_run(id: str):
     return {}
 
 
-# ok: cc-027-action-verb-in-route — 'executions' is a noun, not a verb
+# 'executions' is a noun, not a verb
+# ok: cc-027-action-verb-in-route
 @router.get("/workflows/{id}/executions")
 async def list_executions(id: str):
     return []

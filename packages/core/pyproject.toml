@@ -56,7 +56,7 @@ dependencies = [
     # Note: google-generativeai version controlled by langchain-google-genai
 
     # Document processing
-    "pypdf>=6.13.3,<7",            # floor lifted for GHSA-jm82-fx9c-mx94 (stream-length DoS)
+    "pypdf>=6.16.1,<7",            # floor lifted for CVE-2026-84309/84310/84311
     "pypdfium2>=5.7.0,<6",
     "beautifulsoup4>=4.12,<5",      # MIT; HTML/EPUB loaders + archive Sphinx handler
     "docutils>=0.20,<1",            # BSD; RST loader (parse validation)

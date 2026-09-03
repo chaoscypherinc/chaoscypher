@@ -353,7 +353,7 @@ The log level can be changed at runtime from the web UI or API — no restart re
 <TabItem value="web-ui" label="Web UI">
 
 
-Open **Settings** > **General** and select a log level from the dropdown.
+Open **Settings** > **Logs** and select a log level from the dropdown.
 
 </TabItem>
 <TabItem value="api" label="API">
@@ -387,7 +387,7 @@ Export a diagnostic bundle for troubleshooting:
 <TabItem value="web-ui" label="Web UI">
 
 
-Open **Settings** and click **Export Diagnostics**.
+Open **Settings** → **Logs** and click **Export Diagnostic Bundle**.
 
 </TabItem>
 <TabItem value="cli" label="CLI">

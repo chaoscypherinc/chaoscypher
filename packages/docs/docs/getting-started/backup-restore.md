@@ -33,7 +33,7 @@ What a backup does **not** capture:
 The primary backup interface is the Cortex API. The endpoint creates a clean, compacted copy using `VACUUM INTO`, which compresses freed pages and avoids blocking active writers.
 
 :::note Authentication
-Every request must authenticate with either the browser session cookie or an API key. There is no HTTP Basic Auth. Mint an API key via **Settings → API Keys** in the web UI (which calls `POST /api/v1/auth/keys`); keys are prefixed `cc_live_`. Pass it as a Bearer token, e.g. `export CHAOSCYPHER_API_KEY=cc_live_...`. Note that `http://localhost` resolves through the nginx edge, which performs `auth_request` verification, so the same auth applies to every example on this page.
+Every request must authenticate with either the browser session cookie or an API key. There is no HTTP Basic Auth. Mint an API key via **Settings → General → API Keys** in the web UI (which calls `POST /api/v1/auth/keys`); keys are prefixed `cc_live_`. Pass it as a Bearer token, e.g. `export CHAOSCYPHER_API_KEY=cc_live_...`. Note that `http://localhost` resolves through the nginx edge, which performs `auth_request` verification, so the same auth applies to every example on this page.
 :::
 
 ```bash
@@ -65,7 +65,7 @@ For example, with `data_dir=/data` and database `default`:
 
 ### Via the maintenance UI
 
-Open **Settings → Maintenance** in the web interface. The Backups panel shows existing backups and a **Create Backup** button.
+Open **Settings → Backup** in the web interface. The Backups panel shows existing backups and a **Create Backup Now** button.
 
 ### Listing existing backups
 
@@ -103,7 +103,7 @@ The restore endpoint:
 
 ### Via the maintenance UI
 
-Open **Settings → Maintenance → Backups**, find the backup in the list, and click **Restore**.
+Open **Settings → Backup**, find the backup in the list, and click **Restore**.
 
 ### Manual restore (container stopped)
 
@@ -163,7 +163,7 @@ See [Upgrading](./upgrading.md) for the full upgrade and rollback procedure.
 
 ## Worked example: cron backup with retention
 
-This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days. The retention `find` runs inside the container (`docker exec`) because `/data` is a named Docker volume on the default install; if you bind-mount `/data` from the host, you can run `find /data/backups/default ...` directly instead.
+Scheduled backups are already on by default (daily, 7 retained per database — tune under **Settings → Backup → Scheduled Backups** or the `backup.*` keys in `settings.yaml`); reach for cron only when you need scheduling or retention beyond what those settings offer. This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days. The retention `find` runs inside the container (`docker exec`) because `/data` is a named Docker volume on the default install; if you bind-mount `/data` from the host, you can run `find /data/backups/default ...` directly instead.
 
 ```bash
 # /etc/cron.d/chaoscypher-backup

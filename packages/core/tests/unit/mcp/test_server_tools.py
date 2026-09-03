@@ -213,6 +213,83 @@ class TestConfirmExtractionReadModeRejection:
 
 
 # ------------------------------------------------------------------ #
+#  TestReadModeAllowlist
+# ------------------------------------------------------------------ #
+
+
+class TestReadModeAllowlist:
+    """Read mode permits ONLY tools advertised by get_tools_for_mode('read').
+
+    Regression: the gate used to be a denylist built from ``write_only``
+    flags, so bridge handlers absent from TOOL_DEFINITIONS (summarize,
+    extract_entities_from_text, research_topic, build_topic_hierarchy,
+    identify_knowledge_gaps) fell through to ``bridge.execute``
+    unconditionally in read mode.
+    """
+
+    @staticmethod
+    def _make_read_server(bridge_mock: MagicMock):
+        from chaoscypher_core.mcp.server import create_mcp_server
+
+        engine = MagicMock()
+        engine.settings.mcp.mode = "read"
+        engine.settings.mcp.auto_extract = False
+        engine.settings.mcp.completed_history_limit = 20
+        engine.settings.current_database = "default"
+        engine.embedding_service = None
+
+        with patch("chaoscypher_core.mcp.server.MCPToolBridge", return_value=bridge_mock):
+            return create_mcp_server(engine)
+
+    @pytest.mark.asyncio
+    async def test_read_mode_rejects_unlisted_bridge_tool(self):
+        """The summarize handler (absent from TOOL_DEFINITIONS) gets NOT_AUTHORIZED."""
+        import mcp.types
+
+        bridge = MagicMock()
+        bridge.execute = AsyncMock()
+        server = self._make_read_server(bridge)
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+
+        req = mcp.types.CallToolRequest(
+            method="tools/call",
+            params=mcp.types.CallToolRequestParams(
+                name="summarize",
+                arguments={"query": "everything"},
+            ),
+        )
+        server_result = await handler(req)
+
+        bridge.execute.assert_not_awaited()
+        payload = json.loads(server_result.root.content[0].text)
+        assert payload["success"] is False
+        assert payload["error_code"] == "NOT_AUTHORIZED"
+
+    @pytest.mark.asyncio
+    async def test_read_mode_still_allows_read_tools(self):
+        """A normal read tool (search_nodes) still reaches the bridge."""
+        import mcp.types
+
+        bridge = MagicMock()
+        bridge.execute = AsyncMock(return_value=MagicMock(text='{"success": true}'))
+        server = self._make_read_server(bridge)
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+
+        req = mcp.types.CallToolRequest(
+            method="tools/call",
+            params=mcp.types.CallToolRequestParams(
+                name="search_nodes",
+                arguments={"query": "x"},
+            ),
+        )
+        server_result = await handler(req)
+
+        bridge.execute.assert_awaited_once_with("search_nodes", {"query": "x"})
+        payload = json.loads(server_result.root.content[0].text)
+        assert payload["success"] is True
+
+
+# ------------------------------------------------------------------ #
 #  Helpers
 # ------------------------------------------------------------------ #
 

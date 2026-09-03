@@ -80,7 +80,7 @@ services:
           --maxmemory-policy noeviction \
           --aclfile /tmp/users.acl
     healthcheck:
-      test: ["CMD", "valkey-cli", "-a", "${QUEUE_PASSWORD}", "--no-auth-warning", "ping"]
+      test: ["CMD", "valkey-cli", "-a", "${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}", "--no-auth-warning", "ping"]
       interval: ${CHAOSCYPHER_VALKEY_HEALTH_INTERVAL:-10s}
       timeout: ${CHAOSCYPHER_VALKEY_HEALTH_TIMEOUT:-3s}
       retries: 3
@@ -121,7 +121,9 @@ services:
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
       - CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE=/run/chaoscypher-edge/.edge_auth_token
       - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}
-      - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      # Lexicon package registry base URL. Defaults to the public hub (the
+      # same default the app itself uses); override for a local dev registry.
+      - LEXICON_URL=${LEXICON_URL:-https://lexicon.chaoscypher.com}
       - CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434  # First-boot Ollama URL (library default is localhost)
       - LOG_LEVEL=INFO
       - USE_JSON_LOGGING=true
@@ -214,7 +216,9 @@ services:
       - QUEUE_PORT=6379
       - QUEUE_DB=0
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
-      - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
+      # Lexicon package registry base URL. Defaults to the public hub (the
+      # same default the app itself uses); override for a local dev registry.
+      - LEXICON_URL=${LEXICON_URL:-https://lexicon.chaoscypher.com}
       - CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434  # First-boot Ollama URL (library default is localhost)
       - LOG_LEVEL=INFO
       - USE_JSON_LOGGING=true

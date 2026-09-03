@@ -427,6 +427,28 @@ async def handle_vision_finalize(  # noqa: PLR0911 - idempotency state machine; 
         )
         return {"status": "skipped_already_advanced"}
 
+    # 3b. Re-check job terminality on a FRESH read. A page retry accepted
+    #     in the enqueue→dequeue window (the retry gate keys off the source
+    #     status, which stays vision_pending until step 7's CAS) resets a
+    #     page to PENDING and rewinds the job counter below total. Splicing
+    #     now would silently drop the retried page's description — the
+    #     splice takes only SUCCEEDED/TRUNCATED rows — so defer instead:
+    #     the retried page's own completion re-fires the terminal→enqueue
+    #     path and finalize converges with the full page set.
+    fresh_job = await asyncio.to_thread(adapter.get_vision_job, job_id)
+    if fresh_job is not None and (
+        fresh_job["completed"] + fresh_job["failed"] < fresh_job["total_pages"]
+    ):
+        logger.info(
+            "vision_finalize_deferred_not_terminal",
+            source_id=source_id,
+            job_id=job_id,
+            completed=fresh_job["completed"],
+            failed=fresh_job["failed"],
+            total_pages=fresh_job["total_pages"],
+        )
+        return {"status": "skipped_not_terminal"}
+
     # 4. Re-load documents (deterministic loader call).
     documents = await asyncio.to_thread(
         _reload_documents, adapter, source_id, database_name, settings

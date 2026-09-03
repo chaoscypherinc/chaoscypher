@@ -239,9 +239,10 @@ async def test_handler_does_not_pass_heartbeat_when_source_id_missing(
                 "small_chunk_ids": ["sc-1"],
             },
         )
-    # Adapter never called update_source_last_activity from the
-    # heartbeat (the post-completion checkpoint is also gated on
-    # source_id being truthy in the existing code, so 0 is fine).
-    # If the post-completion checkpoint is unconditional, this number
-    # could be 1 — relax to ≤1 to tolerate either implementation.
-    assert adapter.update_source_last_activity.call_count <= 1
+    # Adapter never called update_source_last_activity: the stream heartbeat
+    # is gated on `isinstance(source_id, str)` and the post-completion
+    # checkpoint is gated on source_id being truthy, so with source_id
+    # missing the count must be exactly 0. (A previous `<= 1` relaxation
+    # made deleting the isinstance gate invisible — one heartbeat fires,
+    # one call lands, still green.)
+    assert adapter.update_source_last_activity.call_count == 0

@@ -148,7 +148,7 @@ statistics about the import:
 | Status | Cause |
 |--------|-------|
 | `400` | Invalid CCX file format |
-| `413` | Upload exceeds the configured `max_upload_bytes` size limit |
+| `400` | Upload exceeds the configured `max_upload_bytes` size limit (`VALIDATION_ERROR` — this route is exempt from the generic 413 body-size middleware) |
 | `503` | Operations service unavailable |
 
 ---

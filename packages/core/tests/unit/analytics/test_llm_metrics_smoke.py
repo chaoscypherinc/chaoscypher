@@ -38,19 +38,22 @@ def test_collector_canonical_home():
 def test_shim_module_deleted():
     """The Phase 1 shim at adapters/llm/metrics.py must be gone."""
     shim_path = (
-        Path(__file__).resolve().parents[4]
+        Path(__file__).resolve().parents[3]
         / "src"
         / "chaoscypher_core"
         / "adapters"
         / "llm"
         / "metrics.py"
     )
+    # Guard the guard: if the package root ever moves, fail loudly instead of
+    # asserting against a path that can never exist.
+    assert shim_path.parents[2].is_dir(), f"package src root missing: {shim_path.parents[2]}"
     assert not shim_path.exists(), f"Phase 1 shim still present at {shim_path}"
 
 
 def test_no_runtime_imports_of_shim():
     """No runtime import of chaoscypher_core.adapters.llm.metrics under src/ or cortex/cli."""
-    repo_root = Path(__file__).resolve().parents[5].parent
+    repo_root = Path(__file__).resolve().parents[5]
     targets = [
         repo_root / "packages" / "core" / "src",
         repo_root / "packages" / "cortex" / "src",
@@ -59,6 +62,7 @@ def test_no_runtime_imports_of_shim():
     ]
     bad: list[str] = []
     for root in targets:
+        assert root.is_dir(), f"scan root missing (parents[] index drift?): {root}"
         for path in root.rglob("*.py"):
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))

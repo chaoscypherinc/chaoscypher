@@ -286,6 +286,7 @@ class LLMQueueService:
 
         queue_start_time = time.monotonic()
         queue_wait_logged = False
+        transient_failed_polls = 0
 
         while True:
             task = await queue_client.get_task(task_id)
@@ -324,8 +325,25 @@ class LLMQueueService:
             # boundary is an open decision — see internal/TODO.md
             # (2026-07-30 queue section-audit).
             if status == "failed":
+                # A retryable failure is PUBLISHED as status="failed" before
+                # ``_retry_task`` resets it to "queued" (the worker's
+                # will_retry branches write the failed fields first, and the
+                # reset happens only after semaphore release). A poll landing
+                # in that window would abort an interactive turn whose task
+                # the queue then retries successfully. When the hash says the
+                # failure was transient, give the reset a short grace — a
+                # couple of poll cycles — before treating it as terminal; a
+                # terminally failed transient task stays "failed" and raises
+                # after the grace.
+                if task.get("error_type") == "transient" and transient_failed_polls < 2:
+                    transient_failed_polls += 1
+                    await asyncio.sleep(self.settings.timeouts.queue_poll_interval)
+                    continue
                 msg = task.get("error") or "Task failed"
                 raise OperationError(msg)
+            # Any non-failed status means a scheduled retry went through (or
+            # the task recovered) — re-arm the grace for the next failure.
+            transient_failed_polls = 0
 
             # Task cancelled
             if status == "cancelled":

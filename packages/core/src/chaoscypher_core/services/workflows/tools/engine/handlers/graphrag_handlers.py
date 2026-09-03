@@ -180,16 +180,19 @@ class GraphRAGToolHandlers:
         """
         try:
             max_nodes = self._graphrag.max_graph_nodes
-            # Load graph nodes (use minimal variant when available)
+            # Load graph nodes (minimal variant when available), pushing the
+            # chat's source scope into SQL: a Python filter AFTER the LIMIT
+            # hands a scoped chat an arbitrary id-ordered slice once the
+            # graph exceeds max_graph_nodes.
             if hasattr(self.graph, "list_nodes_minimal"):
-                nodes = list(self.graph.list_nodes_minimal(limit=max_nodes))
+                nodes = list(self.graph.list_nodes_minimal(limit=max_nodes, source_ids=source_ids))
             else:
-                nodes = list(self.graph.list_nodes(limit=max_nodes))
+                nodes = list(self.graph.list_nodes(limit=max_nodes, source_ids=source_ids))
 
             if not nodes:
                 return {}
 
-            # Scope filter
+            # Scope filter (belt-and-braces for repos ignoring the kwarg)
             if source_ids:
                 nodes = [
                     n
@@ -197,10 +200,11 @@ class GraphRAGToolHandlers:
                     if not getattr(n, "source_id", None) or n.source_id in source_ids
                 ]
 
-            # Load edges
+            # Load edges (scope in SQL too; the endpoint filter below still
+            # enforces both-ends-in-scope)
             edge_limit = max_nodes * 4
             if hasattr(self.graph, "list_edges_minimal"):
-                edges = list(self.graph.list_edges_minimal(limit=edge_limit))
+                edges = list(self.graph.list_edges_minimal(limit=edge_limit, source_ids=source_ids))
             else:
                 edges = list(self.graph.list_edges(limit=edge_limit))
 
@@ -436,13 +440,12 @@ class GraphRAGToolHandlers:
                     seen.add(cid)
                     chunk_ids.append(cid)
 
-            # Hydrate chunks
+            # Hydrate chunks — one batch SELECT instead of one per citation;
+            # input order is preserved and missing ids are silently absent.
+            chunk_rows = self.indexing.get_chunks_by_ids_batch(chunk_ids)
             chunks: list[dict[str, Any]] = []
             source_filenames: dict[str, str] = {}
-            for cid in chunk_ids:
-                chunk_data = self.indexing.get_chunk_by_id(cid)
-                if not chunk_data:
-                    continue
+            for chunk_data in chunk_rows:
                 chunk_source_id = chunk_data.get("source_id", "")
 
                 # Source scope filter
@@ -519,14 +522,22 @@ class GraphRAGToolHandlers:
                 min_similarity=0.3,
             )
 
+            chunk_hits = [
+                (result_id[6:], score)
+                for result_id, score in search_results
+                if result_id.startswith("chunk:")
+            ]
+            # One batch SELECT instead of one per hit; missing ids are
+            # silently absent from the lookup map, matching the old loop.
+            chunks_by_id = {
+                row["id"]: row
+                for row in self.indexing.get_chunks_by_ids_batch([cid for cid, _ in chunk_hits])
+            }
+
             chunks: list[dict[str, Any]] = []
             source_filenames: dict[str, str] = {}
-            for result_id, score in search_results:
-                if not result_id.startswith("chunk:"):
-                    continue
-
-                chunk_uuid = result_id[6:]
-                chunk_data = self.indexing.get_chunk_by_id(chunk_uuid)
+            for chunk_uuid, score in chunk_hits:
+                chunk_data = chunks_by_id.get(chunk_uuid)
                 if not chunk_data:
                     continue
 

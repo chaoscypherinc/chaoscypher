@@ -60,7 +60,7 @@ flowchart TD
 
 ### Public phases (API and UI)
 
-The `progress` field on `SourceDetailResponse` (and `SourceResponse`) exposes a simplified 5-phase view that the UI can display directly, without needing to understand the internal state machine:
+The `progress` field on `SourceResponse` exposes a simplified 5-phase view (the list-view `SourceSummaryResponse` does not carry it) that the UI can display directly, without needing to understand the internal state machine:
 
 | Phase | `is_searchable` | Meaning |
 |-------|:---------------:|---------|

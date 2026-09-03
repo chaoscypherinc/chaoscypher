@@ -436,6 +436,70 @@ def test_sweep_drain_plus_exhaust_ends_failed_not_indexed(tmp_path: Path) -> Non
         adapter.disconnect()
 
 
+def test_sweep_exhaust_first_then_drain_still_ends_failed(tmp_path: Path) -> None:
+    """The doomed row swept BEFORE its sibling must still leave 'failed'.
+
+    This is the production-natural ordering: the persistently-failing row
+    has been in the table longest (lowest rowid), and the unordered LIMIT
+    select sweeps it first. Its exhaustion deletes the queue row before
+    marking the source failed, so the sibling draining later sees zero
+    remaining pending rows — without the terminal-failed guard it flipped
+    the source back to 'indexed', hiding a permanently unindexed node.
+    """
+    from chaoscypher_core.adapters.sqlite.models import SourceRow
+    from chaoscypher_neuron.search_sweep import sweep_search_indexes
+
+    adapter, search_repo = _make_db(tmp_path)
+    try:
+        _make_node(adapter, "mixed-ok-002")
+        _make_node(adapter, "mixed-doomed-002")
+        _seed_source(adapter, "src-mixed-2", status="degraded")
+
+        # Doomed row inserted FIRST — lower rowid, swept first.
+        adapter.session.add(
+            PendingSearchIndex(
+                id="node:mixed-doomed-002",
+                kind="node",
+                item_id="mixed-doomed-002",
+                source_id="src-mixed-2",
+                attempts=4,
+            )
+        )
+        adapter.session.add(
+            PendingSearchIndex(
+                id="node:mixed-ok-002",
+                kind="node",
+                item_id="mixed-ok-002",
+                source_id="src-mixed-2",
+                attempts=0,
+            )
+        )
+        adapter.session.commit()
+
+        real_index_node = search_repo.index_node
+
+        def _selective_index(node: object, **kwargs: object) -> None:
+            if getattr(node, "id", "") == "mixed-doomed-002":
+                msg = "permanent failure"
+                raise RuntimeError(msg)
+            real_index_node(node, **kwargs)  # type: ignore[arg-type]
+
+        with patch.object(search_repo, "index_node", side_effect=_selective_index):
+            stats = sweep_search_indexes(adapter, search_repo, max_attempts=5)
+
+        adapter.session.expire_all()
+        assert stats["pending_drained"] == 1
+        assert stats["pending_exhausted"] == 1
+        row = adapter.session.get(SourceRow, "src-mixed-2")
+        assert row is not None
+        assert row.vector_indexing_status == "failed", (
+            "a source with an exhausted pending row must end 'failed', not "
+            f"'indexed'; got {row.vector_indexing_status!r}"
+        )
+    finally:
+        adapter.disconnect()
+
+
 def test_sweep_flips_source_to_failed_when_retries_exhausted(tmp_path: Path) -> None:
     """After max_attempts failures, the pending row is removed and source -> 'failed'."""
     from chaoscypher_core.adapters.sqlite.models import SourceRow

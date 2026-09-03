@@ -121,6 +121,23 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     else:
         # Blocked DB: start the degraded maintenance-mode server (no Engine).
         # This is the MCP analog of the web maintenance page — never invisible.
+        if mode == "read":
+            # The maintenance server cannot honor read-only: its purpose
+            # includes destructive repair (apply_upgrade). Refuse loudly
+            # instead of silently dropping the operator's --mode read.
+            logger.error(
+                "mcp_maintenance_refuses_read_mode",
+                database=db_name,
+                blocked_on=state.blocked_on,
+            )
+            msg = (
+                f"Database '{db_name}' is in maintenance mode, which cannot honor "
+                "--mode read: maintenance tools include destructive repair "
+                "(e.g. apply_upgrade). Re-run without --mode read to use the "
+                "maintenance server, or repair the database first."
+            )
+            raise click.ClickException(msg)
+
         from chaoscypher_core.mcp.maintenance import create_maintenance_mcp_server
 
         server = create_maintenance_mcp_server(db_name)

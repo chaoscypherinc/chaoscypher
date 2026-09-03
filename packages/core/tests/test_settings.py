@@ -306,3 +306,33 @@ def test_batching_bulk_request_max_operations_default() -> None:
     from chaoscypher_core.app_config import Settings
 
     assert Settings().batching.bulk_request_max_operations == 500
+
+
+def test_cors_wildcard_with_credentials_rejected() -> None:
+    """Wildcard origin + credentials must fail validation, not brick the next boot.
+
+    ``create_app`` treats the pair as fatal (SystemExit), so if the settings
+    PATCH persisted it the container would fail to start. The CorsSettings
+    validator rejects it up front so the PATCH 422s instead.
+    """
+    import pytest
+    from pydantic import ValidationError
+
+    from chaoscypher_core.app_config import Settings
+
+    with pytest.raises(ValidationError) as exc:
+        Settings.model_validate({"cors": {"allowed_origins": ["*"], "allow_credentials": True}})
+    assert "allow_credentials" in str(exc.value)
+
+
+def test_cors_credentials_without_wildcard_accepted() -> None:
+    from chaoscypher_core.app_config import Settings
+
+    s = Settings.model_validate(
+        {"cors": {"allowed_origins": ["https://example.test"], "allow_credentials": True}}
+    )
+    assert s.cors.allow_credentials is True
+
+    # Wildcard alone (no credentials) is also fine.
+    s = Settings.model_validate({"cors": {"allowed_origins": ["*"]}})
+    assert s.cors.allowed_origins == ["*"]

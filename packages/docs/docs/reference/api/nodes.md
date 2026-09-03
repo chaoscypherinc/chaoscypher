@@ -693,7 +693,7 @@ Wrapper for paginated node lists.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data` | list[NodeResponse] | Array of node objects |
-| `pagination` | object | Pagination metadata (`page`, `page_size`, `total`) |
+| `pagination` | object | Pagination metadata (`total`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`) |
 
 ### ConnectionsResponse
 
@@ -702,7 +702,7 @@ Wrapper for node connections results.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data` | list[ConnectedNodeResponse] | Array of connected node objects |
-| `pagination` | object | Pagination metadata (`page`, `page_size`, `total`) |
+| `pagination` | object | Pagination metadata (`total`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`) |
 
 ### CitationListResponse
 
@@ -711,7 +711,7 @@ Wrapper for paginated citation results.
 | Field | Type | Description |
 |-------|------|-------------|
 | `data` | list[CitationResponse] | Array of citation objects |
-| `pagination` | object | Pagination metadata (`page`, `page_size`, `total`) |
+| `pagination` | object | Pagination metadata (`total`, `page`, `page_size`, `total_pages`, `has_next`, `has_prev`) |
 
 ### BulkRequest / BulkResponse
 

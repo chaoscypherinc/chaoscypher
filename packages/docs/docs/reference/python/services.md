@@ -23,7 +23,7 @@ to extract entities from any text content.
 
 **Methods:**
 
-#### `build_extraction_results(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], generate_embeddings: bool, cached_embeddings: list[Any], detected_domain: str | None, forced_domain: str | None = None, extraction_depth: str = 'full') -> dict[str, Any]`
+#### `build_extraction_results(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], *, generate_embeddings: bool, cached_embeddings: list[Any], detected_domain: str | None, forced_domain: str | None = None, extraction_depth: str = 'full') -> dict[str, Any]`
 
 Public entry point for building extraction results.
 
@@ -52,7 +52,7 @@ Returns:
 | `forced_domain` | `str \| None` |  |
 | `extraction_depth` | `str` |  |
 
-#### `extract(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], domain: str | None = None, generate_embeddings: bool = True, edge_type_constraints: dict[str, dict[str, list[str]]] | None = None, filtering_config: FilteringConfig | None = None) -> dict[str, Any]`
+#### `extract(entities: list[dict[str, Any]], relationships: list[dict[str, Any]], *, domain: str | None = None, generate_embeddings: bool = True, edge_type_constraints: dict[str, dict[str, list[str]]] | None = None, filtering_config: FilteringConfig | None = None) -> dict[str, Any]`
 
 Extract, deduplicate, and normalize entities and relationships.
 
@@ -80,7 +80,7 @@ Returns:
 | `edge_type_constraints` | `dict[str, dict[str, list[str]]] \| None` |  |
 | `filtering_config` | `FilteringConfig \| None` |  |
 
-#### `finalize_distributed_extraction(raw_entities: list[dict[str, Any]], raw_relationships: list[dict[str, Any]], generate_embeddings: bool = True, file_info: dict[str, Any] | None = None, detected_domain: str | None = None, forced_domain: str | None = None, edge_type_constraints: dict[str, dict[str, list[str]]] | None = None, filtering_config: FilteringConfig | None = None) -> dict[str, Any]`
+#### `finalize_distributed_extraction(raw_entities: list[dict[str, Any]], raw_relationships: list[dict[str, Any]], generate_embeddings: bool = True, file_info: dict[str, Any] | None = None, detected_domain: str | None = None, forced_domain: str | None = None, *, edge_type_constraints: dict[str, dict[str, list[str]]] | None = None, filtering_config: FilteringConfig | None = None) -> dict[str, Any]`
 
 Finalize extraction from pre-extracted chunk results.
 
@@ -283,7 +283,7 @@ Raises:
 | `progress_callback` | `Callable[[int, int], None] \| None` |  |
 | `cancellation_check` | `Callable[[], Any] \| None` |  |
 
-#### `embed_chunks(chunks: list[dict[str, Any]], source_id: str, database_name: str, progress_callback: Callable[[int, int], None] | None = None, cancellation_check: Callable[[], Any] | None = None, expected_dimensions: int | None = None) -> int`
+#### `embed_chunks(*, chunks: list[dict[str, Any]], source_id: str, database_name: str, progress_callback: Callable[[int, int], None] | None = None, cancellation_check: Callable[[], Any] | None = None, expected_dimensions: int | None = None) -> int`
 
 Embed a pre-fetched list of chunks and persist the vectors.
 
@@ -342,7 +342,7 @@ Raises:
 | `cancellation_check` | `Callable[[], Any] \| None` |  |
 | `expected_dimensions` | `int \| None` |  |
 
-#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, embedding_service: EmbeddingProviderProtocol | None = None) -> IndexingService`
+#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, *, embedding_service: EmbeddingProviderProtocol | None = None) -> IndexingService`
 
 Create IndexingService from a storage adapter.
 
@@ -406,7 +406,7 @@ Handles keyword, semantic, and hybrid search across both:
 
 **Methods:**
 
-#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, search_repository: SearchRepositoryProtocol, graph_repository: GraphRepositoryProtocol | None = None, default_embedding_callback: Any = None) -> SearchService`
+#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, *, search_repository: SearchRepositoryProtocol, graph_repository: GraphRepositoryProtocol | None = None, default_embedding_callback: Any = None) -> SearchService`
 
 Create a SearchService from a storage adapter.
 
@@ -621,7 +621,7 @@ Raises:
 |---|---|---|
 | `node_id` | `str` |  |
 
-#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, search_repository: SearchRepositoryProtocol | None = None) -> NodeService`
+#### `from_adapter(adapter: SqliteAdapter, settings: EngineSettings, *, search_repository: SearchRepositoryProtocol | None = None) -> NodeService`
 
 Create a NodeService from a storage adapter.
 
@@ -1113,7 +1113,7 @@ Combined protocol for SourceCommitService — covers CRUD and citations.
 
 **Bases:** `SourceStorageProtocol, CitationStorageProtocol, Protocol`
 
-### `drop_orphan_entities(entities: list[dict], relationships: list[dict], enabled: bool) -> tuple[list[dict], list[dict], int]`
+### `drop_orphan_entities(entities: list[dict], relationships: list[dict], *, enabled: bool) -> tuple[list[dict], list[dict], int]`
 
 Filter entities not referenced by any relationship, when enabled.
 
@@ -1227,7 +1227,7 @@ are optimal for entity detection.
 
 **Methods:**
 
-#### `create_chunks(full_text: str, source_id: str | None = None, analysis_depth: str = 'full', store: bool | None = None, original_text: str | None = None, location_index: LocationIndex | None = None) -> ChunksResult`
+#### `create_chunks(full_text: str, source_id: str | None = None, analysis_depth: str = 'full', *, store: bool | None = None, original_text: str | None = None, location_index: LocationIndex | None = None) -> ChunksResult`
 
 Create hierarchical chunks from document text with filtering.
 
@@ -1304,7 +1304,7 @@ Get all small chunks for a source (for RAG indexing).
 |---|---|---|
 | `source_id` | `str` |  |
 
-#### `process(text: str, analysis_depth: str = 'full', file_info: dict[str, Any] | None = None, embedding_service: Any = None) -> ExtractionResult`
+#### `process(text: str, *, analysis_depth: str = 'full', file_info: dict[str, Any] | None = None, embedding_service: Any = None) -> ExtractionResult`
 
 Chunk text and extract entities in one call.
 
@@ -1526,7 +1526,7 @@ Example:
 
 **Methods:**
 
-#### `add_document(filepath: str | Path, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
+#### `add_document(filepath: str | Path, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
 
 Load a file and process it through the full extraction pipeline.
 
@@ -1566,7 +1566,7 @@ Example:
 | `auto_confirm` | `bool` |  |
 | `forced_domain` | `str \| None` |  |
 
-#### `add_document_sync(filepath: str | Path, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
+#### `add_document_sync(filepath: str | Path, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
 
 Synchronous wrapper for `add_document`.
 
@@ -1591,7 +1591,7 @@ Example:
 | `analysis_depth` | `AnalysisDepth` |  |
 | `on_progress` | `ProgressCallback \| None` |  |
 
-#### `add_documents(paths: str | list[str | Path], on_document_complete: Callable[[str, ProcessingResult], None] | None = None) -> list[ProcessingResult]`
+#### `add_documents(paths: str | list[str | Path], *, on_document_complete: Callable[[str, ProcessingResult], None] | None = None) -> list[ProcessingResult]`
 
 Load and process multiple documents.
 
@@ -1615,7 +1615,7 @@ Example:
 | `paths` | `str \| list[str \| Path]` |  |
 | `on_document_complete` | `Callable[[str, ProcessingResult], None] \| None` |  |
 
-#### `add_documents_sync(paths: str | list[str | Path], on_document_complete: Callable[[str, ProcessingResult], None] | None = None) -> list[ProcessingResult]`
+#### `add_documents_sync(paths: str | list[str | Path], *, on_document_complete: Callable[[str, ProcessingResult], None] | None = None) -> list[ProcessingResult]`
 
 Synchronous wrapper for `add_documents`.
 
@@ -1636,7 +1636,7 @@ Example:
 | `paths` | `str \| list[str \| Path]` |  |
 | `on_document_complete` | `Callable[[str, ProcessingResult], None] \| None` |  |
 
-#### `add_edge(template_name: str, source: Node | str, target: Node | str, label: str | None = None, properties: dict[str, Any] | None = None, source_id: str | None = None) -> Edge`
+#### `add_edge(template_name: str, source: Node | str, target: Node | str, *, label: str | None = None, properties: dict[str, Any] | None = None, source_id: str | None = None) -> Edge`
 
 Create an edge with get-or-create template semantics.
 
@@ -1668,7 +1668,7 @@ Example:
 | `properties` | `dict[str, Any] \| None` |  |
 | `source_id` | `str \| None` |  |
 
-#### `add_node(template_name: str, label: str, properties: dict[str, Any] | None = None, source_id: str | None = None) -> Node`
+#### `add_node(template_name: str, label: str, *, properties: dict[str, Any] | None = None, source_id: str | None = None) -> Node`
 
 Create a node with get-or-create template semantics.
 
@@ -1696,7 +1696,7 @@ Example:
 | `properties` | `dict[str, Any] \| None` |  |
 | `source_id` | `str \| None` |  |
 
-#### `batch_embed(texts: list[str], kwargs: Any = {}) -> BatchEmbedResult`
+#### `batch_embed(texts: list[str], **kwargs: Any) -> BatchEmbedResult`
 
 Generate vector embeddings for multiple texts.
 
@@ -1710,9 +1710,9 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `texts` | `list[str]` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
-#### `batch_embed_sync(texts: list[str], kwargs: Any = {}) -> BatchEmbedResult`
+#### `batch_embed_sync(texts: list[str], **kwargs: Any) -> BatchEmbedResult`
 
 Synchronous wrapper for `batch_embed`.
 
@@ -1726,9 +1726,9 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `texts` | `list[str]` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
-#### `chat(messages: str | list[dict[str, Any]], stream: bool = False, kwargs: Any = {}) -> LLMChatResponse`
+#### `chat(messages: str | list[dict[str, Any]], *, stream: bool = False, **kwargs: Any) -> LLMChatResponse`
 
 Send a chat message to the configured LLM provider.
 
@@ -1753,9 +1753,9 @@ Example:
 |---|---|---|
 | `messages` | `str \| list[dict[str, Any]]` |  |
 | `stream` | `bool` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
-#### `chat_sync(messages: str | list[dict[str, Any]], stream: bool = False, kwargs: Any = {}) -> LLMChatResponse`
+#### `chat_sync(messages: str | list[dict[str, Any]], *, stream: bool = False, **kwargs: Any) -> LLMChatResponse`
 
 Synchronous wrapper for `chat`.
 
@@ -1776,7 +1776,7 @@ Example:
 |---|---|---|
 | `messages` | `str \| list[dict[str, Any]]` |  |
 | `stream` | `bool` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
 #### `check_health() -> HealthReport`
 
@@ -1793,7 +1793,7 @@ Example:
     if health.chat.status == "healthy":
         print(f"Chat OK (\{health.chat.response_time_ms\}ms)")
 
-#### `chunk_document(text: str, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full') -> ChunkingResult`
+#### `chunk_document(text: str, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full') -> ChunkingResult`
 
 Chunk document text and store for RAG search.
 
@@ -1825,7 +1825,7 @@ Disconnect adapters and cleanup resources.
 
 Safe to call multiple times - subsequent calls are no-ops.
 
-#### `commit(source_id: str, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full') -> ProcessingResult`
+#### `commit(source_id: str, *, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full') -> ProcessingResult`
 
 Extract entities from stored chunks and commit to the knowledge graph.
 
@@ -1937,7 +1937,7 @@ Args:
 |---|---|---|
 | `template_id` | `str` |  |
 
-#### `embed(text: str, kwargs: Any = {}) -> EmbedResult`
+#### `embed(text: str, **kwargs: Any) -> EmbedResult`
 
 Generate a vector embedding for text.
 
@@ -1955,9 +1955,9 @@ Example:
 | Parameter | Type | Description |
 |---|---|---|
 | `text` | `str` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
-#### `embed_sync(text: str, kwargs: Any = {}) -> EmbedResult`
+#### `embed_sync(text: str, **kwargs: Any) -> EmbedResult`
 
 Synchronous wrapper for `embed`.
 
@@ -1971,7 +1971,7 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `text` | `str` |  |
-| `kwargs` | `Any` |  |
+| `**kwargs` | `Any` |  |
 
 #### `get_edge(edge_id: str) -> Edge`
 
@@ -2112,7 +2112,7 @@ Returns:
 | `page` | `int` |  |
 | `page_size` | `int` |  |
 
-#### `process_document(text: str, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
+#### `process_document(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
 
 Process a document through the full extraction pipeline.
 
@@ -2172,7 +2172,7 @@ Example:
 | `auto_confirm` | `bool` |  |
 | `forced_domain` | `str \| None` |  |
 
-#### `process_document_sync(text: str, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
+#### `process_document_sync(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
 
 Synchronous wrapper for `process_document`.
 
@@ -2205,7 +2205,7 @@ Returns:
     RebuildResult with total_nodes, nodes_with_embeddings,
     and chunks_indexed counts.
 
-#### `search(query: str, limit: int = 10, mode: SearchMode = 'hybrid') -> list[EngineSearchResult]`
+#### `search(query: str, *, limit: int = 10, mode: SearchMode = 'hybrid') -> list[EngineSearchResult]`
 
 Search the knowledge graph and document chunks.
 
@@ -2232,7 +2232,7 @@ Example:
 | `limit` | `int` |  |
 | `mode` | `SearchMode` |  |
 
-#### `search_sync(query: str, limit: int = 10, mode: SearchMode = 'hybrid') -> list[EngineSearchResult]`
+#### `search_sync(query: str, *, limit: int = 10, mode: SearchMode = 'hybrid') -> list[EngineSearchResult]`
 
 Synchronous wrapper for `search`.
 

@@ -17,6 +17,8 @@ import structlog
 from sqlalchemy import create_engine, event
 from sqlmodel import SQLModel
 
+from chaoscypher_core.exceptions import ValidationError
+
 
 if TYPE_CHECKING:
     from sqlite3 import Connection as SQLite3Connection
@@ -28,6 +30,22 @@ logger = structlog.get_logger(__name__)
 # Engine cache (one database path → one engine)
 _engines: dict[str, Engine] = {}
 _engines_lock = threading.Lock()
+
+# Mirror ``DatabaseRepository.create_database``'s unicode-aware name rule exactly
+# (alnum after stripping ``_``/``-``, at most 64 chars) rather than an ASCII
+# regex: a name such as ``研究ノート`` is legitimately creatable, and a stricter
+# sink would 500 every request that touches it with no in-app recovery (the
+# same reasoning ``Settings._validate_current_database`` records). Guarding at
+# this sink still covers every reader of caller-supplied names (e.g. task
+# metadata), since ``get_engine`` mkdirs the resulting path on first connect.
+# Keep the length bound in lockstep with ``DatabaseRepository``.
+_MAX_DB_NAME_LENGTH = 64
+
+
+def _is_safe_db_name(database_name: str) -> bool:
+    if not database_name or len(database_name) > _MAX_DB_NAME_LENGTH:
+        return False
+    return database_name.replace("_", "").replace("-", "").isalnum()
 
 
 def get_db_path(
@@ -51,7 +69,15 @@ def get_db_path(
     Returns:
         Path to database file
 
+    Raises:
+        ValidationError: If ``database_name`` contains characters outside
+            ``[A-Za-z0-9_-]`` (path separators, ``..``, absolute paths, …),
+            which would escape the databases directory when joined.
+
     """
+    if not _is_safe_db_name(database_name):
+        msg = f"Invalid database name: {database_name!r}"
+        raise ValidationError(msg, field="database_name")
     return Path(data_dir) / databases_subdir / database_name / app_db_filename
 
 

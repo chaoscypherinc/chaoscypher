@@ -38,7 +38,7 @@ View all available databases with their size and last modified date:
 <TabItem value="web-ui" label="Web UI">
 
 
-Go to **Settings** → **Databases** to see all databases with their size, last modified date, and active status.
+Use the **Database** selector at the top of the **Settings** page to see all databases with their size and which one is active.
 
 ![Settings page with database selector showing size](/img/screenshots/settings-database-selector.png)
 
@@ -108,8 +108,8 @@ curl http://localhost:8080/api/v1/databases/current
 <TabItem value="web-ui" label="Web UI">
 
 
-1. Go to **Settings** → **Databases**
-2. Click **Create Database**
+1. Open the **Database** selector at the top of the **Settings** page
+2. Click **Create new database**
 3. Enter a name (alphanumeric, hyphens, and underscores allowed)
 
 ![Database selector with create new database option](/img/screenshots/settings-database-selector.png)
@@ -166,7 +166,7 @@ New databases are automatically initialized with the required directory structur
 <TabItem value="web-ui" label="Web UI">
 
 
-Click on a database name in **Settings** → **Databases** to switch to it. The UI refreshes to load the new context.
+Click a database name in the **Database** selector on the **Settings** page to switch to it. The UI refreshes to load the new context.
 
 </TabItem>
 <TabItem value="cli" label="CLI">
@@ -202,7 +202,7 @@ After switching databases, the web UI refreshes to load the new context. All sub
 <TabItem value="web-ui" label="Web UI">
 
 
-Click the delete button next to a database in **Settings** → **Databases** and confirm the deletion.
+Click the delete button next to a database in the **Database** selector on the **Settings** page and confirm the deletion.
 
 </TabItem>
 <TabItem value="cli" label="CLI">

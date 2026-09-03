@@ -33,7 +33,14 @@ access_log /dev/stdout json_access;
 
 {% if settings.rate_limit.enabled %}
 # Rate limiting zones
-limit_req_zone $binary_remote_addr zone=auth:10m rate={{ settings.rate_limit.login_max_requests }}r/s;
+# Auth zones enforce the configured per-WINDOW policy. nginx rates are
+# per-second or per-minute only, so requests-per-window is converted to
+# r/m (floored, min 1): with the 60s default window this is exact. The
+# old form rendered the per-window count as r/s — 60x the declared
+# policy — and silently ignored *_window_seconds; setup_max_requests
+# never rendered at all (both locations shared zone=auth).
+limit_req_zone $binary_remote_addr zone=auth:10m rate={{ [1, settings.rate_limit.login_max_requests * 60 // settings.rate_limit.login_window_seconds] | max }}r/m;
+limit_req_zone $binary_remote_addr zone=setup:10m rate={{ [1, settings.rate_limit.setup_max_requests * 60 // settings.rate_limit.setup_window_seconds] | max }}r/m;
 limit_req_zone $binary_remote_addr zone=api_general:10m rate={{ settings.rate_limit.api_general_max_requests }}r/s;
 limit_req_zone $binary_remote_addr zone=uploads:10m rate={{ settings.rate_limit.uploads_max_requests }}r/s;
 
@@ -144,14 +151,14 @@ server {
     }
     location = /api/v1/auth/setup {
 {% if settings.rate_limit.enabled %}
-        limit_req zone=auth burst=3 nodelay;
+        limit_req zone=setup burst={{ settings.rate_limit.setup_max_requests }} nodelay;
 {% endif %}
         proxy_pass http://127.0.0.1:8080;
         include /etc/nginx/proxy-public.conf;
     }
     location = /api/v1/auth/login {
 {% if settings.rate_limit.enabled %}
-        limit_req zone=auth burst=3 nodelay;
+        limit_req zone=auth burst={{ settings.rate_limit.login_max_requests }} nodelay;
 {% endif %}
         proxy_pass http://127.0.0.1:8080;
         include /etc/nginx/proxy-public.conf;
@@ -185,6 +192,9 @@ server {
     # LAN scanners) fall through to @health_unauth which strips auth
     # headers and yields only {healthy, status}.
     location = /api/v1/health {
+{% if settings.rate_limit.enabled %}
+        limit_req zone=api_general burst=50 nodelay;
+{% endif %}
         auth_request /auth/verify;
         auth_request_set $health_auth_user $upstream_http_x_auth_user;
         error_page 401 403 = @health_unauth;

@@ -254,13 +254,17 @@ Implementations:
 
 Generate embedding vectors for multiple texts.
 
+All-or-nothing: every implementation embeds the full batch or raises.
+There is no partial-success return — a caller either gets one vector
+per input text or an `LLMError`, never a mix of the two.
+
 Args:
     texts: List of input texts to embed.
     batch_size: Number of texts to process per batch.
 
 Returns:
-    BatchEmbedResult with embedding vectors, total count, failure count,
-    and provider name.
+    BatchEmbedResult with embedding vectors, total count, and
+    provider name.
 
 Raises:
     LLMError: If the batch embedding request fails.
@@ -454,7 +458,7 @@ Returns:
 | `exclude` | `bool` |  |
 | `include_disabled_sources` | `bool` |  |
 
-#### `count_templates(database_name: str | None = None, template_type: str | None = None, source_id: str | None = None, include_disabled_sources: bool = True) -> int`
+#### `count_templates(*, database_name: str | None = None, template_type: str | None = None, source_id: str | None = None, include_disabled_sources: bool = True) -> int`
 
 Count GraphTemplate rows.
 
@@ -618,7 +622,7 @@ Returns:
 |---|---|---|
 | `edge_id` | `str` |  |
 
-#### `delete_edges_batch(edge_ids: list[str]) -> int`
+#### `delete_edges_batch(*, edge_ids: list[str]) -> int`
 
 Delete GraphEdge rows by ID list.
 
@@ -664,7 +668,7 @@ Returns:
 |---|---|---|
 | `node_id` | `str` |  |
 
-#### `delete_nodes_batch(node_ids: list[str]) -> int`
+#### `delete_nodes_batch(*, node_ids: list[str]) -> int`
 
 Delete GraphNode rows by ID list. Returns count.
 
@@ -688,7 +692,7 @@ Returns:
 | `template_id` | `str` |  |
 | `force` | `bool` |  |
 
-#### `delete_templates_batch(template_ids: list[str]) -> int`
+#### `delete_templates_batch(*, template_ids: list[str]) -> int`
 
 Delete GraphTemplate rows by ID list. Returns count.
 
@@ -710,7 +714,7 @@ Returns:
 |---|---|---|
 | `max_items` | `int` |  |
 
-#### `export_graph_records(source_ids: list[str] | None = None, max_items: int = 100000) -> dict[str, list[dict[str, Any]]]`
+#### `export_graph_records(*, source_ids: list[str] | None = None, max_items: int = 100000) -> dict[str, list[dict[str, Any]]]`
 
 Export graph nodes + edges as dicts carrying the persisted `ccx_iri`.
 
@@ -731,7 +735,7 @@ Returns:
 | `source_ids` | `list[str] \| None` |  |
 | `max_items` | `int` |  |
 
-#### `find_orphaned_edges_by_source_node(database_name: str) -> list[str]`
+#### `find_orphaned_edges_by_source_node(*, database_name: str) -> list[str]`
 
 Return IDs of edges whose source_node_id has no matching GraphNode.
 
@@ -745,7 +749,7 @@ Returns:
 |---|---|---|
 | `database_name` | `str` |  |
 
-#### `find_orphaned_edges_by_target_node(database_name: str) -> list[str]`
+#### `find_orphaned_edges_by_target_node(*, database_name: str) -> list[str]`
 
 Return IDs of edges whose target_node_id has no matching GraphNode.
 
@@ -759,7 +763,7 @@ Returns:
 |---|---|---|
 | `database_name` | `str` |  |
 
-#### `find_orphaned_nodes_by_source(database_name: str) -> list[str]`
+#### `find_orphaned_nodes_by_source(*, database_name: str) -> list[str]`
 
 Return IDs of nodes whose source_id references a missing SourceRow.
 
@@ -775,7 +779,7 @@ Returns:
 |---|---|---|
 | `database_name` | `str` |  |
 
-#### `find_orphaned_templates_by_source(database_name: str) -> list[str]`
+#### `find_orphaned_templates_by_source(*, database_name: str) -> list[str]`
 
 Return IDs of non-system templates whose source_id references a missing SourceRow.
 
@@ -1304,7 +1308,7 @@ Notes:
 | `status` | `str \| None` |  |
 | `include_embeddings` | `bool` |  |
 
-#### `increment_source_counter(source_id: str, database_name: str, column: str, n: int) -> None`
+#### `increment_source_counter(*, source_id: str, database_name: str, column: str, n: int) -> None`
 
 Atomically increment a numeric counter column on a source row.
 
@@ -1335,6 +1339,14 @@ Notes:
     - 'indexed' means has embedding but not yet in vector search index
     - 'committed' means indexed in sqlite-vec and searchable
 
+Deprecated:
+    Prefer `update_chunk_embeddings_batch` for multi-chunk
+    writes — this single-row method costs one full-row SELECT plus
+    one real COMMIT per call. No production multi-chunk caller
+    remains (the CLI's `index_file` embedding wave was the last
+    and now uses the batch form); kept for isolated single-chunk
+    writers.
+
 | Parameter | Type | Description |
 |---|---|---|
 | `chunk_id` | `str` |  |
@@ -1343,7 +1355,7 @@ Notes:
 | `embedding_dimensions` | `int` |  |
 | `status` | `str` |  |
 
-#### `update_chunk_embeddings_batch(embeddings_by_chunk: dict[str, str], embedding_model: str, embedding_dimensions: int, status: str) -> list[str]`
+#### `update_chunk_embeddings_batch(embeddings_by_chunk: dict[str, str], *, embedding_model: str, embedding_dimensions: int, status: str) -> list[str]`
 
 Batch form of `update_chunk_embedding` — one UPDATE, one commit.
 
@@ -1408,7 +1420,7 @@ Notes:
 | `source_id` | `str` |  |
 | `status` | `str` |  |
 
-#### `update_source_columns(source_id: str, database_name: str, updates: dict[str, Any]) -> None`
+#### `update_source_columns(*, source_id: str, database_name: str, updates: dict[str, Any]) -> None`
 
 Apply a partial column update to a source row.
 
@@ -1453,7 +1465,7 @@ Search methods:
 
 **Methods:**
 
-#### `delete_node(node_id: str, session: TransactionalSession | None = None) -> None`
+#### `delete_node(node_id: str, *, session: TransactionalSession | None = None) -> None`
 
 Remove a node from both keyword and vector indexes.
 
@@ -1468,7 +1480,7 @@ Args:
 | `node_id` | `str` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `delete_nodes_batch(node_ids: list[str], session: TransactionalSession | None = None) -> int`
+#### `delete_nodes_batch(node_ids: list[str], *, session: TransactionalSession | None = None) -> int`
 
 Remove multiple nodes from both keyword and vector indexes.
 
@@ -1488,7 +1500,7 @@ Returns:
 | `node_ids` | `list[str]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `flush_reindex(batch_embed_fn: Callable[[list[str]], Any], session: TransactionalSession | None = None) -> int`
+#### `flush_reindex(batch_embed_fn: Callable[[list[str]], Any], *, session: TransactionalSession | None = None) -> int`
 
 Re-embed and index all queued items.
 
@@ -1507,7 +1519,7 @@ Returns:
 | `batch_embed_fn` | `Callable[[list[str]], Any]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `flush_reindex_with_service(embedding_service: Any, session: TransactionalSession | None = None) -> int`
+#### `flush_reindex_with_service(embedding_service: Any, *, session: TransactionalSession | None = None) -> int`
 
 Convenience wrapper that flushes using an embedding provider.
 
@@ -1558,7 +1570,7 @@ Returns:
 | `embedding_provider_callback` | `Callable[[str], Any] \| None` |  |
 | `min_similarity` | `float` |  |
 
-#### `index_embeddings_batch(embeddings: list[tuple[str, list[float]]], item_type: str = 'node', text_lookup: dict[str, str] | None = None, session: TransactionalSession | None = None) -> int`
+#### `index_embeddings_batch(embeddings: list[tuple[str, list[float]]], item_type: str = 'node', text_lookup: dict[str, str] | None = None, *, session: TransactionalSession | None = None) -> int`
 
 Batch index embeddings.
 
@@ -1581,7 +1593,7 @@ Returns:
 | `text_lookup` | `dict[str, str] \| None` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `index_node(node: Node, session: TransactionalSession | None = None) -> None`
+#### `index_node(node: Node, *, session: TransactionalSession | None = None) -> None`
 
 Index a node for full-text and vector search.
 
@@ -1600,7 +1612,7 @@ Args:
 | `node` | `Node` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `index_node_embedding(node_id: str, embedding: list[float], session: TransactionalSession | None = None) -> None`
+#### `index_node_embedding(node_id: str, embedding: list[float], *, session: TransactionalSession | None = None) -> None`
 
 Index a single node's embedding for vector search.
 
@@ -1617,7 +1629,7 @@ Args:
 | `embedding` | `list[float]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `index_nodes_batch(nodes: list[Node], session: TransactionalSession | None = None) -> None`
+#### `index_nodes_batch(nodes: list[Node], *, session: TransactionalSession | None = None) -> None`
 
 Index multiple nodes in batch.
 
@@ -1632,7 +1644,7 @@ Args:
 | `nodes` | `list[Node]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `index_template(template_id: str, embedding: list[float], session: TransactionalSession | None = None) -> None`
+#### `index_template(template_id: str, embedding: list[float], *, session: TransactionalSession | None = None) -> None`
 
 Index a template embedding for semantic search.
 
@@ -1665,7 +1677,7 @@ Returns:
 | `query` | `str` |  |
 | `limit` | `int` |  |
 
-#### `reindex_all_nodes(nodes: list[Node], session: TransactionalSession | None = None) -> None`
+#### `reindex_all_nodes(nodes: list[Node], *, session: TransactionalSession | None = None) -> None`
 
 Reindex all nodes (useful after bulk import or index corruption).
 
@@ -1680,7 +1692,7 @@ Args:
 | `nodes` | `list[Node]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `remove_embedding(item_id: str, item_type: str, session: TransactionalSession | None = None) -> None`
+#### `remove_embedding(item_id: str, item_type: str, *, session: TransactionalSession | None = None) -> None`
 
 Remove an embedding from the per-type vector index.
 
@@ -1814,6 +1826,24 @@ Handles CRUD for:
 
 **Methods:**
 
+#### `claim_chat_processing(chat_id: str) -> bool`
+
+Atomically claim a chat for processing (compare-and-swap on status).
+
+Must be a single guarded UPDATE (`WHERE status != 'processing'`)
+so concurrent claims cannot both succeed.
+
+Args:
+    chat_id: Chat to claim.
+
+Returns:
+    True when this call transitioned the chat to `processing`;
+    False when the chat is unknown or already processing.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `chat_id` | `str` |  |
+
 #### `count_chats(database_name: str, status: str | None = None, scoped: bool | None = None, search: str | None = None) -> int`
 
 Count chats for database with optional filters.
@@ -1841,7 +1871,7 @@ Create chat message.
 |---|---|---|
 | `message` | `dict[str, Any]` |  |
 
-#### `delete_all_chats(database_name: str) -> int`
+#### `delete_all_chats(*, database_name: str) -> int`
 
 Delete every Chat row in one database.
 
@@ -1863,7 +1893,7 @@ Delete chat.
 |---|---|---|
 | `chat_id` | `str` |  |
 
-#### `delete_messages_after(chat_id: str, message_id: str, inclusive: bool = False) -> int`
+#### `delete_messages_after(chat_id: str, message_id: str, *, inclusive: bool = False) -> int`
 
 Delete the tail of a chat's history starting at/after a message.
 
@@ -1886,7 +1916,7 @@ Returns:
 | `message_id` | `str` |  |
 | `inclusive` | `bool` |  |
 
-#### `delete_messages_by_chat_ids(chat_ids: list[str]) -> int`
+#### `delete_messages_by_chat_ids(*, chat_ids: list[str]) -> int`
 
 Delete ChatMessage rows whose chat_id is in the given list.
 
@@ -2301,7 +2331,7 @@ Mark commit stage as complete.
 | `templates_created` | `int` |  |
 | `source_document_node_id` | `str \| None` |  |
 
-#### `complete_extraction(source_id: str, entities: list[dict[str, Any]], relationships: list[dict[str, Any]], detected_domain: str | None = None, forced_domain: str | None = None, domain_version: str | None = None, domain_content_hash: str | None = None, cross_chunk_filtering_log: dict[str, Any] | None = None) -> None`
+#### `complete_extraction(source_id: str, *, entities: list[dict[str, Any]], relationships: list[dict[str, Any]], detected_domain: str | None = None, forced_domain: str | None = None, domain_version: str | None = None, domain_content_hash: str | None = None, cross_chunk_filtering_log: dict[str, Any] | None = None) -> None`
 
 Mark extraction stage as complete and persist the entity/relationship rows.
 
@@ -2339,7 +2369,7 @@ Mark indexing stage as complete.
 | `embedding_model` | `str` |  |
 | `embedding_dimensions` | `int` |  |
 
-#### `count_sources(database_name: str) -> int`
+#### `count_sources(*, database_name: str) -> int`
 
 Count SourceRow rows in one database.
 
@@ -2367,7 +2397,7 @@ Returns:
 |---|---|---|
 | `source` | `dict[str, Any]` |  |
 
-#### `delete_all_sources(database_name: str) -> int`
+#### `delete_all_sources(*, database_name: str) -> int`
 
 Delete every SourceRow in one database.
 
@@ -2546,7 +2576,7 @@ Returns:
 |---|---|---|
 | `database_name` | `str` |  |
 
-#### `increment_source_counter(source_id: str, database_name: str, column: str, n: int) -> None`
+#### `increment_source_counter(*, source_id: str, database_name: str, column: str, n: int) -> None`
 
 Atomically increment a numeric counter column on a source row.
 
@@ -2621,7 +2651,7 @@ Mark source as starting indexing stage.
 |---|---|---|
 | `source_id` | `str` |  |
 
-#### `transition_source_status(source_id: str, from_status: str, to_status: str, database_name: str) -> bool`
+#### `transition_source_status(source_id: str, from_status: str, to_status: str, *, database_name: str) -> bool`
 
 Atomic compare-and-swap status transition, scoped to a single database.
 
@@ -2658,7 +2688,7 @@ Returns:
 | `source_id` | `str` |  |
 | `updates` | `dict[str, Any]` |  |
 
-#### `update_source_columns(source_id: str, database_name: str, updates: dict[str, Any]) -> None`
+#### `update_source_columns(*, source_id: str, database_name: str, updates: dict[str, Any]) -> None`
 
 Apply a partial column update to a source row.
 
@@ -2775,7 +2805,7 @@ Delete every ToolStatistics row. Returns count.
 
 Count every SystemTool row. Returns non-negative int.
 
-#### `count_user_tools(database_name: str) -> int`
+#### `count_user_tools(*, database_name: str) -> int`
 
 Count UserTool rows in one database.
 
@@ -2807,7 +2837,7 @@ Create user tool.
 |---|---|---|
 | `tool` | `dict[str, Any]` |  |
 
-#### `delete_all_user_tools(database_name: str) -> int`
+#### `delete_all_user_tools(*, database_name: str) -> int`
 
 Delete every UserTool row in one database. Returns count.
 
@@ -2924,7 +2954,7 @@ Handles CRUD for:
 
 Delete every TriggerExecutionRow across databases. Returns count.
 
-#### `count_triggers(database_name: str) -> int`
+#### `count_triggers(*, database_name: str) -> int`
 
 Count Trigger rows in one database.
 
@@ -2940,7 +2970,7 @@ Create trigger.
 |---|---|---|
 | `trigger` | `dict[str, Any]` |  |
 
-#### `delete_all_triggers(database_name: str) -> int`
+#### `delete_all_triggers(*, database_name: str) -> int`
 
 Delete every Trigger row in one database. Returns count.
 
@@ -3273,7 +3303,7 @@ Delete every WorkflowStatistics row across databases. Returns count.
 
 Delete every WorkflowStep row across databases. Returns count.
 
-#### `count_workflows(database_name: str) -> int`
+#### `count_workflows(*, database_name: str) -> int`
 
 Count Workflow rows in one database.
 
@@ -3289,7 +3319,7 @@ Create new workflow. Returns created workflow with generated ID.
 |---|---|---|
 | `workflow` | `dict[str, Any]` |  |
 
-#### `create_workflow_safe(workflow: dict[str, Any]) -> dict[str, Any]`
+#### `create_workflow_safe(*, workflow: dict[str, Any]) -> dict[str, Any]`
 
 Create a Workflow row, raising ConflictError on duplicate name.
 
@@ -3331,7 +3361,7 @@ Create new workflow step.
 |---|---|---|
 | `step` | `dict[str, Any]` |  |
 
-#### `delete_all_workflows(database_name: str) -> int`
+#### `delete_all_workflows(*, database_name: str) -> int`
 
 Delete every Workflow row in one database. Returns count.
 
@@ -3378,6 +3408,23 @@ Get statistics for a workflow.
 | Parameter | Type | Description |
 |---|---|---|
 | `workflow_id` | `str` |  |
+
+#### `get_workflow_statistics_totals(*, database_name: str) -> dict[str, int]`
+
+Sum execution counters across every workflow in one database.
+
+Single aggregate SELECT (SUM over total/successful/failed/cancelled
+executions). Use instead of per-workflow `get_workflow_statistics`
+round-trips when only the global totals are needed.
+
+Returns:
+    Dict with `total_executions`, `successful_executions`,
+    `failed_executions`, `cancelled_executions` — all 0 when
+    the database has no statistics rows.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `database_name` | `str` |  |
 
 #### `get_workflow_step(step_id: str) -> WorkflowStepDict | None`
 

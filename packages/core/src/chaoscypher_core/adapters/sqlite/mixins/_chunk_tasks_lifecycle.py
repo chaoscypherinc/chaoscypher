@@ -250,8 +250,19 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             or None if no chunk is currently running.
         """
         self._ensure_connected()
+        # load_only the four columns read below — input_text is populated
+        # exactly while a task is running, and this is polled by the
+        # extraction-status endpoint.
         statement = (
             select(ChunkExtractionTask)
+            .options(
+                load_only(
+                    ChunkExtractionTask.chunk_index,
+                    ChunkExtractionTask.retry_count,
+                    ChunkExtractionTask.max_retries,
+                    ChunkExtractionTask.started_at,
+                )
+            )
             .where(ChunkExtractionTask.job_id == job_id)
             .where(ChunkExtractionTask.status == "running")
             .order_by(ChunkExtractionTask.started_at.desc())
@@ -289,8 +300,26 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             List of completed tasks with their extraction results
         """
         self._ensure_connected()
+        # load_only the columns the finalizer actually consumes. Unlike
+        # get_chunk_tasks_by_job, aggregation NEEDS input_text/chunk_sentences;
+        # only llm_response_json and other debug columns are skipped.
         statement = (
             select(ChunkExtractionTask)
+            .options(
+                load_only(
+                    ChunkExtractionTask.id,
+                    ChunkExtractionTask.job_id,
+                    ChunkExtractionTask.database_name,
+                    ChunkExtractionTask.chunk_index,
+                    ChunkExtractionTask.status,
+                    ChunkExtractionTask.raw_entities,
+                    ChunkExtractionTask.raw_relationships,
+                    ChunkExtractionTask.raw_entity_embeddings,
+                    ChunkExtractionTask.input_text,
+                    ChunkExtractionTask.chunk_sentences,
+                    # EXCLUDE: llm_response_json (multi-MB on book-sized sources)
+                )
+            )
             .where(ChunkExtractionTask.job_id == job_id)
             .where(ChunkExtractionTask.status == "completed")
             .order_by(ChunkExtractionTask.chunk_index)

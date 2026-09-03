@@ -63,11 +63,17 @@ class TestBackupTab:
         """
         page = authenticated_page
 
-        # Track network requests to verify the API call
-        backup_requests: list[str] = []
+        # Track network requests to verify the API call. Record the method:
+        # opening the Backup tab fires an unconditional GET /backup on mount
+        # (useBackups' ungated useQuery), and backupApi.create POSTs the SAME
+        # URL — so a method-blind, never-cleared accumulator was satisfied
+        # before the click ever ran.
+        backup_requests: list[tuple[str, str]] = []
         page.on(
             "request",
-            lambda r: backup_requests.append(r.url) if "/api/v1/backup" in r.url else None,
+            lambda r: (
+                backup_requests.append((r.method, r.url)) if "/api/v1/backup" in r.url else None
+            ),
         )
 
         _open_settings_with_retry(page)
@@ -75,9 +81,14 @@ class TestBackupTab:
         page.wait_for_timeout(500)
 
         create_btn = page.get_by_role("button", name="Create Backup Now")
+        # Drop everything recorded so far (the tab-mount GET included): only
+        # requests fired by the click may satisfy the assertion.
+        backup_requests.clear()
         create_btn.click()
         page.wait_for_timeout(2000)  # Allow API call to fire
 
-        # Verify backup endpoint was hit
-        backup_post = [r for r in backup_requests if "backup" in r and "download" not in r]
+        # Verify the click triggered the create call: POST /backup.
+        backup_post = [
+            url for method, url in backup_requests if method == "POST" and "download" not in url
+        ]
         assert len(backup_post) > 0, f"Backup API not called. Requests: {backup_requests}"

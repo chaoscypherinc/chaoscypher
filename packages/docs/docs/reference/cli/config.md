@@ -306,6 +306,7 @@ Type conversion happens automatically:
 | `"42"` | `int` | `42` |
 | `"3.14"` | `float` | `3.14` |
 | `"qwen3:30b"` | `str` | `"qwen3:30b"` |
+| `'["a.example","b.example"]'` or `a.example,b.example` (list-typed keys only) | `list` | `["a.example", "b.example"]` |
 
 ```console
 chaoscypher config set llm.chat_provider ollama

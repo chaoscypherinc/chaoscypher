@@ -10,10 +10,13 @@ per-package unit + integration tests, see `CONTRIBUTING.md`.
   Requires Docker.
 - `browser/` — Playwright-based UI tests against a running Interface stack.
   Requires Docker + browser binaries.
-- `cli/` — CLI end-to-end tests that drive the `chaoscypher` binary as a
-  subprocess. Most run without Docker; some need a running stack.
+- `cli/` — CLI end-to-end tests that drive the `chaoscypher` CLI in-process
+  via `CliRunner`. No Docker and no running stack needed.
+- `migrations/` — snapshot-based migration roundtrip tests. Boot their own
+  isolated stack from a committed pre-squash DB snapshot; require Docker
+  (auto-skipped when `docker` is not on PATH).
 - `fixtures/` — seed data and helpers used across the harness (sample
-  documents, `seed.ccx`, generator scripts).
+  documents, `seed.ccx`, generator scripts, DB snapshots).
 - `conftest.py` — fixtures shared across api/browser/cli.
 
 ## Running
@@ -32,11 +35,14 @@ per-package unit + integration tests, see `CONTRIBUTING.md`.
 ## Markers
 
 - `e2e` — applied to every test in this tree. Use `-m "not e2e"` to exclude.
-- `api`, `browser`, `cli` — finer-grained selection (one per tier).
+- `api`, `browser`, `cli`, `migrations` — finer-grained selection (one per
+  tier).
 - `fresh`, `resume` — phase markers for the API subset.
+- `requires_llm` — auto-skips when the running stack has no verified LLM.
 
-All markers are registered in the root `pyproject.toml`
-`[tool.pytest.ini_options]` section.
+`e2e`, `api`, `browser`, `cli`, `fresh`, and `resume` are registered in the
+root `pyproject.toml` `[tool.pytest.ini_options]` section; `requires_llm`
+and `migrations` are registered by their tiers' conftests.
 
 ## CI vs local-only tiers
 
@@ -55,7 +61,7 @@ result in the PR description; reviewers will not see CI signal for it.
 
 Match the surrounding files. For `api/`: use the API client fixture from
 `api/conftest.py`. For `browser/`: use the Playwright `page` fixture from
-`browser/conftest.py`. For `cli/`: use the `invoke_cli` helper from
+`browser/conftest.py`. For `cli/`: use the `run_cli` fixture from
 `cli/conftest.py` and assert on `result.exit_code` and `result.output`.
 
 Use the seed fixtures under `fixtures/sample_data/` rather than inventing

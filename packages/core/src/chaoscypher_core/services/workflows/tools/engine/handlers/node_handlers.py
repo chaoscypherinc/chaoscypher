@@ -360,65 +360,73 @@ class NodeToolHandlers:
         max_chunks = fetch_count if rerank_enabled else limit
 
         # Filter to chunks only and hydrate content
+        chunk_hits = [
+            (result_id[6:], score)
+            for result_id, score in search_results
+            if result_id.startswith("chunk:")
+        ]
+        # One batch SELECT instead of one per hit; missing ids are silently
+        # absent from the lookup map, matching the old per-id loop.
+        chunks_by_id = {
+            row["id"]: row
+            for row in self.indexing.get_chunks_by_ids_batch([cid for cid, _ in chunk_hits])
+        }
+
         chunks: list[dict] = []
         source_filenames: dict[str, str] = {}
-        for result_id, score in search_results:
-            if result_id.startswith("chunk:"):
-                chunk_uuid = result_id[6:]
-                chunk_data = self.indexing.get_chunk_by_id(chunk_uuid)
-                if chunk_data:
-                    # Filter by source scope
-                    chunk_source = chunk_data.get("source_id")
-                    if source_ids and chunk_source not in source_ids:
-                        continue
-                    if source_id and chunk_source != source_id:
-                        continue
-                    # Resolve source filename for citation labels
-                    original_content = chunk_data["content"]
-                    chunk_source_id = chunk_data.get("source_id", "")
-                    if chunk_source_id and chunk_source_id not in source_filenames:
-                        get_source = getattr(self.indexing, "get_source", None)
-                        if get_source:
-                            db = chunk_data.get("database_name", "")
-                            src = get_source(chunk_source_id, db)
-                            source_filenames[chunk_source_id] = (
-                                src.get("filename", "") if src else ""
-                            )
+        for chunk_uuid, score in chunk_hits:
+            chunk_data = chunks_by_id.get(chunk_uuid)
+            if chunk_data:
+                # Filter by source scope
+                chunk_source = chunk_data.get("source_id")
+                if source_ids and chunk_source not in source_ids:
+                    continue
+                if source_id and chunk_source != source_id:
+                    continue
+                # Resolve source filename for citation labels
+                original_content = chunk_data["content"]
+                chunk_source_id = chunk_data.get("source_id", "")
+                if chunk_source_id and chunk_source_id not in source_filenames:
+                    get_source = getattr(self.indexing, "get_source", None)
+                    if get_source:
+                        db = chunk_data.get("database_name", "")
+                        src = get_source(chunk_source_id, db)
+                        source_filenames[chunk_source_id] = src.get("filename", "") if src else ""
 
-                    # Use short alias (C0, C1, ...) instead of UUID
-                    # for LLM readability — mapped back during enrichment
-                    chunk_id = chunk_data["id"]
-                    alias = f"C{len(chunks)}"
-                    filename = source_filenames.get(chunk_source_id, "")
+                # Use short alias (C0, C1, ...) instead of UUID
+                # for LLM readability — mapped back during enrichment
+                chunk_id = chunk_data["id"]
+                alias = f"C{len(chunks)}"
+                filename = source_filenames.get(chunk_source_id, "")
 
-                    # Number sentences and build header via shared utility
-                    numbered_content, sentence_count = format_chunk_content(
-                        original_content, filename, alias
-                    )
+                # Number sentences and build header via shared utility
+                numbered_content, sentence_count = format_chunk_content(
+                    original_content, filename, alias
+                )
 
-                    # Strip combined_content from metadata before sending
-                    # to LLM — it contains sibling chunks' text which causes
-                    # the LLM to quote from chunks it didn't actually search for.
-                    chunk_meta = clean_chunk_metadata(chunk_data.get("chunk_metadata"))
+                # Strip combined_content from metadata before sending
+                # to LLM — it contains sibling chunks' text which causes
+                # the LLM to quote from chunks it didn't actually search for.
+                chunk_meta = clean_chunk_metadata(chunk_data.get("chunk_metadata"))
 
-                    chunks.append(
-                        {
-                            "chunk_id": chunk_id,
-                            "chunk_alias": alias,
-                            "content": numbered_content,
-                            "original_content": original_content,
-                            "source_id": chunk_source_id,
-                            "filename": source_filenames.get(chunk_source_id, ""),
-                            "chunk_index": chunk_data.get("chunk_index"),
-                            "page_number": chunk_data.get("page_number"),
-                            "section": chunk_data.get("section"),
-                            "sentence_count": sentence_count,
-                            "chunk_metadata": chunk_meta,
-                            "score": score,
-                        }
-                    )
-                    if len(chunks) >= max_chunks:
-                        break
+                chunks.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "chunk_alias": alias,
+                        "content": numbered_content,
+                        "original_content": original_content,
+                        "source_id": chunk_source_id,
+                        "filename": source_filenames.get(chunk_source_id, ""),
+                        "chunk_index": chunk_data.get("chunk_index"),
+                        "page_number": chunk_data.get("page_number"),
+                        "section": chunk_data.get("section"),
+                        "sentence_count": sentence_count,
+                        "chunk_metadata": chunk_meta,
+                        "score": score,
+                    }
+                )
+                if len(chunks) >= max_chunks:
+                    break
 
         # Re-rank if enabled, then trim to requested limit
         if rerank_enabled and len(chunks) > 1:

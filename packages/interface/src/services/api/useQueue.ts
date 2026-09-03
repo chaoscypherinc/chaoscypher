@@ -63,7 +63,8 @@ interface QueueTasksResponse {
     has_next: boolean;
     has_prev: boolean;
   };
-  total_in_queue?: number;
+  /** Active (queued + running) count; null = unknown (stats unavailable). */
+  total_in_queue?: number | null;
   queues?: string[] | null;
 }
 

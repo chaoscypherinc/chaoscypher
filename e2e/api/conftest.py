@@ -29,16 +29,18 @@ ADMIN_EMAIL = "admin@e2e-test.example.com"
 SESSION_COOKIE = "cc_session"
 
 # Tests in these files exercise paths gated by ``/api/v1/sources`` upload
-# / extraction code which the cortex now blocks with HTTP 409
+# / extraction code which the cortex blocks with HTTP 409
 # LLM_NOT_VERIFIED when no LLM is configured. The e2e Docker stack ships
-# without an LLM; rather than fail every one of these tests we mark them
-# requires_llm and skip when the runtime says LLM is not verified.
+# fake-ollama, so there the gate is open — but on an LLM-less stack,
+# rather than fail every one of these tests we mark them requires_llm
+# and skip when the runtime says LLM is not verified.
 _LLM_REQUIRED_FILES = frozenset({
     "test_sources.py",
     "test_source_url.py",
     "test_source_data.py",
     "test_source_extraction.py",
     "test_extraction_control.py",
+    "test_loader_matrix.py",  # uploads gated by the same 409
     "test_journeys.py",       # source-upload journey only
     "test_negative_paths.py", # source-url negative paths only
 })

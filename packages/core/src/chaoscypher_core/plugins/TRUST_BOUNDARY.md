@@ -58,6 +58,12 @@ via Python entry points declared in installed packages' `pyproject.toml`
 | `chaoscypher.providers`        | `core/adapters/llm/providers/__init__.py`                            | `BaseLLMProvider`          |
 | `chaoscypher.cleaners`         | `core/services/sources/normalizer/cleaners/registry.py`              | (cleaner contract)         |
 | `chaoscypher.archive_handlers` | `core/services/sources/loaders/archive/handlers/registry.py`         | (archive-handler contract) |
+| `chaoscypher.extensions`       | `cortex/api/v1/router.py`                                            | (callable given the API router; can mount arbitrary routes) |
+| `chaoscypher.edition`          | `cortex/features/edition/api.py`                                     | (callable returning edition metadata; loaded AND invoked)   |
+
+Any group not listed here is a documentation bug, not a safety guarantee:
+adding an entry-point group to a loader without updating this table leaves
+operators auditing an incomplete code-execution surface.
 
 ### Trust posture
 

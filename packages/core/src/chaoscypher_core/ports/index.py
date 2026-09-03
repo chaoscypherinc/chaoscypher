@@ -148,22 +148,29 @@ class IndexingProtocol(Protocol):
         """
         ...
 
-    def get_chunks_by_ids_batch(self, chunk_ids: list[str]) -> list[dict[str, Any]]:
+    def get_chunks_by_ids_batch(
+        self, chunk_ids: list[str], *, include_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
         """Fetch multiple chunks by UUID in one query.
 
-        Batch sibling of ``get_chunk_by_id`` with the identical per-chunk
-        dict shape.
+        Batch sibling of ``get_chunk_by_id``, minus the heavy columns:
+        ``embedding`` (~5KB per chunk) and ``raw_content`` are excluded
+        from the returned dicts by default; ``include_embeddings=True``
+        adds ``embedding`` back (``raw_content`` is always excluded).
 
         Args:
             chunk_ids: Chunk UUIDs.
+            include_embeddings: If True, include the embedding column
+                (slower — only for callers that consume the vectors).
 
         Returns:
             Chunk dictionaries for every id that exists, in input order;
             missing ids are silently absent.
 
         Notes:
-            - Used by SearchService to hydrate a page of chunk results in
-              one round trip instead of one SELECT per chunk.
+            - Used by SearchService and the tool handlers to hydrate a
+              page of chunk results in one round trip instead of one
+              SELECT per chunk.
 
         """
         ...

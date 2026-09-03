@@ -3,9 +3,11 @@
 
 """``get_chunks_by_ids_batch`` — the search-hydration batch chunk fetch.
 
-Pins the contract ``SearchService._hydrate_chunks`` relies on: identical
-per-chunk dict shape to ``get_chunk_by_id``, input-order results,
-missing ids silently absent, database-agnostic lookup.
+Pins the contract ``SearchService._hydrate_chunks`` relies on:
+``get_chunk_by_id`` dict shape minus the heavy ``embedding`` /
+``raw_content`` columns (``include_embeddings=True`` adds embedding
+back), input-order results, missing ids silently absent,
+database-agnostic lookup.
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ def _seed_chunk(adapter: SqliteAdapter, chunk_id: str, index: int) -> None:
             source_id="src-1",
             chunk_index=index,
             content=f"content-{chunk_id}",
+            raw_content=f"raw-{chunk_id}",
+            embedding=f"emb-{chunk_id}".encode(),
         )
     )
     adapter.session.commit()
@@ -74,7 +78,25 @@ def test_returns_get_chunk_by_id_shape_in_input_order(adapter: SqliteAdapter) ->
     single = adapter.get_chunk_by_id("c1")
     assert single is not None
     match = next(c for c in batch if c["id"] == "c1")
-    assert match == single, "batch shape must be identical to get_chunk_by_id"
+    expected = {k: v for k, v in single.items() if k not in {"embedding", "raw_content"}}
+    assert match == expected, (
+        "batch shape must be get_chunk_by_id minus the heavy embedding/raw_content columns"
+    )
+    assert "embedding" not in match, "embedding BLOB must be excluded by default"
+    assert "raw_content" not in match, "raw_content must be excluded by default"
+
+
+def test_include_embeddings_adds_embedding_back(adapter: SqliteAdapter) -> None:
+    _seed_source(adapter)
+    _seed_chunk(adapter, "c1", 0)
+
+    batch = adapter.get_chunks_by_ids_batch(["c1"], include_embeddings=True)
+
+    assert len(batch) == 1
+    single = adapter.get_chunk_by_id("c1")
+    assert single is not None
+    assert batch[0]["embedding"] == single["embedding"], "flag must include the embedding column"
+    assert "raw_content" not in batch[0], "raw_content stays excluded even with embeddings"
 
 
 def test_missing_ids_are_silently_absent(adapter: SqliteAdapter) -> None:

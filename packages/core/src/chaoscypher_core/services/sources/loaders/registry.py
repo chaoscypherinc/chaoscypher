@@ -261,7 +261,14 @@ class LoaderRegistry(BaseRegistry["BaseLoader"]):
 
             # Find loader classes in the module
             for name, obj in inspect.getmembers(module, inspect.isclass):
-                # Skip quarantined classes silently (one DEBUG log per pass).
+                # Skip quarantined classes (DEBUG by design — the first
+                # failure already logged a loader_instantiation_failed
+                # warning, and re-warning every pass is deliberate spam
+                # suppression pinned by test_loader_quarantine.py). Note the
+                # quarantine has no removal path and lasts the registry's
+                # process lifetime; the policy question is tracked in
+                # internal/TODO.md ("LoaderRegistry class-quarantine
+                # removal-path policy").
                 quarantine_key = (getattr(obj, "__module__", ""), name)
                 if quarantine_key in self._failed_classes:
                     logger.debug(
@@ -312,9 +319,12 @@ class LoaderRegistry(BaseRegistry["BaseLoader"]):
                             if ext_lower in seen_exts:
                                 continue
                             seen_exts.add(ext_lower)
-                            self._failed_loaders_by_ext.pop(
-                                ext_lower, None
-                            )  # success clears any prior quarantine
+                            # Clears only the failure-reason MESSAGE for this
+                            # extension (another class now serves it). It does
+                            # NOT lift a class quarantine: the _failed_classes
+                            # gate above `continue`s before instantiation, so a
+                            # quarantined class never reaches this line.
+                            self._failed_loaders_by_ext.pop(ext_lower, None)
                             # Audit fix #12: warn operators when a user plugin
                             # overrides a built-in loader (override is documented
                             # behavior, but should not be silent).

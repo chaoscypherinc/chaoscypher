@@ -411,6 +411,56 @@ def test_reset_vision_page_for_retry_unknown_id_returns_false(adapter: SqliteAda
     assert adapter.reset_vision_page_for_retry(page_id="vpd_no-such-row") is False
 
 
+def test_reset_vision_page_for_retry_lost_race_skips_counter_decrement(
+    adapter: SqliteAdapter,
+) -> None:
+    """A caller whose status snapshot lost a race must not decrement counters.
+
+    Simulates the interleaving deterministically: the SELECT observes a stale
+    SUCCEEDED snapshot while the DB row has already moved to FAILED (a
+    concurrent writer won). The guarded UPDATE (``WHERE status = <observed>``)
+    matches nothing, so the method must report False and leave both job
+    counters untouched — the double-decrement previously drove
+    ``completed + failed`` below ``total_pages`` forever.
+    """
+    from types import SimpleNamespace
+
+    source_id = _create_source(adapter)
+    pages = [{"page_number": 1, "kind": VisionPageKind.PDF_PAGE, "image_path": "/p.png"}]
+    job_id = adapter.create_vision_job_with_pages(source_id=source_id, pages=pages)
+    page_id = adapter.list_vision_page_descriptions(source_id)[0]["id"]
+
+    adapter.update_vision_page_description(
+        page_id=page_id,
+        new_status=VisionPageStatus.FAILED,
+        description=None,
+        finish_reason=None,
+        error_message="LLM timeout",
+    )
+    adapter.increment_vision_job_completed_and_check(job_id=job_id, outcome=VisionPageStatus.FAILED)
+
+    adapter._ensure_connected()
+    assert adapter.session is not None
+    real_scalars = adapter.session.scalars
+    stale_row = SimpleNamespace(
+        status=VisionPageStatus.SUCCEEDED.value,
+        vision_job_id=job_id,
+    )
+    adapter.session.scalars = lambda *_a, **_k: SimpleNamespace(first=lambda: stale_row)  # type: ignore[method-assign]
+    try:
+        reset_happened = adapter.reset_vision_page_for_retry(page_id=page_id)
+    finally:
+        adapter.session.scalars = real_scalars  # type: ignore[method-assign]
+
+    assert reset_happened is False
+    row = adapter.list_vision_page_descriptions(source_id)[0]
+    assert row["status"] == VisionPageStatus.FAILED
+    job = adapter.get_vision_job(job_id)
+    assert job is not None
+    assert job["completed"] == 0
+    assert job["failed"] == 1
+
+
 # ---------------------------------------------------------------------------
 # Task 11: Concurrent-increment race test
 # ---------------------------------------------------------------------------

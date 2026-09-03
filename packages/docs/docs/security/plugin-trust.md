@@ -54,7 +54,7 @@ If you're running Chaos Cypher in a multi-user or untrusted environment:
 
 ## Entry-point plugin groups
 
-Plugins distributed as pip packages register under these entry-point groups — any other group name (e.g. `chaoscypher.plugins.*`) is silently ignored:
+Plugins distributed as pip packages register under these entry-point groups — groups not listed here are ignored:
 
 | Entry-point group | Plugin kind | Loaded class/callable |
 |---|---|---|
@@ -62,5 +62,6 @@ Plugins distributed as pip packages register under these entry-point groups — 
 | `chaoscypher.cleaners` | normalizer cleaners | cleaner contract |
 | `chaoscypher.archive_handlers` | archive handlers | archive-handler contract |
 | `chaoscypher.extensions` | Cortex API routers (e.g. enterprise features) | callable accepting an `APIRouter` |
+| `chaoscypher.edition` | edition/licensing metadata provider | callable returning an edition-info dict |
 
 Entry points are resolved via `importlib.metadata` and `ep.load()` imports the target module — any top-level code runs in the server process with full privileges, same as directory plugins. `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` does **not** disable entry-point plugins; uninstall the package to remove one.

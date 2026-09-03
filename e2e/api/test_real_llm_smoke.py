@@ -21,12 +21,12 @@ Gated by ``E2E_REAL_LLM=1`` because:
 Operator workflow:
   1. Start Ollama on the host, ensure ``llama3.2:1b`` (or similar
      tiny chat model) and ``nomic-embed-text`` are pulled.
-  2. ``docker compose -f packages/docker/e2e/docker-compose.yml \\
-       --profile real-llm up -d``
+  2. ``cd packages/docker/e2e && docker compose -f docker-compose.yml \\
+       -f docker-compose.real-llm.yml up -d``
   3. ``E2E_REAL_LLM=1 E2E_BASE_URL=http://localhost:8888 \\
        uv run pytest e2e/api/test_real_llm_smoke.py -v``
 
-The compose ``real-llm`` profile points the cortex at
+The real-llm overlay compose file points the cortex at
 ``host.docker.internal:11434`` (the host's Ollama) instead of the
 in-network fake. See ``packages/docker/e2e/settings.real-llm.yaml``.
 """
@@ -90,7 +90,10 @@ def test_real_extraction_smoke(client: httpx.Client, sample_data_dir: str) -> No
         upload = client.post(
             "/api/v1/sources",
             files={"file": ("real_llm_smoke.txt", f, "text/plain")},
-            data={"extract_entities": "true"},
+            # auto_confirm: without it the domain-confirmation gate parks
+            # the source at awaiting_confirmation and it never reaches
+            # "committed" (same rationale as test_race_conditions.py).
+            data={"extract_entities": "true", "auto_confirm": "true"},
         )
     assert upload.status_code == 202, upload.text
     source_id = upload.json()["id"]

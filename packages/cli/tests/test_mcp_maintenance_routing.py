@@ -97,6 +97,40 @@ def test_mcp_blocked_builds_maintenance_server(monkeypatch: pytest.MonkeyPatch) 
     spies["get_ctx"].assert_not_called()
 
 
+def test_mcp_blocked_with_read_mode_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--mode read must not be silently dropped by the maintenance branch.
+
+    The maintenance dispatcher exposes destructive repair (apply_upgrade)
+    unconditionally, so a read-only request cannot be honored — the command
+    refuses with an actionable error instead of starting a writable server.
+    """
+    from chaoscypher_cli.mcp.command import mcp
+
+    spies = _patch_common(monkeypatch, ready=False)
+    result = CliRunner().invoke(mcp, ["--database", "warpeace", "--mode", "read"])
+
+    assert result.exit_code != 0
+    assert "maintenance mode" in result.output
+    assert "--mode read" in result.output
+    spies["maint"].assert_not_called()
+    spies["normal"].assert_not_called()
+
+
+def test_mcp_blocked_with_write_mode_still_starts_maintenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--mode write is compatible with maintenance repair; server still starts."""
+    from chaoscypher_cli.mcp.command import mcp
+
+    spies = _patch_common(monkeypatch, ready=False)
+    result = CliRunner().invoke(mcp, ["--database", "warpeace", "--mode", "write"])
+
+    assert result.exit_code == 0, result.output
+    spies["maint"].assert_called_once_with("warpeace")
+
+
 def test_mcp_heal_error_still_routes_to_maintenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

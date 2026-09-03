@@ -212,7 +212,7 @@ Returns the latest pre-computed graph breakdown. If no snapshot exists yet, enqu
 curl http://localhost/api/v1/graph/snapshot
 ```
 
-**Response** `200 OK` — `GraphBreakdown` (see response model below), or `204 No Content` when no snapshot has been built yet.
+**Response** `200 OK` — `GraphBreakdown`, the canonical graph snapshot (`version`, `generated_at`, `database_name`, `title`, and the per-template breakdown the dashboard renders), or `204 No Content` when no snapshot has been built yet.
 
 Use `POST /api/v1/graph/snapshot/refresh` to trigger a manual build.
 

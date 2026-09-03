@@ -165,3 +165,27 @@ class TestWaitForDocumentDocsReconciled:
         tool = next(t for t in TOOL_DEFINITIONS if t.name == "wait_for_document")
         assert "get_document_status" in tool.description
         assert "awaiting_confirmation" in tool.description
+
+
+class TestAddDocumentNormalizationSchemaHonest:
+    """The shipped add_document schema must match the handler's tri-state.
+
+    The handler defaults enable_normalization to None and resolves it
+    per-format (prose -> True, CSV/TSV/JSON/JSONL/NDJSON/XML -> False,
+    via resolve_normalization_default). The schema previously advertised
+    "default": true — a client that trusted it and sent an explicit true
+    on a structured upload re-enabled the whitespace-stripping corruption
+    the tri-state was added to fix.
+    """
+
+    def test_schema_declares_no_boolean_default(self):
+        from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS
+
+        tool = next(t for t in TOOL_DEFINITIONS if t.name == "add_document")
+        prop = tool.input_schema["properties"]["enable_normalization"]
+        assert "default" not in prop, (
+            "add_document.enable_normalization must not advertise a boolean "
+            "default — the handler's default is the tri-state None (auto)"
+        )
+        assert "Defaults to true" not in prop["description"]
+        assert "auto" in prop["description"].lower()

@@ -80,11 +80,27 @@ class SystemStateMixin(SqliteMixinBase):
         is_paused: bool,
         reason: str | None = None,
         paused_by: str | None = None,
-    ) -> None:
+        expect_unpaused: bool = False,
+        expect_paused_by: str | None = None,
+    ) -> int:
         """Set or clear the system-wide processing-paused flag.
 
         Ensures the singleton row exists before issuing the UPDATE so
         the first system-pause call on a fresh database still succeeds.
+
+        The two ``expect_*`` guards turn the write into a compare-and-swap
+        for callers that decided from a snapshot (the health-monitor
+        evaluator): ``expect_unpaused=True`` restricts the UPDATE to a row
+        that is currently unpaused; ``expect_paused_by=<who>`` restricts it
+        to a row currently paused by exactly ``<who>``. When a guard does
+        not match — e.g. a user pause landed between the caller's read and
+        this write — the UPDATE matches zero rows, nothing changes, no
+        audit event is recorded, and 0 is returned so the caller can log
+        the lost race instead of silently relabelling or lifting a pause
+        it does not own.
+
+        Returns:
+            Number of rows updated (1 on success, 0 on a lost CAS guard).
         """
         self._ensure_connected()
         self.get_system_state()  # ensure singleton row exists
@@ -110,8 +126,24 @@ class SystemStateMixin(SqliteMixinBase):
             values["paused_by"] = None
 
         stmt = update(SystemState).where(SystemState.id == 1).values(**values)
-        self.session.execute(stmt)
+        if expect_unpaused:
+            stmt = stmt.where(SystemState.processing_paused == False)  # noqa: E712
+        if expect_paused_by is not None:
+            stmt = stmt.where(
+                SystemState.processing_paused == True,  # noqa: E712
+                SystemState.paused_by == expect_paused_by,
+            )
+        result = self.session.execute(stmt)
+        updated = int(getattr(result, "rowcount", 0) or 0)
         self._maybe_commit()
+        if not updated:
+            logger.debug(
+                "system_pause_cas_lost",
+                is_paused=is_paused,
+                expect_unpaused=expect_unpaused,
+                expect_paused_by=expect_paused_by,
+            )
+            return 0
 
         # Audit trail
         self.record_system_event(
@@ -120,6 +152,7 @@ class SystemStateMixin(SqliteMixinBase):
             source=event_source,
             reason=reason,
         )
+        return updated
 
     def record_system_event(
         self,

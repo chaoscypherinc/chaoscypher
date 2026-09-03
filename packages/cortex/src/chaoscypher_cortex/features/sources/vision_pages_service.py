@@ -36,6 +36,7 @@ from chaoscypher_core.vision.states import VisionPageStatus
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.ports.storage_vision import VisionJob
     from chaoscypher_cortex.features.sources.vision_pages_repository import (
         VisionPagesRepository,
     )
@@ -87,6 +88,33 @@ class VisionPagesService:
             )
             raise ConflictError(msg)
 
+    @staticmethod
+    def _require_job_not_terminal(job: VisionJob) -> None:
+        """Refuse retry once the job counters have gone terminal.
+
+        The moment ``completed + failed`` reaches ``total_pages`` the page
+        handler enqueues OP_VISION_FINALIZE — but the SOURCE stays
+        ``vision_pending`` until that task is dequeued and CASes it, so the
+        status gate above cannot see the scheduled finalize. Accepting a
+        retry in that queue-latency window rewinds the job counter behind
+        an already-scheduled finalize, and the retried page's description
+        is produced too late for the splice. Fail fast with the same
+        conflict shape the status gate uses.
+
+        Raises:
+            ConflictError: the job is terminal (finalize scheduled or
+                imminent).
+
+        """
+        if job["completed"] + job["failed"] >= job["total_pages"]:
+            msg = (
+                f"vision job {job['id']!r} is terminal "
+                f"({job['completed']} completed + {job['failed']} failed of "
+                f"{job['total_pages']} pages); finalize is already scheduled — "
+                f"retry is no longer possible for this job"
+            )
+            raise ConflictError(msg)
+
     async def retry_page(
         self,
         *,
@@ -110,8 +138,11 @@ class VisionPagesService:
         job = self._repository.get_job_by_source(source_id)
         if job is None:
             raise NotFoundError("vision_job", f"source={source_id}")
+        self._require_job_not_terminal(job)
 
-        pages = self._repository.list_pages(source_id)
+        # include_content=False: retry only needs id/status/position — never
+        # the per-page LLM description Text column.
+        pages = self._repository.list_pages(source_id, include_content=False)
         page = next(
             (
                 p
@@ -180,8 +211,10 @@ class VisionPagesService:
         job = self._repository.get_job_by_source(source_id)
         if job is None:
             raise NotFoundError("vision_job", f"source={source_id}")
+        self._require_job_not_terminal(job)
 
-        all_pages = self._repository.list_pages(source_id)
+        # include_content=False: the status filter never reads description.
+        all_pages = self._repository.list_pages(source_id, include_content=False)
         failed_pages = [p for p in all_pages if p["status"] == VisionPageStatus.FAILED.value]
         skipped = len(all_pages) - len(failed_pages)
 

@@ -210,11 +210,14 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
-    def get_nodes_batch(self, node_ids: list[str]) -> list[Node]:
+    def get_nodes_batch(self, node_ids: list[str], *, include_embedding: bool = True) -> list[Node]:
         """Get multiple nodes by ID in a single operation.
 
         Args:
             node_ids: List of node IDs to retrieve
+            include_embedding: When False, the embedding column is neither
+                queried nor decoded and ``Node.embedding`` is ``None`` —
+                use for hydration paths that never read the vector.
 
         Returns:
             List of Node objects (may be less than requested if some not found)

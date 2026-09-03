@@ -725,10 +725,21 @@ async def send_message(
                 detail="A turn is already in progress",
             )
         chat_service.truncate_from_message(chat_id, message.replace_from_message_id, inclusive=True)
+    # Plain send: claim BEFORE the user row is appended, with the same
+    # atomic CAS the edit-resend branch above (and /retry, /regenerate)
+    # uses. This was the one turn-enqueue path left on the plain
+    # read-check + write shape those three siblings document as the
+    # double-enqueue defect: two concurrent sends both appended a user
+    # message and both enqueued OP_CHAT_BACKGROUND — explicitly
+    # non-idempotent — for the same chat. Claim-first also keeps the
+    # loser's user row from being persisted.
+    elif not chat_service.try_begin_processing(chat_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A turn is already in progress",
+        )
 
     chat_service.add_message(chat_id, role="user", content=message.content)
-    if not message.replace_from_message_id:
-        chat_service.update_chat_status(chat_id, "processing")
 
     task_id = await queue_client.enqueue_task(
         queue=QUEUE_LLM,

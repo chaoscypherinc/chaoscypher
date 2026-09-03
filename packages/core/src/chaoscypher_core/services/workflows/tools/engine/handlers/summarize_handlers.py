@@ -342,12 +342,12 @@ class SummarizeToolHandlers:
             )
             return []
 
-        chunks = []
-        for result_id, _score in results:
-            chunk_id = result_id.removeprefix("chunk:")
-            chunk = self.indexing.get_chunk_by_id(chunk_id)
-            if chunk:
-                chunks.append(chunk)
+        chunk_ids = [result_id.removeprefix("chunk:") for result_id, _score in results]
+        # One batch SELECT instead of one per hit; embeddings are needed
+        # for representative-chunk clustering (_select_representatives).
+        chunks: list[dict[str, Any]] = self.indexing.get_chunks_by_ids_batch(
+            chunk_ids, include_embeddings=True
+        )
         return chunks
 
     def _build_prompt(

@@ -343,6 +343,13 @@ class VisionPagesMixin(SqliteMixinBase):
 
         Decrement is based on current status; clears description /
         finish_reason / error_message. Returns True if reset happened.
+
+        The row flip is a guarded compare-and-set on the observed status
+        (mirroring ``update_vision_page_description``): a caller whose
+        snapshot lost a race — the row moved on between the SELECT and
+        the UPDATE — gets rowcount 0 and MUST NOT decrement the job
+        counter, or two racing retries double-decrement and
+        ``completed + failed`` can never reach ``total_pages`` again.
         """
         self._ensure_connected()
 
@@ -377,6 +384,7 @@ class VisionPagesMixin(SqliteMixinBase):
         row_stmt = (
             sqla_update(VisionPageDescription)
             .where(VisionPageDescription.id == page_id)
+            .where(VisionPageDescription.status == current)
             .values(
                 status=VisionPageStatus.PENDING.value,
                 description=None,
@@ -386,8 +394,14 @@ class VisionPagesMixin(SqliteMixinBase):
             )
         )
 
+        result = self.session.execute(row_stmt)
+        if int(result.rowcount or 0) == 0:
+            # Lost the race: the status moved past our snapshot. Commit
+            # nothing extra and report no-reset so the caller skips the
+            # enqueue (vision_pages_service treats False as "skipped").
+            self._maybe_commit()
+            return False
         if counter_stmt is not None:
             self.session.execute(counter_stmt)
-        self.session.execute(row_stmt)
         self._maybe_commit()
         return True

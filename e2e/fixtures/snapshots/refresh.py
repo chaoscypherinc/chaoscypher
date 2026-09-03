@@ -91,6 +91,28 @@ def main() -> int:
         )
         return 1
 
+    # --force acknowledges the risk; it does not license destroying the
+    # committed pre-squash pair. Refuse while the targets exist — move or
+    # rename them first (see the docstring's note on output paths).
+    existing = [
+        p
+        for p in (
+            _SNAPSHOT_DIR / "post-setup-app.db",
+            _SNAPSHOT_DIR / "credentials.json",
+        )
+        if p.exists()
+    ]
+    if existing:
+        names = ", ".join(str(p) for p in existing)
+        print(
+            f"Refusing to overwrite the committed snapshot file(s): {names}. "
+            "Move them aside (or change the output paths) before rerunning — "
+            "e2e/migrations/ depends on the committed pre-squash pair.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
+
     print("Regenerating snapshot...", flush=True)
     print(f"  output dir: {_SNAPSHOT_DIR}", flush=True)
 

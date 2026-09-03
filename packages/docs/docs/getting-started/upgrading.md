@@ -11,7 +11,8 @@ Chaos Cypher ships as a Docker image plus the Python CLI. This page covers tag-t
 ## TL;DR
 
 ```bash
-# all-in-one
+# all-in-one (published-image install; if you built from source, use
+# `make docker-rebuild` — the repo compose file has no image to pull)
 docker compose pull && docker compose up -d
 
 # multi-container dev (requires QUEUE_PASSWORD exported — see Installation)
@@ -22,7 +23,7 @@ Cortex runs `alembic upgrade head` on startup before serving any request.
 
 ## Pre-upgrade checklist
 
-1. Take a backup via the maintenance UI (**Settings → Maintenance → Backups → Create Backup**) or `POST /api/v1/backup`. See [Backup and Restore](./backup-restore.md) for the full procedure.
+1. Take a backup via the web UI (**Settings → Backup → Create Backup Now**) or `POST /api/v1/backup`. See [Backup and Restore](./backup-restore.md) for the full procedure.
 2. Read the [changelog](../about/changelog) for breaking changes between your tag and the target tag.
 3. Verify disk space — migrations may rewrite tables.
 4. **Drain the queue** (see next section).

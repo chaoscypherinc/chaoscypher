@@ -153,6 +153,98 @@ async def test_process_task_no_handler_marks_terminal() -> None:
     assert "No handler registered" in failed[0].kwargs["mapping"]["error"]
 
 
+@pytest.mark.asyncio
+async def test_process_task_pre_dispatch_failure_marks_failed_not_lost() -> None:
+    """A raise before handler dispatch marks the task failed instead of losing it.
+
+    Malformed ``data`` JSON raises between the outer try and the
+    handler-dispatch try. Previously that exception escaped the coroutine
+    (no outer except), the finally SREM'd the task out of the running set,
+    and the hash still read ``status="queued"`` — in neither pending nor
+    running, invisible to every recovery layer. The outer except arm must
+    swallow it and write a terminal failed status.
+    """
+    worker, valkey = _make_worker()
+    bad_hash = _task_hash()
+    bad_hash[b"data"] = b"{not json"
+    valkey.hgetall = AsyncMock(return_value=bad_hash)
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-badjson", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result is None  # no exception escaped
+    failed = [
+        c
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("status") == "failed"
+    ]
+    assert failed
+    mapping = failed[0].kwargs["mapping"]
+    assert mapping["error_type"] == "permanent"
+    assert "Task processing error" in mapping["error"]
+    # finally cleanup still ran.
+    valkey.srem.assert_awaited_with(f"queue:{QUEUE_OPERATIONS}:running", "t-badjson")
+
+
+@pytest.mark.asyncio
+async def test_process_task_mark_failed_write_failure_is_contained() -> None:
+    """If even the failed-status write raises, _process_task still returns."""
+    worker, valkey = _make_worker()
+    bad_hash = _task_hash()
+    bad_hash[b"data"] = b"{not json"
+    valkey.hgetall = AsyncMock(return_value=bad_hash)
+    valkey.hset = AsyncMock(side_effect=ConnectionError("valkey gone"))
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    result = await worker._process_task("t-badjson2", QUEUE_OPERATIONS, _config(), sem)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_poll_queue_done_callback_retrieves_task_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The poller's done-callback runs log_task_exception on the spawned task.
+
+    Drives one real poll iteration with a ``_process_task`` that raises, and
+    asserts the callback handed the finished task to ``log_task_exception``
+    (which retrieves the exception, so it is never unobserved) and dropped it
+    from the active-tasks registry.
+    """
+    import chaoscypher_core.queue.worker as worker_mod
+
+    worker, valkey = _make_worker()
+    valkey.zpopmax = AsyncMock(return_value=[(b"t-boom", 50.0)])
+    valkey.hget = AsyncMock(return_value=None)  # no retry_after
+
+    logged: list[asyncio.Task[Any]] = []
+    monkeypatch.setattr(worker_mod, "log_task_exception", logged.append)
+
+    async def _raising_process(_task_id: str, *_a: Any, **_k: Any) -> None:
+        worker._running = False
+        raise RuntimeError("escaped")
+
+    worker._process_task = _raising_process  # type: ignore[method-assign]
+    worker._running = True
+
+    async def _stop_sleep(_secs: float) -> None:
+        worker._running = False
+
+    monkeypatch.setattr(worker_mod.asyncio, "sleep", _stop_sleep)
+    await worker._poll_queue(QUEUE_OPERATIONS, _config())
+    monkeypatch.undo()
+    await asyncio.sleep(0)  # let the spawned task finish and callbacks fire
+    await asyncio.sleep(0)
+
+    assert len(logged) == 1
+    assert logged[0].done()
+    assert isinstance(logged[0].exception(), RuntimeError)
+    assert "t-boom" not in worker._active_tasks
+
+
 # ---------------------------------------------------------------------------
 # _process_task — successful dispatch
 # ---------------------------------------------------------------------------

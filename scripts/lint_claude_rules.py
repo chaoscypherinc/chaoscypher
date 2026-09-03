@@ -71,10 +71,12 @@ class ClaudeRulesChecker(ast.NodeVisitor):
         scope.
         """
         old_function = self.current_function
+        old_storage_vars = self.storage_call_vars
         self.current_function = node.name
-        self.storage_call_vars.clear()
+        self.storage_call_vars = set()
         self.generic_visit(node)
         self.current_function = old_function
+        self.storage_call_vars = old_storage_vars
 
     visit_AsyncFunctionDef = visit_FunctionDef  # noqa: N815 - ast.NodeVisitor dispatch name
 

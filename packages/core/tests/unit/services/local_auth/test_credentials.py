@@ -199,3 +199,40 @@ def test_touch_api_key_unknown_is_silent_noop(cred_path: Path) -> None:
     creds.initialize("admin", "pw")
     # Should not raise
     creds.touch_api_key("k_nonexistent")
+
+
+def test_mutations_serialize_on_a_cross_process_file_lock(cred_path: Path) -> None:
+    """RMW mutators block on the sidecar flock, not just the in-process lock.
+
+    With uvicorn_workers > 1 each worker holds its own CredentialsFile and
+    its own threading.Lock, so a touch_api_key rewrite in one process could
+    clobber a concurrent bump_session_epoch in another (the lost bump kept
+    a logged-out cookie valid until TTL). Holding the sidecar flock from
+    "another process" (a separate handle here) must block every mutator
+    until release.
+    """
+    import threading
+    import time
+
+    from chaoscypher_core.utils.filelock import lock_file, unlock_file
+
+    creds = CredentialsFile(cred_path)
+    creds.initialize("admin", "CorrectHorse9!")
+    epoch_before = creds.get_session_epoch()
+
+    lock_path = cred_path.with_suffix(cred_path.suffix + ".lock")
+    done: list[str] = []
+
+    with open(lock_path, "w", encoding="utf-8") as foreign_holder:
+        lock_file(foreign_holder, blocking=True)
+        worker = threading.Thread(
+            target=lambda: (creds.bump_session_epoch(), done.append("bumped"))
+        )
+        worker.start()
+        time.sleep(0.2)
+        assert not done, "mutator proceeded while a foreign process held the file lock"
+        unlock_file(foreign_holder)
+        worker.join(timeout=5)
+
+    assert done == ["bumped"]
+    assert creds.get_session_epoch() == epoch_before + 1

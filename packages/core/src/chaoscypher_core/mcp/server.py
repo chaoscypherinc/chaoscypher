@@ -20,7 +20,7 @@ from mcp.types import TextContent, Tool
 from chaoscypher_core.mcp.bridge import MCPToolBridge
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
 from chaoscypher_core.mcp.processor import DocumentProcessor
-from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, get_tools_for_mode
+from chaoscypher_core.mcp.tools import get_tools_for_mode
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.operations.importing.confirmation_gate import confirm_extraction
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
@@ -114,11 +114,14 @@ def create_mcp_server(engine: Engine) -> Server:
         """Route a tool call to the appropriate handler."""
         args = arguments or {}
 
-        # Effective-mode gating (per-key downgrade).
+        # Effective-mode gating (per-key downgrade). Allowlist, not denylist:
+        # bridge handlers that are absent from TOOL_DEFINITIONS (summarize,
+        # research_topic, ...) must not fall through to bridge.execute in
+        # read mode just because they carry no write_only flag.
         effective_mode = _extract_effective_mode(server, default=mode)
         if effective_mode == "read":
-            write_only_tools = {t.name for t in TOOL_DEFINITIONS if t.write_only}
-            if name in write_only_tools:
+            read_tools = {t.name for t in get_tools_for_mode("read")}
+            if name not in read_tools:
                 result = {
                     "success": False,
                     "error_code": "NOT_AUTHORIZED",

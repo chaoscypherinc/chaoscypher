@@ -60,6 +60,39 @@ def test_local_mode_matches_make_ci_local():
     assert _RUN_CI.build_plan("local") == [*_COMMON, "test-cov-internal", "e2e-cli", "security"]
 
 
+def test_security_step_runs_every_subcommand_and_reports_the_union(monkeypatch, capsys):
+    """``security`` must not fail-fast (issue #519): all four gates run, the rollup names each, and the exit code is the first failure's."""
+    expected = [command for command, _ in _RUN_CI._STEPS["security"]]
+    codes = iter([3, 0, 1, 0])
+    calls: list[str] = []
+
+    def fake_shell(command: str, subdir: str | None) -> int:
+        calls.append(command)
+        return next(codes)
+
+    monkeypatch.setattr(_RUN_CI, "_run_shell", fake_shell)
+    assert _RUN_CI._run_step("security") == 3
+    assert calls == expected, "every security sub-command must run, in plan order"
+    out = capsys.readouterr().out
+    assert out.count("PASS") == 2
+    assert out.count("FAIL (exit 3)") == 1
+    assert out.count("FAIL (exit 1)") == 1
+
+
+def test_ordinary_steps_still_fail_fast(monkeypatch):
+    """Only the aggregating steps run past a failure; everything else stops at the first red."""
+    calls: list[str] = []
+
+    def fake_shell(command: str, subdir: str | None) -> int:
+        calls.append(command)
+        return 1
+
+    monkeypatch.setattr(_RUN_CI, "_run_shell", fake_shell)
+    assert len(_RUN_CI._STEPS["lint"]) > 1
+    assert _RUN_CI._run_step("lint") == 1
+    assert len(calls) == 1
+
+
 def test_unknown_mode_raises():
     """An unknown mode is rejected rather than silently running a partial plan."""
     with pytest.raises(ValueError, match="unknown mode"):

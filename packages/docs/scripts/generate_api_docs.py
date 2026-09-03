@@ -208,22 +208,45 @@ def render_parameters(func: griffe.Function) -> str:
                         if dp.name == p.name:
                             desc = dp.description.replace("\n", " ")
         desc = _convert_rst_inline(desc)
+        name = p.name
+        if p.kind is griffe.ParameterKind.var_positional:
+            name = f"*{name}"
+        elif p.kind is griffe.ParameterKind.var_keyword:
+            name = f"**{name}"
         lines.append(
-            f"| `{p.name}` | `{escape_table_cell(annotation)}` | {escape_table_cell(desc)} |"
+            f"| `{name}` | `{escape_table_cell(annotation)}` | {escape_table_cell(desc)} |"
         )
     return "\n".join(lines)
 
 
+def format_signature_params(func: griffe.Function) -> str:
+    """Format a signature's parameters, preserving `/`, `*`, `*args`, `**kwargs` markers."""
+    params = [p for p in func.parameters if p.name not in ("self", "cls")]
+    sig_params = []
+    keyword_only_marked = False
+    for i, p in enumerate(params):
+        prefix = ""
+        if p.kind is griffe.ParameterKind.var_positional:
+            prefix = "*"
+            keyword_only_marked = True
+        elif p.kind is griffe.ParameterKind.var_keyword:
+            prefix = "**"
+        elif p.kind is griffe.ParameterKind.keyword_only and not keyword_only_marked:
+            sig_params.append("*")
+            keyword_only_marked = True
+        annotation = f": {p.annotation}" if p.annotation else ""
+        default = f" = {p.default}" if p.default and not prefix else ""
+        sig_params.append(f"{prefix}{p.name}{annotation}{default}")
+        if p.kind is griffe.ParameterKind.positional_only and (
+            i + 1 == len(params) or params[i + 1].kind is not griffe.ParameterKind.positional_only
+        ):
+            sig_params.append("/")
+    return ", ".join(sig_params)
+
+
 def render_function(func: griffe.Function, heading: str = "####") -> str:
     """Render a function/method as markdown."""
-    sig_params = []
-    for p in func.parameters:
-        if p.name in ("self", "cls"):
-            continue
-        annotation = f": {p.annotation}" if p.annotation else ""
-        default = f" = {p.default}" if p.default else ""
-        sig_params.append(f"{p.name}{annotation}{default}")
-    sig = ", ".join(sig_params)
+    sig = format_signature_params(func)
 
     ret = ""
     if func.returns:

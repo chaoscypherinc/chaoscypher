@@ -60,6 +60,7 @@ services:
       - /bin/sh
       - -c
       - |
+        set -e
         cp /etc/chaoscypher/e2e-settings.yaml /data/settings.yaml
         chown appuser:appuser /data/settings.yaml 2>/dev/null || true
         exec /entrypoint.sh supervisord -c /etc/supervisor/conf.d/supervisord.conf
@@ -107,6 +108,9 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
       - E2E_BASE_URL=http://app.test:80
+      # In-network control URL: the helper's localhost:11500 default is the
+      # host-published port, unreachable from inside this container.
+      - E2E_FAKE_OLLAMA_CONTROL_URL=http://fake-ollama:11434
       - E2E_PHASE=fresh
       - LOG_LEVEL=WARNING
     working_dir: /app

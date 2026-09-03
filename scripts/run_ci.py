@@ -247,10 +247,34 @@ def _run_advisory_diff_cover() -> int:
     return 0
 
 
+# Steps whose sub-commands are independent gates: run every one and report the
+# union of failures instead of stopping at the first red. Issue #519: the
+# `security` step's fail-fast hid two red npm gates behind a red pip-audit, so
+# the self-heal fast-path sized its fix from an incomplete flagged set and
+# needed a second full sweep to discover the rest. The step only gets slower
+# when it is already failing (each sub-command is seconds).
+_RUN_ALL_COMMANDS = frozenset({"security"})
+
+
+def _run_all_commands(name: str, payload: list[Command]) -> int:
+    """Run every command in ``payload``; print a per-command rollup; return the first failure's rc."""
+    results: list[tuple[str, int]] = []
+    for command, subdir in payload:
+        results.append((command, _run_shell(command, subdir)))
+    print(f"  [{name}] sub-command rollup:", flush=True)
+    for command, rc in results:
+        verdict = "PASS" if rc == 0 else f"FAIL (exit {rc})"
+        print(f"    {verdict:<14} {command}", flush=True)
+    failures = [rc for _, rc in results if rc != 0]
+    return failures[0] if failures else 0
+
+
 def _run_step(name: str) -> int:
     payload = _STEPS[name]
     if isinstance(payload, str):  # the ADVISORY_DIFF sentinel
         return _run_advisory_diff_cover()
+    if name in _RUN_ALL_COMMANDS:
+        return _run_all_commands(name, payload)
     for command, subdir in payload:
         rc = _run_shell(command, subdir)
         if rc != 0:

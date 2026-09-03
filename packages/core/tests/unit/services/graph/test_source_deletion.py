@@ -64,8 +64,14 @@ class TestDeleteSourceOrchestration:
     def test_collects_orphans_before_deletion(self, service, mock_repo) -> None:
         mock_repo.get_orphaned_entity_uris.return_value = ["uri/node1"]
         service.delete_source("src1")
-        # Orphan detection must happen before delete
+        # Orphan detection must happen before delete — assert the ORDER, not
+        # just that the read happened: after the SQL cascade the query would
+        # return nothing and orphaned graph nodes would leak silently.
         mock_repo.get_orphaned_entity_uris.assert_called_once_with("src1")
+        call_names = [name for name, _args, _kwargs in mock_repo.mock_calls]
+        assert call_names.index("get_orphaned_entity_uris") < call_names.index(
+            "delete_source_db"
+        ), "orphan query must run before delete_source_db"
 
     def test_delegates_to_repository(self, service, mock_repo) -> None:
         result = service.delete_source("src1")

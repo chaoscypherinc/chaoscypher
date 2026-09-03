@@ -318,7 +318,7 @@ curl -X POST http://localhost/api/v1/workflows/wf_abc123/steps \
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `step_number` | int | Yes | -- | Display ordering in the UI — execution order is governed by `depends_on` (see [Execution Model](#execution-model)) |
+| `step_number` | int | No | `null` | Display ordering in the UI (server assigns when omitted) — execution order is governed by `depends_on` (see [Execution Model](#execution-model)) |
 | `name` | string | Yes | -- | Step name |
 | `description` | string | No | `null` | Description |
 | `tool_type` | string | Yes | -- | `system_tool`, `user_tool`, or `workflow` |
@@ -688,9 +688,10 @@ curl -X POST http://localhost/api/v1/workflows/wf_abc123/executions/exec_xyz789/
 
 ```json
 {
+  "success": true,
   "execution_id": "exec_xyz789",
   "status": "cancelled",
-  "message": "Execution cancelled"
+  "message": "Execution cancelled successfully"
 }
 ```
 

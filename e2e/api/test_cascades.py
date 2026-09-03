@@ -45,9 +45,14 @@ class TestSourceCascades:
         source_id = upload_resp.json()["id"]
         _poll_indexed(client, source_id)
 
-        # Verify chunks exist
+        # Verify chunks exist, and capture their ids: the list route guards on
+        # the parent row, so post-delete it 404s whether or not chunk rows
+        # leaked. The by-id route fetches the chunk row first (no parent
+        # guard), making it the only API-visible orphan oracle.
         chunks_before = client.get(f"/api/v1/sources/{source_id}/chunks").json()
         assert chunks_before["pagination"]["total"] > 0
+        chunk_ids = [c["id"] for c in chunks_before["data"]]
+        assert chunk_ids
 
         # Delete the source
         del_resp = client.delete(f"/api/v1/sources/{source_id}")
@@ -58,6 +63,13 @@ class TestSourceCascades:
         assert chunks_after.status_code in (200, 404)
         if chunks_after.status_code == 200:
             assert chunks_after.json().get("pagination", {}).get("total", 0) == 0
+
+        # Falsifiable cascade check: every previously-seen chunk row is gone.
+        for chunk_id in chunk_ids:
+            chunk_resp = client.get(f"/api/v1/sources/{source_id}/chunks/{chunk_id}")
+            assert chunk_resp.status_code == 404, (
+                f"orphaned chunk row survived source delete: {chunk_id} -> {chunk_resp.status_code}"
+            )
 
 
 class TestWorkflowCascades:

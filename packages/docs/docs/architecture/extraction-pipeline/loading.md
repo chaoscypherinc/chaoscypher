@@ -246,7 +246,7 @@ Archives receive special treatment because they may contain structured documenta
 ```mermaid
 flowchart TD
     Archive["Archive File\n(.zip / .tar.gz)"] --> Extract["ArchiveExtractor\nSecure extraction to temp dir"]
-    Extract --> Detect["DocumentationDetector\nIdentify documentation format"]
+    Extract --> Detect["Handler registry\ncan_handle() specificity scoring"]
     Detect --> Route{Detected Format}
     Route -->|"Sphinx HTML\n(_static/, genindex.html)"| Sphinx["SphinxHTMLHandler"]
     Route -->|"Markdown\n(10+ .md files, mkdocs.yml)"| MD["MarkdownHandler"]
@@ -272,16 +272,16 @@ The temporary directory is always cleaned up in a `finally` block after processi
 
 ### Format Detection
 
-`DocumentationDetector` uses heuristic scoring to identify the archive format. Detection runs in priority order:
+The handler registry identifies the archive format by scoring: each registered handler's `can_handle()` returns an integer specificity score (`0` = does not apply, `1-10` = generic fallback, `50-100` = format-specific match), and `find_handler()` picks the highest non-zero scorer (ties go to registration order). The winning score divided by 100 becomes each document's `detection_confidence` metadata:
 
-| Format | Indicators | Confidence Signals |
-|--------|------------|-------------------|
+| Format | Indicators | Scoring |
+|--------|------------|---------|
 | **OpenAPI** | `openapi.json/yaml`, `swagger.json/yaml` at root or nested | Validated by checking for `openapi` or `swagger` keys in the file |
-| **Sphinx HTML** | `_static/` directory, `genindex.html`, `searchindex.js`, `.doctrees/`, Sphinx CSS files | Each indicator adds 0.1-0.3 confidence; threshold is 0.5 |
-| **Markdown** | 10+ `.md`/`.mdx` files, `docs/` directory, `mkdocs.yml`, `docusaurus.config.js` | File count and config files contribute to confidence score |
-| **Generic** | No specific patterns matched | Fallback at 0.1 confidence |
+| **Sphinx HTML** | `_static/` directory, `genindex.html`, `searchindex.js`, `.doctrees/`, Sphinx CSS files | Scores 50-100 on match (stronger evidence = higher); 0 below the match threshold |
+| **Markdown** | 10+ `.md`/`.mdx` files, `docs/` directory, `mkdocs.yml`, `docusaurus.config.js` | File count and config files raise the score |
+| **Generic** | No specific patterns matched | Fallback score 10 (`detection_confidence` 0.1) |
 
-Detection also identifies the **root path** -- the subdirectory where documentation actually starts (e.g., `docs/_build/html/` for Sphinx). This prevents handlers from processing non-documentation files.
+Handlers also identify the **root path** -- the subdirectory where documentation actually starts (e.g., `docs/_build/html/` for Sphinx) -- by walking the extracted tree in `can_handle()`, so a nested archive still scores highly and non-documentation files are skipped.
 
 ### Format Handlers
 
@@ -291,7 +291,7 @@ Each handler implements the `ArchiveHandler` protocol:
 class ArchiveHandler(Protocol):
     @property
     def name(self) -> str: ...
-    def can_handle(self, extracted_dir: Path) -> tuple[bool, float]: ...
+    def can_handle(self, extracted_dir: Path) -> int: ...
     def process(self, extracted_dir: Path, settings: Any) -> list[dict[str, Any]]: ...
 ```
 
@@ -467,6 +467,6 @@ For a worked example mirroring the shipped `xlsx_loader.py`, see [Building Docum
 | AudioLoader | `packages/core/src/chaoscypher_core/services/sources/loaders/audio_loader.py` |
 | VideoLoader | `packages/core/src/chaoscypher_core/services/sources/loaders/video_loader.py` |
 | ArchiveLoader | `packages/core/src/chaoscypher_core/services/sources/loaders/archive_loader.py` |
-| Archive Detector | `packages/core/src/chaoscypher_core/services/sources/loaders/archive/detector.py` |
+| Archive Handler Registry | `packages/core/src/chaoscypher_core/services/sources/loaders/archive/handlers/registry.py` |
 | Archive Extractor | `packages/core/src/chaoscypher_core/services/sources/loaders/archive/extractor.py` |
 | Archive Handlers | `packages/core/src/chaoscypher_core/services/sources/loaders/archive/handlers/` |

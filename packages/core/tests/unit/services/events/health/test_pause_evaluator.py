@@ -432,6 +432,97 @@ class TestHealthPauseEvaluator:
         adapter.set_system_paused.assert_not_called()
         assert "unparseable_auto_pause_reason" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_probe_failing_during_pause_joins_witness_and_blocks_resume(
+        self,
+    ) -> None:
+        """A probe crossing the trip threshold WHILE auto-paused must join
+        the witness set (persisted, so a restart re-derives the full set),
+        and auto-resume must not fire while it is still erroring — resume
+        is a global flip, so resuming on the original probes' recovery
+        alone un-pauses into a still-degraded system.
+        """
+        probe_a = _StubProbe("db")
+        probe_b = _StubProbe("queue")
+        probe_a.set_status("error")
+        evaluator, adapter = _make_evaluator([probe_a, probe_b], trip=2, clear=2)
+
+        # Two ticks: A trips, evaluator pauses with witness {db}.
+        await evaluator.tick()
+        await evaluator.tick()
+        assert evaluator._tripped_probes == {"db"}
+
+        # System now durably paused by health_monitor; A recovers, B fails.
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: db",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+        probe_a.set_status("ok")
+        probe_b.set_status("error")
+        for _ in range(4):
+            await evaluator.tick()
+
+        # B joined the witness set and its grown reason was re-persisted...
+        assert evaluator._tripped_probes == {"db", "queue"}
+        grow_calls = [
+            c.kwargs
+            for c in adapter.set_system_paused.call_args_list
+            if c.kwargs.get("is_paused") is True and "queue" in (c.kwargs.get("reason") or "")
+        ]
+        assert grow_calls, "grown witness set was never re-persisted"
+        assert grow_calls[0]["reason"] == "Auto-paused: db, queue"
+        assert grow_calls[0]["expect_paused_by"] == "health_monitor"
+        # ...and no resume fired despite A passing clear_threshold.
+        resume_calls = [
+            c
+            for c in adapter.set_system_paused.call_args_list
+            if c.kwargs.get("is_paused") is False
+        ]
+        assert not resume_calls, "auto-resumed while a probe was still erroring"
+
+    @pytest.mark.asyncio
+    async def test_trip_write_is_guarded_and_lost_race_keeps_witness_empty(self) -> None:
+        """The trip write passes expect_unpaused and honors a lost CAS.
+
+        A manual pause landing between the snapshot read and the write must
+        not be relabelled: on rowcount 0 the evaluator records nothing.
+        """
+        probe = _StubProbe("db")
+        probe.set_status("error")
+        evaluator, adapter = _make_evaluator([probe], trip=1)
+        adapter.set_system_paused.return_value = 0  # lost the CAS
+
+        await evaluator.tick()
+
+        call_kwargs = adapter.set_system_paused.call_args.kwargs
+        assert call_kwargs["expect_unpaused"] is True
+        assert evaluator._tripped_probes == set()
+
+    @pytest.mark.asyncio
+    async def test_resume_write_is_guarded_and_lost_race_keeps_witness(self) -> None:
+        """The clear write passes expect_paused_by and honors a lost CAS."""
+        probe = _StubProbe("disk_space", auto_recoverable=True)
+        evaluator, adapter = _make_evaluator([probe], clear=1)
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_reason": "Auto-paused: disk_space",
+            "processing_paused_at": None,
+            "paused_by": "health_monitor",
+        }
+        adapter.set_system_paused.return_value = 0  # user re-took the pause
+
+        await evaluator.tick()
+
+        call_kwargs = adapter.set_system_paused.call_args.kwargs
+        assert call_kwargs["is_paused"] is False
+        assert call_kwargs["expect_paused_by"] == "health_monitor"
+        # Witness survives so the next tick re-evaluates from fresh state.
+        assert evaluator._tripped_probes == {"disk_space"}
+
 
 class TestPauseReasonFormatParse:
     """Round-trip contract between the auto-pause reason writer and the

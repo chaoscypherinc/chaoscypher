@@ -13,7 +13,7 @@ Chaos Cypher uses a multi-level testing approach:
 | Level | Location | Runner | Purpose |
 |-------|----------|--------|---------|
 | **Unit** | `packages/*/tests/unit/` | pytest | Individual functions and classes |
-| **Integration** | `packages/*/tests/integration/` | pytest | Cross-component interactions within a package |
+| **Integration** | `packages/*/tests/integration/` (core and cli today) | pytest | Cross-component interactions within a package |
 | **End-to-End** | `e2e/` (repo root) | pytest in Docker | Full-stack API + browser + CLI harness |
 | **Docker** | `make docker-test` | pytest in Docker | Isolated, production-like environment |
 
@@ -94,9 +94,9 @@ e2e/                          # System-level harness (Docker-driven)
 └── fixtures/                 # Seed data shared across e2e tiers
 
 packages/core/tests/          # Core package — unit + integration
-packages/cortex/tests/        # Cortex package — unit + integration
+packages/cortex/tests/        # Cortex package — unit
 packages/cli/tests/           # CLI package — unit + integration
-packages/neuron/tests/        # Neuron package — unit + integration
+packages/neuron/tests/        # Neuron package — unit
 packages/interface/src/**/__tests__/   # Frontend (Vitest, colocated)
 ```
 
@@ -166,10 +166,12 @@ The full CI pipeline (`make ci`) runs, in order:
 7. **Docstring coverage** — 100% required for public APIs
 8. **Dead code detection** — vulture scanning
 9. **Bundle-size budget** — frontend build + size-limit check
-10. **License scan** — Python + frontend dependency license policy
-11. **Frontend tests + coverage** — Vitest with coverage
-12. **Docker tests** — full Python test suite with the 80% coverage gate
-13. **Diff coverage (advisory)** — ≥90% on changed lines vs `origin/main`
-14. **Security audit** — pip-audit + npm audit
+10. **Docs build** — `npm ci` + Docusaurus build in `packages/docs`
+11. **License scan** — Python + frontend dependency license policy
+12. **Frontend tests + coverage** — Vitest with coverage
+13. **Docker tests** — full Python test suite with the 80% coverage gate
+14. **Diff coverage (advisory)** — ≥90% on changed lines vs `origin/main`
+15. **CLI E2E tier** — the no-Docker CLI end-to-end tests under `e2e/cli`
+16. **Security audit** — pip-audit + npm audit
 
 The authoritative step list lives in `scripts/run_ci.py` (`uv run python scripts/run_ci.py --list`). All blocking checks must pass before merging.

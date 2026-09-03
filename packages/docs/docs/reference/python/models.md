@@ -18,12 +18,16 @@ suggestions, and other entities.
 
 Result from LLMProvider.batch_embed().
 
+The embedding port is all-or-nothing: `batch_embed` either returns a
+full batch of vectors or raises `LLMError` — it never partially
+succeeds. There is no per-text failure count to report; a caller either
+has `total` embeddings or an exception, never a fractional result.
+
 **Bases:** `BaseModel`
 
 **Attributes:**
 
 - `embeddings`: `list[list[float]]`
-- `failed`: `int`
 - `model_config`
 - `provider`: `str`
 - `total`: `int`

@@ -40,9 +40,10 @@ logger = structlog.get_logger(__name__)
 # Columns excluded from get_source() because they can be large
 # (commit_payload can be MBs of pending entity/relationship data, even
 # though per-source entity/relationship rows now live in dedicated
-# tables since migration 0042). Callers needing the commit payload use
-# the dedicated accessor ``get_source_commit_payload``.
-_HEAVY_SOURCE_COLUMNS: frozenset[str] = frozenset({"commit_payload"})
+# tables since migration 0042; full_text is the whole raw upload).
+# Callers needing them use the dedicated accessors
+# ``get_source_commit_payload`` / ``get_source_full_text``.
+_HEAVY_SOURCE_COLUMNS: frozenset[str] = frozenset({"commit_payload", "full_text"})
 
 
 def _light_source_columns() -> list[InstrumentedAttribute[Any]]:
@@ -72,11 +73,29 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
     - SourceCitationsMixin: Citation operations, stats, orphan detection
     """
 
+    def list_enabled_source_ids(self) -> set[str]:
+        """Return the ids of all enabled sources in the active database.
+
+        Single-column projection for the per-search enabled-source filter:
+        the previous path ran the full 57-column ``list_sources`` at the
+        100k bulk page size — plus its COUNT subquery, dict
+        materialisation, and per-source stage-progress hydration — on
+        EVERY keyword/semantic/hybrid search, then kept only the ids.
+        """
+        self._ensure_connected()
+        statement = select(SourceRow.id).where(
+            SourceRow.database_name == self.database_name,
+            SourceRow.enabled == True,  # noqa: E712
+        )
+        return set(self.session.exec(statement).all())
+
     def get_source(self, source_id: str, database_name: str = "") -> dict[str, Any] | None:
         """Get source by ID and database.
 
-        Uses ``load_only()`` to exclude the large ``commit_payload`` text
-        column. Per-source entity/relationship rows live in the dedicated
+        Uses ``load_only()`` to exclude the large ``commit_payload`` and
+        ``full_text`` text columns (fetch them via the narrow
+        ``get_source_commit_payload`` / ``get_source_full_text`` accessors).
+        Per-source entity/relationship rows live in the dedicated
         ``source_entities`` / ``source_relationships`` tables (migration
         0042) — fetch them through ``get_source_entities_page`` /
         ``get_source_relationships_page``.
@@ -441,6 +460,37 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             )
             return None
         return decoded if isinstance(decoded, dict) else None
+
+    def get_source_full_text(
+        self,
+        source_id: str,
+        database_name: str,
+    ) -> str | None:
+        """Read the full raw text for a source.
+
+        Loads only the ``full_text`` column (narrow projection) without
+        touching any other row data — ``get_source`` excludes it as a
+        heavy column. Used by the CCX exporter, which stores the raw
+        upload as a content-addressed text asset.
+
+        Args:
+            source_id: Source ID to read.
+            database_name: Database scope for the source.
+
+        Returns:
+            The stored full text, or ``None`` if the source does not
+            exist or has no full text persisted.
+        """
+        self._ensure_connected()
+        statement = (
+            select(SourceRow)
+            .where(SourceRow.id == source_id, SourceRow.database_name == database_name)
+            .options(load_only(SourceRow.id, SourceRow.full_text))
+        )
+        source = self.session.exec(statement).first()
+        if not source:
+            return None
+        return source.full_text
 
     def clear_source_commit_payload(
         self,

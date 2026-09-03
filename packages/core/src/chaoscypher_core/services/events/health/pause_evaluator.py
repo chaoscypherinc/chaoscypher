@@ -26,6 +26,7 @@ from chaoscypher_core.services.events.bus import event_bus
 
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
+    from chaoscypher_core.services.events.health.models import ProbeResult
     from chaoscypher_core.services.events.health.registry import HealthRegistry
 
 logger = structlog.get_logger(__name__)
@@ -157,6 +158,45 @@ class HealthPauseEvaluator:
 
         return parsed
 
+    async def _grow_witness_while_paused(self) -> None:
+        """Union newly threshold-crossing probes into the witness set.
+
+        A probe that crosses the trip threshold WHILE the system is already
+        auto-paused must join ``_tripped_probes``: the clear check iterates
+        only this set, and the resume it gates is a global flip — without
+        this, recovery of the original probes auto-resumes into a
+        still-degraded system. The grown reason is re-persisted (guarded on
+        ``expect_paused_by``) so a restarted process re-derives the full
+        set; on a lost race (the pause changed hands, e.g. a user pause)
+        both the row and the witness set are left alone.
+        """
+        newly_tripped = {
+            name
+            for name, count in self._consecutive_failures.items()
+            if count >= self.trip_threshold
+        } - self._tripped_probes
+        if not newly_tripped:
+            return
+        grown = self._tripped_probes | newly_tripped
+        grown_reason = _format_pause_reason(grown)
+        updated = await asyncio.to_thread(
+            lambda: self._adapter.set_system_paused(
+                is_paused=True,
+                reason=grown_reason,
+                paused_by="health_monitor",
+                expect_paused_by="health_monitor",
+            )
+        )
+        if updated:
+            self._tripped_probes = grown
+            logger.info(
+                "auto_pause_witness_grew",
+                added=sorted(newly_tripped),
+                probes=sorted(grown),
+            )
+        else:
+            logger.debug("auto_pause_grow_lost_race", added=sorted(newly_tripped))
+
     async def tick(self) -> None:
         """Run one evaluation cycle.
 
@@ -223,14 +263,24 @@ class HealthPauseEvaluator:
                 if count >= self.trip_threshold
             }
             if tripped:
-                self._tripped_probes = tripped
                 reason = _format_pause_reason(tripped)
-                await asyncio.to_thread(
-                    self._adapter.set_system_paused,
-                    is_paused=True,
-                    reason=reason,
-                    paused_by="health_monitor",
+                # CAS: only pause a row that is still unpaused. A manual
+                # pause landing between this tick's snapshot read and this
+                # write must never be relabelled "health_monitor" — that
+                # would let the clear branch later lift the user's pause
+                # (the invariant in the module docstring).
+                updated = await asyncio.to_thread(
+                    lambda: self._adapter.set_system_paused(
+                        is_paused=True,
+                        reason=reason,
+                        paused_by="health_monitor",
+                        expect_unpaused=True,
+                    )
                 )
+                if not updated:
+                    logger.debug("auto_pause_lost_race", probes=sorted(tripped))
+                    return
+                self._tripped_probes = tripped
                 logger.info(
                     "auto_paused",
                     probes=sorted(tripped),
@@ -252,30 +302,51 @@ class HealthPauseEvaluator:
             )
 
         if paused_by == "health_monitor" and self._tripped_probes:
-            # Cannot auto-resume if any tripped probe is non-recoverable.
-            for name in self._tripped_probes:
-                tripped_result = results.get(name)
-                if tripped_result and not tripped_result.auto_recoverable:
-                    logger.debug(
-                        "skip_non_recoverable",
-                        probe=name,
-                    )
-                    return
+            await self._grow_witness_while_paused()
+            await self._maybe_auto_resume(results)
 
-            # All tripped probes must pass consecutively.
-            all_cleared = all(
-                self._consecutive_passes.get(name, 0) >= self.clear_threshold
-                for name in self._tripped_probes
-            )
-            if all_cleared:
-                await asyncio.to_thread(
-                    self._adapter.set_system_paused,
+    async def _maybe_auto_resume(self, results: dict[str, ProbeResult]) -> None:
+        """Lift the auto-pause once every witnessed probe has recovered.
+
+        Refuses while any tripped probe is non-recoverable, requires
+        ``clear_threshold`` consecutive passes from every probe in the
+        witness set, and lifts via a CAS guarded on
+        ``expect_paused_by="health_monitor"`` — a user pause (or resume)
+        landing after this tick's snapshot must survive; never wipe it
+        from stale state.
+        """
+        # Cannot auto-resume if any tripped probe is non-recoverable.
+        for name in self._tripped_probes:
+            tripped_result = results.get(name)
+            if tripped_result and not tripped_result.auto_recoverable:
+                logger.debug(
+                    "skip_non_recoverable",
+                    probe=name,
+                )
+                return
+
+        # All tripped probes must pass consecutively.
+        all_cleared = all(
+            self._consecutive_passes.get(name, 0) >= self.clear_threshold
+            for name in self._tripped_probes
+        )
+        if all_cleared:
+            updated = await asyncio.to_thread(
+                lambda: self._adapter.set_system_paused(
                     is_paused=False,
                     reason=None,
                     paused_by=None,
+                    expect_paused_by="health_monitor",
                 )
-                logger.info(
-                    "auto_resumed",
+            )
+            if not updated:
+                logger.debug(
+                    "auto_resume_lost_race",
                     probes=sorted(self._tripped_probes),
                 )
-                self._tripped_probes.clear()
+                return
+            logger.info(
+                "auto_resumed",
+                probes=sorted(self._tripped_probes),
+            )
+            self._tripped_probes.clear()

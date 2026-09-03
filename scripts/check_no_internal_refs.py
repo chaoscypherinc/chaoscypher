@@ -20,8 +20,8 @@ from pathlib import Path
 
 # Private subdirectories under the docs tree that must never be referenced by
 # shipped code. The pattern is assembled at runtime so this file does not
-# contain the forbidden literal itself (it lives in scripts/, which is not
-# scanned, but assembling keeps the guard self-consistent).
+# contain the forbidden literal itself — load-bearing, not just
+# self-consistency: scripts/ IS in _ROOTS below, so this file scans itself.
 _PRIVATE_SUBDIRS = (
     "plans",
     "notes",
@@ -36,6 +36,9 @@ _PRIVATE_SUBDIRS = (
     "claude",
     "package-todos",
     "test_fixtures",
+    "loops",
+    "metrics",
+    "migrations",
 )
 _DOCS_DIR = "internal"
 _PATTERN = re.compile(rf"{_DOCS_DIR}/(?:{'|'.join(_PRIVATE_SUBDIRS)})/")

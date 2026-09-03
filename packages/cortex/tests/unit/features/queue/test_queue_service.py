@@ -222,6 +222,49 @@ class TestListTasks:
         assert result.pagination.has_prev is False
 
     @pytest.mark.asyncio
+    async def test_list_strips_task_data_to_whitelist(self) -> None:
+        """The list endpoint never ships raw task payloads.
+
+        chat_completion payloads carry the full messages array (retrieved
+        chunk text included) and two pages poll 50 rows every 5 s while
+        reading only inputs.filename / analysis_depth and the operations
+        count — everything else stays on the single-task detail endpoint.
+        """
+        service = _make_service()
+        service.queue_client.get_recent_tasks = AsyncMock(
+            return_value=[
+                {
+                    "id": "t-llm",
+                    "operation": "chat_completion",
+                    "data": {"messages": [{"role": "user", "content": "x" * 5000}]},
+                },
+                {
+                    "id": "t-wf",
+                    "operation": "execute_workflow",
+                    "data": {
+                        "inputs": {"filename": "a.pdf", "analysis_depth": "deep", "blob": "big"},
+                        "operations": [{"op": 1}, {"op": 2}],
+                    },
+                },
+            ]
+        )
+        service.queue_client.get_recent_tasks_count = AsyncMock(return_value=2)
+
+        with patch(
+            "chaoscypher_core.app_config.get_settings",
+            return_value=_fake_settings(),
+        ):
+            result = await service.list_tasks(page=1, page_size=50, queues=None)
+
+        llm_task = next(t for t in result.data if t["id"] == "t-llm")
+        assert llm_task["data"] == {}, "LLM messages array leaked into the list view"
+        wf_task = next(t for t in result.data if t["id"] == "t-wf")
+        assert wf_task["data"] == {
+            "inputs": {"filename": "a.pdf", "analysis_depth": "deep"},
+            "operations_count": 2,
+        }
+
+    @pytest.mark.asyncio
     async def test_page_two_offset_computation(self) -> None:
         """page=2 forwards offset=page_size to the queue client."""
         service = _make_service()
@@ -294,8 +337,13 @@ class TestListTasks:
         assert call_kwargs["limit"] == 100
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_task_count_when_stats_fail(self) -> None:
-        """list_tasks uses len(data) as total_in_queue when get_all_stats raises."""
+    async def test_falls_back_to_none_when_stats_fail(self) -> None:
+        """list_tasks reports total_in_queue=None (unknown) when get_all_stats raises.
+
+        The old fallback fabricated the current page's row count into the
+        field — capped at page_size, it made a deep backlog look nearly
+        drained during a stats outage.
+        """
         service = _make_service()
         service.queue_client.get_recent_tasks = AsyncMock(
             return_value=[{"id": "a"}, {"id": "b"}, {"id": "c"}]
@@ -309,7 +357,7 @@ class TestListTasks:
         ):
             result = await service.list_tasks()
 
-        assert result.total_in_queue == 3
+        assert result.total_in_queue is None
 
     @pytest.mark.asyncio
     async def test_last_page_has_no_next(self) -> None:

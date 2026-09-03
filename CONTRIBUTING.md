@@ -36,8 +36,9 @@ Every source file (`.py`, `.ts`, `.tsx`) must start with:
 (For TypeScript, use `//` comments instead of `#`.)
 
 Pre-commit enforces the `SPDX-License-Identifier` line on shipped source
-(`packages/{core,cortex,neuron,cli}/src`, `packages/interface/src`, plus
-`scripts/`, `tools/`, and `e2e/`); files missing it fail the hook. Run
+(`packages/{core,cortex,neuron,cli}/src` and `packages/interface/src`);
+`make lint-internal-refs` (part of `make ci`) additionally covers
+`scripts/`, `tools/`, and `e2e/`. Run
 `uv run python scripts/check_spdx_headers.py --fix` to insert both lines
 automatically.
 
@@ -67,8 +68,10 @@ make docker-dev        # Starts the multi-container dev environment (hot-reload)
 
 `make install` runs `uv sync --all-packages --extra dev`, which materializes
 `.venv/` at the repo root with every workspace member installed editably plus
-the union of every member's `[dev]` extras (ruff, mypy, pytest, pytest-cov,
-pytest-asyncio, vulture, pre-commit, pip-audit, interrogate, types-requests).
+the union of every member's `[dev]` extras (ruff, mypy, pytest and its
+plugins, hypothesis, vulture, pre-commit, pip-audit, detect-secrets,
+import-linter, diff-cover, interrogate, types-requests, httpx, among others —
+the package `pyproject.toml` files are authoritative).
 The lockfile (`uv.lock`) is the authoritative resolution; treat it like
 `package-lock.json` — commit changes to it.
 
@@ -106,7 +109,7 @@ Examples:
   - Pass CI.
   - Include tests for new behavior.
   - Update `CLAUDE.md`, `CONTRIBUTING.md`, package READMEs, or `packages/docs/` if rules, procedures, or user-facing behavior shifted.
-  - Keep Alembic migrations in sync with SQLModel metadata (see `CLAUDE.md` and the relevant package README).
+  - Keep Alembic migrations in sync with SQLModel metadata (background: `packages/docs/docs/architecture/adrs/0006-re-adopt-alembic.md`).
 
 ## Pre-merge checklist
 
@@ -124,7 +127,7 @@ Before requesting review:
 - [ ] SPDX header on all new source files
 - [ ] No TODO/FIXME added in code; open or update a GitHub issue instead
 - [ ] No commented-out code
-- [ ] If frontend: `npm run lint`, `npm run typecheck`, component tests pass
+- [ ] If frontend: `npm run lint`, `npx tsc --noEmit` (or `make typecheck`), component tests pass
 
 ## Coverage gates
 
@@ -154,7 +157,7 @@ Shortcut: `make ci` runs the full pipeline (lint, typecheck, docstrings, tests, 
 Three layers guard against committed secrets:
 
 1. **Pre-commit hook** — runs `gitleaks` (v8.21.2) on staged files. Bypassed by `git commit --no-verify`, web-UI commits, or any tool ignoring `core.hooksPath`.
-2. **Local `make lint-secrets`** — runs `gitleaks detect` against the entire working tree. Chained into `make ci` and `make ci-local`, so the full local CI run catches anything pre-commit missed. Run ad-hoc with `make lint-secrets`.
+2. **Local `make lint-secrets`** — runs `gitleaks detect` against the entire working tree. `make ci` and `make ci-local` run the same scan via `scripts/secrets_scan.py` (gitleaks binary when available, `detect-secrets` fallback otherwise), so the full local CI run catches anything pre-commit missed. Run ad-hoc with `make lint-secrets`.
 3. **CI workflow** — `.github/workflows/gitleaks.yml` is active: it runs `gitleaks` (v8.21.2, mirroring the pre-commit hook and `make lint-secrets`) on every `push` to every branch (PR branches included) as the CI defeat-path guard for `git commit --no-verify` and web-UI commits, and is also available via `workflow_dispatch` for ad-hoc audits. It intentionally does **not** trigger on `pull_request` (the `push` trigger already covers PR branches, and gitleaks-action's pull_request path 403s under this workflow's read-only `contents` token). This repository is organization-owned, so the free `GITLEAKS_LICENSE` repo secret (obtain at gitleaks.io) is required and already configured; forks under personal accounts do not need it. Tune false positives by adding entries to `.gitleaks.toml`'s `allowlist`.
 
 If `make lint-secrets` flags something:
@@ -186,7 +189,7 @@ When adding a rule:
    and false positives that won't appear in the existing clean codebase.
 2. **Run against the full codebase** — `make lint-claude` should pass on
    the unchanged tree (no new violations from your rule means parity).
-3. **Document in CLAUDE.md** — add a `**CCNNN** — <description>. *(import-linter / semgrep / eslint / AST checker)*` line to the Architectural lint rules section.
+3. **Document with the rule itself** — the rule census lives with the rules, not in a central list (hardcoded lists drift): describe the rule in its enforcer — the import-linter contract comment, the semgrep rule's `message`, or the AST `check_*` function's docstring.
 4. **Reference numbers** — pick the next unused CC number from
    the current CC rule range (the historical range; gaps like CC016/CC017 are
    reserved/unused). Don't reuse a number that was deleted.

@@ -146,11 +146,12 @@ def _inject_session(context: BrowserContext, base_url: str) -> None:
 
 # Tests in these files (or specific cases below) drive UI flows that
 # the React app gates on ``LLMHealth.verified=True`` — the Add Source
-# button is disabled, the chat input is read-only, etc. The e2e
-# Docker stack ships without an LLM, so we auto-skip these rather
-# than fail every run. Wiring a fake-ollama service unblocks them.
+# button is disabled, the chat input is read-only, etc. The e2e Docker
+# stack ships fake-ollama, so there the gate is open; on an LLM-less
+# stack we auto-skip these rather than fail every run.
 _LLM_REQUIRED_FILES = frozenset({
     "test_upload_source.py",
+    "test_mobile_layout.py",  # seeded_app uploads a source (gated 409)
 })
 
 

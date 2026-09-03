@@ -151,6 +151,22 @@ def _source_has_remaining_pending(session: Any, source_id: str) -> bool:
     return session.exec(stmt).first() is not None
 
 
+def _source_search_failed(adapter: SqliteAdapter, source_id: str) -> bool:
+    """Return True when the source's vector_indexing_status is terminal ``failed``.
+
+    ``failed`` is documented terminal (counters.py Workstream 10): the
+    exhaustion branch deletes its queue row BEFORE marking the source
+    failed, so that row is invisible to ``_source_has_remaining_pending``
+    — a sibling row draining later in the same batch would otherwise see
+    zero survivors and clobber the terminal ``failed`` back to
+    ``indexed``, hiding a permanently unindexed node. Guarding the flip
+    on the current status keeps ``failed`` sticky until operator action.
+    The sweeper is single-threaded, so a read-then-write suffices here.
+    """
+    src = adapter.get_source(source_id, adapter.database_name)
+    return src is not None and src.get("vector_indexing_status") == "failed"
+
+
 def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index types in sequence; refactor out-of-scope
     adapter: SqliteAdapter,
     search_repo: SearchRepository,
@@ -228,8 +244,10 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
                     session.delete(entry)
                     session.commit()
                     stats["pending_drained"] += 1
-                    if entry_source_id and not _source_has_remaining_pending(
-                        session, entry_source_id
+                    if (
+                        entry_source_id
+                        and not _source_has_remaining_pending(session, entry_source_id)
+                        and not _source_search_failed(adapter, entry_source_id)
                     ):
                         mark_search_indexing_indexed(
                             adapter=adapter,
@@ -256,7 +274,11 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
             # 'indexed' so the UI badge clears — but only once its LAST
             # pending row drains (the deleted entry is already committed,
             # so the probe sees only surviving siblings).
-            if entry_source_id and not _source_has_remaining_pending(session, entry_source_id):
+            if (
+                entry_source_id
+                and not _source_has_remaining_pending(session, entry_source_id)
+                and not _source_search_failed(adapter, entry_source_id)
+            ):
                 mark_search_indexing_indexed(
                     adapter=adapter,
                     source_id=entry_source_id,

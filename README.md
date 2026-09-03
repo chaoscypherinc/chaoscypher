@@ -268,7 +268,7 @@ docker compose -f docker-compose.dev.yml logs -f cortex
 
 ```bash
 make docker-test     # Run tests in Docker (isolated)
-make lint            # Run all linters
+make lint            # Python + frontend lint (make ci runs the full linter suite)
 make ci              # Full CI pipeline
 ```
 

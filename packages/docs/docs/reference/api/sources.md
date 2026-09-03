@@ -191,15 +191,25 @@ The URL fetcher validates the upstream `Content-Type` against the same allowlist
 
 :::
 
-**Response** `202 Accepted` -- [SourceResponse](#sourceresponse)
+**Response** `202 Accepted` -- `UrlImportResponse`
 
-The response is identical in shape to the single file upload response. The `source_type`
-will be `webpage` and `origin_url` will contain the imported URL.
+The fetch is queued on the operations worker; no source row exists yet when
+the route returns. Poll `GET /api/v1/queue/tasks/{task_id}` (or the source
+list) to observe the fetch + indexing progress and find the resulting source
+(its `source_type` will be `webpage` and `origin_url` the imported URL).
+
+```json
+{
+  "task_id": "task_abc123",
+  "url": "https://example.com/article",
+  "status": "queued"
+}
+```
 
 | Status | Description |
 |--------|-------------|
-| `400` | Invalid URL format |
-| `422` | Failed to fetch URL or content shorter than 50 characters |
+| `400` | Invalid URL (blocked scheme, loopback address, or cloud metadata endpoint) |
+| `409` | LLM provider has not been verified (`LLM_NOT_VERIFIED`) |
 
 ---
 
@@ -375,15 +385,21 @@ curl http://localhost/api/v1/sources/domains
     {
       "name": "generic",
       "description": "General-purpose entity extraction",
+      "icon": null,
+      "version": "1.0",
       "builtin": true,
-      "extraction_density": "medium",
+      "has_examples": false,
+      "extraction_density": 1.0,
       "prompt_tokens": 1200
     },
     {
       "name": "technical",
       "description": "Technical documentation and specifications",
+      "icon": "Memory",
+      "version": "1.0",
       "builtin": true,
-      "extraction_density": "high",
+      "has_examples": true,
+      "extraction_density": 1.4,
       "prompt_tokens": 1800
     }
   ]
@@ -454,6 +470,11 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/extraction \
 | `domain` | string | No | `null` | Force extraction domain. Auto-detected if omitted. |
 | `filtering_mode` | string | No | persisted | Override the source's persisted `filtering_mode` **for this run only**. |
 | `force` | bool | No | `false` | Re-extract even if extraction results already exist |
+| `content_filtering` | bool | No | `true` | Filter non-essential content from entity extraction |
+| `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
+| `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
 The endpoint reuses the source's persisted upload settings (`filtering_mode`, `enable_vision`, `content_filtering`) unless you override them per call.
 
@@ -477,11 +498,14 @@ explicit per-call value.
 ```json
 {
   "source_id": "src_abc123",
-  "job_id": "job_xyz789",
-  "status": "queued",
-  "message": "Extraction started"
+  "status": "extracting"
 }
 ```
+
+When the domain-confirmation gate parks the source instead of starting
+extraction, the response is `{"source_id": "src_abc123", "status":
+"awaiting_confirmation"}` — confirm via
+[Confirm Domain (Extraction Gate)](#confirm-domain-extraction-gate) to proceed.
 
 | Status | Description |
 |--------|-------------|
@@ -908,20 +932,24 @@ curl http://localhost/api/v1/sources/src_abc123/extraction/charts
 ```json
 [
   {
+    "id": "task_chunk_001",
     "chunk_index": 0,
     "status": "completed",
     "retry_count": 0,
     "entity_count": 8,
     "relationship_count": 12,
+    "invalid_relationship_count": 0,
     "input_text_length": 3200,
     "llm_duration_ms": 3800
   },
   {
+    "id": "task_chunk_002",
     "chunk_index": 1,
     "status": "completed",
     "retry_count": 1,
     "entity_count": 6,
     "relationship_count": 9,
+    "invalid_relationship_count": 1,
     "input_text_length": 2800,
     "llm_duration_ms": 5200
   }
@@ -1392,7 +1420,7 @@ curl http://localhost/api/v1/sources/src_abc123/chunks/0/attempts
 | `source_id` | string (path) | **Yes** | Source ID |
 | `chunk_index` | int (path) | **Yes** | Zero-based chunk index |
 
-**Response** `200 OK` — list of attempt summaries (`ChunkAttemptSummary`).
+**Response** `200 OK` — `{"data": [...]}` envelope of attempt summaries (`ChunkAttemptSummary`).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -1679,9 +1707,20 @@ curl "http://localhost/api/v1/sources/src_abc123/templates?page=1&page_size=20&t
     {
       "id": "template_abc123",
       "name": "ProgrammingLanguage",
-      "type": "node",
+      "description": "A programming language entity",
+      "template_type": "node",
+      "properties": [
+        {"name": "name", "display_name": "Name", "property_type": "string", "required": true},
+        {"name": "paradigm", "display_name": "Paradigm", "property_type": "string", "required": false}
+      ],
+      "is_system": false,
+      "icon": null,
+      "color": null,
       "source_id": "src_abc123",
-      "properties": ["name", "paradigm", "version"]
+      "node_count": 14,
+      "edge_count": 0,
+      "created_at": "2026-08-01T10:00:00Z",
+      "updated_at": "2026-08-01T10:00:00Z"
     }
   ],
   "pagination": {
@@ -2120,8 +2159,7 @@ curl http://localhost/api/v1/sources/src_abc123/images/page_1.png \
 
 | Status | Description |
 |--------|-------------|
-| `403` | Path traversal attempt detected |
-| `404` | Image file not found |
+| `404` | Image file not found (also returned for structurally invalid IDs/filenames and path-traversal attempts — masked as 404 so valid IDs are not leaked) |
 
 ---
 
@@ -2273,6 +2311,25 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `llm_model` | string? | LLM model used |
 | `created_at` | datetime | Creation timestamp |
 | `updated_at` | datetime | Last update timestamp |
+| `last_activity_at` | datetime? | Last observed pipeline activity (drives stall detection) |
+| `recovery_attempts` | int | Automatic stall-recovery attempts made for this source |
+| `is_paused` | bool | Whether processing for this source is paused |
+| `paused_at` | datetime? | When the source was paused |
+| `paused_reason` | string? | Why the source was paused |
+| `extraction_domain_icon` | string? | Icon name for the extraction domain |
+| `domain_version` | string? | Version of the domain used at extraction time |
+| `domain_changed_since_extraction` | bool | True when the domain plugin changed after this source was extracted |
+| `confirmation_required` | bool | True while the source is parked at the domain-confirmation gate |
+| `extraction_confirmed_at` | datetime? | When the domain confirmation was given |
+| `detection_ranking` | array | Ranked detection candidates `[{domain, score}]` (best first); empty when detection fell back to generic |
+| `detection_confidence` | float? | Winning candidate score, or `null` when low-confidence |
+| `detection_low_confidence` | bool? | True when the detection heuristic fell back to generic; `null` for non-parked sources |
+| `proposed_extraction_options` | object? | Full detection proposal blob the UI seeds the confirm dialog from |
+| `extraction_mode` | string? | Extraction mode used (e.g. internal vs MCP-driven) |
+| `skipped_duplicate` | bool? | True if this upload was skipped because its content hash matched an existing source |
+| `existing_status` | string? | Status of the matching existing source when `skipped_duplicate` is true |
+| `indexing_extraction_method` | string? | Text-extraction method used during loading (PDFs: `pypdf`; other types `null`) |
+| `progress` | object? | User-facing 5-phase progress summary (`waiting_to_index` \| `indexing` \| `awaiting_input` \| `extracting` \| `ready`, plus `is_searchable`) |
 | `user_metadata` | object? | User-defined metadata |
 | `upload_options` | object | Persisted upload settings — see [UploadOptions](#uploadoptions) |
 | `quality_metrics` | object | Per-stage quality counters and loader/search status — see [QualityMetrics](#qualitymetrics). Full reference: [Quality Metrics API](quality-metrics.md). |
@@ -2334,7 +2391,7 @@ The record's lifetime: row INSERTed at stage open with `total` set and `processe
 
 ### QualityMetrics
 
-45 quality counters spanning every silent-drop / silent-merge / silent-skip site of the import pipeline, plus encoding and vector-search companion fields. Counters reset to zero on `Re-extract` (`force_re_extract`); the quality grade itself is not affected.
+46 quality counters spanning every silent-drop / silent-merge / silent-skip site of the import pipeline, plus encoding and vector-search companion fields. Counters reset to zero on `Re-extract` (`force_re_extract`); the quality grade itself is not affected.
 
 The counters are grouped by pipeline stage; every field, stage by stage, is listed in the [Quality Metrics API](quality-metrics.md).
 
@@ -2376,8 +2433,13 @@ Pagination wrapper for source list responses.
 | `page_number` | int? | PDF page number |
 | `section` | string? | Section heading |
 | `group_index` | int? | Hierarchical group index |
+| `char_start` | int? | Start offset into the original upload text (`null` when `citation_offset_method` is `none`) |
+| `char_end` | int? | End offset into the original upload text (`null` when `citation_offset_method` is `none`) |
+| `citation_offset_method` | string | How offsets were computed: `exact` \| `fuzzy` \| `none` (default `exact`) |
 | `status` | string | Chunk status |
 | `created_at` | datetime | Creation timestamp |
+| `raw_content` | string? | Pre-cleanup text slice — detail endpoint only (excluded from list responses for payload size) |
+| `chunk_metadata` | object? | Chunk metadata, notably `sentence_offsets` — detail endpoint only (excluded from list responses) |
 
 ---
 

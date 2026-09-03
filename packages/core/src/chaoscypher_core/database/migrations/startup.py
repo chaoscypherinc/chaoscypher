@@ -26,7 +26,6 @@ there is no user data to protect).
 
 from __future__ import annotations
 
-import contextlib
 from typing import TYPE_CHECKING
 
 import structlog
@@ -147,30 +146,30 @@ def run_startup_migrations(
         return
 
     lock_path = db_path.with_suffix(db_path.suffix + ".upgrade.lock")
-    try:
-        with open(lock_path, "w", encoding="utf-8") as lock_handle:
-            try:
-                lock_file(lock_handle, blocking=False)
-            except BlockingIOError:
-                logger.info("startup_migrations_waiting_for_lock", db=str(db_path))
-                lock_file(lock_handle, blocking=True)
-            try:
-                # Re-read under the lock: another process may have applied
-                # while we waited (or between the pre-lock read and
-                # acquiring the lock).
-                pending = pending_revisions(db_path)
-                if not pending:
-                    clear_upgrade_state(db_path)
-                    return
-                _run_locked(db_path, pending, apply_destructive=apply_destructive)
-            finally:
-                unlock_file(lock_handle)
-    finally:
-        # Best-effort cleanup, mirroring engine.py's .init.lock handling.
-        # The lock is advisory (released via unlock_file + handle close), so
-        # a leftover file is harmless — we just don't want to litter.
-        with contextlib.suppress(OSError):
-            lock_path.unlink(missing_ok=True)
+    # The lock file is NEVER unlinked — matching engine.py's .init.lock.
+    # flock binds to the inode, not the path: unlinking the name while a
+    # waiter still holds (or is about to acquire) the old inode lets the
+    # next process create a fresh inode at the same path and acquire its
+    # lock instantly, so two migration runs (backup + upgrade_to_head)
+    # proceed concurrently on the same SQLite file. A leftover lock file
+    # is harmless litter; a recycled one is a broken mutex.
+    with open(lock_path, "w", encoding="utf-8") as lock_handle:
+        try:
+            lock_file(lock_handle, blocking=False)
+        except BlockingIOError:
+            logger.info("startup_migrations_waiting_for_lock", db=str(db_path))
+            lock_file(lock_handle, blocking=True)
+        try:
+            # Re-read under the lock: another process may have applied
+            # while we waited (or between the pre-lock read and
+            # acquiring the lock).
+            pending = pending_revisions(db_path)
+            if not pending:
+                clear_upgrade_state(db_path)
+                return
+            _run_locked(db_path, pending, apply_destructive=apply_destructive)
+        finally:
+            unlock_file(lock_handle)
 
 
 def _record_apply_failure(

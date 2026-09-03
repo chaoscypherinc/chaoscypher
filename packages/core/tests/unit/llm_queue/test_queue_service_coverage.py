@@ -503,3 +503,42 @@ async def test_get_stats_hours_format_for_large_estimate(
 
     # est = 1000 * 15 = 15000s = 4h 10m
     assert stats["estimated_completion_times_human"]["llm"] == "4h 10m"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_result_transient_failed_window_rides_through_retry(
+    patched_queue_client: MagicMock,
+) -> None:
+    """A transient 'failed' that flips back to queued (retry scheduled) is not raised.
+
+    Retryable failures are published as status="failed" before _retry_task
+    resets them to "queued"; a poll landing in that window must not abort the
+    interactive turn (the queue goes on to retry the task successfully).
+    """
+    service = _make_service()
+    patched_queue_client.get_task = AsyncMock(
+        side_effect=[
+            {"status": "failed", "error": "boom", "error_type": "transient"},
+            {"status": "queued"},
+            {"status": "completed"},
+        ]
+    )
+
+    result = await service.wait_for_result("task-1")
+    assert result == {"answer": 42}
+
+
+@pytest.mark.asyncio
+async def test_wait_for_result_terminal_transient_failed_still_raises(
+    patched_queue_client: MagicMock,
+) -> None:
+    """A transient failure with no retry coming raises after the short grace."""
+    service = _make_service()
+    patched_queue_client.get_task = AsyncMock(
+        return_value={"status": "failed", "error": "boom", "error_type": "transient"}
+    )
+
+    with pytest.raises(OperationError, match="boom"):
+        await service.wait_for_result("task-1")
+    # Initial poll + 2 grace polls.
+    assert patched_queue_client.get_task.await_count == 3

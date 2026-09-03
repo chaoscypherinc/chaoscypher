@@ -98,6 +98,30 @@ class ChatsMixin(SqliteMixinBase, ChatStorageProtocol):
         self._maybe_commit()
         return int(result.rowcount or 0) == 1
 
+    def mark_chat_error_if_processing(self, chat_id: str) -> bool:
+        """Atomically flip a chat to ``error`` ONLY while it still reads ``processing``.
+
+        The stuck-chat sweeper decides from a snapshot taken up to 10,000
+        rows earlier; a worker that legitimately finishes mid-scan sets
+        ``active``, and a blind ``update_chat(..., {"status": "error"})``
+        then stamps an error banner over a successfully-completed answer.
+        Mirror of :meth:`claim_chat_processing` with the inverse guard.
+
+        Returns:
+            True when this call transitioned the chat to ``error``; False
+            when the chat is unknown or no longer processing (lost race).
+        """
+        self._ensure_connected()
+        stmt = (
+            update(Chat)
+            .where(col(Chat.id) == chat_id)
+            .where(col(Chat.status) == "processing")
+            .values(status="error", updated_at=datetime.now(UTC))
+        )
+        result = self.session.exec(stmt)
+        self._maybe_commit()
+        return int(result.rowcount or 0) == 1
+
     def delete_chat(self, chat_id: str) -> bool:
         """Delete chat."""
         self._ensure_connected()

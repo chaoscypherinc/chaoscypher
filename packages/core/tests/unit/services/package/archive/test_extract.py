@@ -88,3 +88,71 @@ def test_extract_rejects_symlink_member_with_strip_components(tmp_path: Path) ->
 
     with pytest.raises(ArchiveSecurityError, match="Unsafe file type"):
         extract_archive(archive, dest, strip_components=1)
+
+
+# ---------------------------------------------------------------------------
+# Volume limits (zip-bomb defenses, mirrored from ArchiveExtractor)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_extract_rejects_too_many_members(tmp_path: Path) -> None:
+    archive = tmp_path / "many.zip"
+    dest = tmp_path / "out"
+    with zipfile.ZipFile(archive, "w") as zf:
+        for i in range(4):
+            zf.writestr(f"f{i}.txt", "x")
+
+    with pytest.raises(ArchiveSecurityError, match="file limit"):
+        extract_archive(archive, dest, max_files=3)
+
+
+@pytest.mark.unit
+def test_extract_rejects_declared_size_over_limit(tmp_path: Path) -> None:
+    archive = tmp_path / "big.zip"
+    dest = tmp_path / "out"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("big.txt", "a" * 4096)
+
+    with pytest.raises(ArchiveSecurityError, match="declared size limit"):
+        extract_archive(archive, dest, max_total_bytes=1024)
+
+
+@pytest.mark.unit
+def test_extract_streaming_tally_stops_lying_member(tmp_path: Path, monkeypatch) -> None:
+    """A member stream yielding more bytes than declared trips the byte tally.
+
+    CPython's ``ZipExtFile`` bounds reads by the declared size, so the tally
+    is defense-in-depth (crafted archives, future zipfile behavior changes).
+    Simulate the overrun by faking the member stream: declared sizes stay
+    tiny (passing the pre-check), the stream carries 4096 real bytes.
+    """
+    import io
+
+    archive = tmp_path / "liar.zip"
+    dest = tmp_path / "out"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("liar.txt", "tiny")
+
+    monkeypatch.setattr(
+        zipfile.ZipFile,
+        "open",
+        lambda self, member, mode="r": io.BytesIO(b"a" * 4096),
+    )
+    with pytest.raises(ArchiveSecurityError, match="possible zip bomb"):
+        extract_archive(archive, dest, max_total_bytes=1024)
+    assert not (dest / "liar.txt").exists()  # partial output removed
+
+
+@pytest.mark.unit
+def test_extract_within_limits_succeeds(tmp_path: Path) -> None:
+    archive = tmp_path / "ok.zip"
+    dest = tmp_path / "out"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("a.txt", "hello")
+        zf.writestr("sub/b.txt", "world")
+
+    extract_archive(archive, dest, max_files=10, max_total_bytes=1024)
+
+    assert (dest / "a.txt").read_text() == "hello"
+    assert (dest / "sub" / "b.txt").read_text() == "world"

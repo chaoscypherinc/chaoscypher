@@ -12,6 +12,15 @@ from chaoscypher_cortex.shared.middleware.security_headers import (
 )
 
 
+def _parse_csp(csp: str) -> dict[str, str]:
+    """Parse a CSP header into {directive: value} for exact-match assertions."""
+    directives: dict[str, str] = {}
+    for part in csp.split("; "):
+        name, _, value = part.partition(" ")
+        directives[name] = value
+    return directives
+
+
 def _app() -> FastAPI:
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
@@ -29,13 +38,17 @@ def test_security_headers_present() -> None:
     assert r.headers.get("X-Frame-Options") == "DENY"
     assert r.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
     assert "camera=()" in r.headers.get("Permissions-Policy", "")
-    csp = r.headers.get("Content-Security-Policy", "")
-    assert "default-src 'self'" in csp
-    assert "frame-ancestors 'none'" in csp
-    assert "base-uri 'self'" in csp
-    assert "form-action 'self'" in csp
-    # connect-src should NOT allow arbitrary ws/wss hosts (prompt-injection defense)
-    assert "connect-src 'self'" in csp
+    # Exact per-directive matches: substring checks would still pass if a
+    # directive were widened (e.g. "script-src 'self' 'unsafe-inline'" or
+    # "connect-src 'self' ws: https:" keep the original value as a prefix).
+    csp = _parse_csp(r.headers.get("Content-Security-Policy", ""))
+    assert csp["default-src"] == "'self'"
+    assert csp["script-src"] == "'self'"
+    # connect-src must NOT allow arbitrary ws/wss hosts (prompt-injection defense)
+    assert csp["connect-src"] == "'self'"
+    assert csp["frame-ancestors"] == "'none'"
+    assert csp["base-uri"] == "'self'"
+    assert csp["form-action"] == "'self'"
 
 
 def test_headers_apply_to_errors() -> None:

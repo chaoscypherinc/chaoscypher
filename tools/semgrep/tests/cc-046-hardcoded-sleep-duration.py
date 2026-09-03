@@ -16,7 +16,8 @@ def bad_sync():
 
 
 async def ok_yield():
-    # ok: cc-046-hardcoded-sleep-duration — sleep(0) is yield-to-loop
+    # sleep(0) is yield-to-loop
+    # ok: cc-046-hardcoded-sleep-duration
     await asyncio.sleep(0)
 
 

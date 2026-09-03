@@ -29,6 +29,7 @@ flips to ``error`` with a worker-crashed message.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -45,13 +46,21 @@ from e2e.api._fake_ollama_helpers import (
 
 _APP_CONTAINER = os.environ.get("E2E_APP_CONTAINER", "chaoscypher-e2e-app")
 
+# Without this guard, _docker_exec raises FileNotFoundError before the
+# in-test container probe can self-skip (e.g. inside the compose runner,
+# which ships no docker CLI). Mirrors e2e/migrations/test_migration_roundtrip.py.
+pytestmark = pytest.mark.skipif(
+    shutil.which("docker") is None,
+    reason="docker not on PATH — worker-crash test drives the app container via docker exec.",
+)
+
 
 def _docker_exec(*args: str) -> subprocess.CompletedProcess:
     """Run ``docker exec`` against the app container.
 
-    Skipped at module load if ``docker`` isn't on PATH; the test
-    self-skips if the container isn't running. Returns the
-    CompletedProcess so callers can read stdout/stderr.
+    The module is skipped if ``docker`` isn't on PATH (see pytestmark);
+    the test additionally self-skips if the container isn't running.
+    Returns the CompletedProcess so callers can read stdout/stderr.
     """
     return subprocess.run(  # noqa: S603 - fixed argv, no shell; e2e harness shells out to docker by design
         ["docker", "exec", _APP_CONTAINER, *args],  # noqa: S607 - docker resolved from PATH on every dev/CI host

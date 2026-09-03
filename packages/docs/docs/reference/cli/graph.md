@@ -445,6 +445,8 @@ chaoscypher graph template list [OPTIONS]
 | `--format` | `-f` | `table` | Output format (`table`, `json`, `yaml`) |
 | `--verbose` | `-v` | `false` | Show properties and descriptions |
 | `--type` | `-t` | | Filter by template type (`node` or `edge`) |
+| `--page` | `-p` | `1` | Page number |
+| `--limit` | `-l` | `50` | Items per page |
 | `--database` | `-d` | current database | Database name |
 
 **Examples:**
@@ -750,7 +752,7 @@ chaoscypher graph package export [OPTIONS]
 | `--workflows/--no-workflows` | | `--workflows` | Include workflows |
 | `--embeddings/--no-embeddings` | | `--no-embeddings` | Include embedding vectors (only useful when the importing database uses the same embedding model) |
 | `--lens-id <id>` | | — | Export only a specific lens by ID |
-| `--title` | `-t` | — | Display title shown on the graph preview image |
+| `--title` | `-t` | — | Display title for the export (stored in the package manifest) |
 | `--database` | `-d` | current database | Database name |
 
 At least one of `--templates`, `--knowledge`, `--lenses`, or `--workflows` must remain enabled — disabling all four is a usage error.

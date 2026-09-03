@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '0 2 * * *'  # Nightly at 2 AM UTC
 
+permissions:
+  contents: read
+  checks: write # dorny/test-reporter publishes a check run
+
 jobs:
   cli-e2e:
     name: CLI E2E Tests

@@ -35,6 +35,7 @@ docker run -d --name chaoscypher \
   -p 80:80 \
   -p 443:443 \
   -v chaoscypher-data:/data \
+  --add-host=host.docker.internal:host-gateway \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
 
@@ -54,6 +55,10 @@ services:
       - "443:443"
     volumes:
       - chaoscypher-data:/data
+    extra_hosts:
+      # Lets the container reach an Ollama running on the host (Linux engines
+      # don't resolve host.docker.internal without this)
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 volumes:
   chaoscypher-data:
@@ -91,7 +96,7 @@ This starts everything at [http://localhost](http://localhost):
 
 ### Startup
 
-While services initialize, the browser shows a **startup page** with live component health indicators and a real-time log viewer. Once all services are ready, the page automatically redirects to the application.
+While services initialize, the browser shows a **startup page** with live component health indicators. Once all services are ready, the page automatically redirects to the application.
 
 If you encounter an error, custom error pages provide contextual messages and a link to report issues on GitHub with pre-filled diagnostic information.
 
@@ -218,7 +223,7 @@ Docker deployments point the seeded Ollama instance at `http://host.docker.inter
 docker run ... --add-host=host.docker.internal:host-gateway ...
 ```
 
-(Compose equivalent: `extra_hosts: ["host.docker.internal:host-gateway"]` on the service.) Or edit the Ollama instance URL under **Settings → LLM** to your host's IP (e.g. `http://172.17.0.1:11434`) and make sure Ollama listens beyond loopback (`OLLAMA_HOST=0.0.0.0`).
+(Compose equivalent: `extra_hosts: ["host.docker.internal:host-gateway"]` on the service.) Or edit the Ollama instance URL under **Settings → Models** to your host's IP (e.g. `http://172.17.0.1:11434`) and make sure Ollama listens beyond loopback (`OLLAMA_HOST=0.0.0.0`).
 
 :::
 

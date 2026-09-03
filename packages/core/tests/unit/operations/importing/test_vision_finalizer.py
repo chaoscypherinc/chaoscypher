@@ -180,6 +180,66 @@ async def test_finalize_merges_descriptions_and_enqueues_resume(
 
 
 @pytest.mark.asyncio
+async def test_finalize_defers_when_counters_rewound_by_retry(
+    adapter: SqliteAdapter,
+) -> None:
+    """A page retry accepted before finalize dequeues defers the finalize.
+
+    A retry in the enqueue→dequeue window resets a page to PENDING and
+    rewinds the job counter; splicing anyway would drop that page's
+    description. The finalizer must defer — the retried page's own
+    completion re-fires the terminal→enqueue path.
+    """
+    from chaoscypher_core.operations.importing.vision_finalizer import (
+        handle_vision_finalize,
+    )
+
+    source_id, job_id = _setup_finished_vision_job(
+        adapter,
+        page_outcomes=[
+            (1, VisionPageStatus.SUCCEEDED, "A diagram of a cat."),
+            (2, VisionPageStatus.FAILED, None),
+        ],
+    )
+    # Simulate the in-window retry: page 2 back to PENDING, counter rewound.
+    failed_row = next(
+        r
+        for r in adapter.list_vision_page_descriptions(source_id)
+        if r["status"] == VisionPageStatus.FAILED.value
+    )
+    adapter.reset_vision_page_for_retry(page_id=failed_row["id"])
+
+    settings = MagicMock()
+    with (
+        patch(
+            "chaoscypher_core.operations.importing.vision_finalizer._reload_documents",
+            return_value=[],
+        ),
+        patch(
+            "chaoscypher_core.operations.importing.vision_finalizer._enqueue_resume_indexing",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        result = await handle_vision_finalize(
+            data={
+                "source_id": source_id,
+                "job_id": job_id,
+                "database_name": "test",
+            },
+            adapter=adapter,
+            settings=settings,
+        )
+
+    assert result["status"] == "skipped_not_terminal"
+    mock_enqueue.assert_not_awaited()
+    # Source must NOT have been CASed forward — the retried page's own
+    # completion re-triggers finalize.
+    src = adapter.get_source(source_id, "test")
+    assert src is not None
+    assert src["status"] == SourceStatus.VISION_PENDING.value
+
+
+@pytest.mark.asyncio
 async def test_finalize_idempotent_when_already_advanced(
     adapter: SqliteAdapter,
 ) -> None:

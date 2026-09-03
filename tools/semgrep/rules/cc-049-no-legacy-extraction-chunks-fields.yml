@@ -27,14 +27,11 @@ rules:
     languages: [python]
     paths:
       exclude:
-        # 0001 originally created the six columns; 0030 dropped them.
-        # Both migrations must reference the names by definition.
-        - "**/database/migrations/versions/0001_baseline.py"
-        - "**/database/migrations/versions/0030_llm_stage_progress.py"
-        - "**/tests/**/test_0030_llm_stage_progress.py"
         # The regression guard that asserts the six names are ABSENT from
-        # SourceResponse / SourceSummaryResponse has to spell them out.
-        # Same "references the names by definition" carve-out as above.
+        # SourceResponse / SourceSummaryResponse has to spell them out
+        # ("references the names by definition" carve-out).
+        # (The pre-squash 0001/0030 migration excludes are gone: today's
+        # squashed 0001_baseline never creates the six columns.)
         - "**/tests/**/test_sources_endpoint_legacy_fields_removed.py"
     pattern-either:
       # Bare-name identifier references (assignments, reads, function args).

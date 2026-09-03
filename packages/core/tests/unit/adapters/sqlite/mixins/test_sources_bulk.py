@@ -67,3 +67,15 @@ def test_delete_all_sources_scoped_to_database(adapter: SqliteAdapter) -> None:
 
 def test_delete_all_sources_empty_noop(adapter: SqliteAdapter) -> None:
     assert adapter.delete_all_sources(database_name="test") == 0
+
+
+def test_list_enabled_source_ids_scoped_and_filtered(adapter: SqliteAdapter) -> None:
+    """Single-column enabled-id projection: scoped to the active db, enabled only."""
+    _seed(adapter, "src-on", "test")
+    _seed(adapter, "src-off", "test")
+    _seed(adapter, "src-other", "other-db")
+    adapter.update_source_columns(
+        source_id="src-off", database_name="test", updates={"enabled": False}
+    )
+
+    assert adapter.list_enabled_source_ids() == {"src-on"}

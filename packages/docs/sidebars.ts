@@ -285,7 +285,7 @@ const sidebars: SidebarsConfig = {
     },
   ],
 
-  about: ["about/license", "about/changelog", "about/roadmap"],
+  about: ["about/license", "about/changelog", "about/roadmap", "about/privacy", "about/terms"],
 };
 
 export default sidebars;

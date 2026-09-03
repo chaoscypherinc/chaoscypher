@@ -6,11 +6,17 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   python-quality:
     name: Python Quality
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30 (was 20): the Architecture-rules step now runs the full lint-claude
+    # sweep (rule self-tests + import-linter + semgrep + AST checker), ~7 min
+    # warm on top of ruff/mypy — 20 was tight on a cold runner.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -38,7 +44,10 @@ jobs:
         run: uv run mypy packages/core/src packages/cortex/src packages/neuron/src packages/cli/src --config-file=pyproject.toml
 
       - name: Architecture rules
-        run: uv run python scripts/lint_claude_rules.py packages/
+        # Delegate to the local CI runner so all four enforcers run
+        # (rule self-tests, import-linter, semgrep, AST checker) —
+        # same single-source-of-truth pattern as the security job.
+        run: uv run python scripts/run_ci.py --steps lint-claude
 
   python-tests:
     name: Python Unit Tests
@@ -123,14 +132,17 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uv sync --all-packages --frozen
 
+      # Types must be generated before Lint/Test: src/types/generated/api.ts
+      # is gitignored, so it does not exist at checkout (run_ci.py orders
+      # `types` before `lint` for the same reason).
+      - name: Generate OpenAPI types
+        run: ../../scripts/generate-types.sh
+
       - name: Lint
         run: npm run lint
 
       - name: Test
         run: npm test -- --run
-
-      - name: Generate OpenAPI types
-        run: ../../scripts/generate-types.sh
 
       - name: Build
         run: npm run build

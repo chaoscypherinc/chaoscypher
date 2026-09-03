@@ -552,6 +552,28 @@ class CorsSettings(BaseModel):
         ),
     )
 
+    @model_validator(mode="after")
+    def _reject_wildcard_with_credentials(self) -> CorsSettings:
+        """Reject the wildcard-origin + credentials pair at validation time.
+
+        ``create_app`` treats ``allowed_origins=["*"]`` with
+        ``allow_credentials=True`` as fatal (SystemExit), so persisting the
+        pair via the settings PATCH would brick the next boot. Failing here
+        turns that into a clean 422 before the config is ever saved.
+
+        Raises:
+            ValueError: if a wildcard origin is combined with credentials.
+        """
+        if self.allow_credentials and "*" in self.allowed_origins:
+            msg = (
+                "CORS misconfiguration: allow_credentials=True with a wildcard "
+                'origin ("*") is invalid per the CORS spec and would prevent '
+                "the app from starting. Set explicit allowed_origins or "
+                "disable allow_credentials."
+            )
+            raise ValueError(msg)
+        return self
+
 
 class TLSSettings(BaseModel):
     """TLS certificate and Nginx configuration paths (all-in-one container)."""

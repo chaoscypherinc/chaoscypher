@@ -98,6 +98,8 @@ async def test_retry_single_page_success(fake_repo, fake_queue, fake_source_stor
 
     assert result["reset"] is True
     assert result["page_id"] == "p1"
+    # Hot-path projection: retry never reads the per-page LLM description.
+    fake_repo.list_pages.assert_called_once_with("s1", include_content=False)
     fake_repo.reset_for_retry.assert_called_once_with("p1")
     fake_queue.enqueue.assert_awaited_once()
     enqueue_kwargs = fake_queue.enqueue.await_args.kwargs
@@ -209,6 +211,43 @@ async def test_retry_single_page_already_pending_no_op(fake_repo, fake_queue, fa
 
 
 @pytest.mark.asyncio
+async def test_retry_refused_when_job_terminal(fake_repo, fake_queue, fake_source_storage):
+    """Terminal counters refuse retry even while the source reads vision_pending.
+
+    Terminal counters mean OP_VISION_FINALIZE is already enqueued, but the
+    source stays vision_pending until it dequeues — the status gate alone
+    accepts a retry in that window. Both entry points must fail fast.
+    """
+    fake_repo.get_job_by_source.return_value = {
+        "id": "j1",
+        "total_pages": 2,
+        "completed": 1,
+        "failed": 1,
+        "is_terminal": True,
+        "created_at": "2026-05-13T12:00:00Z",
+        "updated_at": "2026-05-13T12:01:00Z",
+    }
+    from chaoscypher_cortex.features.sources.vision_pages_service import (
+        VisionPagesService,
+    )
+
+    service = VisionPagesService(
+        repository=fake_repo,
+        source_storage=fake_source_storage,
+        queue_client=fake_queue,
+        database_name="test",
+    )
+
+    with pytest.raises(ConflictError, match="terminal"):
+        await service.retry_page(source_id="s1", page_number=1, region_index=0)
+    with pytest.raises(ConflictError, match="terminal"):
+        await service.retry_failed(source_id="s1")
+
+    fake_repo.reset_for_retry.assert_not_called()
+    fake_queue.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_retry_failed_batch_success(fake_repo, fake_queue, fake_source_storage):
     """Three pages: one FAILED + one TRUNCATED + one PENDING → only FAILED retried."""
     fake_repo.list_pages.return_value = [
@@ -231,6 +270,8 @@ async def test_retry_failed_batch_success(fake_repo, fake_queue, fake_source_sto
 
     assert result["retried_count"] == 1
     assert result["page_ids"] == ["p1"]
+    # Hot-path projection: the status filter never reads description.
+    fake_repo.list_pages.assert_called_once_with("s1", include_content=False)
     # Skipped: 1 TRUNCATED + 1 PENDING = 2.
     assert result["skipped_count"] == 2
     assert fake_queue.enqueue.await_count == 1

@@ -25,6 +25,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+from e2e.browser.conftest import ADMIN_PASSWORD, ADMIN_USERNAME, SESSION_COOKIE
+
 
 try:
     from playwright.sync_api import Browser, Page, expect
@@ -98,19 +100,41 @@ def _create_mobile_page(
         try:
             login_page.goto(browser_base_url + "/login")
             login_page.wait_for_load_state("domcontentloaded")
-            login_page.evaluate(
-                """async () => {
-                    await fetch("/api/v1/auth/login", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        credentials: "include",
-                        body: JSON.stringify({
-                            username: "e2e_admin",
-                            password: "E2eTestPass123",
-                        }),
-                    });
-                }"""
-            )
+            # Mirror conftest._inject_session: check the login result and
+            # retry past auth-zone 429s (nginx: 5 r/s) instead of silently
+            # discarding it — otherwise a rate-limited login leaves the
+            # context unauthenticated and the layout tests measure the
+            # login page instead of the target page.
+            for _attempt in range(20):
+                result = login_page.evaluate(
+                    """async ({ username, password }) => {
+                        const resp = await fetch("/api/v1/auth/login", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            credentials: "include",
+                            body: JSON.stringify({ username, password }),
+                        });
+                        return { status: resp.status, body: await resp.text() };
+                    }""",
+                    {"username": ADMIN_USERNAME, "password": ADMIN_PASSWORD},
+                )
+                if result.get("status") != 429:
+                    break
+                time.sleep(2.0)
+            if result.get("status") != 200:
+                msg = (
+                    f"Browser-side login failed: status={result.get('status')} "
+                    f"body={result.get('body', '')[:200]!r}"
+                )
+                raise RuntimeError(msg)
+            # Verify the cookie actually landed.
+            names = {c["name"] for c in context.cookies(browser_base_url)}
+            if SESSION_COOKIE not in names:
+                msg = (
+                    f"Browser did not retain {SESSION_COOKIE} cookie after "
+                    f"login. Cookies present: {sorted(names)}."
+                )
+                raise RuntimeError(msg)
         finally:
             login_page.close()
 
@@ -236,13 +260,26 @@ def seeded_app(browser_base_url: str, browser_session_cookie: str) -> dict:
         existing_sources = client.get("/api/v1/sources").json()
         if existing_sources["pagination"]["total"] == 0:
             with sample_txt.open("rb") as f:
-                client.post(
+                resp = client.post(
                     "/api/v1/sources",
                     files={"file": ("mobile_seed.txt", f, "text/plain")},
                     data={"extract_entities": "false"},
                 )
-            # Wait briefly for indexing
-            time.sleep(3)
+            # A rejected upload (409/422/507) would leave the table empty
+            # and the overflow tests measuring an empty state — the same
+            # silent-seeding failure the missing-file guard above fixes.
+            assert resp.status_code == 202, (
+                f"seed upload failed: {resp.status_code} {resp.text[:200]}"
+            )
+            # Poll until the source lists instead of a fixed sleep.
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                total = client.get("/api/v1/sources").json()["pagination"]["total"]
+                if total > 0:
+                    break
+                time.sleep(0.5)
+            else:
+                pytest.fail("seeded source never appeared in /api/v1/sources")
 
     return {"seeded": True}
 

@@ -58,12 +58,15 @@ class TaskListResponse(BaseModel):
     ``total_in_queue`` is a sibling of the pagination block, not a
     pagination metric: it counts active tasks (queued + running) across
     every matched queue regardless of which page is shown. The UI uses
-    it for the "N tasks in queue" indicator.
+    it for the "N tasks in queue" indicator. ``None`` means the count is
+    UNKNOWN (queue stats unavailable) — never substitute a fabricated
+    number for it: a page-length stand-in once made a 2,000-deep backlog
+    read as "50 tasks in queue" during a Valkey hiccup.
     """
 
     data: list[dict[str, Any]]
     pagination: PaginationMetadata
-    total_in_queue: int = 0
+    total_in_queue: int | None = 0
     queues: list[str] | None = None
 
 

@@ -14,6 +14,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy import bindparam, func
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select, update
 
@@ -24,6 +25,13 @@ from chaoscypher_core.ports.storage_chunks import ChunkStorageProtocol
 
 
 logger = structlog.get_logger(__name__)
+
+
+# Columns excluded from get_chunks_by_ids_batch() because they are large
+# (embedding is a ~5KB base64 BLOB per chunk, raw_content is the pre-cleanup
+# text). Search hydration and the tool handlers never need them; the
+# summarize handler opts back into embedding via include_embeddings=True.
+_HEAVY_CHUNK_COLUMNS: frozenset[str] = frozenset({"embedding", "raw_content"})
 
 
 class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
@@ -82,26 +90,48 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
             return self._entity_to_dict(chunk)
         return None
 
-    def get_chunks_by_ids_batch(self, chunk_ids: list[str]) -> list[dict[str, Any]]:
+    def get_chunks_by_ids_batch(
+        self, chunk_ids: list[str], *, include_embeddings: bool = False
+    ) -> list[dict[str, Any]]:
         """Fetch multiple chunks by UUID in one query (database-agnostic).
 
-        Batch sibling of ``get_chunk_by_id`` with the identical per-chunk
-        dict shape — used by SearchService to hydrate a page of chunk
-        results in one round trip instead of one SELECT per chunk.
-        (Distinct from ``get_chunks_by_ids``, which is database-scoped
-        and projects the extraction-handler subset of columns.)
+        Batch sibling of ``get_chunk_by_id`` — used by SearchService and the
+        tool handlers to hydrate a page of chunk results in one round trip
+        instead of one SELECT per chunk. (Distinct from
+        ``get_chunks_by_ids``, which is database-scoped and projects the
+        extraction-handler subset of columns.)
+
+        Projection: unlike ``get_chunk_by_id``, the heavy ``embedding``
+        (~5KB BLOB per chunk) and ``raw_content`` columns are excluded via
+        ``load_only()`` by default — the keys are absent from the returned
+        dicts. Pass ``include_embeddings=True`` when the caller needs the
+        embedding vectors (e.g. representative-chunk clustering);
+        ``raw_content`` is always excluded.
 
         Args:
             chunk_ids: Chunk UUIDs.
+            include_embeddings: Default False. When True, the ``embedding``
+                column is included in the projection.
 
         Returns:
-            Chunk dictionaries (``get_chunk_by_id`` shape) for every id
-            that exists, in input order. Missing ids are silently absent.
+            Chunk dictionaries (``get_chunk_by_id`` shape minus the excluded
+            columns) for every id that exists, in input order. Missing ids
+            are silently absent.
         """
         if not chunk_ids:
             return []
         self._ensure_connected()
-        statement = select(DocumentChunk).where(col(DocumentChunk.id).in_(chunk_ids))
+        excluded = _HEAVY_CHUNK_COLUMNS - ({"embedding"} if include_embeddings else set())
+        columns = [
+            getattr(DocumentChunk, attr.key)
+            for attr in sa_inspect(DocumentChunk).column_attrs
+            if attr.key not in excluded
+        ]
+        statement = (
+            select(DocumentChunk)
+            .options(load_only(*columns))
+            .where(col(DocumentChunk.id).in_(chunk_ids))
+        )
         rows = self.session.exec(statement).all()
         by_id = {chunk.id: chunk for chunk in rows}
         return [self._entity_to_dict(by_id[cid]) for cid in chunk_ids if cid in by_id]

@@ -32,7 +32,9 @@ repair_aof() {
 
     echo "[valkey-startup] AOF repair failed, removing corrupted AOF directory"
     rm -rf "$AOF_DIR"
-    touch /run/chaoscypher/valkey_was_wiped
+    # Sentinel contract: the Neuron worker's _consume_wipe_sentinel reads
+    # <data_dir>/.valkey_was_wiped (worker.py) to force queue rehydration.
+    touch /data/.valkey_was_wiped
     echo "[valkey-startup] Clean slate — Valkey will create fresh AOF files"
 }
 
@@ -59,7 +61,7 @@ fi
 # limiting moved out of env vars and into RateLimitSettings).
 #
 # Writes into /run/chaoscypher/ — the ephemeral runtime dir
-# (root:appuser, mode 755) shared with nginx and recreated on each boot.
+# (appuser:appuser, mode 700) shared with nginx and recreated on each boot.
 ACL_FILE="/run/chaoscypher/valkey-users.acl"
 PASSWORD_HASH=$(printf '%s' "$QUEUE_PASSWORD" | sha256sum | cut -d' ' -f1)
 (
@@ -73,8 +75,10 @@ EOF
 # process shell $VAR / ${VAR} — those are shell-only). The rendered
 # args file expects this wrapper to add the auth/ACL config and
 # --loglevel.
+# No log-prefix pipe here: the supervisord program that launches this
+# script already pipes through `log-prefix valkey` — a second pipe would
+# double the prefix and append every line to valkey.log twice.
 # shellcheck disable=SC2046
 exec valkey-server $(cat "$VALKEY_ARGS_FILE") \
     --aclfile "$ACL_FILE" \
-    --loglevel "${VALKEY_LOGLEVEL:-notice}" \
-    2>&1 | log-prefix valkey
+    --loglevel "${VALKEY_LOGLEVEL:-notice}"

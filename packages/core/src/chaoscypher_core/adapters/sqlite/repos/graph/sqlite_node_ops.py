@@ -375,6 +375,7 @@ class NodeOperationsMixin(GraphMixinBase):
         self,
         limit: int = 10000,
         include_disabled_sources: bool = False,
+        source_ids: list[str] | None = None,
     ) -> list[SimpleNamespace]:
         """List nodes with minimal fields for analytics (fast).
 
@@ -384,6 +385,12 @@ class NodeOperationsMixin(GraphMixinBase):
         Args:
             limit: Maximum number of results
             include_disabled_sources: If False (default), excludes nodes from disabled sources
+            source_ids: When set, restricts to nodes whose ``source_id`` is in
+                the list (nodes with no ``source_id`` are kept, matching the
+                scope semantics of the GraphRAG handlers). Applied in SQL so
+                the WHERE runs BEFORE ``limit`` — a Python post-filter on an
+                already-limited slice silently drops in-scope rows once the
+                graph exceeds the cap.
 
         Returns:
             List of SimpleNamespace objects with minimal node data (id, label, template_id)
@@ -406,6 +413,11 @@ class NodeOperationsMixin(GraphMixinBase):
         if not include_disabled_sources:
             statement = statement.outerjoin(SourceRow, GraphNode.source_id == SourceRow.id).where(
                 (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
+            )
+
+        if source_ids is not None:
+            statement = statement.where(
+                (GraphNode.source_id.is_(None)) | (col(GraphNode.source_id).in_(source_ids))
             )
 
         statement = statement.limit(limit)
@@ -564,8 +576,16 @@ class NodeOperationsMixin(GraphMixinBase):
             "errors": [],
         }
 
-    def get_nodes_batch(self, node_ids: list[str]) -> list[Node]:
-        """Get multiple nodes by ID in a single operation."""
+    def get_nodes_batch(self, node_ids: list[str], *, include_embedding: bool = True) -> list[Node]:
+        """Get multiple nodes by ID in a single operation.
+
+        ``include_embedding=False`` leaves the 1024-float JSON embedding
+        column out of the query entirely (same projection contract as
+        ``list_nodes``) — callers that hydrate search results or chat-tool
+        output never read it, and decoding it per node is the batch's
+        dominant cost. The default stays ``True`` because the import path
+        (``_fetch_nodes_by_ids``) genuinely needs embeddings.
+        """
         if not node_ids:
             return []
 
@@ -573,9 +593,26 @@ class NodeOperationsMixin(GraphMixinBase):
             GraphNode.database_name == self.database_name,
             col(GraphNode.id).in_(node_ids),
         )
+        if not include_embedding:
+            statement = statement.options(
+                load_only(
+                    GraphNode.id,
+                    GraphNode.database_name,
+                    GraphNode.graph_name,
+                    GraphNode.template_id,
+                    GraphNode.label,
+                    GraphNode.entity_type,
+                    GraphNode.properties,
+                    GraphNode.position_x,
+                    GraphNode.position_y,
+                    GraphNode.source_id,
+                    GraphNode.created_at,
+                    GraphNode.updated_at,
+                )
+            )
         db_nodes = self.session.exec(statement).all()
 
-        return [self._db_node_to_model(n) for n in db_nodes]
+        return [self._db_node_to_model(n, include_embedding=include_embedding) for n in db_nodes]
 
     def update_node_position(self, node_id: str, x: float, y: float) -> Node | None:
         """Update only the node's position (optimized for layout saving)."""

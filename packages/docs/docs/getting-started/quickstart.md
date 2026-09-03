@@ -28,6 +28,7 @@ docker run -d --name chaoscypher \
   -p 80:80 \
   -p 443:443 \
   -v chaoscypher-data:/data \
+  --add-host=host.docker.internal:host-gateway \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
 
@@ -408,7 +409,7 @@ Chaos Cypher supports multiple isolated databases:
 <TabItem value="web-ui" label="Web UI">
 
 
-1. Go to **Settings** → **Databases**
+1. Open the **Database** selector at the top of the **Settings** page
 2. Create a new database for a different project or topic
 3. Switch between databases — each has its own sources, graph, and chat history
 

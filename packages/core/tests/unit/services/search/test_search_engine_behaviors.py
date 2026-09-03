@@ -128,12 +128,23 @@ class TestGetEnabledSourceIds:
         svc = _make_search_service(sources_repository=None)
         assert svc._get_enabled_source_ids() == set()
 
-    def test_returns_enabled_ids(self) -> None:
+    def test_returns_enabled_ids_via_narrow_projection(self) -> None:
+        """The hot path is the single-column id query, never list_sources.
+
+        The old path ran the full 57-column list_sources at the 100k bulk
+        page size (plus COUNT + stage-progress hydration) on EVERY search.
+        """
         svc = _make_search_service()
-        svc.sources_repository.list_sources.return_value = (
-            _enabled_sources("a", "b"),
-            2,
-        )
+        svc.sources_repository.list_enabled_source_ids.return_value = {"a", "b"}
+        assert svc._get_enabled_source_ids() == {"a", "b"}
+        svc.sources_repository.list_sources.assert_not_called()
+
+    def test_falls_back_to_list_sources_for_legacy_repositories(self) -> None:
+        class _LegacyRepo:
+            def list_sources(self, **kwargs: object) -> tuple[list[dict[str, str]], int]:
+                return _enabled_sources("a", "b"), 2
+
+        svc = _make_search_service(sources_repository=_LegacyRepo())
         assert svc._get_enabled_source_ids() == {"a", "b"}
 
 

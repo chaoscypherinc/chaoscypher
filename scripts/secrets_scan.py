@@ -78,12 +78,23 @@ _CHUNK = 400
 
 
 def _run_gitleaks() -> int:
+    # gitleaks exits 1 for leaks; anything else non-zero (bad config,
+    # missing git objects) is a tooling failure, not a finding.
     result = subprocess.run(
         ["gitleaks", "detect", "--redact", "--verbose", "--no-banner"],
         cwd=REPO_ROOT,
         check=False,
     )
-    return 0 if result.returncode == 0 else 1
+    if result.returncode == 0:
+        return 0
+    if result.returncode == 1:
+        return 1
+    print(
+        f"secrets_scan: gitleaks exited {result.returncode} "
+        "— unrecognized status, treating as a tooling failure",
+        file=sys.stderr,
+    )
+    return 2
 
 
 def _tracked_files() -> list[str]:

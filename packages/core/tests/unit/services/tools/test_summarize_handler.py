@@ -145,9 +145,9 @@ class TestSummarizeHandler:
         self, mock_indexing, mock_search, mock_llm_chat, mock_embedding
     ):
         """Should retrieve chunks by search when no source_ids."""
-        mock_indexing.get_chunk_by_id.side_effect = lambda cid: _make_chunk(
-            int(cid.split("-")[-1]), source_id="src1"
-        )
+        mock_indexing.get_chunks_by_ids_batch.side_effect = lambda chunk_ids, **_kwargs: [
+            _make_chunk(int(cid.split("-")[-1]), source_id="src1") for cid in chunk_ids
+        ]
 
         handlers = SummarizeToolHandlers(
             indexing_repository=mock_indexing,

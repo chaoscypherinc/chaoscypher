@@ -86,6 +86,28 @@ class SourceStorageProtocol(Protocol):
 
             None if not found
 
+        Notes:
+            - Heavy text columns (``commit_payload``, ``full_text``) are
+              excluded — fetch them via the narrow accessors
+              (``get_source_commit_payload`` / ``get_source_full_text``).
+
+        """
+        ...
+
+    def get_source_full_text(self, source_id: str, database_name: str) -> str | None:
+        """Read the full raw text for a source (narrow projection).
+
+        ``get_source`` excludes the heavy ``full_text`` column; callers
+        that need the raw upload text (e.g. the CCX exporter) fetch it
+        through this accessor instead.
+
+        Args:
+            source_id: Source UUID
+            database_name: Database that owns the source
+
+        Returns:
+            The stored full text, or ``None`` if the source does not
+            exist or has no full text persisted.
         """
         ...
 
@@ -205,6 +227,15 @@ class SourceStorageProtocol(Protocol):
         Returns:
             True if deleted, False if not found
 
+        """
+        ...
+
+    def list_enabled_source_ids(self) -> set[str]:
+        """Return the ids of all enabled sources in the active database.
+
+        Single-column projection for hot per-request filters (the search
+        engine calls this on every keyword/semantic/hybrid search). Must
+        not hydrate stage progress or any wide columns.
         """
         ...
 

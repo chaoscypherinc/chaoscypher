@@ -2,7 +2,12 @@
 
 import textwrap
 
-from generate_api_docs import escape_table_cell, sanitize_docstring
+import griffe
+from generate_api_docs import (
+    escape_table_cell,
+    format_signature_params,
+    sanitize_docstring,
+)
 
 
 class TestEscapeTableCell:
@@ -85,3 +90,62 @@ class TestSanitizeDocstring:
         # The fence must close before the next arg — it must not be swallowed.
         closing_fence = result.index("```", result.index('{"key"'))
         assert closing_fence < result.index("other: second arg.")
+
+
+class TestFormatSignatureParams:
+    """Signatures must preserve `/`, `*`, `*args`, and `**kwargs` markers."""
+
+    @staticmethod
+    def _func(*params):
+        return griffe.Function("f", parameters=griffe.Parameters(*params))
+
+    def test_keyword_only_gets_bare_star(self):
+        func = self._func(
+            griffe.Parameter("a", kind=griffe.ParameterKind.positional_or_keyword),
+            griffe.Parameter("b", kind=griffe.ParameterKind.keyword_only),
+        )
+        assert format_signature_params(func) == "a, *, b"
+
+    def test_var_positional_and_var_keyword(self):
+        func = self._func(
+            griffe.Parameter("args", kind=griffe.ParameterKind.var_positional),
+            griffe.Parameter("kwargs", kind=griffe.ParameterKind.var_keyword),
+        )
+        assert format_signature_params(func) == "*args, **kwargs"
+
+    def test_var_positional_suppresses_bare_star(self):
+        func = self._func(
+            griffe.Parameter("args", kind=griffe.ParameterKind.var_positional),
+            griffe.Parameter("b", kind=griffe.ParameterKind.keyword_only),
+        )
+        assert format_signature_params(func) == "*args, b"
+
+    def test_positional_only_gets_slash(self):
+        func = self._func(
+            griffe.Parameter("a", kind=griffe.ParameterKind.positional_only),
+            griffe.Parameter("b", kind=griffe.ParameterKind.positional_or_keyword),
+        )
+        assert format_signature_params(func) == "a, /, b"
+
+    def test_self_dropped_and_kwonly_annotation_default_kept(self):
+        func = self._func(
+            griffe.Parameter("self", kind=griffe.ParameterKind.positional_or_keyword),
+            griffe.Parameter(
+                "x",
+                annotation="int",
+                default="0",
+                kind=griffe.ParameterKind.keyword_only,
+            ),
+        )
+        assert format_signature_params(func) == "*, x: int = 0"
+
+    def test_var_keyword_default_suppressed(self):
+        func = self._func(
+            griffe.Parameter(
+                "kwargs",
+                annotation="Any",
+                default="{}",
+                kind=griffe.ParameterKind.var_keyword,
+            ),
+        )
+        assert format_signature_params(func) == "**kwargs: Any"

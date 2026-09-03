@@ -24,11 +24,14 @@ cd "${REPO_ROOT}"
 # The editable install may point at a different checkout — force sys.path
 # to the current worktree's packages so we capture THIS tree's schema.
 #
-# NOTE: On Windows the PYTHONPATH separator is ';', but bash running under Git
-# Bash / MSYS2 treats ';' correctly too.  Using ';' here is safe on all
-# platforms because Python's site.py processes PYTHONPATH before any OS
-# path-splitting logic.
-PYTHONPATH="${REPO_ROOT}/packages/core/src;${REPO_ROOT}/packages/cortex/src${PYTHONPATH:+;${PYTHONPATH}}" \
+# NOTE: Python splits PYTHONPATH on os.pathsep — ':' on POSIX, ';' only on
+# native Windows. A ';'-joined value on Linux/macOS becomes one nonexistent
+# sys.path entry and the worktree pin silently does nothing.
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) PYSEP=';' ;;
+    *) PYSEP=':' ;;
+esac
+PYTHONPATH="${REPO_ROOT}/packages/core/src${PYSEP}${REPO_ROOT}/packages/cortex/src${PYTHONPATH:+${PYSEP}${PYTHONPATH}}" \
 uv run --project "${REPO_ROOT}" python - <<PY
 import json
 import os

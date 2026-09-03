@@ -35,6 +35,7 @@ curl http://localhost/api/v1/tools/system?category=extraction&is_active=true
   {
     "id": "extract_entities",
     "category": "extraction",
+    "icon": null,
     "name": "Entity Extraction",
     "description": "Extract entities and relationships from source documents",
     "version": "1.0.0",
@@ -73,6 +74,7 @@ curl http://localhost/api/v1/tools/system/extract_entities
 {
   "id": "extract_entities",
   "category": "extraction",
+  "icon": null,
   "name": "Entity Extraction",
   "description": "Extract entities and relationships from source documents",
   "input_schema": {

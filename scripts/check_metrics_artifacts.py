@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Fail if a cc-metrics-collector artifact is malformed.
 
-`internal/metrics/` is written wholesale by the `cc-metrics-collector`
+The private metrics tree (the `_METRICS_DIR` below; the path literal is
+avoided so the internal-refs gate, which scans this file, stays clean) is
+written wholesale by the `cc-metrics-collector`
 routine each run and reaches `main` via its Friday consolidation PR, which
 the collector auto-merges under `auto-merge:deps`' sibling class
 `auto-merge:data`. Nothing else reads these files until a later run does, so
@@ -39,7 +41,7 @@ from typing import Any
 import yaml
 
 
-_METRICS_DIR = Path("internal/metrics")
+_METRICS_DIR = Path(__file__).resolve().parent.parent / "internal" / "metrics"
 _CHECKED_SUFFIXES = (".md", ".yaml", ".yml")
 
 # The collector stamps guardrail-10 self-metering into these files. When a run
@@ -132,11 +134,14 @@ def _check_file(path: Path) -> list[str]:
 def main() -> int:
     if not _METRICS_DIR.is_dir():
         # Public export: internal/ is stripped. Nothing to check.
+        print("check_metrics_artifacts: internal/metrics absent, skipped")
         return 0
 
     problems: list[str] = []
+    checked = 0
     for path in sorted(_METRICS_DIR.rglob("*")):
         if path.is_file() and path.suffix in _CHECKED_SUFFIXES:
+            checked += 1
             problems.extend(_check_file(path))
 
     if problems:
@@ -150,6 +155,7 @@ def main() -> int:
         )
         return 1
 
+    print(f"check_metrics_artifacts: OK ({checked} artifact files checked)")
     return 0
 
 

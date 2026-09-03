@@ -217,6 +217,8 @@ const config: Config = {
             { label: "Blog", to: "/blog" },
             { label: "Changelog", to: "/docs/about/changelog" },
             { label: "Roadmap", to: "/docs/about/roadmap" },
+            { label: "Privacy", to: "/docs/about/privacy" },
+            { label: "Terms", to: "/docs/about/terms" },
           ],
         },
       ],

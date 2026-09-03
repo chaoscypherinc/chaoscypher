@@ -253,12 +253,71 @@ async def test_adapter_calls_run_off_event_loop_thread() -> None:
             stuck = datetime.now(UTC) - timedelta(seconds=DEFAULT_STUCK_THRESHOLD_SECONDS + 60)
             return [{"id": "chat-threaded", "updated_at": stuck}]
 
-        def update_chat(self, chat_id: str, updates: dict[str, Any]) -> None:
-            call_threads["update_chat"] = threading.get_ident()
+        def mark_chat_error_if_processing(self, chat_id: str) -> bool:
+            call_threads["mark_chat_error_if_processing"] = threading.get_ident()
+            return True
 
     adapter = cast("Any", _RecordingAdapter())
     recovered = await reconcile_stuck_chats(adapter, "threading-db")
 
     assert recovered == 1
     assert call_threads["list_chats"] != loop_thread
-    assert call_threads["update_chat"] != loop_thread
+    assert call_threads["mark_chat_error_if_processing"] != loop_thread
+
+
+# ============================================================
+# The flip is a CAS: completed-during-sweep chats stay 'active'
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_chat_completing_during_sweep_keeps_active_status(in_memory_adapter) -> None:
+    """A worker finishing between the snapshot and the flip must win.
+
+    The sweeper snapshots up to 10k processing rows, then runs the
+    liveness gate per chat; a turn that completes in that window sets
+    'active'. A blind update_chat stamped 'error' over the finished
+    answer — the guarded CAS must lose the race instead.
+    """
+    _seed_processing_chat(
+        in_memory_adapter,
+        chat_id="chat-finishing",
+        age_seconds=DEFAULT_STUCK_THRESHOLD_SECONDS + 60,
+    )
+
+    queue = AsyncMock()
+
+    async def _task_gone_and_chat_completed(**_kwargs: Any) -> bool:
+        # Model the worker completing exactly in the gate window: the
+        # queue task is gone AND the row now reads 'active'.
+        in_memory_adapter.update_chat("chat-finishing", {"status": "active"})
+        return False
+
+    queue.task_exists_for_chat = AsyncMock(side_effect=_task_gone_and_chat_completed)
+
+    recovered = await reconcile_stuck_chats(
+        in_memory_adapter,
+        in_memory_adapter.database_name,
+        queue_client=queue,
+    )
+
+    assert recovered == 0
+    chat = in_memory_adapter.get_chat("chat-finishing", in_memory_adapter.database_name)
+    assert chat is not None
+    assert chat["status"] == "active", (
+        "sweeper stamped 'error' over a successfully-completed answer"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_chat_error_if_processing_is_guarded(in_memory_adapter) -> None:
+    """Mixin-level contract: flips only processing rows, reports the race."""
+    _seed_processing_chat(in_memory_adapter, chat_id="chat-cas", age_seconds=10)
+
+    assert in_memory_adapter.mark_chat_error_if_processing("chat-cas") is True
+    chat = in_memory_adapter.get_chat("chat-cas", in_memory_adapter.database_name)
+    assert chat is not None and chat["status"] == "error"
+
+    # Already error -> guard refuses; unknown id -> refuses.
+    assert in_memory_adapter.mark_chat_error_if_processing("chat-cas") is False
+    assert in_memory_adapter.mark_chat_error_if_processing("nope") is False

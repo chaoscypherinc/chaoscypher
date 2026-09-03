@@ -170,7 +170,7 @@ The system fetches the page, extracts clean text content, and processes it like 
 | **Text** | Plain text (.txt), Markdown (.md), Log files (.log) |
 | **Web / Markup** | HTML (.html / .htm / .xhtml), reStructuredText (.rst) |
 | **Data** | CSV, JSON, JSONL, NDJSON |
-| **Images** | JPEG, PNG, GIF, WebP, TIFF, BMP (text extracted via OCR) |
+| **Images** | JPEG, PNG, GIF, WebP, TIFF, BMP (described by the vision LLM) |
 | **Audio** | MP3, WAV, M4A, FLAC, OGG, WMA, AAC (transcribed to text) |
 | **Video** | MP4, MKV, AVI, MOV, WebM, WMV, FLV (audio extracted and transcribed) |
 | **Archives** | ZIP, TAR.GZ (files extracted and processed individually) |

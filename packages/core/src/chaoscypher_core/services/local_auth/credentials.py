@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import secrets
 import threading
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict
 
@@ -24,10 +25,12 @@ from chaoscypher_core.services.local_auth.errors import (
     InvalidPassword,
     UsernameMismatch,
 )
+from chaoscypher_core.utils.filelock import lock_file, unlock_file
 from chaoscypher_core.utils.secure_write import atomic_secret_write
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -81,6 +84,32 @@ class CredentialsFile:
         self._path = path
         self._lock = threading.Lock()
 
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Serialize a read-modify-write cycle across threads AND processes.
+
+        ``_atomic_write`` makes each single write atomic, but every mutator
+        is load -> mutate -> write; the in-process ``threading.Lock`` alone
+        left that pair unserialized across uvicorn workers (supported up to
+        8), where a ``touch_api_key`` rewrite in one worker silently
+        clobbered a concurrent ``bump_session_epoch`` in another — keeping
+        the cookie that logout was supposed to invalidate valid until its
+        TTL. Matches the cross-process flock precedent of
+        ``database/engine.py`` (``.init.lock``) and ``cortex/lifespan.py``.
+        The sidecar lock file is deliberately never unlinked: flock binds
+        to the inode, and recycling the path hands a fresh, instantly
+        lockable inode to the next process.
+        """
+        with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            lock_path = self._path.with_suffix(self._path.suffix + ".lock")
+            with open(lock_path, "w", encoding="utf-8") as handle:
+                lock_file(handle, blocking=True)
+                try:
+                    yield
+                finally:
+                    unlock_file(handle)
+
     def is_initialized(self) -> bool:
         """Return True if the credentials file exists on disk."""
         return self._path.exists()
@@ -96,7 +125,7 @@ class CredentialsFile:
             CredentialsAlreadyInitialized: If the credentials file already exists.
 
         """
-        with self._lock:
+        with self._locked():
             if self._path.exists():
                 msg = f"Credentials already initialized at {self._path}"
                 raise CredentialsAlreadyInitialized(msg)
@@ -148,7 +177,7 @@ class CredentialsFile:
             InvalidPassword: If ``old_password`` does not verify.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             if data["user"]["username"] != username:
                 raise UsernameMismatch(username)
@@ -173,7 +202,7 @@ class CredentialsFile:
             InvalidPassword: If ``password`` does not verify.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             if data["user"]["username"] != old_username:
                 raise UsernameMismatch(old_username)
@@ -193,7 +222,7 @@ class CredentialsFile:
             CredentialsNotInitialized: If no credentials file exists.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             data["session_epoch"] = int(data.get("session_epoch", 0)) + 1
             self._atomic_write(data)
@@ -230,7 +259,7 @@ class CredentialsFile:
             CredentialsNotInitialized: If no credentials file exists.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             key_id = f"k_{secrets.token_hex(8)}"
             record: ApiKeyRecord = {
@@ -277,7 +306,7 @@ class CredentialsFile:
             ApiKeyNotFound: If no key with ``key_id`` exists.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             before = len(data["api_keys"])
             data["api_keys"] = [rec for rec in data["api_keys"] if rec["id"] != key_id]
@@ -295,7 +324,7 @@ class CredentialsFile:
             CredentialsNotInitialized: If no credentials file exists.
 
         """
-        with self._lock:
+        with self._locked():
             data = self._load()
             for rec in data["api_keys"]:
                 if rec["id"] == key_id:

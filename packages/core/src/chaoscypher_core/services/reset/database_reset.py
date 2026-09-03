@@ -67,30 +67,52 @@ class DatabaseResetService:
             / self.database_name
         )
 
-        # Delete app.db and SQLite WAL files (db_path already resolved above)
-        if db_path.exists():
-            db_path.unlink()
-            logger.info("database_file_deleted", db_path=str(db_path))
+        # Destructive section. From the first unlink onward the app has no
+        # schema until init_database() runs, so a filesystem failure here
+        # (open handle, permissions, read-only mount) must still reinitialize
+        # before the exception propagates to the queue task — otherwise the
+        # next connection opens a fresh empty app.db and every query fails
+        # "no such table" until a manual process restart.
+        try:
+            # Delete app.db and SQLite WAL files (db_path already resolved above)
+            if db_path.exists():
+                db_path.unlink()
+                logger.info("database_file_deleted", db_path=str(db_path))
 
-        # Also delete WAL files to ensure clean state
-        wal_path = db_path.with_suffix(".db-wal")
-        shm_path = db_path.with_suffix(".db-shm")
-        for wal_file in [wal_path, shm_path]:
-            if wal_file.exists():
-                wal_file.unlink()
-                logger.info("wal_file_deleted", wal_path=str(wal_file))
+            # Also delete WAL files to ensure clean state
+            wal_path = db_path.with_suffix(".db-wal")
+            shm_path = db_path.with_suffix(".db-shm")
+            for wal_file in [wal_path, shm_path]:
+                if wal_file.exists():
+                    wal_file.unlink()
+                    logger.info("wal_file_deleted", wal_path=str(wal_file))
 
-        # Remove residual graphs/ directory if present (from earlier deployments)
-        graphs_dir = db_dir / "graphs"
-        if graphs_dir.exists():
-            shutil.rmtree(graphs_dir)
-            logger.info("graphs_directory_deleted", graphs_dir=str(graphs_dir))
+            # Remove residual graphs/ directory if present (from earlier deployments)
+            graphs_dir = db_dir / "graphs"
+            if graphs_dir.exists():
+                shutil.rmtree(graphs_dir)
+                logger.info("graphs_directory_deleted", graphs_dir=str(graphs_dir))
 
-        # Delete import files
-        imports_dir = db_dir / "imports"
-        if imports_dir.exists():
-            shutil.rmtree(imports_dir)
-            logger.info("imports_directory_deleted", imports_dir=str(imports_dir))
+            # Delete import files
+            imports_dir = db_dir / "imports"
+            if imports_dir.exists():
+                shutil.rmtree(imports_dir)
+                logger.info("imports_directory_deleted", imports_dir=str(imports_dir))
+        except Exception:
+            try:
+                init_database(self.database_name)
+                logger.warning(
+                    "database_reinitialized_after_failed_reset",
+                    database_name=self.database_name,
+                )
+            except Exception:
+                # Keep the original failure as the propagating exception —
+                # it names the file that could not be deleted.
+                logger.exception(
+                    "database_reinit_after_failed_reset_failed",
+                    database_name=self.database_name,
+                )
+            raise
 
         # Clear queue history
         logger.info("clearing_queue_history")

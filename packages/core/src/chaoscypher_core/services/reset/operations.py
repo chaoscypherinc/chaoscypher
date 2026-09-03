@@ -106,8 +106,31 @@ def _reset_knowledge_graph(database_name: str, stats: dict[str, object]) -> None
         finally:
             adapter.disconnect()
 
+        # The clear_all above committed inside its own transaction, so the
+        # template delete is already durable when this line runs: a seed
+        # failure here would leave the database with ZERO node templates —
+        # every node type gone — with the queue reporting "failed" and no
+        # repairer. seed_default_templates is documented idempotent, so
+        # retry once before giving up, and raise a typed error that names
+        # the recovery action instead of a bare traceback.
         logger.info("reseeding_default_templates")
-        seed_default_templates(database_name)
+        try:
+            seed_default_templates(database_name)
+        except Exception:
+            logger.warning("default_template_seed_failed_retrying", exc_info=True)
+            try:
+                seed_default_templates(database_name)
+            except Exception as retry_exc:
+                from chaoscypher_core.exceptions import OperationError
+
+                msg = (
+                    f"knowledge-graph reset cleared database "
+                    f"{database_name!r} but reseeding the default templates "
+                    f"failed twice — the database currently has no node "
+                    f"templates. Re-run the reset (safe: reseeding is "
+                    f"idempotent) once the underlying error is resolved."
+                )
+                raise OperationError(msg) from retry_exc
         logger.info("default_templates_reseeded")
     except Exception:
         logger.exception("knowledge_graph_reset_failed")

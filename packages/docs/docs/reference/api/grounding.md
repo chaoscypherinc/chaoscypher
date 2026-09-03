@@ -100,6 +100,7 @@ curl -X GET "http://localhost/api/v1/graph/grounding/nodes?template_id=person&pa
 | `id` | string | Unique node identifier |
 | `label` | string | Human-readable label/title |
 | `template_id` | string | Template type this node follows |
+| `entity_type` | string or null | Extracted entity type (e.g. `Person`); `null` on legacy nodes |
 | `properties` | object | Key-value property map |
 | `position` | object or null | Graph canvas position (`x`, `y`) |
 | `source_id` | string or null | Source document this node was extracted from |

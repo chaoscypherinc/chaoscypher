@@ -2,13 +2,13 @@
 #
 # Same shape as ./settings.yaml but points cortex at the host's real
 # Ollama instance (via ``host.docker.internal``) instead of the
-# in-network fake-ollama service. Activated by running:
+# in-network fake-ollama service. Activated via the overlay compose file
+# (see docker-compose.real-llm.yml's own header):
 #
-#   E2E_SETTINGS=settings.real-llm.yaml docker compose -f docker-compose.yml up
+#   docker compose -f docker-compose.yml -f docker-compose.real-llm.yml up -d
 #
-# (the docker-compose ``real-llm`` profile maps this onto the
-# read-only sidecar mount). Tests then run with E2E_REAL_LLM=1 so
-# test_real_llm_smoke.py picks them up.
+# Tests then run with E2E_REAL_LLM=1 so test_real_llm_smoke.py picks
+# them up.
 #
 # Model names below are sensible defaults for a 16 GB consumer GPU.
 # Operators with different hardware can edit this file or pull

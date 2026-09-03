@@ -135,8 +135,13 @@ def test_rate_limit_enabled_emits_zones() -> None:
     settings.rate_limit.login_max_requests = 7
     settings.rate_limit.api_general_max_requests = 200
     out = render_template("nginx-http.conf", settings)
-    assert "rate=7r/s" in out
+    # Auth zone renders the per-WINDOW policy as r/m (7 per 60s -> 7r/m);
+    # rendering it as r/s was the 60x-policy-gap regression. Per-second
+    # zones (api_general, window=1s) still render r/s.
+    assert "zone=auth:10m rate=7r/m" in out
+    assert "zone=setup:10m rate=3r/m" in out
     assert "rate=200r/s" in out
+    assert "rate=7r/s" not in out
 
 
 def test_rate_limit_emits_mutations_zone_with_per_method_key_map() -> None:
@@ -180,6 +185,25 @@ def test_rate_limit_emits_mutations_zone_with_per_method_key_map() -> None:
         # Applied inside the catch-all /api/ location alongside api_general.
         assert "limit_req zone=mutations burst=25 nodelay;" in out, (
             f"{template_name}: mutations limit_req directive missing or wrong burst"
+        )
+
+
+def test_health_location_is_rate_limited() -> None:
+    """The soft-auth /api/v1/health location must carry limit_req.
+
+    Its ``auth_request`` subrequest runs a bcrypt comparison per stored API key
+    for every request, so without a limit an unauthenticated LAN host can drive
+    unbounded bcrypt work through the healthcheck endpoint.
+    """
+    settings = Settings()
+    settings.rate_limit.enabled = True
+    for template_name in ("nginx-http.conf", "nginx-https.conf"):
+        out = render_template(template_name, settings)
+        idx = out.find("location = /api/v1/health")
+        assert idx != -1, template_name
+        block = out[idx : out.index("}", idx)]
+        assert "limit_req zone=api_general burst=50 nodelay;" in block, (
+            f"{template_name}: health location must rate-limit its auth_request"
         )
 
 

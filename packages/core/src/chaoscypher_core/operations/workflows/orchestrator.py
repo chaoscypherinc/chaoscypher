@@ -259,83 +259,94 @@ async def execute_workflow_task(
     from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
 
     exec_adapter = get_sqlite_adapter(database_name=database_name)
-    execution_repo = WorkflowExecutionRepository(exec_adapter)
+    # Everything before the main try/finally below must not leak the
+    # adapter session: validation raises (missing workflow, deleted tool
+    # references, invalid inputs, inactive workflow) and the zero-step
+    # return are common exits, and get_sqlite_adapter registers no
+    # cleanup outside a request context (workers always take that
+    # branch).
+    try:
+        execution_repo = WorkflowExecutionRepository(exec_adapter)
 
-    # 1. Get workflow and steps
-    workflow = workflow_service.get_workflow(workflow_id)
-    if not workflow:
-        raise NotFoundError("Workflow", workflow_id)
+        # 1. Get workflow and steps
+        workflow = workflow_service.get_workflow(workflow_id)
+        if not workflow:
+            raise NotFoundError("Workflow", workflow_id)
 
-    # 2. Get workflow steps (needed for validation)
-    steps = workflow_service.list_workflow_steps(workflow_id)
-    steps.sort(key=lambda s: s["step_number"])
+        # 2. Get workflow steps (needed for validation)
+        steps = workflow_service.list_workflow_steps(workflow_id)
+        steps.sort(key=lambda s: s["step_number"])
 
-    # Validate tool references at execution time (tools may have been deleted after import)
-    if tool_service is not None:
-        available_system = {t["id"] for t in tool_service.list_system_tools()}
-        available_user = {t["id"] for t in tool_service.list_user_tools()}
-        missing: list[str] = []
-        for step in steps:
-            tool_type = step.get("tool_type")
-            tool_id = step.get("tool_id")
-            if tool_type in ("system_tool", "SYSTEM_TOOL") and tool_id not in available_system:
-                missing.append(f"system_tool:{tool_id}")
-            elif tool_type in ("user_tool", "USER_TOOL") and tool_id not in available_user:
-                missing.append(f"user_tool:{tool_id}")
-            # workflow type is validated by the nested-workflow path itself
-        if missing:
-            msg = f"Workflow references unknown tools: {', '.join(missing)}"
+        # Validate tool references at execution time (tools may have been deleted after import)
+        if tool_service is not None:
+            available_system = {t["id"] for t in tool_service.list_system_tools()}
+            available_user = {t["id"] for t in tool_service.list_user_tools()}
+            missing: list[str] = []
+            for step in steps:
+                tool_type = step.get("tool_type")
+                tool_id = step.get("tool_id")
+                if tool_type in ("system_tool", "SYSTEM_TOOL") and tool_id not in available_system:
+                    missing.append(f"system_tool:{tool_id}")
+                elif tool_type in ("user_tool", "USER_TOOL") and tool_id not in available_user:
+                    missing.append(f"user_tool:{tool_id}")
+                # workflow type is validated by the nested-workflow path itself
+            if missing:
+                msg = f"Workflow references unknown tools: {', '.join(missing)}"
+                logger.error(
+                    "workflow_tool_references_missing",
+                    workflow_id=workflow_id,
+                    missing=missing,
+                )
+                raise ValidationError(msg, details={"missing_tools": missing})
+
+        # Merge steps into workflow for validation (validator expects 'steps' field)
+        workflow_with_steps = {**workflow, "steps": steps}
+
+        # 3. Validate workflow and inputs
+        workflow_errors = WorkflowValidator.validate_workflow(workflow_with_steps)
+        if workflow_errors:
+            error_msg = f"Invalid workflow: {'; '.join(workflow_errors)}"
             logger.error(
-                "workflow_tool_references_missing",
+                "workflow_validation_failed",
                 workflow_id=workflow_id,
-                missing=missing,
+                errors=workflow_errors,
             )
-            raise ValidationError(msg, details={"missing_tools": missing})
+            raise ValidationError(error_msg, details={"errors": workflow_errors})
 
-    # Merge steps into workflow for validation (validator expects 'steps' field)
-    workflow_with_steps = {**workflow, "steps": steps}
+        input_errors = WorkflowValidator.validate_inputs(workflow_with_steps, inputs)
+        if input_errors:
+            error_msg = f"Invalid inputs: {'; '.join(input_errors)}"
+            logger.error(
+                "workflow_input_validation_failed",
+                workflow_id=workflow_id,
+                errors=input_errors,
+            )
+            raise ValidationError(error_msg, details={"errors": input_errors})
 
-    # 3. Validate workflow and inputs
-    workflow_errors = WorkflowValidator.validate_workflow(workflow_with_steps)
-    if workflow_errors:
-        error_msg = f"Invalid workflow: {'; '.join(workflow_errors)}"
-        logger.error(
-            "workflow_validation_failed",
+        if not workflow.get("is_active"):
+            msg = f"Workflow {workflow_id} is not active"
+            raise ValidationError(msg, details={"workflow_id": workflow_id})
+
+        if not steps:
+            logger.warning("workflow_has_no_steps", workflow_id=workflow_id)
+            exec_adapter.disconnect()
+            return {"success": True, "outputs": {}, "message": "No steps to execute"}
+
+        # 4. Use existing execution record or create new one
+        execution_id = await _ensure_execution_record(
+            execution_repo=execution_repo,
+            execution_id=execution_id,
             workflow_id=workflow_id,
-            errors=workflow_errors,
+            triggered_by=triggered_by,
+            trigger_id=trigger_id,
+            parent_execution_id=parent_execution_id,
+            inputs=inputs,
         )
-        raise ValidationError(error_msg, details={"errors": workflow_errors})
 
-    input_errors = WorkflowValidator.validate_inputs(workflow_with_steps, inputs)
-    if input_errors:
-        error_msg = f"Invalid inputs: {'; '.join(input_errors)}"
-        logger.error(
-            "workflow_input_validation_failed",
-            workflow_id=workflow_id,
-            errors=input_errors,
-        )
-        raise ValidationError(error_msg, details={"errors": input_errors})
-
-    if not workflow.get("is_active"):
-        msg = f"Workflow {workflow_id} is not active"
-        raise ValidationError(msg, details={"workflow_id": workflow_id})
-
-    if not steps:
-        logger.warning("workflow_has_no_steps", workflow_id=workflow_id)
-        return {"success": True, "outputs": {}, "message": "No steps to execute"}
-
-    # 4. Use existing execution record or create new one
-    execution_id = await _ensure_execution_record(
-        execution_repo=execution_repo,
-        execution_id=execution_id,
-        workflow_id=workflow_id,
-        triggered_by=triggered_by,
-        trigger_id=trigger_id,
-        parent_execution_id=parent_execution_id,
-        inputs=inputs,
-    )
-
-    start_time = datetime.now(UTC)
+        start_time = datetime.now(UTC)
+    except BaseException:
+        exec_adapter.disconnect()
+        raise
 
     try:
         # 5. Update status to running. ``update_status`` runs a

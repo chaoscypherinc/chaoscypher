@@ -157,9 +157,12 @@ async def test_run_indexing_persists_full_text_to_source_row(
 
     row = sqlite_adapter.get_source(prepared_source_id, "default")
     assert row is not None, "source row should exist after indexing"
-    assert row["full_text"] == original, (
+    # get_source excludes the heavy full_text column; the narrow accessor
+    # is the export path's way to read it.
+    full_text = sqlite_adapter.get_source_full_text(prepared_source_id, "default")
+    assert full_text == original, (
         "sources.full_text must equal the raw pre-chunking loader text so the "
-        f"CCX exporter can slice it with chunk offsets (got {row['full_text']!r})"
+        f"CCX exporter can slice it with chunk offsets (got {full_text!r})"
     )
 
 
@@ -209,7 +212,8 @@ async def test_run_indexing_skips_full_text_when_preserve_toggle_off(
 
     row = sqlite_adapter.get_source(prepared_source_id, "default")
     assert row is not None
-    assert row["full_text"] is None, (
+    full_text = sqlite_adapter.get_source_full_text(prepared_source_id, "default")
+    assert full_text is None, (
         "full_text must stay NULL when preserve_original_text_for_citations is "
-        f"off (got {row['full_text']!r})"
+        f"off (got {full_text!r})"
     )

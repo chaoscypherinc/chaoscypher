@@ -93,6 +93,7 @@ chaoscypher diagnostics [OPTIONS]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--output PATH` | `-o` | Output path for the ZIP file (default: current directory) |
+| `--database DATABASE` | `-d` | Database to collect (default: the active database) |
 
 ### Default Filename
 

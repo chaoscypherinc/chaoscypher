@@ -72,3 +72,66 @@ async def test_run_async_invokes_coroutine_and_returns_value() -> None:
 
     result = await policy.run_async(add_async, 2, 3)
     assert result == 5
+
+
+def test_run_sync_labels_logs_with_fn_qualname(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The policy forwards a real operation label, not the 'transaction' default.
+
+    Previously neither entry point forwarded ``operation_name``, so every
+    SQLite-lock retry/exhaustion log in the repo read operation="transaction".
+    """
+    from chaoscypher_core.utils import retry as retry_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_retry_sync(fn, *args, **kwargs):
+        captured.update(kwargs)
+        return fn(*args)
+
+    monkeypatch.setattr(retry_mod, "retry_on_db_lock_sync", fake_retry_sync)
+
+    def commit_everything() -> str:
+        return "ok"
+
+    assert DbLockRetryPolicy().run_sync(commit_everything) == "ok"
+    assert (
+        captured["operation_name"]
+        == "test_run_sync_labels_logs_with_fn_qualname.<locals>.commit_everything"
+    )
+
+
+def test_run_sync_explicit_operation_name_wins(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chaoscypher_core.utils import retry as retry_mod
+
+    captured: dict[str, object] = {}
+
+    def fake_retry_sync(fn, *args, **kwargs):
+        captured.update(kwargs)
+        return fn(*args)
+
+    monkeypatch.setattr(retry_mod, "retry_on_db_lock_sync", fake_retry_sync)
+
+    DbLockRetryPolicy().run_sync(lambda: None, operation_name="commit")
+    assert captured["operation_name"] == "commit"
+
+
+@pytest.mark.asyncio
+async def test_run_async_labels_logs_with_fn_qualname(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chaoscypher_core.utils import retry as retry_mod
+
+    captured: dict[str, object] = {}
+
+    async def fake_retry_async(fn, *args, **kwargs):
+        captured.update(kwargs)
+        return await fn(*args)
+
+    monkeypatch.setattr(retry_mod, "retry_on_db_lock_async", fake_retry_async)
+
+    async def delete_source() -> str:
+        return "gone"
+
+    assert await DbLockRetryPolicy().run_async(delete_source) == "gone"
+    assert (
+        captured["operation_name"]
+        == "test_run_async_labels_logs_with_fn_qualname.<locals>.delete_source"
+    )

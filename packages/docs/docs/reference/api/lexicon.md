@@ -610,4 +610,5 @@ Errors from the upstream Lexicon server are mapped to HTTP status codes:
 | `404`           | `404`      | Not found            |
 | `408`           | `408`      | Request timeout      |
 | `410`           | `408`      | Gone (code expired)  |
+| `429`           | `429`      | Upstream rate limit (passed through so it is not mistaken for an outage) |
 | Other           | `503`      | Service unavailable  |

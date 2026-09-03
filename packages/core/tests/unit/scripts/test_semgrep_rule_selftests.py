@@ -275,6 +275,15 @@ def test_semgrep_rule_self_test(rule_yaml: Path) -> None:
             f"  stdout:\n{proc.stdout}\n"
             f"  stderr:\n{proc.stderr}"
         )
+    # semgrep silently drops `# ruleid:` / `# ok:` annotations it cannot
+    # parse (e.g. a trailing "— rationale" after the rule id) and still
+    # exits 0 — the annotation's assertion just stops being enforced.
+    if "malformed rule ID" in proc.stderr:
+        pytest.fail(
+            f"semgrep dropped an annotation in the fixture for {rule_yaml.name}"
+            " (malformed rule ID — put rationale comments on their own line,"
+            f" not after the id):\n  stderr:\n{proc.stderr}"
+        )
 
 
 # ---------------------------------------------------------------------------

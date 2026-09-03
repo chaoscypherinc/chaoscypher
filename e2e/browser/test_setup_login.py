@@ -49,9 +49,7 @@ class TestLoginFlow:
         page.wait_for_url("**/", timeout=10000)
         assert "/login" not in page.url
 
-    def test_login_navigates_to_dashboard(
-        self, page: Page, browser_session_cookie: str
-    ) -> None:
+    def test_login_navigates_to_dashboard(self, page: Page, browser_session_cookie: str) -> None:
         """After login, the page navigates to the dashboard (not /login).
 
         Auth migrated from bearer tokens in localStorage to a
@@ -121,6 +119,12 @@ class TestNavigation:
         page.wait_for_load_state("networkidle")
         page.wait_for_timeout(2000)  # Allow Sigma.js to render
 
-        canvas_count = page.locator("canvas").count()
-        svg_count = page.locator("svg").count()
-        assert canvas_count > 0 or svg_count > 0
+        # Scope to <main>: the app shell's sidebar renders MUI/lucide icons as
+        # <svg> outside the routed page on EVERY authenticated route, so a
+        # page-wide svg count is unconditionally > 0 and the canvas half of
+        # the old page-wide `or` could never fail. Layout.tsx's <main>
+        # exclusively wraps the routed page (the sidebar <nav> is a sibling),
+        # so an element inside it can only come from the graph page itself.
+        # Same defect + fix as test_import_graph.py's canvas assertion.
+        viz_count = page.locator("main canvas, main svg").count()
+        assert viz_count > 0, "no visualization element rendered inside <main> on /graph"

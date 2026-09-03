@@ -23,7 +23,6 @@ services:
       - ../../cli/src/chaoscypher_cli:/app/packages/cli/src/chaoscypher_cli:ro
       - ../../interface/src:/app/packages/interface/src:ro
       # Mount test directories
-      - ../../../tests:/app/tests:ro
       - ../../core/tests:/app/packages/core/tests:ro
       - ../../cortex/tests:/app/packages/cortex/tests:ro
       - ../../cli/tests:/app/packages/cli/tests:ro
@@ -36,6 +35,12 @@ services:
       # Semgrep rules — the rule self-tests assert /app/tools/semgrep/rules
       # is populated; without this mount they fail only inside Docker CI.
       - ../../../tools:/app/tools:ro
+      # Shipped static nginx/supervisor configs — contract tests pin the files
+      # the production Dockerfile COPYs (e.g. proxy-public.conf must forward
+      # X-Auth-Edge-Token). Routine sandboxes sweep in local mode where the
+      # host repo has them; only this docker-test tier lacked the directory,
+      # so #500's pin passed everywhere except the push gate (2026-09-03).
+      - ../config:/app/packages/docker/config:ro
       # Semgrep ignore list — load-bearing, not a convenience. The Dockerfile
       # COPYs only manifests + src, so anything not mounted here simply does
       # not exist at /app. Without this file semgrep falls back to its

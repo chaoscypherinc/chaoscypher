@@ -101,7 +101,7 @@ Before upgrading or making structural changes, take a backup:
 ```bash
 # Via the REST API (Cortex must be running)
 # Authenticate with a Bearer API key — there is no HTTP Basic Auth.
-# Mint one via the web UI under Settings → API Keys, or POST /api/v1/auth/keys.
+# Mint one via the web UI under Settings → General → API Keys, or POST /api/v1/auth/keys.
 curl -s -H "Authorization: Bearer <api_key>" \
   -X POST http://localhost:8080/api/v1/backup \
   | jq .

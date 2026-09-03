@@ -7,7 +7,7 @@ description: Reference for the 45 source-row quality counters returned in Source
 
 The `quality_metrics` block on every [SourceResponse](sources.md#sourceresponse)
 records what the pipeline silently dropped, deduplicated, or merged on
-the way to the knowledge graph. There are 45 counters plus the encoding /
+the way to the knowledge graph. There are 46 counters plus the encoding /
 vector-index companion fields. They back the [Pipeline flow & quality counters](../../user-guide/data-quality.md)
 in the UI and the data the CLI exposes via `chaoscypher source get
 SOURCE_ID`.
@@ -41,6 +41,7 @@ Returns a [SourceResponse](sources.md#sourceresponse). The
     "loader_replacement_chars_count": 0,
     "loader_pdf_pages_failed": 0,
     "loader_docx_paragraphs_skipped": 0,
+    "loader_epub_chapters_skipped": 0,
     "loader_xlsx_rows_skipped": 0,
     "loader_csv_rows_truncated": 0,
     "loader_html_dropped_tags": null,
@@ -105,6 +106,7 @@ appear only inside `quality_metrics`.
 | `loader_replacement_chars_count` | int | U+FFFD replacement characters that landed in the text because the encoding detector fell back to `utf-8-replace`. A non-zero value almost always indicates an encoding mismatch in the source. |
 | `loader_pdf_pages_failed` | int | Individual PDF pages whose `extract_text()` raised; the rest of the document loaded, the failed page is empty. |
 | `loader_docx_paragraphs_skipped` | int | DOCX paragraphs the loader couldn't extract. |
+| `loader_epub_chapters_skipped` | int | EPUB chapters the spine promised but the loader could not deliver. |
 | `loader_xlsx_rows_skipped` | int | XLSX rows the loader couldn't extract. |
 | `loader_csv_rows_truncated` | int | CSV rows truncated by the configured per-file row cap. |
 | `loader_html_dropped_tags` | object? | `dict[tag → count]` of HTML elements the sanitizer stripped (e.g. `<script>`, `<style>`). `null` when the HTML loader didn't run for this source. |
@@ -199,7 +201,7 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/re_extract
 
 Reset values:
 
-- All 43 integer counters → `0`
+- All 44 integer counters → `0`
 - Both JSON counters (`loader_html_dropped_tags`, `loader_pptx_shapes_skipped`) → `null`
 - `loader_encoding_used` → `null`
 - `vector_indexed_at` → `null`

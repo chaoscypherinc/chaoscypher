@@ -95,6 +95,18 @@ def test_delete_source_mid_extraction_leaves_no_orphans(
     # under a second.
     _wait_until_extracting(client, source_id, timeout=15)
 
+    # Capture the chunk ids that exist right now: they are the falsifiable
+    # post-delete oracle. Every source-scoped LIST route runs a parent-exists
+    # guard (or a service-level ValueError → 404) before any child query, so
+    # once the parent row is gone those routes 404 regardless of orphan rows.
+    # GET /sources/{id}/chunks/{chunk_id} is different: it fetches the chunk
+    # row FIRST and only then compares its source_id, so an orphaned chunk
+    # returns 200 — exactly the signal the loop below can never see.
+    chunks_resp = client.get(f"/api/v1/sources/{source_id}/chunks")
+    assert chunks_resp.status_code == 200, chunks_resp.text
+    chunk_ids = [c["id"] for c in chunks_resp.json().get("data", [])]
+    assert chunk_ids, "no chunks existed pre-delete; orphan oracle would be vacuous"
+
     # Race window is now open — fake-ollama is asleep inside
     # /api/chat. Delete the source.
     delete_resp = client.delete(f"/api/v1/sources/{source_id}")
@@ -129,6 +141,18 @@ def test_delete_source_mid_extraction_leaves_no_orphans(
                 or len(body.get("data", []))
             )
             assert count == 0, f"orphan rows under {path}: {body}"
+
+    # The falsifiable check: each chunk row captured pre-delete must be gone.
+    # The by-id route reads the chunk row directly (no parent guard), so a
+    # cascade that missed chunk rows — e.g. an extraction-completion write
+    # landing after the DELETE — surfaces here as a 200. Entity/citation
+    # orphans still lack an API-visible oracle.
+    for chunk_id in chunk_ids:
+        chunk_resp = client.get(f"/api/v1/sources/{source_id}/chunks/{chunk_id}")
+        assert chunk_resp.status_code == 404, (
+            f"orphaned chunk row survived source delete: {chunk_id} -> "
+            f"{chunk_resp.status_code} {chunk_resp.text}"
+        )
 
 
 def _wait_until_extracting(client: httpx.Client, source_id: str, timeout: int = 15) -> None:

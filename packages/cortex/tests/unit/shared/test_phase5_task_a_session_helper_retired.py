@@ -27,7 +27,9 @@ def _parse(path: Path) -> ast.Module:
 
 def test_session_module_no_longer_defines_legacy_helpers() -> None:
     tree = _parse(SESSION_MODULE)
-    func_names = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    func_names = {
+        n.name for n in tree.body if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
     assert "get_db_session" not in func_names, "get_db_session must be deleted from session.py"
     assert "get_session" not in func_names, "get_session must be deleted from session.py"
     assert "get_current_session" in func_names, "get_current_session must still exist"

@@ -355,44 +355,71 @@ class DbLockRetryPolicy:
         self.base_delay = base_delay
         self.max_delay = max_delay
 
-    def run_sync(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    def run_sync(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        operation_name: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Run ``fn(*args, **kwargs)`` under SQLite-lock retry.
 
         Args:
             fn: Sync callable to invoke.
             *args: Positional arguments forwarded to ``fn``.
+            operation_name: Label for the retry/exhaustion logs. Defaults to
+                ``fn.__qualname__`` (matching the decorator variants) so the
+                log identifies the failing operation — an explicit
+                keyword-only parameter, never smuggled through ``**kwargs``
+                (which are forwarded to ``fn``).
             **kwargs: Keyword arguments forwarded to ``fn``.
 
         Returns:
             Return value of ``fn`` on success.
 
         """
+        if operation_name is None:
+            operation_name = str(getattr(fn, "__qualname__", "transaction"))
         return retry_on_db_lock_sync(
             fn,
             *args,
             max_retries=self.max_retries,
             base_delay=self.base_delay,
             max_delay=self.max_delay,
+            operation_name=operation_name,
             **kwargs,
         )
 
-    async def run_async(self, fn: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    async def run_async(
+        self,
+        fn: Callable[..., Any],
+        /,
+        *args: Any,
+        operation_name: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """Await ``fn(*args, **kwargs)`` under SQLite-lock retry.
 
         Args:
             fn: Async callable to invoke.
             *args: Positional arguments forwarded to ``fn``.
+            operation_name: Label for the retry/exhaustion logs; defaults to
+                ``fn.__qualname__`` (see ``run_sync``).
             **kwargs: Keyword arguments forwarded to ``fn``.
 
         Returns:
             Return value of ``fn`` on success.
 
         """
+        if operation_name is None:
+            operation_name = str(getattr(fn, "__qualname__", "transaction"))
         return await retry_on_db_lock_async(
             fn,
             *args,
             max_retries=self.max_retries,
             base_delay=self.base_delay,
             max_delay=self.max_delay,
+            operation_name=operation_name,
             **kwargs,
         )

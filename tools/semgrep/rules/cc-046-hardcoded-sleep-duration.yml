@@ -28,7 +28,7 @@ rules:
         - "/packages/core/src/chaoscypher_core/app_config/__init__.py"
         - "/packages/core/src/chaoscypher_core/settings.py"
         - "/packages/core/src/chaoscypher_core/policy.py"
-        - "/packages/core/src/chaoscypher_core/services/orchestration/"
+        - "packages/core/src/chaoscypher_core/services/orchestration/**"
     pattern-either:
       - patterns:
           - pattern: asyncio.sleep($N)

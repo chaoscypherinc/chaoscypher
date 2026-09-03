@@ -321,6 +321,7 @@ class EdgeOperationsMixin(GraphMixinBase):
         self,
         limit: int = 10000,
         include_disabled_sources: bool = False,
+        source_ids: list[str] | None = None,
     ) -> list[SimpleNamespace]:
         """List edges with minimal fields for analytics (fast).
 
@@ -330,6 +331,11 @@ class EdgeOperationsMixin(GraphMixinBase):
         Args:
             limit: Maximum number of results
             include_disabled_sources: If False (default), excludes edges from disabled sources
+            source_ids: When set, restricts to edges whose SOURCE node belongs
+                to one of the listed sources (source-less nodes are kept,
+                matching ``list_nodes_minimal``). Applied in SQL so the WHERE
+                runs before ``limit``; endpoint-level scope (both ends in the
+                loaded node set) remains the caller's responsibility.
 
         Returns:
             List of SimpleNamespace objects with minimal edge data
@@ -349,19 +355,27 @@ class EdgeOperationsMixin(GraphMixinBase):
             .where(GraphEdge.database_name == self.database_name)
         )
 
+        # Both the enabled filter and the source scope need the source-node
+        # join; add it once.
+        if not include_disabled_sources or source_ids is not None:
+            # Join includes database_name to ensure we find the right Source record
+            statement = statement.join(
+                GraphNode, GraphEdge.source_node_id == GraphNode.id
+            ).outerjoin(
+                SourceRow,
+                (GraphNode.source_id == SourceRow.id)
+                & (SourceRow.database_name == self.database_name),
+            )
+
         # Filter by source enabled status via source node
         if not include_disabled_sources:
-            # Join includes database_name to ensure we find the right Source record
-            statement = (
-                statement.join(GraphNode, GraphEdge.source_node_id == GraphNode.id)
-                .outerjoin(
-                    SourceRow,
-                    (GraphNode.source_id == SourceRow.id)
-                    & (SourceRow.database_name == self.database_name),
-                )
-                .where(
-                    (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-                )
+            statement = statement.where(
+                (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
+            )
+
+        if source_ids is not None:
+            statement = statement.where(
+                (GraphNode.source_id.is_(None)) | (col(GraphNode.source_id).in_(source_ids))
             )
 
         statement = statement.limit(limit)

@@ -29,7 +29,7 @@ In scope:
 - The plugin system's trust boundary
 
 Out of scope (known properties, not bugs):
-- User-dropped plugins in `data/plugins/` execute with server privileges. This is documented in `packages/core/src/chaoscypher_core/plugins/TRUST_BOUNDARY.md`. Use `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` to disable.
+- User-dropped plugins in `<data-dir>/plugins/` (`/data/plugins/` in the container) execute with server privileges. This is documented in `packages/core/src/chaoscypher_core/plugins/TRUST_BOUNDARY.md`. Use `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` to disable.
 - Entry-point plugins (e.g. `chaoscypher.providers`, `chaoscypher.cleaners`, `chaoscypher.archive_handlers`) execute with server privileges and are not signature-verified — trust derives from what's installed in the venv. Same `TRUST_BOUNDARY.md` documents the posture.
 - Self-hosted deployments that expose the Cortex API over the public internet without HTTPS and a strong password. The default bind address is `CHAOSCYPHER_BIND=0.0.0.0` (matches self-hosted convention: Vaultwarden, Jellyfin, Home Assistant); operators who require loopback-only access should set `CHAOSCYPHER_BIND=127.0.0.1`. See `packages/docs/docs/security/self-hosted-threat-model.md` for the full security rationale.
 

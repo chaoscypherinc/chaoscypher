@@ -182,7 +182,19 @@ async def reconcile_stuck_chats(
                 continue
 
             try:
-                await asyncio.to_thread(adapter.update_chat, chat["id"], {"status": "error"})
+                # CAS, not a blind write: the snapshot above is up to 10k
+                # rows old and the liveness gate itself takes time — a
+                # worker finishing in that window has already set 'active',
+                # and stamping 'error' over it puts an error banner on a
+                # successfully-completed answer.
+                flipped = await asyncio.to_thread(adapter.mark_chat_error_if_processing, chat["id"])
+                if not flipped:
+                    logger.debug(
+                        "chat_stuck_flip_lost_race",
+                        chat_id=chat["id"],
+                        database_name=database_name,
+                    )
+                    continue
                 recovered += 1
                 event_bus.emit(
                     "recovery",

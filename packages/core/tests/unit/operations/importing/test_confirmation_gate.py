@@ -654,13 +654,25 @@ class TestPreGateClaimAtomic:
         """First claim wins (rowcount 1); the second loses (rowcount 0)."""
         _seed_status(adapter, "src-claim-1", status=SourceStatus.INDEXING)
 
-        assert confirmation_gate._claim_pre_gate_confirmation(adapter, "src-claim-1") is True
-        assert confirmation_gate._claim_pre_gate_confirmation(adapter, "src-claim-1") is False
+        assert (
+            confirmation_gate._claim_pre_gate_confirmation(
+                adapter, "src-claim-1", {"forced_domain": "technical"}
+            )
+            is True
+        )
+        assert (
+            confirmation_gate._claim_pre_gate_confirmation(
+                adapter, "src-claim-1", {"forced_domain": "news"}
+            )
+            is False
+        )
 
         adapter.session.expire_all()
         row = adapter.session.get(SourceRow, "src-claim-1")
         assert row is not None
         assert row.extraction_confirmed_at is not None
+        # The loser's values never land.
+        assert row.forced_domain == "technical"
 
     @pytest.mark.asyncio
     async def test_pre_gate_confirm_honors_lost_claim(
@@ -678,7 +690,7 @@ class TestPreGateClaimAtomic:
         monkeypatch.setattr(
             confirmation_gate,
             "_claim_pre_gate_confirmation",
-            lambda _adapter, _file_id: False,
+            lambda _adapter, _file_id, _values: False,
         )
 
         with pytest.raises(ConflictError):
@@ -688,3 +700,60 @@ class TestPreGateClaimAtomic:
         row = adapter.session.get(SourceRow, "src-claim-2")
         assert row is not None
         assert row.forced_domain is None  # loser wrote nothing
+
+    @pytest.mark.asyncio
+    async def test_claim_commit_carries_domain_atomically(
+        self,
+        adapter: SqliteAdapter,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """forced_domain is visible in the SAME commit as the claim timestamp.
+
+        Regression for the two-transaction race: the claim used to commit only
+        ``extraction_confirmed_at``, with forced_domain + overrides landing in
+        a second commit. ``gate_decision`` short-circuits "proceed" on the
+        timestamp alone, so an OP_IMPORT_ANALYSIS consumer snapshotting between
+        the commits extracted under the auto-detected domain instead of the
+        user's. Probed here with a second session read immediately after the
+        claim returns (i.e. after its commit, before anything else runs).
+        """
+        _seed_status(adapter, "src-atomic-1", status=SourceStatus.INDEXING)
+
+        real_claim = confirmation_gate._claim_pre_gate_confirmation
+        observed: dict[str, Any] = {}
+
+        def probing_claim(a: SqliteAdapter, file_id: str, values: dict[str, Any]) -> bool:
+            won = real_claim(a, file_id, values)
+            # The consumer's snapshot: a SECOND session reading right after
+            # the claim commit is visible.
+            probe = SqliteAdapter(str(tmp_path / "app.db"), database_name=_DB)
+            probe.connect()
+            try:
+                snap = probe.get_source(file_id, _DB)
+                assert snap is not None
+                observed["forced_domain"] = snap.get("forced_domain")
+                observed["extraction_confirmed_at"] = snap.get("extraction_confirmed_at")
+                observed["filtering_mode"] = snap.get("filtering_mode")
+            finally:
+                probe.disconnect()
+            return won
+
+        monkeypatch.setattr(confirmation_gate, "_claim_pre_gate_confirmation", probing_claim)
+
+        ok = await confirm_extraction(adapter, "src-atomic-1", "legal", _OVERRIDES)
+
+        assert ok is True
+        # Any snapshot taken once the timestamp is visible must already carry
+        # the user's decision — never a half-committed claim.
+        assert observed["extraction_confirmed_at"] is not None
+        assert observed["forced_domain"] == "legal"
+        assert observed["filtering_mode"] == "strict"
+
+        # The rowcount CAS still prevents a double-confirm.
+        with pytest.raises(ConflictError):
+            await confirm_extraction(adapter, "src-atomic-1", "news", _OVERRIDES)
+        adapter.session.expire_all()
+        row = adapter.session.get(SourceRow, "src-atomic-1")
+        assert row is not None
+        assert row.forced_domain == "legal"

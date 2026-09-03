@@ -142,7 +142,7 @@ Searches the Lexicon Hub for packages matching the query. The search covers pack
 | `--limit` | `-n` | Maximum results to show (default: `20`) |
 | `--tag` | `-t` | Add tag terms to the search query (can be repeated) |
 | `--author` | `-a` | Filter the returned results by author username (applied after `--limit`) |
-| `--sort` | `-s` | Sort results: `relevance` (default), `downloads`, `updated`, `name` |
+| `--sort` | `-s` | Sort results: `relevance` (default), `downloads`, `stars`, `newest`, `updated`, `name` |
 
 #### Examples
 
@@ -183,7 +183,7 @@ Lists locally installed and cached packages (`.ccx` files in the packages direct
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--all` | | Show all cached versions (includes relative paths) |
+| `--all` | | Show each package's file path in the table |
 | `--format` | `-f` | Output format: `table` (default), `json`, `simple` |
 
 #### Table Format (Default)

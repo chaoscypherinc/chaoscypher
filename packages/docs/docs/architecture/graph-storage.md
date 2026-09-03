@@ -171,11 +171,11 @@ def find_shortest_path(nodes, edges, source_id, target_id):
     }
 ```
 
-The same `build_graph` / `build_digraph` entry points feed every algorithm in `services/graph/engine/algorithms.py`:
+The same `build_graph` / `build_digraph` entry points feed the algorithms in `services/graph/engine/algorithms.py` and `traversal.py`:
 
 | Algorithm | rustworkx call |
 |---|---|
-| Shortest path | `rx.dijkstra_shortest_paths()` |
+| Shortest path | `rx.dijkstra_shortest_paths()` (`traversal.py`) |
 | Connected components | `rx.connected_components()` |
 | PageRank | `rx.pagerank()` |
 | Betweenness centrality | `rx.betweenness_centrality()` |

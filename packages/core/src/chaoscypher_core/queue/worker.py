@@ -36,6 +36,7 @@ from chaoscypher_core.queue.reconciler import reconcile_queue
 from chaoscypher_core.queue.service import _execute_handler, classify_error
 from chaoscypher_core.queue.utils import iso_now as _iso_now
 from chaoscypher_core.queue.worker_timeouts import reconciler_cutoff_seconds
+from chaoscypher_core.utils.task_callbacks import log_task_exception
 
 
 if TYPE_CHECKING:
@@ -356,8 +357,15 @@ class QueueWorker:
                 self._active_tasks[task_id] = process_task
 
                 # Define callback with explicit type hint for task parameter
-                def task_done_callback(_t: asyncio.Task[Any], tid: str = task_id) -> None:
-                    """Drop the finished task from the active-tasks registry."""
+                def task_done_callback(t: asyncio.Task[Any], tid: str = task_id) -> None:
+                    """Log any escaped exception, then drop the task from the registry.
+
+                    ``_process_task`` marks its own failures, so a retrieved
+                    exception here is defense-in-depth — without the retrieval
+                    an escaped exception vanishes silently (the contract
+                    ``log_task_exception`` exists for).
+                    """
+                    log_task_exception(t)
                     self._task_done(tid)
 
                 process_task.add_done_callback(task_done_callback)
@@ -401,6 +409,34 @@ class QueueWorker:
     # ------------------------------------------------------------------
     # Task Processing
     # ------------------------------------------------------------------
+
+    async def _handle_processing_error(
+        self, task_id: str, queue_name: str, exc: BaseException
+    ) -> None:
+        """Log a pre/post-dispatch failure and best-effort mark the task failed.
+
+        See ``_process_task``'s outer except arm: without the terminal-failed
+        write the task would be permanently lost (removed from ``running`` by
+        the finally, hash still ``queued``, invisible to recovery). The write
+        itself is guarded — if Valkey is down, the log line is the trace.
+        """
+        logger.exception("task_processing_error", task_id=task_id, queue=queue_name)
+        try:
+            await self._mark_task_failed_terminal(
+                task_id,
+                {
+                    "status": "failed",
+                    "error": f"Task processing error: {exc}",
+                    "error_type": "permanent",
+                    "completed_at": _iso_now(),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "task_processing_error_mark_failed_write_failed",
+                task_id=task_id,
+                queue=queue_name,
+            )
 
     async def _mark_task_failed_terminal(self, task_id: str, fields: dict[str, str]) -> None:
         """HSET terminal-failed fields and apply dead-letter retention TTL.
@@ -695,6 +731,19 @@ class QueueWorker:
                     )
                 # For permanent errors, _execute_handler already marked as failed.
                 return None
+
+        except Exception as exc:
+            # Pre/post-dispatch failure (Valkey blip, malformed hash JSON, a
+            # non-integer numeric field): the handler excepts above never saw
+            # it. Without this arm the exception escaped the coroutine while
+            # the finally below removed the task from the running set —
+            # leaving a hash still reading ``status="queued"`` that sat in
+            # neither pending nor running, invisible to the reconciler (which
+            # scans only the running set) and to rehydration (which skips
+            # present hashes): a permanently lost task. Mark it terminally
+            # failed so the failure is visible and dead-lettered instead.
+            await self._handle_processing_error(task_id, queue_name, exc)
+            return None
 
         finally:
             await self._finish_task_cleanup(

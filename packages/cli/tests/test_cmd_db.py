@@ -35,6 +35,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import yaml
 from click.testing import CliRunner
+from rich.console import Console as RichConsole
 
 from chaoscypher_cli.commands.db.create import create, validate_database_name
 from chaoscypher_cli.commands.db.current import current
@@ -51,6 +52,23 @@ from chaoscypher_cli.commands.db.switch import switch
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _narrow_singleton_console() -> Any:
+    """Patch the utils/console singleton to a genuinely narrow Console.
+
+    The no-wrap regression guards below must run against a console that is
+    actually narrow: ``env={"COLUMNS": "80"}`` proved unreliable for
+    CliRunner-based tests (Rich reads the real terminal size wherever the
+    runner allocates a tty — see test_cmd_template.py's fix), and these
+    commands print through ``print_json``/``print_unwrapped``, which resolve
+    the ``chaoscypher_cli.utils.console`` process singleton rather than the
+    command module's ``console`` attribute. Width 40 guarantees every
+    tmp_path-bearing line exceeds the width, so if ``soft_wrap=True`` is ever
+    dropped from those helpers the output hard-wraps mid-token and the
+    assertions go red in every environment.
+    """
+    return patch("chaoscypher_cli.utils.console._console", RichConsole(width=40, height=50))
 
 
 def _make_db(databases_dir: Path, name: str, size: int = 4096) -> Path:
@@ -100,9 +118,11 @@ class TestCreate:
                 "chaoscypher_cli.commands.db.create.get_context",
                 return_value=created_ctx,
             ) as mock_get_context:
-                # Force the narrow, no-TTY width a CI runner uses so the long
-                # "Location:" path is not hard-wrapped mid-token (regression).
-                result = runner.invoke(create, ["my-project"], env={"COLUMNS": "80"})
+                # Run against a genuinely narrow singleton console so the long
+                # "Location:" path would hard-wrap mid-token if soft_wrap were
+                # ever dropped (regression guard; see _narrow_singleton_console).
+                with _narrow_singleton_console():
+                    result = runner.invoke(create, ["my-project"])
 
         assert result.exit_code == 0, result.output
         assert "Created database 'my-project'" in result.output
@@ -257,8 +277,9 @@ class TestList:
                 "chaoscypher_cli.commands.db.list.get_databases_dir",
                 return_value=databases_dir,
             ):
-                # Force the narrow width a non-TTY CI runner sees.
-                result = runner.invoke(list_databases, ["--json"], env={"COLUMNS": "80"})
+                # Genuinely narrow singleton console (see _narrow_singleton_console).
+                with _narrow_singleton_console():
+                    result = runner.invoke(list_databases, ["--json"])
 
         assert result.exit_code == 0, result.output
         import json
@@ -673,8 +694,9 @@ class TestInfo:
         ):
             with _patch_current_db("info", "default"):
                 with patch("chaoscypher_cli.commands.db.info.get_context", return_value=ctx):
-                    # Force the narrow width a non-TTY CI runner sees.
-                    result = runner.invoke(info, ["beta", "--json"], env={"COLUMNS": "80"})
+                    # Genuinely narrow singleton console (see _narrow_singleton_console).
+                    with _narrow_singleton_console():
+                        result = runner.invoke(info, ["beta", "--json"])
 
         assert result.exit_code == 0, result.output
         import json

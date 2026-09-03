@@ -19,6 +19,7 @@ def get_user_transport():
 
 
 class FooService:
-    # ok: cc-001-factory-naming  — class methods are not factories
+    # class methods are not factories
+    # ok: cc-001-factory-naming
     def get_service(self):
         return None

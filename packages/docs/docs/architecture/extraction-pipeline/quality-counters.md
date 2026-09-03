@@ -8,7 +8,8 @@ description: Internal architecture of the quality-counter infrastructure — whe
 
 The quality counter system records, on every source row, what the
 extraction pipeline silently dropped, deduplicated, or merged.
-45 typed counters cover every silent-drop site from loader to commit
+46 typed counters (the `QualityCounter` enum is the authoritative
+count) cover every silent-drop site from loader to commit
 and embedding — the original W2 set, the Phase 2 batch, Phase 5b
 (PDF per-page failures), Phase 6 (loader observability), the Phase 7
 audit-remediation pass on 2026-05-09 that closed the remaining drift
@@ -255,9 +256,10 @@ The counter columns, the upload-settings columns, and the
 together in one internal migration. Adding them together kept the schema
 in sync with the design intent of the W1+W2 workstreams (what you set is
 what you get; nothing disappears silently). The public repository's
-migration history is squashed into a single `0001_baseline.py`, where
-all 45 counter columns are defined today on the `sources` table,
-alongside:
+migration history was squashed into `0001_baseline.py`, which defines
+45 counter columns on the `sources` table (the 46th,
+`loader_epub_chapters_skipped`, is added by the incremental revision
+`0006_loader_epub_chapters_skipped.py`), alongside:
 
 - 5 upload-settings columns: `auto_analyze`, `enable_normalization`,
   `enable_vision`, `content_filtering`, `filtering_mode`
@@ -272,7 +274,7 @@ alongside:
 issues one `update_source_columns` setting every counter back to its
 post-upload default:
 
-- Every counter column (45 as of today) → its post-upload default — `0`
+- Every counter column (46 as of today) → its post-upload default — `0`
   for integer counters, `null` for the JSON-shaped
   `loader_html_dropped_tags` / `loader_pptx_shapes_skipped` breakdowns
 - The cumulative `llm_*` metrics → their zero/empty defaults

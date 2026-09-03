@@ -512,10 +512,102 @@ class TestSendMessageHandler:
             )
 
         service.add_message.assert_called_once_with("chat-1", role="user", content="hello there")
-        service.update_chat_status.assert_called_once_with("chat-1", "processing")
+        # The plain-send claim is the atomic CAS, not a blind status write
+        # (the blind write was the double-enqueue defect the three sibling
+        # paths already fixed).
+        service.try_begin_processing.assert_called_once_with("chat-1")
+        service.update_chat_status.assert_not_called()
         mock_enqueue.assert_awaited_once()
         assert result.task_id == "task-9"
         assert result.status == "processing"
+
+    @pytest.mark.asyncio
+    async def test_plain_send_raises_409_when_claim_lost(self) -> None:
+        """Losing the CAS means a turn is in flight — 409, no row, no enqueue."""
+        service = MagicMock()
+        service.get_chat.return_value = _chat_dict("chat-1")
+        service.try_begin_processing.return_value = False
+
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(),
+            ) as mock_enqueue,
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await send_message(
+                    chat_id="chat-1",
+                    message=ChatSendRequest(content="hi"),
+                    chat_service=service,
+                    settings=_settings(),
+                    _="test-user",
+                )
+
+        assert exc_info.value.status_code == 409
+        service.add_message.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_plain_sends_one_wins_one_409_single_enqueue(self) -> None:
+        """Two concurrent plain sends: exactly one 202 + one 409, one enqueue,
+        ONE persisted user message. Mirrors the /retry concurrency test — the
+        plain-send branch was the last turn-enqueue path without the claim.
+        """
+        import asyncio
+
+        service = MagicMock()
+        service.get_chat.return_value = _chat_dict("chat-1")
+        claimed = False
+
+        def _cas_claim(chat_id: str) -> bool:
+            nonlocal claimed
+            if claimed:
+                return False
+            claimed = True
+            return True
+
+        service.try_begin_processing.side_effect = _cas_claim
+
+        with (
+            patch(
+                "chaoscypher_core.services.llm.require_extraction_ready",
+                new=AsyncMock(),
+            ),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(return_value="task-11"),
+            ) as mock_enqueue,
+        ):
+            results = await asyncio.gather(
+                send_message(
+                    chat_id="chat-1",
+                    message=ChatSendRequest(content="one"),
+                    chat_service=service,
+                    settings=_settings(),
+                    _="test-user",
+                ),
+                send_message(
+                    chat_id="chat-1",
+                    message=ChatSendRequest(content="two"),
+                    chat_service=service,
+                    settings=_settings(),
+                    _="test-user",
+                ),
+                return_exceptions=True,
+            )
+
+        winners = [r for r in results if not isinstance(r, BaseException)]
+        losers = [r for r in results if isinstance(r, HTTPException)]
+        assert len(winners) == 1
+        assert winners[0].task_id == "task-11"
+        assert len(losers) == 1
+        assert losers[0].status_code == 409
+        mock_enqueue.assert_awaited_once()
+        service.add_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_raises_404_when_chat_missing(self) -> None:

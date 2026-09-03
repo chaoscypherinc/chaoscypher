@@ -84,6 +84,30 @@ class QueueService:
         )
         return QueueTaskResponse(task_id=task_id)
 
+    @staticmethod
+    def _slim_task_data(data: Any) -> dict[str, Any]:
+        """Project a task's ``data`` payload down to what list views read.
+
+        Kept fields: ``inputs.filename`` / ``inputs.analysis_depth`` (the
+        workflow description + detail chips) and ``operations_count`` (the
+        bulk-op description). Everything else — LLM ``messages`` arrays,
+        chunk text, full operation bodies — stays on the detail endpoint.
+        """
+        if not isinstance(data, dict):
+            return {}
+        slim: dict[str, Any] = {}
+        inputs = data.get("inputs")
+        if isinstance(inputs, dict):
+            slim_inputs = {
+                key: inputs[key] for key in ("filename", "analysis_depth") if key in inputs
+            }
+            if slim_inputs:
+                slim["inputs"] = slim_inputs
+        operations = data.get("operations")
+        if isinstance(operations, list):
+            slim["operations_count"] = len(operations)
+        return slim
+
     async def list_tasks(
         self,
         page: int = 1,
@@ -119,20 +143,37 @@ class QueueService:
         tasks = await self.queue_client.get_recent_tasks(
             limit=effective_page_size, offset=offset, queues=queues
         )
+        # List views ship a whitelist of the payload, never the raw blob:
+        # for chat_completion tasks ``data`` carries the entire messages
+        # array (retrieved chunk text included — routinely 50-200 KB per
+        # hash), and both the dashboard activity log and the queue monitor
+        # poll 50 rows every 5 s while reading only inputs.filename and
+        # the operations count. The single-task detail endpoint keeps the
+        # full payload.
+        tasks = [{**task, "data": self._slim_task_data(task.get("data"))} for task in tasks]
         total = await self.queue_client.get_recent_tasks_count(queues=queues)
 
         # Active-tasks counter (queued + running across matched queues),
         # not a pagination metric — surfaced as a sibling for the UI's
-        # "N tasks in queue" indicator.
-        total_in_queue = 0
+        # "N tasks in queue" indicator. On a stats failure the count is
+        # UNKNOWN: return None rather than a fabricated stand-in (the old
+        # page-row-count fallback capped the value at page_size, making a
+        # deep backlog look nearly drained during a Valkey hiccup).
+        total_in_queue: int | None
         try:
             all_stats = await self.queue_client.get_all_stats()
+            active = 0
             for stat in all_stats:
                 if queues is None or stat.get("queue") in queues:
-                    total_in_queue += stat.get("queued", 0) + stat.get("running", 0)
+                    active += stat.get("queued", 0) + stat.get("running", 0)
+            total_in_queue = active
         except Exception:
-            logger.warning("failed_to_get_queue_stats_for_total")
-            total_in_queue = len(tasks)
+            logger.warning(
+                "failed_to_get_queue_stats_for_total",
+                queues=queues,
+                exc_info=True,
+            )
+            total_in_queue = None
 
         total_pages = (
             (total + effective_page_size - 1) // effective_page_size

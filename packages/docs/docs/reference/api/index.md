@@ -305,7 +305,7 @@ Request-body validation failures return `422` with:
 | [Databases](databases.md) | `/databases` | Multi-database management |
 | [Queue](queue.md) | `/queue` | Task queue management and monitoring |
 | [Exports](exports.md) | `/exports` | Data export operations |
-| [LLM](llm.md) | `/llm` | LLM provider configuration and model listing |
+| [LLM](llm.md) | `/llm` | LLM queue statistics, task monitoring, and semaphore diagnostics (provider configuration lives under `/settings`) |
 | [Counts](counts.md) | `/counts` | Aggregate counts across resources |
 | [Pause](pause.md) | `/sources`, `/system/processing` | Per-source and system-wide pause / resume controls |
 | [Settings](settings.md) | `/settings` | Application configuration |

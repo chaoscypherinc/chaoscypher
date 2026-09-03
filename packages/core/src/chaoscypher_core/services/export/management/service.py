@@ -332,12 +332,15 @@ class CcxExporter:
         """Read full source dicts (carrying ``ccx_iri`` / ``full_text``).
 
         Both the scoped and unscoped paths resolve each source through
-        ``get_source`` so the dicts always carry ``full_text`` and
-        ``ccx_iri``. ``list_sources`` uses a narrow ``load_only`` projection
-        that omits both (it feeds list-view rendering, not export), so the
-        unscoped path uses it only to enumerate ids and then re-fetches the
-        full row — otherwise a full export would silently lose the offset-
-        selector / full-text path that a source-scoped export keeps.
+        ``get_source`` so the dicts always carry ``ccx_iri``.
+        ``list_sources`` uses a narrow ``load_only`` projection that omits
+        it (it feeds list-view rendering, not export), so the unscoped path
+        uses it only to enumerate ids and then re-fetches the full row —
+        otherwise a full export would silently lose the offset-selector /
+        full-text path that a source-scoped export keeps. ``get_source``
+        excludes the heavy ``full_text`` column, so the export path — the
+        one consumer that genuinely needs it — merges it back per source
+        via the narrow ``get_source_full_text`` accessor.
         """
         database_name = self.settings.current_database
         resolved_ids = source_ids if source_ids is not None else self._all_source_ids()
@@ -345,6 +348,7 @@ class CcxExporter:
         for source_id in resolved_ids:
             source = self.sources.get_source(source_id, database_name=database_name)
             if source is not None:
+                source["full_text"] = self.sources.get_source_full_text(source_id, database_name)
                 sources.append(source)
         return sources
 

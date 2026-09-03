@@ -30,7 +30,7 @@ from chaoscypher_core.operations.queue_utils import queue_import_analysis
 logger = structlog.get_logger(__name__)
 
 
-def _claim_pre_gate_confirmation(adapter: Any, file_id: str) -> bool:
+def _claim_pre_gate_confirmation(adapter: Any, file_id: str, values: dict[str, Any]) -> bool:
     """Atomically claim the write-once pre-gate confirmation timestamp.
 
     A rowcount-checked ``UPDATE … WHERE extraction_confirmed_at IS NULL``
@@ -43,6 +43,18 @@ def _claim_pre_gate_confirmation(adapter: Any, file_id: str) -> bool:
     conflict. This is the timestamp-column analogue of
     ``transition_source_status`` (which can only CAS the status column).
 
+    ``values`` (forced_domain + override columns) rides in the SAME
+    statement and commit as the timestamp: a consumer that snapshots the
+    row after the claim commit is visible must already see the user's
+    domain choice — a second decision-commit would open a window where
+    ``gate_decision`` proceeds on ``extraction_confirmed_at`` alone and
+    extraction runs under the auto-detected domain.
+
+    Args:
+        adapter: SqliteAdapter (source repository).
+        file_id: Source ID to claim.
+        values: Decision columns to persist atomically with the claim.
+
     Returns:
         True when this caller claimed the timestamp; False when a rival
         already had (or the row vanished).
@@ -53,7 +65,7 @@ def _claim_pre_gate_confirmation(adapter: Any, file_id: str) -> bool:
         update(SourceRow)
         .where(SourceRow.id == file_id)  # type: ignore[arg-type]
         .where(SourceRow.extraction_confirmed_at.is_(None))  # type: ignore[union-attr]
-        .values(extraction_confirmed_at=datetime.now(UTC))
+        .values(extraction_confirmed_at=datetime.now(UTC), **values)
     )
     adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
     return getattr(result, "rowcount", 0) == 1
@@ -238,7 +250,8 @@ def _apply_decision(
 ) -> str | None:
     """Persist the human's domain choice + non-None overrides onto the row.
 
-    Shared by both confirm branches (parked CAS-win and pre-gate). Sets
+    Used by the parked (CAS-win) confirm branch; the pre-gate branch writes
+    the same decision inside its atomic claim UPDATE instead. Sets
     ``forced_domain`` (chosen, or the proposal's detected_domain as fallback),
     applies only present non-None overrides, and stamps ``extraction_confirmed_at``
     write-once. Does NOT change ``status`` and does NOT commit — the caller owns
@@ -378,19 +391,21 @@ async def confirm_extraction(
     # forced/confirmed fields are set. Write-once is enforced by an atomic SQL
     # claim on the timestamp column (see _claim_pre_gate_confirmation) — the ORM
     # row in hand may be a stale read when two confirms race, so it must never
-    # be the guard. A lost claim falls through to bucket 3 (already confirmed).
+    # be the guard. The decision (forced_domain + non-None overrides) rides in
+    # the SAME claim statement: gate_decision short-circuits on the timestamp
+    # alone, so a two-commit write let an OP_IMPORT_ANALYSIS snapshot between
+    # the commits extract under the auto-detected domain instead of the user's.
+    # A lost claim falls through to bucket 3 (already confirmed).
     if status in _PRE_GATE and row.extraction_confirmed_at is None:
-        if _claim_pre_gate_confirmation(adapter, file_id):
-            # Re-read so the claimed timestamp is on the row and
-            # _apply_decision's write-once check cannot re-stamp it.
+        forced = chosen_domain or (row.detection_proposal or {}).get("detected_domain")
+        claim_values: dict[str, Any] = {"forced_domain": forced}
+        for key in _OVERRIDE_COLUMNS:
+            # None means "leave the column as-is" — same guard as _apply_decision.
+            if key in overrides and overrides[key] is not None:
+                claim_values[key] = overrides[key]
+        if _claim_pre_gate_confirmation(adapter, file_id, claim_values):
+            # The raw UPDATE bypassed the ORM identity map; drop stale state.
             adapter.session.expire_all()
-            row = adapter.session.exec(select(SourceRow).where(SourceRow.id == file_id)).first()
-            if row is None:  # pragma: no cover — the claim just matched this row
-                logger.warning("confirm_extraction_row_vanished", source_id=file_id)
-                return False
-            forced = _apply_decision(row, chosen_domain, overrides)
-            adapter.session.add(row)
-            adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
             logger.info(
                 "source_confirmed_pre_gate",
                 source_id=file_id,

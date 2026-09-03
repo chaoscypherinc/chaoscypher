@@ -171,6 +171,13 @@ class SearchService:
         if not self.sources_repository:
             return set()  # No filtering if repository not available
 
+        # Single-column id projection. The list_sources fallback below runs
+        # the full 57-column projection + COUNT + stage-progress hydration
+        # at the 100k bulk page size on EVERY search — keep it only for
+        # repositories that predate list_enabled_source_ids.
+        if hasattr(self.sources_repository, "list_enabled_source_ids"):
+            return self.sources_repository.list_enabled_source_ids()
+
         sources_list, _ = self.sources_repository.list_sources(
             enabled="enabled",
             page=1,
@@ -195,7 +202,9 @@ class SearchService:
             return {}
 
         nodes_dict: dict[str, Any] = {}
-        nodes = self.graph_repository.get_nodes_batch(node_ids)
+        # Hydration reads only id/properties/source_id — skip the 1024-float
+        # embedding decode per node (the batch's dominant cost).
+        nodes = self.graph_repository.get_nodes_batch(node_ids, include_embedding=False)
         for node in nodes:
             if enabled_source_ids is not None:
                 # Filter by the canonical ``source_id`` COLUMN (a real FK), not

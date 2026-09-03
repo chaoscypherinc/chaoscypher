@@ -669,10 +669,12 @@ _add_document = ToolDefinition(
                 "type": "boolean",
                 "description": (
                     "Clean OCR artifacts, fix encoding issues, and "
-                    "normalize whitespace before chunking. Recommended "
-                    "for PDFs and scanned documents. Defaults to true."
+                    "normalize whitespace before chunking. Defaults to "
+                    "auto: enabled for prose formats, disabled for "
+                    "structured files (CSV/TSV/JSON/JSONL/NDJSON/XML), "
+                    "whose whitespace is data, not OCR noise. Omit unless "
+                    "you need to override the per-format default."
                 ),
-                "default": True,
             },
             "skip_duplicates": {
                 "type": "boolean",
@@ -960,8 +962,8 @@ _finalize_extraction = ToolDefinition(
         "entities, match templates, create citations, and commit nodes and "
         "edges to the knowledge graph. Requires all chunks to be submitted. "
         "Returns nodes_created, edges_created, templates_created, status, "
-        "and the v7 quality scoring — quality_grade (0-100), quality_label "
-        "(Poor/Fair/Good/Excellent), and a quality_breakdown object with "
+        "and the quality scoring — quality_grade (0-100), quality_label "
+        "(Outstanding/Excellent/Good/Fair/Low), and a quality_breakdown object with "
         "the component scores (richness, avg_entity_quality, "
         "avg_relationship_quality, topology_score, density_score, "
         "structural_penalty, hub_skew, reciprocal_rate, coverage_score, ...) "

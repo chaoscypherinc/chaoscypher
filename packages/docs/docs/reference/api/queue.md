@@ -769,6 +769,7 @@ stateDiagram-v2
 | `completed` | Task finished successfully (result available) |
 | `failed` | Task encountered an error (can be retried) |
 | `cancelled` | Task was cancelled before completion |
+| `retried` | A failed task claimed by `retry_task`; `retried_to` links the replacement task |
 
 ### Example: Submit and Track a Task
 

@@ -274,7 +274,8 @@ ENV PYTHONUNBUFFERED=1 \
     CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434 \
     PYTHONWARNINGS="ignore::UserWarning:langchain_core._api.deprecation"
 
-# Copy healthcheck script (all-in-one: checks Nginx + Cortex + Valkey + workers)
+# Copy healthcheck script (probes Cortex /health directly, bypassing nginx —
+# see the script's docstring for why)
 COPY packages/docker/config/healthcheck.py /healthcheck.py
 
 # Expose ports

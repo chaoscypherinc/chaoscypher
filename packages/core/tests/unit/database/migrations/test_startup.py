@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -463,3 +464,33 @@ def test_concurrent_starts_apply_once(tmp_path, monkeypatch) -> None:
     assert errors == []
     assert current_revision(db) == head_revision()
     assert get_upgrade_state(db).ready is True
+
+
+def test_upgrade_lock_file_survives_the_run(tmp_path: Path) -> None:
+    """The .upgrade.lock file must persist after a locked run.
+
+    Regression guard against re-adding the tidiness unlink: flock binds to
+    the inode, so unlinking the path while another process still holds (or
+    waits on) the old inode lets a third process lock a fresh inode at the
+    same path instantly — two concurrent migration runs on one SQLite file.
+    The exposed caller is the MCP stdio path, which runs
+    run_startup_migrations without engine.py's .init.lock wrapper.
+    """
+    from chaoscypher_core.database.migrations import startup as startup_mod
+
+    db_path = tmp_path / "app.db"
+    db_path.touch()
+
+    with (
+        patch.object(startup_mod, "_is_fresh_install", return_value=False),
+        patch.object(startup_mod, "ensure_stamped"),
+        patch.object(startup_mod, "pending_revisions", return_value=["abc123"]),
+        patch.object(startup_mod, "_run_locked") as run_locked,
+    ):
+        startup_mod.run_startup_migrations(db_path)
+
+    run_locked.assert_called_once()
+    lock_path = db_path.with_suffix(db_path.suffix + ".upgrade.lock")
+    assert lock_path.exists(), (
+        ".upgrade.lock was unlinked — the inode-recycling race is back"
+    )

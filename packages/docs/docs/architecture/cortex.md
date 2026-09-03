@@ -144,7 +144,6 @@ def get_source_service(
 
 ```
 shared/
-├── adapters/        # Shared adapters
 ├── api/             # Shared API helpers and dependencies
 ├── auth/            # Authentication and permissions
 ├── database/        # Session management, models
@@ -155,5 +154,6 @@ shared/
 ├── models/          # Shared SQLModel/Pydantic models
 ├── repositories/    # Shared repository factories
 ├── service_factory.py  # Service factory helpers
-└── utils/           # Shared utilities
+├── utils/           # Shared utilities
+└── worker_notify.py # Settings hot-reload notifications to the worker (Valkey pub/sub)
 ```

@@ -66,6 +66,20 @@ class SomeService:
         return source.get("title")
 """
 
+_BAD_AFTER_NESTED_DEF = """
+class SomeService:
+    def __init__(self, storage):
+        self.storage = storage
+
+    def show(self, source_id):
+        source = self.storage.get_source(source_id)
+
+        def _helper():
+            return None
+
+        return source.title  # CC002: tracking must survive the nested def
+"""
+
 _OK_NON_STORAGE_CALL = """
 class SomeService:
     def __init__(self, repo):
@@ -95,6 +109,22 @@ def test_cc002_flags_entity_attr_on_storage_dict(tmp_path: Path) -> None:
     assert len(violations) == 1, f"Expected 1 CC002 violation; got {violations}"
     assert "source.title" in violations[0].message
     assert "dict" in violations[0].message.lower()
+
+
+def test_cc002_survives_nested_function_def(tmp_path: Path) -> None:
+    """A nested ``def`` must not wipe the enclosing scope's storage tracking.
+
+    Regression guard: ``visit_FunctionDef`` used to ``clear()`` the shared
+    ``storage_call_vars`` set for a nested function, permanently dropping the
+    outer function's tracked variables — CC002 went silent for the rest of
+    the enclosing function.
+    """
+    target = tmp_path / "packages" / "cortex" / "src" / "feature" / "service.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_BAD_AFTER_NESTED_DEF)
+    violations = _check(_BAD_AFTER_NESTED_DEF, target)
+    assert len(violations) == 1, f"Expected 1 CC002 violation; got {violations}"
+    assert "source.title" in violations[0].message
 
 
 def test_cc002_silent_on_dict_subscript(tmp_path: Path) -> None:

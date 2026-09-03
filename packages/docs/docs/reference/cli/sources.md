@@ -245,6 +245,7 @@ chaoscypher source list
 | `--pending` | `-p` | Show only files not yet committed (excludes committed and errored) |
 | `--awaiting` | `-a` | Show only sources awaiting domain confirmation |
 | `--format FORMAT` | `-f` | Output format: `table` (default), `json`, `yaml` |
+| `--limit N` | `-n` | Maximum number of files to fetch (default: adapter default, 100) |
 | `--database DATABASE` | `-d` | Database name (default: the current database) |
 
 ### Sample Table Output
@@ -389,7 +390,7 @@ chaoscypher source extract SOURCE_ID
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--depth {quick,full}` | | Extraction depth: `quick` (fast sample) or `full` (all chunks, default). |
+| `--depth {quick,full}` | | Extraction depth: `quick` (fast sample) or `full` (all chunks). Default: the source's stored depth. |
 | `--domain DOMAIN` | | Force extraction domain (default: auto-detect from content). |
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--force` | | Re-extract a committed source. Deletes existing graph nodes and edges before re-running extraction. |
@@ -428,7 +429,7 @@ chaoscypher source confirm --all --yes
 |--------|-------|-------------|
 | `--all` | | Confirm every parked source. |
 | `--domain DOMAIN` | | Override the detected domain (default: accept the recommendation). |
-| `--depth {quick,full}` | | Extraction depth (default: `full`). |
+| `--depth {quick,full}` | | Extraction depth (default: the source's stored depth). |
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--yes` | `-y` | Accept the recommended domain without prompting (required when not a TTY). |
 | `--database DATABASE` | `-d` | Target database (default: the current database). |

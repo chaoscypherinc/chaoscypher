@@ -324,7 +324,7 @@ The chat switcher in the header includes a search box that queries the server by
 
 ## Tool Approval
 
-By default the assistant runs its tools automatically. **Settings → Tool call approval** offers two stricter modes:
+By default the assistant runs its tools automatically. **Settings → Models → Tool call approval** offers two stricter modes:
 
 - **ask-on-write** — read-only tools (search, traversal) run freely; mutating tools (create/update/delete nodes and edges, document changes) pause and ask for your confirmation.
 - **always-ask** — every tool call asks first.
@@ -335,7 +335,7 @@ When a gated tool call occurs, an approval dialog appears in the chat. Approving
 
 Two automatic quality layers run on every answer:
 
-- **Truncation warnings** — if the model's answer was cut off by the token budget, or the conversation outgrew the model's context window, an amber warning appears under the answer explaining what happened and how to work around it (for Ollama: raise the context size under Settings → LLM).
+- **Truncation warnings** — if the model's answer was cut off by the token budget, or the conversation outgrew the model's context window, an amber warning appears under the answer explaining what happened and how to work around it (for Ollama: raise the context size under Settings → Models).
 - **Citation validation** — when enabled (`chat_context.enable_response_validation`, on by default), each citation is checked against the retrieved source text and marked with a Verified/Invalid chip.
 
 ## LLM Configuration

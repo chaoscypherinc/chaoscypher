@@ -45,10 +45,10 @@ def _outcome_color(outcome: str) -> str:
     return CYAN
 
 
-def _print_report(report_path: Path) -> tuple[int, int, int]:
+def _print_report(report_path: Path) -> tuple[int, int, int, int]:
     """Print summary for a single pytest-json-report file.
 
-    Returns (passed, failed, skipped) counts.
+    Returns (passed, failed, skipped, errors) counts.
     """
     with report_path.open() as f:
         data = json.load(f)
@@ -96,15 +96,18 @@ def _print_report(report_path: Path) -> tuple[int, int, int]:
                 for line in error_lines[:2]:
                     print(f"         {RED}{line[:140]}{RESET}")
 
-    return passed, failed, skipped
+    return passed, failed, skipped, errors
 
 
 def main(reports_dir: str) -> int:
     """Aggregate all JSON reports in the directory."""
     reports_path = Path(reports_dir)
     if not reports_path.exists():
-        print(f"{RED}Reports directory not found: {reports_dir}{RESET}")
-        return 1
+        # Informational, like the empty-dir case below: "nothing ran yet" is
+        # not a failure. Real failures are gated by the report contents.
+        print(f"{YELLOW}Reports directory not found: {reports_dir}{RESET}")
+        print("(Run make e2e-cli, e2e-fresh, or e2e-resume first)")
+        return 0
 
     json_reports = sorted(reports_path.glob("*-report.json"))
     if not json_reports:
@@ -115,28 +118,31 @@ def main(reports_dir: str) -> int:
     total_passed = 0
     total_failed = 0
     total_skipped = 0
+    total_errors = 0
 
     print(f"{BOLD}{CYAN}E2E Test Report Summary{RESET}")
     print("=" * 60)
 
     for report in json_reports:
-        p, f, s = _print_report(report)
+        p, f, s, e = _print_report(report)
         total_passed += p
         total_failed += f
         total_skipped += s
+        total_errors += e
 
     print(f"\n{BOLD}{CYAN}== TOTALS =={RESET}")
     print(
         f"  {GREEN}{total_passed} passed{RESET}  "
         f"{RED}{total_failed} failed{RESET}  "
-        f"{YELLOW}{total_skipped} skipped{RESET}"
+        f"{YELLOW}{total_skipped} skipped{RESET}  "
+        f"{RED}{total_errors} errors{RESET}"
     )
 
     print(f"\n{CYAN}HTML reports:{RESET}")
     for html in sorted(reports_path.glob("*-report.html")):
         print(f"  {html}")
 
-    return 0 if total_failed == 0 else 1
+    return 0 if total_failed == 0 and total_errors == 0 else 1
 
 
 if __name__ == "__main__":

@@ -104,6 +104,20 @@ def make_chunk(
     }
 
 
+def batch_lookup(*chunks: dict[str, Any]) -> Any:
+    """side_effect emulating get_chunks_by_ids_batch over the given chunks.
+
+    Mirrors the adapter contract: results follow input order and missing
+    ids are silently absent.
+    """
+    by_id = {c["id"]: c for c in chunks}
+
+    def _fetch(chunk_ids: list[str], **_kwargs: Any) -> list[dict[str, Any]]:
+        return [by_id[cid] for cid in chunk_ids if cid in by_id]
+
+    return _fetch
+
+
 def _configure_graph_repo(
     repo: MagicMock,
     nodes: list[SimpleNamespace],
@@ -170,7 +184,7 @@ def search_repo() -> MagicMock:
 def indexing_repo() -> MagicMock:
     """Mock indexing repository."""
     repo = MagicMock()
-    repo.get_chunk_by_id.return_value = None
+    repo.get_chunks_by_ids_batch.return_value = []
     repo.get_source.return_value = None
     return repo
 
@@ -257,7 +271,7 @@ class TestDegradationPaths:
 
         # hybrid_search also returns chunks for vector path
         chunk = make_chunk("abc123")
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:abc123", 0.9)])
 
         handler = _make_handler(
@@ -310,7 +324,7 @@ class TestDegradationPaths:
 
         # Vector search returns one chunk
         chunk = make_chunk("chunk_v1", content="Vector chunk content.")
-        indexing_repo.get_chunk_by_id.return_value = chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:chunk_v1", 0.85)])
 
         handler = _make_handler(
@@ -366,14 +380,7 @@ class TestDegradationPaths:
         # Vector chunk (different chunk)
         vec_chunk = make_chunk("vec_chunk_1", content="Vector content.", source_id="src1")
 
-        def get_chunk_side_effect(chunk_id: str) -> dict[str, Any] | None:
-            if chunk_id == "prov_chunk_1":
-                return prov_chunk
-            if chunk_id == "vec_chunk_1":
-                return vec_chunk
-            return None
-
-        indexing_repo.get_chunk_by_id.side_effect = get_chunk_side_effect
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(prov_chunk, vec_chunk)
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:vec_chunk_1", 0.8)])
 
         handler = _make_handler(
@@ -518,7 +525,7 @@ class TestPipelineMechanics:
         ]
 
         # Vector search also returns the same chunk
-        indexing_repo.get_chunk_by_id.return_value = shared_chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(shared_chunk)
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:" + shared_chunk_id, 0.85)])
 
         handler = _make_handler(
@@ -601,7 +608,7 @@ class TestPipelineMechanics:
             {"chunk_id": "scoped_chunk", "entity_uri": "n1"}
         ]
         scoped_chunk = make_chunk("scoped_chunk", source_id="allowed_src")
-        indexing_repo.get_chunk_by_id.return_value = scoped_chunk
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(scoped_chunk)
         search_repo.hybrid_search = AsyncMock(return_value=[])
 
         handler = _make_handler(
@@ -623,6 +630,12 @@ class TestPipelineMechanics:
             call_args.args[2] if len(call_args.args) >= 3 else None
         )
         assert passed_source_ids == ["allowed_src"]
+
+        # The PPR graph load must push the scope into SQL: a Python filter
+        # after the SQL LIMIT hands scoped chats an arbitrary slice once the
+        # graph exceeds max_graph_nodes (and loads the whole cap regardless).
+        assert graph_repo.list_nodes_minimal.call_args.kwargs.get("source_ids") == ["allowed_src"]
+        assert graph_repo.list_edges_minimal.call_args.kwargs.get("source_ids") == ["allowed_src"]
 
 
 # ===========================================================================

@@ -12,6 +12,9 @@ interface TaskLike {
   operation: string;
   data?: {
     inputs?: { filename?: string; analysis_depth?: string };
+    // The list endpoint ships operations_count (payload whitelist — the
+    // raw operations array only exists on the task detail endpoint).
+    operations_count?: number;
     operations?: unknown[];
   };
   metadata?: {
@@ -67,7 +70,7 @@ export function getTaskDescription(task: TaskLike): string {
     return task.metadata.tool;
   }
   if (task.operation === 'bulk_nodes' || task.operation === 'bulk_edges') {
-    const count = task.data?.operations?.length || 0;
+    const count = task.data?.operations_count ?? task.data?.operations?.length ?? 0;
     return `${count} operations`;
   }
   if (task.operation === 'export_graph') {

@@ -17,6 +17,7 @@ Example:
 
 from __future__ import annotations
 
+import contextlib
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from chaoscypher_core.exceptions import NotFoundError, ValidationError
+from chaoscypher_core.settings import ArchiveSettings
 
 
 if TYPE_CHECKING:
@@ -156,23 +158,72 @@ def _validate_member_for_extraction(
         raise ArchiveSecurityError(msg) from e
 
 
+def _stream_extract_member(
+    zipf: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    dest_dir: Path,
+    *,
+    running_total: int,
+    max_total_bytes: int,
+    copy_chunk: int,
+) -> int:
+    """Stream one member to disk with per-byte accounting.
+
+    Returns the updated running byte total. Raises
+    ``ArchiveSecurityError`` (and removes the partial file) the moment the
+    total crosses ``max_total_bytes`` — the backstop for members whose
+    declared size lies (possible zip bomb).
+    """
+    target = dest_dir / member.filename
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with zipf.open(member, "r") as src, target.open("wb") as dst:
+        while chunk := src.read(copy_chunk):
+            running_total += len(chunk)
+            if running_total > max_total_bytes:
+                # Remove the partial file so we don't leak disk.
+                with contextlib.suppress(OSError):
+                    dst.close()
+                    target.unlink(missing_ok=True)
+                msg = (
+                    f"Archive exceeds actual-size limit during "
+                    f"extraction ({running_total} > {max_total_bytes}); "
+                    f"possible zip bomb"
+                )
+                raise ArchiveSecurityError(msg)
+            dst.write(chunk)
+    return running_total
+
+
 def extract_archive(
     archive_path: Path,
     dest_dir: Path,
     *,
     strip_components: int = 0,
     progress_callback: Callable[[str, int, int], None] | None = None,
+    max_files: int | None = None,
+    max_total_bytes: int | None = None,
 ) -> Path:
     """Extract a .ccx package archive to a directory.
 
     Extracts a ZIP archive with security validation to prevent
-    path traversal attacks.
+    path traversal attacks and archive-volume abuse (zip bombs).
+
+    Volume limits mirror ``ArchiveExtractor`` (the user-upload sibling):
+    member count and declared total size are pre-checked, and bytes are
+    tallied during extraction so a member that decompresses far past its
+    declared size is stopped at the cap. Untrusted inputs reach this
+    function — hub-downloaded packages and local ``.ccx`` files — so the
+    caps must hold here, not only in the loader path.
 
     Args:
         archive_path: Path to the .ccx archive file.
         dest_dir: Destination directory for extraction.
         strip_components: Number of leading path components to strip.
         progress_callback: Optional callback(filename, current, total) for progress.
+        max_files: Maximum member count; defaults to
+            ``ArchiveSettings.max_files``.
+        max_total_bytes: Maximum extracted bytes across all members;
+            defaults to ``ArchiveSettings.max_extracted_size_mb``.
 
     Returns:
         Path to the extraction directory.
@@ -180,7 +231,8 @@ def extract_archive(
     Raises:
         NotFoundError: If archive doesn't exist.
         zipfile.BadZipFile: If archive is corrupted or invalid.
-        ArchiveSecurityError: If archive contains unsafe paths.
+        ArchiveSecurityError: If archive contains unsafe paths or exceeds
+            the volume limits.
         PermissionError: If unable to read archive or write to destination.
 
     Example:
@@ -192,6 +244,16 @@ def extract_archive(
     """
     if not archive_path.exists():
         raise NotFoundError("Archive", str(archive_path))
+
+    if max_files is None or max_total_bytes is None:
+        # Callers on this path (compose resolver, CLI lexicon pull) have no
+        # settings plumbing yet, so fall back to the model's defaults — the
+        # same values the sibling extractor gets on an unconfigured install.
+        defaults = ArchiveSettings()
+        if max_files is None:
+            max_files = defaults.max_files
+        if max_total_bytes is None:
+            max_total_bytes = defaults.max_extracted_size_mb * 1024 * 1024
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -206,13 +268,27 @@ def extract_archive(
         members = zipf.infolist()
         total_members = len(members)
 
+        # Volume pre-checks (cheap; the streaming tally below is the
+        # backstop for members whose declared size lies).
+        if total_members > max_files:
+            msg = f"Archive exceeds file limit: {total_members} > {max_files}"
+            raise ArchiveSecurityError(msg)
+        declared_total = sum(m.file_size for m in members)
+        if declared_total > max_total_bytes:
+            msg = f"Archive exceeds declared size limit: {declared_total} > {max_total_bytes}"
+            raise ArchiveSecurityError(msg)
+
         # First pass: validate all members (without mutating filenames)
         for member in members:
             if member.is_dir():
                 continue
             _validate_member_for_extraction(member, dest_dir, strip_components)
 
-        # Second pass: extract validated members
+        # Second pass: stream-extract validated members with per-byte
+        # accounting, so decompressed output crossing the cap stops the
+        # extraction instead of filling the data volume.
+        actual_total = 0
+        copy_chunk = 1024 * 1024  # 1 MB, mirrors ArchiveExtractor
         for idx, member in enumerate(members):
             # Skip directories (they're created automatically)
             if member.is_dir():
@@ -228,9 +304,16 @@ def extract_archive(
 
             extracted_name = member.filename
             try:
-                zipf.extract(member, dest_dir)
+                actual_total = _stream_extract_member(
+                    zipf,
+                    member,
+                    dest_dir,
+                    running_total=actual_total,
+                    max_total_bytes=max_total_bytes,
+                    copy_chunk=copy_chunk,
+                )
             finally:
-                # Restore even when extract raises — members are shared
+                # Restore even when extraction raises — members are shared
                 # ZipInfo objects and a mutated filename would corrupt any
                 # retry or later use of the same ZipFile.
                 member.filename = original_filename

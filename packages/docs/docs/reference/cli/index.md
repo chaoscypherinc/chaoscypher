@@ -21,7 +21,7 @@ uv run chaoscypher --version
 ```
 
 ```
-chaoscypher, version 0.2.0
+chaoscypher, version 0.4.1
 ```
 
 ## Help Output

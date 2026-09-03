@@ -24,13 +24,9 @@ rules:
       See the vision pipeline migration notes
     severity: ERROR
     languages: [python]
-    paths:
-      exclude:
-        - "**/database/migrations/versions/0019_sources_vision_pages_failed.py"
-        - "**/database/migrations/versions/0021_upload_settings_and_quality_counters.py"
-        - "**/database/migrations/versions/0031_failed_page_lists.py"
-        - "**/database/migrations/versions/0032_create_vision_page_tables.py"
-        - "**/database/migrations/versions/0034_drop_legacy_vision_columns.py"
+    # (No path excludes: the pre-squash 0019/0021/0031/0032/0034 migration
+    # carve-outs are gone — today's squashed baseline never creates these
+    # columns, so nothing may reference the names.)
     pattern-either:
       # Bare-name identifier references (assignments, reads, function args)
       - pattern: vision_pages_failed

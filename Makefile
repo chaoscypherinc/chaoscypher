@@ -4,7 +4,7 @@
 #
 # Run 'make' or 'make help' to see available commands
 
-.PHONY: help install lint lint-fix format typecheck test test-unit test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface security docstrings deadcode deadcode-all ci ci-local ci-extended ci-docker docker-test docker-ci docs docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs benchmark-list benchmark-quick benchmark-cards check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface
+.PHONY: help install lint lint-fix format typecheck test test-unit test-all test-cov test-cov-internal test-cov-interface coverage-diff coverage-diff-interface coverage-diff-advisory security docstrings deadcode deadcode-all ci ci-local ci-extended docker-test docker-ci docs docs-serve docker-dev docker-prod docker-down docker-up docker-rebuild clean clean-worktrees lint-claude lint-claude-selftest lint-secrets lint-internal-refs benchmark-list benchmark-quick benchmark-cards check-api-docs license-check license-check-python license-check-interface bundle-size mutate mutate-python mutate-interface types e2e e2e-cli e2e-docker e2e-fresh e2e-resume e2e-report-summary e2e-browser e2e-cleanup
 
 # Default target
 help:
@@ -151,7 +151,7 @@ E2E_PYTEST_REPORTS = \
   --junit-xml=$$REPORT_PREFIX.xml \
   --json-report --json-report-file=$$REPORT_PREFIX.json
 
-e2e: e2e-cli e2e-docker e2e-report-summary ## Run full E2E suite (CLI + Docker API + Browser)
+e2e: e2e-cli e2e-docker e2e-report-summary ## Run full E2E suite (CLI + Docker fresh + resume; browser tier is operator-run via e2e-browser)
 	@echo ""
 	@echo "========================================"
 	@echo "ALL E2E TESTS PASSED"
@@ -179,7 +179,7 @@ e2e-fresh: ## Run fresh phase E2E tests (wipes data, starts clean)
 	$(E2E_COMPOSE) up -d app
 	bash $(E2E_WAIT) http://localhost:8888 120
 	$(E2E_COMPOSE) run --rm -e E2E_PHASE=fresh runner pytest e2e/ --import-mode=importlib -v --tb=short \
-		-m "e2e and not resume and not cli" \
+		-m "e2e and not resume and not cli and not browser and not migrations" \
 		--html=test-reports/api-fresh-report.html --self-contained-html \
 		--junit-xml=test-reports/api-fresh-report.xml \
 		--json-report --json-report-file=test-reports/api-fresh-report.json
@@ -202,7 +202,7 @@ e2e-resume: ## Run resume phase E2E tests (keeps data from fresh)
 e2e-report-summary: ## Print summary of all E2E test reports
 	@echo ""
 	@echo "=== E2E Test Report Summary ==="
-	@uv run python scripts/e2e_report_summary.py $(E2E_REPORTS_DIR)/ 2>/dev/null || echo "(run individual e2e targets first to generate reports)"
+	@uv run python scripts/e2e_report_summary.py $(E2E_REPORTS_DIR)/
 
 e2e-browser: ## Run Playwright browser E2E tests only
 	@echo "=== Browser E2E Tests ==="
@@ -281,7 +281,7 @@ test-cov-internal:
 #
 # Currently advisory in `make ci` (prints results, does not fail). After
 # two weeks of advisory data we'll promote to blocking — see
-# CONTRIBUTING.md and CONTRIBUTING.md.
+# CONTRIBUTING.md.
 
 COVERAGE_XML_PATH = packages/docker/test-output/coverage.xml
 
@@ -357,10 +357,16 @@ security:
 	uv run pip-audit --ignore-vuln PYSEC-2022-42969
 	@echo ""
 	@echo "=== Frontend Dependency Audit ==="
-	cd packages/interface && npm audit --audit-level=high
+	# Mirrors the `security` step in scripts/run_ci.py (the authoritative
+	# list — update both together): shipped interface deps stay strict via
+	# --omit=dev; the full trees (incl. devDependencies-only tooling) run
+	# through the actionability gate, which blocks on *fixable* high+
+	# findings and reports the rest.
+	cd packages/interface && npm audit --omit=dev --audit-level=high
+	uv run python scripts/npm_audit_gate.py packages/interface
 	@echo ""
 	@echo "=== Docs Dependency Audit ==="
-	cd packages/docs && npm audit --audit-level=high
+	uv run python scripts/npm_audit_gate.py packages/docs
 	@echo ""
 	@echo "Security scan complete"
 
@@ -421,7 +427,7 @@ deadcode-all:
 # ==========================================================================
 # Enforces brotli'd byte budgets on the Vite-built JS chunks. Budgets live
 # in packages/interface/.size-limit.json; baseline composition is documented
-# at packages/interface/.size-limit.json.
+# in internal/BUNDLE_SIZE_BASELINE.md.
 #
 # Always rebuilds first so the gate measures the current source — a stale
 # dist/ would let bloat slip through. ~3 s to rebuild + ~1 s to measure.
@@ -484,8 +490,8 @@ lint-claude-selftest:
 	@echo "CLAUDE.md rule self-tests passed"
 
 lint-secrets:
-	@echo "=== Secret Scan (gitleaks) ==="
-	gitleaks detect --redact --verbose --no-banner
+	@echo "=== Secret Scan (gitleaks, detect-secrets fallback) ==="
+	uv run python scripts/secrets_scan.py
 	@echo ""
 	@echo "Secret scan passed"
 
@@ -493,6 +499,7 @@ lint-internal-refs:
 	@echo "=== Public-export hygiene (private-docs refs + SPDX headers) ==="
 	uv run python scripts/check_no_internal_refs.py
 	uv run python scripts/check_spdx_headers.py
+	uv run python scripts/check_metrics_artifacts.py
 
 check-api-docs:
 	cd packages/docs && uv run python scripts/check_api_docs.py
