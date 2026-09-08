@@ -1,10 +1,13 @@
 # Publishes the four Python packages (core, cortex, neuron, cli) to PyPI.
 #
 # Triggers:
-#   - a published GitHub Release -> publishes all four to REAL PyPI at the
-#     release version. A guard first verifies the tag matches the package
-#     versions. This is the same Release that publishes the GHCR image, so
+#   - a pushed vX.Y.Z tag -> publishes all four to REAL PyPI at the release
+#     version. A guard first verifies the tag matches the package versions.
+#     This is the same tag that publishes the GHCR image, so
 #     `pip install chaoscypher-core==X.Y.Z` matches `ghcr.io/...:X.Y.Z`.
+#     (Since 2026-09-04 the tag push is the release act; release.yml writes
+#     the GitHub Release notes, and `gh release create vX.Y.Z` — which creates
+#     the tag — publishes once too.)
 #   - manual workflow_dispatch -> defaults to TestPyPI for a rehearsal run;
 #     set target=pypi for an out-of-band real publish.
 #
@@ -29,12 +32,12 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # final releases only — a pre-release tag (v0.5.0-rc1) must never repoint :latest or publish to PyPI (#530 § 3)
   workflow_dispatch:
     inputs:
       target:
-        description: "Index to publish to. Use testpypi for a rehearsal run. (A published Release always targets pypi.)"
+        description: "Index to publish to. Use testpypi for a rehearsal run. (A vX.Y.Z tag push always targets pypi.)"
         type: choice
         options:
           - testpypi
@@ -58,7 +61,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Verify tag matches package versions
-        if: github.event_name == 'release'
+        if: github.event_name == 'push'
         run: python3 scripts/check_release_version.py "${{ github.ref_name }}"
 
       - name: Install uv
@@ -100,8 +103,8 @@ jobs:
           - package: chaoscypher-cli
             short: cli
     # One environment per package — must match each PyPI pending publisher's
-    # registered environment exactly (see header note on uniqueness). A
-    # published Release has no `target` input, so it resolves to `pypi`.
+    # registered environment exactly (see header note on uniqueness). A tag
+    # push has no `target` input, so it resolves to `pypi`.
     environment: ${{ inputs.target || 'pypi' }}-${{ matrix.short }}
     permissions:
       # Required for PyPI Trusted Publishing (OIDC token exchange).

@@ -189,7 +189,7 @@ def _hydrate_results(ctx: CLIContext, raw_results: list[tuple[str, float]]) -> l
     # Hydrate nodes
     if node_ids:
         ids_only = [nid for nid, _ in node_ids]
-        nodes = ctx.graph_repository.get_nodes_batch(ids_only)
+        nodes = ctx.graph_repository.get_nodes_batch(ids_only, include_embedding=False)
         nodes_dict = {node.id: node for node in nodes}
 
         for node_id, score in node_ids:

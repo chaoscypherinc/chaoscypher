@@ -30,6 +30,15 @@ this gate then covers interface's *full* tree (including devDependencies-only
 tooling like bundle-size checks), where unfixable/downgrade-only advisories in
 dev-only chains would otherwise block every push with no action available.
 
+Fail-closed rule (2026-09-04 npm registry outage, #530): when the registry's
+audit endpoint is degraded npm still prints JSON on stdout, but it is an error
+object (``{"error": {"code": "E503", ...}}``) with no ``vulnerabilities`` key.
+That parsed cleanly, classified to zero findings and the gate printed PASS
+while a known high-severity root (``image-size``) sat in the tree. So
+``_run_audit`` now rejects any report that is not an object, carries an
+``error`` key, or lacks a ``vulnerabilities`` object, and ``main`` turns that
+into exit 2: the gate refuses to vouch for a tree it could not actually audit.
+
 Usage:
     uv run python scripts/npm_audit_gate.py packages/docs
     uv run python scripts/npm_audit_gate.py packages/docs --severity critical
@@ -75,10 +84,40 @@ def _run_audit(directory: Path) -> dict:
         msg = f"npm audit produced no output in {directory} (stderr: {proc.stderr.strip()[:400]})"
         raise RuntimeError(msg)
     try:
-        return json.loads(proc.stdout)
+        report = json.loads(proc.stdout)
     except json.JSONDecodeError as exc:  # pragma: no cover - malformed npm output
         msg = f"could not parse npm audit JSON from {directory}: {exc}"
         raise RuntimeError(msg) from exc
+    problem = _report_problem(report)
+    if problem:
+        msg = f"npm audit in {directory} {problem}"
+        raise RuntimeError(msg)
+    return report
+
+
+def _report_problem(report: object) -> str | None:
+    """Describe why ``report`` is not a usable audit report, or return None when it is.
+
+    A degraded registry (observed 2026-09-04, #530) makes npm emit an error
+    object on stdout instead of a report. It parses, has no ``vulnerabilities``
+    key, and would classify to zero findings — a PASS the gate never earned. A
+    normal v2 report is ``{"auditReportVersion": 2, "vulnerabilities": {...},
+    "metadata": {...}}``; an empty ``vulnerabilities`` object is a valid clean
+    result and passes through unchanged.
+    """
+    if not isinstance(report, dict):
+        return f"returned a JSON {type(report).__name__}, not a report object"
+    if "error" in report:
+        error = report["error"]
+        if isinstance(error, dict):
+            parts = (error.get("code"), error.get("summary"))
+            detail = " ".join(str(part) for part in parts if part) or repr(error)
+        else:
+            detail = repr(error)
+        return f"returned an error instead of a report: {detail}"
+    if not isinstance(report.get("vulnerabilities"), dict):
+        return f"report has no 'vulnerabilities' object (keys: {sorted(report)})"
+    return None
 
 
 def _version_tuple(version: str) -> tuple[int, ...]:
@@ -232,7 +271,14 @@ def main() -> int:
         print(f"[npm-audit-gate] no package-lock.json in {directory}", file=sys.stderr)
         return 2
 
-    report = _run_audit(directory)
+    try:
+        report = _run_audit(directory)
+    except RuntimeError as exc:
+        print(
+            f"[npm-audit-gate] ERROR: {exc} — advisories could not be evaluated; failing closed",
+            file=sys.stderr,
+        )
+        return 2
     fixable, unfixable, propagated = classify(report, args.severity, installed_versions(directory))
 
     print(f"[npm-audit-gate] {directory} — severity floor: {args.severity}")

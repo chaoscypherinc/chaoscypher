@@ -98,7 +98,7 @@ class EdgeToolHandlers:
             for edge in edges:
                 all_node_ids.add(edge.source_node_id)
                 all_node_ids.add(edge.target_node_id)
-            nodes = self.graph.get_nodes_batch(list(all_node_ids))
+            nodes = self.graph.get_nodes_batch(list(all_node_ids), include_embedding=False)
             allowed_ids = {
                 n.id
                 for n in nodes
@@ -189,7 +189,7 @@ class EdgeToolHandlers:
                 break
 
         # Batch fetch related nodes
-        related_nodes = self.graph.get_nodes_batch(list(related_node_ids))
+        related_nodes = self.graph.get_nodes_batch(list(related_node_ids), include_embedding=False)
         # Filter related nodes by source scope
         if source_ids:
             related_nodes = [

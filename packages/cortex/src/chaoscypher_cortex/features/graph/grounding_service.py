@@ -313,7 +313,14 @@ class GroundingService:
 
         # Batch-fetch all neighbor nodes in a single query
         neighbor_ids = [nid for nid, _, _ in unique_edges]
-        node_map = {n.id: n for n in self.graph_repository.get_nodes_batch(neighbor_ids)}
+        # Neighbour payloads render label/type/properties only, so skip the
+        # 1024-float vector: it would otherwise be read, JSON-decoded and
+        # serialized onto the wire for every neighbour (``Node.embedding`` has
+        # no ``exclude=True``).
+        node_map = {
+            n.id: n
+            for n in self.graph_repository.get_nodes_batch(neighbor_ids, include_embedding=False)
+        }
 
         # Build response from pre-fetched nodes
         neighbors: list[NeighborNodeResponse] = []

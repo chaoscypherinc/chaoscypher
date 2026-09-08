@@ -48,8 +48,6 @@ docker run -d --name chaoscypher \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
 
-(Cloned the repo instead? `make docker-up` builds and starts the same container.)
-
 On Linux Docker Engine (not Docker Desktop), add `--add-host=host.docker.internal:host-gateway` so the container can reach Ollama on your host -- Docker Desktop resolves this automatically.
 
 <!-- screenshot: docker-up terminal output showing the container starting and becoming healthy -->

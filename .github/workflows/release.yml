@@ -1,0 +1,56 @@
+name: Release notes
+
+# Creates the GitHub Release for a pushed vX.Y.Z tag, with notes taken from the
+# matching section of the docs changelog (packages/docs/docs/about/changelog.md).
+#
+# Publishing keys off the TAG PUSH itself — publish-ghcr.yml (image) and
+# publish-pypi.yml (four PyPI packages) both trigger on `push: tags: v[0-9]+.[0-9]+.[0-9]+` (final releases only) — so the
+# Release created here never needs to re-trigger anything, and a Release created
+# by hand (`gh release create vX.Y.Z`, which also creates the tag) is left as is.
+#
+# Since 2026-09-04 the weekly cc-public-snapshot routine pushes the tag after the
+# snapshot's public CI is green; a human can still push the tag or run
+# `gh release create` — both publish exactly once.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]  # final releases only — a pre-release tag (v0.5.0-rc1) must never repoint :latest or publish to PyPI (#530 § 3)
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Create the GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Verify tag matches package versions
+        run: python3 scripts/check_release_version.py "${{ github.ref_name }}"
+
+      - name: Extract the changelog section
+        run: |
+          if ! python3 scripts/changelog_section.py "${{ github.ref_name }}" > release-notes.md; then
+            printf 'Release %s.\n\nFull changelog: https://chaoscypher.com/about/changelog\n' "${{ github.ref_name }}" > release-notes.md
+            echo "::warning::no changelog section for ${{ github.ref_name }} — published a generic body"
+          fi
+          cat release-notes.md
+
+      - name: Create the Release (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+            echo "Release $TAG already exists — leaving it untouched." >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh release create "$TAG" -R "$REPO" --title "$TAG" --notes-file release-notes.md
+            echo "Created Release $TAG from the changelog section." >> "$GITHUB_STEP_SUMMARY"
+          fi

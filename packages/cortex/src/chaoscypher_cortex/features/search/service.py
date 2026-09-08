@@ -477,7 +477,12 @@ class SearchService:
             # rows survived: a node deleted mid-request must not be pushed into
             # the search index (what the per-node update_node -> None check did).
             found = (
-                {n.id for n in self.graph_repository.get_nodes_batch(list(updates))}
+                {
+                    n.id
+                    for n in self.graph_repository.get_nodes_batch(
+                        list(updates), include_embedding=False
+                    )
+                }
                 if changed
                 else set()
             )

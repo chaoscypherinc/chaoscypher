@@ -279,7 +279,26 @@ def test_get_node_neighbors_outgoing_only_respects_limit() -> None:
     # limit=2 truncates the unique-edge collection to 2 ids.
     assert result.total == 2
     # Batch fetch only asked for the first 2 neighbor ids.
-    repo.get_nodes_batch.assert_called_once_with(["n1", "n2"])
+    repo.get_nodes_batch.assert_called_once_with(["n1", "n2"], include_embedding=False)
+
+
+def test_get_node_neighbors_never_loads_embeddings() -> None:
+    """Neighbour hydration must not read the 1024-float embedding vector.
+
+    ``NeighborNodeResponse.node`` is a plain ``Node``, which has no
+    ``exclude=True`` on ``embedding`` — so a batch fetch that loads the
+    vector serializes it onto the wire for every neighbour.
+    """
+    center = _make_node("center")
+    repo = MagicMock()
+    repo.get_node.return_value = center
+    repo.list_edges.return_value = [_make_edge("e1", "center", "n1")]
+    repo.get_nodes_batch.return_value = [_make_node("n1")]
+    service = _make_service(repo=repo)
+
+    service.get_node_neighbors("center")
+
+    assert repo.get_nodes_batch.call_args.kwargs["include_embedding"] is False
 
 
 def test_get_node_neighbors_skips_missing_hydrated_nodes() -> None:

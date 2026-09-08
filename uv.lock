@@ -293,7 +293,7 @@ wheels = [
 
 [[package]]
 name = "chaoscypher-cli"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/cli" }
 dependencies = [
     { name = "chaoscypher-core" },
@@ -341,7 +341,7 @@ provides-extras = ["server", "dev"]
 
 [[package]]
 name = "chaoscypher-core"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/core" }
 dependencies = [
     { name = "alembic" },
@@ -494,7 +494,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "chaoscypher-cortex"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/cortex" }
 dependencies = [
     { name = "chaoscypher-core" },
@@ -548,7 +548,7 @@ provides-extras = ["dev"]
 
 [[package]]
 name = "chaoscypher-neuron"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "packages/neuron" }
 dependencies = [
     { name = "chaoscypher-core" },

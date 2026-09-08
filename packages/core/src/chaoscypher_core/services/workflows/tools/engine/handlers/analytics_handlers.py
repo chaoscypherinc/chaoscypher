@@ -350,7 +350,7 @@ class AnalyticsToolHandlers:
 
             # Fetch nodes
             node_ids = [nid for nid, _ in results]
-            nodes = self.graph.get_nodes_batch(node_ids)
+            nodes = self.graph.get_nodes_batch(node_ids, include_embedding=False)
 
             # Filter by source scope
             if source_ids:
@@ -511,7 +511,7 @@ class AnalyticsToolHandlers:
 
         # Hydrate nodes
         result_node_ids = [r["node_id"] for r in results]
-        nodes = self.graph.get_nodes_batch(result_node_ids)
+        nodes = self.graph.get_nodes_batch(result_node_ids, include_embedding=False)
         # Filter by source scope
         if source_ids:
             nodes = [

@@ -117,7 +117,11 @@ class TopicResearcher:
 
             # Build context from graph (batch fetch to avoid N+1 queries)
             top_result_ids = [r["id"] for r in graph_results[:5]]
-            graph_nodes = self.graph.get_nodes_batch(top_result_ids) if top_result_ids else []
+            graph_nodes = (
+                self.graph.get_nodes_batch(top_result_ids, include_embedding=False)
+                if top_result_ids
+                else []
+            )
             graph_node_map = {node.id: node for node in graph_nodes}
             graph_context = "\n".join(
                 [

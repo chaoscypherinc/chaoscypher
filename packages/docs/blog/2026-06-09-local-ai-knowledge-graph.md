@@ -32,10 +32,15 @@ That downloads the model weights once. After that, Ollama runs as a local API se
 **Step 2: Start the Chaos Cypher stack.**
 
 ```bash
-cd packages/docker && docker compose up -d
+docker run -d --name chaoscypher \
+  -p 80:80 \
+  -p 443:443 \
+  -v chaoscypher-data:/data \
+  --add-host=host.docker.internal:host-gateway \
+  ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
 
-(Or `make docker-up` from a repo clone -- same thing.) This brings up the all-in-one container: the Cortex API server, a Neuron background worker, the web Interface, and Valkey for job queuing, all in one box. The compose file points the container at Ollama on your host machine through Docker's `host.docker.internal` bridge. No external network calls during operation -- the only downloads are the one-time Ollama model pull and a one-time fetch of the embedding model from HuggingFace at first indexing (cached afterwards; air-gapped installs can pre-seed the cache).
+That pulls the published all-in-one image and starts it: the Cortex API server, a Neuron background worker, the web Interface, and Valkey for job queuing, all in one container. The image points the container at Ollama on your host machine through Docker's `host.docker.internal` bridge; the `--add-host` flag makes that name resolve on Linux Docker Engine (Docker Desktop resolves it on its own). No external network calls during operation -- the only downloads are the one-time Ollama model pull and a one-time fetch of the embedding model from HuggingFace at first indexing (cached afterwards; air-gapped installs can pre-seed the cache).
 
 **Step 3: Upload a document.**
 
@@ -118,22 +123,26 @@ llm:
   ollama_num_ctx: 32768
 ```
 
-The default Ollama URL is `http://localhost:11434`; the Docker compose file
+The default Ollama URL is `http://localhost:11434`; the published image
 overrides it to `http://host.docker.internal:11434` (via the
 `CHAOSCYPHER_OLLAMA_URL` environment variable), which Just Works™ for the
-all-in-one container talking to a host-side Ollama on Docker Desktop. On
-Linux Docker Engine (not Docker Desktop), `host.docker.internal` is not
-defined for the all-in-one container -- add
-`extra_hosts: ["host.docker.internal:host-gateway"]` to the compose service,
-or set `CHAOSCYPHER_OLLAMA_URL` to your host's LAN IP. To add multi-GPU
-instances, use `ollama_instances`.
+all-in-one container talking to a host-side Ollama. On Linux Docker Engine
+(not Docker Desktop), that name only resolves because of the
+`--add-host=host.docker.internal:host-gateway` flag in the `docker run`
+command above -- keep it, or set `CHAOSCYPHER_OLLAMA_URL` to your host's LAN
+IP instead. To add multi-GPU instances, use `ollama_instances`.
 
 Or skip the YAML entirely -- open the Settings page in the UI, select Ollama as your provider, pick a VRAM preset that matches your GPU, and you're done. The preset fills in the model name, context window, batch size, and extraction model automatically.
 
 Then start everything:
 
 ```bash
-cd packages/docker && docker compose up -d
+docker run -d --name chaoscypher \
+  -p 80:80 \
+  -p 443:443 \
+  -v chaoscypher-data:/data \
+  --add-host=host.docker.internal:host-gateway \
+  ghcr.io/chaoscypherinc/chaoscypher:latest
 ```
 
 Upload a document, wait for indexing (30 seconds) and extraction (a few minutes), and you have a working knowledge graph built entirely on your hardware.

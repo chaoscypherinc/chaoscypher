@@ -285,7 +285,7 @@ class GraphRAGToolHandlers:
 
             # Single batch-fetch for all nodes (sorted + neighbors)
             all_needed = neighbor_ids | set(sorted_ids)
-            all_fetched = self.graph.get_nodes_batch(list(all_needed))
+            all_fetched = self.graph.get_nodes_batch(list(all_needed), include_embedding=False)
             nodes_map: dict[str, Any] = {n.id: n for n in all_fetched}
             label_map: dict[str, str] = {n.id: n.label for n in all_fetched}
             template_map = self._resolve_template_names(all_fetched)

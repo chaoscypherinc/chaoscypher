@@ -198,7 +198,7 @@ class NodeToolHandlers:
 
         # Fetch nodes
         node_id_list = [nid for nid, _ in node_ids]
-        nodes = self.graph.get_nodes_batch(node_id_list)
+        nodes = self.graph.get_nodes_batch(node_id_list, include_embedding=False)
         nodes_dict = {node.id: node for node in nodes}
 
         # Build template name lookup for filtering (if template_ids filter is used)
@@ -652,7 +652,9 @@ class NodeToolHandlers:
                 related_node_ids.add(edge.source_node_id)
 
             # Batch fetch related nodes
-            related_nodes = self.graph.get_nodes_batch(list(related_node_ids))
+            related_nodes = self.graph.get_nodes_batch(
+                list(related_node_ids), include_embedding=False
+            )
             # Filter related nodes by source scope
             if source_ids:
                 related_nodes = [
@@ -823,7 +825,7 @@ class NodeToolHandlers:
         # Include alternatives if requested
         if include_alternatives and len(node_results) > 1:
             alt_ids = [rid for rid, _ in node_results[1 : max_alternatives + 1]]
-            alt_nodes = self.graph.get_nodes_batch(alt_ids)
+            alt_nodes = self.graph.get_nodes_batch(alt_ids, include_embedding=False)
             alt_dict = {n.id: n for n in alt_nodes}
 
             result["alternatives"] = [

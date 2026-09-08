@@ -91,7 +91,8 @@ def get_chat_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ChatService:
     """Get ChatService instance (uses engine service with SQLite adapter)."""
-    # Get singleton storage adapter
+    # A fresh, request-scoped adapter (NOT a singleton) — registered for
+    # teardown by AdapterCleanupMiddleware once the response is fully sent.
     adapter = get_sqlite_adapter(database_name=settings.current_database)
 
     # Return engine service directly (no wrapper)

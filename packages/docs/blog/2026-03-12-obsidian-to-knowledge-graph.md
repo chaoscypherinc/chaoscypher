@@ -3,8 +3,8 @@ slug: obsidian-to-knowledge-graph
 title: "From Obsidian Vault to AI-Powered Knowledge Graph in Minutes"
 authors: [denis]
 tags: [integrations, workflows]
-date: 2026-03-12
-draft: true
+date: 2026-09-08
+draft: false
 description: Import an Obsidian vault into Chaos Cypher to add AI-discovered entities and relationships on top of your manual wiki-links — no re-linking required.
 ---
 
