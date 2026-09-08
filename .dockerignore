@@ -51,6 +51,15 @@ docs/_build/
 # Test trees — no Dockerfile copies these at build time (test runner mounts
 # them at runtime). Defense in depth against accidental inclusion.
 **/tests/
+# Frontend test files too: the production image's frontend-builder stage runs
+# `tsc` over everything it copies, and a test that imports a fixture from a
+# sibling package (defaultPublicSettingsDrift.test.ts -> packages/cortex/tests)
+# resolves in the monorepo but not inside the image, which broke the image
+# build and held the v0.4.2 tag (#557, 2026-09-08). Tests never belong in the
+# image, so keep them out of the build context outright.
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
 
 # Build-supporting files (lint configs, plans, ADRs, scripts) — never shipped.
 internal/
