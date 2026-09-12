@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from contextlib import asynccontextmanager
 from unittest.mock import MagicMock
 
 import pytest
@@ -203,3 +205,52 @@ async def test_beats_never_run_on_the_handler_scoped_session(tmp_path) -> None:
         "a beat executed on the handler's scoped session — the cross-thread "
         "shared-session race the isolated beat exists to prevent"
     )
+
+
+@pytest.mark.asyncio
+async def test_beat_is_offloaded_off_the_event_loop_thread() -> None:
+    """The blocking SQLite write never runs on the caller's event loop.
+
+    ``_beat`` issues an ``UPDATE`` + ``COMMIT`` whose busy-retry backoff
+    sleeps with ``time.sleep``, so running it inline stalled the worker's
+    event loop — and with it all eight concurrent operations slots — for
+    the whole retry ladder. The beat must be handed to a worker thread.
+
+    Both branches of ``_isolated_beat`` are covered: an adapter with no
+    ``session_scope`` (the fake-adapter fallback) and one that provides a
+    real async scope.
+    """
+    loop_thread = threading.get_ident()
+
+    class _NoScopeAdapter:
+        """Adapter without ``session_scope`` — takes the fallback branch."""
+
+        def __init__(self) -> None:
+            self.beat_threads: list[int] = []
+
+        def update_source_last_activity(self, **_kwargs: object) -> None:
+            self.beat_threads.append(threading.get_ident())
+
+    class _ScopedAdapter(_NoScopeAdapter):
+        """Adapter with a real async ``session_scope`` — isolated branch."""
+
+        def session_scope(self):
+            @asynccontextmanager
+            async def _scope():
+                yield None
+
+            return _scope()
+
+    for adapter in (_NoScopeAdapter(), _ScopedAdapter()):
+        async with source_heartbeat(
+            adapter=adapter,
+            source_id="src-offload",
+            database_name="default",
+            interval_seconds=60.0,  # long enough that the loop never fires
+        ):
+            pass
+
+        assert adapter.beat_threads, f"no beat recorded for {type(adapter).__name__}"
+        assert all(t != loop_thread for t in adapter.beat_threads), (
+            f"{type(adapter).__name__} ran the blocking beat on the event loop thread"
+        )

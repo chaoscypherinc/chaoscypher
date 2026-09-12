@@ -8,9 +8,11 @@ from __future__ import annotations
 import pytest
 
 from chaoscypher_core.services.quality.scoring import (
+    _GRADE_LABEL_THRESHOLDS,
     DEFAULT_TARGET_DENSITY,
     SCORING_VERSION,
     QualityScorer,
+    _label_by_threshold,
     build_entity_chunk_mentions,
     cacheable_scores_from,
     calculate_density_score,
@@ -433,3 +435,55 @@ class TestCacheableScoresFrom:
         via_method.pop("cached_scores_at")
         via_function.pop("cached_scores_at")
         assert via_function == via_method
+
+
+@pytest.mark.unit
+class TestGradeLabelThresholds:
+    """The grade -> label mapping, pinned at every bucket and every boundary.
+
+    Added 2026-09-10. Four of the five buckets were asserted by no test
+    anywhere: the CLI class that claimed to cover "all five quality labels"
+    (``packages/cli/tests/test_cmd_quality_score.py``) passed both the grade
+    and the label into its own mock and asserted only that the label came
+    back out, so it would have passed with the mapping inverted or deleted.
+    ``test_empty_source`` above pinned the ``Low`` default and nothing else.
+
+    Boundaries are inclusive (``value >= threshold``), so each cut point is
+    asserted from both sides.
+    """
+
+    @pytest.mark.parametrize(
+        ("grade", "expected"),
+        [
+            (100.0, "Outstanding"),
+            (90.0, "Outstanding"),
+            (85.0, "Outstanding"),
+            (84.9, "Excellent"),
+            (75.0, "Excellent"),
+            (70.0, "Excellent"),
+            (69.9, "Good"),
+            (55.0, "Good"),
+            (50.0, "Good"),
+            (49.9, "Fair"),
+            (35.0, "Fair"),
+            (30.0, "Fair"),
+            (29.9, "Low"),
+            (20.0, "Low"),
+            (0.0, "Low"),
+        ],
+    )
+    def test_grade_maps_to_label(self, grade: float, expected: str) -> None:
+        assert _label_by_threshold(grade, _GRADE_LABEL_THRESHOLDS, default="Low") == expected
+
+    def test_thresholds_are_descending(self) -> None:
+        """``_label_by_threshold`` returns the first match, so order is load-bearing."""
+        cutoffs = [cutoff for cutoff, _ in _GRADE_LABEL_THRESHOLDS]
+        assert cutoffs == sorted(cutoffs, reverse=True)
+
+    def test_every_label_is_reachable(self) -> None:
+        """No bucket is shadowed by a wider one above it."""
+        produced = {
+            _label_by_threshold(grade, _GRADE_LABEL_THRESHOLDS, default="Low")
+            for grade in (0.0, 30.0, 50.0, 70.0, 85.0)
+        }
+        assert produced == {"Low", "Fair", "Good", "Excellent", "Outstanding"}

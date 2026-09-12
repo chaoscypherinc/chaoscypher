@@ -49,7 +49,11 @@ class QueueMonitor:
 
         """
         self.client = client
-        self._queues = queues or set()
+        # Bind the caller's set by reference: ``QueueClient`` passes its live
+        # ``_queues`` before any handler is registered, so an ``or set()``
+        # fallback would detach on the empty set and never observe later
+        # ``register_handlers`` additions.
+        self._queues = queues if queues is not None else set()
 
     async def get_queue_stats(self, queue: str) -> dict[str, Any]:
         """Get statistics for a specific queue.

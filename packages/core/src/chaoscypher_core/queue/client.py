@@ -46,6 +46,7 @@ from chaoscypher_core.adapters.sqlite.models import ChunkExtractionTask
 from chaoscypher_core.constants import (
     OP_CHAT_BACKGROUND,
     OPERATION_RETRY_ON_CRASH,
+    QUEUE_LLM,
     QUEUE_OPERATIONS,
 )
 from chaoscypher_core.exceptions import ExternalServiceError, QueueFullError
@@ -300,7 +301,13 @@ class QueueClient:
         self._handlers: dict[str, dict[str, TaskHandler]] = {}
         self._retry_policy: dict[str, dict[str, bool]] = {}
         self._transient_retry_policy: dict[str, dict[str, bool]] = {}
-        self._queues: set[str] = set()
+        # Seeded with the two queues this system always runs (the same pair
+        # ``features/queue/service.py`` falls back to when the set is empty).
+        # ``register_handlers`` adds any further queue a worker registers.
+        # Without a seed the set is empty in Cortex, which never registers
+        # handlers, and ``QueueMonitor.get_all_stats`` then pays two full
+        # keyspace SCANs per call to rediscover these same two names.
+        self._queues: set[str] = {QUEUE_LLM, QUEUE_OPERATIONS}
         self._enabled: bool = True
         self._connected: bool = False
         self.monitor: QueueMonitor | None = None

@@ -361,3 +361,50 @@ async def test_clear_all_stats_sweeps_recent_and_stats_keys() -> None:
     assert b"queue:llm:recent" in deleted
     assert b"queue:llm:stats" in deleted
     assert b"queue:operations:stats" in deleted
+
+
+@pytest.mark.asyncio
+async def test_get_all_stats_observes_queues_registered_after_construction() -> None:
+    """The monitor binds the caller's set by reference, not a detached copy.
+
+    ``QueueClient.connect`` hands its live ``_queues`` to the monitor before
+    any handler is registered. An ``or set()`` fallback detached on the empty
+    set, so every later ``register_handlers`` addition was invisible and
+    ``get_all_stats`` fell through to the auto-detect keyspace scan forever.
+    """
+    valkey = _make_valkey()
+    valkey.zcard = AsyncMock(return_value=1)
+    valkey.scard = AsyncMock(return_value=0)
+
+    scanned: list[str | None] = []
+    _inner_scan_iter = _scan_iter_factory([])
+
+    def _recording_scan_iter(match: str | None = None) -> AsyncIterator[bytes]:
+        scanned.append(match)
+        return _inner_scan_iter(match)
+
+    valkey.scan_iter = _recording_scan_iter
+
+    live_queues: set[str] = set()
+    monitor = QueueMonitor(client=valkey, queues=live_queues)
+
+    # Registered after the monitor was constructed, exactly as the worker does.
+    live_queues.add("operations")
+
+    all_stats = await monitor.get_all_stats()
+
+    assert [s["queue"] for s in all_stats] == ["operations"]
+    assert scanned == []  # the auto-detect keyspace scan was not needed
+
+
+def test_queue_client_seeds_the_two_standard_queues() -> None:
+    """A fresh client already knows the queues this system always runs.
+
+    Cortex never calls ``register_handlers``, so without the seed its queue set
+    was permanently empty and every ``get_all_stats`` call paid two full
+    keyspace SCANs to rediscover the same two constant names.
+    """
+    from chaoscypher_core.constants import QUEUE_LLM, QUEUE_OPERATIONS
+    from chaoscypher_core.queue.client import QueueClient
+
+    assert QueueClient()._queues == {QUEUE_LLM, QUEUE_OPERATIONS}

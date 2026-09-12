@@ -162,10 +162,16 @@ class SourceHeartbeat:
         short-lived session and the handler's session is never touched.
         Falls back to a plain beat for adapters without
         ``session_scope`` (in-memory test fakes).
+
+        The beat itself is a blocking SQLite ``UPDATE`` + ``COMMIT`` whose
+        busy-retry backoff sleeps with ``time.sleep``, so it is offloaded
+        with ``asyncio.to_thread`` rather than run on the worker's event
+        loop. ``to_thread`` copies the context, so the ``session_scope``
+        rebinding above still reaches the worker thread.
         """
         scope = getattr(self._adapter, "session_scope", None)
         if scope is None:
-            self._beat()
+            await asyncio.to_thread(self._beat)
             return
         try:
             cm = scope()
@@ -175,10 +181,10 @@ class SourceHeartbeat:
             # not a real async CM, or a disconnected adapter) — fall back
             # to the plain best-effort beat, which swallows its own
             # failures.
-            self._beat()
+            await asyncio.to_thread(self._beat)
             return
         try:
-            self._beat()
+            await asyncio.to_thread(self._beat)
         finally:
             with suppress(Exception):
                 await cm.__aexit__(None, None, None)

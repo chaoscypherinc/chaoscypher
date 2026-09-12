@@ -27,6 +27,10 @@ from click.testing import CliRunner
 from rich.table import Table
 
 from chaoscypher_cli.commands.quality.score import score
+from chaoscypher_core.services.quality.scoring import (
+    _GRADE_LABEL_THRESHOLDS,
+    _label_by_threshold,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -307,8 +311,10 @@ class TestRichOutput:
 
     def test_green_grade_tier(self) -> None:
         """Grade >= 70 renders with green colour."""
+        # 80.0 maps to "Excellent", not "Outstanding" (the cut is 85) — the
+        # fixture used an impossible pairing until 2026-09-10.
         result = _invoke_score(
-            mock_score_obj=_make_mock_score(quality_grade=80.0, quality_label="Outstanding")
+            mock_score_obj=_make_mock_score(quality_grade=80.0, quality_label="Excellent")
         )
         assert result.exit_code == 0
         assert "80" in result.output
@@ -394,15 +400,31 @@ class TestRichOutput:
 
 
 class TestQualityLabels:
-    """All five quality labels are rendered in the output."""
+    """All five quality labels are rendered in the output.
+
+    The label is **derived from the real Core mapping** rather than passed
+    in alongside the grade. Before 2026-09-10 this helper took both values,
+    stuffed both into its own mock and asserted only that the label came
+    back out — so the `grade` argument reached no assertion and the class
+    would have passed with the mapping inverted or deleted. The mapping
+    itself is pinned in
+    `packages/core/tests/unit/services/quality/test_scoring.py`
+    (`TestGradeLabelThresholds`); what this class covers is the *rendering*,
+    on grade/label pairs that cannot drift out of agreement with production.
+    """
 
     @staticmethod
     def _check_label(grade: float, label: str) -> None:
+        derived = _label_by_threshold(grade, _GRADE_LABEL_THRESHOLDS, default="Low")
+        assert derived == label, (
+            f"grade {grade} maps to {derived!r}, not {label!r} — this test's "
+            "expectation has drifted from _GRADE_LABEL_THRESHOLDS"
+        )
         result = _invoke_score(
-            mock_score_obj=_make_mock_score(quality_grade=grade, quality_label=label)
+            mock_score_obj=_make_mock_score(quality_grade=grade, quality_label=derived)
         )
         assert result.exit_code == 0
-        assert label in result.output
+        assert derived in result.output
 
     def test_outstanding_label(self) -> None:
         self._check_label(90.0, "Outstanding")

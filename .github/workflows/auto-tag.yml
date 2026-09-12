@@ -1,0 +1,125 @@
+name: Tag release on version bump
+
+# Cuts the vX.Y.Z tag from inside GitHub once a release snapshot is green.
+#
+# Why this exists: cc-public-snapshot runs in a Claude Code Remote sandbox whose
+# git credential can push branches but is refused on refs/tags/* on every repo
+# (HTTP 403 over git transport; no ruleset involved — 2026-09-08, v0.4.2,
+# dev-repo issue 559). The sandbox has no gh and no REST either, so nothing in
+# it can create a tag. The snapshot therefore pushes main (carrying the version
+# bump the merged release candidate made) and this workflow creates the tag,
+# which the platform cannot block. The tag push then fires release.yml,
+# publish-ghcr.yml and publish-pypi.yml exactly as a hand-pushed tag would.
+#
+# Two triggers, one idempotent job: the routine dispatches it after its own
+# gate is green (or a human runs it from the Actions tab), and a push to main
+# that bumps the version is the backstop. The job re-checks everything itself:
+# version matches all four packages, a changelog section exists, and CI,
+# E2E Tests and gitleaks are green on this exact commit (it dispatches E2E
+# when no run exists for the commit — E2E is dispatch/schedule only).
+#
+# The tag is pushed with RELEASE_TAG_TOKEN — a fine-grained PAT scoped to this
+# repository with Contents: read and write — and NOT with github.token: pushes
+# made with the workflow token do not trigger other workflows, so the three
+# publish workflows would never fire. Without the secret the job explains the
+# hand command and exits 0 (the routine then files a health(P1)).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - packages/core/pyproject.toml
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-tag-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Create vX.Y.Z when the version is new
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Read the version and check whether its tag exists
+        id: version
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('packages/core/pyproject.toml','rb'))['project']['version'])")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "Tag v$v already exists — nothing to do." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "Version $v has no tag yet — gating before tagging $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Verify the tag would match all four package versions
+        if: steps.version.outputs.new == 'true'
+        run: python3 scripts/check_release_version.py "v${{ steps.version.outputs.version }}"
+
+      - name: Require a changelog section for the version
+        if: steps.version.outputs.new == 'true'
+        run: python3 scripts/changelog_section.py "v${{ steps.version.outputs.version }}" > /dev/null
+
+      - name: Wait for CI, E2E Tests and gitleaks to be green on this commit
+        if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          status_of() {  # prints "<status>/<conclusion>" of the newest run of workflow $1 on this commit, or "none"
+            gh run list -R "$GITHUB_REPOSITORY" --workflow "$1" --commit "$GITHUB_SHA" --limit 1 \
+              --json status,conclusion --jq 'if length == 0 then "none" else "\(.[0].status)/\(.[0].conclusion)" end'
+          }
+          # E2E Tests only runs on dispatch or schedule — start one for this commit if none exists.
+          if [ "$(status_of 'E2E Tests')" = "none" ]; then
+            echo "No E2E Tests run for $GITHUB_SHA — dispatching one on $GITHUB_REF_NAME."
+            gh workflow run e2e.yml -R "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+          fi
+          for i in $(seq 1 100); do
+            ci=$(status_of CI); e2e=$(status_of 'E2E Tests'); gl=$(status_of gitleaks)
+            echo "[$i] CI=$ci  E2E=$e2e  gitleaks=$gl"
+            for s in "$ci" "$e2e" "$gl"; do
+              case "$s" in
+                */failure|*/cancelled|*/timed_out|*/startup_failure)
+                  echo "::error::a release gate is red on $GITHUB_SHA (CI=$ci E2E=$e2e gitleaks=$gl) — not tagging"; exit 1;;
+              esac
+            done
+            if [ "$ci" = "completed/success" ] && [ "$e2e" = "completed/success" ] && [ "$gl" = "completed/success" ]; then
+              echo "All three gates green on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"; exit 0
+            fi
+            if [ "$i" -eq 8 ] && [ "$e2e" = "none" ]; then
+              echo "::error::the dispatched E2E Tests run did not appear for $GITHUB_SHA (did main move?) — not tagging"; exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::gates did not all go green within 50 minutes — not tagging"; exit 1
+
+      - name: Create and push the tag
+        if: steps.version.outputs.new == 'true'
+        env:
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "${RELEASE_TAG_TOKEN:-}" ]; then
+            {
+              echo "::warning::RELEASE_TAG_TOKEN is not set — v$VERSION was NOT tagged."
+              echo "Add a fine-grained PAT (this repository only, Contents: read and write) as the RELEASE_TAG_TOKEN secret and re-run this workflow,"
+              echo "or push the tag by hand: git tag -a v$VERSION $GITHUB_SHA -m v$VERSION && git push origin v$VERSION"
+            } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "Denis MacPherson"
+          git config user.email "denis@chaoscypher.com"
+          git tag -a "v$VERSION" "$GITHUB_SHA" -m "v$VERSION"
+          git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v$VERSION"
+          echo "Tagged v$VERSION at $GITHUB_SHA — release.yml, publish-ghcr.yml and publish-pypi.yml fire on the tag push." >> "$GITHUB_STEP_SUMMARY"

@@ -22,13 +22,18 @@ The tests pin three halves of the contract:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import click
 import pytest
 import yaml
 from click.testing import CliRunner
+
+from chaoscypher_cli.__main__ import _FIRST_RUN_SAFE_SUBCOMMANDS
 
 
 def _write_settings(data_dir: Path, data: dict) -> None:
@@ -52,6 +57,33 @@ def _stub_upgrade_guard(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _call_gate(
+    monkeypatch: pytest.MonkeyPatch, *, invoked: str, argv: list[str] | None = None
+) -> str:
+    """Drive ``_first_run_gate`` directly and return what it wrote to stderr.
+
+    Invoking through ``CliRunner`` with ``--help`` cannot exercise the
+    bypass branches: the gate returns on the ``--help`` in ``sys.argv``
+    *before* it reads ``invoked_subcommand`` or calls
+    ``is_setup_completed()``, so such a test asserts nothing about the
+    branch it names. Calling the gate with a real ``click.Context`` reaches
+    the branch and keeps the test hermetic — the safe subcommands include
+    ``db`` and ``upgrade``, which must not actually run.
+
+    Raises ``click.exceptions.Exit`` when the gate fires (exit code 2).
+    """
+    from chaoscypher_cli.__main__ import _first_run_gate, main
+
+    monkeypatch.setattr(sys, "argv", argv if argv is not None else ["chaoscypher", invoked])
+
+    buffer = io.StringIO()
+    ctx = click.Context(main)
+    ctx.invoked_subcommand = invoked
+    with contextlib.redirect_stderr(buffer):
+        _first_run_gate(ctx)
+    return buffer.getvalue()
+
+
 def test_gate_blocks_source_when_first_run_signature_matches(
     monkeypatch: pytest.MonkeyPatch, isolated_settings: Path
 ) -> None:
@@ -73,6 +105,22 @@ def test_gate_blocks_source_when_first_run_signature_matches(
     assert "chaoscypher setup" in result.stderr
 
 
+def test_gate_fires_without_the_help_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control for the four bypass tests below: same call shape, gate fires.
+
+    Without this, a bypass test that silently stopped reaching its branch
+    would look identical to one that reached it and correctly stayed quiet.
+    Here nothing is configured and ``source`` is not a safe subcommand, so
+    the gate must reach its non-interactive arm and exit 2.
+    """
+    _stub_upgrade_guard(monkeypatch)
+
+    with pytest.raises(click.exceptions.Exit) as excinfo:
+        _call_gate(monkeypatch, invoked="source")
+
+    assert excinfo.value.exit_code == 2
+
+
 def test_gate_bypassed_when_setup_completed(
     monkeypatch: pytest.MonkeyPatch, isolated_settings: Path
 ) -> None:
@@ -81,15 +129,8 @@ def test_gate_bypassed_when_setup_completed(
     """
     _stub_upgrade_guard(monkeypatch)
     _write_settings(isolated_settings, {"setup_completed": True})
-    monkeypatch.setattr(sys, "argv", ["chaoscypher", "source", "--help"])
 
-    from chaoscypher_cli.__main__ import main
-
-    result = CliRunner().invoke(main, ["source", "--help"])
-
-    # `source --help` returns 0 and shows the source help page; the
-    # gate must not interfere.
-    assert "first time running" not in result.stderr
+    assert _call_gate(monkeypatch, invoked="source") == ""
 
 
 def test_gate_bypassed_when_llm_configured(
@@ -100,13 +141,8 @@ def test_gate_bypassed_when_llm_configured(
     """
     _stub_upgrade_guard(monkeypatch)
     _write_settings(isolated_settings, {"llm": {"chat_provider": "ollama"}})
-    monkeypatch.setattr(sys, "argv", ["chaoscypher", "source", "--help"])
 
-    from chaoscypher_cli.__main__ import main
-
-    result = CliRunner().invoke(main, ["source", "--help"])
-
-    assert "first time running" not in result.stderr
+    assert _call_gate(monkeypatch, invoked="source") == ""
 
 
 def test_gate_bypassed_when_env_provider_set(
@@ -118,34 +154,25 @@ def test_gate_bypassed_when_env_provider_set(
     _stub_upgrade_guard(monkeypatch)
     # No settings.yaml on disk, but the env override marks it configured.
     monkeypatch.setenv("CHAOSCYPHER_LLM_PROVIDER", "ollama")
-    monkeypatch.setattr(sys, "argv", ["chaoscypher", "source", "--help"])
 
-    from chaoscypher_cli.__main__ import main
-
-    result = CliRunner().invoke(main, ["source", "--help"])
-
-    assert "first time running" not in result.stderr
+    assert _call_gate(monkeypatch, invoked="source") == ""
 
 
-@pytest.mark.parametrize(
-    "safe_cmd",
-    ["health", "doctor", "setup", "config", "db", "diagnostics", "upgrade"],
-)
+@pytest.mark.parametrize("safe_cmd", sorted(_FIRST_RUN_SAFE_SUBCOMMANDS))
 def test_gate_silent_for_safe_subcommands(
     monkeypatch: pytest.MonkeyPatch, isolated_settings: Path, safe_cmd: str
 ) -> None:
     """Bootstrap / read-only diagnostic commands must always run, even
     on a fresh install — they're the user's escape hatch.
+
+    Parametrized off the production frozenset rather than a hand-copied
+    list, so a subcommand added to the escape hatch is covered
+    automatically instead of drifting out of test.
     """
     _stub_upgrade_guard(monkeypatch)
     # No settings.yaml → first-run signature, but safe subcommands bypass.
-    monkeypatch.setattr(sys, "argv", ["chaoscypher", safe_cmd, "--help"])
 
-    from chaoscypher_cli.__main__ import main
-
-    result = CliRunner().invoke(main, [safe_cmd, "--help"])
-
-    assert "first time running" not in result.stderr, (
+    assert _call_gate(monkeypatch, invoked=safe_cmd) == "", (
         f"Gate fired on safe subcommand `{safe_cmd}` — should have bypassed"
     )
 
