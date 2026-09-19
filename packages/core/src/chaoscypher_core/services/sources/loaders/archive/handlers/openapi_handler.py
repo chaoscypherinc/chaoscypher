@@ -216,9 +216,6 @@ class OpenAPIHandler:
         all_documents: list[dict[str, Any]] = []
 
         for spec_path in spec_paths:
-            # Reset per-call warning accumulator.
-            self._resolve_refs_warnings: list[str] = []
-
             try:
                 spec = self._parse_spec(spec_path)
                 resolved_spec = self._resolve_refs(spec)
@@ -236,15 +233,6 @@ class OpenAPIHandler:
                         meta = doc.setdefault("metadata", {})
                         meta["encoding_used"] = encoding_used
                         meta["replacement_chars_count"] = replacement_chars_count
-
-                # Attach any ref-resolution warnings accumulated during
-                # _resolve_refs to the first document so the indexing handler
-                # can surface them via loader_warnings.
-                ref_warnings = getattr(self, "_resolve_refs_warnings", [])
-                if documents and ref_warnings:
-                    first_meta = documents[0].setdefault("metadata", {})
-                    existing = first_meta.get("loader_warnings") or []
-                    first_meta["loader_warnings"] = list(existing) + ref_warnings
 
                 logger.info(
                     "openapi_processing_complete",
@@ -335,7 +323,9 @@ class OpenAPIHandler:
 
         from chaoscypher_core.utils.encoding import detect_encoding
 
-        encoding_used, content, replacement_chars_count = detect_encoding(spec_path)
+        encoding_used, content, replacement_chars_count = detect_encoding(
+            spec_path, settings=self.settings.loader if self.settings is not None else None
+        )
         # Stash on instance so chunked-doc metadata can pick it up.
         self._last_spec_encoding = encoding_used
         self._last_spec_replacement_chars_count = replacement_chars_count

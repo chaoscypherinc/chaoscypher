@@ -207,7 +207,10 @@ export function useSourceDetail(
   const resetToIndexed = useCallback(async () => {
     if (!source || !id) return;
     try {
-      await sourcesApi.update(id, { processing_status: 'ready' });
+      // 'indexed' is the pre-extraction state the banner promises ("Reset to
+      // Indexed"); it must be a real SourceStatus — 'ready' never was, and
+      // writing it broke every later read of the source.
+      await sourcesApi.update(id, { processing_status: 'indexed' });
       await refetch();
     } catch (err) {
       setActionError('Failed to reset: ' + getApiErrorMessage(err));

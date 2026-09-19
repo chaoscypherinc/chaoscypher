@@ -218,3 +218,32 @@ async def test_empty_result_path_enqueue_failure_keeps_extracted_status() -> Non
     assert tx_enter < events.index("complete_extraction") < tx_exit_ok, (
         f"complete_extraction must persist inside the transaction; events={events}"
     )
+
+
+@pytest.mark.asyncio
+async def test_failing_fail_handler_does_not_mask_the_original_exception() -> None:
+    """A SQLITE_BUSY on the failure write must not replace the real cause.
+
+    A bare ``raise`` inside ``except ... as fail_exc`` re-raises ``fail_exc``,
+    so a storage error escaped in place of the retryable LLM error and the
+    queue classified it permanent, forfeiting the stage's retry budget.
+    """
+    from chaoscypher_core.operations.extraction.extraction_finalizer import (
+        finalize_extraction_handler,
+    )
+
+    events: list[str] = []
+    adapter = _make_tracking_adapter(events)
+    adapter.get_completed_chunk_results.side_effect = RuntimeError("llm boom")
+    adapter.fail_extraction_job.side_effect = RuntimeError("database is locked")
+
+    with pytest.raises(RuntimeError, match="llm boom"):
+        await finalize_extraction_handler(
+            graph_repository=MagicMock(),
+            llm_service=AsyncMock(),
+            source_repository=adapter,
+            chunk_extraction_service=MagicMock(),
+            data={"source_id": "src-1", "job_id": "job-1", "database_name": "default"},
+        )
+
+    adapter.fail_extraction.assert_called_once()

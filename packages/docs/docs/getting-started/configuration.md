@@ -468,11 +468,14 @@ When enabled, the following rate limits apply:
 
 | Zone | Path | Rate | Burst |
 |------|------|------|-------|
-| Auth | `/api/v1/auth/` | 5 r/s | 3 |
+| Auth | `/api/v1/auth/login` (exact match only) | 5 r/m | 5 |
+| Setup | `/api/v1/auth/setup` (exact match only) | 3 r/m | 3 |
 | Uploads | `/api/v1/sources` | 10 r/s | 5 |
 | Mutations | POST/PUT/PATCH/DELETE on `/api/*` | 10 r/s | 20 (nodelay) |
 | General API | `/` (catch-all) | 100 r/s | 50 |
 | Static assets | `/assets/` | No limit | — |
+
+The auth and setup zones are **per minute**, not per second: the renderer expresses the configured per-window budget as `r/m` (`login_max_requests` requests per `login_window_seconds`, defaulting to 5 per 60 s). Only the two exact-match locations above are limited — `/api/v1/auth/status` and `/api/v1/auth/logout` carry no `limit_req` directive.
 
 Rate limits are per client IP. These zones are also tunable under `rate_limit` in `settings.yaml` (e.g. `login_max_requests`, `api_general_max_requests`, `mutations_max_requests`, `mutations_burst`). Keep rate limiting on if you expose Chaos Cypher to the internet or untrusted networks.
 
@@ -504,7 +507,7 @@ MCP:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 19 read tools (search/query). `write` exposes all 31 tools — adding 12 write-only tools for create, update, delete, and document upload. |
+| `mode` | `read` | Tool access level. `read` exposes 16 read tools (search/query). `write` exposes all 31 tools — adding 15 write-only tools for create, update, delete, document upload, and client-driven extraction. |
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |
 
 See [MCP Server](../user-guide/mcp.md) for setup and usage details.

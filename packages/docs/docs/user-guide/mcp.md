@@ -115,7 +115,7 @@ mcp:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 19 search/query tools. `write` exposes all 31 tools including create, update, and delete operations. |
+| `mode` | `read` | Tool access level. `read` exposes 16 search/query tools. `write` exposes all 31 tools including create, update, delete, and client-driven extraction operations. |
 | `auto_extract` | `false` | When `true`, the server runs entity extraction after indexing uploaded documents. When `false` (default), the MCP client drives extraction itself using `submit_chunk_extraction` and `finalize_extraction`. |
 | `confirmation_required_default` | `true` | Server-wide default for the [domain-confirmation gate](#document-processing-via-mcp). When `true`, an upload with an auto-detected domain parks at `awaiting_confirmation` until `confirm_extraction` is called; a per-call `auto_confirm: true` on `add_document` overrides it for a single upload. |
 | `max_extraction_payload_bytes` | `10485760` | Maximum combined UTF-8 size (10 MiB) of `entities_text` + `relationships_text` accepted per `submit_chunk_extraction` call. Larger submissions are rejected with `PAYLOAD_TOO_LARGE`. |
@@ -130,9 +130,9 @@ MCP starts in **read-only mode**. Your AI assistant can search and explore your 
 
 ## Available Tools
 
-### Read Tools (19)
+### Read Tools (16)
 
-These tools are always available regardless of mode:
+These tools are available in both modes:
 
 | Tool | Description |
 |------|-------------|
@@ -152,11 +152,8 @@ These tools are always available regardless of mode:
 | `traverse_path` | Multi-hop BFS traversal with depth and type filters |
 | `get_summary_context` | Retrieve and cluster document chunks for summarization |
 | `get_document_status` | Check status of queued, in-progress, and completed document uploads |
-| `get_extraction_tasks` | List extraction tasks for a source document with status and entity counts |
-| `get_extraction_chunks` | Retrieve extracted entities and relationships from individual chunks |
-| `get_extraction_progress` | Check overall extraction progress for a source (completed chunks, total, percentage) |
 
-### Write Tools (12)
+### Write Tools (15)
 
 These tools are only available when `mcp.mode` is set to `write`:
 
@@ -172,6 +169,9 @@ These tools are only available when `mcp.mode` is set to `write`:
 | `wait_for_document` | Wait for a document to finish processing, polling until it reaches the target status. Cannot see a source parked at `awaiting_confirmation` — see [Document Processing via MCP](#document-processing-via-mcp) |
 | `remove_document` | Delete a source document and all its derived data |
 | `confirm_extraction` | Confirm (or override) the auto-detected extraction domain for a source parked at `awaiting_confirmation` and start extraction |
+| `get_extraction_tasks` | Start a client-driven extraction and return its planning metadata: chunk count, chunk indices, extraction instructions, and existing templates (no chunk text) |
+| `get_extraction_chunks` | Fetch the source text of specific chunk groups, with numbered sentences and token estimates, for the client to extract from |
+| `get_extraction_progress` | Check extraction submission progress for a source (submitted and missing chunk indices, and whether it is ready to finalize) |
 | `submit_chunk_extraction` | Submit extracted entities and relationships for a specific document chunk |
 | `finalize_extraction` | Finalize the extraction process for a source, committing results to the knowledge graph |
 

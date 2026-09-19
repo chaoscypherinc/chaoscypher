@@ -101,9 +101,9 @@ curl "http://localhost:8080/api/v1/search?q=neural+networks&search_type=hybrid"
 
 ### Keyword Search
 
-Traditional full-text search using SQLite FTS. Matches exact terms and phrases in document chunks.
+Traditional full-text search using SQLite FTS. The FTS index only covers graph node labels and properties — it never indexes document chunk text, so keyword search results are always graph nodes, never chunks.
 
-Best for: finding specific terms, names, or exact phrases.
+Best for: finding specific terms, names, or exact phrases in your knowledge graph's entities.
 
 ### Semantic Search
 
@@ -113,7 +113,7 @@ Best for: conceptual queries, finding related content, when you don't know the e
 
 ### Hybrid Search
 
-Runs keyword and semantic search together and merges the results — semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included, and each result keeps the higher of its two scores. Very short queries (under 3 characters) use keyword search only.
+Runs keyword and semantic search together and merges the results — semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included, and each result keeps the higher of its two scores. Because the keyword arm only searches graph nodes (see Keyword Search above), any chunk result in hybrid search always comes from the semantic arm. Very short queries (under 3 characters) use keyword search only.
 
 Best for: general-purpose search that combines both approaches.
 
@@ -123,8 +123,8 @@ Graph-enhanced retrieval that fuses knowledge graph traversal with vector search
 
 **How it works:**
 
-1. Extracts entities from your query
-2. Finds matching nodes in the knowledge graph
+1. Embeds your query and finds knowledge graph nodes with the most similar embeddings (seed entities) — there is no separate named-entity-extraction step
+2. Filters those matches by a minimum similarity threshold to keep the strongest seed entities
 3. Traverses graph relationships using Personalized PageRank
 4. Retrieves provenance-linked document chunks
 5. Fuses graph and vector results using Reciprocal Rank Fusion
@@ -213,7 +213,7 @@ One related cap lives outside the `graphrag` section: `batching.graphrag_edge_qu
 
 ### Re-ranking
 
-When enabled, search results are re-ranked using a cross-encoder model for improved relevance. The re-ranker evaluates each result against your query and reorders them by true relevance rather than raw similarity scores. Chaos Cypher defaults to `Alibaba-NLP/gte-reranker-modernbert-base`, a ModernBERT-based cross-encoder (149M params, ~600MB) that scores ~56.2 NDCG@10 on the BEIR benchmark. Any HuggingFace cross-encoder model can be used via the `rerank_model_name` setting.
+When enabled, re-ranking applies only to the `search_chunks` tool used by AI chat and MCP clients — not to the keyword, semantic, or hybrid modes described above (the Web UI search bar, CLI, and `/api/v1/search`). For chunk candidates it retrieves, the re-ranker evaluates each one against your query with a cross-encoder model and reorders them by true relevance rather than raw similarity scores. Chaos Cypher defaults to `Alibaba-NLP/gte-reranker-modernbert-base`, a ModernBERT-based cross-encoder (149M params, ~600MB) that scores ~56.2 NDCG@10 on the BEIR benchmark. Any HuggingFace cross-encoder model can be used via the `rerank_model_name` setting.
 
 | Setting | Default | Description |
 |---------|---------|-------------|

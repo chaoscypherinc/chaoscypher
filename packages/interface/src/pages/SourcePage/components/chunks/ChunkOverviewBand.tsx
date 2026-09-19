@@ -132,9 +132,11 @@ export function ChunkOverviewBand({ source, llm, onSelectChunk, onViewChunk }: C
             Extraction
           </Typography>
           <Typography sx={{ fontSize: '0.72rem', color: 'text.secondary', mt: 0.25, mb: 1.5 }}>
-            Each cell is a chunk — click one to jump to its text &amp; entities below.{' '}
+            Each cell is an extraction group — click one to jump to its text &amp; entities below.{' '}
             <Box component="span" sx={{ opacity: 0.7 }}>
-              {llm.chartTasks.length} chunks{retried > 0 ? ` · ${retried} retried` : ''}
+              {llm.chartTasks.length} extraction groups
+              {source.chunk_count > 0 ? ` (${source.chunk_count} chunks)` : ''}
+              {retried > 0 ? ` · ${retried} retried` : ''}
             </Box>
           </Typography>
           <ExtractDetail

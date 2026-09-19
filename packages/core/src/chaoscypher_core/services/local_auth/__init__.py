@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Single-user local auth primitives (credentials file + session cookies + API keys)."""
 
+from chaoscypher_core.services.local_auth.api_key_lookup import resolve_api_key
 from chaoscypher_core.services.local_auth.api_keys import (
     API_KEY_PREFIX,
+    compute_api_key_selector,
     generate_api_key,
+    generate_selector_secret,
     hash_api_key,
     verify_api_key,
 )
@@ -46,9 +49,12 @@ __all__ = [
     "SessionPayload",
     "UserRecord",
     "UsernameMismatch",
+    "compute_api_key_selector",
     "decode_session",
     "encode_session",
     "generate_api_key",
+    "generate_selector_secret",
     "hash_api_key",
+    "resolve_api_key",
     "verify_api_key",
 ]

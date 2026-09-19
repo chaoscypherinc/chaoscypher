@@ -1317,3 +1317,134 @@ class TestFullPipelineExtractionDepth:
         await pipeline(file_path="/tmp/doc.txt", file_id="f1", extraction_depth="bogus")
 
         assert engine.add_document.await_args.kwargs["analysis_depth"] == "full"
+
+
+class TestHandleAddDocumentSandboxWithContent:
+    """The sandbox guard must not be skippable by supplying ``content``.
+
+    Regression tests for the hunt-queue finding that the guard condition
+    read ``if not content and not is_url and file_path``, while no code
+    path anywhere consumes ``content`` — so the file at the un-sandboxed
+    ``file_path`` was loaded and indexed regardless, handing a
+    prompt-injected client an arbitrary-file read.
+    """
+
+    @pytest.mark.asyncio
+    async def test_outside_sandbox_still_rejected_when_content_supplied(self, tmp_path):
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        processor = MagicMock()
+        uploads = tmp_path / "mcp"
+        uploads.mkdir()
+        secret = tmp_path / "credentials.json"
+        secret.write_text('{"password_hash": "x"}')
+
+        called = False
+
+        async def pipeline(**kwargs):
+            nonlocal called
+            called = True
+            return {"success": True, "source_id": kwargs["file_id"]}
+
+        result = _parse_result(
+            await _handle_add_document(
+                processor,
+                {"file_path": str(secret)},
+                content="benign text",
+                pipeline=pipeline,
+                sandbox_dir=uploads,
+            )
+        )
+
+        assert result["success"] is False
+        assert result.get("error_code") == "PATH_OUTSIDE_SANDBOX"
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_dotfile_still_rejected_when_content_supplied(self, tmp_path):
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        processor = MagicMock()
+        uploads = tmp_path / "mcp"
+        uploads.mkdir()
+        secret = uploads / ".secret"
+        secret.write_text("x")
+
+        called = False
+
+        async def pipeline(**kwargs):
+            nonlocal called
+            called = True
+            return {"success": True, "source_id": kwargs["file_id"]}
+
+        result = _parse_result(
+            await _handle_add_document(
+                processor,
+                {"file_path": str(secret)},
+                content="benign text",
+                pipeline=pipeline,
+                sandbox_dir=uploads,
+            )
+        )
+
+        assert result["success"] is False
+        assert result.get("error_code") == "DOTFILE_REJECTED"
+        assert called is False
+
+    @pytest.mark.asyncio
+    async def test_queued_path_outside_sandbox_rejected_when_content_supplied(self, tmp_path):
+        """wait=False takes the processor queue and must be guarded too."""
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        processor = MagicMock()
+        processor.add_document = AsyncMock(
+            return_value={"success": True, "status": "queued", "file_id": "f1"}
+        )
+        uploads = tmp_path / "mcp"
+        uploads.mkdir()
+        secret = tmp_path / "credentials.json"
+        secret.write_text('{"password_hash": "x"}')
+
+        async def pipeline(**kwargs):
+            return {"success": True, "source_id": kwargs["file_id"]}
+
+        result = _parse_result(
+            await _handle_add_document(
+                processor,
+                {"file_path": str(secret)},
+                wait=False,
+                content="benign text",
+                pipeline=pipeline,
+                sandbox_dir=uploads,
+            )
+        )
+
+        assert result["success"] is False
+        assert result.get("error_code") == "PATH_OUTSIDE_SANDBOX"
+        processor.add_document.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_inside_sandbox_still_accepted_when_content_supplied(self, tmp_path):
+        """The guard must not reject a legitimate in-sandbox path."""
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        processor = MagicMock()
+        uploads = tmp_path / "mcp"
+        uploads.mkdir()
+        doc = uploads / "notes.txt"
+        doc.write_text("hello")
+
+        async def pipeline(**kwargs):
+            return {"success": True, "source_id": kwargs["file_id"]}
+
+        result = _parse_result(
+            await _handle_add_document(
+                processor,
+                {"file_path": str(doc)},
+                content="benign text",
+                pipeline=pipeline,
+                sandbox_dir=uploads,
+            )
+        )
+
+        assert result["success"] is True

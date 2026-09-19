@@ -37,11 +37,14 @@ class GraphRepositoryProtocol(Protocol):
 
     # ==================== Node Operations ====================
 
-    def get_node(self, node_id: str) -> Node | None:
+    def get_node(self, node_id: str, *, include_embedding: bool = True) -> Node | None:
         """Get a node by ID.
 
         Args:
             node_id: Unique node identifier
+            include_embedding: Default True. False leaves the 1024-float
+                embedding out of the query (the ``get_nodes_batch``
+                projection contract); existence checks must pass False.
 
         Returns:
             Node object or None if not found

@@ -3,8 +3,8 @@ slug: citation-click-through
 title: "Citation Click-Through: How Chaos Cypher Traces Every Answer to Its Source"
 authors: [denis]
 tags: [graphrag, ai, rag, selfhosted]
-date: 2026-07-21
-draft: true
+date: 2026-09-18
+draft: false
 description: Every citation in a Chaos Cypher chat answer is clickable -- it jumps straight to the exact sentence and source chunk the model grounded its answer in.
 ---
 
@@ -20,11 +20,11 @@ Ask a chatbot a question about your own documents and you get an answer that rea
 
 Ask Chaos Cypher a question in **Chat** and the streamed answer arrives with small inline markers next to the sentences it pulled from your sources -- a document icon for text, a thumbnail for an image chunk. Hover one and a tooltip shows the source it came from, the page number, and a validation badge: **Verified** when the cited sentence was actually found in that chunk, **Invalid** when it wasn't.
 
-<!-- screenshot: chat panel with an inline citation marker and its hover tooltip showing source, page, and verified badge -->
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 Click the marker and you land on that source's detail page with the exact chunk highlighted -- not "somewhere in this document," the specific paragraph the sentence was grounded in. Answers that pulled from a scanned page or image work the same way: the marker is a thumbnail, and clicking it opens the full image.
 
-<!-- screenshot: source detail page with a chunk highlighted after navigating from a chat citation -->
+![Source overview for war_and_peace.txt: entity and relationship counts, pipeline flow, entity distribution](/img/screenshots/app-source-overview.png)
 
 ## Why This Matters More Than a Nice-to-Have
 

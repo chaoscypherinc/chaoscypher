@@ -83,8 +83,9 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/resume
 POST /api/v1/sources/pause
 ```
 
-Pause multiple sources in a single request. Returns the count of sources
-successfully paused.
+Pause multiple sources in a single request. Returns the count of source
+rows matched by id in the current database — unknown ids are excluded,
+rows that were already paused are included.
 
 ```bash
 curl -X POST http://localhost/api/v1/sources/pause \
@@ -217,7 +218,8 @@ curl http://localhost/api/v1/system/processing/status
 {
   "paused": true,
   "paused_at": "2026-04-13T09:00:00",
-  "reason": "Scheduled maintenance"
+  "reason": "Scheduled maintenance",
+  "paused_by": "user"
 }
 ```
 
@@ -333,3 +335,4 @@ curl -X DELETE http://localhost/api/v1/system/processing/events
 | `paused` | bool | Whether system-wide processing is currently paused |
 | `paused_at` | datetime? | When the system was paused (`null` if not paused) |
 | `reason` | string? | Reason provided when pausing (`null` if none given) |
+| `paused_by` | string? | Who paused: `user` for an API pause, `health_monitor` for an automatic safety pause (`null` if not paused) |

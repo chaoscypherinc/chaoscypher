@@ -17,7 +17,7 @@ The worst part: it fails silently. No error message, no "I couldn't find a compl
 
 Chaos Cypher's GraphRAG search fixes this by fusing knowledge graph traversal with vector search. When you ask a multi-hop question, it walks the graph of entities and relationships extracted from your documents, finds structurally connected information you didn't ask about, retrieves the source passages that prove those connections, and merges everything into a single ranked result set. The answer you get isn't just semantically similar text. It's the actual chain of evidence.
 
-![Search results showing entities with relevance scores and type badges](/img/screenshots/search-results.png)
+![Command palette searching for Pierre, listing entity results with connection counts](/img/screenshots/search-results.png)
 
 
 ## What Happens When You Ask a Multi-Hop Question
@@ -44,7 +44,7 @@ In our example, the algorithm discovers that "Dr. Sarah Chen" has a "published" 
 
 Instead of a shallow answer about CRISPR, you get the full chain: Chen's delivery mechanism research led to a cited clinical application at Stanford, connected through shared funding. The chat response includes both the graph context (discovered entities and relationships) and the document passages that prove those connections.
 
-![Knowledge graph with search highlighting entity paths](/img/screenshots/graph-search-highlight.png)
+![Knowledge graph with the searched entity highlighted and its neighbourhood dimmed](/img/screenshots/graph-search-highlight.png)
 
 
 ## Under the Hood (Technical Deep-Dive)
@@ -95,7 +95,7 @@ GraphRAG is also available as an MCP tool called `graphrag_search`, meaning any 
 
 The pipeline is tunable -- seed similarity threshold, PageRank top-K and damping, triple limits -- via a `graphrag` section in `settings.yaml`, though the defaults were chosen from the GraphRAG literature and testing across database sizes, and most users will never need to touch them. The full parameter reference is in the [search documentation](/docs/user-guide/search#graphrag-tuning).
 
-![Chat conversation with AI response and source citations](/img/screenshots/chat-conversation.png)
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 
 ## What's Next

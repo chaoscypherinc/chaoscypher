@@ -341,11 +341,13 @@ API keys allow token-based access without a browser session. Useful for scripts,
 
 **Format:** `cc_live_<32 url-safe base64 chars>`
 
-**Storage:** bcrypt-hashed in the credentials file. The plaintext key is shown exactly once, at creation time.
+**Storage:** bcrypt-hashed in the credentials file, alongside a *selector* — a keyed HMAC-SHA256 of the key under a per-install secret that lives in the same file. The plaintext key is shown exactly once, at creation time. The selector is only a lookup index: bcrypt still authenticates every match, so a leaked credentials file reveals no key material.
 
 **Usage:** `Authorization: Bearer cc_live_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`
 
-**Verification:** The prefix `cc_live_` is checked first (cheap constant-time string comparison). bcrypt verification against stored hashes runs only for keys that pass the prefix check.
+**Verification:** The prefix `cc_live_` is checked first (cheap constant-time string comparison). Keys that pass it are looked up by their selector, and only the single record that matches is bcrypt-verified — an unrecognised key costs no bcrypt work at all. Repeated failed bearer attempts from one client address are also throttled (5 failures in 60 seconds blocks that client for 60 seconds); a valid key clears the count, and session-cookie auth is never affected.
+
+**Migration of existing keys:** keys minted before selectors existed keep working unchanged — nothing to re-issue, no downtime. The first time such a key is used it is verified the old way, then its selector is computed and stored, and from then on it is looked up like any new key. The migration is transparent and happens key by key, so the only cost is one extra verification per key, once. Note the corollary: a key that is never used again is never migrated, and stays in the small set that unrecognised tokens are checked against. Revoke keys you no longer use — `DELETE /api/v1/auth/keys/{key_id}`, or **Settings → General → API Keys** — rather than leaving them to be scanned.
 
 ---
 

@@ -11,8 +11,7 @@
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",
     "clear": "docusaurus clear",
-    "serve": "docusaurus serve",
-    "test": "vitest run"
+    "serve": "docusaurus serve"
   },
   "dependencies": {
     "@docusaurus/core": "^3.10.2",
@@ -30,8 +29,7 @@
     "@docusaurus/module-type-aliases": "^3.7.0",
     "@docusaurus/types": "^3.7.0",
     "typescript": "~5.9.3",
-    "vitest": "^3.2.7",
-    "wrangler": "^4.125.0"
+    "wrangler": "^4.131.0"
   },
   "browserslist": {
     "production": [
@@ -60,6 +58,6 @@
     "browserslist": "^4.28.8",
     "qs": "^6.16.0",
     "svgo": "^3.3.5",
-    "sharp": "^0.35.4"
+    "image-size": "^2.0.3"
   }
 }

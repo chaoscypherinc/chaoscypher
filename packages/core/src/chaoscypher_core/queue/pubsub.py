@@ -185,8 +185,21 @@ async def subscribe_chat_events(chat_id: str) -> AsyncIterator[dict[str, Any]]:
                 continue
 
     finally:
+        # Sequenced in two independent arms on purpose. ``aclose()`` is the
+        # only path that returns the dedicated pub/sub connection to the
+        # pool, and the pool holds in-use connections in a strong set — so
+        # sharing one ``try`` with ``unsubscribe()`` meant the very Valkey
+        # outage that ends the stream also leaked the connection for the
+        # process lifetime.
         try:
             await pubsub.unsubscribe(channel)
+        except Exception:
+            logger.warning(
+                "chat_pubsub_unsubscribe_failed",
+                chat_id=chat_id,
+                exc_info=True,
+            )
+        try:
             await pubsub.aclose()
         except Exception:
             logger.warning(

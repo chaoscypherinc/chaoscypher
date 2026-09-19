@@ -4,9 +4,9 @@
 """Queue self-healing reconciler.
 
 Scans queue:{queue}:running for orphan or abandoned task IDs and
-recovers them per handler policy. See the design spec at
-queue reconciliation design notes for the
-classification matrix and architectural rationale.
+recovers them per handler policy. The classification matrix (orphan /
+timed-out / healthy / abandoned) and its rationale live in
+:func:`reconcile_queue`'s docstring below.
 """
 
 from __future__ import annotations
@@ -141,9 +141,9 @@ async def reconcile_queue(
 
     # Cross-invocation pass lock (SET NX). reconcile_queue runs from three
     # unsynchronized callers (worker startup, worker periodic loop, Cortex
-    # lifespan safety net); two overlapping passes double-consume retry
-    # budgets via the attempts increment and can requeue a task another
-    # worker just re-claimed. The TTL bounds one pass so a crashed holder
+    # lifespan safety net); two overlapping passes can requeue a task another
+    # worker just re-claimed (the requeue no longer bumps ``attempts`` —
+    # #599 — so the budget itself is safe). The TTL bounds one pass so a crashed holder
     # cannot block reconciliation forever; a caller that loses the lock
     # simply skips its pass — the winner covers the same running set.
     lock_key = f"queue:{queue_name}:reconcile_lock"
@@ -288,15 +288,19 @@ async def _handle_abandoned(
 
     if retry_allowed and attempts < max_tries:
         # Requeue as ONE atomic Lua move (reset hash + PERSIST + ZADD
-        # pending + SREM running + attempts bump). The old zadd-then-srem
-        # sequence left a window where a transient srem failure stranded
-        # the task in BOTH sets — a worker could pull it from pending
-        # while the next cycle requeued it again (duplicate execution).
-        # A transient error during the move leaves the task in the running
-        # set for the next cycle; attempts increments only inside a
-        # successful move so the budget is never silently consumed. The
-        # script refuses if the task finished while being classified —
+        # pending + SREM running). The old zadd-then-srem sequence left a
+        # window where a transient srem failure stranded the task in BOTH
+        # sets — a worker could pull it from pending while the next cycle
+        # requeued it again (duplicate execution). A transient error during
+        # the move leaves the task in the running set for the next cycle.
+        # The script refuses if the task finished while being classified —
         # then the stale running-set entry is simply dropped.
+        #
+        # The move does NOT touch `attempts`. The budget is charged once
+        # per dispatch by the worker at claim time, so `attempts` above is
+        # already the number of dispatches spent and requeuing here must
+        # not charge a second unit (it did until 2026-09-17, halving the
+        # effective budget for every crash-recovery cycle).
         try:
             outcome = await client.requeue_task_atomic(queue_name, task_id, priority)
         except Exception:

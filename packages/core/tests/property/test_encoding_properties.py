@@ -108,7 +108,7 @@ def test_detect_encoding_utf8_round_trip(tmp_path: Path, text: str) -> None:
     encoding, decoded, count = detect_encoding(path)
     # When the text is empty the cascade hits the empty-bytes path; both
     # branches still need to round-trip cleanly.
-    assert decoded == text
+    assert decoded == text.removeprefix("\ufeff")
     assert count == 0
     # Empty input cannot be relabelled — it satisfies UTF-8 strict.
     assert encoding in {"utf-8", "utf-8-bom"} or text == ""

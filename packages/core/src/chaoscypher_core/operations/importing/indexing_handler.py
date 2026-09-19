@@ -1263,11 +1263,17 @@ async def _run_indexing(
         # leave orphaned files in ``{data_dir}/databases/<db>/images/<src>/``
         # forever. Failure to clean is logged but never raised — the
         # underlying indexing exception must still propagate. Audit fix F32.
-        cleanup_vision_images(
-            data_dir=engine_settings.paths.data_dir,
-            database_name=database_name,
-            source_id=file_id,
-        )
+        # FIRST PASS ONLY: on the ``resume_after_vision`` pass the vision
+        # phase already finished, every page row is terminal and nothing
+        # re-renders them, so sweeping would destroy completed output —
+        # including the pages this function's own error message tells the
+        # operator to go and inspect.
+        if not resume_after_vision:
+            cleanup_vision_images(
+                data_dir=engine_settings.paths.data_dir,
+                database_name=database_name,
+                source_id=file_id,
+            )
 
         adapter.fail_indexing(file_id, str(exc))
 
@@ -1874,23 +1880,39 @@ async def _apply_vision_processing(
     # (``vision_operations_service._handle_vision_page``) is registered
     # on QUEUE_LLM so per-page LLM calls are paced by the LLM worker
     # (concurrency = 1).
+    #
+    # One pipelined batch, not one awaited enqueue per page: the fan-out is
+    # bounded only by ``loader.vision_max_pages`` (default 2,000) and
+    # ``enqueue`` costs two awaited round trips each (a ZCARD depth check
+    # plus the pipeline), so the loop form cost up to 4,000 sequential round
+    # trips where this costs two. The structurally identical chunk fan-out on
+    # this same queue already uses the batch primitive
+    # (``import_service._enqueue_chunk_tasks``). ``priorities.background`` is
+    # 50, which is what ``enqueue``'s default gave these tasks before.
+    from chaoscypher_core.app_config import get_settings
+
+    vision_priority = get_settings().priorities.background
     page_rows = adapter.list_vision_page_descriptions(file_id, statuses=[VisionPageStatus.PENDING])
-    for row in page_rows:
-        await queue_client.enqueue_task(
-            queue=QUEUE_LLM,
-            operation=OP_VISION_PAGE,
-            data={
+    vision_specs: list[dict[str, Any]] = [
+        {
+            "operation": OP_VISION_PAGE,
+            "data": {
                 "page_id": row["id"],
                 "job_id": job_id,
                 "source_id": file_id,
             },
-            metadata={
+            "priority": vision_priority,
+            "metadata": {
                 "source_id": file_id,
                 "database_name": database_name,
                 "page_id": row["id"],
                 "page_number": row["page_number"],
                 "operation_type": OP_VISION_PAGE,
             },
-        )
+        }
+        for row in page_rows
+    ]
+    if vision_specs:
+        await queue_client.enqueue_tasks_batch(QUEUE_LLM, vision_specs)
 
     return documents, job_id

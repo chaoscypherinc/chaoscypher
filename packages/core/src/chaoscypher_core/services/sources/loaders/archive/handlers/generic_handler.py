@@ -179,7 +179,6 @@ class GenericHandler:
         )
 
         registry = get_loader_registry(settings)
-        supported_extensions = set(registry.list_supported_extensions())
 
         documents: list[dict[str, Any]] = []
         files_processed = 0
@@ -196,14 +195,14 @@ class GenericHandler:
                 files_skipped += 1
                 continue
 
-            # Check if extension is supported
-            file_ext = file_path.suffix.lower()
-
-            if file_ext not in supported_extensions:
+            # Ask the registry rather than checking ``file_path.suffix``:
+            # the registry matches compound extensions (``inner.tar.gz``
+            # -> ``.tar.gz``) that a single-suffix lookup would miss.
+            if registry.get_loader(str(file_path)) is None:
                 logger.debug(
                     "generic_file_unsupported",
                     file=str(file_path),
-                    extension=file_ext,
+                    extension="".join(file_path.suffixes).lower(),
                 )
                 files_skipped += 1
                 continue

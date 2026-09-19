@@ -279,8 +279,9 @@ class GroundingService:
             msg = f"Invalid direction. Must be one of: {', '.join(valid_directions)}"
             raise ValidationError(msg, field="direction")
 
-        # Verify node exists
-        node = self.graph_repository.get_node(node_id)
+        # Verify node exists (discarded — skip the 1024-float embedding, the
+        # same reason the neighbour hydration below opts out).
+        node = self.graph_repository.get_node(node_id, include_embedding=False)
         if not node:
             raise NotFoundError("Node", node_id)
 

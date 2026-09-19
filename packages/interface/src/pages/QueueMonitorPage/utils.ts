@@ -53,6 +53,19 @@ export function getStatusColor(status: string): MuiChipColor {
   }
 }
 
+/**
+ * Whether "Cancel All" should be offered for an active-task count.
+ *
+ * `total_in_queue` is `null` when the backend could not read queue stats —
+ * the count is UNKNOWN, not zero. Cancel All stays available then (the
+ * server-side cancel covers whatever is actually queued); only a known
+ * zero disables it.
+ */
+export function hasActiveTasks(totalInQueue: number | null | undefined): boolean {
+  if (totalInQueue === null || totalInQueue === undefined) return true;
+  return totalInQueue > 0;
+}
+
 /** Map numeric priority to MUI Chip color. */
 export function getPriorityColor(priority: number): MuiChipColor {
   if (priority >= 80) return 'error';
@@ -107,6 +120,7 @@ const STATUS_SORT_ORDER: Record<string, number> = {
   failed: 2,
   completed: 3,
   cancelled: 4,
+  retried: 5,
 };
 
 /** Sort tasks: running first, then queued, then by descending created_at.

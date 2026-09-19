@@ -154,17 +154,13 @@ class SourceRecovery:
 
         Args:
             adapter: Any object satisfying ``SourceRecoveryPorts`` —
-                the composite Protocol bundling the 9 storage methods
-                this reconciler needs (``get_source``,
-                ``list_sources_by_statuses``, ``get_system_state``,
-                ``mark_source_exhausted``, ``get_active_extraction_job``,
-                ``list_extraction_tasks_by_status``,
-                ``increment_source_recovery_attempts``,
-                ``update_source_last_activity``,
-                ``list_source_entities`` /
-                ``list_source_relationships`` /
-                ``get_source_commit_payload``). ``SqliteAdapter``
-                satisfies this structurally.
+                the composite Protocol (``ports/source_recovery.py``)
+                bundling every storage method this reconciler needs:
+                source reads/status transitions, recovery-attempt and
+                recovery-event bookkeeping, extraction-job / chunk-task
+                reads, commit-payload get/set, and the vision-job reads.
+                The Protocol is the authoritative list; ``SqliteAdapter``
+                satisfies it structurally.
             queue_client: A queue client exposing
                 ``enqueue(queue, operation, data, metadata, priority)``
                 and, optionally, ``task_exists_for_source`` for the

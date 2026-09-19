@@ -286,8 +286,9 @@ async def _run_chat_completion(
     from chaoscypher_core.streaming.chat.loop import ChatLoopDeps, run_chat_tool_loop
     from chaoscypher_core.streaming.chat.sinks import ValkeyPubSubSink
 
-    # Load chat from database
-    chat = chat_service.get_chat(chat_id)
+    # Offloaded per this file's convention: ``get_chat`` also selects up to
+    # 500 message rows with full content, the turn's largest blocking read.
+    chat = await asyncio.to_thread(chat_service.get_chat, chat_id)
     if not chat:
         await publish_chat_event(
             chat_id, "error", {"error": "Chat not found", "error_code": "CHAT_NOT_FOUND"}
@@ -305,7 +306,9 @@ async def _run_chat_completion(
         # Use the task's resolved database (chat_service.database_name),
         # not the live settings value — the operator may have switched the
         # active database while this task sat in the queue.
-        title_map = storage_adapter.get_source_titles_by_ids(source_ids, chat_service.database_name)
+        title_map = await asyncio.to_thread(
+            storage_adapter.get_source_titles_by_ids, source_ids, chat_service.database_name
+        )
         # Missing ids are absent from the map (source deleted mid-queue) and
         # are skipped; a source whose title AND filename are both null maps
         # to None, so fall back to the id explicitly.

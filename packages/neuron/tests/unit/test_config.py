@@ -169,6 +169,39 @@ class TestNumericTypeValidation:
         assert isinstance(config["max_concurrent"], int)
         assert not isinstance(config["max_concurrent"], bool)
 
+    def test_boolean_max_concurrent_rejected_falls_back_to_worker_base_default(
+        self, tmp_path
+    ) -> None:
+        """A rejected override falls back to THAT worker type's default, not a literal 1.
+
+        The llm_worker variant above cannot see this — its base default IS 1.
+        ``config.get("max_concurrent", 1)`` once collapsed the operations queue
+        from 8 to 1 on a single YAML typo (2026-09-17 queue section-audit).
+        """
+        yaml_content = "operations_worker:\n  max_concurrent: true\n"
+        config = _load_config_with_yaml(tmp_path, "operations_worker", yaml_content)
+
+        assert config["max_concurrent"] == 8
+        assert not isinstance(config["max_concurrent"], bool)
+
+    def test_string_timeout_rejected_falls_back_to_worker_base_default(self, tmp_path) -> None:
+        """Same fallback for ``timeout`` / ``max_tries`` when the base default differs from the literal."""
+        defaults = _make_defaults()
+        defaults["operations_worker"]["timeout"] = 7200
+        defaults["operations_worker"]["max_tries"] = 3
+        config_file = tmp_path / "workers.yaml"
+        config_file.write_text('operations_worker:\n  timeout: "soon"\n  max_tries: "few"\n')
+        mock_ps = _mock_path_settings(str(tmp_path))
+
+        with (
+            _patch_defaults(defaults),
+            patch("chaoscypher_core.app_config.PathSettings", return_value=mock_ps),
+        ):
+            config = load_worker_config("operations_worker")
+
+        assert config["timeout"] == 7200
+        assert config["max_tries"] == 3
+
     def test_string_timeout_rejected(self, tmp_path) -> None:
         """String value for timeout is stripped and falls back to clamped default."""
         yaml_content = 'llm_worker:\n  timeout: "not_a_number"\n'

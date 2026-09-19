@@ -23,8 +23,6 @@ Find and download knowledge packages from the Lexicon Hub community.
 2. Enter a search query — the search covers package names, descriptions, and tags
 3. Use filters to narrow results by type, author, or popularity
 
-![Lexicon Hub search interface with package results](/img/screenshots/lexicon-hub.png)
-
 </TabItem>
 <TabItem value="cli" label="CLI">
 

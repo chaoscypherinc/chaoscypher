@@ -34,16 +34,18 @@ SESSION_COOKIE = "cc_session"
 # fake-ollama, so there the gate is open — but on an LLM-less stack,
 # rather than fail every one of these tests we mark them requires_llm
 # and skip when the runtime says LLM is not verified.
-_LLM_REQUIRED_FILES = frozenset({
-    "test_sources.py",
-    "test_source_url.py",
-    "test_source_data.py",
-    "test_source_extraction.py",
-    "test_extraction_control.py",
-    "test_loader_matrix.py",  # uploads gated by the same 409
-    "test_journeys.py",       # source-upload journey only
-    "test_negative_paths.py", # source-url negative paths only
-})
+_LLM_REQUIRED_FILES = frozenset(
+    {
+        "test_sources.py",
+        "test_source_url.py",
+        "test_source_data.py",
+        "test_source_extraction.py",
+        "test_extraction_control.py",
+        "test_loader_matrix.py",  # uploads gated by the same 409
+        "test_journeys.py",  # source-upload journey only
+        "test_negative_paths.py",  # source-url negative paths only
+    }
+)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -86,6 +88,7 @@ def session_cookie(base_url: str, e2e_phase: str) -> str:
     passing the value through ``cookies=`` rather than letting the
     cookie jar enforce policy bypasses httpx's secure-cookie check.
     """
+
     def _post(c: httpx.Client, path: str, payload: dict) -> httpx.Response:
         """POST that retries past nginx/app auth-zone 429s.
 
@@ -182,15 +185,26 @@ def llm_verified(client: httpx.Client) -> bool:
 
 @pytest.fixture(autouse=True)
 def _skip_if_no_llm(request: pytest.FixtureRequest, llm_verified: bool) -> None:
-    """Skip ``requires_llm``-marked tests when the stack has no LLM."""
+    """Skip ``requires_llm``-marked tests when the stack has no LLM.
+
+    On a stack that is *supposed* to have one — the Docker e2e tier, which
+    ships fake-ollama expressly so ``/llm/health`` reports verified=True —
+    a failed probe is a broken run, not a configuration choice. That stack
+    sets ``E2E_REQUIRE_LLM=1`` so the miss fails loudly instead of silently
+    deleting the whole upload/extraction/loader/journey/cascade/race/
+    crash-recovery tier while the run still exits 0.
+    """
     if request.node.get_closest_marker("requires_llm") and not llm_verified:
-        pytest.skip(
-            "Skipped: stack has no LLM configured "
+        reason = (
+            "stack has no LLM configured "
             "(GET /api/v1/settings/llm/health → verified=False). "
             "This test exercises source-upload / extraction paths that "
             "require LLM verification. Configure a stub LLM in "
             "packages/docker/e2e/docker-compose.yml to unblock."
         )
+        if os.environ.get("E2E_REQUIRE_LLM") == "1":
+            pytest.fail(f"E2E_REQUIRE_LLM=1 but {reason}", pytrace=False)
+        pytest.skip(f"Skipped: {reason}")
 
 
 @pytest.fixture(scope="session")

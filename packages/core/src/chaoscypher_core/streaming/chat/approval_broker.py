@@ -15,6 +15,7 @@ only the consumer-less ``/stream`` path could reach (2026-06-10 audit P1:
 """
 
 import asyncio
+import contextlib
 import time
 from collections.abc import Callable
 from typing import Any
@@ -139,6 +140,20 @@ class ValkeyApprovalBroker:
                     await client.delete(key)
                     return value
             await asyncio.sleep(min(poll_s, max(deadline - time.monotonic(), 0)))
+
+        # Claim the key for the timeout before giving up. The TTL is
+        # deliberately ``timeout + _TTL_GRACE_SECONDS`` so a decision
+        # arriving at the buzzer still lands on a live key — but the waiter
+        # is already gone, so for those grace seconds ``resolve_tool_approval``
+        # would CAS the surviving sentinel, log ``tool_approval_resolved`` and
+        # return 204 for a decision nobody will ever honour. Flipping the key
+        # here makes that CAS miss, so the endpoint correctly answers 404.
+        # Fail-closed, per this module's contract: no decision within the
+        # timeout is a denial.
+        client = self._client_getter()
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.eval(_RESOLVE_CAS_SCRIPT, 1, key, PENDING_SENTINEL, "timeout")
 
         logger.info(
             "tool_approval_timed_out",

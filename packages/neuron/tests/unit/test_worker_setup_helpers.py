@@ -362,6 +362,38 @@ class TestSetupOrphanFilesCleanup:
         finally:
             await _cancel(task)
 
+    @pytest.mark.asyncio
+    async def test_crash_reaches_log_task_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A crash outside the loop body must reach ``log_task_exception``.
+
+        This was the worker's one ``create_task`` site without that callback.
+        """
+        from chaoscypher_neuron import worker as worker_mod
+
+        settings = MagicMock()
+        settings.database_dir = tmp_path
+        settings.current_database = "default"
+        settings.source_recovery.orphan_files_retention_days = 1
+        settings.source_recovery.orphan_files_cleanup_interval_seconds = 3600
+        settings.source_recovery.orphan_files_cleanup_timeout_seconds = 60
+        ctx = {"settings": settings, "storage_adapter": MagicMock()}
+
+        async def _boom(**_kwargs: object) -> None:
+            raise RuntimeError("deferred import failed")
+
+        logged: list[asyncio.Task[None]] = []
+        monkeypatch.setattr(worker_mod, "_orphan_files_cleanup_loop", _boom)
+        monkeypatch.setattr(worker_mod, "log_task_exception", logged.append)
+
+        task = worker_mod._setup_orphan_files_cleanup(ctx)
+        assert task is not None
+        with contextlib.suppress(RuntimeError):
+            await task
+
+        assert logged == [task]
+
 
 class TestSetupSearchSweep:
     @pytest.mark.asyncio
@@ -729,6 +761,40 @@ def _run_worker_patches(
 
 
 class TestRunWorkerTail:
+    @pytest.mark.asyncio
+    async def test_queue_worker_drain_budget_is_the_shutdown_grace(self) -> None:
+        """The SIGTERM drain reads ``shutdown.worker_shutdown_grace_seconds``.
+
+        That is the setting the compose-grace validator bounds and
+        supervisord's ``stopwaitsecs`` mirrors. It used to read the LLM
+        load balancer's ``timeouts.instance_drain_max_wait`` instead — invisible
+        while both defaulted to 30 s, wrong the moment either is tuned.
+        """
+        import chaoscypher_neuron.worker as worker_mod
+        from chaoscypher_neuron.worker import run_worker
+
+        qc = MagicMock()
+        storage_adapter = MagicMock()
+        storage_adapter.session = None
+
+        worker_instance, settings, ctx_managers = _run_worker_patches(
+            qc=qc,
+            llm_handlers={"op_a": object()},
+            ops_handlers={"op_b": object()},
+            storage_adapter=storage_adapter,
+        )
+        settings.shutdown.worker_shutdown_grace_seconds = 120
+        settings.timeouts.instance_drain_max_wait = 30.0
+
+        with contextlib.ExitStack() as stack:
+            for cm in ctx_managers:
+                stack.enter_context(cm)
+            await asyncio.wait_for(run_worker(), timeout=10.0)
+            kwargs = worker_mod.QueueWorker.call_args.kwargs
+
+        worker_instance.run.assert_awaited_once()
+        assert kwargs["drain_timeout"] == 120
+
     @pytest.mark.asyncio
     async def test_shutdown_disconnects_and_skips_rehydration_without_session(
         self,

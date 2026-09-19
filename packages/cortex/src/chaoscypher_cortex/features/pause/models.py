@@ -96,9 +96,11 @@ class BulkPauseActionResponse(BaseModel):
     * POST /api/v1/sources/pause  (bulk)
     * POST /api/v1/sources/resume (bulk)
 
-    ``count`` is the number of source rows the repository actually
-    updated — not the length of ``source_ids`` in the request (rows
-    already in the requested state are skipped by the repo).
+    ``count`` is the number of source rows the repository matched by id
+    in the current database — not the length of ``source_ids`` in the
+    request (unknown ids are excluded). Rows already in the requested
+    state are counted too: ``bulk_set_sources_paused`` filters only on
+    id + database, not on the current ``is_paused`` value.
     """
 
     count: int = Field(description="Number of source rows updated by the bulk action.")

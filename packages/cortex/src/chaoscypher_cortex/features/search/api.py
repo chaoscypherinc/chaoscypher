@@ -80,13 +80,15 @@ async def search(
 
     **Query Parameters:**
     - `q`: Search query string (required)
-    - `search_type`: Search type - keyword (full-text), semantic (vector), or hybrid (semantic with fallback)
+    - `search_type`: Search type - keyword (full-text), semantic (vector), or hybrid (both merged)
     - `limit`: Maximum results
 
     **Search Types:**
     - **keyword**: Full-text keyword search
     - **semantic**: Vector similarity search using embeddings
-    - **hybrid**: Semantic search with keyword fallback if no results
+    - **hybrid**: Runs keyword and semantic search together and keeps each
+      result's higher score; queries under 3 characters, and any search error,
+      fall back to keyword-only
 
     **Returns:**
     - List of search results with nodes and relevance scores

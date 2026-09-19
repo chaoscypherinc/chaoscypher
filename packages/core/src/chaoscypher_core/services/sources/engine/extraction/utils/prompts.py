@@ -125,7 +125,7 @@ RELATIONSHIP GUIDELINES:
 - Extract ALL relationships stated or strongly implied between entities — do not skip obvious connections
 - Every entity should have at least one relationship. If you have N entities, aim for at least N relationships.
 - Prefer specific types (spouse_of, wrote, parent_of) over generic ones (related_to, explores)
-- JUSTIFICATION: Write a full sentence (50+ characters) explaining the relationship with evidence from the text
+- JUSTIFICATION: One sentence (50-300 characters) quoting or paraphrasing the cited sentence as evidence. Evidence only: no deliberation, no alternatives, no notes to yourself
 
 EXAMPLE (using indices from entity list):
 R|0|2|participates_in|0.9|S4|Prince Andrei fought in the Battle of Austerlitz as part of the Russian forces against Napoleon

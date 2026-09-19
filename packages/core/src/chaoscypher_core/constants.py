@@ -137,7 +137,7 @@ OPERATION_RETRY_ON_CRASH: dict[str, bool] = {
     # QUEUE_LLM
     "chat_completion": False,  # user-facing chat turn, not idempotent
     "tool_execution": False,  # LLM tool-call dispatch, not idempotent
-    OP_EXTRACT_CHUNK: True,  # DB short-circuit makes re-running safe
+    OP_EXTRACT_CHUNK: True,  # row-status guard on both transitions + DB short-circuit
     OP_FINALIZE_EXTRACTION: True,  # status short-circuit makes re-running safe
     OP_VISION_PAGE: True,  # row-status guard + single-terminal-observation guarantee
     OP_EMBED_CHUNKS: True,  # embedded_at checkpoint

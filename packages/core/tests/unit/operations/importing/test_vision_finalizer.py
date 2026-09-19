@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
@@ -776,3 +777,80 @@ async def test_finalize_skips_already_advanced_when_no_vision_job_for_source(
     mock_enqueue.assert_not_awaited()
     # No queue probe — terminal statuses skip without touching the queue.
     mock_qcheck.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finalize_proceeds_when_counter_stale_but_rows_terminal(
+    adapter: SqliteAdapter,
+) -> None:
+    """The crash-stale counter must not block finalize.
+
+    ``_handle_vision_page`` commits the page-row UPDATE and the
+    ``vision_jobs`` counter bump in two transactions with an await between
+    them, so a crash in between leaves every row terminal while
+    ``completed + failed`` sits permanently one short of ``total_pages``.
+    Nothing repairs that counter — a queue re-delivery short-circuits on the
+    non-PENDING row. ``SourceRecovery._classify_vision_pending`` detects the
+    shape and dispatches OP_VISION_FINALIZE precisely to unstick it, so a
+    counter-based terminality guard turned the one repair path into a
+    permanent no-op: the source burned its recovery budget and landed at
+    ``error`` with every vision LLM call already paid for.
+    """
+    from chaoscypher_core.operations.importing.vision_finalizer import (
+        handle_vision_finalize,
+    )
+
+    source_id, job_id = _setup_finished_vision_job(
+        adapter,
+        page_outcomes=[
+            (1, VisionPageStatus.SUCCEEDED, "A diagram of a cat."),
+            (2, VisionPageStatus.SUCCEEDED, "A diagram of a dog."),
+        ],
+    )
+
+    # Reproduce the crash-stale shape: both rows terminal, counter one
+    # short. Rewind the counter directly, leaving every row untouched —
+    # this is what a crash between the two commits leaves behind.
+    job = adapter.get_vision_job(job_id)
+    assert job is not None
+    assert job["completed"] + job["failed"] == job["total_pages"]
+    with adapter.transaction():
+        adapter.session.execute(
+            text("UPDATE vision_jobs SET completed = completed - 1 WHERE id = :jid"),
+            {"jid": job_id},
+        )
+    stale = adapter.get_vision_job(job_id)
+    assert stale is not None
+    assert stale["completed"] + stale["failed"] < stale["total_pages"]
+    # And no PENDING row exists — the discriminator the counter cannot see.
+    assert all(
+        r["status"] != VisionPageStatus.PENDING.value
+        for r in adapter.list_vision_page_descriptions(source_id)
+    )
+
+    settings = MagicMock()
+    with (
+        patch(
+            "chaoscypher_core.operations.importing.vision_finalizer._reload_documents",
+            return_value=[],
+        ),
+        patch(
+            "chaoscypher_core.operations.importing.vision_finalizer._enqueue_resume_indexing",
+            new_callable=AsyncMock,
+        ) as mock_enqueue,
+    ):
+        result = await handle_vision_finalize(
+            data={
+                "source_id": source_id,
+                "job_id": job_id,
+                "database_name": "test",
+            },
+            adapter=adapter,
+            settings=settings,
+        )
+
+    assert result["status"] != "skipped_not_terminal"
+    mock_enqueue.assert_awaited()
+    src = adapter.get_source(source_id, "test")
+    assert src is not None
+    assert src["status"] == SourceStatus.INDEXING.value

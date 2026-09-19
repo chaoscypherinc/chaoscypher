@@ -5,16 +5,16 @@
 from __future__ import annotations
 
 from chaoscypher_core.services.local_auth import (
-    API_KEY_PREFIX,
     CredentialsFile,
     InvalidPassword,
     InvalidSessionCookie,
     UsernameMismatch,
+    compute_api_key_selector,
     decode_session,
     encode_session,
     generate_api_key,
     hash_api_key,
-    verify_api_key,
+    resolve_api_key,
 )
 from chaoscypher_cortex.features.local_auth.models import (
     ApiKeyCreateResponse,
@@ -131,20 +131,24 @@ class LocalAuthService:
     def verify_api_key(self, key: str) -> str | None:
         """Return the matching key id, or ``None``. Updates ``last_used_at`` on hit.
 
+        Delegates the lookup to ``resolve_api_key``, which indexes the single
+        candidate record by its keyed selector rather than bcrypt-scanning
+        every stored hash — an unknown key costs zero bcrypt work. Records
+        written before the selector existed are migrated transparently on
+        their first successful verify.
+
         Args:
             key: Plaintext API key from the client.
 
         Returns:
-            The key id if one of the stored hashes matches; otherwise ``None``.
+            The key id if a stored key matches; otherwise ``None``.
 
         """
-        if not key.startswith(API_KEY_PREFIX):
+        key_id = resolve_api_key(key, self._creds)
+        if key_id is None:
             return None
-        for key_id, hashed in self._creds.get_api_key_hashes():
-            if verify_api_key(key, hashed):
-                self._creds.touch_api_key(key_id)
-                return key_id
-        return None
+        self._creds.touch_api_key(key_id)
+        return key_id
 
     def change_password(self, username: str, old_password: str, new_password: str) -> None:
         """Rotate the admin password (bumps session epoch, invalidates cookies).
@@ -183,7 +187,10 @@ class LocalAuthService:
 
         """
         key = generate_api_key()
-        key_id = self._creds.add_api_key(name, hash_api_key(key))
+        selector = compute_api_key_selector(
+            key, self._creds.get_or_create_api_key_selector_secret()
+        )
+        key_id = self._creds.add_api_key(name, hash_api_key(key), selector=selector)
         record = next(rec for rec in self._creds.list_api_keys() if rec["id"] == key_id)
         return ApiKeyCreateResponse(id=key_id, name=name, key=key, created_at=record["created_at"])
 

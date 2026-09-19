@@ -40,6 +40,8 @@ from chaoscypher_core.queue.handler_spec import HandlerSpec
 
 
 if TYPE_CHECKING:
+    from collections.abc import Coroutine
+
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository
     from chaoscypher_core.app_config import Settings
@@ -70,6 +72,47 @@ _SNAPSHOT_TO_LLM_KEYS: tuple[str, ...] = (
     "extraction_examples_enabled",
     "extraction_examples_max_chars",
 )
+
+
+async def _run_uncancellable[T](
+    coro: Coroutine[Any, Any, T],
+    *,
+    cancellation: asyncio.CancelledError | None = None,
+) -> tuple[T, asyncio.CancelledError | None]:
+    """Await ``coro`` to completion even when the caller is cancelled.
+
+    ``asyncio.shield`` alone only survives the *first* cancel: the shielded
+    await raises and the caller abandons work that keeps running anyway (an
+    ``asyncio.to_thread`` hop cannot be cancelled at all). So the shield is
+    driven in a loop that records each cancellation instead of propagating
+    it, which the caller then re-raises once the work it protected is done.
+    The loop terminates because ``coro`` is not cancelled by any of this.
+
+    Only use this for work whose completion is already paid for — a
+    committed transaction's result, or the enqueue that spends it — never as
+    a general "ignore cancellation" wrapper: every cancel absorbed here
+    delays the worker's shutdown or timeout by however long ``coro`` takes.
+
+    Args:
+        coro: The coroutine to run to completion.
+        cancellation: A cancellation already absorbed by an earlier call,
+            carried forward so one ``raise`` at the end covers them all.
+
+    Returns:
+        ``(result, cancellation)`` — ``cancellation`` is the last
+        ``CancelledError`` absorbed (by this call or carried in), or None.
+
+    Raises:
+        Exception: Whatever ``coro`` raised; an absorbed cancellation is
+            then dropped, since failed work has nothing to protect.
+    """
+    task = asyncio.create_task(coro)
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+    return task.result(), cancellation
 
 
 def _apply_snapshot_overrides(engine_settings: Any, snapshot: dict[str, Any]) -> Any:
@@ -469,7 +512,25 @@ class ChunkExtractionOperationsService:
         )
 
         try:
-            adapter.start_chunk_task_with_input(chunk_task_id, chunk_content)
+            # Guarded claim. rows=0 means the row went ``completed`` between
+            # _check_stale_chunk_task's read above and this write — another
+            # delivery of the same chunk_task_id finished in the gap. Bail
+            # BEFORE the billable LLM call rather than re-extracting a chunk
+            # whose output is already durable.
+            if adapter.start_chunk_task_with_input(chunk_task_id, chunk_content) == 0:
+                logger.info(
+                    "extract_chunk_skipped_claim_refused",
+                    chunk_task_id=chunk_task_id,
+                    job_id=job_id,
+                    chunk_index=chunk_index,
+                    reason="chunk_task_completed_before_claim",
+                )
+                return {
+                    "success": False,
+                    "skipped": True,
+                    "reason": "task_already_completed",
+                    "chunk_task_id": chunk_task_id,
+                }
 
             # Spend-cap pre-check (2026-05-19, P0): refuse extraction
             # before the LLM call if the per-source or per-day token
@@ -648,8 +709,13 @@ class ChunkExtractionOperationsService:
             # Operations-queue slots (2026-05-23 perf fix; matches the
             # pattern of the 2026-05-21 ``loader_registry.load_document``
             # hoist into ``asyncio.to_thread``).
-            def _run_chunk_persist_txn() -> tuple[str, bool, int]:
-                """Persist this chunk's metrics inside one write transaction."""
+            def _run_chunk_persist_txn() -> tuple[str, bool, int, int]:
+                """Persist this chunk's metrics inside one write transaction.
+
+                The trailing element is ``complete_chunk_task_with_output``'s
+                rowcount: 0 means this delivery lost the completion race and
+                MUST NOT bump the job counter (see the guard's contract).
+                """
                 with adapter.transaction():
                     persist_chunk_metrics(
                         adapter,
@@ -702,7 +768,7 @@ class ChunkExtractionOperationsService:
                     _parser_lines_dropped = int(
                         extraction_metrics.pop("parser_lines_dropped", 0) or 0
                     )
-                    adapter.complete_chunk_task_with_output(
+                    _completed_rows = adapter.complete_chunk_task_with_output(
                         task_id=chunk_task_id,
                         llm_response_json=extraction_metrics.pop("raw_llm_response", ""),
                         llm_duration_ms=llm_duration_ms,
@@ -720,12 +786,18 @@ class ChunkExtractionOperationsService:
                         finish_reason=_finish_reason,
                         aborted_by_loop=_aborted_by_loop,
                     )
-                    return _finish_reason, _aborted_by_loop, _parser_lines_dropped
+                    return (
+                        _finish_reason,
+                        _aborted_by_loop,
+                        _parser_lines_dropped,
+                        _completed_rows,
+                    )
 
             (
                 _chunk_finish_reason,
                 _chunk_aborted_by_loop,
                 _chunk_parser_lines_dropped,
+                _chunk_completed_rows,
             ) = await asyncio.to_thread(_run_chunk_persist_txn)
 
             # Everything below runs AFTER the chunk's output is durably
@@ -754,6 +826,32 @@ class ChunkExtractionOperationsService:
                         adapter=adapter,
                         database_name=database_name,
                     )
+
+                # Lost the completion race: another delivery of this same
+                # chunk_task_id already wrote the terminal row, so THIS run's
+                # output was never persisted. The token spend above is still
+                # recorded — those tokens were really burned and the spend cap
+                # must see them — but everything below is per-chunk
+                # bookkeeping that the winning delivery already did. Bumping
+                # the job counter here is precisely the defect the guard
+                # exists to close: two increments for one chunk satisfy the
+                # finalize predicate (completed_chunks + failed_chunks >=
+                # total_chunks) one chunk early, and leave completed_chunks
+                # permanently wrong for the progress UI.
+                if _chunk_completed_rows == 0:
+                    logger.warning(
+                        "extract_chunk_completion_lost_race",
+                        chunk_task_id=chunk_task_id,
+                        job_id=job_id,
+                        chunk_index=chunk_index,
+                        reason="chunk_task_no_longer_running",
+                    )
+                    return {
+                        "success": False,
+                        "skipped": True,
+                        "reason": "task_completed_by_other_delivery",
+                        "chunk_task_id": chunk_task_id,
+                    }
 
                 # Bump source-level observability counters. Done after the
                 # transaction so a rollback (which would have raised before
@@ -811,7 +909,11 @@ class ChunkExtractionOperationsService:
                 # "source_id") may be None, and an UPDATE against a null id is a
                 # silent no-op at best.
                 if isinstance(source_id, str):
-                    adapter.update_source_last_activity(
+                    # Offloaded like the sibling writes in
+                    # ``_update_chunk_progress`` — an UPDATE + COMMIT that
+                    # loses the writer lock must not park the event loop.
+                    await asyncio.to_thread(
+                        adapter.update_source_last_activity,
                         source_id=source_id,
                         database_name=database_name,
                         at_time=datetime.now(UTC),
@@ -918,23 +1020,43 @@ class ChunkExtractionOperationsService:
             task_outcome: Either ``"completed"`` or ``"failed"``.
             settings: Application settings.
         """
-        progress = adapter.increment_job_completed_and_check(
-            job_id=job_id,
-            database_name=database_name,
-            outcome=task_outcome,
+        # Offloaded to a worker thread for the same reason the chunk-persist
+        # transaction 150 lines above is (see the rationale comment there):
+        # ``increment_job_completed_and_check`` and ``update_step_progress``
+        # are plain ``def`` writer-lock work, so a COMMIT that loses the lock
+        # would park the whole event loop inside SQLite's busy handler and
+        # then add ``SafeSession._retry_delay``'s ``time.sleep`` on top —
+        # stalling every other Operations-queue slot and the heartbeat
+        # refresher that keeps live tasks from being judged abandoned.
+        #
+        # Shielded because ``asyncio.to_thread`` cannot cancel the thread it
+        # started: a cancel delivered while we await it (the worker's
+        # ``asyncio.wait_for`` timeout, or the shutdown drain's
+        # ``task.cancel()``) abandons ``progress`` while the thread's COMMIT
+        # still lands. ``is_terminal`` is not a report but the atomic *claim*
+        # of the finalize transition (``finalize_claimed = 0 -> 1``), so
+        # dropping it burns the claim for good — no other handler, not even a
+        # re-delivery of this chunk, can observe it again, and the job's
+        # auto-finalize waits for ``services/sources/recovery.py``. So keep
+        # waiting for the result we already paid for, remember the
+        # cancellation, act on the progress, and re-raise at the end.  If the
+        # increment itself raised, ``result()`` re-raises that instead and the
+        # cancellation is dropped: nothing committed, so there is no claim to
+        # protect, and the caller's post-commit tail guard handles the failure
+        # exactly as it does with no cancel in flight.
+        progress, cancellation = await _run_uncancellable(
+            asyncio.to_thread(
+                adapter.increment_job_completed_and_check,
+                job_id=job_id,
+                database_name=database_name,
+                outcome=task_outcome,
+            )
         )
 
-        # Update step progress for the UI (counted = completed + failed
-        # so the bar keeps advancing even when chunks fail)
+        # counted = completed + failed so the UI bar keeps advancing even
+        # when chunks fail.
         counted = progress["completed"] + progress["failed"]
         total = progress["total"]
-        if source_id:
-            adapter.update_step_progress(
-                source_id,
-                counted,
-                total,
-                f"Analyzing chunk {counted}/{total}",
-            )
 
         logger.info(
             "chunk_progress_updated",
@@ -946,17 +1068,35 @@ class ChunkExtractionOperationsService:
             failed=progress["failed"],
             total=total,
             is_terminal=progress["is_terminal"],
+            cancelled_mid_increment=cancellation is not None,
         )
 
         if progress["is_terminal"]:
-            job = adapter.get_extraction_job(job_id)
-            generate_embeddings = bool(job.get("generate_embeddings", True)) if job else True
-            await self.queue_finalize_extraction(
-                job_id=job_id,
-                source_id=source_id,
-                database_name=database_name,
-                generate_embeddings=generate_embeddings,
-                priority=settings.priorities.background,
+
+            async def _spend_the_claim() -> None:
+                """Read the job's flags and enqueue the finalize it claimed."""
+                job = await asyncio.to_thread(adapter.get_extraction_job, job_id)
+                generate_embeddings = bool(job.get("generate_embeddings", True)) if job else True
+                await self.queue_finalize_extraction(
+                    job_id=job_id,
+                    source_id=source_id,
+                    database_name=database_name,
+                    generate_embeddings=generate_embeddings,
+                    priority=settings.priorities.background,
+                )
+
+            # Unbreakable for the same reason the increment above is, and it
+            # is the half that matters: the claim is already spent in the DB
+            # the moment that increment commits, so this tail is the only
+            # thing that can turn it into a queued finalize.
+            #
+            # It runs FIRST, before the step-progress write below, precisely
+            # so no unshielded await sits between the claim and the enqueue —
+            # the enqueue does not depend on that write, and any await in
+            # between is one more place a cancel lands and loses the
+            # finalize, which is how this hole kept moving one await later.
+            _, cancellation = await _run_uncancellable(
+                _spend_the_claim(), cancellation=cancellation
             )
             logger.info(
                 "auto_finalize_triggered",
@@ -966,6 +1106,46 @@ class ChunkExtractionOperationsService:
                 completed_chunks=progress["completed"],
                 failed_chunks=progress["failed"],
             )
+
+        # Update step progress for the UI. Deliberately the LAST thing and
+        # deliberately unprotected — it is the one await in this method a
+        # cancel may still take out, in either of two ways: skipped outright
+        # when a cancellation was already absorbed above, or cancelled
+        # mid-hop when this is the first cancel to arrive (it then raises
+        # straight out of this method). Both are fine now that it runs after
+        # the enqueue: it is a cosmetic bar update that the next chunk or
+        # finalization rewrites, and not worth holding a cancelled worker in
+        # another writer-lock thread hop. One wrinkle it does leave: on the
+        # terminal chunk the finalize is already enqueued above, so a slow
+        # hop here can land after the finalizer wrote its own "Finalizing…"
+        # label and briefly overwrite it. Cosmetic only — nothing gates on
+        # the step fields, and the finalizer's next write restores it.
+        if source_id and cancellation is None:
+            await asyncio.to_thread(
+                adapter.update_step_progress,
+                source_id,
+                counted,
+                total,
+                f"Analyzing chunk {counted}/{total}",
+            )
+
+        if cancellation is not None:
+            # Everything the claim had to buy is now durable — the counter
+            # committed, and for a terminal chunk the finalize is queued — so
+            # honour the cancellation the worker asked for: the caller's
+            # ``except asyncio.CancelledError`` requeues or fails this chunk
+            # exactly as it did before the shields. Protected: the counter's
+            # commit and the finalize enqueue. Not protected: the cosmetic
+            # step-progress write just above, and a cancel that arrives
+            # before this method starts (nothing claimed yet, nothing lost).
+            #
+            # The requeue here is the pre-existing behaviour, not a desired
+            # outcome: reaching this point means the increment has committed,
+            # so the re-delivery re-runs the LLM call and bumps ``completed``
+            # past ``total``. See the #564 entry in ``internal/TODO.md``
+            # (2026-09-17 note) — the fix has to know whether the increment
+            # landed, which this arm currently cannot tell.
+            raise cancellation
 
     async def _handle_chunk_cancellation(
         self,

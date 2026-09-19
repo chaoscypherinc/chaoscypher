@@ -12,12 +12,14 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from chaoscypher_core.exceptions import NotFoundError, ValidationError
 from chaoscypher_core.operations.workflows.orchestrator import execute_workflow_task
+from chaoscypher_core.operations.workflows.status import WorkflowExecutionStatus
 
 
 def _make_graph_repo() -> MagicMock:
@@ -177,3 +179,67 @@ class TestAdapterCleanupOnEarlyExit:
             )
 
         adapter.disconnect.assert_called_once()
+
+
+class TestCancellationFinalizesExecution:
+    """A cancel must not leave the durable execution row RUNNING forever."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_during_invoke_finalizes_row_and_reraises(self) -> None:
+        """Worker drain / task timeout cancels are routine, not exotic.
+
+        ``CancelledError`` is a ``BaseException``, so the handler's
+        ``except Exception`` arm never saw it. Nothing else writes
+        ``workflow_executions`` and no reconciler covers that table, so the
+        row stayed ``running`` with NULL ``completed_at`` for the life of the
+        database — and with ``allow_parallel_execution=False`` it then raised
+        ``WorkflowBusyError`` on every future run of that workflow.
+        """
+        from unittest.mock import patch
+
+        from chaoscypher_core.operations.workflows.repository import (
+            WorkflowExecutionRepository,
+        )
+        from chaoscypher_core.services.workflows.engine.validator import WorkflowValidator
+
+        workflow = {"id": "wf-1", "name": "Test", "is_active": True, "steps": []}
+        workflow_service = _make_workflow_service(workflow=workflow)
+        workflow_service.list_workflow_steps.return_value = [
+            {"step_number": 1, "tool_type": "system_tool", "tool_id": "t1"}
+        ]
+
+        compiled = MagicMock()
+        compiled.ainvoke = AsyncMock(side_effect=asyncio.CancelledError())
+        graph = MagicMock()
+        graph.compile.return_value = compiled
+
+        with (
+            patch(
+                "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+                return_value=MagicMock(),
+            ),
+            patch.object(WorkflowValidator, "validate_workflow", staticmethod(lambda w: [])),
+            patch.object(WorkflowValidator, "validate_inputs", staticmethod(lambda w, i: [])),
+            patch.object(WorkflowExecutionRepository, "create_execution", return_value="exec-1"),
+            patch.object(WorkflowExecutionRepository, "update_status"),
+            patch.object(WorkflowExecutionRepository, "finalize_execution") as finalize,
+            patch(
+                "chaoscypher_core.operations.workflows.orchestrator.build_workflow_graph",
+                return_value=graph,
+            ),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await execute_workflow_task(
+                workflow_id="wf-1",
+                inputs={},
+                workflow_service=workflow_service,
+                tool_service=None,
+                llm_service=AsyncMock(),
+                graph_repository=_make_graph_repo(),
+                search_repository=MagicMock(),
+                database_name="test_db",
+            )
+
+        finalize.assert_called_once()
+        assert finalize.call_args.kwargs["status"] == WorkflowExecutionStatus.FAILED
+        assert "cancelled" in finalize.call_args.kwargs["error_message"].lower()

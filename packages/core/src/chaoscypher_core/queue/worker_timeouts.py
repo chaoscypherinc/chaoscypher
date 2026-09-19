@@ -113,25 +113,26 @@ def clamp_worker_timeout(value: float, *, default: int) -> int:
     )
 
 
-def read_workers_yaml_timeout(worker_type: str) -> float | None:
-    """Read the operator's ``workers.yaml`` timeout override for a worker type.
+def read_workers_yaml_key(worker_type: str, key: str) -> float | None:
+    """Read one ``workers.yaml`` override for a worker type.
 
     Deliberately uncached — see the module docstring for what that buys and what
     it costs. Shapes that tell us the worker booted on its default (absent file,
-    non-mapping document, missing section, missing/boolean/non-numeric
-    ``timeout``) return ``None``, matching Neuron's permissive handling. Shapes
-    that tell us *nothing* raise, so the caller can fail long instead.
+    non-mapping document, missing section, missing/boolean/non-numeric value)
+    return ``None``, matching Neuron's permissive handling. Shapes that tell us
+    *nothing* raise, so the caller can decide how to fail.
 
     Args:
         worker_type: ``workers.yaml`` section name, e.g. ``"llm_worker"``.
+        key: Override to read, e.g. ``"timeout"`` or ``"max_tries"``.
 
     Returns:
-        The raw (unclamped) override in seconds, or ``None`` when no usable
-        override is configured.
+        The raw (unclamped) override, or ``None`` when no usable override is
+        configured.
 
     Raises:
         WorkersConfigUnreadableError: The file could not be located, opened, or
-            parsed, leaving the worker's deadline unknowable from here.
+            parsed, leaving the worker's configuration unknowable from here.
     """
     from chaoscypher_core.settings import PathSettings
 
@@ -157,11 +158,16 @@ def read_workers_yaml_timeout(worker_type: str) -> float | None:
     section = document.get(worker_type)
     if not isinstance(section, dict):
         return None
-    value = section.get("timeout")
+    value = section.get(key)
     # YAML booleans coerce silently (True == 1) — reject them like Neuron does.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return value
+
+
+def read_workers_yaml_timeout(worker_type: str) -> float | None:
+    """Read the operator's ``workers.yaml`` ``timeout`` override."""
+    return read_workers_yaml_key(worker_type, "timeout")
 
 
 def resolve_effective_worker_timeout(queue_name: str, *, default: int) -> int:
@@ -196,6 +202,59 @@ def resolve_effective_worker_timeout(queue_name: str, *, default: int) -> int:
     # Floor at the default — a value lowered without a worker restart must never
     # pull the cutoff below where it sat before this resolver existed.
     return max(clamp_worker_timeout(override, default=default), default)
+
+
+def resolve_effective_worker_max_tries(queue_name: str, *, default: int) -> int:
+    """Return the retry budget the worker is enforcing for a queue.
+
+    ``max_tries`` is an operator-settable ``workers.yaml`` key that Neuron
+    forwards into the worker's ``queues_config``, but Cortex's safety-net
+    reconcile used to judge the same task against the bare
+    ``settings.retries.*_worker_max_tries`` default. The two then disagreed
+    about the same task's remaining budget, and the reconciler's else-branch is
+    not a soft skip — it writes ``status="failed"``, ``error_type=
+    "worker_crashed"``, SREMs from ``running`` and applies the dead-letter TTL.
+    An operator who raised ``max_tries`` got abandoned tasks terminally failed
+    early, by whichever reconcile pass happened to win the lock.
+
+    **Failure policy differs from ``resolve_effective_worker_timeout``, on
+    purpose.** That resolver fails LONG (to the clamp ceiling) on an unreadable
+    file because a cutoff shorter than the worker's real deadline requeues
+    *live* work — a correctness bug. Here the analogous "fail long" would be
+    the clamp ceiling of 20, which would keep re-dispatching a genuinely poison
+    task far past what the operator configured. The conservative choice is the
+    settings default: it is exactly the pre-existing behaviour, so an
+    unreadable file is never *worse* than before this resolver existed, while a
+    readable file still picks up the operator's raise.
+
+    Args:
+        queue_name: Logical queue name (``"llm"`` or ``"operations"``).
+        default: The configured default for this queue, normally
+            ``settings.retries.<queue>_worker_max_tries``. Doubles as the floor,
+            so a value lowered without a worker restart never pulls the budget
+            below where it sat before.
+
+    Returns:
+        The effective retry budget, clamped to the shared policy bounds.
+    """
+    worker_type = WORKER_TYPE_BY_QUEUE.get(queue_name)
+    if worker_type is None:
+        return default
+    try:
+        override = read_workers_yaml_key(worker_type, "max_tries")
+    except WorkersConfigUnreadableError:
+        return default
+    if override is None:
+        return default
+    try:
+        clamped = int(override)
+    except (TypeError, ValueError, OverflowError):  # fmt: skip
+        return default
+    clamped = max(policy.WORKER_MAX_TRIES_MIN, min(clamped, policy.WORKER_MAX_TRIES_MAX))
+    # Floor at the default, mirroring the timeout resolver: a value lowered
+    # without a worker restart must not terminally fail work the still-running
+    # worker would retry.
+    return max(clamped, default)
 
 
 def reconciler_cutoff_seconds(effective_timeout_seconds: int | None) -> int | None:

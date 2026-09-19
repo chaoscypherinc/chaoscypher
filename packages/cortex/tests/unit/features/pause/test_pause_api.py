@@ -132,6 +132,7 @@ async def test_system_status_endpoint_returns_typed_response() -> None:
             "paused": True,
             "paused_at": None,
             "reason": "test",
+            "paused_by": "health_monitor",
         }
     )
 
@@ -142,3 +143,54 @@ async def test_system_status_endpoint_returns_typed_response() -> None:
     assert isinstance(result, SystemPauseStatusResponse)
     assert result.paused is True
     assert result.reason == "test"
+    # ``paused_by`` is the one field that tells an automatic safety pause
+    # from an operator pause; the model used to drop it silently.
+    assert result.paused_by == "health_monitor"
+    assert "paused_by" in result.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_list_system_events_endpoint_maps_full_rows() -> None:
+    """A realistic adapter row (decoded ``details`` included) maps field-for-field."""
+    from chaoscypher_cortex.features.pause.api import list_system_events
+    from chaoscypher_cortex.features.pause.models import SystemEventResponse
+
+    row = {
+        "id": 7,
+        "timestamp": "2026-09-17T22:48:00Z",
+        "type": "pause",
+        "action": "source_paused",
+        "source": "s-1",
+        "reason": "maintenance",
+        "details": {"paused_by": "operator", "scope": "source"},
+        "database_name": "default",
+    }
+    service = AsyncMock()
+    service.list_events = AsyncMock(return_value=[row])
+
+    result = await list_system_events(
+        _="test-user",
+        service=service,
+        event_type="pause",
+        limit=10,
+    )
+
+    assert len(result) == 1
+    assert isinstance(result[0], SystemEventResponse)
+    assert result[0].model_dump() == row
+    service.list_events.assert_awaited_once_with(event_type="pause", limit=10)
+
+
+@pytest.mark.asyncio
+async def test_clear_system_events_endpoint_returns_deleted_count() -> None:
+    from chaoscypher_cortex.features.pause.api import clear_system_events
+    from chaoscypher_cortex.features.pause.models import SystemEventsClearResponse
+
+    service = AsyncMock()
+    service.clear_events = AsyncMock(return_value=3)
+
+    result = await clear_system_events(_="test-user", service=service)
+
+    assert isinstance(result, SystemEventsClearResponse)
+    assert result.deleted == 3
+    service.clear_events.assert_awaited_once()

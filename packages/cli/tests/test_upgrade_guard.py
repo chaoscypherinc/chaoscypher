@@ -116,16 +116,40 @@ def test_upgrade_guard_allows_safe_subcommand_when_db_blocked(
     """``db`` is on the safe-subcommands allowlist — the user must be
     able to inspect / repair the gate state without first satisfying
     the gate.
+
+    Deliberately invoked WITHOUT ``--help``: the guard's ``--help``/``-h``
+    bypass returns before the allowlist is ever consulted, so a ``--help``
+    invocation exercises the wrong branch and passes with the allowlist
+    emptied. Click exits 2 for a group invoked with no subcommand, which
+    collides with the gate's own ``exit(2)``, so the discriminating
+    assertion is that usage text was printed and no banner was emitted.
     """
     _install_blocked_state(monkeypatch)
-    monkeypatch.setattr(sys, "argv", ["chaoscypher", "db", "--help"])
+    monkeypatch.setattr(sys, "argv", ["chaoscypher", "db"])
 
     from chaoscypher_cli.__main__ import main
 
-    result = CliRunner().invoke(main, ["db", "--help"])
+    result = CliRunner().invoke(main, ["db"])
 
-    assert result.exit_code == 0, (result.output, result.stderr)
+    assert "Usage:" in result.output, (result.output, result.stderr)
     assert "waiting on a schema upgrade" not in result.stderr
+
+
+def test_upgrade_guard_blocks_unsafe_subcommand_when_db_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The control for the test above: a subcommand NOT on the allowlist
+    must still be blocked, so the allowlist assertion means something.
+    """
+    _install_blocked_state(monkeypatch)
+    monkeypatch.setattr(sys, "argv", ["chaoscypher", "source"])
+
+    from chaoscypher_cli.__main__ import main
+
+    result = CliRunner().invoke(main, ["source"])
+
+    assert result.exit_code == 2
+    assert "waiting on a schema upgrade" in result.stderr
 
 
 # ---------------------------------------------------------------------------

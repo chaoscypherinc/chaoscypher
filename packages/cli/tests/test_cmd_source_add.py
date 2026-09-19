@@ -169,13 +169,15 @@ class TestIsUrl:
 
 
 class TestGetPendingFiles:
-    def test_filters_committed_and_failed(self) -> None:
+    def test_filters_committed_and_errored(self) -> None:
+        # Errored sources carry SourceStatus.ERROR ("error"); the old
+        # "failed" literal never matched and leaked them into the picker.
         ctx = MagicMock()
         ctx.database_name = "default"
         ctx.storage_adapter.list_files.return_value = [
             {"id": "if_1", "status": "indexed"},
             {"id": "if_2", "status": "committed"},
-            {"id": "if_3", "status": "failed"},
+            {"id": "if_3", "status": "error"},
             {"id": "if_4", "status": "pending"},
         ]
         pending = _get_pending_files(ctx)

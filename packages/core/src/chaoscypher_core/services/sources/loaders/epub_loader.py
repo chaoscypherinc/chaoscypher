@@ -261,7 +261,10 @@ class EPUBLoader:
                 _tmp.write(raw_bytes)
                 _tmp_path = Path(_tmp.name)
             try:
-                encoding_used, raw, replacement_count = detect_encoding(_tmp_path)
+                encoding_used, raw, replacement_count = detect_encoding(
+                    _tmp_path,
+                    settings=self.settings.loader if self.settings is not None else None,
+                )
             finally:
                 _tmp_path.unlink(missing_ok=True)
             replacement_total += replacement_count

@@ -54,7 +54,11 @@ def _is_url(value: str) -> bool:
 def _get_pending_files(ctx: CLIContext) -> list[dict]:
     """Get files that haven't been committed yet."""
     all_files = ctx.storage_adapter.list_files(ctx.database_name)
-    return [f for f in all_files if f.get("status") not in (SourceStatus.COMMITTED, "failed")]
+    # Same filter as ``source list --pending``: the enum value is
+    # ``SourceStatus.ERROR`` ("error"); there is no "failed" status.
+    return [
+        f for f in all_files if f.get("status") not in (SourceStatus.COMMITTED, SourceStatus.ERROR)
+    ]
 
 
 def _show_resume_picker(ctx: CLIContext, console: Any) -> str | None:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -27,6 +28,11 @@ from chaoscypher_core.services.local_auth import (
     InvalidPassword,
     InvalidSessionCookie,
     UsernameMismatch,
+)
+from chaoscypher_cortex.features.local_auth.bearer_throttle import (
+    BEARER_BLOCK_SECONDS,
+    BEARER_FAILURE_LIMIT,
+    BearerFailureThrottle,
 )
 from chaoscypher_cortex.features.local_auth.models import (
     ApiKeyCreateRequest,
@@ -45,6 +51,7 @@ from chaoscypher_cortex.shared.api.responses import (
     CONFLICT_RESPONSE,
     NOT_FOUND_RESPONSE,
 )
+from chaoscypher_cortex.shared.utils.client_ip import client_ip
 
 
 if TYPE_CHECKING:
@@ -52,6 +59,8 @@ if TYPE_CHECKING:
 
     from chaoscypher_cortex.features.local_auth.service import LocalAuthService
 
+
+logger = structlog.get_logger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -82,6 +91,9 @@ def build_router(  # noqa: C901, PLR0915
     """
     router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
+    # Per-router (so per-app) so tests and multi-mount setups stay isolated.
+    bearer_throttle = BearerFailureThrottle()
+
     def _set_cookie(response: Response, value: str) -> None:
         """Set the signed session cookie on the outgoing response."""
         response.set_cookie(
@@ -103,6 +115,44 @@ def build_router(  # noqa: C901, PLR0915
             samesite="strict",
         )
 
+    def _verify_bearer_blocking(client: str, credentials: str) -> str | None:
+        """Verify a bearer token in a worker thread, throttle-checked in place.
+
+        Both the block check and the failure count happen here, inside the
+        thread, and that placement is the whole point. The guard used to be
+        evaluated on arrival and the failure recorded back on the event loop
+        after the thread returned, which left the two ends of the window wide
+        open: every request that arrived before the fifth failure *completed*
+        had already passed the guard, so 30 concurrent attempts from one
+        address bought 30 full bcrypt scans and the throttle capped nothing.
+
+        Re-reading the block here means a request that queued on the shared
+        thread limiter sees blocks latched by attempts that started ahead of
+        it, and recording the failure here latches it as early as it can be
+        known. Attempts are deliberately not counted on *entry*: a client
+        verifying several valid keys in parallel is legitimate and must not
+        throttle itself.
+
+        Returns:
+            The matching key id, or ``None`` when the key does not verify or
+            the client is blocked — the caller only needs "not authenticated".
+
+        """
+        if bearer_throttle.is_blocked(client):
+            return None
+        key_id = service.verify_api_key(credentials)
+        if key_id is None:
+            if bearer_throttle.record_failure(client):
+                logger.warning(
+                    "bearer_auth_blocked",
+                    client_ip=client,
+                    failures=BEARER_FAILURE_LIMIT,
+                    block_seconds=BEARER_BLOCK_SECONDS,
+                )
+        else:
+            bearer_throttle.record_success(client)
+        return key_id
+
     async def _resolve_username(
         request: Request,
         bearer: HTTPAuthorizationCredentials | None,
@@ -113,6 +163,12 @@ def build_router(  # noqa: C901, PLR0915
         not authenticated by either mechanism. The credential lookups touch
         bcrypt + file I/O, so they run in a thread to keep the event loop
         responsive.
+
+        nginx runs this resolution as an ``auth_request`` subrequest on every
+        ``/api/`` call, so the bearer arm is unauthenticated attack surface.
+        It is guarded by ``bearer_throttle``: repeated failures from one
+        client stop reaching the key lookup at all. The cookie arm above is
+        deliberately outside that guard — it must never be collateral.
         """
         cookie = request.cookies.get(cookie_name)
         if cookie:
@@ -121,7 +177,13 @@ def build_router(  # noqa: C901, PLR0915
             except InvalidSessionCookie:
                 pass
         if bearer and bearer.scheme.lower() == "bearer":
-            matched = await asyncio.to_thread(service.verify_api_key, bearer.credentials)
+            client = client_ip(request)
+            # Cheap pre-check so a blocked client never occupies a thread at
+            # all; the authoritative one runs inside the thread, where it can
+            # see blocks latched by attempts already in flight.
+            if bearer_throttle.is_blocked(client):
+                return None
+            matched = await asyncio.to_thread(_verify_bearer_blocking, client, bearer.credentials)
             if matched:
                 return await asyncio.to_thread(service.get_username)
         return None

@@ -25,6 +25,7 @@ from chaoscypher_core.queue.reconciler import (
 )
 from chaoscypher_core.queue.worker_timeouts import (
     reconciler_cutoff_seconds,
+    resolve_effective_worker_max_tries,
     resolve_effective_worker_timeout,
 )
 from chaoscypher_cortex.features.queue.models import (
@@ -340,9 +341,19 @@ class QueueService:
         from chaoscypher_core.app_config import get_settings
 
         settings = get_settings()
-        max_tries_map = {
+        # Resolved workers.yaml-aware for the same reason the timeout below
+        # is: max_tries is an operator-settable workers.yaml key that Neuron
+        # forwards into the worker's reconcile passes. Judging the same task
+        # against the bare settings default terminally failed work an operator
+        # who RAISED the budget still expected to be retried — and the
+        # else-branch below is a dead-letter write, not a soft skip.
+        default_max_tries = {
             "llm": settings.retries.llm_worker_max_tries,
             "operations": settings.retries.operations_worker_max_tries,
+        }
+        max_tries_map = {
+            q: resolve_effective_worker_max_tries(q, default=default_max_tries_value)
+            for q, default_max_tries_value in default_max_tries.items()
         }
         # The reconciler's absolute cutoff must clear the deadline the WORKER
         # enforces — which is the workers.yaml override, not the settings

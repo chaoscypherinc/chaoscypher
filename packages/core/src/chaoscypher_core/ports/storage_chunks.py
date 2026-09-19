@@ -35,6 +35,14 @@ class ChunkStorageProtocol(Protocol):
         """Get chunk by ID."""
         ...
 
+    def chunk_exists(self, chunk_id: str, database_name: str) -> bool:
+        """Report whether a chunk row exists, without hydrating it.
+
+        Existence-check sibling of ``get_chunk``: use this wherever the row
+        is only tested for presence, never ``get_chunk(...) is not None``.
+        """
+        ...
+
     def list_chunks(
         self,
         database_name: str,

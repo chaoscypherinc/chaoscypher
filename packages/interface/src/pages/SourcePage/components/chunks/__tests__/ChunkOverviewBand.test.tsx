@@ -71,4 +71,25 @@ describe('ChunkOverviewBand', () => {
     expect(screen.getByTestId('time-chart')).toBeInTheDocument();
     expect(screen.getByTestId('density-chart')).toBeInTheDocument();
   });
+
+  it('counts extraction groups, not chunks, in the summary line', () => {
+    const groups = [
+      chartTasks[0],
+      { ...chartTasks[0], id: 't2', chunk_index: 1 },
+      { ...chartTasks[0], id: 't3', chunk_index: 2 },
+    ] as unknown as ExtractionChartTask[];
+    render(
+      wrap(
+        <ChunkOverviewBand
+          source={{ ...source, chunk_count: 419 }}
+          llm={{ ...llm, chartTasks: groups }}
+          onSelectChunk={vi.fn()}
+          onViewChunk={vi.fn()}
+        />,
+      ),
+    );
+    // One ChunkExtractionTask groups several document chunks: the band counts
+    // groups, so it must not reuse the tab badge's "chunks" unit for them.
+    expect(screen.getByText(/^3 extraction groups \(419 chunks\)$/)).toBeInTheDocument();
+  });
 });

@@ -227,3 +227,41 @@ async def test_route_offloads_service_call_to_thread(monkeypatch: pytest.MonkeyP
     service.get_canvas_data.assert_not_called()
     # Response is the model wrap of the dispatched payload.
     assert response.truncated is False
+
+
+def test_source_groups_endpoint_offloads_to_thread() -> None:
+    """``GET /graph/source_groups`` must offload like its canvas sibling.
+
+    The service body has no ``await`` and does blocking SQLite work — a
+    source listing plus an unbounded DISTINCT over ``source_citations`` —
+    so awaiting it inline stalled every other ``/api/`` request, which is
+    exactly the hazard the canvas route above documents.
+    """
+    source = GRAPH_API.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    found = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_source_groups":
+            for sub in ast.walk(node):
+                if (
+                    isinstance(sub, ast.Call)
+                    and isinstance(sub.func, ast.Attribute)
+                    and sub.func.attr == "to_thread"
+                ):
+                    found = True
+                    break
+    assert found, "get_source_groups must call asyncio.to_thread on the service method"
+
+
+def test_source_groups_service_method_is_synchronous() -> None:
+    """The service method must NOT be ``async def``.
+
+    ``asyncio.to_thread`` on a coroutine function silently returns an
+    un-awaited coroutine object to the response model — a runtime failure
+    with no import-time or type-check signal. Pinning the sync signature is
+    what makes the offload above safe.
+    """
+    import inspect
+
+    assert not inspect.iscoroutinefunction(GraphService.get_source_groups)

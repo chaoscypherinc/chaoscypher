@@ -68,7 +68,10 @@ class TextLoader:
         logger.info("text_loading_started", filepath=filepath)
 
         try:
-            encoding_used, text, replacement_chars_count = detect_encoding(Path(filepath))
+            encoding_used, text, replacement_chars_count = detect_encoding(
+                Path(filepath),
+                settings=self.settings.loader if self.settings is not None else None,
+            )
 
             logger.info(
                 "text_loaded",

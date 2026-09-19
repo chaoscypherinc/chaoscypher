@@ -3,8 +3,8 @@ slug: graphrag-teardown-naive-rag
 title: "GraphRAG Teardown: What the Graph Actually Adds to Naive RAG"
 authors: [denis]
 tags: [graphrag, rag, ai, python]
-date: 2026-08-04
-draft: true
+date: 2026-09-18
+draft: false
 description: A step-by-step teardown of vector RAG vs GraphRAG over three real AI agent papers -- what each path finds, what it misses, and when the graph earns its keep.
 ---
 
@@ -86,7 +86,7 @@ The property that matters: a chunk appearing in *both* lists collects from both.
 
 In plain English: the graph finds the path between the things you asked about, the vector index finds text that sounds like your question, and fusion trusts what both agree on.
 
-<!-- screenshot: search results panel showing entities with relevance scores and type badges after a multi-hop query -->
+![Command palette searching for Pierre, listing entity results with connection counts](/img/screenshots/search-results.png)
 
 ## Reading the Receipts
 
@@ -111,7 +111,7 @@ This is the number to watch when you evaluate GraphRAG on your own corpus. A que
 
 In plain English: don't take our word for whether the graph fired -- the response tells you.
 
-<!-- screenshot: chat answer with the retrieval stats panel expanded, showing mode full_graphrag and the seed/provenance/vector counts -->
+<!-- optional screenshot: chat answer with the retrieval stats panel expanded, showing mode full_graphrag and the seed/provenance/vector counts -->
 
 ## Where the Graph Doesn't Help
 

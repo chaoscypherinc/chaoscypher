@@ -4,14 +4,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
-from chaoscypher_core.services.local_auth import CredentialsFile
+from chaoscypher_core.services.local_auth import (
+    CredentialsFile,
+    generate_api_key,
+    hash_api_key,
+)
+from chaoscypher_cortex.features.local_auth import service as service_module
 from chaoscypher_cortex.features.local_auth.api import build_router
+from chaoscypher_cortex.features.local_auth.bearer_throttle import BEARER_FAILURE_LIMIT
 from chaoscypher_cortex.features.local_auth.service import LocalAuthService
 
 
@@ -371,3 +382,207 @@ def test_logout_invalidates_existing_session_cookie(app: FastAPI) -> None:
     # The old cookie must now be rejected because the epoch advanced.
     me_after = client.get("/api/v1/auth/me")
     assert me_after.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Bearer failure throttle (bcrypt CPU-exhaustion fix)
+# ---------------------------------------------------------------------------
+
+
+_EDGE_TOKEN = "edge-secret"
+
+
+@pytest.fixture
+def edge_client(app: FastAPI, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient whose requests arrive edge-verified, so X-Real-IP is trusted.
+
+    Mirrors the real subrequest: nginx sets ``X-Real-IP`` from ``$remote_addr``
+    and forwards the edge token, which is what lets ``client_ip`` key the
+    throttle per client rather than collapsing every caller into the nginx
+    loopback peer.
+    """
+    from chaoscypher_core import app_config
+    from chaoscypher_core.app_config import LocalAuthSettings, Settings
+
+    settings = Settings(
+        dev_mode=False,
+        local_auth=LocalAuthSettings(edge_auth_token=SecretStr(_EDGE_TOKEN)),
+    )
+    monkeypatch.setattr(app_config, "get_settings", lambda: settings)
+    client = TestClient(app)
+    client.headers.update({"X-Auth-Edge-Token": _EDGE_TOKEN})
+    return client
+
+
+def _bad_bearer(client: TestClient, ip: str) -> int:
+    return client.get(
+        "/api/v1/auth/verify",
+        headers={"Authorization": "Bearer cc_live_definitely_wrong", "X-Real-IP": ip},
+    ).status_code
+
+
+def test_bearer_throttle_short_circuits_after_five_failures(
+    edge_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 6th bad bearer from one client is refused without a key lookup."""
+    edge_client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    edge_client.cookies.clear()
+
+    lookups = {"n": 0}
+    real = service_module.resolve_api_key
+
+    def _counting(key: str, store: object) -> str | None:
+        lookups["n"] += 1
+        return real(key, store)  # type: ignore[arg-type,no-any-return]
+
+    monkeypatch.setattr(service_module, "resolve_api_key", _counting)
+
+    for _ in range(BEARER_FAILURE_LIMIT):
+        assert _bad_bearer(edge_client, "203.0.113.7") == 401
+    assert lookups["n"] == BEARER_FAILURE_LIMIT
+
+    assert _bad_bearer(edge_client, "203.0.113.7") == 401
+    assert lookups["n"] == BEARER_FAILURE_LIMIT, "blocked attempt must not reach the key lookup"
+
+
+def test_bearer_throttle_is_per_client(edge_client: TestClient) -> None:
+    """Blocking one address must not block another."""
+    edge_client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    key = edge_client.post("/api/v1/auth/keys", json={"name": "CLI"}).json()["key"]
+    edge_client.cookies.clear()
+
+    for _ in range(BEARER_FAILURE_LIMIT + 1):
+        assert _bad_bearer(edge_client, "203.0.113.7") == 401
+
+    r = edge_client.get(
+        "/api/v1/auth/verify",
+        headers={"Authorization": f"Bearer {key}", "X-Real-IP": "203.0.113.8"},
+    )
+    assert r.status_code == 200
+
+
+def test_bearer_throttle_never_affects_the_cookie_path(edge_client: TestClient) -> None:
+    """A blocked bearer client can still authenticate with a session cookie."""
+    edge_client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    cookie = edge_client.cookies.get("cc_session")
+    assert cookie is not None
+    edge_client.cookies.clear()
+
+    for _ in range(BEARER_FAILURE_LIMIT + 1):
+        assert _bad_bearer(edge_client, "203.0.113.7") == 401
+
+    edge_client.cookies.set("cc_session", cookie)
+    r = edge_client.get("/api/v1/auth/verify", headers={"X-Real-IP": "203.0.113.7"})
+    assert r.status_code == 200
+    assert r.headers.get("X-Auth-User") == "admin"
+
+
+def test_valid_key_still_works_below_the_limit(edge_client: TestClient) -> None:
+    """Four failures then a good key: the good key must be accepted."""
+    edge_client.post(
+        "/api/v1/auth/setup",
+        json={"username": "admin", "password": "PasswordPassword1"},
+    )
+    key = edge_client.post("/api/v1/auth/keys", json={"name": "CLI"}).json()["key"]
+    edge_client.cookies.clear()
+
+    for _ in range(BEARER_FAILURE_LIMIT - 1):
+        assert _bad_bearer(edge_client, "203.0.113.7") == 401
+
+    r = edge_client.get(
+        "/api/v1/auth/verify",
+        headers={"Authorization": f"Bearer {key}", "X-Real-IP": "203.0.113.7"},
+    )
+    assert r.status_code == 200
+
+
+# The worst case this design admits: every thread already running when the
+# Nth failure latches the block has passed its re-check, so it still does its
+# one bcrypt pass. That is BEARER_FAILURE_LIMIT completions plus at most
+# (executor workers - 1) already in flight. ``asyncio.to_thread`` dispatches
+# to the event loop's default executor (not anyio's limiter), so the test
+# pins that executor and the bound becomes a number rather than a race.
+_TEST_THREAD_CAPACITY = 4
+_CONCURRENT_ATTEMPTS = 30
+
+
+@pytest.mark.asyncio
+async def test_concurrent_bad_bearers_from_one_client_are_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent wrong bearers must not each get a full bcrypt pass.
+
+    The guard used to be evaluated only on arrival, before the verify was
+    handed to a worker thread, and the failure was recorded only after that
+    thread returned — so every request that arrived before the fifth failure
+    *completed* sailed past the guard. 30 concurrent attempts from one
+    address bought 30 bcrypt scans; the throttle capped nothing.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from chaoscypher_core import app_config
+    from chaoscypher_core.app_config import LocalAuthSettings, Settings
+    from chaoscypher_core.services.local_auth import api_key_lookup
+
+    settings = Settings(
+        dev_mode=False,
+        local_auth=LocalAuthSettings(edge_auth_token=SecretStr(_EDGE_TOKEN)),
+    )
+    monkeypatch.setattr(app_config, "get_settings", lambda: settings)
+
+    # Bootstrap an install with one *legacy* (selector-less) key, so the
+    # migration loop is non-empty and a wrong key really does reach bcrypt.
+    creds = CredentialsFile(tmp_path / "creds.json")
+    creds.initialize("admin", "PasswordPassword1")
+    creds.add_api_key("old", hash_api_key(generate_api_key()))
+    service = LocalAuthService(credentials=creds, session_secret=b"y" * 32, cookie_ttl_seconds=60)
+    app = FastAPI()
+    app.include_router(
+        build_router(service, cookie_name="cc_session", cookie_secure_provider=lambda: False)
+    )
+
+    calls = {"bcrypt": 0}
+    lock = threading.Lock()
+
+    def _counting_verify(key: str, hashed: str) -> bool:
+        with lock:
+            calls["bcrypt"] += 1
+        time.sleep(0.02)  # widen the window the old code left open
+        return False
+
+    monkeypatch.setattr(api_key_lookup, "verify_api_key", _counting_verify)
+
+    executor = ThreadPoolExecutor(max_workers=_TEST_THREAD_CAPACITY)
+    asyncio.get_running_loop().set_default_executor(executor)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://edge") as client:
+        headers = {
+            "Authorization": "Bearer cc_live_definitely_wrong",
+            "X-Real-IP": "203.0.113.9",
+            "X-Auth-Edge-Token": _EDGE_TOKEN,
+        }
+        results = await asyncio.gather(
+            *(
+                client.get("/api/v1/auth/verify", headers=headers)
+                for _ in range(_CONCURRENT_ATTEMPTS)
+            )
+        )
+
+    executor.shutdown(wait=True)
+
+    assert all(r.status_code == 401 for r in results)
+    bound = BEARER_FAILURE_LIMIT + _TEST_THREAD_CAPACITY - 1
+    assert calls["bcrypt"] <= bound, (
+        f"{calls['bcrypt']} bcrypt passes for {_CONCURRENT_ATTEMPTS} concurrent "
+        f"attempts from one address; the throttle should cap it at {bound}"
+    )

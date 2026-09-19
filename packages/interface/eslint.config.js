@@ -171,21 +171,21 @@ export default tseslint.config(
           default: 'disallow',
           rules: [
             // L1 — pages and App.tsx may import from anything below.
-            { from: ['page', 'root'], allow: ['page', 'component', 'context', 'hook', 'service', 'util', 'type', 'theme', 'config', 'constant'] },
+            { from: { type: ['page', 'root'] }, allow: { to: { type: ['page', 'component', 'context', 'hook', 'service', 'util', 'type', 'theme', 'config', 'constant'] } } },
             // L2 — components/contexts/hooks: only L3, L4. (See carve-out for contexts below.)
-            { from: ['component'], allow: ['component', 'service', 'util', 'type', 'theme', 'config', 'constant'] },
-            { from: ['hook'],      allow: ['hook',      'service', 'util', 'type', 'theme', 'config', 'constant'] },
+            { from: { type: ['component'] }, allow: { to: { type: ['component', 'service', 'util', 'type', 'theme', 'config', 'constant'] } } },
+            { from: { type: ['hook'] },      allow: { to: { type: ['hook',      'service', 'util', 'type', 'theme', 'config', 'constant'] } } },
             // contexts -> hooks: documented carve-out for query-derived
             // context state (e.g. DashboardContext composing useDashboardData).
-            { from: ['context'],   allow: ['context', 'hook', 'service', 'util', 'type', 'theme', 'config', 'constant'] },
+            { from: { type: ['context'] },   allow: { to: { type: ['context', 'hook', 'service', 'util', 'type', 'theme', 'config', 'constant'] } } },
             // L3 — services may import only L4 (no UI).
-            { from: ['service'],   allow: ['service', 'util', 'type', 'config', 'constant'] },
+            { from: { type: ['service'] },   allow: { to: { type: ['service', 'util', 'type', 'config', 'constant'] } } },
             // L4 — leaves import only other leaves.
-            { from: ['util'],      allow: ['util', 'type', 'theme', 'config', 'constant'] },
-            { from: ['type'],      allow: ['type', 'config', 'constant'] },
-            { from: ['theme'],     allow: ['theme', 'type', 'config', 'constant'] },
-            { from: ['config'],    allow: ['config', 'constant', 'type'] },
-            { from: ['constant'],  allow: ['constant', 'type'] },
+            { from: { type: ['util'] },      allow: { to: { type: ['util', 'type', 'theme', 'config', 'constant'] } } },
+            { from: { type: ['type'] },      allow: { to: { type: ['type', 'config', 'constant'] } } },
+            { from: { type: ['theme'] },     allow: { to: { type: ['theme', 'type', 'config', 'constant'] } } },
+            { from: { type: ['config'] },    allow: { to: { type: ['config', 'constant', 'type'] } } },
+            { from: { type: ['constant'] },  allow: { to: { type: ['constant', 'type'] } } },
           ],
         },
       ],

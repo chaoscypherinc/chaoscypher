@@ -393,7 +393,16 @@ async def _handle_add_document(
             # bypass. resolve_within is idempotent, so the index-only
             # pipeline's own resolve_within of the (now absolute) path is a
             # safe defense-in-depth no-op.
-            if not content and not is_url and file_path:
+            #
+            # The guard is deliberately NOT conditional on ``content``. The
+            # tool schema claims that supplying ``content`` means the file is
+            # never loaded, but nothing implements that: neither the inline
+            # pipeline call below nor the processor's pipeline_callback
+            # forwards ``content``, so ``file_path`` is read from disk on
+            # every path. Skipping the guard when ``content`` was supplied
+            # therefore handed a caller an unsandboxed arbitrary-file read —
+            # and a caller supplying both is exactly the attack.
+            if not is_url and file_path:
                 file_path, guard_error = _resolve_local_ingest_path(file_path, sandbox_dir)
                 if guard_error is not None:
                     return [TextContent(type="text", text=json.dumps(guard_error, default=str))]

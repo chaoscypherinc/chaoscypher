@@ -341,6 +341,28 @@ async def handle_vision_finalize(  # noqa: PLR0911 - idempotency state machine; 
     job_id = data["job_id"]
     database_name = data["database_name"]
 
+    # 0. Pause guard (``pause_guard`` contract, shared with every other
+    # source-processing handler): skip before any state mutation. The
+    # source stays ``vision_pending`` with its terminal job, which is
+    # exactly the shape source recovery routes back here after resume.
+    from chaoscypher_core.operations.pause_guard import check_paused
+
+    pause_check = await asyncio.to_thread(
+        check_paused,
+        source_id=source_id,
+        database_name=database_name,
+        adapter=adapter,
+    )
+    if pause_check.paused:
+        logger.info(
+            "handler_skipped_paused",
+            handler="handle_vision_finalize",
+            source_id=source_id,
+            scope=pause_check.scope,
+            reason=pause_check.reason,
+        )
+        return {"skipped": "paused"}
+
     # 1. Validate job exists.
     job = await asyncio.to_thread(adapter.get_vision_job, job_id)
     if job is None:
@@ -435,27 +457,51 @@ async def handle_vision_finalize(  # noqa: PLR0911 - idempotency state machine; 
     #     splice takes only SUCCEEDED/TRUNCATED rows — so defer instead:
     #     the retried page's own completion re-fires the terminal→enqueue
     #     path and finalize converges with the full page set.
+    #
+    #     The predicate is row-derived, NOT counter-derived. The counter can
+    #     be permanently short of total: ``_handle_vision_page`` commits the
+    #     page-row UPDATE and the counter bump in two transactions, and a
+    #     crash between them leaves every row terminal with the counter one
+    #     behind, which nothing repairs (a queue re-delivery short-circuits
+    #     on the non-PENDING row). ``SourceRecovery._classify_vision_pending``
+    #     detects exactly that shape and dispatches OP_VISION_FINALIZE for
+    #     it — so a counter-based guard refused the one repair path that
+    #     exists, and the source burned its recovery budget and landed at
+    #     ``error`` with every vision LLM call wasted. Rows distinguish the
+    #     two cases the counter cannot: a retry rewind leaves a PENDING row,
+    #     a crash-stale counter leaves none.
     fresh_job = await asyncio.to_thread(adapter.get_vision_job, job_id)
-    if fresh_job is not None and (
-        fresh_job["completed"] + fresh_job["failed"] < fresh_job["total_pages"]
-    ):
+
+    # 4. Read all page descriptions (also the guard's input, so guard and
+    #    splice share one snapshot).
+    page_rows = await asyncio.to_thread(adapter.list_vision_page_descriptions, source_id)
+
+    terminal_rows = sum(
+        1
+        for r in page_rows
+        if r["status"]
+        in {
+            VisionPageStatus.SUCCEEDED.value,
+            VisionPageStatus.TRUNCATED.value,
+            VisionPageStatus.FAILED.value,
+        }
+    )
+    if fresh_job is not None and terminal_rows < (fresh_job["total_pages"] or 0):
         logger.info(
             "vision_finalize_deferred_not_terminal",
             source_id=source_id,
             job_id=job_id,
+            terminal_rows=terminal_rows,
             completed=fresh_job["completed"],
             failed=fresh_job["failed"],
             total_pages=fresh_job["total_pages"],
         )
         return {"status": "skipped_not_terminal"}
 
-    # 4. Re-load documents (deterministic loader call).
+    # 5. Re-load documents (deterministic loader call).
     documents = await asyncio.to_thread(
         _reload_documents, adapter, source_id, database_name, settings
     )
-
-    # 5. Read all page descriptions.
-    page_rows = await asyncio.to_thread(adapter.list_vision_page_descriptions, source_id)
 
     # 6. Splice descriptions into documents (in-memory; the indexing
     #    resume path will re-run the same splice deterministically).

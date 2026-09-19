@@ -826,12 +826,15 @@ Args:
 | `ccx_iri` | `str` |  |
 | `database_name` | `str` |  |
 
-#### `get_node(node_id: str) -> Node | None`
+#### `get_node(node_id: str, *, include_embedding: bool = True) -> Node | None`
 
 Get a node by ID.
 
 Args:
     node_id: Unique node identifier
+    include_embedding: Default True. False leaves the 1024-float
+        embedding out of the query (the `get_nodes_batch`
+        projection contract); existence checks must pass False.
 
 Returns:
     Node object or None if not found
@@ -844,6 +847,7 @@ Example:
 | Parameter | Type | Description |
 |---|---|---|
 | `node_id` | `str` |  |
+| `include_embedding` | `bool` |  |
 
 #### `get_node_by_ccx_iri(ccx_iri: str, database_name: str) -> dict[str, Any] | None`
 
@@ -863,12 +867,15 @@ Args:
 | `ccx_iri` | `str` |  |
 | `database_name` | `str` |  |
 
-#### `get_nodes_batch(node_ids: list[str]) -> list[Node]`
+#### `get_nodes_batch(node_ids: list[str], *, include_embedding: bool = True) -> list[Node]`
 
 Get multiple nodes by ID in a single operation.
 
 Args:
     node_ids: List of node IDs to retrieve
+    include_embedding: When False, the embedding column is neither
+        queried nor decoded and `Node.embedding` is `None` —
+        use for hydration paths that never read the vector.
 
 Returns:
     List of Node objects (may be less than requested if some not found)
@@ -876,6 +883,7 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `node_ids` | `list[str]` |  |
+| `include_embedding` | `bool` |  |
 
 #### `get_template(template_id: str) -> Template | None`
 
@@ -1245,27 +1253,33 @@ Notes:
 |---|---|---|
 | `chunk_id` | `str` |  |
 
-#### `get_chunks_by_ids_batch(chunk_ids: list[str]) -> list[dict[str, Any]]`
+#### `get_chunks_by_ids_batch(chunk_ids: list[str], *, include_embeddings: bool = False) -> list[dict[str, Any]]`
 
 Fetch multiple chunks by UUID in one query.
 
-Batch sibling of `get_chunk_by_id` with the identical per-chunk
-dict shape.
+Batch sibling of `get_chunk_by_id`, minus the heavy columns:
+`embedding` (~5KB per chunk) and `raw_content` are excluded
+from the returned dicts by default; `include_embeddings=True`
+adds `embedding` back (`raw_content` is always excluded).
 
 Args:
     chunk_ids: Chunk UUIDs.
+    include_embeddings: If True, include the embedding column
+        (slower — only for callers that consume the vectors).
 
 Returns:
     Chunk dictionaries for every id that exists, in input order;
     missing ids are silently absent.
 
 Notes:
-    - Used by SearchService to hydrate a page of chunk results in
-      one round trip instead of one SELECT per chunk.
+    - Used by SearchService and the tool handlers to hydrate a
+      page of chunk results in one round trip instead of one
+      SELECT per chunk.
 
 | Parameter | Type | Description |
 |---|---|---|
 | `chunk_ids` | `list[str]` |  |
+| `include_embeddings` | `bool` |  |
 
 #### `get_chunks_by_source(source_id: str, page: int = 1, page_size: int = 50, status: str | None = None, include_embeddings: bool = False) -> tuple[list[dict[str, Any]], int]`
 
@@ -2118,6 +2132,18 @@ Count graph nodes per source_id.
 | `database_name` | `str` |  |
 | `source_ids` | `list[str]` |  |
 
+#### `count_source_attributed_nodes(database_name: str) -> int`
+
+Node count restricted to rows carrying a source_id.
+
+The like-for-like live counterpart of the snapshot's persisted
+`total_nodes`, which is summed per source and therefore excludes
+NULL-source rows.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `database_name` | `str` |  |
+
 #### `count_template_entities_per_source(database_name: str, source_ids: list[str]) -> dict[str, dict[str, int]]`
 
 Count entities by template_id, grouped by source_id.
@@ -2532,6 +2558,11 @@ Returns:
 
     None if not found
 
+Notes:
+    - Heavy text columns (`commit_payload`, `full_text`) are
+      excluded — fetch them via the narrow accessors
+      (`get_source_commit_payload` / `get_source_full_text`).
+
 | Parameter | Type | Description |
 |---|---|---|
 | `source_id` | `str` |  |
@@ -2555,6 +2586,27 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `ccx_iri` | `str` |  |
+| `database_name` | `str` |  |
+
+#### `get_source_full_text(source_id: str, database_name: str) -> str | None`
+
+Read the full raw text for a source (narrow projection).
+
+`get_source` excludes the heavy `full_text` column; callers
+that need the raw upload text (e.g. the CCX exporter) fetch it
+through this accessor instead.
+
+Args:
+    source_id: Source UUID
+    database_name: Database that owns the source
+
+Returns:
+    The stored full text, or `None` if the source does not
+    exist or has no full text persisted.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
 | `database_name` | `str` |  |
 
 #### `get_stats(database_name: str) -> dict[str, Any]`
@@ -2596,6 +2648,14 @@ Args:
 | `database_name` | `str` |  |
 | `column` | `str` |  |
 | `n` | `int` |  |
+
+#### `list_enabled_source_ids() -> set[str]`
+
+Return the ids of all enabled sources in the active database.
+
+Single-column projection for hot per-request filters (the search
+engine calls this on every keyword/semantic/hybrid search). Must
+not hydrate stage progress or any wide columns.
 
 #### `list_sources(page: int = 1, page_size: int = 50, source_type: str | None = None, status: str | None = None, enabled: str | None = None, search: str | None = None, tag_id: str | None = None) -> tuple[list[dict[str, Any]], int]`
 

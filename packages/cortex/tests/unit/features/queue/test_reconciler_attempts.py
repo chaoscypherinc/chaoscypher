@@ -1,13 +1,22 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Task 5.6: reconciler must increment attempts only after a successful requeue.
+"""The reconciler must not charge the retry budget a second time.
 
-Three invariants under test:
+``attempts`` is charged exactly once per dispatch, by the worker at claim
+time (``QueueWorker._process_task``). ``requeue_atomic.lua`` used to bump it
+again on every crash-recovery requeue, so one crash cycle cost TWO units of
+``max_tries``: a ``retry_on_crash=True`` operation got 3 dispatches out of a
+configured 5, and the terminal error reported the wrong count. The sibling
+requeue path for the same event (``_retry_task``, graceful shutdown) always
+charged one — the asymmetry was the bug.
+
+Invariants under test:
 
 1. zadd failure → attempts unchanged, task not failed (next reconcile retries).
-2. Happy path → zadd succeeds, attempts increments by 1.
+2. Happy path → zadd succeeds, requeue does NOT touch attempts.
 3. Max-tries exhausted → task marked failed, zadd never called.
+4. The full crash-recovery budget is spent one dispatch at a time.
 """
 
 from __future__ import annotations
@@ -85,7 +94,9 @@ def _build_mock_client(
         await valkey.persist(f"queue:task:{task_id}")
         await valkey.zadd(f"queue:{queue_name}:pending", {task_id: priority})
         await valkey.srem(f"queue:{queue_name}:running", task_id)
-        await valkey.hincrby(f"queue:task:{task_id}", "attempts", 1)
+        # No attempts bump: the budget is charged once per dispatch by the
+        # worker at claim time. requeue_atomic.lua deliberately leaves the
+        # counter alone (see its header).
         return "__ok__"
 
     client.requeue_task_atomic = AsyncMock(side_effect=_requeue_atomic)
@@ -161,11 +172,11 @@ async def test_handle_abandoned_does_not_increment_attempts_on_zadd_failure() ->
 
 
 @pytest.mark.asyncio
-async def test_handle_abandoned_increments_attempts_on_successful_requeue() -> None:
-    """Happy path: zadd succeeds, attempts increments by 1.
+async def test_handle_abandoned_does_not_charge_attempts_on_successful_requeue() -> None:
+    """Happy path: zadd succeeds and the requeue leaves ``attempts`` alone.
 
-    After a successful requeue the attempts counter must reflect one more
-    processing attempt so the retry budget is correctly tracked.
+    The worker already charged this dispatch at claim time. A second charge
+    here halves the effective retry budget for every crash-recovery cycle.
     """
     client = _build_mock_client(
         task_hash={
@@ -188,8 +199,8 @@ async def test_handle_abandoned_increments_attempts_on_successful_requeue() -> N
     # zadd must have been called (task requeued)
     client.client.zadd.assert_awaited_once()
 
-    # hincrby must follow the zadd, incrementing attempts by exactly 1
-    client.client.hincrby.assert_awaited_once_with("queue:task:test-task-id", "attempts", 1)
+    # The requeue must NOT charge a second unit of the retry budget.
+    client.client.hincrby.assert_not_awaited()
 
     # Stats should count one recovered task
     assert stats.recovered_crashed == 1
@@ -370,3 +381,71 @@ async def test_handle_abandoned_terminal_fail_is_one_guarded_write() -> None:
     valkey.srem.assert_not_awaited()
     valkey.hset.assert_not_awaited()
     assert stats.failed_unrecoverable == 1
+
+
+@pytest.mark.asyncio
+async def test_crash_recovery_spends_the_full_budget_one_dispatch_at_a_time() -> None:
+    """A crashing task gets ``max_tries`` dispatches, not half of them.
+
+    This is the regression itself, driven end to end over a live counter:
+    each cycle is one worker dispatch (the claim-time ``HINCRBY``) followed
+    by one reconciler pass over the abandoned task. With the script's second
+    charge in place this terminated after 3 dispatches out of 5.
+    """
+    max_tries = 5
+    task_hash = {
+        "operation": "execute_workflow",
+        "attempts": "0",
+        "priority": "50",
+        "max_tries": str(max_tries),
+        "status": "running",
+    }
+    client = _build_mock_client(task_hash=task_hash)
+
+    # Route the emulated requeue's writes back into the fixture hash so the
+    # counter is live across cycles rather than reset each pass.
+    async def _requeue(queue_name: str, task_id: str, priority: float) -> str:
+        task_hash["status"] = "queued"
+        return "__ok__"
+
+    client.requeue_task_atomic = AsyncMock(side_effect=_requeue)
+
+    async def _mark_failed(task_id: str, fields: dict[str, str]) -> None:
+        task_hash.update(fields)
+
+    client.mark_task_failed_terminal = AsyncMock(side_effect=_mark_failed)
+
+    async def _guarded(task_id: str, **kwargs: object) -> str:
+        task_hash["status"] = str(kwargs["new_status"])
+        extra = kwargs.get("extra_fields") or {}
+        task_hash.update({k: str(v) for k, v in dict(extra).items()})  # type: ignore[arg-type]
+        return "__ok__"
+
+    client.guarded_status_write = AsyncMock(side_effect=_guarded)
+
+    dispatches = 0
+    stats = ReconcileStats()
+    for _ in range(20):  # generous bound; the budget must terminate well inside it
+        if task_hash["status"] == "failed":
+            break
+        # One worker dispatch: the claim-time charge, before the handler runs.
+        dispatches += 1
+        task_hash["attempts"] = str(int(task_hash["attempts"]) + 1)
+        task_hash["status"] = "running"
+        # Worker is SIGKILLed; the heartbeat lapses and the reconciler acts.
+        await _handle_abandoned(
+            client=client,
+            queue_name="operations",
+            task_id="crash-loop-id",
+            max_tries=max_tries,
+            stats=stats,
+        )
+
+    assert task_hash["status"] == "failed"
+    assert dispatches == max_tries, (
+        f"crash recovery spent {dispatches} dispatches of a {max_tries}-try budget"
+    )
+    assert stats.recovered_crashed == max_tries - 1
+    assert stats.failed_unrecoverable == 1
+    # The terminal message must report the dispatches actually spent.
+    assert f"after {max_tries} attempts (max {max_tries})" in task_hash["error"]

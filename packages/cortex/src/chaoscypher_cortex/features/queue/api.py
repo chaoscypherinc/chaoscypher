@@ -85,7 +85,7 @@ async def queue_task(
     - `queue`: Queue name (e.g., "operations", "llm")
     - `operation`: Operation name (e.g., "import_ccx", "chat_completion")
     - `data`: Operation-specific data
-    - `priority`: Task priority (0-100, default: 50)
+    - `priority`: Task priority (0-100; omitted → `settings.priorities.background`, 50 by default)
     - `metadata`: Optional metadata for filtering
 
     **Returns:**

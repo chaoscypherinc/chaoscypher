@@ -57,11 +57,11 @@ class TestToolDefinitions:
 
     def test_read_tool_count(self):
         read_tools = get_tools_for_mode("read")
-        assert len(read_tools) == 19
+        assert len(read_tools) == 16
 
     def test_write_tool_count(self):
         write_only = [t for t in TOOL_DEFINITIONS if t.write_only]
-        assert len(write_only) == 12
+        assert len(write_only) == 15
 
     def test_new_tools_present(self):
         names = {t.name for t in TOOL_DEFINITIONS}
@@ -189,3 +189,32 @@ class TestAddDocumentNormalizationSchemaHonest:
         )
         assert "Defaults to true" not in prop["description"]
         assert "auto" in prop["description"].lower()
+
+
+class TestReadModeAdvertisesOnlyExecutableTools:
+    """Read mode must not advertise a tool that can only ever error.
+
+    ``create_mcp_server`` builds the ``ExtractionOrchestrator`` only in
+    write mode, and dispatch matches the extraction tool names before any
+    bridge fall-through — so in read mode the three extraction tools
+    returned "Extraction tools require mcp.mode: write" to every caller
+    while still appearing in the advertised tool list.
+    """
+
+    def test_extraction_tools_not_advertised_in_read_mode(self):
+        read_names = {t.name for t in get_tools_for_mode("read")}
+        for name in (
+            "get_extraction_tasks",
+            "get_extraction_chunks",
+            "get_extraction_progress",
+        ):
+            assert name not in read_names
+
+    def test_extraction_tools_still_advertised_in_write_mode(self):
+        write_names = {t.name for t in get_tools_for_mode("write")}
+        for name in (
+            "get_extraction_tasks",
+            "get_extraction_chunks",
+            "get_extraction_progress",
+        ):
+            assert name in write_names

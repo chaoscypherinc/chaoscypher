@@ -24,3 +24,26 @@ async def test_schema_anchor_raises_501_not_500() -> None:
         await sse_event_schema_anchor()
 
     assert exc_info.value.status_code == status.HTTP_501_NOT_IMPLEMENTED
+
+
+def test_schema_anchor_registers_chat_sse_envelope_component() -> None:
+    """The anchor's whole reason to exist: named OpenAPI component schemas.
+
+    The 501 above is the endpoint's incidental error path. What the route
+    is *for* is forcing FastAPI to register ``ChatSSEEnvelope`` and its
+    event variants as ``#/components/schemas`` entries so the
+    OpenAPI-to-TypeScript codegen can emit a typed discriminated union.
+    Dropping ``response_model`` or flipping ``include_in_schema`` would
+    silently delete the union and the 501 test would not notice.
+    """
+    from fastapi import FastAPI
+
+    from chaoscypher_cortex.features.chats.api import router
+
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/chats")
+    schemas = app.openapi()["components"]["schemas"]
+
+    assert "ChatSSEEnvelope" in schemas
+    for variant in ("DoneEvent", "ErrorEvent", "ToolCallsEvent"):
+        assert variant in schemas, sorted(schemas)

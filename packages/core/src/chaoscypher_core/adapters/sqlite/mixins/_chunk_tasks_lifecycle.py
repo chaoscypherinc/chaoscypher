@@ -371,33 +371,57 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
 
     # -- Combined lifecycle methods (reduce per-chunk DB writes) --
 
-    def start_chunk_task_with_input(self, task_id: str, input_text: str) -> None:
-        """Mark chunk task as running and store input text in a single transaction.
+    def start_chunk_task_with_input(self, task_id: str, input_text: str) -> int:
+        """Guarded claim: mark chunk task running + store input. Returns rows affected.
 
         Combines ``start_chunk_task`` + ``update_chunk_task_input`` into one
-        select-update-commit cycle, halving the DB writes at task start.
+        guarded update, halving the DB writes at task start.
+
+        rows=0 means the claim was refused because the row is already
+        ``completed``. Caller MUST treat 0 as a no-op — no LLM call, no
+        counter bump. This closes the read-then-write gap between
+        ``_check_stale_chunk_task``'s ``completed`` short-circuit and this
+        claim: the re-delivery paths that reach here (queue reconciler,
+        ``SourceRecovery``) can dispatch a chunk that finishes in between.
+
+        ``running`` is deliberately NOT excluded. ``SourceRecovery``
+        re-dispatches stale ``running`` rows *without* rewinding their
+        status (services/sources/recovery.py — "running zombies whose
+        worker died after claiming"), so refusing a ``running`` claim here
+        would strand exactly the chunks that path exists to rescue. A live
+        concurrent duplicate is therefore still possible on this side; it is
+        caught on the completion side by
+        ``complete_chunk_task_with_output``, which is what keeps the job
+        counters and the finalize claim correct. See ``internal/TODO.md``
+        for the open design question.
 
         Args:
             task_id: Task identifier.
             input_text: The combined content sent to LLM for extraction.
+
+        Returns:
+            Number of rows updated: 1 on a successful claim, 0 when the row
+            is already ``completed`` or does not exist.
         """
         self._ensure_connected()
 
-        statement = select(ChunkExtractionTask).where(ChunkExtractionTask.id == task_id)
-        result = self.session.exec(statement)
-        task = result.first()
-
-        if not task:
-            logger.warning("chunk_task_not_found_for_start_input", task_id=task_id)
-            return
-
-        task.status = "running"
-        task.started_at = datetime.now(UTC)
-        task.input_text = input_text
-        task.input_text_length = len(input_text)
-
-        self.session.add(task)
+        result = self.session.execute(
+            sqla_update(ChunkExtractionTask)
+            .where(ChunkExtractionTask.id == task_id)
+            .where(ChunkExtractionTask.status != "completed")
+            .values(
+                status="running",
+                started_at=datetime.now(UTC),
+                input_text=input_text,
+                input_text_length=len(input_text),
+            )
+        )
         self._maybe_commit()
+
+        rows = int(result.rowcount or 0)
+        if rows == 0:
+            logger.warning("chunk_task_start_claim_refused", task_id=task_id)
+        return rows
 
     def complete_chunk_task_with_output(
         self,
@@ -415,11 +439,24 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
         filtering_log: dict | None = None,
         finish_reason: str | None = None,
         aborted_by_loop: bool | None = None,
-    ) -> None:
-        """Store LLM output and mark chunk task as completed in a single transaction.
+    ) -> int:
+        """Guarded completion: store LLM output + mark completed. Returns rows affected.
 
         Combines ``update_chunk_task_output`` + ``complete_chunk_task`` into one
-        select-update-commit cycle, halving the DB writes at task completion.
+        guarded update, halving the DB writes at task completion.
+
+        rows=0 means this delivery lost the race: the row is no longer
+        ``running`` because another slot already completed (or a rerun reset)
+        it. Caller MUST treat 0 as a no-op — **no counter bump, no finalize
+        enqueue**. Mirrors ``update_vision_page_guarded``'s contract on the
+        sibling vision pipeline.
+
+        This is the guard that keeps ``completed_chunks``/``failed_chunks``
+        and the ``finalize_claimed`` claim correct when
+        ``OPERATION_RETRY_ON_CRASH[OP_EXTRACT_CHUNK]`` re-delivers a chunk
+        that another slot is already executing: without it both runs write
+        ``completed`` and both bump the job counter, satisfying the finalize
+        predicate one chunk early.
 
         Args:
             task_id: Task identifier.
@@ -445,50 +482,57 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             aborted_by_loop: True when the streaming loop detector cut
                 the LLM stream short on a degenerate pattern.
                 Persisted for per-chunk degenerate-stream visibility.
+
+        Returns:
+            Number of rows updated: 1 on a successful completion, 0 when the
+            row is no longer ``running`` (lost race) or does not exist.
         """
         self._ensure_connected()
         entities = raw_entities or []
         relationships = raw_relationships or []
 
-        statement = select(ChunkExtractionTask).where(ChunkExtractionTask.id == task_id)
-        result = self.session.exec(statement)
-        task = result.first()
-
-        if not task:
-            logger.warning("chunk_task_not_found_for_complete_output", task_id=task_id)
-            return
-
-        # Output fields
-        task.llm_response_json = llm_response_json
-        task.llm_response_length = len(llm_response_json)
-        task.llm_duration_ms = llm_duration_ms
-        task.input_tokens = input_tokens
-        task.output_tokens = output_tokens
-        task.context_window_available = context_window_available
-
-        # Completion fields
-        task.status = "completed"
-        task.completed_at = datetime.now(UTC)
-        task.raw_entities = entities  # type: ignore[assignment]
-        task.raw_entity_embeddings = raw_entity_embeddings  # type: ignore[assignment]
-        task.raw_relationships = relationships  # type: ignore[assignment]
-        task.entity_count = len(entities)
-        task.relationship_count = len(relationships)
-        task.invalid_relationship_count = invalid_relationship_count
+        values: dict[str, Any] = {
+            # Output fields
+            "llm_response_json": llm_response_json,
+            "llm_response_length": len(llm_response_json),
+            "llm_duration_ms": llm_duration_ms,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "context_window_available": context_window_available,
+            # Completion fields
+            "status": "completed",
+            "completed_at": datetime.now(UTC),
+            "raw_entities": entities,
+            "raw_entity_embeddings": raw_entity_embeddings,
+            "raw_relationships": relationships,
+            "entity_count": len(entities),
+            "relationship_count": len(relationships),
+            "invalid_relationship_count": invalid_relationship_count,
+        }
         if chunk_sentences is not None:
-            task.chunk_sentences = chunk_sentences  # type: ignore[assignment]
+            values["chunk_sentences"] = chunk_sentences
         if filtering_log is not None:
-            task.filtering_log = filtering_log  # type: ignore[assignment]
+            values["filtering_log"] = filtering_log
         # Persist Workstream 8 observability fields. Both tolerate None
         # so legacy callers (and tests) that don't pass them in keep
         # working.
         if finish_reason is not None:
-            task.finish_reason = finish_reason
+            values["finish_reason"] = finish_reason
         if aborted_by_loop is not None:
-            task.aborted_by_loop = aborted_by_loop
+            values["aborted_by_loop"] = aborted_by_loop
 
-        self.session.add(task)
+        result = self.session.execute(
+            sqla_update(ChunkExtractionTask)
+            .where(ChunkExtractionTask.id == task_id)
+            .where(ChunkExtractionTask.status == "running")
+            .values(**values)
+        )
         self._maybe_commit()
+
+        rows = int(result.rowcount or 0)
+        if rows == 0:
+            logger.warning("chunk_task_completion_lost_race", task_id=task_id)
+        return rows
 
     def set_chunk_task_embeddings(
         self,

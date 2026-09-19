@@ -187,20 +187,37 @@ async def create_import(
     )
 
     size = 0
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".import") as tmp:
-        tmp_path = Path(tmp.name)
-        while chunk := await file.read(chunk_size):
-            size += len(chunk)
-            if size > max_bytes:
-                break  # stop reading; the temp file is unlinked in finally below
-            tmp.write(chunk)
+    tmp_path: Path | None = None
     try:
+        # ``dir=`` is load-bearing: the preflight above measures free space on
+        # ``settings.data_dir``, but a bare NamedTemporaryFile writes to
+        # ``tempfile.gettempdir()``. In the shipped container those are
+        # different filesystems (/data is the mounted volume, /tmp is not), so
+        # the preflight was guarding a disk the write never touched. Same
+        # expression as the preflight so the two cannot drift apart again.
+        # No mkdir needed: the preflight above already stats this directory
+        # (``check_disk_space`` calls ``shutil.disk_usage``), so reaching here
+        # means it exists.
+        tmp_dir = Path(str(settings.data_dir))
+        # The create+write loop is INSIDE this try so the finally below
+        # unlinks the partial file. It used to sit outside, so the ENOSPC the
+        # preflight failed to prevent also stranded the partial file forever:
+        # it lands in neither the orphan sweeper's tree nor its dir-only scan.
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".import", dir=tmp_dir) as tmp:
+            tmp_path = Path(tmp.name)
+            while chunk := await file.read(chunk_size):
+                size += len(chunk)
+                if size > max_bytes:
+                    break  # stop reading; the temp file is unlinked in finally below
+                tmp.write(chunk)
+
         if size > max_bytes:
             msg = f"Import exceeds max_upload_bytes={max_bytes}"
             raise ValidationError(msg, field="file")
         content = await asyncio.to_thread(tmp_path.read_bytes)
     finally:
-        tmp_path.unlink(missing_ok=True)  # noqa: ASYNC240
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
 
     return await export_service.queue_import(
         file_content=content, filename=file.filename or "unknown.ccx", merge=merge

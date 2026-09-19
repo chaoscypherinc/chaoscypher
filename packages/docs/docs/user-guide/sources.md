@@ -472,7 +472,7 @@ Toggle a source's `enabled` flag to include or exclude it from:
 
 Toggle the enable/disable switch on any source in the Sources list.
 
-![Sources list showing active status toggles](/img/screenshots/sources-list.png)
+![Sources list showing Active status chips and entity counts](/img/screenshots/sources-list.png)
 
 </TabItem>
 <TabItem value="cli" label="CLI">

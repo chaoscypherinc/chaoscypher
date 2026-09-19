@@ -86,3 +86,42 @@ async def test_create_import_rejects_oversized_upload(monkeypatch: pytest.Monkey
 
     # The oversized upload never reaches the queue.
     export_service.queue_import.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_import_cleans_up_partial_file_on_write_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A failure mid-write must not strand the partial ``.import`` file.
+
+    The temp file used to be created OUTSIDE the ``try`` whose ``finally``
+    unlinks it, so the ENOSPC the preflight failed to prevent (it measured a
+    different filesystem than the one written) also leaked the partial file
+    permanently — the orphan sweeper walks a different tree and skips
+    non-directories anyway.
+    """
+    from chaoscypher_cortex.features.export import api as export_api
+
+    fake_settings = SimpleNamespace(
+        batching=SimpleNamespace(
+            upload_chunk_size=4,
+            max_upload_bytes=1000,
+            upload_disk_headroom_bytes=0,
+        ),
+        data_dir=str(tmp_path),
+    )
+    monkeypatch.setattr("chaoscypher_core.app_config.get_settings", lambda: fake_settings)
+    monkeypatch.setattr("chaoscypher_core.utils.disk.check_disk_space", lambda *a, **k: None)
+
+    file = MagicMock()
+    file.read = AsyncMock(side_effect=[b"1234", OSError("No space left on device")])
+    export_service = MagicMock()
+    export_service.queue_import = AsyncMock()
+
+    with pytest.raises(OSError, match="No space left"):
+        await export_api.create_import(
+            _="user", export_service=export_service, file=file, merge=False
+        )
+
+    assert list(tmp_path.glob("*.import")) == [], "partial temp file was left behind"
+    export_service.queue_import.assert_not_called()

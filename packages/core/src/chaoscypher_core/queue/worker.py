@@ -229,6 +229,116 @@ class QueueWorker:
             return True
         return bool(get_policy(queue_name, operation))
 
+    def _allows_queue_crash_retry(self, queue_name: str, operation: str) -> bool:
+        """Return whether this operation is recoverable after a worker crash.
+
+        Mirrors ``_allows_queue_transient_retry`` but reads the crash policy
+        (``HandlerSpec.retry_on_crash``, canonically
+        ``chaoscypher_core.constants.OPERATION_RETRY_ON_CRASH``) — the same
+        policy the reconciler consults before requeueing a task abandoned by
+        a hard kill. Without a QueueClient (unit harnesses) assume False, so
+        a worker with no policy source keeps today's terminal behavior.
+        """
+        if self._queue_client is None:
+            return False
+
+        get_policy = getattr(self._queue_client, "get_retry_policy", None)
+        if get_policy is None:
+            return False
+        return bool(get_policy(queue_name, operation))
+
+    async def _cancel_is_user_initiated(self, task_id: str) -> bool:
+        """Return True when a caller explicitly cancelled this task.
+
+        The durable cancel flag is set before the status CAS in
+        ``cancel_task``, so it is the authoritative signal — a user cancel
+        must never be resurrected by the shutdown requeue below.
+        Fails CLOSED: if the flag cannot be read, treat the cancel as
+        user-initiated and keep the terminal write.
+        """
+        if self._queue_client is None:
+            return True
+        try:
+            return bool(await self._queue_client.is_task_cancelled(task_id))
+        except Exception:
+            logger.exception("cancel_flag_read_failed", task_id=task_id)
+            return True
+
+    async def _record_cancelled_task(
+        self,
+        task_id: str,
+        queue_name: str,
+        operation: str,
+        attempts: int,
+        max_tries: int,
+    ) -> tuple[int, int] | None:
+        """Record a cancelled task, requeueing it when shutdown caused it.
+
+        A shutdown-initiated cancel is, from the task's point of view, a
+        crash — and a SIGKILL is RECOVERED: the running-set entry outlives
+        the process and the reconciler requeues it via
+        ``requeue_atomic.lua``. Writing terminal ``cancelled`` is strictly
+        worse, because ``cancelled`` is precisely the status that script
+        (and ``retry_task``) refuses, so a GRACEFUL restart permanently
+        loses ``retry_on_crash`` work that a hard kill would have kept.
+
+        Crash-retryable work is therefore handed to the same transient-retry
+        path the timeout arm uses: mark it transiently failed and let
+        ``_finish_task_cleanup`` schedule the requeue, which already does the
+        cancel re-check, the guarded CAS, the PERSIST that clears the
+        dead-letter TTL, and the priority-preserving re-add.
+
+        A user cancel, an operation with no crash-retry budget, an exhausted
+        attempt count, or a cancel arriving while the worker is still running
+        all keep the terminal ``cancelled`` write.
+
+        Returns:
+            The ``pending_retry`` tuple for ``_finish_task_cleanup`` to act
+            on, or None when the task was recorded terminally.
+
+        """
+        logger.info("task_cancelled_by_worker", task_id=task_id)
+
+        requeue_after_shutdown = (
+            not self._running
+            and self._allows_queue_crash_retry(queue_name, operation)
+            and attempts + 1 < max_tries
+            and not await self._cancel_is_user_initiated(task_id)
+        )
+
+        if not requeue_after_shutdown:
+            await _await_result(
+                self.client.hset(
+                    f"queue:task:{task_id}",
+                    mapping={
+                        "status": "cancelled",
+                        "error": "Task cancelled during shutdown",
+                        "completed_at": _iso_now(),
+                    },
+                )
+            )
+            return None
+
+        await _await_result(
+            self.client.hset(
+                f"queue:task:{task_id}",
+                mapping={
+                    "status": "failed",
+                    "error": "Worker shut down before the task completed",
+                    "error_type": "transient",
+                    "completed_at": _iso_now(),
+                },
+            )
+        )
+        logger.info(
+            "task_requeued_after_shutdown",
+            task_id=task_id,
+            queue=queue_name,
+            attempt=attempts + 1,
+            max_tries=max_tries,
+        )
+        return (attempts + 1, max_tries)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -493,11 +603,16 @@ class QueueWorker:
 
         # Mark-and-prompt recovery — transition the owning resource to a
         # retry-friendly state. Best-effort; the queue task is marked failed
-        # regardless of recovery outcome.
+        # regardless of recovery outcome. ``apply_upgrade_recovery`` opens a
+        # SQLite session and commits under the writer lock, so it runs in a
+        # thread: this fires once per queued task during a rollout — exactly
+        # when the queue is full — and inline it stalled every in-flight
+        # handler on this loop (and their heartbeat refreshers).
         try:
             from chaoscypher_core.queue.upgrade_recovery import apply_upgrade_recovery
 
-            apply_upgrade_recovery(
+            await asyncio.to_thread(
+                apply_upgrade_recovery,
                 operation=operation,
                 data=data or {},
                 metadata=metadata or {},
@@ -694,16 +809,8 @@ class QueueWorker:
                 return None
 
             except asyncio.CancelledError:
-                logger.info("task_cancelled_by_worker", task_id=task_id)
-                await _await_result(
-                    self.client.hset(
-                        f"queue:task:{task_id}",
-                        mapping={
-                            "status": "cancelled",
-                            "error": "Task cancelled during shutdown",
-                            "completed_at": _iso_now(),
-                        },
-                    )
+                pending_retry = await self._record_cancelled_task(
+                    task_id, queue_name, operation, attempts, max_tries
                 )
                 raise
 
@@ -984,10 +1091,12 @@ class QueueWorker:
     # ------------------------------------------------------------------
 
     async def _publish_health(self) -> None:
-        """Publish worker health to queue server every 2 seconds.
+        """Publish worker health to the queue server every ``health_report_interval`` seconds.
 
-        Writes a hash per queue with running count and timestamp, with a 10s TTL
-        so the key auto-expires if the worker dies.
+        Writes a hash per queue with running/queued counts, the configured
+        concurrency and a timestamp. The key's TTL is five times the publish
+        interval (floor 10 s) so it auto-expires if the worker dies without
+        flapping "offline" between publishes at a slower interval.
         """
         try:
             while self._running:

@@ -3,8 +3,8 @@ slug: ccx-open-format
 title: "The CCX Open Format: A Portable Spec for Knowledge Graphs"
 authors: [denis]
 tags: [opensource, python, graphrag, selfhosted]
-date: 2026-09-01
-draft: true
+date: 2026-09-18
+draft: false
 description: CCX is now a documented, openly specified format for portable knowledge packages -- with a draft spec page and an Apache-2.0 reader you can pip install and use without Chaos Cypher.
 ---
 
@@ -74,7 +74,7 @@ print(report.ok, report.classes)   # e.g. True ('core', 'sources', 'shapes')
 
 There is a CLI too -- `ccx inspect`, `ccx validate`, and `ccx pack` -- so you can check a package without writing any code at all.
 
-<!-- screenshot: terminal output of `ccx validate` on a real exported package, showing ok/errors/warnings and the granted conformance classes -->
+<!-- optional screenshot: terminal output of `ccx validate` on a real exported package, showing ok/errors/warnings and the granted conformance classes -->
 
 Note what `validate()` hands back: not a boolean, but a report with errors, warnings, and a set of **conformance classes**. Those classes are the format's honesty mechanism.
 
@@ -96,7 +96,7 @@ A typical full Chaos Cypher export validates as `core`, `sources`, `shapes`.
 
 Nothing new here, but for completeness -- the graphical path is **Settings → General → Import & Export**: pick which components to include, click Export, and the browser downloads the `.ccx`.
 
-<!-- screenshot: Settings > General > Import & Export panel with the component toggles and the Export button -->
+![Settings → General with the Import & Export row and its Export and Import buttons](/img/screenshots/settings-general.png)
 
 For a single document's worth of knowledge rather than the whole graph, use **Export Source** in that source's action menu on the Sources page.
 

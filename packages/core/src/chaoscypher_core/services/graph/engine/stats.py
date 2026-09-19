@@ -90,10 +90,16 @@ class CountsService:
             }
 
         """
-        # Use optimized filtered count methods (O(1) memory, no loading)
-        knowledge_nodes_count = self.graph_repository.count_nodes_by_template(
-            system_template_ids, exclude=True
-        )
+        # Use optimized filtered count methods (O(1) memory, no loading).
+        # knowledge_nodes is derived by SUBTRACTION rather than by a negated
+        # IN: `template_id NOT IN (...)` is not an index range, so SQLite
+        # cannot serve it from ix_graph_nodes_db_template and plans a full
+        # SCAN of graph_nodes — on a 2-second poll mounted on every page.
+        # Both terms below are index-served. The two forms are arithmetically
+        # identical because `template_id` is non-nullable (models.py), so no
+        # row is dropped the way SQL `NOT IN` drops NULLs.
+        system_nodes_count = self.graph_repository.count_nodes_by_template(system_template_ids)
+        knowledge_nodes_count = self.graph_repository.count_nodes() - system_nodes_count
         workflows_count = self.graph_repository.count_nodes_by_template(["system_workflow"])
         lenses_count = self.graph_repository.count_nodes_by_template(["system_lens"])
         user_templates_count = self.graph_repository.count_templates_by_system(is_system=False)

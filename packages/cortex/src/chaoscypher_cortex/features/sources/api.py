@@ -195,8 +195,9 @@ async def list_sources(
 
     Filters:
     - source_type: Filter by source type (pdf, text, csv, etc.)
-    - status: Filter by processing_status (ready, indexing, extracting,
-      awaiting_confirmation, error)
+    - status: Filter by processing_status (a ``SourceStatus`` value: pending,
+      indexing, vision_pending, indexed, awaiting_confirmation, extracting,
+      mcp_extracting, extracted, committing, committed, error)
     - enabled: Filter by enabled status ('enabled' or 'disabled')
     - search: Search in title and origin_url
     - tag_id: Filter by tag ID

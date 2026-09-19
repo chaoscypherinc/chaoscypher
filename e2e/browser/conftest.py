@@ -105,6 +105,7 @@ def _inject_session(context: BrowserContext, base_url: str) -> None:
     matching how a real user's login flow works.
     """
     from urllib.parse import urlparse
+
     host = urlparse(base_url).hostname or "localhost"
     page = context.new_page()
     try:
@@ -149,10 +150,12 @@ def _inject_session(context: BrowserContext, base_url: str) -> None:
 # button is disabled, the chat input is read-only, etc. The e2e Docker
 # stack ships fake-ollama, so there the gate is open; on an LLM-less
 # stack we auto-skip these rather than fail every run.
-_LLM_REQUIRED_FILES = frozenset({
-    "test_upload_source.py",
-    "test_mobile_layout.py",  # seeded_app uploads a source (gated 409)
-})
+_LLM_REQUIRED_FILES = frozenset(
+    {
+        "test_upload_source.py",
+        "test_mobile_layout.py",  # seeded_app uploads a source (gated 409)
+    }
+)
 
 
 def pytest_collection_modifyitems(config, items):
@@ -214,19 +217,25 @@ def browser_llm_verified(browser_base_url: str, browser_session_cookie: str) -> 
 
 
 @pytest.fixture(autouse=True)
-def _skip_if_no_llm(
-    request: pytest.FixtureRequest, browser_llm_verified: bool
-) -> None:
-    """Skip ``requires_llm``-marked browser tests when no LLM is configured."""
+def _skip_if_no_llm(request: pytest.FixtureRequest, browser_llm_verified: bool) -> None:
+    """Skip ``requires_llm``-marked browser tests when no LLM is configured.
+
+    ``E2E_REQUIRE_LLM=1`` (set by the Docker e2e stack, which ships
+    fake-ollama for exactly this) turns the skip into a failure, so a
+    blipped probe cannot silently empty the tier on a green run.
+    """
     if request.node.get_closest_marker("requires_llm") and not browser_llm_verified:
-        pytest.skip(
-            "Skipped: stack has no LLM configured "
+        reason = (
+            "stack has no LLM configured "
             "(GET /api/v1/settings/llm/health → verified=False). "
             "This test drives a UI flow gated by LLM verification "
             "(disabled Add Source button, read-only chat input, etc.). "
             "Configure a stub LLM in packages/docker/e2e/docker-compose.yml "
             "to unblock."
         )
+        if os.environ.get("E2E_REQUIRE_LLM") == "1":
+            pytest.fail(f"E2E_REQUIRE_LLM=1 but {reason}", pytrace=False)
+        pytest.skip(f"Skipped: {reason}")
 
 
 @pytest.fixture(scope="session")

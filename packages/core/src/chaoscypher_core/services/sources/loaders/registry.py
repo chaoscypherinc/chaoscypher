@@ -427,19 +427,29 @@ class LoaderRegistry(BaseRegistry["BaseLoader"]):
             >>> loader = registry.get_loader('/path/to/file.pdf')
             >>> chunks = loader.load_document('/path/to/file.pdf')
         """
-        path = Path(filepath)
-        # Match compound extensions (".tar.gz") before the single suffix.
-        # ``Path.suffix`` is only the last component (".gz" for "x.tar.gz"),
-        # so a loader registered under ".tar.gz" would otherwise be
-        # unreachable. Try progressively shorter suffix runs, longest first,
-        # so the most specific registered extension wins.
-        suffixes = path.suffixes
-        for start in range(len(suffixes)):
-            compound = "".join(suffixes[start:]).lower()
-            loader = self.get(compound)
+        for extension in self._candidate_extensions(Path(filepath)):
+            loader = self.get(extension)
             if loader is not None:
                 return loader
-        return self.get(path.suffix.lower())
+        return None
+
+    @staticmethod
+    def _candidate_extensions(path: Path) -> list[str]:
+        """Return the lower-cased extension keys to try for ``path``, longest first.
+
+        Matches compound extensions (".tar.gz") before the single suffix.
+        ``Path.suffix`` is only the last component (".gz" for "x.tar.gz"),
+        so a loader registered under ".tar.gz" would otherwise be
+        unreachable. Progressively shorter suffix runs come first-to-last
+        so the most specific registered extension wins; the bare
+        ``path.suffix`` is always the final candidate.
+        """
+        suffixes = path.suffixes
+        candidates = ["".join(suffixes[start:]).lower() for start in range(len(suffixes))]
+        single = path.suffix.lower()
+        if single not in candidates:
+            candidates.append(single)
+        return candidates
 
     def load_document(self, filepath: str) -> list[dict[str, Any]]:
         """Load a document via the registered loader for its extension.
@@ -477,7 +487,14 @@ class LoaderRegistry(BaseRegistry["BaseLoader"]):
 
         if loader is None:
             logger.error("no_loader_available", filepath=filepath, extension=file_path.suffix)
-            quarantine_reason = self._failed_loaders_by_ext.get(file_path.suffix.lower())
+            quarantine_reason = next(
+                (
+                    reason
+                    for ext in self._candidate_extensions(file_path)
+                    if (reason := self._failed_loaders_by_ext.get(ext))
+                ),
+                None,
+            )
             if quarantine_reason:
                 msg = (
                     f"No loader available for file type: {file_path.suffix}."

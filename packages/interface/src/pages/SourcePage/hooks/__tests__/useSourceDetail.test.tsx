@@ -186,4 +186,32 @@ describe('useSourceDetail (TanStack Query)', () => {
     );
     await waitFor(() => expect(result.current.source?.enabled).toBe(false));
   });
+
+  it('resetToIndexed PATCHes a real SourceStatus (indexed), never "ready"', async () => {
+    // The stale-MCP banner's reset used to send `processing_status: 'ready'`,
+    // which is not a SourceStatus: the row accepted it and every later read
+    // of the source (and the whole sources list) failed validation with a 500.
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/sources/s1') {
+        return Promise.resolve({ data: makeSource({ status: 'mcp_extracting' }) });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    mockedApiClient.patch.mockResolvedValue({
+      data: makeSource({ status: 'indexed' }),
+    });
+
+    const { result } = renderHook(() => useSourceDetail('s1', navigate), {
+      wrapper: wrap,
+    });
+
+    await waitFor(() => expect(result.current.source?.status).toBe('mcp_extracting'));
+
+    await result.current.resetToIndexed();
+
+    expect(mockedApiClient.patch).toHaveBeenCalledWith(
+      '/sources/s1',
+      { processing_status: 'indexed' },
+    );
+  });
 });

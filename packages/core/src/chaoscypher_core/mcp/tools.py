@@ -848,7 +848,8 @@ _remove_document = ToolDefinition(
 )
 
 # ============================================================================
-# MCP extraction tools (3 read, 2 write)
+# MCP extraction tools (all write_only: they need the ExtractionOrchestrator,
+# which the server builds only in write mode)
 # ============================================================================
 
 _get_extraction_tasks = ToolDefinition(
@@ -873,6 +874,7 @@ _get_extraction_tasks = ToolDefinition(
         },
         "required": ["source_id"],
     },
+    write_only=True,
 )
 
 _get_extraction_chunks = ToolDefinition(
@@ -897,6 +899,7 @@ _get_extraction_chunks = ToolDefinition(
         },
         "required": ["source_id", "chunk_indices"],
     },
+    write_only=True,
 )
 
 _submit_chunk_extraction = ToolDefinition(
@@ -953,6 +956,7 @@ _get_extraction_progress = ToolDefinition(
         },
         "required": ["source_id"],
     },
+    write_only=True,
 )
 
 _finalize_extraction = ToolDefinition(

@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy import inspect as sa_inspect
 from sqlmodel import Session, SQLModel, create_engine
 
 from chaoscypher_core.adapters.sqlite.models import (
@@ -149,6 +150,25 @@ class TestGetCitationsForNode:
         assert source.id == "src-1"
         assert chunk.id == "chunk-1"
         assert chunk.content == "some chunk content"
+
+    def test_source_projection_excludes_heavy_columns(self, session: Session) -> None:
+        """The join must not haul SourceRow's ~162 columns to read five scalars."""
+        session.add(_source("src-1"))
+        session.add(_chunk("chunk-1", "src-1"))
+        session.add(_citation("cit-1", entity_uri="node-1"))
+        session.commit()
+        session.expire_all()
+
+        results, _ = _repo(session).get_citations_for_node("node-1")
+        _, source, _ = results[0]
+
+        assert {"full_text", "commit_payload"} <= sa_inspect(source).unloaded
+        # The five fields the response builder reads survive the projection.
+        assert source.id == "src-1"
+        assert source.title == "My Source"
+        assert source.filename == "doc.pdf"
+        assert source.source_type == "pdf"
+        assert source.origin_url == "http://example.com"
 
     def test_pagination_offset_and_limit(self, session: Session) -> None:
         session.add(_source("src-1"))

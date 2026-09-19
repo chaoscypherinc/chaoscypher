@@ -44,6 +44,10 @@ class SystemPauseStatusResponse(BaseModel):
     paused: bool
     paused_at: datetime | None = None
     reason: str | None = None
+    # Who paused: ``user`` via the API, or ``health_monitor`` for an
+    # automatic safety pause. The service has always produced it; the
+    # model silently dropped it until 2026-09-17 (pydantic ``extra="ignore"``).
+    paused_by: str | None = None
 
 
 class QueueStatsResponse(BaseModel):

@@ -39,6 +39,7 @@ _COMMON = [
     "deadcode",
     "bundle-size",
     "docs-build",
+    "docs-generated",
     "license-check",
     "test-cov-interface",
 ]

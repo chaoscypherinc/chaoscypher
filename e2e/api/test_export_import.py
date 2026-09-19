@@ -123,7 +123,9 @@ class TestExportImport:
                 "/api/v1/exports/by_sources",
                 json=[],
             )
-            assert resp.status_code in (202, 400, 422)
+            # The body model is `list[str]` with no min_length and the
+            # service rejects nothing, so an empty list is accepted: 202.
+            assert resp.status_code == 202
             return
 
         source_ids = [sources[0]["id"]]

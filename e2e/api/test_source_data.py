@@ -90,8 +90,12 @@ class TestSourceData:
         """Source-level stats endpoint returns metrics."""
         source_id = self._upload_and_index(client, sample_data_dir, "stats_test.txt")
         resp = client.get(f"/api/v1/sources/{source_id}/stats")
-        # Stats might not exist for indexed-only sources, 200 or 404 acceptable
-        assert resp.status_code in (200, 404)
+        # 404 is unreachable here: raise_if_not_found only fires on a falsy
+        # value and the adapter's stats reader returns a populated dict even
+        # for an unknown source, so the old `in (200, 404)` disjunction
+        # covered the endpoint's entire outcome space — the route could have
+        # been deleted and this test would still have passed.
+        assert resp.status_code == 200
 
     def test_source_tags(self, client: httpx.Client, sample_data_dir: str) -> None:
         """Source tags endpoint returns list."""

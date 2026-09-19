@@ -139,7 +139,10 @@ class DocumentProcessor:
 
         """
         is_url = file_path.startswith(("http://", "https://")) if file_path else False
-        if not content and not is_url and file_path:
+        # Not conditional on ``content``: nothing downstream consumes it, so
+        # ``file_path`` is always the thing that gets read (see the guard in
+        # ``_handle_add_document``).
+        if not is_url and file_path:
             file_exists = await asyncio.to_thread(Path(file_path).exists)
             if not file_exists:
                 return {"success": False, "error": "File not found"}

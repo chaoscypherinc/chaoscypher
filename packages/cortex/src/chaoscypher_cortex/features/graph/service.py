@@ -172,8 +172,15 @@ class GraphService:
         """
         return remove_corrupt_nodes(self.graph_repository)
 
-    async def get_source_groups(self) -> list[dict[str, Any]]:
+    def get_source_groups(self) -> list[dict[str, Any]]:
         """Get source groups for graph visualization.
+
+        Synchronous by design: the body has no ``await`` and does blocking
+        SQLite work (a source listing plus an unbounded DISTINCT over
+        ``source_citations``). Declaring it ``async`` while awaiting it
+        directly parked that work on the Cortex event loop; callers must now
+        offload it with ``asyncio.to_thread``, as the canvas sibling on the
+        same router already does.
 
         Returns image-type sources that have been committed and have
         extracted entities in the graph, grouped for visual display.

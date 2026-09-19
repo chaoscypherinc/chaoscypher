@@ -88,7 +88,7 @@ Type your question and the AI will:
 
 Type your message in the chat input and press Enter or click Send. Responses stream in real-time.
 
-![Chat conversation with AI response and citations](/img/screenshots/chat-conversation.png)
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 </TabItem>
 <TabItem value="cli" label="CLI">
@@ -265,7 +265,7 @@ When the AI references information from your documents, responses include citati
 - The exact text passage
 - Page number and section (when available)
 
-![Chat showing AI response with inline source citations](/img/screenshots/chat-conversation.png)
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 Citations help you verify the AI's answers against your original documents.
 

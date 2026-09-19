@@ -75,10 +75,13 @@ LOG_LEVEL=INFO
 USE_JSON_LOGGING=false
 ```
 
-Per-queue concurrency, retry limits, and timeouts are not env-driven —
-edit `settings.yaml` and restart the worker, or change them through the
-Settings UI (cortex pushes updates via the `settings_changes` channel and
-`cc-neuron` picks them up at the next poll boundary).
+Per-queue concurrency, retry limits, and timeouts are not env-driven.
+Override them in `<data_dir>/workers.yaml` (`llm_worker:` /
+`operations_worker:` with `max_concurrent`, `timeout`, `max_tries`; values
+are clamped to safe ranges) and **restart the worker** — they are read
+once at startup and frozen into the `QueueWorker`. The settings-change
+listener (`chaoscypher:settings:changed`) hot-reloads the LLM provider and
+handler registrations only; it does not resize queue concurrency.
 
 ## Architecture
 

@@ -69,6 +69,20 @@ class SourceChunksMixin(SqliteMixinBase, ChunkStorageProtocol):
             return self._entity_to_dict(chunk)
         return None
 
+    def chunk_exists(self, chunk_id: str, database_name: str) -> bool:
+        """Report whether a chunk row exists, without hydrating it.
+
+        Selects the id column alone, so the ``content``/``raw_content``
+        TEXT and the ~5KB ``embedding`` BLOB are never read. The CCX
+        importer runs this once per chunk record in the package.
+        """
+        self._ensure_connected()
+        statement = select(DocumentChunk.id).where(
+            DocumentChunk.id == chunk_id,
+            DocumentChunk.database_name == database_name,
+        )
+        return self.session.exec(statement).first() is not None
+
     def get_chunk_by_id(self, chunk_id: str) -> dict[str, Any] | None:
         """Get a single chunk by UUID (database-agnostic).
 

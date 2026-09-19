@@ -447,7 +447,11 @@ class SearchService:
         min_similarity: float = 0.55,
         include_disabled_sources: bool = False,
     ) -> dict[str, Any]:
-        """Perform hybrid search (semantic with keyword fallback).
+        """Perform hybrid search: keyword and semantic merged, higher score wins.
+
+        Both arms run and their results are merged by result id, keeping each
+        result's higher score. Queries under 3 characters, and any search
+        error, fall back to keyword-only.
 
         Args:
             query: Search query

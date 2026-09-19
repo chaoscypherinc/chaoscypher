@@ -17,7 +17,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -303,9 +303,11 @@ class HealthPauseEvaluator:
 
         if paused_by == "health_monitor" and self._tripped_probes:
             await self._grow_witness_while_paused()
-            await self._maybe_auto_resume(results)
+            await self._maybe_auto_resume(results, state)
 
-    async def _maybe_auto_resume(self, results: dict[str, ProbeResult]) -> None:
+    async def _maybe_auto_resume(
+        self, results: dict[str, ProbeResult], state: dict[str, Any] | None = None
+    ) -> None:
         """Lift the auto-pause once every witnessed probe has recovered.
 
         Refuses while any tripped probe is non-recoverable, requires
@@ -331,6 +333,26 @@ class HealthPauseEvaluator:
             for name in self._tripped_probes
         )
         if all_cleared:
+            # Never lift a system-wide pause whose persisted reason names
+            # probes this process did not witness. Cortex and the Neuron run
+            # separate evaluators against the same singleton row with
+            # DIFFERENT registries (the Neuron also owns QueueProbe), and the
+            # recovery gate above is consulted only when the in-memory
+            # witness is empty. So once Cortex holds a witness of its own, a
+            # later witness-growth by the Neuron is invisible to it and it
+            # would resume on its stale witness while that probe is still
+            # failing. In the healthy case the persisted reason equals the
+            # witness and nothing changes; this refuses only in the broken
+            # case, leaving the resume to the better-equipped sibling.
+            persisted = _parse_pause_reason((state or {}).get("processing_paused_reason"))
+            if persisted is not None and not persisted <= self._tripped_probes:
+                logger.info(
+                    "skip_resume_foreign_witness",
+                    persisted=sorted(persisted),
+                    witness=sorted(self._tripped_probes),
+                )
+                return
+
             updated = await asyncio.to_thread(
                 lambda: self._adapter.set_system_paused(
                     is_paused=False,

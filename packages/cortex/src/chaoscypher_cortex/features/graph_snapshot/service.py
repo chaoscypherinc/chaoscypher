@@ -73,16 +73,23 @@ class GraphSnapshotFeatureService:
         return repo.get_staleness_info(database_name)
 
     def get_live_node_count(self, database_name: str) -> int:
-        """COUNT(*) of graph_nodes for the given database — cheap staleness check.
+        """Live node count comparable with the snapshot's persisted total.
 
-        Uses ``GraphBreakdownQueryRepository.count_all_nodes`` so that the
-        adapter access stays in one place and no raw SQL appears in the service.
+        Counts only SOURCE-ATTRIBUTED nodes, because that is what the
+        persisted ``total_nodes`` measures: the snapshot builder sums
+        ``count_nodes_per_source``, which drops rows whose ``source_id`` is
+        NULL. Counting every node here instead made the staleness formula
+        subtract two different row sets, so one manual/legacy node left the
+        snapshot permanently "stale" and every ``GET /graph/snapshot``
+        enqueued another undeduplicated whole-database rebuild — a drift that
+        no rebuild could ever clear, because the rebuild recomputes the
+        persisted side through the same per-source path.
 
         Args:
             database_name: Database to count nodes for.
 
         Returns:
-            Total number of graph nodes currently stored for the database.
+            Number of source-attributed graph nodes for the database.
 
         """
         from chaoscypher_core.adapters.sqlite.repos.graph_breakdown import (
@@ -91,4 +98,4 @@ class GraphSnapshotFeatureService:
 
         assert self._adapter.session is not None, "adapter must be connected"
         repo = GraphBreakdownQueryRepository(self._adapter.session)
-        return repo.count_all_nodes(database_name)
+        return repo.count_source_attributed_nodes(database_name)

@@ -76,8 +76,6 @@ chaoscypher graph package load john-medical-ontology.ccx
 2. Search for packages by keyword, author, or tag
 3. Click **Pull** to download and import
 
-![Lexicon Hub package browser with search](/img/screenshots/lexicon-hub.png)
-
 </TabItem>
 <TabItem value="api" label="API">
 

@@ -140,8 +140,20 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Cookie $http_cookie;
         proxy_set_header Authorization $http_authorization;
+        # Client address for the bearer failure throttle. The bearer arm of
+        # this subrequest is unauthenticated attack surface reachable on every
+        # /api/ request, so Cortex caps repeated failures per client — which
+        # needs a client identity. nginx sets X-Real-IP from $remote_addr, so a
+        # client-supplied value is always overwritten. The edge token is
+        # forwarded for the same reason proxy-public.conf forwards it: it
+        # asserts only "transited the trusted edge", and it is what lets
+        # client_ip() honour X-Real-IP. Blanked, every caller collapses into
+        # one bucket keyed to the nginx loopback peer and a single attacker
+        # would throttle the operator's own API keys. It confers no identity:
+        # X-Auth-User stays blanked below — deciding it is this request's job.
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Auth-User "";
-        proxy_set_header X-Auth-Edge-Token "";
+        proxy_set_header X-Auth-Edge-Token $chaoscypher_edge_auth_token;
     }
 
     # Public auth endpoints (bootstrap + recovery). Not behind auth_request.

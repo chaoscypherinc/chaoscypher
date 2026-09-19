@@ -82,3 +82,28 @@ async def test_sentinel_emitted_even_when_channel_stays_silent(
     events = [e async for e in pubsub_module.subscribe_chat_events("c1")]
 
     assert events == [{"type": "__subscribed__", "data": {}}]
+
+
+@pytest.mark.asyncio
+async def test_connection_is_released_even_when_unsubscribe_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing ``unsubscribe`` must not skip ``aclose``.
+
+    ``aclose()`` is the only call that returns the dedicated pub/sub
+    connection to the pool, and the pool tracks in-use connections in a
+    strong set — so when both calls shared one ``try``, the Valkey outage
+    that ended the stream also leaked the connection permanently.
+    """
+    fake_pubsub = _FakePubSub([])
+
+    async def _raising_unsubscribe(_channel: str) -> None:
+        raise ConnectionError("valkey went away")
+
+    fake_pubsub.unsubscribe = _raising_unsubscribe  # type: ignore[method-assign]
+    _patch_queue_client(monkeypatch, fake_pubsub)
+
+    events = [e async for e in pubsub_module.subscribe_chat_events("c1")]
+
+    assert events == [{"type": "__subscribed__", "data": {}}]
+    assert fake_pubsub.closed is True, "aclose() was skipped — connection leaked"

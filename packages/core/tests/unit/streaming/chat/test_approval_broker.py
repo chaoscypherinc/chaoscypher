@@ -88,6 +88,24 @@ async def test_wait_times_out_to_timeout_decision() -> None:
     assert decision == "timeout"
 
 
+async def test_late_decision_after_timeout_is_refused() -> None:
+    """A decision arriving after the waiter gave up must not report success.
+
+    The key's TTL is deliberately ``timeout + 60s`` so a decision at the
+    buzzer still lands on a live key — but once ``wait`` has returned
+    ``timeout`` nobody will honour it, and the endpoint used to CAS the
+    surviving sentinel and answer 204 for a decision that was already dead.
+    """
+    fake = _FakeValkey()
+    broker = _broker(fake)
+    await broker.request("c1", "tc-late", "delete_node", {}, iteration=1)
+
+    assert await broker.wait("c1", "tc-late", timeout_s=0.2) == "timeout"
+
+    resolved = await resolve_tool_approval("c1", "tc-late", "approve", client=fake)
+    assert resolved is False
+
+
 async def test_wait_cleans_up_key_after_decision() -> None:
     fake = _FakeValkey()
     broker = _broker(fake)

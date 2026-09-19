@@ -44,7 +44,7 @@ logger = structlog.get_logger(__name__)
 # Expand only after verifying the higher bound has been load-tested.
 # ============================================================================
 _MAX_CONCURRENT_HARD_CAP = 64
-_MAX_TRIES_HARD_CAP = 20
+_MAX_TRIES_HARD_CAP = policy.WORKER_MAX_TRIES_MAX  # 20
 # Timeout bounds live in core.policy so the deadline this worker enforces and
 # the reconciler cutoff derived from the same workers.yaml override clamp
 # identically — see chaoscypher_core.queue.worker_timeouts.
@@ -207,7 +207,7 @@ def _get_default_config() -> dict[str, Any]:
         }
 
 
-@functools.cache  # Startup-only; not invalidated on hot-reload (safe: load_worker_config called once)
+@functools.cache  # Not invalidated on hot-reload: every run_worker() re-entry (circuit-breaker restarts included) reuses the boot-time defaults
 def _get_defaults() -> dict[str, Any]:
     """Return the default config, building it on first call.
 
@@ -301,22 +301,30 @@ def load_worker_config(worker_type: str) -> dict[str, Any]:
             worker_type=worker_type,
         )
 
-    # Validate numeric types before clamping (YAML booleans silently coerce: True == 1)
+    # Validate numeric types before clamping (YAML booleans silently coerce: True == 1).
+    # A rejected key falls back to THIS worker type's base default — not a
+    # literal: ``config.get("max_concurrent", 1)`` once collapsed the
+    # operations queue from 8 to 1 on a single YAML typo (2026-09-17 audit).
+    base = defaults[worker_type]
     numeric_keys = ("max_concurrent", "timeout", "max_tries")
     for key in numeric_keys:
         val = config.get(key)
         if val is not None and (not isinstance(val, (int, float)) or isinstance(val, bool)):
             logger.warning("worker_config_invalid_type", key=key, value=val, expected="numeric")
-            del config[key]  # Let it fall back to default from base config
+            config[key] = base[key]
 
     # Clamp values to safe ranges
     config["max_concurrent"] = max(
-        1, min(config.get("max_concurrent", 1), _MAX_CONCURRENT_HARD_CAP)
+        1, min(config.get("max_concurrent", base["max_concurrent"]), _MAX_CONCURRENT_HARD_CAP)
     )
     config["timeout"] = max(
-        _MIN_TIMEOUT_FLOOR_SECONDS, min(config.get("timeout", 3600), _MAX_TIMEOUT_HARD_CAP_SECONDS)
+        _MIN_TIMEOUT_FLOOR_SECONDS,
+        min(config.get("timeout", base["timeout"]), _MAX_TIMEOUT_HARD_CAP_SECONDS),
     )
-    config["max_tries"] = max(1, min(config.get("max_tries", 5), _MAX_TRIES_HARD_CAP))
+    config["max_tries"] = max(
+        policy.WORKER_MAX_TRIES_MIN,
+        min(config.get("max_tries", base["max_tries"]), _MAX_TRIES_HARD_CAP),
+    )
 
     logger.info(
         "worker_config_loaded",

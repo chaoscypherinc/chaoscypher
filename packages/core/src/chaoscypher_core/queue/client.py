@@ -634,9 +634,18 @@ class QueueClient:
         await self.client.set(self._heartbeat_key(task_id), "1", ex=ttl_seconds)
 
     async def refresh_heartbeat(self, task_id: str, ttl_seconds: int) -> None:
-        """Reset the heartbeat TTL during handler execution.
+        """Re-create the heartbeat key with a fresh TTL during handler execution.
 
-        Called periodically by the worker's heartbeat co-task.
+        Called periodically by the worker's heartbeat co-task. This is a
+        ``SET ... EX`` (the same write as :meth:`set_heartbeat`), not a bare
+        ``EXPIRE``: ``EXPIRE`` on a missing key is a silent no-op, so a key
+        that lapsed once — an event-loop stall or Valkey blip longer than
+        the TTL — could never come back, every later refresh "succeeded"
+        without writing anything, and the reconciler classified the still-
+        running task as abandoned for the rest of its life (2026-09-17 queue
+        section-audit). Re-creating the key makes a lapse self-healing: the
+        abandonment signal is truthful only while the refresher is actually
+        not firing.
 
         Args:
             task_id: Task identifier.
@@ -644,7 +653,7 @@ class QueueClient:
         """
         if self.client is None:
             raise QueueUnavailableError("Queue server is not connected")
-        await self.client.expire(self._heartbeat_key(task_id), ttl_seconds)
+        await self.client.set(self._heartbeat_key(task_id), "1", ex=ttl_seconds)
 
     async def delete_heartbeat(self, task_id: str) -> None:
         """Remove the heartbeat key at task completion.
@@ -801,8 +810,11 @@ class QueueClient:
         """Atomically requeue an abandoned task (reset + pending + un-run).
 
         One Lua move for the reconciler's requeue branch: HSET queued-state,
-        PERSIST (clear dead-letter TTL), ZADD pending, SREM running, HINCRBY
-        attempts. Refuses when the task finished while being classified.
+        PERSIST (clear dead-letter TTL), ZADD pending, SREM running. It does
+        NOT touch ``attempts``: the worker's claim-time HINCRBY is the only
+        writer, so one crash-recovery cycle charges exactly one unit of
+        ``max_tries`` (the requeue used to bump it too — #599). Refuses when
+        the task finished while being classified.
 
         Returns:
             ``GUARDED_OK`` on success, ``GUARDED_MISSING`` when the hash does
@@ -1302,7 +1314,7 @@ class QueueClient:
                 "1",
                 ex=self._cancel_ttl,
             )
-            self._persist_cancellation_to_db(task_id, task)
+            await asyncio.to_thread(self._persist_cancellation_to_db, task_id, task)
             outcome = await self.guarded_status_write(
                 task_id,
                 new_status="cancelled",
@@ -1328,8 +1340,12 @@ class QueueClient:
     def _persist_cancellation_to_db(self, task_id: str, task: dict[str, Any]) -> None:
         """Write ChunkExtractionTask.cancelled_at to SQLite for durable cancellation.
 
-        Called synchronously from cancel_task after the Valkey cancel flag
-        is set.  Only acts when the task hash contains a database_name field
+        Called from the cancel paths after the Valkey cancel flag is set.
+        This body is synchronous and opens its own short-lived adapter
+        session, so every caller runs it via ``asyncio.to_thread`` — the
+        batch paths invoke it once per task, and running it inline blocked
+        the Cortex event loop for the whole of ``POST /queue/cancel-all``.
+        Only acts when the task hash contains a database_name field
         (i.e. is a chunk-extraction task); all other task types are silently
         skipped.
 
@@ -1443,7 +1459,7 @@ class QueueClient:
                 # raced queued -> running: fall through to the running cancel
 
             await self.client.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
-            self._persist_cancellation_to_db(task_id, task)
+            await asyncio.to_thread(self._persist_cancellation_to_db, task_id, task)
             outcome = await self.guarded_status_write(
                 task_id,
                 new_status="cancelled",
@@ -1596,7 +1612,7 @@ class QueueClient:
                     removal="zrem",
                 )
                 if outcome == GUARDED_OK:
-                    self._persist_cancellation_to_db(task_id, task)
+                    await asyncio.to_thread(self._persist_cancellation_to_db, task_id, task)
                     cancelled += 1
                     continue
                 if outcome != "running":
@@ -1609,7 +1625,7 @@ class QueueClient:
             # outlives the handler's worst-case run time. The status write
             # is guarded: completion in the window wins (cancel loses).
             await self.client.set(f"queue:cancel:{task_id}", "1", ex=self._cancel_ttl)
-            self._persist_cancellation_to_db(task_id, task)
+            await asyncio.to_thread(self._persist_cancellation_to_db, task_id, task)
             outcome = await self.guarded_status_write(
                 task_id,
                 new_status="cancelled",
@@ -2013,6 +2029,12 @@ class QueueClient:
         if self.client is None:
             raise QueueUnavailableError("Queue server is not connected")
         async for key in self.client.scan_iter(match="queue:task:*"):
+            # The glob also matches the heartbeat STRINGS at
+            # ``queue:task:{id}:heartbeat``; HGETALL on one raises WRONGTYPE
+            # mid-sweep (partial deletes, no recent-list cleanup). Only the
+            # two-segment ``queue:task:{id}`` keys are task hashes.
+            if _decode_bytes(key).count(":") != 2:
+                continue
             hgetall_result = self.client.hgetall(key)
             record = (
                 await hgetall_result if not isinstance(hgetall_result, dict) else hgetall_result

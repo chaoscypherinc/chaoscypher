@@ -479,6 +479,32 @@ async def execute_workflow_task(
             "execution_id": execution_id,
         }
 
+    except asyncio.CancelledError:
+        # ``CancelledError`` is a ``BaseException``, so the arm below never
+        # saw a worker-drain or per-task-timeout cancel and the durable
+        # ``workflow_executions`` row stayed RUNNING forever — nothing else
+        # ever writes it, there is no reconciler for this table, and with
+        # ``allow_parallel_execution=False`` that stale row raises
+        # WorkflowBusyError on every future run of the workflow. Any workflow
+        # with an LLM step routinely outlives the drain timeout. The cancel
+        # is re-raised: the queue worker's own handler needs it to propagate.
+        logger.warning(
+            "workflow_execution_cancelled",
+            workflow_id=workflow_id,
+            execution_id=execution_id,
+        )
+        duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)
+        await asyncio.to_thread(
+            execution_repo.finalize_execution,
+            execution_id,
+            status=WorkflowExecutionStatus.FAILED,
+            outputs=None,
+            error_message="Execution cancelled (worker shutdown or task timeout)",
+            failed_step_id=None,
+            duration_ms=duration_ms,
+        )
+        raise
+
     except Exception as e:
         logger.exception(
             "workflow_execution_exception",

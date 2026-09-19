@@ -127,9 +127,12 @@ class MarkdownHandler:
                 ".vscode",
             }
         )
-        # Memoize the resolved root so can_handle() and find_root() share
-        # the same subtree analysis. Keyed by resolved absolute path.
-        self._scan_cache: dict[Path, tuple[int, Path]] = {}
+        # Single-slot memo so can_handle() and find_root() share one subtree
+        # analysis: ``(resolved_dir, (score, root))``. One slot rather than
+        # a dict because every archive load extracts into a fresh mkdtemp
+        # dir, so a keyed cache never hits twice and only grows for the
+        # lifetime of the process-cached handler; process() releases it.
+        self._scan_memo: tuple[Path, tuple[int, Path]] | None = None
 
     def can_handle(self, extracted_dir: Path) -> int:
         """Check for Markdown documentation indicators, including nested roots.
@@ -180,9 +183,9 @@ class MarkdownHandler:
         under a wrapper directory. Results are memoized.
         """
         cache_key = extracted_dir.resolve() if extracted_dir.exists() else extracted_dir
-        cached = self._scan_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        memo = self._scan_memo
+        if memo is not None and memo[0] == cache_key:
+            return memo[1]
 
         best_score = 0
         best_root = extracted_dir
@@ -207,7 +210,7 @@ class MarkdownHandler:
             )
 
         result = (best_score, best_root)
-        self._scan_cache[cache_key] = result
+        self._scan_memo = (cache_key, result)
         return result
 
     def _candidate_roots(self, extracted_dir: Path) -> list[Path]:
@@ -309,6 +312,11 @@ class MarkdownHandler:
         """
         logger.info("markdown_processing_started", directory=str(extracted_dir))
 
+        # process() is the last step of an archive load and never re-reads
+        # the can_handle()/find_root() memo, so release it here rather than
+        # holding the extracted temp-dir path for the handler's lifetime.
+        self._scan_memo = None
+
         documents: list[dict[str, Any]] = []
         files_skipped = 0
         md_files = self._find_markdown_files(extracted_dir)
@@ -388,9 +396,11 @@ class MarkdownHandler:
             base_dir: Base directory to search.
 
         Returns:
-            List of markdown file paths.
+            Sorted list of unique markdown file paths. Deduplicated because
+            on case-insensitive filesystems ``rglob("*.md")`` and
+            ``rglob("*.MD")`` both return the same file.
         """
-        md_files: list[Path] = []
+        md_files: set[Path] = set()
 
         for pattern in ["*.md", "*.mdx", "*.MD", "*.MDX"]:
             for file_path in base_dir.rglob(pattern):
@@ -402,7 +412,7 @@ class MarkdownHandler:
                 if file_path.name in self._skip_files:
                     continue
 
-                md_files.append(file_path)
+                md_files.add(file_path)
 
         return sorted(md_files)
 
@@ -442,7 +452,9 @@ class MarkdownHandler:
         """
         from chaoscypher_core.utils.encoding import detect_encoding
 
-        encoding_used, raw_content, replacement_chars_count = detect_encoding(md_path)
+        encoding_used, raw_content, replacement_chars_count = detect_encoding(
+            md_path, settings=self.settings.loader if self.settings is not None else None
+        )
 
         # Strip frontmatter
         content, frontmatter = self._strip_frontmatter(raw_content)

@@ -225,3 +225,40 @@ async def test_no_snapshot_enqueues_initial_build() -> None:
     mock_enqueue.assert_awaited_once()
     call_kwargs = mock_enqueue.call_args.kwargs
     assert call_kwargs["metadata"]["trigger"] == "no_snapshot"
+
+
+def test_live_node_count_uses_source_attributed_counter(monkeypatch) -> None:
+    """The live side of the drift formula must measure the same rows as the
+    persisted side.
+
+    ``staleness.node_count`` is summed from ``count_nodes_per_source``, which
+    drops rows whose ``source_id`` is NULL. Counting every node here instead
+    made ``_is_stale`` subtract two different row sets, so one manual/legacy
+    node pinned the snapshot permanently stale and every ``GET
+    /graph/snapshot`` enqueued another whole-database rebuild that could
+    never clear the drift.
+    """
+    from chaoscypher_core.adapters.sqlite.repos import graph_breakdown as gb
+
+    calls: list[str] = []
+
+    class _Repo:
+        def __init__(self, _session) -> None:
+            pass
+
+        def count_all_nodes(self, database_name: str) -> int:
+            calls.append("count_all_nodes")
+            return 11
+
+        def count_source_attributed_nodes(self, database_name: str) -> int:
+            calls.append("count_source_attributed_nodes")
+            return 7
+
+    monkeypatch.setattr(gb, "GraphBreakdownQueryRepository", _Repo)
+
+    adapter = MagicMock()
+    adapter.session = MagicMock()
+    service = GraphSnapshotFeatureService(adapter=adapter)
+
+    assert service.get_live_node_count("default") == 7
+    assert calls == ["count_source_attributed_nodes"]

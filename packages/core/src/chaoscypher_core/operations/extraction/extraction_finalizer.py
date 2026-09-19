@@ -898,7 +898,6 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 fail_exception_type=type(fail_exc).__name__,
                 fail_exception_message=str(fail_exc),
             )
-            raise
         try:
             adapter.fail_extraction(source_id, str(exc))
         except Exception as fail_exc:
@@ -912,7 +911,6 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 fail_exception_type=type(fail_exc).__name__,
                 fail_exception_message=str(fail_exc),
             )
-            raise
 
         try:
             await trigger_next_waiting_extraction(adapter, database_name, settings)

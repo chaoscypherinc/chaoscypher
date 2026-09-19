@@ -3,10 +3,12 @@
 
 """Microsoft Word (.docx) loader.
 
-Walks paragraphs and tables in document order. Captures heading-style
-paragraphs as document landmarks (returned in metadata for citation)
-and flattens table rows to ``col1 | col2 | …`` lines so plain-text
-downstream consumers (extraction, embedding) keep the row association.
+Emits every body paragraph in document order, then every table
+(flattened to ``col1 | col2 | …`` lines so plain-text downstream
+consumers — extraction, embedding — keep the row association) after the
+paragraphs; a table's position between paragraphs is not preserved.
+Captures heading-style paragraphs as document landmarks (returned in
+metadata for citation).
 """
 
 from __future__ import annotations

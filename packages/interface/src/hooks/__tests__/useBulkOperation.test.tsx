@@ -43,4 +43,38 @@ describe('useBulkOperation', () => {
     expect(result.current.progress.open).toBe(true);
     expect(result.current.progress.total).toBe(1);
   });
+
+  it('surfaces a failed task immediately instead of polling to timeout', async () => {
+    // The failed-status throw used to sit inside the try whose catch only
+    // rethrows HTTP 404s, so a plain Error was swallowed and the loop kept
+    // polling a task it already knew was dead — ~60 further attempts, then a
+    // generic "timeout" message instead of the backend's actual reason.
+    vi.useFakeTimers();
+    try {
+      const client = await import('../../services/api/client');
+      (client.apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        data: { task_id: 'task-1' },
+      });
+      const get = client.apiClient.get as ReturnType<typeof vi.fn>;
+      get.mockResolvedValue({ data: { status: 'failed', error: 'node 7 is locked' } });
+
+      const { result } = renderHook(() => useBulkOperation());
+
+      let rejection: unknown;
+      const pending = result.current
+        .execute('nodes', [{ operation: 'delete', data: { id: 'n7' } }])
+        .catch((e: unknown) => {
+          rejection = e;
+        });
+
+      await vi.advanceTimersByTimeAsync(5000);
+      await pending;
+
+      expect((rejection as Error).message).toBe('node 7 is locked');
+      // One status poll, not the full 60-attempt budget.
+      expect(get).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -632,3 +632,54 @@ async def test_vision_page_handler_render_failed_bumps_counter(
 
     # Single-page job is terminal → finalize must have been enqueued.
     mock_finalize.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_vision_page_handler_activity_checkpoint_runs_off_the_event_loop(
+    adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """The ``last_activity_at`` checkpoint must not run inline on the QUEUE_LLM loop.
+
+    ``update_source_last_activity`` issues an ``UPDATE`` + ``COMMIT`` whose
+    SQLITE_BUSY back-off sleeps synchronously. Every other storage touch in
+    ``_handle_vision_page`` is handed to a worker thread; the checkpoint was
+    the one inline call, stalling the loop (concurrency 1) for the whole
+    retry ladder under writer contention — the class ``source_heartbeat``
+    already fixed for the per-source heartbeat.
+    """
+    import threading
+
+    img = tmp_path / "p.png"
+    img.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+    source_id, job_id, page_id = _create_source_with_pending_page(adapter, img)
+
+    loop_thread = threading.get_ident()
+    seen_threads: list[int] = []
+    real_bump = adapter.update_source_last_activity
+
+    def _probe(**kwargs):
+        seen_threads.append(threading.get_ident())
+        return real_bump(**kwargs)
+
+    adapter.update_source_last_activity = _probe  # type: ignore[method-assign]
+
+    fake_vision = MagicMock()
+    fake_vision.describe_image = AsyncMock(
+        return_value=VisionResult(description="A cat sitting on a mat.", finish_reason="stop")
+    )
+    service = _make_service(adapter, _vision_settings(tmp_path), vision_service=fake_vision)
+
+    with patch(
+        "chaoscypher_core.operations.importing.vision_operations_service._enqueue_finalize",
+        new_callable=AsyncMock,
+    ):
+        result = await service._handle_vision_page(
+            data={"page_id": page_id, "job_id": job_id, "source_id": source_id},
+            metadata={},
+            task_id="test-task",
+        )
+
+    assert result["status"] == "success"
+    assert seen_threads, "the activity checkpoint never ran"
+    assert all(t != loop_thread for t in seen_threads), "checkpoint ran on the event loop"
+    assert adapter.get_source(source_id, "test")["last_activity_at"] is not None

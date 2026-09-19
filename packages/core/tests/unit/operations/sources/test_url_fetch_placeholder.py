@@ -173,6 +173,38 @@ async def test_unexpected_exception_marks_placeholder_error(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_fetch_marks_placeholder_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shutdown/timeout cancel must still promote the placeholder to ERROR.
+
+    ``CancelledError`` is a ``BaseException`` the ``except Exception`` arm
+    never saw, so the row stayed PENDING with an empty ``filepath``.
+    """
+    import asyncio
+
+    sps, storage = _make_sps(monkeypatch)
+
+    with patch("chaoscypher_core.adapters.web.search.WebScraper") as mock_scraper:
+        mock_scraper.return_value.extract_full_content = AsyncMock(
+            side_effect=asyncio.CancelledError()
+        )
+
+        with pytest.raises(asyncio.CancelledError):
+            await handle_fetch_url(
+                data={"url": "https://example.com", "options": {}},
+                source_processing_service=sps,
+                metadata={"database_name": "default", "operation_type": "fetch_url"},
+            )
+
+    storage.create_url_placeholder.assert_called_once()
+    storage.fail_url_fetch.assert_called_once()
+    _placeholder_id, error_msg, db_name = storage.fail_url_fetch.call_args[0]
+    assert db_name == "default"
+    assert "cancelled" in error_msg.lower()
+
+
+@pytest.mark.asyncio
 async def test_placeholder_delete_failure_logs_database_name_and_sql_code(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

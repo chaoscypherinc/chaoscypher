@@ -22,8 +22,11 @@ from chaoscypher_core.adapters.sqlite.engine import get_engine
 def integration_adapter(tmp_path: Path) -> Generator[SqliteAdapter]:
     """Per-test file-backed SqliteAdapter for end-to-end flows.
 
-    Creates all tables via SQLModel.metadata.create_all() so schema
-    migrations, pragmas, and FTS behave identically to production.
+    Creates all tables via SQLModel.metadata.create_all(). Pragmas come
+    from get_engine() and match production, but Alembic migrations do NOT
+    run here — the schema is built directly from the current SQLModel
+    metadata, so this fixture cannot exercise a migration, a backfill, or
+    any upgrade-path behavior. Use a migration-aware harness for those.
     Isolated per test via tmp_path. Disconnects on teardown.
     """
     db_dir = tmp_path / "chaoscypher-integration"

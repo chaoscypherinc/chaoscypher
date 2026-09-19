@@ -1012,8 +1012,10 @@ async def test_heartbeat_primitives_happy_path() -> None:
     await client.delete_heartbeat("t")
     exists = await client.heartbeat_exists("t")
 
-    valkey.set.assert_awaited()
-    valkey.expire.assert_awaited()
+    # set_heartbeat and refresh_heartbeat are both SET-with-EX: a bare EXPIRE
+    # refresh was a silent no-op on a lapsed key (2026-09-17 queue audit).
+    assert valkey.set.await_count == 2
+    valkey.expire.assert_not_awaited()
     valkey.delete.assert_awaited()
     assert exists is False  # exists returned 0
 

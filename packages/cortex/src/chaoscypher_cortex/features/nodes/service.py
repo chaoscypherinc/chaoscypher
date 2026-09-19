@@ -416,8 +416,8 @@ class NodeService:
             NotFoundError: If node not found
 
         """
-        # Verify node exists
-        node = self.graph_node_repository.get_node(node_id)
+        # Verify node exists (discarded — skip the 1024-float embedding).
+        node = self.graph_node_repository.get_node(node_id, include_embedding=False)
         if not node:
             msg = "Node"
             raise NotFoundError(msg, node_id)
@@ -506,8 +506,8 @@ class NodeService:
             NotFoundError: If node not found
 
         """
-        # Verify node exists
-        node = self.graph_node_repository.get_node(node_id)
+        # Verify node exists (discarded — skip the 1024-float embedding).
+        node = self.graph_node_repository.get_node(node_id, include_embedding=False)
         if not node:
             msg = "Node"
             raise NotFoundError(msg, node_id)

@@ -139,3 +139,25 @@ def test_security_settings_accepts_allow_external_access_true() -> None:
 
     s = SecuritySettings(allow_external_access=True)
     assert s.allow_external_access is True
+
+
+def test_create_app_installs_security_headers_middleware(monkeypatch):
+    """The assembled app must actually install SecurityHeadersMiddleware.
+
+    ``test_security_headers.py`` builds its own bare ``FastAPI()`` and adds
+    the middleware by hand, so it proves only that the class emits the right
+    headers when installed. Nothing pinned that ``create_app`` installs it —
+    deleting the ``add_middleware`` line left every test green.
+    """
+    monkeypatch.delenv("CHAOSCYPHER_ALLOW_DEV_MODE", raising=False)
+    set_settings(Settings(dev_mode=False))
+
+    from chaoscypher_cortex.app_factory import create_app
+    from chaoscypher_cortex.shared.middleware.security_headers import (
+        SecurityHeadersMiddleware,
+    )
+
+    app = create_app(schema_only=True)
+
+    installed = [m.cls for m in app.user_middleware]
+    assert SecurityHeadersMiddleware in installed, [c.__name__ for c in installed]

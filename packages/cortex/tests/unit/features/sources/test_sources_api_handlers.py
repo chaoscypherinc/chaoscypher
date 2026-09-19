@@ -248,6 +248,24 @@ class TestUpdateSourceHandler:
         )
         assert result["title"] == "New"
 
+    def test_processing_status_must_be_a_source_status(self) -> None:
+        """``processing_status`` is typed to the enum, so a phantom value is a 422.
+
+        The value is written verbatim to the row's status column, and every
+        response model declares ``status: SourceStatus`` -- writing ``"ready"``
+        (which the stale-MCP "Reset to Indexed" button used to send) made the
+        source unreadable and 500'd the whole sources list.
+        """
+        from pydantic import ValidationError
+
+        from chaoscypher_core.models import SourceStatus
+        from chaoscypher_cortex.features.sources.models import SourceUpdate
+
+        with pytest.raises(ValidationError):
+            SourceUpdate(processing_status="ready")  # type: ignore[arg-type]
+
+        assert SourceUpdate(processing_status="indexed").processing_status is SourceStatus.INDEXED
+
     @pytest.mark.asyncio
     async def test_raises_404_when_missing(self) -> None:
         """Handler raises 404 when update_source returns None."""

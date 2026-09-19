@@ -11,6 +11,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.line_parser impor
     _strip_markdown_decoration,
     parse_entity_line,
     parse_relationship_line,
+    sanitize_justification,
 )
 
 
@@ -369,3 +370,50 @@ class TestParseRelationshipLineMarkdownStripping:
 
         assert rel is not None
         assert rel["type"] == "interacts_with"
+
+
+class TestSanitizeJustification:
+    """Justification is evidence prose, never the model's deliberation (media audit 2026-09-15)."""
+
+    def test_clean_sentence_passes_unchanged(self):
+        text = "Pierre is the illegitimate son of Count Cyril Vladimirovich Bezukhov."
+        assert sanitize_justification(text) == text
+
+    def test_reasoning_markers_blank_the_field(self):
+        text = (
+            "The lady asks about her son. Wait, the prompt says to use numbered sentences. "
+            "I will link 9 to 3 via interacts_with. Actually, S25 implies parentage."
+        )
+        assert sanitize_justification(text) == ""
+
+    def test_keeps_only_the_first_two_sentences(self):
+        text = "First sentence here. Second sentence here. Third sentence must go. Fourth too."
+        assert sanitize_justification(text) == "First sentence here. Second sentence here."
+
+    def test_long_single_sentence_is_cut_on_a_word_boundary(self):
+        text = "word " * 100
+        out = sanitize_justification(text.strip())
+        assert len(out) <= 300
+        assert not out.endswith(" ")
+        assert out.split(" ") == ["word"] * len(out.split(" "))
+
+    def test_empty_and_whitespace_stay_empty(self):
+        assert sanitize_justification("") == ""
+        assert sanitize_justification("   ") == ""
+
+    def test_parse_relationship_line_applies_the_sanitizer(self):
+        cot = (
+            "No explicit parent_of link in this text. Wait, the prompt says extract "
+            "relationships based on the numbered sentences. I will link 9 to 3."
+        )
+        result = parse_relationship_line(f"R|9|3|parent_of|0.9|S25|{cot}")
+        assert result is not None
+        assert result["type"] == "parent_of"
+        assert result["justification"] == ""
+
+    def test_parse_relationship_line_keeps_a_clean_justification(self):
+        result = parse_relationship_line(
+            "R|1|2|serves|1.0|S7|Petrushka is identified as Prince Andrew's valet."
+        )
+        assert result is not None
+        assert result["justification"] == "Petrushka is identified as Prince Andrew's valet."

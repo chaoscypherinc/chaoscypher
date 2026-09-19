@@ -578,3 +578,35 @@ def test_get_chunks_for_extraction(adapter: SqliteAdapter) -> None:
 def test_get_chunks_for_extraction_empty(adapter: SqliteAdapter) -> None:
     _seed_source(adapter)
     assert adapter.get_chunks_for_extraction("src-1", "test") == []
+
+
+# ---------------------------------------------------------------------------
+# chunk_exists — existence probe that must not hydrate the row
+# ---------------------------------------------------------------------------
+
+
+def test_chunk_exists_true_for_present_row(adapter: SqliteAdapter) -> None:
+    _seed_source(adapter)
+    _add_chunk(adapter, "c-1")
+    assert adapter.chunk_exists("c-1", "test") is True
+
+
+def test_chunk_exists_false_for_absent_row(adapter: SqliteAdapter) -> None:
+    _seed_source(adapter)
+    assert adapter.chunk_exists("c-absent", "test") is False
+
+
+def test_chunk_exists_is_database_scoped(adapter: SqliteAdapter) -> None:
+    """Must keep ``get_chunk``'s database scoping, not just match the id."""
+    _seed_source(adapter)
+    _add_chunk(adapter, "c-1")
+    assert adapter.chunk_exists("c-1", "other-db") is False
+
+
+def test_chunk_exists_agrees_with_get_chunk(adapter: SqliteAdapter) -> None:
+    _seed_source(adapter)
+    _add_chunk(adapter, "c-1")
+    for chunk_id, database in [("c-1", "test"), ("c-1", "other-db"), ("c-x", "test")]:
+        assert adapter.chunk_exists(chunk_id, database) == (
+            adapter.get_chunk(chunk_id, database) is not None
+        )

@@ -362,8 +362,16 @@ def get(source_id: str, database: str) -> None:
         extraction_depth = file_record.get("extraction_depth", "full")
         table.add_row("Extraction Depth", extraction_depth)
 
-        forced_domain = file_record.get("forced_domain")
-        detected_domain = file_record.get("detected_domain")
+        # Domain provenance lives in ``extraction_domain`` +
+        # ``extraction_domain_auto`` on the source row; a user-selected domain
+        # persisted before upload-time ``forced_domain`` stamping shows up as
+        # ``extraction_domain_auto=False`` (same rule as Cortex's retry path).
+        extraction_domain = file_record.get("extraction_domain")
+        domain_auto = file_record.get("extraction_domain_auto", True)
+        forced_domain = file_record.get("forced_domain") or (
+            None if domain_auto else extraction_domain
+        )
+        detected_domain = extraction_domain if domain_auto else None
         domain_version = file_record.get("domain_version")
         changed = _domain_changed(ctx, file_record)
         value, detail = _format_domain_row(
@@ -376,8 +384,14 @@ def get(source_id: str, database: str) -> None:
         if detail:
             table.add_row("", detail)
 
-        extract = file_record.get("extract_entities", False)
-        table.add_row("Extract Entities", "[green]Yes[/green]" if extract else "[dim]No[/dim]")
+        # ``auto_analyze`` is the real column, but ``get_file``'s load_only
+        # projection does not carry it yet — render only when present so an
+        # absent key never prints a fabricated Yes/No.
+        auto_analyze = file_record.get("auto_analyze")
+        if auto_analyze is not None:
+            table.add_row(
+                "Extract Entities", "[green]Yes[/green]" if auto_analyze else "[dim]No[/dim]"
+            )
 
         console.print(table)
 
@@ -487,16 +501,23 @@ def get(source_id: str, database: str) -> None:
 
             console.print(ltable)
 
-        # Show error if failed
-        if file_record.get("error"):
-            console.print(f"\n[red]Error:[/red] {file_record.get('error')}")
+        # Show error if failed (real columns: error_message + error_stage)
+        error_message = file_record.get("error_message")
+        if error_message:
+            error_stage = file_record.get("error_stage")
+            stage_suffix = f" [dim](stage: {error_stage})[/dim]" if error_stage else ""
+            console.print(f"\n[red]Error:[/red] {error_message}{stage_suffix}")
 
-        # Show indexing stats if available
-        indexing = file_record.get("indexing_stats")
-        if indexing:
+        # Show indexing stats if available (real columns: chunk_count +
+        # total_content_length; the latter is outside get_file's projection
+        # today, so it renders only when the row carries it).
+        chunk_count = file_record.get("chunk_count") or 0
+        if chunk_count > 0:
             console.print("\n[cyan]Indexing Stats:[/cyan]")
-            console.print(f"  Chunks: {indexing.get('chunk_count', 0)}")
-            console.print(f"  Tokens: {indexing.get('token_count', 0):,}")
+            console.print(f"  Chunks: {chunk_count}")
+            content_length = file_record.get("total_content_length")
+            if content_length:
+                console.print(f"  Content: {content_length:,} chars")
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")

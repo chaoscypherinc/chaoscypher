@@ -559,3 +559,53 @@ class TestPauseReasonFormatParse:
         after it must fail safe rather than parsing to an empty set.
         """
         assert _parse_pause_reason("Auto-paused: ") is None
+
+
+class TestForeignWitnessResumeGuard:
+    """Cortex must not resume a pause whose reason names a probe it lacks."""
+
+    @pytest.mark.asyncio
+    async def test_evaluator_with_weaker_registry_declines_to_resume(self) -> None:
+        """The shipped registries genuinely diverge.
+
+        The Neuron registers DiskSpaceProbe AND QueueProbe; Cortex registers
+        DiskSpaceProbe only. Both run an evaluator against the same singleton
+        row. ``_recover_tripped_probes`` refuses partial coverage — but it is
+        consulted only when the in-memory witness is EMPTY, so once Cortex
+        holds a witness of its own, a later witness-growth by the Neuron is
+        invisible to it. Cortex would then lift the system-wide pause on its
+        stale witness, logging ``auto_resumed`` while the queue probe is
+        still failing.
+        """
+        disk = _StubProbe("disk")
+        disk.set_status("error")
+        evaluator, adapter = _make_evaluator([disk], trip=2, clear=2)
+
+        # Disk trips; this evaluator pauses with witness {disk}.
+        await evaluator.tick()
+        await evaluator.tick()
+        assert evaluator._tripped_probes == {"disk"}
+
+        # The sibling process (with the wider registry) grew the persisted
+        # reason to include a probe this evaluator cannot see, then disk
+        # recovered here.
+        adapter.get_system_state.return_value = {
+            "id": 1,
+            "processing_paused": True,
+            "processing_paused_at": None,
+            "processing_paused_reason": "Auto-paused: disk, queue",
+            "paused_by": "health_monitor",
+        }
+        disk.set_status("ok")
+        adapter.set_system_paused.reset_mock()
+
+        await evaluator.tick()
+        await evaluator.tick()
+        await evaluator.tick()
+
+        resume_calls = [
+            c
+            for c in adapter.set_system_paused.call_args_list
+            if c.kwargs.get("is_paused") is False
+        ]
+        assert resume_calls == [], "resumed a pause whose reason it could not cover"

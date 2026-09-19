@@ -3,8 +3,8 @@ slug: graphrag-ollama-10-minutes
 title: "GraphRAG with Ollama in 10 Minutes: The Local-First Quickstart"
 authors: [denis]
 tags: [selfhosted, graphrag, ollama, python]
-date: 2026-07-14
-draft: true
+date: 2026-09-18
+draft: false
 description: Install Chaos Cypher and Ollama, upload a PDF, and ask a cited question against your own knowledge graph — no API key, nothing leaves your machine.
 ---
 
@@ -50,7 +50,7 @@ docker run -d --name chaoscypher \
 
 On Linux Docker Engine (not Docker Desktop), add `--add-host=host.docker.internal:host-gateway` so the container can reach Ollama on your host -- Docker Desktop resolves this automatically.
 
-<!-- screenshot: docker-up terminal output showing the container starting and becoming healthy -->
+<!-- optional screenshot: terminal output of the docker run command with the container reporting healthy -->
 
 Open [http://localhost](http://localhost). A startup page shows each service (Nginx, Cortex, Valkey, Neuron) coming online -- usually 30-60 seconds. Set a username and password on first run, and you land on the Dashboard.
 
@@ -66,7 +66,7 @@ If the Ollama model pull from Step 1 is still running, the source will sit at **
 
 Once extraction commits, open **Graph** in the sidebar. You'll see nodes for the people, organizations, concepts, and events the model found in your document, connected by edges representing the relationships it inferred between them. For a 100-page document on a 30B-class model, expect roughly 5-10 minutes of extraction time.
 
-<!-- screenshot: graph view showing extracted entities and relationships after a first extraction run -->
+![Knowledge graph visualization showing extracted entities and relationships](/img/screenshots/graph-visualization.png)
 
 Click any node to see its properties, its connections, and the source text it was extracted from -- that link back to source evidence is the same mechanism the chat citations use in the next step.
 
@@ -74,7 +74,7 @@ Click any node to see its properties, its connections, and the source text it wa
 
 Open **Chat**, start a new conversation, and ask something specific about the document you just uploaded. Chaos Cypher retrieves the relevant chunks and graph context, hands them to your local model, and streams back an answer with citations attached to the sentences that came from your source.
 
-<!-- screenshot: chat panel showing a streamed answer with a highlighted citation -->
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 Click a citation and it jumps straight to the exact chunk in the source document the sentence was grounded in -- not a link to "the document," the specific paragraph. That's the difference between an AI answer you have to take on faith and one you can verify in a click.
 

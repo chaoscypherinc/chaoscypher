@@ -57,6 +57,15 @@ BYTES_PER_GIB = 1_073_741_824
 WORKER_TIMEOUT_MIN_SECONDS = 60
 WORKER_TIMEOUT_MAX_SECONDS = SECONDS_PER_DAY
 
+# ---- Worker retry-budget clamp ------------------------------------------
+# Bounds an operator's ``workers.yaml`` ``max_tries`` override is clamped
+# into. Shared for the same reason as the timeout clamp above: the worker
+# forwards the resolved value into its reconcile passes while Cortex's safety
+# net resolves it independently, and a disagreement makes one of them
+# terminally fail a task the other would still retry.
+WORKER_MAX_TRIES_MIN = 1
+WORKER_MAX_TRIES_MAX = 20
+
 # ---- Backup interval presets (cortex lifespan.py) -----------------------
 BACKUP_INTERVAL_PRESETS: dict[str, int] = {
     "hourly": SECONDS_PER_HOUR,

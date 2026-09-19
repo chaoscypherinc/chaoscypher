@@ -11,6 +11,7 @@ via ``GraphSnapshotRepository``.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -20,6 +21,7 @@ from chaoscypher_core.exceptions import ValidationError
 
 if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
+    from chaoscypher_core.services.graph.snapshot.models import GraphBreakdown
 
 
 logger = structlog.get_logger(__name__)
@@ -71,21 +73,50 @@ async def handle_build_graph_snapshot(
         source_ids: list[str] | None = data.get("source_ids")
         title: str | None = data.get("title")
 
+        from chaoscypher_core.adapters.sqlite import SqliteAdapter
         from chaoscypher_core.adapters.sqlite.engine import get_engine
         from chaoscypher_core.adapters.sqlite.repos import GraphSnapshotRepository
         from chaoscypher_core.services.graph.snapshot.build_service import (
             BuildGraphSnapshotService,
         )
 
-        breakdown = BuildGraphSnapshotService.from_adapter(adapter).build(
-            database_name, source_ids, title
-        )
+        engine = get_engine(adapter.db_path)
 
-        persisted = False
-        if source_ids is None:
-            engine = get_engine(adapter.db_path)
-            GraphSnapshotRepository(engine).upsert(breakdown)
-            persisted = True
+        def _build_and_persist() -> tuple[GraphBreakdown, bool]:
+            """Run the six aggregates and the upsert off the event loop.
+
+            Deliberately builds a private adapter rather than reusing the
+            one passed in: the worker's adapter is process-wide and shared
+            with every sibling handler, and ``SafeSession`` is not
+            thread-safe, so offloading it would trade an event-loop stall
+            for cross-thread session corruption. Same pattern, and the same
+            reason, as ``operations/workflows/orchestrator.py``.
+
+            It is built from ``adapter.db_path`` rather than through
+            ``get_sqlite_adapter``, which re-resolves the path from settings
+            and so would silently open a different database than the one
+            this handler was handed. The engine is cached per path, so the
+            extra adapter only costs a session.
+            """
+            build_adapter = SqliteAdapter(db_path=adapter.db_path)
+            build_adapter.connect()
+            try:
+                built = BuildGraphSnapshotService.from_adapter(build_adapter).build(
+                    database_name, source_ids, title
+                )
+            finally:
+                build_adapter.disconnect()
+            if source_ids is not None:
+                return built, False
+            GraphSnapshotRepository(engine).upsert(built)
+            return built, True
+
+        # ``build()`` is six sequential whole-database aggregates and
+        # ``upsert()`` a sync write; awaiting them inline pinned the Neuron
+        # event loop — every ops slot, the pollers, the heartbeat refresher
+        # and the reconciler — for the whole build, on every post-commit
+        # refresh.
+        breakdown, persisted = await asyncio.to_thread(_build_and_persist)
 
         logger.info(
             "graph_snapshot_built",

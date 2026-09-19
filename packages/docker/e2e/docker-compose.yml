@@ -112,6 +112,10 @@ services:
       # host-published port, unreachable from inside this container.
       - E2E_FAKE_OLLAMA_CONTROL_URL=http://fake-ollama:11434
       - E2E_PHASE=fresh
+      # This stack ships fake-ollama precisely so /llm/health reports
+      # verified=True. If the probe misses, the requires_llm tier must fail
+      # loudly rather than skip itself and let the run exit 0.
+      - E2E_REQUIRE_LLM=1
       - LOG_LEVEL=WARNING
     working_dir: /app
     command: >

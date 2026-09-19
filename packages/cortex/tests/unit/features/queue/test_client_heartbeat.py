@@ -33,13 +33,20 @@ async def test_set_heartbeat_sets_key_with_ttl() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_heartbeat_extends_ttl() -> None:
+async def test_refresh_heartbeat_rewrites_key_with_ttl() -> None:
+    """Refresh is a SET-with-EX, not a bare EXPIRE (a no-op on a lapsed key).
+
+    Key-state behaviour (re-creation after a lapse) is pinned against
+    fakeredis in ``packages/core/tests/unit/queue/test_heartbeat_key_lifecycle.py``.
+    """
     client, valkey = _build_client_with_mock_valkey()
+    valkey.set = AsyncMock(return_value=True)
     valkey.expire = AsyncMock(return_value=True)
 
     await client.refresh_heartbeat("abc-123", ttl_seconds=30)
 
-    valkey.expire.assert_awaited_once_with("queue:task:abc-123:heartbeat", 30)
+    valkey.set.assert_awaited_once_with("queue:task:abc-123:heartbeat", "1", ex=30)
+    valkey.expire.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,15 @@ def decode_session(cookie: str, secret: bytes) -> SessionPayload:
     """
     if not cookie or cookie.count(".") != 1:
         raise InvalidSessionCookie("malformed")
+    # Both halves must be ASCII before the HMAC work below: ``body.encode
+    # ("ascii")`` raises UnicodeEncodeError on a non-ASCII body, and
+    # ``hmac.compare_digest`` raises TypeError on a non-ASCII signature.
+    # Neither is an InvalidSessionCookie, so both used to escape this
+    # function's documented "raise InvalidSessionCookie on any failure"
+    # contract and reach the app's 500 catch-all. Every cookie this module
+    # issues is base64 and therefore ASCII by construction.
+    if not cookie.isascii():
+        raise InvalidSessionCookie("malformed")
     body, sig = cookie.split(".", 1)
     expected_sig = _b64(hmac.new(secret, body.encode("ascii"), sha256).digest())
     if not hmac.compare_digest(sig, expected_sig):

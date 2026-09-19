@@ -30,7 +30,7 @@ import { LoadingState } from '../../components/LoadingState';
 import { QueueToolbar } from './components/QueueToolbar';
 import { QueueStatsCards } from './components/QueueStatsCards';
 import { TaskTable } from './components/TaskTable';
-import { sortTasks } from './utils';
+import { hasActiveTasks, sortTasks } from './utils';
 import { logger } from '../../utils/logger';
 
 const PAGE_SIZE = 50;
@@ -62,7 +62,10 @@ export default function QueueMonitorPage() {
   // Derived data
   const tasks = tasksQuery.data?.data ?? [];
   const pagination = tasksQuery.data?.pagination ?? null;
-  const totalInQueue = tasksQuery.data?.total_in_queue ?? 0;
+  // null = UNKNOWN (queue stats unavailable). The backend refuses to fabricate
+  // a stand-in count and so must the client: `?? 0` once turned a full
+  // backlog into "No active tasks to cancel" during a Valkey stats hiccup.
+  const totalInQueue = tasksQuery.data?.total_in_queue ?? null;
   const stats = statsQuery.data?.queues ?? [];
 
   const finishedTasks = tasks.filter((t) =>
@@ -76,7 +79,8 @@ export default function QueueMonitorPage() {
   // total_in_queue is the ACTIVE (queued + running) count across all pages —
   // the backend documents it as "not a pagination metric". The pagination
   // envelope's `total` is the recent-history count the table pages over.
-  const totalActiveTasks = totalInQueue;
+  const totalActiveTasks: number | null = totalInQueue;
+  const cancelAllEnabled = hasActiveTasks(totalActiveTasks);
   const totalTasks = pagination?.total ?? displayedTasks;
   const totalPages = pagination?.total_pages ?? 0;
 
@@ -111,7 +115,7 @@ export default function QueueMonitorPage() {
   };
 
   const handleCancelAllClick = () => {
-    if (totalActiveTasks === 0) {
+    if (!cancelAllEnabled) {
       notify('No active tasks to cancel', 'info');
       return;
     }
@@ -170,7 +174,7 @@ export default function QueueMonitorPage() {
         onRefresh={handleRefresh}
         onCancelAll={handleCancelAllClick}
         cancellingAll={cancelAllDialog.isConfirming}
-        hasActiveTasks={totalActiveTasks > 0}
+        hasActiveTasks={cancelAllEnabled}
       />
 
       {statsError && (
@@ -255,8 +259,9 @@ export default function QueueMonitorPage() {
         <DialogTitle sx={{ color: 'text.primary' }}>Cancel All Active Tasks</DialogTitle>
         <DialogContent>
           <Typography sx={{ color: 'text.secondary' }}>
-            Are you sure you want to cancel ALL {totalActiveTasks} active task
-            {totalActiveTasks === 1 ? '' : 's'} across every queue?
+            {totalActiveTasks === null
+              ? 'Are you sure you want to cancel ALL active tasks across every queue? (The active count is currently unknown — queue stats are unavailable.)'
+              : `Are you sure you want to cancel ALL ${totalActiveTasks} active task${totalActiveTasks === 1 ? '' : 's'} across every queue?`}
           </Typography>
           <Typography sx={{ mt: 1, fontWeight: 'bold', color: 'error.main', fontSize: 13 }}>
             This action cannot be undone.
@@ -290,7 +295,7 @@ export default function QueueMonitorPage() {
             Are you sure you want to clear task history?
           </Typography>
           <Typography sx={{ mt: 1, color: 'text.disabled', fontSize: 13 }}>
-            This will remove all completed, failed, and cancelled tasks from the display.
+            This permanently deletes all completed, failed, and cancelled task records from the queue history.
           </Typography>
           <Typography sx={{ mt: 1, fontWeight: 'bold', color: 'warning.main', fontSize: 13 }}>
             This action cannot be undone.

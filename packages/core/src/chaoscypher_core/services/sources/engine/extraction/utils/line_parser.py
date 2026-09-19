@@ -190,6 +190,64 @@ def safe_float(value: str, default: float = 0.8) -> float:
     return default
 
 
+_JUSTIFICATION_MAX_CHARS = 300
+_JUSTIFICATION_MAX_SENTENCES = 2
+# Deliberation leaking from a model that reasons inline (untagged <think>): a
+# justification that argues with itself is not evidence. Found by the
+# 2026-09-15 media audit — a parent_of edge at confidence 0.9 whose stored
+# justification concluded "I will link 9 to 3 via interacts_with".
+_REASONING_MARKERS = re.compile(
+    r"\b(?:Wait|Hmm|Let['\u2019]s|Let us|Let me|Actually|I will|I['\u2019]ll|I must|the prompt)\b"
+)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+
+
+def sanitize_justification(
+    text: str,
+    *,
+    max_chars: int = _JUSTIFICATION_MAX_CHARS,
+    max_sentences: int = _JUSTIFICATION_MAX_SENTENCES,
+) -> str:
+    """Keep a relationship justification to evidence prose.
+
+    Blank it (and log) when it carries reasoning markers — the model
+    deliberating instead of citing — and otherwise keep at most
+    ``max_sentences`` sentences and ``max_chars`` characters, cutting on a
+    sentence or word boundary so no trailing fragment survives.
+
+    Args:
+        text: Raw justification field from a relationship line.
+        max_chars: Hard cap on the returned length.
+        max_sentences: How many leading sentences to keep.
+
+    Returns:
+        The sanitized justification, or ``""`` when it was deliberation.
+
+    """
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return ""
+    if _REASONING_MARKERS.search(cleaned):
+        logger.warning(
+            "relationship_justification_rejected",
+            reason="reasoning_markers",
+            justification=cleaned[:100],
+        )
+        return ""
+    kept = " ".join(_SENTENCE_END.split(cleaned)[:max_sentences])
+    if len(kept) > max_chars:
+        cut = kept[:max_chars]
+        boundary = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+        if boundary > 0:
+            kept = cut[: boundary + 1]
+        elif " " in cut:
+            kept = cut[: cut.rfind(" ")]
+        else:
+            kept = cut
+        logger.debug("relationship_justification_truncated", chars=len(cleaned))
+    return kept.rstrip()
+
+
 def parse_entity_line(
     line: str, minimum_alias_length: int = _DEFAULT_MIN_ALIAS_LENGTH
 ) -> dict[str, Any] | None:
@@ -460,7 +518,7 @@ def parse_relationship_line(line: str) -> dict[str, Any] | None:
         "target": target,
         "type": rel_type,
         "confidence": safe_float(confidence_str),
-        "justification": unescape_field(justification_raw.strip()),
+        "justification": sanitize_justification(unescape_field(justification_raw.strip())),
         "sent_ref": sent_ref,
     }
 

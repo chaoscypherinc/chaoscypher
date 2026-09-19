@@ -21,6 +21,7 @@ AsyncMock backend pattern (no sibling-test imports under importlib mode).
 from __future__ import annotations
 
 import json
+import threading
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -244,3 +245,33 @@ async def test_cancel_by_metadata_raced_task_keeps_hash_gets_flag() -> None:
     args = valkey.evalsha.await_args_list[1].args
     assert args[3] == f"queue:{QUEUE_OPERATIONS}:running"
     assert args[6] == "srem"
+
+
+# ---------------------------------------------------------------------------
+# Durable persist is offloaded off the event loop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_persist_runs_off_the_event_loop_thread() -> None:
+    """The durable cancel write must not run inline on the caller's loop.
+
+    ``_persist_cancellation_to_db`` is synchronous and opens its own adapter
+    session (connect -> SELECT -> commit -> disconnect, with a busy-retry
+    ``time.sleep`` under writer contention). Called bare, it blocked the
+    Cortex event loop once per task, so ``POST /queue/cancel-all`` wedged the
+    whole API for the length of the batch.
+    """
+    client, _valkey = _make_client(status="running")
+    loop_thread = threading.current_thread()
+    seen: list[threading.Thread] = []
+
+    def _record(*_args: object, **_kwargs: object) -> None:
+        seen.append(threading.current_thread())
+
+    client._persist_cancellation_to_db = _record  # type: ignore[method-assign]
+
+    await client.cancel_task("t-1")
+
+    assert seen, "the durable cancellation persist never ran"
+    assert seen[0] is not loop_thread

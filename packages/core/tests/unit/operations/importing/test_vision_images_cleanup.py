@@ -208,3 +208,74 @@ def test_cleanup_vision_images_swallows_oserror(
     # Directory still there because rmtree was forced to fail; the helper
     # logged a warning and returned cleanly.
     assert images_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_resume_after_vision_failure_keeps_completed_vision_pages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The F32 sweep is first-pass-only: a resume failure must keep the PNGs.
+
+    One ``try`` covers both the first indexing pass and the
+    ``resume_after_vision`` pass. On the resume pass the vision phase has
+    already finished — every page row is terminal and nothing re-renders
+    them — so sweeping destroys completed output, including on the failure
+    whose own message tells the operator to inspect those very pages.
+    """
+    from chaoscypher_core.operations.importing import indexing_handler
+    from chaoscypher_core.settings import EngineSettings
+
+    images_dir = indexing_handler.vision_images_dir(
+        data_dir=tmp_path, database_name="default", source_id="src_resume"
+    )
+    images_dir.mkdir(parents=True, exist_ok=True)
+    (images_dir / "page_1.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    fake_registry = MagicMock()
+    fake_registry.load_document.return_value = [{"content": "x", "metadata": {}}]
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.loaders.get_loader_registry",
+        lambda *a, **kw: fake_registry,
+    )
+    monkeypatch.setattr(
+        indexing_handler,
+        "_extract_text",
+        lambda **kw: (
+            "x" * 200,
+            {"lines_removed": 0, "paragraphs_deduplicated": 0, "chars_removed": 0},
+        ),
+    )
+    monkeypatch.setattr(indexing_handler, "event_bus", MagicMock())
+
+    chunking_service = MagicMock()
+    chunking_service.create_chunks = AsyncMock(side_effect=RuntimeError("resume boom"))
+    chunking_service.store_chunks = MagicMock()
+
+    adapter = MagicMock()
+    adapter.list_vision_page_descriptions.return_value = []
+
+    engine_settings = EngineSettings(current_database="default")
+    engine_settings.paths.data_dir = str(tmp_path)
+    settings = MagicMock()
+    settings.priorities.background = 50
+
+    with pytest.raises(RuntimeError, match="resume boom"):
+        await indexing_handler._run_indexing(
+            file_id="src_resume",
+            file_info={"filename": "x.pdf"},
+            filepath="/tmp/x.pdf",
+            analysis_depth="full",
+            enable_normalization=False,
+            enable_vision=True,
+            adapter=adapter,
+            chunking_service=chunking_service,
+            engine_settings=engine_settings,
+            settings=settings,
+            database_name="default",
+            resume_after_vision=True,
+        )
+
+    assert (images_dir / "page_1.png").exists(), (
+        "resume-pass failure deleted PNGs from an already-completed vision phase"
+    )
+    adapter.fail_indexing.assert_called_once_with("src_resume", "resume boom")

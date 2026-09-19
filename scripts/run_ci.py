@@ -81,6 +81,7 @@ _STEPS: dict[str, list[Command] | str] = {
         ("uv run python scripts/check_no_internal_refs.py", None),
         ("uv run python scripts/check_spdx_headers.py", None),
         ("uv run python scripts/check_metrics_artifacts.py", None),
+        ("uv run python scripts/check_media_manifest.py", None),
     ],
     "docstrings": [
         (
@@ -112,6 +113,19 @@ _STEPS: dict[str, list[Command] | str] = {
     "docs-build": [
         ("npm ci", DOCS),
         ("npm run build", DOCS),
+    ],
+    # The Python API reference under packages/docs/docs/reference/python/ is
+    # committed generated Markdown (see packages/docs/README.md). PR #603
+    # hand-edited protocols.md and drifted from the generator's output with
+    # nothing to catch it. This regenerates into a temp dir and diffs against
+    # the committed files, so a stale reference fails CI instead of shipping
+    # quietly. `--with griffe` keeps griffe out of the project's own
+    # dependencies while still working on a fresh clone.
+    "docs-generated": [
+        (
+            "uv run --with griffe python packages/docs/scripts/generate_api_docs.py --check",
+            None,
+        ),
     ],
     "license-check": [
         ("uv run python scripts/license_check_python.py", None),
@@ -201,6 +215,7 @@ _COMMON = [
     "deadcode",
     "bundle-size",
     "docs-build",
+    "docs-generated",
     "license-check",
     "test-cov-interface",
 ]

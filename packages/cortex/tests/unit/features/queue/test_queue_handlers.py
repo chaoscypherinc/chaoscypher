@@ -108,6 +108,23 @@ class TestQueueTaskHandler:
             metadata={"user": "a"},
         )
 
+    @pytest.mark.asyncio
+    async def test_queue_task_omitted_priority_reaches_service_as_none(self) -> None:
+        """An omitted ``priority`` is forwarded as None.
+
+        The service then applies ``settings.priorities.background``; a literal
+        50 default on the request model made that setting unreachable from the API.
+        """
+        service = _mock_service()
+        service.enqueue_task.return_value = QueueTaskResponse(task_id="new-2")
+
+        request = QueueTaskRequest(queue="operations", operation="import_ccx", data={})
+        assert request.priority is None
+
+        await queue_task(_="test-user", request=request, queue_service=service)
+
+        assert service.enqueue_task.await_args.kwargs["priority"] is None
+
 
 # ---------------------------------------------------------------------------
 # list_tasks handler

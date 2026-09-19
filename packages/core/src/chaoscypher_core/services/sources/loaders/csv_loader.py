@@ -79,7 +79,9 @@ class CSVLoader:
         check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
-        encoding_used, text, replacement_chars_count = detect_encoding(path)
+        encoding_used, text, replacement_chars_count = detect_encoding(
+            path, settings=self.settings.loader if self.settings is not None else None
+        )
 
         sample = text[: self._sample_bytes]
         sniffer = csv.Sniffer()

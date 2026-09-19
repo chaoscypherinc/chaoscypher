@@ -55,6 +55,10 @@ def _make_chunk_task_row(
         database_name="default",
         chunk_index=0,
     )
+    # Claim the task. ``complete_chunk_task_with_output`` is guarded on
+    # ``status == "running"``, so a row left at the ``pending`` default is
+    # not completable — the real handler always claims before completing.
+    assert adapter.start_chunk_task_with_input(task_id, "chunk text") == 1
 
 
 def _read_back(adapter: SqliteAdapter, task_id: str) -> dict:

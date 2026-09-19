@@ -40,7 +40,7 @@ Run a search query using keyword, semantic, or hybrid strategies.
 |------------|----------------------------------------------------------|
 | `keyword`  | Full-text keyword search against the FTS index           |
 | `semantic` | Vector similarity search using embeddings                |
-| `hybrid`   | Semantic search with automatic keyword fallback if no vector results are found |
+| `hybrid`   | Runs keyword and semantic search together and keeps each result's higher score; very short queries (under 3 characters) or a search error fall back to keyword-only. The keyword arm only matches graph nodes, so chunk results always come from the semantic arm. |
 
 :::note[Limit behavior]
 
@@ -58,11 +58,11 @@ curl "http://localhost/api/v1/search?q=machine+learning&search_type=keyword"
 # Semantic search
 curl "http://localhost/api/v1/search?q=artificial+intelligence&search_type=semantic"
 
-# Hybrid search (semantic with keyword fallback)
+# Hybrid search (keyword + semantic, higher score wins)
 curl "http://localhost/api/v1/search?q=neural+networks&search_type=hybrid"
 
-# Keyword search with a custom result limit
-curl "http://localhost/api/v1/search?q=deep+learning&search_type=keyword&limit=10"
+# Hybrid search with a custom result limit
+curl "http://localhost/api/v1/search?q=deep+learning&search_type=hybrid&limit=10"
 ```
 
 ### Response
@@ -98,9 +98,11 @@ curl "http://localhost/api/v1/search?q=deep+learning&search_type=keyword&limit=1
       "chunk": null
     }
   ],
-  "type": "keyword"
+  "type": "hybrid"
 }
 ```
+
+Only `semantic` and `hybrid` searches can return chunk results — `keyword` search matches graph nodes only.
 
 #### SearchResponse
 

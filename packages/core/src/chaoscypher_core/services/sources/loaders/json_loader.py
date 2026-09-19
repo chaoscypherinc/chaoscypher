@@ -85,7 +85,9 @@ class JSONLoader:
         check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
-        encoding_used, text, replacement_chars_count = detect_encoding(path)
+        encoding_used, text, replacement_chars_count = detect_encoding(
+            path, settings=self.settings.loader if self.settings is not None else None
+        )
 
         if path.suffix.lower() in {".jsonl", ".ndjson"}:
             return self._load_jsonl(text, path, encoding_used, replacement_chars_count)

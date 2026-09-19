@@ -95,7 +95,8 @@ def _build_mock_client(
         await valkey.persist(f"queue:task:{task_id}")
         await valkey.zadd(f"queue:{queue_name}:pending", {task_id: priority})
         await valkey.srem(f"queue:{queue_name}:running", task_id)
-        await valkey.hincrby(f"queue:task:{task_id}", "attempts", 1)
+        # requeue_atomic.lua deliberately does not touch ``attempts`` — the
+        # budget is charged once per dispatch by the worker at claim time.
         return "__ok__"
 
     client.requeue_task_atomic = AsyncMock(side_effect=_requeue_atomic)

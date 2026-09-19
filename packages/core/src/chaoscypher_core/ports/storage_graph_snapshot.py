@@ -103,6 +103,15 @@ class GraphBreakdownQueryProtocol(Protocol):
         """Total node count for all sources in database_name (no source filter)."""
         ...
 
+    def count_source_attributed_nodes(self, database_name: str) -> int:
+        """Node count restricted to rows carrying a source_id.
+
+        The like-for-like live counterpart of the snapshot's persisted
+        ``total_nodes``, which is summed per source and therefore excludes
+        NULL-source rows.
+        """
+        ...
+
     def count_edges(
         self,
         database_name: str,

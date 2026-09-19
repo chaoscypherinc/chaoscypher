@@ -263,6 +263,9 @@ def _seed_source_job_task(
         database_name="default",
         chunk_index=0,
     )
+    # Claim the task: the completion write is guarded on
+    # ``status == "running"``, matching the real handler's lifecycle.
+    assert adapter.start_chunk_task_with_input(task_id, "chunk text") == 1
 
 
 def test_valid_round_trip_through_adapter(adapter: SqliteAdapter) -> None:

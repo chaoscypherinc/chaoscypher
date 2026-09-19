@@ -395,7 +395,7 @@ Cancels tasks using one of two modes: **batch** (by task IDs) or **metadata** (b
 
 :::note
 
-You must provide either `task_ids` or `metadata`, but not both. Batch mode is preferred to avoid SCAN overhead.
+Provide `task_ids` or `metadata`. If both are supplied, `task_ids` wins and the `metadata` filter is ignored. Batch mode is preferred to avoid SCAN overhead.
 
 :::
 
@@ -448,6 +448,7 @@ You must provide either `task_ids` or `metadata`, but not both. Batch mode is pr
 | Status | Description |
 |--------|-------------|
 | `400` | Must provide either `task_ids` or `metadata` |
+| `422` | Body validation failed (unknown field, wrong type, `queue` name too long) |
 | `503` | Queue service unavailable |
 
 #### curl Example
@@ -756,11 +757,18 @@ stateDiagram-v2
     queued --> running
     running --> completed
     running --> failed
-    failed --> queued: retry
+    queued --> cancelled
+    running --> cancelled
+    failed --> retried: retry
+    retried --> [*]
 
     classDef default fill:#12121e,stroke:#7b2ff7,color:#e0e0f0
-    class queued,running,completed,failed default
+    class queued,running,completed,failed,cancelled,retried default
 ```
+
+Retry does not requeue the failed task in place: it marks the original
+`retried` (with `retried_at` and `retried_to`) and enqueues a **new** task,
+returned as `new_task_id`, which starts its own life at `queued`.
 
 | Status | Description |
 |--------|-------------|
@@ -847,7 +855,7 @@ Returned by the list tasks endpoint.
 |-------|------|-------------|
 | `data` | object[] | List of task detail objects |
 | `pagination` | PaginationInfo | Pagination metadata |
-| `total_in_queue` | integer | Active tasks across queues (queued + running) |
+| `total_in_queue` | integer or `null` | Active tasks across queues (queued + running); `null` when queue stats are unavailable — the count is unknown, do not substitute 0 |
 | `queues` | string[] or null | Queue filter applied, or `null` if unfiltered |
 
 ### PaginationInfo

@@ -202,6 +202,31 @@ class GraphBreakdownQueryRepository:
         result = self._session.exec(stmt).one()
         return int(result) if result is not None else 0
 
+    def count_source_attributed_nodes(self, database_name: str) -> int:
+        """Node count restricted to rows that carry a ``source_id``.
+
+        The snapshot's persisted ``total_nodes`` is built by summing
+        ``count_nodes_per_source``, which drops rows whose ``source_id`` is
+        NULL. Comparing that total against :meth:`count_all_nodes` — which
+        applies no source filter — makes the drift formula subtract two
+        different row sets, so a single manual/legacy node pins the snapshot
+        permanently stale. This is the like-for-like live counterpart.
+
+        Args:
+            database_name: Database filter.
+
+        Returns:
+            Integer count of source-attributed nodes (0 when there are none).
+
+        """
+        # mypy can't see SQLModel column attrs as ColumnElement here.
+        stmt = select(func.count(GraphNode.id)).where(  # type: ignore[arg-type]
+            GraphNode.database_name == database_name,
+            col(GraphNode.source_id).is_not(None),
+        )
+        result = self._session.exec(stmt).one()
+        return int(result) if result is not None else 0
+
     def count_edges(
         self,
         database_name: str,

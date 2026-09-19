@@ -206,7 +206,7 @@ function LexiconHub() {
         <div className="lexicon-shot-wrap">
           <img
             className="lexicon-shot"
-            src="/img/screenshots/lexicon-hub.png"
+            src="/img/screenshots/templates-list.png"
             alt=""
             loading="lazy"
           />

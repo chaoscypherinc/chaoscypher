@@ -4,6 +4,18 @@
 
 Single-user: one password hash, many API keys. Never stores plaintext.
 Atomic writes via tempfile + os.replace so the file is never partially written.
+
+API-key records also carry a ``selector`` — a keyed HMAC of the plaintext key
+(see ``api_keys.compute_api_key_selector``) — used as a lookup index so that
+verification bcrypt-checks one candidate instead of every stored hash. The
+HMAC secret lives in this same file as ``api_key_selector_secret``, minted on
+first need. It is only an index: a leaked credentials file reveals no key
+material, because bcrypt remains the authenticator.
+
+Records written before selectors existed simply lack the field; they are
+transparently migrated on their first successful verify (see
+``api_key_lookup``). There is no file-format version stamp and none is needed
+— both readers and writers treat ``selector`` as optional.
 """
 
 from __future__ import annotations
@@ -13,10 +25,12 @@ import secrets
 import threading
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
+import structlog
 from passlib.hash import bcrypt  # type: ignore[import-untyped]
 
+from chaoscypher_core.services.local_auth.api_keys import generate_selector_secret
 from chaoscypher_core.services.local_auth.errors import (
     ApiKeyNotFound,
     CorruptCredentialsFile,
@@ -35,13 +49,18 @@ if TYPE_CHECKING:
 
 
 class ApiKeyRecord(TypedDict):
-    """Persisted API key record (includes hash)."""
+    """Persisted API key record (includes hash).
+
+    ``selector`` is absent on records written before keyed-selector lookup
+    landed; those are migrated on first successful verify.
+    """
 
     id: str
     name: str
     hash: str
     created_at: str
     last_used_at: str | None
+    selector: NotRequired[str]
 
 
 class UserRecord(TypedDict):
@@ -52,12 +71,19 @@ class UserRecord(TypedDict):
 
 
 class CredentialsData(TypedDict):
-    """Full on-disk shape of the credentials file."""
+    """Full on-disk shape of the credentials file.
+
+    ``api_key_selector_secret`` is absent until the first API key is minted
+    or verified on an install that has the selector index.
+    """
 
     user: UserRecord
     api_keys: list[ApiKeyRecord]
     session_epoch: int
+    api_key_selector_secret: NotRequired[str]
 
+
+logger = structlog.get_logger(__name__)
 
 BCRYPT_ROUNDS = 12
 
@@ -245,12 +271,16 @@ class CredentialsFile:
         """
         return self._load()["session_epoch"]
 
-    def add_api_key(self, name: str, key_hash: str) -> str:
+    def add_api_key(self, name: str, key_hash: str, *, selector: str | None = None) -> str:
         """Append a new API key record and return its generated id.
 
         Args:
             name: Human-readable label for the key.
             key_hash: Pre-hashed secret (callers hash before calling).
+            selector: Optional keyed lookup selector for the same key (see
+                ``api_keys.compute_api_key_selector``). Omitting it writes a
+                selector-less record, which verifies through the migration
+                loop — kept optional so existing callers keep working.
 
         Returns:
             The generated key id (e.g. ``k_ab12...``).
@@ -269,21 +299,116 @@ class CredentialsFile:
                 "created_at": datetime.now(UTC).isoformat(),
                 "last_used_at": None,
             }
+            if selector is not None:
+                record["selector"] = selector
             data["api_keys"].append(record)
             self._atomic_write(data)
             return key_id
 
-    def list_api_keys(self) -> list[ApiKeyRecord]:
-        """Return API key records with the ``hash`` field blanked out.
+    def get_or_create_api_key_selector_secret(self) -> str:
+        """Return the per-install selector secret, minting it on first need.
 
-        Safe to return to callers/UI — no secret material is leaked.
+        The secret only keys the lookup index, never the authentication:
+        every candidate still has to pass bcrypt. It lives in the credentials
+        file so it is backed up, restored, and permissioned (0600) exactly
+        like the hashes it indexes — losing one without the other would
+        strand the keys either way.
+
+        Returns:
+            Hex-encoded secret, 64 characters.
+
+        Raises:
+            CredentialsNotInitialized: If no credentials file exists.
+            CorruptCredentialsFile: If the stored secret is not valid hex.
+                Every bearer verify reaches this, so it must surface as a
+                typed local-auth error rather than a bare stdlib exception
+                from ``bytes.fromhex`` (CC045 class). The error names the
+                file, never the secret.
+
+        """
+        existing = self._load().get("api_key_selector_secret")
+        if existing:
+            try:
+                bytes.fromhex(existing)
+            except ValueError as exc:
+                self._log_corrupt("selector_secret_not_hex")
+                raise CorruptCredentialsFile(str(self._path)) from exc
+            return existing
+        with self._locked():
+            data = self._load()
+            # Re-check inside the lock: another worker may have won the race.
+            already = data.get("api_key_selector_secret")
+            if already:
+                return already
+            secret = generate_selector_secret()
+            data["api_key_selector_secret"] = secret
+            self._atomic_write(data)
+            return secret
+
+    def find_api_key_by_selector(self, selector: str) -> tuple[str, str] | None:
+        """Return ``(id, hash)`` for the record carrying ``selector``, or None.
+
+        Raises:
+            CredentialsNotInitialized: If no credentials file exists.
+
+        """
+        for rec in self._load()["api_keys"]:
+            if rec.get("selector") == selector:
+                return (rec["id"], rec["hash"])
+        return None
+
+    def get_legacy_api_key_hashes(self) -> list[tuple[str, str]]:
+        """Return ``(id, hash)`` pairs for records that carry no selector.
+
+        These are the only records the migration loop has to bcrypt-scan;
+        the list drains to empty as each key is used once.
+
+        Raises:
+            CredentialsNotInitialized: If no credentials file exists.
+
+        """
+        return [
+            (rec["id"], rec["hash"]) for rec in self._load()["api_keys"] if not rec.get("selector")
+        ]
+
+    def set_api_key_selector(self, key_id: str, selector: str) -> None:
+        """Backfill the lookup selector on an existing record.
+
+        Silent no-op if the key is missing (it may have been revoked between
+        the verify and this write).
+
+        Args:
+            key_id: Id returned by :meth:`add_api_key`.
+            selector: Keyed lookup selector for that key.
+
+        Raises:
+            CredentialsNotInitialized: If no credentials file exists.
+
+        """
+        with self._locked():
+            data = self._load()
+            for rec in data["api_keys"]:
+                if rec["id"] == key_id:
+                    rec["selector"] = selector
+                    self._atomic_write(data)
+                    return
+
+    def list_api_keys(self) -> list[ApiKeyRecord]:
+        """Return API key records with the ``hash`` and ``selector`` stripped.
+
+        Safe to return to callers/UI — no secret material is leaked. The
+        selector is only an index, but it is derived from the plaintext key,
+        so it never leaves the storage layer either.
 
         Raises:
             CredentialsNotInitialized: If no credentials file exists.
 
         """
         data = self._load()
-        return [{**rec, "hash": ""} for rec in data["api_keys"]]
+        return [
+            {**{k: v for k, v in rec.items() if k != "selector"}, "hash": ""}  # type: ignore[typeddict-item]
+            for rec in data["api_keys"]
+        ]
 
     def get_api_key_hashes(self) -> list[tuple[str, str]]:
         """Return ``(id, hash)`` pairs for internal verification use only.
@@ -345,6 +470,7 @@ class CredentialsFile:
         try:
             return bool(bcrypt.verify(password, password_hash))
         except ValueError as exc:
+            self._log_corrupt("unparseable_password_hash")
             raise CorruptCredentialsFile(str(self._path)) from exc
 
     def _load(self) -> CredentialsData:
@@ -356,11 +482,33 @@ class CredentialsFile:
 
         """
         if not self._path.exists():
+            self._log_not_initialized()
             raise CredentialsNotInitialized(str(self._path))
         try:
             return json.loads(self._path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
         except json.JSONDecodeError as exc:
+            self._log_corrupt("invalid_json")
             raise CorruptCredentialsFile(str(self._path)) from exc
+
+    def _log_corrupt(self, reason: str) -> None:
+        """Record the path of an unreadable credentials file, operator-side only.
+
+        ``CorruptCredentialsFile`` deliberately carries no path in its message
+        — it maps to a 401 whose body is rendered to the caller, and the
+        unauthenticated bearer arm can reach it. The operator still needs to
+        know which file to look at, so it goes here instead.
+        """
+        logger.error("corrupt_credentials_file", path=str(self._path), reason=reason)
+
+    def _log_not_initialized(self) -> None:
+        """Record the path of a missing credentials file, operator-side only.
+
+        ``CredentialsNotInitialized`` deliberately carries no path in its
+        message, for the same reason ``CorruptCredentialsFile`` does not: the
+        message is rendered into a 401 body. This is the ordinary pre-setup
+        state rather than a fault, so it logs at info level.
+        """
+        logger.info("credentials_not_initialized", path=str(self._path))
 
     def _atomic_write(self, data: CredentialsData) -> None:
         """Write ``data`` atomically: tempfile -> chmod 0600 -> os.replace."""

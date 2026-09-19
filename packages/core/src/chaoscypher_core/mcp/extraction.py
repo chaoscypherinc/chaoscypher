@@ -187,8 +187,8 @@ def _build_relationship_instructions(
         "- Every entity should have at least one relationship. "
         "Aim for at least N relationships for N entities.",
         "- Prefer specific types (spouse_of, wrote, parent_of) over generic ones (related_to)",
-        "- JUSTIFICATION: Full sentence (50+ characters) explaining "
-        "the relationship with text evidence",
+        "- JUSTIFICATION: One sentence (50-300 characters) quoting or paraphrasing "
+        "the cited sentence; evidence only, no deliberation or alternatives",
     ]
 
     if relationship_examples:

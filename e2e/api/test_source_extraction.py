@@ -54,8 +54,10 @@ class TestSourceExtraction:
         """Getting extraction status for an indexed source works."""
         source_id = self._upload_indexed_source(client, sample_data_dir, "extraction_status.txt")
         resp = client.get(f"/api/v1/sources/{source_id}/extraction")
-        # Either returns 200 with state info, or 404 if no job yet
-        assert resp.status_code in (200, 404)
+        # 404 requires the source itself to be missing; this fixture just
+        # uploaded and indexed it. "No job yet" is a 200 whose payload says
+        # so, which is the behaviour this test is named for.
+        assert resp.status_code == 200
 
     def test_extraction_tasks_endpoint(self, client: httpx.Client, sample_data_dir: str) -> None:
         """Extraction tasks endpoint returns paginated list."""

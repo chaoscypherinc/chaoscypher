@@ -246,3 +246,87 @@ async def test_finalize_handler_skips_when_source_paused() -> None:
     )
     assert result == {"skipped": "paused"}
     adapter.start_extraction_job.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 6. handle_embed_chunks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_embedding_handler_skips_when_source_paused() -> None:
+    """The one guarded handler that had no skip-paused pin (2026-09-17 audit)."""
+    from chaoscypher_core.operations.importing.embedding_handler import handle_embed_chunks
+
+    adapter = _paused_source_adapter()
+    adapter.database_name = "default"
+    indexing_service = MagicMock()
+
+    result = await handle_embed_chunks(
+        data={"source_id": "s-1", "file_info": {"filepath": "/tmp/test.pdf"}},
+        source_repository=adapter,
+        indexing_service=indexing_service,
+        metadata={"database_name": "default"},
+    )
+    assert result == {"skipped": "paused"}
+    indexing_service.embed_chunks.assert_not_called()
+    adapter.complete_indexing.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 7. Vision handlers — the fan-out that kept calling the LLM through a pause
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vision_page_handler_skips_when_source_paused() -> None:
+    from chaoscypher_core.operations.importing.vision_operations_service import (
+        VisionOperationsService,
+    )
+
+    adapter = _paused_source_adapter()
+    service = VisionOperationsService(
+        adapter=adapter, settings=MagicMock(), database_name="default"
+    )
+
+    result = await service._handle_vision_page(
+        data={"page_id": "p-1", "job_id": "vj-1", "source_id": "s-1"}
+    )
+    assert result == {"skipped": "paused"}
+    # Nothing past the guard ran: the row scan is the handler's first real step.
+    adapter.list_vision_page_descriptions.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vision_page_handler_skips_when_system_paused() -> None:
+    from chaoscypher_core.operations.importing.vision_operations_service import (
+        VisionOperationsService,
+    )
+
+    adapter = _system_paused_adapter()
+    service = VisionOperationsService(
+        adapter=adapter, settings=MagicMock(), database_name="default"
+    )
+
+    result = await service._handle_vision_page(
+        data={"page_id": "p-1", "job_id": "vj-1", "source_id": "s-1"}
+    )
+    assert result == {"skipped": "paused"}
+    adapter.list_vision_page_descriptions.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_vision_finalize_handler_skips_when_source_paused() -> None:
+    from chaoscypher_core.operations.importing.vision_finalizer import handle_vision_finalize
+
+    adapter = _paused_source_adapter()
+
+    result = await handle_vision_finalize(
+        {"source_id": "s-1", "job_id": "vj-1", "database_name": "default"},
+        adapter=adapter,
+        settings=MagicMock(),
+    )
+    assert result == {"skipped": "paused"}
+    # The guard runs before the job lookup, so no state is read or mutated.
+    adapter.get_vision_job.assert_not_called()
+    adapter.transition_source_status.assert_not_called()

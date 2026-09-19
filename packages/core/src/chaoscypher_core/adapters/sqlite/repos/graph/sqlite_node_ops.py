@@ -268,18 +268,41 @@ class NodeOperationsMixin(GraphMixinBase):
             self.session.maybe_commit()
         return changed
 
-    def get_node(self, node_id: str) -> Node | None:
-        """Get a node by ID."""
+    def get_node(self, node_id: str, *, include_embedding: bool = True) -> Node | None:
+        """Get a node by ID.
+
+        ``include_embedding=False`` leaves the 1024-float JSON embedding out
+        of the query (same contract as ``get_nodes_batch``). The default
+        stays ``True``: ``GET /nodes/{id}`` and the auto-embed trigger's
+        skip check both read it.
+        """
         statement = select(GraphNode).where(
             GraphNode.id == node_id,
             GraphNode.database_name == self.database_name,
         )
+        if not include_embedding:
+            statement = statement.options(
+                load_only(
+                    GraphNode.id,
+                    GraphNode.database_name,
+                    GraphNode.graph_name,
+                    GraphNode.template_id,
+                    GraphNode.label,
+                    GraphNode.entity_type,
+                    GraphNode.properties,
+                    GraphNode.position_x,
+                    GraphNode.position_y,
+                    GraphNode.source_id,
+                    GraphNode.created_at,
+                    GraphNode.updated_at,
+                )
+            )
         db_node = self.session.exec(statement).first()
 
         if db_node is None:
             return None
 
-        return self._db_node_to_model(db_node)
+        return self._db_node_to_model(db_node, include_embedding=include_embedding)
 
     def list_nodes(
         self,

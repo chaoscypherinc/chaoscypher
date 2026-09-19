@@ -63,6 +63,9 @@ def _seed(adapter: SqliteAdapter, *, source_id: str, job_id: str, task_id: str) 
         database_name="default",
         chunk_index=0,
     )
+    # Claim the task: the completion write is guarded on
+    # ``status == "running"``, matching the real handler's lifecycle.
+    assert adapter.start_chunk_task_with_input(task_id, "chunk text") == 1
 
 
 def test_chunk_task_persists_finish_reason_and_aborted_flag(

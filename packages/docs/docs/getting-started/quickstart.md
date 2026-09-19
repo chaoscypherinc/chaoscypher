@@ -330,7 +330,7 @@ Chat uses the same model as extraction — if the pull from step 1 is still runn
 
 The AI uses RAG to search your indexed content and provides answers with citations linking back to specific source chunks.
 
-![Chat interface with AI response and source citations](/img/screenshots/chat-conversation.png)
+![Chat page with an AI answer ranking the top entities by PageRank, with entity chips](/img/screenshots/chat-conversation.png)
 
 :::tip[Scoped chat]
 
@@ -413,7 +413,7 @@ Chaos Cypher supports multiple isolated databases:
 2. Create a new database for a different project or topic
 3. Switch between databases — each has its own sources, graph, and chat history
 
-![Settings page with database management panel](/img/screenshots/settings-database-selector.png)
+![Settings Models tab with the database dropdown open, showing database sizes](/img/screenshots/settings-database-selector.png)
 
 </TabItem>
 <TabItem value="cli" label="CLI">

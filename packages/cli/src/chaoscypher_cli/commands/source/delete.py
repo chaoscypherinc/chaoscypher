@@ -23,7 +23,9 @@ def delete(file_id: str, force: bool, database: str) -> None:
     """Delete an ingested file record.
 
     FILE_ID is the source_processing file identifier.
-    This removes the staging file and source_processing record.
+    This removes the source record, orphaned graph nodes, search-index
+    rows, the staging file, and any rendered vision images — the same
+    cascade the API performs.
 
     Example:
         chaoscypher source delete if_abc123def456
@@ -49,8 +51,23 @@ def delete(file_id: str, force: bool, database: str) -> None:
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
 
-        # delete_source() handles cascade deletion including the staged file on disk
-        ctx.storage_adapter.delete_source(file_id, ctx.database_name)
+        # Same cascade as the API path: SQL cascade + orphaned graph nodes in
+        # one transaction, then vector rows, staged file, and vision images.
+        from chaoscypher_core.services.graph.management.source import SourceService
+
+        service = SourceService(
+            repository=ctx.storage_adapter,
+            database_name=ctx.database_name,
+            settings=ctx.settings,
+        )
+        deleted = service.delete_source(
+            file_id,
+            graph_repo=ctx.graph_repository,
+            search_repo=ctx.search_repository,
+        )
+        if not deleted:
+            console.print(f"[red]File not found:[/red] {file_id}")
+            sys.exit(1)
 
         console.print("[green]✓ File deleted successfully[/green]")
 

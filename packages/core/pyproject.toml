@@ -122,6 +122,11 @@ dev = [
     "pytest-asyncio>=1.3.0,<2",
     "pytest-xdist>=3.6.0,<4",  # parallel test execution (-n auto)
     "hypothesis>=6.115.0,<7",  # property-based tests for foundational helpers (tests/property/)
+    # [lua] pulls in lupa so the queue's shipped .lua scripts can be executed
+    # for real in-process (tests/unit/queue/test_requeue_atomic_lua.py) instead
+    # of having their effect hand-written in Python. Dev-only: the license and
+    # audit gates resolve the runtime closure with `uv export --no-dev`.
+    "fakeredis[lua]>=2.35.0,<3",
     "diff-cover>=9.6.0,<10",   # PR-scoped coverage gate (changed lines only)
     "import-linter>=2.0,<3",   # Python module boundary enforcement (replaces tach for workspace compatibility)
     # semgrep intentionally NOT in [dev] extras — it pins click<8.2 which

@@ -372,11 +372,29 @@ async def test_retry_task_guarded_requeue_success_requeues() -> None:
 
 
 @pytest.mark.asyncio
-async def test_startup_reconcile_noop_without_queue_client() -> None:
-    """No queue_client → startup reconcile is a no-op (reconcile_queue never called)."""
+async def test_startup_reconcile_noop_without_queue_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No queue_client → startup reconcile is a no-op (reconcile_queue never called).
+
+    The claim is only falsifiable with a recorder in place of
+    ``reconcile_queue``: with the bare "does not raise" form, replacing the
+    ``_queue_client is None`` guard with a call still passed.
+    """
+    import chaoscypher_core.queue.worker as worker_mod
+
+    calls: list[Any] = []
+
+    async def _recording_reconcile(*args: Any, **kwargs: Any) -> Any:
+        calls.append((args, kwargs))
+        return MagicMock()
+
+    monkeypatch.setattr(worker_mod, "reconcile_queue", _recording_reconcile)
+
     worker, _ = _make_worker(queue_client=None)
-    # Must not raise; reconcile_queue is never reached.
     await worker._startup_reconcile()
+
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -551,16 +569,26 @@ async def test_drain_active_tasks_cancels_pending() -> None:
 
 
 def test_request_shutdown_flips_running_once() -> None:
-    """_request_shutdown flips _running to False; a second call is a no-op."""
+    """_request_shutdown flips _running to False; a second call is a no-op.
+
+    The early return is observed through the ``shutdown_requested`` log
+    line: re-asserting ``_running is False`` after the second call was
+    tautological (it was already False), so deleting the guard passed.
+    """
+    import structlog.testing
+
     worker, _ = _make_worker()
     worker._running = True
 
-    worker._request_shutdown()
-    assert worker._running is False
+    with structlog.testing.capture_logs() as logs:
+        worker._request_shutdown()
+        assert worker._running is False
+        # Second call returns early (already shutting down) without logging again.
+        worker._request_shutdown()
 
-    # Second call returns early (already shutting down) without error.
-    worker._request_shutdown()
-    assert worker._running is False
+    assert [e["event"] for e in logs if e["event"] == "shutdown_requested"] == [
+        "shutdown_requested"
+    ]
 
 
 # ---------------------------------------------------------------------------

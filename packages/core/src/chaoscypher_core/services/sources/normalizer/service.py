@@ -548,39 +548,6 @@ class ContentNormalizerService:
 
         return ContentType.TEXT
 
-    def _infer_type_from_metadata(self, metadata: dict) -> ContentType | None:
-        """Infer content type from document metadata.
-
-        Args:
-            metadata: Document metadata from loader.
-
-        Returns:
-            Inferred ContentType or None.
-
-        """
-        # Check explicit format field
-        if "format" in metadata:
-            format_val = metadata["format"].lower()
-            if format_val == "markdown":
-                return ContentType.MARKDOWN
-            if format_val == "html":
-                return ContentType.HTML
-
-        # Check extraction method
-        if metadata.get("extraction_method") == "pypdf":
-            return ContentType.PDF
-
-        # Check filename extension
-        source = metadata.get("source", "") or metadata.get("filename", "")
-        if source:
-            ext = source.rsplit(".", 1)[-1] if "." in source else ""
-            if ext:
-                result = ContentType.from_extension(ext)
-                if result != ContentType.TEXT:
-                    return result
-
-        return None
-
     def _calculate_quality_metrics(
         self,
         original: str,

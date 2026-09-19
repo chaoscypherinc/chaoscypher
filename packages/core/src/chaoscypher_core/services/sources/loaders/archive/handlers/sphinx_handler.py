@@ -115,10 +115,12 @@ class SphinxHTMLHandler:
                 ".buildinfo",
             ]
         )
-        # Memoize the best candidate per extracted_dir so can_handle() and
-        # find_root() share one subtree scan. Keyed by resolved absolute
-        # path (same directory may be handed in with different casings).
-        self._scan_cache: dict[Path, tuple[int, Path]] = {}
+        # Single-slot memo so can_handle() and find_root() share one subtree
+        # scan: ``(resolved_dir, (score, root))``. One slot rather than a
+        # dict because every archive load extracts into a fresh mkdtemp
+        # dir, so a keyed cache never hits twice and only grows for the
+        # lifetime of the process-cached handler; process() releases it.
+        self._scan_memo: tuple[Path, tuple[int, Path]] | None = None
 
     def can_handle(self, extracted_dir: Path) -> int:
         """Check for Sphinx HTML indicators, including nested docs roots.
@@ -173,9 +175,9 @@ class SphinxHTMLHandler:
         one scan per archive.
         """
         cache_key = extracted_dir.resolve() if extracted_dir.exists() else extracted_dir
-        cached = self._scan_cache.get(cache_key)
-        if cached is not None:
-            return cached
+        memo = self._scan_memo
+        if memo is not None and memo[0] == cache_key:
+            return memo[1]
 
         best_score = 0
         best_root = extracted_dir
@@ -202,7 +204,7 @@ class SphinxHTMLHandler:
             )
 
         result = (best_score, best_root)
-        self._scan_cache[cache_key] = result
+        self._scan_memo = (cache_key, result)
         return result
 
     # Filenames whose presence in a subdirectory marks it as a potential
@@ -300,6 +302,11 @@ class SphinxHTMLHandler:
             List of document chunks, one per HTML file.
         """
         logger.info("sphinx_processing_started", directory=str(extracted_dir))
+
+        # process() is the last step of an archive load and never re-reads
+        # the can_handle()/find_root() memo, so release it here rather than
+        # holding the extracted temp-dir path for the handler's lifetime.
+        self._scan_memo = None
 
         documents: list[dict[str, Any]] = []
         files_skipped = 0
@@ -419,18 +426,24 @@ class SphinxHTMLHandler:
         """
         from chaoscypher_core.utils.encoding import detect_encoding
 
+        loader_settings = self.settings.loader if self.settings is not None else None
+
         try:
             from bs4 import BeautifulSoup
         except ImportError:
             logger.warning("beautifulsoup4_not_installed", fallback="raw_text")
             # Fallback: return raw text without HTML parsing
-            encoding_used, content, replacement_chars_count = detect_encoding(html_path)
+            encoding_used, content, replacement_chars_count = detect_encoding(
+                html_path, settings=loader_settings
+            )
             metadata = self._build_metadata(html_path, base_dir, None)
             metadata["encoding_used"] = encoding_used
             metadata["replacement_chars_count"] = replacement_chars_count
             return content, metadata
 
-        encoding_used, html_content, replacement_chars_count = detect_encoding(html_path)
+        encoding_used, html_content, replacement_chars_count = detect_encoding(
+            html_path, settings=loader_settings
+        )
         soup = BeautifulSoup(html_content, "html.parser")
 
         # Extract title

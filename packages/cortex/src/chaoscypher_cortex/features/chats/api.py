@@ -698,11 +698,15 @@ async def send_message(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     await require_extraction_ready(settings)
-    chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
+    # Existence check only — ``get_chat`` eager-loads up to 500 message rows
+    # with full content, and the ordinary send path never reads them. The
+    # edit-and-resend branch below, which does, loads them for itself.
+    raise_if_not_found(chat_service.get_chat_summary(chat_id), f"Chat {chat_id} not found")
 
     # Edit-and-resend: replace an existing user message (and everything
     # after it) with this content, atomically before the new row is added.
     if message.replace_from_message_id:
+        chat = raise_if_not_found(chat_service.get_chat(chat_id), f"Chat {chat_id} not found")
         anchor = next(
             (
                 m

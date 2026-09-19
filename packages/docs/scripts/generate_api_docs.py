@@ -3,13 +3,18 @@
 Loads Python source via griffe (same engine mkdocstrings uses) and
 renders markdown for each module/class. Run before docusaurus build.
 
-Usage: python scripts/generate_api_docs.py
+Usage:
+    python scripts/generate_api_docs.py            # regenerate in place
+    python scripts/generate_api_docs.py --check     # fail if stale, no writes
 """
 
 from __future__ import annotations
 
+import argparse
+import difflib
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import griffe
@@ -345,9 +350,8 @@ def render_module(module_path: str, loader: griffe.GriffeLoader) -> str:
     return "\n".join(parts)
 
 
-def generate_page(slug: str, page: dict) -> None:
-    """Generate a complete API reference page."""
-    output_path = DOCS_DIR / f"{slug}.md"
+def render_page(page: dict) -> str:
+    """Render a complete API reference page's contents."""
     loader = griffe.GriffeLoader(search_paths=SEARCH_PATHS)
 
     parts = [
@@ -366,20 +370,78 @@ def generate_page(slug: str, page: dict) -> None:
         parts.append(render_module(module_path, loader))
 
     content = "\n".join(parts)
-    content = escape_mdx_braces(content)
+    return escape_mdx_braces(content)
+
+
+def generate_page(slug: str, page: dict, output_dir: Path) -> None:
+    """Render a page and write it under ``output_dir``."""
+    output_path = output_dir / f"{slug}.md"
+    content = render_page(page)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(content, encoding="utf-8")
-    print(f"  Wrote: {output_path.relative_to(DOCS_DIR.parent.parent)}")
+    print(f"  Wrote: {output_path}")
 
 
-def main() -> None:
-    """Generate all Python API reference pages."""
+def check_up_to_date() -> bool:
+    """Regenerate every page into a temp dir and diff it against the committed tree.
+
+    Prints a unified diff per stale file. Returns True if everything matches.
+    """
+    up_to_date = True
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        for slug, page in PAGES.items():
+            print(f"\n[{page['title']}]")
+            generate_page(slug, page, tmp_dir)
+
+        for slug in PAGES:
+            filename = f"{slug}.md"
+            committed_path = DOCS_DIR / filename
+            generated_path = tmp_dir / filename
+            committed = (
+                committed_path.read_text(encoding="utf-8") if committed_path.exists() else ""
+            )
+            generated = generated_path.read_text(encoding="utf-8")
+            if committed != generated:
+                up_to_date = False
+                diff = difflib.unified_diff(
+                    committed.splitlines(keepends=True),
+                    generated.splitlines(keepends=True),
+                    fromfile=f"a/{committed_path.relative_to(DOCS_DIR.parent.parent.parent)}",
+                    tofile=f"b/{committed_path.relative_to(DOCS_DIR.parent.parent.parent)}",
+                )
+                print(f"\nSTALE: {filename}")
+                sys.stdout.writelines(diff)
+    return up_to_date
+
+
+def main() -> int:
+    """Generate all Python API reference pages, or check they're up to date."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="don't write anything; exit non-zero if committed docs are stale",
+    )
+    args = parser.parse_args()
+
+    if args.check:
+        print("Checking Python API docs are up to date...")
+        if check_up_to_date():
+            print("\nUp to date.")
+            return 0
+        print(
+            "\nSTALE: run `uv run --with griffe python packages/docs/scripts/generate_api_docs.py` and commit the result."
+        )
+        return 1
+
     print("Generating Python API docs...")
     for slug, page in PAGES.items():
         print(f"\n[{page['title']}]")
-        generate_page(slug, page)
+        generate_page(slug, page, DOCS_DIR)
     print("\nDone.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

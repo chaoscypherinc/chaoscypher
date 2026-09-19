@@ -325,7 +325,7 @@ curl -X PATCH http://localhost/api/v1/sources/src_abc123 \
 |-----------|------|----------|-------------|
 | `source_id` | string (path) | **Yes** | Source ID |
 | `title` | string | No | New display title |
-| `processing_status` | string | No | Override status (`ready` or `error`) |
+| `processing_status` | string | No | Override the lifecycle status; must be a `SourceStatus` value (`pending`, `indexing`, `vision_pending`, `indexed`, `awaiting_confirmation`, `extracting`, `mcp_extracting`, `extracted`, `committing`, `committed`, `error`) -- an unknown value is rejected with `422` |
 | `enabled` | bool | No | Enable or disable the source |
 | `user_metadata` | object | No | Arbitrary key-value metadata |
 

@@ -16,6 +16,9 @@ from chaoscypher_core.services.local_auth import (
     InvalidPassword,
     InvalidSessionCookie,
     UsernameMismatch,
+    compute_api_key_selector,
+    generate_api_key,
+    hash_api_key,
 )
 from chaoscypher_cortex.features.local_auth.service import LocalAuthService
 
@@ -127,20 +130,20 @@ def test_change_username_returns_cookie_for_new_name(service: LocalAuthService) 
 
 def test_verify_api_key_fast_rejects_wrong_prefix(monkeypatch) -> None:
     """Tokens without the cc_live_ prefix must not enter the bcrypt loop."""
-    from chaoscypher_cortex.features.local_auth import service as svc_module
+    from chaoscypher_core.services.local_auth import api_key_lookup
 
-    # Track whether verify_api_key (the bcrypt one) was called
+    # Track whether the bcrypt verify was called at all.
     calls = {"verify": 0}
 
     def _fake_verify(*args, **kwargs):  # type: ignore[no-untyped-def]
         calls["verify"] += 1
         return False
 
-    monkeypatch.setattr(svc_module, "verify_api_key", _fake_verify)
+    monkeypatch.setattr(api_key_lookup, "verify_api_key", _fake_verify)
 
     # Build a service with a fake creds store that has one key
     creds = MagicMock(spec=CredentialsFile)
-    creds.get_api_key_hashes.return_value = [("key-1", "$2b$12$dummy")]
+    creds.get_legacy_api_key_hashes.return_value = [("key-1", "$2b$12$dummy")]
 
     svc = LocalAuthService(
         credentials=creds,
@@ -150,3 +153,47 @@ def test_verify_api_key_fast_rejects_wrong_prefix(monkeypatch) -> None:
 
     assert svc.verify_api_key("not-a-real-prefix-xxx") is None
     assert calls["verify"] == 0
+
+
+def test_created_key_is_stored_with_a_selector(service: LocalAuthService) -> None:
+    """A freshly minted key is indexed, so it never enters the migration loop."""
+    service.setup("admin", "password123")
+    resp = service.create_api_key("CLI")
+
+    creds = service._creds
+    assert creds.get_legacy_api_key_hashes() == []
+    secret = creds.get_or_create_api_key_selector_secret()
+    found = creds.find_api_key_by_selector(compute_api_key_selector(resp.key, secret))
+    assert found is not None
+    assert found[0] == resp.id
+
+
+def test_unknown_key_does_zero_bcrypt_work(service: LocalAuthService, monkeypatch) -> None:
+    """The DoS regression: a wrong cc_live_ key costs no bcrypt verifies."""
+    from chaoscypher_core.services.local_auth import api_key_lookup
+
+    service.setup("admin", "password123")
+    for name in ("one", "two", "three"):
+        service.create_api_key(name)
+
+    calls = {"verify": 0}
+
+    def _counting(*args, **kwargs):  # type: ignore[no-untyped-def]
+        calls["verify"] += 1
+        return False
+
+    monkeypatch.setattr(api_key_lookup, "verify_api_key", _counting)
+    assert service.verify_api_key(generate_api_key()) is None
+    assert calls["verify"] == 0
+
+
+def test_legacy_key_verifies_once_then_is_indexed(service: LocalAuthService) -> None:
+    """A pre-selector key keeps working and is migrated on first use."""
+    service.setup("admin", "password123")
+    key = generate_api_key()
+    creds = service._creds
+    key_id = creds.add_api_key("old", hash_api_key(key))
+    assert creds.get_legacy_api_key_hashes() == [(key_id, creds.get_api_key_hashes()[0][1])]
+
+    assert service.verify_api_key(key) == key_id
+    assert creds.get_legacy_api_key_hashes() == []

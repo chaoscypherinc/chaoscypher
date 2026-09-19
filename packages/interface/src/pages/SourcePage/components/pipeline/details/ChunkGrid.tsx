@@ -152,7 +152,7 @@ export function ChunkGrid({ tasks, selectedChunkId, onSelectChunk }: ChunkGridPr
             <Typography
               sx={{ fontSize: '0.66rem', color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.8 }}
             >
-              whole source · viewing {start + 1}–{end} of {sorted.length}
+              whole source · viewing {start + 1}–{end} of {sorted.length} groups
             </Typography>
             <Typography sx={{ fontSize: '0.62rem', color: 'text.disabled' }}>
               <Box component="span" sx={{ color: ChunkStatusColor.ok.main }}>
@@ -219,7 +219,7 @@ export function ChunkGrid({ tasks, selectedChunkId, onSelectChunk }: ChunkGridPr
             Prev
           </Button>
           <Box component="span">
-            Page <b>{safePage + 1}</b> / {lastPage + 1} · chunks <b>{start + 1}–{end}</b> of{' '}
+            Page <b>{safePage + 1}</b> / {lastPage + 1} · groups <b>{start + 1}–{end}</b> of{' '}
             {sorted.length}
           </Box>
           <Button

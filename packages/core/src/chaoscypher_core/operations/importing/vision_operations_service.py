@@ -126,7 +126,7 @@ class VisionOperationsService:
     # Operation handler
     # ------------------------------------------------------------------
 
-    def _bump_vision_activity(self, source_id: str) -> None:
+    async def _bump_vision_activity(self, source_id: str) -> None:
         """Checkpoint the source's ``last_activity_at`` after a page transitions terminal.
 
         ``indexing_handler.py`` wraps only the load/vision-enqueue/chunk
@@ -143,9 +143,16 @@ class VisionOperationsService:
         Mirrors the per-chunk checkpoint in
         ``ChunkExtractionOperationsService`` — best-effort, swallows write
         errors so a heartbeat hiccup never fails the page handler.
+
+        Offloaded like every other storage touch in this handler: the
+        UPDATE commits synchronously and ``SafeSession.commit`` sleeps
+        through SQLITE_BUSY back-off, which inline would stall the
+        QUEUE_LLM event loop (the class ``source_heartbeat`` fixed for the
+        per-source heartbeat).
         """
         try:
-            self.adapter.update_source_last_activity(
+            await asyncio.to_thread(
+                self.adapter.update_source_last_activity,
                 source_id=source_id,
                 database_name=self.database_name,
                 at_time=datetime.now(UTC),
@@ -187,7 +194,7 @@ class VisionOperationsService:
             job_id=job_id,
             outcome=VisionPageStatus.FAILED,
         )
-        self._bump_vision_activity(source_id)
+        await self._bump_vision_activity(source_id)
         if progress["is_terminal"]:
             await _enqueue_finalize(
                 source_id=source_id,
@@ -248,6 +255,32 @@ class VisionOperationsService:
         page_id: str = data["page_id"]
         job_id: str = data["job_id"]
         source_id: str = data["source_id"]
+
+        # 0. Pause guard — the same contract every other source-processing
+        # handler honours (``pause_guard``): a paused source or system
+        # returns {"skipped": "paused"} before any LLM call, consuming no
+        # retry budget. The page row stays PENDING, so source recovery
+        # re-dispatches it once the source is resumed. Vision was the one
+        # fan-out that kept calling the provider through a pause
+        # (2026-09-17 queue section-audit). Offloaded like every other
+        # storage read in this handler.
+        from chaoscypher_core.operations.pause_guard import check_paused
+
+        pause_check = await asyncio.to_thread(
+            check_paused,
+            source_id=source_id,
+            database_name=database_name,
+            adapter=adapter,
+        )
+        if pause_check.paused:
+            logger.info(
+                "handler_skipped_paused",
+                handler="_handle_vision_page",
+                source_id=source_id,
+                scope=pause_check.scope,
+                reason=pause_check.reason,
+            )
+            return {"skipped": "paused"}
 
         # 1. Load the row by scanning all rows for this source and filtering.
         # list_vision_page_descriptions returns rows ordered by (page_number, region_index).
@@ -425,7 +458,7 @@ class VisionOperationsService:
             is_terminal=progress["is_terminal"],
         )
 
-        self._bump_vision_activity(source_id)
+        await self._bump_vision_activity(source_id)
 
         if progress["is_terminal"]:
             await _enqueue_finalize(

@@ -240,11 +240,15 @@ class TriggerExecutor:
 
                 is_auto_embed = trigger["workflow_id"] == "system_workflow_generate_embeddings_v1"
 
-                if self._should_skip_auto_embed(is_auto_embed, event_data):
+                if await self._should_skip_auto_embed(is_auto_embed, event_data):
                     continue
 
                 if not is_auto_embed:
-                    event_bus.emit(
+                    # Offloaded for the same reason as the reads above: emit
+                    # writes a system-event row and prunes the table, two
+                    # commits whose busy-retry backoff sleeps synchronously.
+                    await asyncio.to_thread(
+                        event_bus.emit,
                         "trigger_fired",
                         action=f"Trigger fired: {trigger['name']}",
                         source="trigger",
@@ -285,7 +289,7 @@ class TriggerExecutor:
                     error_message=str(e),
                 )
 
-    def _should_skip_auto_embed(
+    async def _should_skip_auto_embed(
         self,
         is_auto_embed: bool,
         event_data: dict[str, Any],
@@ -313,7 +317,9 @@ class TriggerExecutor:
             return False
 
         try:
-            node = self.graph_manager.get_node(entity_id)
+            # Offloaded: ``get_node`` is a synchronous storage read on the
+            # per-entity auto-embed path, which fires once per created node.
+            node = await asyncio.to_thread(self.graph_manager.get_node, entity_id)
             if node and node.embedding:
                 logger.debug("trigger_skipping_embedding_already_present", node_id=entity_id)
                 return True

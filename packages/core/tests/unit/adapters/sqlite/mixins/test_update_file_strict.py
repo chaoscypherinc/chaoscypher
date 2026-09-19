@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel
 
 import chaoscypher_core.adapters.sqlite.models as _models  # noqa: F401 — registers all tables
 from chaoscypher_core.adapters.sqlite.mixins.source_files import SourceLifecycleMixin
+from chaoscypher_core.adapters.sqlite.mixins.source_files_indexing import SourceIndexingMixin
 from chaoscypher_core.adapters.sqlite.models import SourceRow
 
 
@@ -21,7 +22,7 @@ from chaoscypher_core.adapters.sqlite.models import SourceRow
 # ---------------------------------------------------------------------------
 
 
-class _StubAdapter(SourceLifecycleMixin):
+class _StubAdapter(SourceLifecycleMixin, SourceIndexingMixin):
     """Minimal adapter providing session and connection state for tests."""
 
     def __init__(self, session: Session, database_name: str = "default") -> None:
@@ -186,3 +187,58 @@ def test_unknown_field_raises_without_lazy_loads(adapter: _StubAdapter) -> None:
         adapter.update_source_columns(
             source_id="src_1", database_name=DB_NAME, updates={"cleaner_chars_remoevd": 1}
         )
+
+
+# ---------------------------------------------------------------------------
+# update_step_progress: the extraction hot path's per-chunk progress bump.
+# ---------------------------------------------------------------------------
+
+
+def test_update_step_progress_emits_no_row_load(adapter: _StubAdapter) -> None:
+    """Writing three scalars must not SELECT the 162-column source row.
+
+    ``update_step_progress`` runs once per chunk-task outcome, so a
+    read-modify-write hydrates ``full_text`` (the whole document) and
+    ``commit_payload`` on every chunk. It must use a plain UPDATE, like
+    ``update_source_last_activity``.
+    """
+    captured = _capture_statements(adapter.session)
+
+    adapter.update_step_progress("src_1", 3, 10, "Analyzing chunk 3/10")
+
+    selects = [s for s in captured if s.lstrip().upper().startswith("SELECT")]
+    assert not selects, f"update_step_progress must not issue a lookup SELECT: {selects}"
+    updates = [s for s in captured if s.lstrip().upper().startswith("UPDATE")]
+    assert updates, "update_step_progress should have issued an UPDATE"
+    for stmt in updates:
+        assert "full_text" not in stmt
+        assert "commit_payload" not in stmt
+
+
+def test_update_step_progress_persists_the_three_scalars(adapter: _StubAdapter) -> None:
+    """The plain UPDATE writes the same three fields the row-load path did."""
+    adapter.update_step_progress("src_1", 7, 9, "Analyzing chunk 7/9")
+    adapter.session.expire_all()
+
+    row = adapter.session.get(SourceRow, "src_1")
+    assert row is not None
+    assert row.current_step == 7
+    assert row.total_steps == 9
+    assert row.step_description == "Analyzing chunk 7/9"
+
+
+def test_update_step_progress_unknown_source_is_a_no_op(adapter: _StubAdapter) -> None:
+    """A missing source_id stays a silent no-op, as with the row-load path."""
+    adapter.update_step_progress("nonexistent_source", 1, 2, "x")
+
+
+def test_update_step_progress_refreshes_a_loaded_instance(adapter: _StubAdapter) -> None:
+    """An already-loaded instance reflects the write (synchronize_session)."""
+    row = adapter.session.get(SourceRow, "src_1")
+    assert row is not None
+
+    adapter.update_step_progress("src_1", 4, 8, "Analyzing chunk 4/8")
+
+    assert row.current_step == 4
+    assert row.total_steps == 8
+    assert row.step_description == "Analyzing chunk 4/8"

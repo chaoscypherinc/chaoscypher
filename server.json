@@ -1,22 +1,25 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.chaoscypherinc/chaoscypher",
+  "title": "Chaos Cypher",
   "description": "Local-first knowledge graphs from your documents — build, query, search (GraphRAG), and edit an inspectable graph that never leaves your machine. 31 tools over stdio.",
-  "status": "active",
   "repository": {
     "url": "https://github.com/chaoscypherinc/chaoscypher",
     "source": "github"
   },
-  "version_detail": {
-    "version": "0.2.0"
-  },
+  "websiteUrl": "https://chaoscypher.com",
+  "version": "0.4.2",
   "packages": [
     {
-      "registry_name": "pypi",
-      "name": "chaoscypher-cli",
-      "version": "0.2.0",
-      "runtime_hint": "uvx",
-      "package_arguments": [
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "chaoscypher-cli",
+      "version": "0.4.2",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
         {
           "type": "positional",
           "value": "mcp",

@@ -92,7 +92,9 @@ class HTMLLoader:
         check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
-        encoding_used, raw, replacement_chars_count = detect_encoding(path)
+        encoding_used, raw, replacement_chars_count = detect_encoding(
+            path, settings=self.settings.loader if self.settings is not None else None
+        )
 
         soup = BeautifulSoup(raw, "html.parser")
         dropped_per_tag: dict[str, int] = {}

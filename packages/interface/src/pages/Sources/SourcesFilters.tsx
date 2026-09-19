@@ -24,6 +24,7 @@ import ArrowUpwardIcon from '@mui/icons-material/ArrowUpward';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import ClearIcon from '@mui/icons-material/Clear';
 import SearchIcon from '@mui/icons-material/Search';
+import { SOURCE_STATUS_FILTER_OPTIONS } from './sourceStatusFilterOptions';
 
 interface SourcesFiltersProps {
   searchQuery: string;
@@ -231,14 +232,11 @@ export function SourcesFilters({
             sx={{ mb: 2 }}
           >
             <MenuItem value="">All Status</MenuItem>
-            <MenuItem value="pending">Pending</MenuItem>
-            <MenuItem value="indexing">Indexing</MenuItem>
-            <MenuItem value="extracting">Extracting</MenuItem>
-            <MenuItem value="extracted">Extracted</MenuItem>
-            <MenuItem value="awaiting_confirmation">Awaiting confirmation</MenuItem>
-            <MenuItem value="active">Active</MenuItem>
-            <MenuItem value="archived">Archived</MenuItem>
-            <MenuItem value="error">Error</MenuItem>
+            {SOURCE_STATUS_FILTER_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
           </TextField>
 
           <TextField

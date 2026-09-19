@@ -97,4 +97,12 @@ describe('ChunkGrid', () => {
     expect(screen.queryByTestId('chunk-cell-c1')).toBeNull();
     expect(screen.getByRole('button', { name: /next/i })).toBeDisabled();
   });
+
+  it('labels the whole-source window counter in groups, not chunks', () => {
+    const tasks = Array.from({ length: 30 }, (_, i) => make(i + 1));
+    render(<ChunkGrid tasks={tasks} selectedChunkId={null} onSelectChunk={vi.fn()} />);
+    // One tile is a ChunkExtractionTask covering several document chunks, so
+    // the window counter must say "groups" — the tab badge owns "chunks".
+    expect(screen.getByText(/of 30 groups$/)).toBeInTheDocument();
+  });
 });

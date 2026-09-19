@@ -42,7 +42,10 @@ class QueueTaskRequest(BaseModel):
     queue: str = Field(max_length=policy.QUEUE_NAME_MAX_LENGTH)
     operation: str = Field(max_length=policy.OPERATION_NAME_MAX_LENGTH)
     data: dict[str, Any]
-    priority: int = Field(default=50, ge=0, le=100)
+    # None → the service applies ``settings.priorities.background``. A literal
+    # default here made that setting unreachable from the API (CC046-class
+    # hardcoded config; 2026-09-17 queue section-audit).
+    priority: int | None = Field(default=None, ge=0, le=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -517,6 +517,11 @@ class TestSendMessageHandler:
         # paths already fixed).
         service.try_begin_processing.assert_called_once_with("chat-1")
         service.update_chat_status.assert_not_called()
+        # The ordinary send path must not hydrate the chat's message history:
+        # it reads no message, and ``get_chat`` eager-loads up to 500 rows
+        # with full content. Only edit-and-resend needs them.
+        service.get_chat.assert_not_called()
+        service.get_chat_summary.assert_called_once_with("chat-1")
         mock_enqueue.assert_awaited_once()
         assert result.task_id == "task-9"
         assert result.status == "processing"
@@ -611,9 +616,14 @@ class TestSendMessageHandler:
 
     @pytest.mark.asyncio
     async def test_raises_404_when_chat_missing(self) -> None:
-        """Handler raises 404 (no enqueue) when the chat does not exist."""
+        """Handler raises 404 (no enqueue) when the chat does not exist.
+
+        The existence check runs through ``get_chat_summary`` — the
+        message-free sibling — so the plain send path no longer hydrates
+        500 message rows it never reads.
+        """
         service = MagicMock()
-        service.get_chat.return_value = None
+        service.get_chat_summary.return_value = None
         settings = _settings()
 
         with (

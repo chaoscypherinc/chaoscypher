@@ -359,6 +359,32 @@ async def test_run_chat_not_found_publishes_and_raises(
 
 
 @pytest.mark.asyncio
+async def test_run_chat_load_runs_off_the_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``get_chat`` must not block the worker loop: it reads up to 500 rows."""
+    import threading
+
+    monkeypatch.setattr(cc, "publish_chat_event", AsyncMock())
+    seen: list[int] = []
+    chat_service = MagicMock()
+    chat_service.get_chat.side_effect = lambda _cid: seen.append(threading.get_ident()) or None
+
+    with pytest.raises(ValueError, match="not found"):
+        await cc._run_chat_completion(
+            chat_id="missing",
+            chat_service=chat_service,
+            storage_adapter=MagicMock(),
+            settings=get_settings(),
+            config_manager=MagicMock(),
+            graph_repository=MagicMock(),
+            search_repository=MagicMock(),
+        )
+
+    assert seen and seen[0] != threading.get_ident()
+
+
+@pytest.mark.asyncio
 async def test_run_source_scope_builds_source_metadata(
     chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
 ) -> None:

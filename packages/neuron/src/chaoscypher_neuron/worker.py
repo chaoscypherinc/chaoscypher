@@ -632,7 +632,7 @@ def _setup_orphan_files_cleanup(ctx: WorkerContext) -> asyncio.Task[None] | None
     settings = ctx["settings"]
     staging_dir = settings.database_dir / "sources"
 
-    return asyncio.create_task(
+    task = asyncio.create_task(
         _orphan_files_cleanup_loop(
             adapter=storage_adapter,
             staging_dir=staging_dir,
@@ -642,6 +642,8 @@ def _setup_orphan_files_cleanup(ctx: WorkerContext) -> asyncio.Task[None] | None
             pass_timeout_seconds=settings.source_recovery.orphan_files_cleanup_timeout_seconds,
         )
     )
+    task.add_done_callback(log_task_exception)
+    return task
 
 
 def _setup_search_sweep(ctx: WorkerContext) -> asyncio.Task[None] | None:
@@ -897,7 +899,11 @@ async def run_worker() -> None:  # noqa: PLR0915
         handlers=queue_client.handlers,
         poll_interval=ctx["settings"].timeouts.queue_poll_interval,
         health_report_interval=ctx["settings"].workers.health_report_interval,
-        drain_timeout=ctx["settings"].timeouts.instance_drain_max_wait,
+        # The SIGTERM drain budget is the shutdown grace the compose validator
+        # bounds (and supervisord's stopwaitsecs mirrors) — not the LLM
+        # instance-drain knob (`timeouts.instance_drain_max_wait`), which
+        # the load balancer owns and which merely defaulted to the same 30 s.
+        drain_timeout=ctx["settings"].shutdown.worker_shutdown_grace_seconds,
         semaphore_acquire_timeout=ctx["settings"].timeouts.queue_semaphore_acquire,
         poller_error_delay=ctx["settings"].backoff.queue_poller_error_delay,
         queue_client=queue_client,

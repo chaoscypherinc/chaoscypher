@@ -97,7 +97,10 @@ class ChunkTasksRecoveryMixin(ExtractionJobQueryBase):
             database_name: Database context
 
         Returns:
-            List of stuck source dicts with their extraction job status (if any)
+            List of stuck source dicts, each carrying the projected columns
+            below (``id``, ``database_name``, ``filename``, ``status``,
+            ``current_extraction_job_id``, ``error_message``, ``error_stage``)
+            plus ``extraction_job_status`` when a job was found.
         """
         self._ensure_connected()
         # Expire cache to see changes from other processes
@@ -127,11 +130,19 @@ class ChunkTasksRecoveryMixin(ExtractionJobQueryBase):
             .where(SourceRow.status == SourceStatus.EXTRACTING)
         )
 
+        # Materialise the projected rows BEFORE the per-source job lookup
+        # below. ``get_extraction_job`` opens with ``session.expire_all()``,
+        # which expires these still-live instances; ``_entity_to_dict`` would
+        # then fall through to its getattr re-hydration path, and that refresh
+        # does NOT replay ``load_only`` — it re-reads every column of the row,
+        # once per iteration, defeating the projection above. Converting first
+        # keeps the dicts at exactly the columns selected here.
         sources = list(self.session.exec(statement).all())
+        source_dicts = [d for d in (self._entity_to_dict(s) for s in sources) if d]
         stuck_sources = []
 
-        for source in sources:
-            job_id = source.current_extraction_job_id
+        for source_dict in source_dicts:
+            job_id = source_dict.get("current_extraction_job_id")
             job_status = None
 
             if job_id:
@@ -145,10 +156,8 @@ class ChunkTasksRecoveryMixin(ExtractionJobQueryBase):
                     job_status = job_status_val
 
             # Source is stuck: no job, or job is failed/cancelled/completed
-            source_dict = self._entity_to_dict(source)
-            if source_dict:
-                if job_status:
-                    source_dict["extraction_job_status"] = job_status
-                stuck_sources.append(source_dict)
+            if job_status:
+                source_dict["extraction_job_status"] = job_status
+            stuck_sources.append(source_dict)
 
         return stuck_sources

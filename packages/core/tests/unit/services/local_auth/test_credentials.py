@@ -88,6 +88,25 @@ def test_verify_password_before_init_raises(cred_path: Path) -> None:
         creds.verify_password("admin", "pw")
 
 
+def test_not_initialized_error_never_reveals_the_path(cred_path: Path) -> None:
+    """The message carries no path — it is rendered into a 401.
+
+    Every ``LocalAuthError`` maps to HTTP 401 and its message goes into the
+    response envelope, and a pre-setup install answers from this arm for every
+    caller. The path an operator needs is on the exception as ``.path`` and in
+    the server-side log, not on the wire.
+    """
+    creds = CredentialsFile(cred_path)
+
+    with pytest.raises(CredentialsNotInitialized) as exc:
+        creds.verify_password("admin", "pw")
+
+    message = str(exc.value)
+    assert str(cred_path) not in message
+    assert cred_path.name not in message
+    assert exc.value.path == str(cred_path)
+
+
 def test_change_password_succeeds(cred_path: Path) -> None:
     creds = CredentialsFile(cred_path)
     creds.initialize("admin", "old-pw")

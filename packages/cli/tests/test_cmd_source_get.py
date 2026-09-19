@@ -44,10 +44,27 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
         "created_at": "2026-05-10T18:00:00Z",
         "updated_at": "2026-05-10T19:00:00Z",
         "extraction_depth": "full",
-        "extract_entities": True,
+        "auto_analyze": True,
     }
     record.update(overrides)
     return record
+
+
+def test_base_record_keys_are_real_source_row_columns() -> None:
+    """Every fixture key must be a real ``SourceRow`` column.
+
+    ``get_file`` is a ``model_dump`` of the row, so a fixture key that is not
+    a column (the old ``extract_entities`` / ``detected_domain`` / ``error`` /
+    ``indexing_stats`` phantoms) would make these tests pass against data the
+    command can never receive in production.
+    """
+    from sqlalchemy import inspect
+
+    from chaoscypher_core.adapters.sqlite.models import SourceRow
+
+    columns = {attr.key for attr in inspect(SourceRow).column_attrs}
+    phantom = set(_base_record()) - columns
+    assert not phantom, f"fixture keys not on SourceRow: {sorted(phantom)}"
 
 
 def _make_ctx(file_record: dict[str, Any] | None) -> MagicMock:
@@ -120,14 +137,25 @@ class TestCoreDetails:
         assert "Status" in result.output
         assert "File Type" in result.output
         assert "Extract Entities" in result.output
-        # extract_entities True -> "Yes"
+        # auto_analyze True -> "Yes"
         assert "Yes" in result.output
 
     def test_extract_entities_false_renders_no(self) -> None:
-        ctx = _make_ctx(_base_record(extract_entities=False))
+        ctx = _make_ctx(_base_record(auto_analyze=False))
         result = _invoke(ctx)
         assert result.exit_code == 0, result.output
+        assert "Extract Entities" in result.output
         assert "No" in result.output
+
+    def test_extract_entities_row_omitted_when_column_not_loaded(self) -> None:
+        # get_file's load_only projection does not carry auto_analyze today;
+        # an absent key must not fabricate a Yes/No.
+        record = _base_record()
+        del record["auto_analyze"]
+        ctx = _make_ctx(record)
+        result = _invoke(ctx)
+        assert result.exit_code == 0, result.output
+        assert "Extract Entities" not in result.output
 
     def test_size_bytes_tier(self) -> None:
         ctx = _make_ctx(_base_record(file_size=512))
@@ -148,13 +176,26 @@ class TestCoreDetails:
         assert result.exit_code == 0, result.output
         assert "MB" in result.output
 
-    def test_failed_status_renders_error_footer(self) -> None:
-        ctx = _make_ctx(_base_record(status="failed", error="extraction blew up"))
+    def test_error_status_renders_error_footer(self) -> None:
+        ctx = _make_ctx(
+            _base_record(
+                status="error",
+                error_message="extraction blew up",
+                error_stage="extraction",
+            )
+        )
         result = _invoke(ctx)
         assert result.exit_code == 0, result.output
-        assert "failed" in result.output
+        assert "error" in result.output
         assert "Error:" in result.output
         assert "extraction blew up" in result.output
+        assert "stage: extraction" in result.output
+
+    def test_no_error_footer_when_error_message_absent(self) -> None:
+        ctx = _make_ctx(_base_record(error_message=None, error_stage=None))
+        result = _invoke(ctx)
+        assert result.exit_code == 0, result.output
+        assert "Error:" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -171,11 +212,32 @@ class TestDomainRow:
         assert "forced" in result.output
 
     def test_detected_domain_renders(self) -> None:
-        ctx = _make_ctx(_base_record(detected_domain="technical"))
+        ctx = _make_ctx(_base_record(extraction_domain="technical", extraction_domain_auto=True))
         result = _invoke(ctx)
         assert result.exit_code == 0, result.output
         assert "technical" in result.output
         assert "auto-detected" in result.output
+
+    def test_user_selected_domain_without_forced_column_renders_forced(self) -> None:
+        # Rows persisted before upload-time forced_domain stamping carry the
+        # user's choice as extraction_domain + extraction_domain_auto=False.
+        ctx = _make_ctx(
+            _base_record(
+                extraction_domain="legal", extraction_domain_auto=False, forced_domain=None
+            )
+        )
+        result = _invoke(ctx)
+        assert result.exit_code == 0, result.output
+        assert "legal" in result.output
+        assert "forced" in result.output
+        assert "auto-detected" not in result.output
+
+    def test_no_domain_renders_auto_placeholder(self) -> None:
+        ctx = _make_ctx(_base_record(extraction_domain=None, forced_domain=None))
+        result = _invoke(ctx)
+        assert result.exit_code == 0, result.output
+        assert "auto" in result.output
+        assert "auto-detected" not in result.output
 
     def test_domain_changed_warning_when_hash_differs(self) -> None:
         ctx = _make_ctx(
@@ -609,19 +671,24 @@ class TestLLMMetrics:
 
 class TestIndexingStats:
     def test_indexing_stats_footer(self) -> None:
-        record = _base_record(
-            status="indexed",
-            indexing_stats={"chunk_count": 42, "token_count": 13_500},
-        )
+        record = _base_record(status="indexed", chunk_count=42, total_content_length=13_500)
         ctx = _make_ctx(record)
         result = _invoke(ctx)
         assert result.exit_code == 0, result.output
         assert "Indexing Stats" in result.output
-        assert "42" in result.output
+        assert "Chunks: 42" in result.output
         assert "13,500" in result.output
 
-    def test_no_indexing_stats_when_absent(self) -> None:
-        ctx = _make_ctx(_base_record())
+    def test_indexing_stats_chunks_only_when_content_length_not_loaded(self) -> None:
+        # total_content_length is outside get_file's projection today.
+        ctx = _make_ctx(_base_record(status="indexed", chunk_count=7))
+        result = _invoke(ctx)
+        assert result.exit_code == 0, result.output
+        assert "Chunks: 7" in result.output
+        assert "chars" not in result.output
+
+    def test_no_indexing_stats_when_no_chunks(self) -> None:
+        ctx = _make_ctx(_base_record(chunk_count=0))
         result = _invoke(ctx)
         assert result.exit_code == 0, result.output
         assert "Indexing Stats" not in result.output

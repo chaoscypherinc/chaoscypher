@@ -82,7 +82,9 @@ class RSTLoader:
         check_loader_file_size(filepath, self.settings)
 
         path = Path(filepath)
-        encoding_used, raw, replacement_chars_count = detect_encoding(path)
+        encoding_used, raw, replacement_chars_count = detect_encoding(
+            path, settings=self.settings.loader if self.settings is not None else None
+        )
 
         # Validate parseability via the null writer. ``report_level=5`` /
         # ``halt_level=5`` push docutils' tolerance to its maximum so

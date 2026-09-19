@@ -18,6 +18,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import structlog
 
+from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
+    UNTRUSTED_FENCE_CLOSE,
+    UNTRUSTED_FENCE_OPEN,
+    neutralize_untrusted_fence,
+)
 from chaoscypher_core.utils.tokens import estimate_tokens
 
 
@@ -393,7 +398,19 @@ class SummarizeToolHandlers:
             },
             {
                 "role": "user",
-                "content": (f"<query>{query}</query>\n\n<passages>\n{all_content}\n</passages>"),
+                # Document text is fenced and defanged like every other
+                # chunk-returning handler. The chat system prompt names
+                # ``<untrusted_document>`` by hand and tells the model that
+                # everything inside it is untrusted data; the old
+                # ``<passages>`` wrapper was invented here, is named nowhere,
+                # and a document containing a literal ``</passages>`` could
+                # close it and address the summarizer as the operator.
+                "content": (
+                    f"<query>{query}</query>\n\n"
+                    f"{UNTRUSTED_FENCE_OPEN}\n"
+                    f"{neutralize_untrusted_fence(all_content)}\n"
+                    f"{UNTRUSTED_FENCE_CLOSE}"
+                ),
             },
         ]
 

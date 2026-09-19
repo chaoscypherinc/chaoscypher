@@ -64,12 +64,21 @@ class SqlNodeRepository:
             Tuple of (list of (SourceCitation, SourceRow, DocumentChunk) tuples, total count)
 
         """
-        # Query citations with joins (exclude large BLOB columns from DocumentChunk)
+        # Query citations with joins (exclude large columns from the joined
+        # entities). ``SourceRow`` is ~162 columns wide including ``full_text``
+        # and ``commit_payload``; the consumer reads five scalars off it.
         query = (
             select(SourceCitation, SourceRow, DocumentChunk)
             .join(SourceRow, SourceCitation.source_id == SourceRow.id)
             .join(DocumentChunk, SourceCitation.chunk_id == DocumentChunk.id)
             .options(
+                load_only(
+                    SourceRow.id,
+                    SourceRow.title,
+                    SourceRow.filename,
+                    SourceRow.source_type,
+                    SourceRow.origin_url,
+                ),
                 load_only(
                     DocumentChunk.id,
                     DocumentChunk.database_name,
@@ -83,7 +92,7 @@ class SqlNodeRepository:
                     DocumentChunk.chunk_metadata,
                     DocumentChunk.status,
                     DocumentChunk.created_at,
-                )
+                ),
             )
             .where(
                 SourceCitation.entity_uri == node_id,

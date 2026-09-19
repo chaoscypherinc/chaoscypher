@@ -101,28 +101,30 @@ class ImageLoader:
         try:
             logger.info("image_loading_started", filepath=filepath)
 
-            image = Image.open(filepath)
-            extraction_time = time.time() - start_time
+            # Context manager closes the underlying file handle; a bare
+            # ``Image.open`` leaks it until GC (ResourceWarning).
+            with Image.open(filepath) as image:
+                extraction_time = time.time() - start_time
 
-            # Minimal content — vision LLM will provide the real description
-            content = f"[Image: {filepath_obj.name} ({image.width}x{image.height})]"
+                # Minimal content — vision LLM will provide the real description
+                content = f"[Image: {filepath_obj.name} ({image.width}x{image.height})]"
 
-            metadata: dict[str, Any] = {
-                "source": str(filepath_obj.absolute()),
-                "filename": filepath_obj.name,
-                "width": image.width,
-                "height": image.height,
-                "format": image.format,
-                "mode": image.mode,
-                "total_characters": len(content),
-                "extraction_method": "vision_pending",
-                "extraction_time_seconds": round(extraction_time, 3),
-                "image_path": str(filepath_obj.absolute()),
-            }
+                metadata: dict[str, Any] = {
+                    "source": str(filepath_obj.absolute()),
+                    "filename": filepath_obj.name,
+                    "width": image.width,
+                    "height": image.height,
+                    "format": image.format,
+                    "mode": image.mode,
+                    "total_characters": len(content),
+                    "extraction_method": "vision_pending",
+                    "extraction_time_seconds": round(extraction_time, 3),
+                    "image_path": str(filepath_obj.absolute()),
+                }
 
             logger.info(
                 "image_metadata_extracted",
-                image_size=f"{image.width}x{image.height}",
+                image_size=f"{metadata['width']}x{metadata['height']}",
                 extraction_time_seconds=round(extraction_time, 2),
             )
 

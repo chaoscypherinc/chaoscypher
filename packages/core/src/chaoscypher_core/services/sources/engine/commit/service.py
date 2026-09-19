@@ -695,9 +695,32 @@ class SourceCommitService:
             _raw_relationships = normalize_relationship_endpoints(
                 _raw_entities, commit_data.get("relationships", [])
             )
-            _raw_mode: str | None = file_info.get("filtering_mode")
+            # The queued commit task's ``file_info`` is ``adapter.get_file(...)``
+            # (``extraction_finalizer._queue_commit_phase``), whose narrow
+            # ``load_only`` projection carries neither ``filtering_mode`` nor
+            # ``protect_orphans`` — and recovery's rebuilt file_info carries
+            # neither either. Reading the mode from ``file_info`` alone
+            # therefore always fell through to the engine default, so a
+            # ``minimal``/``unfiltered`` source (or one with
+            # ``protect_orphans=True``) had its orphans dropped here even
+            # though the finalizer honoured the row. Mirror the finalizer's
+            # cascade instead: payload > source row > engine default for the
+            # mode, and the row's explicit ``protect_orphans`` choice beats
+            # the preset's value (``source_record`` is ``get_source``, every
+            # non-heavy column).
+            _raw_mode: str | None = file_info.get("filtering_mode") or source_record.get(
+                "filtering_mode"
+            )
             _filtering_mode: str = _raw_mode or self.settings.extraction.extraction_filtering_mode
-            _filtering_config = resolve_filtering_config(mode=_filtering_mode)
+            _row_protect_orphans = source_record.get("protect_orphans")
+            _source_overrides: dict[str, Any] | None = (
+                {"protect_orphans": _row_protect_orphans}
+                if isinstance(_row_protect_orphans, bool)
+                else None
+            )
+            _filtering_config = resolve_filtering_config(
+                mode=_filtering_mode, source_overrides=_source_overrides
+            )
             (
                 _entities_for_commit,
                 _relationships_for_commit,

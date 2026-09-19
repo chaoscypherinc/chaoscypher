@@ -130,7 +130,11 @@ class SourceUpdate(BaseModel):
     """Request model for updating a source."""
 
     title: str | None = None
-    processing_status: str | None = None  # "ready" | "error"
+    # Typed to the enum: the value is written straight to the row's status
+    # column, and every response model declares ``status: SourceStatus`` — an
+    # unknown value here (the UI's stale-MCP reset used to send ``"ready"``)
+    # 500s every later read of the source and the whole ``GET /sources`` list.
+    processing_status: SourceStatus | None = None
     enabled: bool | None = None
     user_metadata: dict[str, Any] | None = None
 

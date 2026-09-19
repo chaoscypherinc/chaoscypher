@@ -73,6 +73,9 @@ def fake_source_storage() -> MagicMock:
         "status": "vision_pending",
         "database_name": "test",
     }
+    # ``list_pages`` only needs to know the source exists, so it uses the
+    # narrow batched title reader rather than the full row.
+    storage.get_source_titles_by_ids.return_value = {"s1": "doc.pdf"}
     return storage
 
 
@@ -422,8 +425,13 @@ async def test_list_pages_is_terminal_true(fake_repo, fake_queue, fake_source_st
 
 @pytest.mark.asyncio
 async def test_list_pages_source_not_found(fake_repo, fake_queue, fake_source_storage):
-    """Missing source → NotFoundError."""
-    fake_source_storage.get_source.return_value = None
+    """Missing source → NotFoundError.
+
+    The existence check runs through the narrow batched title reader, which
+    returns an empty map for an unknown id, rather than the 160-column
+    ``get_source`` this 5-second poll used to pay for.
+    """
+    fake_source_storage.get_source_titles_by_ids.return_value = {}
     from chaoscypher_cortex.features.sources.vision_pages_service import (
         VisionPagesService,
     )

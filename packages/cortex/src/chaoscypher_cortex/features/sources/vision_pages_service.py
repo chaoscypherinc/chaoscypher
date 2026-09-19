@@ -284,8 +284,15 @@ class VisionPagesService:
             NotFoundError: source not found.
 
         """
-        source = self._source_storage.get_source(source_id, self._database_name)
-        if source is None:
+        # Existence check only — the bound value was read once, against None,
+        # and never again. ``get_source`` selects 160 columns, hydrates a
+        # SourceRow, dumps all 162 fields and issues a second query for
+        # stage_progress; this endpoint is polled every 5 s for the whole
+        # vision phase, which is exactly why the comment further down skips a
+        # Text column. ``get_source_titles_by_ids`` is the repo's existing
+        # narrow accessor (id/title/filename, no stage_progress hop) and
+        # returns an empty map for an unknown id.
+        if not self._source_storage.get_source_titles_by_ids([source_id], self._database_name):
             raise NotFoundError("source", source_id)
 
         job_row = self._repository.get_job_by_source(source_id)

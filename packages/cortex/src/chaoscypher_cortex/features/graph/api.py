@@ -110,7 +110,10 @@ async def get_source_groups(
     Only includes committed image sources that have extracted entities.
     Each group includes the extraction domain icon for visual display.
     """
-    groups = await graph_service.get_source_groups()
+    # Offloaded like the canvas sibling above: the service body is
+    # synchronous blocking SQLite work, and running it inline stalled every
+    # other /api/ request for its duration.
+    groups = await asyncio.to_thread(graph_service.get_source_groups)
 
     # Build domain name → icon lookup from the domain registry
     from chaoscypher_core.app_config.engine_factory import build_engine_settings

@@ -1,11 +1,12 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``get_nodes_batch`` embedding projection.
+"""Single-node and batch embedding projection.
 
 ``include_embedding=False`` must skip the 1024-float JSON column (and
 return ``Node.embedding is None``); the default keeps embeddings for the
-import path that genuinely needs them.
+paths that genuinely need them — the import path for ``get_nodes_batch``,
+``GET /nodes/{id}`` and the auto-embed trigger for ``get_node``.
 """
 
 from __future__ import annotations
@@ -89,3 +90,25 @@ def test_opt_out_skips_embedding(graph_repo: GraphRepository) -> None:
     # Non-embedding fields are intact under the projection.
     assert {n.label for n in nodes} == {"One", "Two"}
     assert all(n.source_id == "src_x" for n in nodes)
+
+
+def test_get_node_default_includes_embedding(graph_repo: GraphRepository) -> None:
+    """The default must stay True — the auto-embed trigger reads the vector."""
+    node = graph_repo.get_node("n_1")
+    assert node is not None
+    assert node.embedding == [0.5] * 8
+
+
+def test_get_node_opt_out_skips_embedding(graph_repo: GraphRepository) -> None:
+    node = graph_repo.get_node("n_1", include_embedding=False)
+    assert node is not None
+    assert node.embedding is None
+    # Everything an existence check or a render needs survives the projection.
+    assert node.label == "One"
+    assert node.source_id == "src_x"
+    assert node.template_id == "tpl_node_person"
+
+
+def test_get_node_opt_out_still_reports_missing(graph_repo: GraphRepository) -> None:
+    """The projection must not turn a miss into a truthy row."""
+    assert graph_repo.get_node("n_absent", include_embedding=False) is None

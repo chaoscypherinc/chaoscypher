@@ -124,14 +124,15 @@ async def test_heartbeat_propagates_exception_from_workload() -> None:
 def test_default_interval_is_under_default_stall_threshold() -> None:
     """Default heartbeat interval must be well under the recovery stall threshold.
 
-    Recovery's default ``stalled_threshold_seconds`` is 120s. The
+    Recovery's default ``stalled_threshold_seconds`` is 600s
+    (``SourceRecoverySettings`` in ``app_config``, mirrored by
+    ``SourceRecoveryReconciler.DEFAULT_STALLED_THRESHOLD_SECONDS``). The
     default heartbeat interval must be small enough that several beats
     happen within one threshold window so a single dropped beat never
     trips a false stall.
     """
-    # The default stall threshold lives in cortex (SourceRecoverySettings)
-    # but the design contract is: heartbeat << stall threshold. 30s ≪ 120s
-    # gives 4 beats per window — adequate margin.
+    # The design contract is: heartbeat << stall threshold. 30s ≪ 600s
+    # gives 20 beats per window — ample margin.
     assert DEFAULT_HEARTBEAT_INTERVAL_SECONDS <= 30.0
 
 

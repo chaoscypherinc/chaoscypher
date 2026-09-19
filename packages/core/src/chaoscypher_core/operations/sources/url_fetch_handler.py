@@ -424,6 +424,20 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
             )
         return result_dict
 
+    except asyncio.CancelledError:
+        # ``CancelledError`` is a ``BaseException`` the arm below never sees,
+        # so a drain/timeout cancel left the placeholder PENDING with an empty
+        # ``filepath`` — the one shape SourceRecovery skips and scores healthy.
+        # Keep this compensation synchronous: an ``await`` in a cancelled
+        # coroutine re-raises, and ``suppress(Exception)`` would not catch it.
+        with contextlib.suppress(Exception):
+            storage.fail_url_fetch(
+                placeholder_id,
+                "URL fetch cancelled (worker shutdown or task timeout)",
+                database_name,
+            )
+        raise
+
     except Exception as exc:
         with contextlib.suppress(Exception):
             storage.fail_url_fetch(placeholder_id, f"Unexpected error: {exc}", database_name)

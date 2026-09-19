@@ -14,7 +14,8 @@ Covers:
 - rebuild_search: fast path (no regeneration needed), slow path (needs regeneration),
                   result failure path
 - delete: --force skips confirmation, confirm-yes proceeds, confirm-no cancels,
-          file-not-found, exception error path
+          file-not-found, exception error path, Core SourceService cascade
+          receives graph + search repos (CLI/API parity), delete-returns-False
 """
 
 from __future__ import annotations
@@ -764,8 +765,15 @@ class TestRebuildSearchCommand:
 # ===========================================================================
 
 
+_SOURCE_SERVICE = "chaoscypher_core.services.graph.management.source.SourceService"
+
+
 class TestDeleteCommand:
-    """Tests for the `delete` Click command."""
+    """Tests for the `delete` Click command.
+
+    ``delete`` imports Core's ``SourceService`` lazily inside the command
+    body, so it is patched at its defining module.
+    """
 
     def _make_source_record(self) -> dict[str, Any]:
         return {
@@ -779,39 +787,95 @@ class TestDeleteCommand:
         ctx = _make_ctx()
         ctx.storage_adapter.get_source.return_value = self._make_source_record()
 
-        with patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx):
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+        ):
+            service_cls.return_value.delete_source.return_value = True
             result = runner.invoke(delete, ["if_del0000000001", "--force"])
 
         assert result.exit_code == 0, result.output
-        ctx.storage_adapter.delete_source.assert_called_once_with(
-            "if_del0000000001", ctx.database_name
-        )
+        service_cls.return_value.delete_source.assert_called_once()
         assert "deleted" in result.output.lower() or "✓" in result.output
+
+    def test_delete_uses_core_cascade_with_graph_and_search_repos(self) -> None:
+        """CLI ↔ API parity: the Core cascade gets the same repos Cortex passes.
+
+        ``SourceService.delete_source`` with ``graph_repo`` + ``search_repo``
+        removes orphaned graph nodes, vector rows, the staged file, and the
+        vision-images directory — a bare ``storage_adapter.delete_source``
+        only did the SQL cascade + staged file.
+        """
+        runner = CliRunner()
+        ctx = _make_ctx()
+        ctx.storage_adapter.get_source.return_value = self._make_source_record()
+
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+        ):
+            service_cls.return_value.delete_source.return_value = True
+            result = runner.invoke(delete, ["if_del0000000001", "--force"])
+
+        assert result.exit_code == 0, result.output
+        service_cls.assert_called_once_with(
+            repository=ctx.storage_adapter,
+            database_name=ctx.database_name,
+            settings=ctx.settings,
+        )
+        service_cls.return_value.delete_source.assert_called_once_with(
+            "if_del0000000001",
+            graph_repo=ctx.graph_repository,
+            search_repo=ctx.search_repository,
+        )
+        ctx.storage_adapter.delete_source.assert_not_called()
+
+    def test_delete_returning_false_exits_1(self) -> None:
+        runner = CliRunner()
+        ctx = _make_ctx()
+        ctx.storage_adapter.get_source.return_value = self._make_source_record()
+
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+        ):
+            service_cls.return_value.delete_source.return_value = False
+            result = runner.invoke(delete, ["if_del0000000001", "--force"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output.lower()
 
     def test_confirm_yes_proceeds(self) -> None:
         runner = CliRunner()
         ctx = _make_ctx()
         ctx.storage_adapter.get_source.return_value = self._make_source_record()
 
-        with patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx):
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
             # Patch Confirm.ask to return True (user said yes)
-            with patch("chaoscypher_cli.commands.source.delete.Confirm.ask", return_value=True):
-                result = runner.invoke(delete, ["if_del0000000001"])
+            patch("chaoscypher_cli.commands.source.delete.Confirm.ask", return_value=True),
+        ):
+            service_cls.return_value.delete_source.return_value = True
+            result = runner.invoke(delete, ["if_del0000000001"])
 
         assert result.exit_code == 0, result.output
-        ctx.storage_adapter.delete_source.assert_called_once()
+        service_cls.return_value.delete_source.assert_called_once()
 
     def test_confirm_no_cancels_without_deleting(self) -> None:
         runner = CliRunner()
         ctx = _make_ctx()
         ctx.storage_adapter.get_source.return_value = self._make_source_record()
 
-        with patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx):
-            with patch("chaoscypher_cli.commands.source.delete.Confirm.ask", return_value=False):
-                result = runner.invoke(delete, ["if_del0000000001"])
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+            patch("chaoscypher_cli.commands.source.delete.Confirm.ask", return_value=False),
+        ):
+            result = runner.invoke(delete, ["if_del0000000001"])
 
         assert result.exit_code == 0, result.output
-        ctx.storage_adapter.delete_source.assert_not_called()
+        service_cls.return_value.delete_source.assert_not_called()
         assert "Cancelled" in result.output
 
     def test_not_found_exits_1(self) -> None:
@@ -842,7 +906,10 @@ class TestDeleteCommand:
         ctx = _make_ctx()
         ctx.storage_adapter.get_source.return_value = self._make_source_record()
 
-        with patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx):
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE),
+        ):
             result = runner.invoke(delete, ["if_del0000000001", "--force"])
 
         assert "to_delete.pdf" in result.output
@@ -853,9 +920,12 @@ class TestDeleteCommand:
         ctx = _make_ctx()
         ctx.storage_adapter.get_source.return_value = self._make_source_record()
 
-        with patch(
-            "chaoscypher_cli.commands.source.delete.get_context", return_value=ctx
-        ) as mock_gc:
+        with (
+            patch(
+                "chaoscypher_cli.commands.source.delete.get_context", return_value=ctx
+            ) as mock_gc,
+            patch(_SOURCE_SERVICE),
+        ):
             runner.invoke(delete, ["if_del0000000001", "--force", "--database", "mydb"])
 
         mock_gc.assert_called_once_with(database_name="mydb")

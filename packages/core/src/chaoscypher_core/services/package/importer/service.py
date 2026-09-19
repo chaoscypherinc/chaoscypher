@@ -1057,7 +1057,7 @@ class CcxImporter:
         # Idempotency: a chunk row keyed on the deterministic id already
         # present means a prior import created it — skip the duplicate insert
         # (chunks have no ccx_iri column to upsert on).
-        if self.sources.get_chunk(chunk_id, database_name) is not None:
+        if self.sources.chunk_exists(chunk_id, database_name):
             self._import_citations(
                 chunk.get("citations") or [],
                 chunk_id,

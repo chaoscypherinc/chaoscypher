@@ -696,3 +696,81 @@ class TestImageDetectionHonorsPageCap:
 
         assert doc.accessed == [0, 1, 2, 3]
         assert len(docs[0]["metadata"]["pages"]) == 4
+
+
+class _FailingPdfiumDoc(_FakePdfiumDoc):
+    """Fake document whose page scan raises partway through."""
+
+    def __init__(self, page_count: int, fail_at: int) -> None:
+        super().__init__(page_count)
+        self._fail_at = fail_at
+
+    def __getitem__(self, idx: int) -> MagicMock:
+        if idx >= self._fail_at:
+            raise RuntimeError("pdfium object enumeration blew up")
+        return super().__getitem__(idx)
+
+
+class TestImageDetectionPartialScanIsSurfaced:
+    """A mid-scan failure must not publish a truncated page inventory silently.
+
+    The scan loop appends per page but its ``except Exception`` sits OUTSIDE
+    the loop, so a raise on page N fell straight through to
+    ``metadata["pages"] = page_infos`` with a partial list. Downstream
+    (``indexing_handler`` -> ``create_vision_job_with_pages``) treats that as
+    the complete inventory and the vision job derives its own total from it,
+    so it completes "successfully" over a truncated document: pages after the
+    failure are never considered for vision, and nothing — operator or
+    reconciler — gets a signal. A total failure is handled better than a
+    partial one, which is the inversion this pins.
+    """
+
+    def test_partial_scan_emits_a_loader_warning(self, tmp_path: Path) -> None:
+        import sys
+
+        dummy_pdf = tmp_path / "partial.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 stub")
+
+        pages = [_make_page(f"page {i}") for i in range(5)]
+        reader = _make_reader(pages)
+        reader.pages = pages
+
+        doc = _FailingPdfiumDoc(page_count=5, fail_at=2)
+        loader = PdfLoader()
+
+        with (
+            patch("pypdf.PdfReader", return_value=reader),
+            patch.dict(sys.modules, {"pypdfium2": _fake_pdfium_module(doc)}),
+        ):
+            docs = loader.load_document(str(dummy_pdf))
+
+        metadata = docs[0]["metadata"]
+        # The inventory really is truncated ...
+        assert len(metadata["pages"]) == 2
+        # ... so the truncation must be visible to the operator.
+        warnings = metadata.get("loader_warnings", [])
+        assert any("image detection stopped after 2 of 5 pages" in w for w in warnings), warnings
+        assert doc.closed is True
+
+    def test_clean_scan_adds_no_truncation_warning(self, tmp_path: Path) -> None:
+        import sys
+
+        dummy_pdf = tmp_path / "clean.pdf"
+        dummy_pdf.write_bytes(b"%PDF-1.4 stub")
+
+        pages = [_make_page(f"page {i}") for i in range(3)]
+        reader = _make_reader(pages)
+        reader.pages = pages
+
+        doc = _FakePdfiumDoc(page_count=3)
+        loader = PdfLoader()
+
+        with (
+            patch("pypdf.PdfReader", return_value=reader),
+            patch.dict(sys.modules, {"pypdfium2": _fake_pdfium_module(doc)}),
+        ):
+            docs = loader.load_document(str(dummy_pdf))
+
+        metadata = docs[0]["metadata"]
+        assert len(metadata["pages"]) == 3
+        assert not any("image detection stopped" in w for w in metadata.get("loader_warnings", []))

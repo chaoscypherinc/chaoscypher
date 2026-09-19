@@ -1,5 +1,7 @@
 # ChaosCypher CLI
 
+<!-- mcp-name: io.github.chaoscypherinc/chaoscypher -->
+
 Command-line tools for ChaosCypher knowledge graph library.
 
 ## Installation

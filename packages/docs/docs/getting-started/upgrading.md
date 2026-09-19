@@ -60,6 +60,10 @@ make install     # uv sync --all-packages --extra dev
 make docker-dev  # requires QUEUE_PASSWORD exported — see Installation
 ```
 
+## Upgrade the edge proxy together with Cortex
+
+In the all-in-one image nginx and Cortex ship in the same container, so this is automatic. If you run the multi-container layout, pull **both** images together. API-key (bearer) auth is throttled per client address, and Cortex learns that address from headers the nginx `/auth/verify` location sets. A new Cortex behind an nginx config that predates those headers still authenticates correctly, but every caller shares one throttle bucket — so five failed key attempts from anywhere pause bearer auth for 60 seconds for everyone. Browser sessions (cookie auth) are unaffected, and the pause clears itself. Matching the two images removes it. The same degraded mode applies behind any *additional* proxy — a Cloudflare Tunnel, Caddy, or Tailscale Serve in front of nginx — because nginx then sees that proxy as `$remote_addr` and forwards the same address for every caller, so all callers again share one bucket; teaching nginx the true client address via `real_ip_header`/`set_real_ip_from` is future work.
+
 ## Rollback
 
 If migrations fail or the new tag is unhealthy:

@@ -662,20 +662,29 @@ class SourceIndexingMixin(
         total_steps: int,
         step_description: str = "",
     ) -> None:
-        """Update file processing progress."""
+        """Update file processing progress.
+
+        Uses a plain UPDATE (no row-load round-trip) because this runs once
+        per chunk-task outcome on the extraction hot path: a full row load
+        hydrates all 162 ``SourceRow`` columns — ``full_text`` (the whole
+        document, written during indexing) and ``commit_payload`` among them
+        — to write three scalars. Mirrors ``update_source_last_activity``
+        below, which documents the same rule.
+
+        A missing ``source_id`` stays a silent no-op (rowcount 0), matching
+        the previous row-load behaviour.
+        """
         self._ensure_connected()
-        statement = select(SourceRow).where(SourceRow.id == source_id)
-        result = self.session.exec(statement)
-        source = result.first()
-
-        if not source:
-            return
-
-        source.current_step = current_step
-        source.total_steps = total_steps
-        source.step_description = step_description
-
-        self.session.add(source)
+        statement = (
+            update(SourceRow)
+            .where(SourceRow.id == source_id)
+            .values(
+                current_step=current_step,
+                total_steps=total_steps,
+                step_description=step_description,
+            )
+        )
+        self.session.execute(statement)
         self._maybe_commit()
 
     def count_sources_by_statuses(

@@ -109,3 +109,25 @@ def test_signed_payload_non_int_epoch_raises_invalid_cookie() -> None:
     cookie = _sign({"u": "admin", "e": "not-an-int", "x": future})
     with pytest.raises(InvalidSessionCookie, match="payload"):
         decode_session(cookie, secret=SECRET)
+
+
+def test_non_ascii_cookie_raises_invalid_session_cookie() -> None:
+    """A non-ASCII cookie must raise InvalidSessionCookie, not escape as a 500.
+
+    ``body.encode("ascii")`` raises UnicodeEncodeError and
+    ``hmac.compare_digest`` raises TypeError on non-ASCII input, and both run
+    before any signature check. Neither is an InvalidSessionCookie, so callers
+    that catch only that exception missed them and the request reached the
+    FastAPI catch-all — on ``GET /api/v1/auth/status``, which needs no
+    credential. This is a 500/log-amplification fix, not an auth bypass:
+    no signature was ever accepted on this path.
+    """
+    secret = b"x" * 32
+
+    # Non-ASCII in the body half (UnicodeEncodeError before the fix).
+    with pytest.raises(InvalidSessionCookie):
+        decode_session("\x80abc.\x80def", secret)
+
+    # Non-ASCII in the signature half (TypeError before the fix).
+    with pytest.raises(InvalidSessionCookie):
+        decode_session("abc.\xe9def", secret)

@@ -57,10 +57,11 @@ class TestExtractionControl:
         """Extraction charts endpoint returns a list (possibly empty)."""
         source_id = self._upload_indexed(client, sample_data_dir, "charts_test.txt")
         resp = client.get(f"/api/v1/sources/{source_id}/extraction/charts")
-        # Should return 200 with empty or populated list, or 404 if no extraction
-        assert resp.status_code in (200, 404)
-        if resp.status_code == 200:
-            assert isinstance(resp.json(), list)
+        # This route has no 404 wiring at all — no lookup, no
+        # raise_if_not_found, and NOT_FOUND_RESPONSE absent from its
+        # `responses` — so the list assertion runs unconditionally.
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
 
     def test_abort_processing(self, client: httpx.Client, sample_data_dir: str) -> None:
         """Abort processing endpoint responds to indexed source."""

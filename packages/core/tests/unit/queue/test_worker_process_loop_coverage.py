@@ -877,3 +877,120 @@ async def test_run_starts_and_stops_cleanly(monkeypatch: pytest.MonkeyPatch) -> 
     # Health/running keys deleted on shutdown.
     valkey.delete.assert_any_await(f"queue:{QUEUE_OPERATIONS}:health")
     valkey.delete.assert_any_await(f"queue:{QUEUE_OPERATIONS}:running")
+
+
+# ---------------------------------------------------------------------------
+# _process_task — graceful shutdown must not lose crash-retryable work
+# ---------------------------------------------------------------------------
+
+
+def _shutdown_queue_client(
+    *, retry_on_crash: bool = True, user_cancelled: bool = False
+) -> MagicMock:
+    """Queue client for the shutdown-cancel branch."""
+    qc = MagicMock()
+    qc.set_heartbeat = AsyncMock(return_value=None)
+    qc.refresh_heartbeat = AsyncMock(return_value=None)
+    qc.complete_task_atomic = AsyncMock(return_value=None)
+    qc.failed_result_ttl = 1209600
+    qc.get_transient_retry_policy = MagicMock(return_value=True)
+    qc.get_retry_policy = MagicMock(return_value=retry_on_crash)
+    qc.guarded_status_write = AsyncMock(return_value=GUARDED_OK)
+    qc.is_task_cancelled = AsyncMock(return_value=user_cancelled)
+    return qc
+
+
+async def _drive_shutdown_cancel(
+    monkeypatch: pytest.MonkeyPatch, qc: MagicMock, *, running: bool = False
+) -> MagicMock:
+    """Cancel a task mid-dispatch and return the fake Valkey for assertions."""
+    import chaoscypher_core.queue.worker as worker_mod
+
+    async def _raise_cancel(*_a: Any, **_k: Any) -> None:
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(worker_mod, "_execute_handler", _raise_cancel)
+
+    worker, valkey = _make_worker(
+        handlers={QUEUE_OPERATIONS: {"test_op": AsyncMock()}}, queue_client=qc
+    )
+    worker._heartbeat_refresh_interval_seconds = 60
+    worker._running = running  # False == shutdown in progress
+    valkey.hgetall = AsyncMock(return_value=_task_hash())
+
+    sem = asyncio.Semaphore(1)
+    await sem.acquire()
+    with pytest.raises(asyncio.CancelledError):
+        await worker._process_task("t-shutdown", QUEUE_OPERATIONS, _config(), sem)
+    return valkey
+
+
+def _statuses(valkey: MagicMock) -> list[str]:
+    return [c.kwargs.get("mapping", {}).get("status") for c in valkey.hset.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancel_requeues_crash_retryable_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A graceful restart must not lose work a SIGKILL would have recovered.
+
+    The drain cancels stragglers, and the cancel arm used to write terminal
+    ``cancelled`` — the one status ``requeue_atomic.lua`` and ``retry_task``
+    both refuse. So a ``retry_on_crash=True`` operation (export_graph,
+    execute_workflow, ...) was permanently lost on a clean restart while a
+    hard kill left it in the running set for the reconciler to requeue.
+
+    It must instead be marked transiently failed and rescheduled.
+    """
+    qc = _shutdown_queue_client()
+    valkey = await _drive_shutdown_cancel(monkeypatch, qc)
+
+    assert "cancelled" not in _statuses(valkey), "task was marked terminally cancelled"
+    assert "failed" in _statuses(valkey)
+    failed = next(
+        c.kwargs["mapping"]
+        for c in valkey.hset.call_args_list
+        if c.kwargs.get("mapping", {}).get("status") == "failed"
+    )
+    assert failed["error_type"] == "transient"
+    # The retry actually got scheduled through the canonical requeue path.
+    requeued = qc.guarded_status_write.await_args_list
+    assert any(c.kwargs.get("new_status") == "queued" for c in requeued), requeued
+    valkey.persist.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancel_keeps_user_cancellation_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A task the user cancelled must never be resurrected by the requeue."""
+    qc = _shutdown_queue_client(user_cancelled=True)
+    valkey = await _drive_shutdown_cancel(monkeypatch, qc)
+
+    assert "cancelled" in _statuses(valkey)
+    assert "failed" not in _statuses(valkey)
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancel_stays_terminal_without_crash_retry_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An operation the crash table marks non-recoverable keeps today's behavior."""
+    qc = _shutdown_queue_client(retry_on_crash=False)
+    valkey = await _drive_shutdown_cancel(monkeypatch, qc)
+
+    assert "cancelled" in _statuses(valkey)
+    assert "failed" not in _statuses(valkey)
+
+
+@pytest.mark.asyncio
+async def test_user_cancel_while_running_stays_terminal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel outside shutdown (worker still running) is terminal, as before."""
+    qc = _shutdown_queue_client()
+    valkey = await _drive_shutdown_cancel(monkeypatch, qc, running=True)
+
+    assert "cancelled" in _statuses(valkey)
+    assert "failed" not in _statuses(valkey)

@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -245,11 +247,45 @@ class TestUpgradeGuard:
             _upgrade_guard(ctx)
         ctx.exit.assert_not_called()
 
+    @staticmethod
+    def _blocked_state() -> Any:
+        """Patches making the guard see a Blocked database.
+
+        Without these the guard returns at the ``state.ready`` check —
+        ``_ensure_table`` seeds ``ready=1``, so an unseeded DB always reads
+        ready — and never reaches the allowlist branch at all.
+        """
+        blocked = SimpleNamespace(ready=False, message="blocked", last_backup=None)
+        return (
+            patch("chaoscypher_cli.engine_config.read_current_database", lambda: "default"),
+            patch("chaoscypher_core.database.engine.get_db_path", lambda name: f"/tmp/{name}.db"),
+            patch(
+                "chaoscypher_core.database.migrations.state.get_upgrade_state",
+                lambda _p: blocked,
+            ),
+            patch.object(sys, "argv", ["chaoscypher", "render-orchestration"]),
+        )
+
     def test_safe_subcommand_bypasses_guard(self) -> None:
-        """render-orchestration is in _UPGRADE_SAFE_SUBCOMMANDS."""
+        """render-orchestration is in _UPGRADE_SAFE_SUBCOMMANDS.
+
+        Driven against a Blocked database so the allowlist is the reason the
+        guard lets it through. Previously this ran against a ready database
+        and passed with ``_UPGRADE_SAFE_SUBCOMMANDS`` emptied.
+        """
         ctx = self._make_ctx(invoked_subcommand="render-orchestration")
-        _upgrade_guard(ctx)
+        a, b, c, d = self._blocked_state()
+        with a, b, c, d:
+            _upgrade_guard(ctx)
         ctx.exit.assert_not_called()
+
+    def test_unsafe_subcommand_still_blocked(self) -> None:
+        """Control: a subcommand off the allowlist exits 2 on the same state."""
+        ctx = self._make_ctx(invoked_subcommand="source")
+        a, b, c, _ = self._blocked_state()
+        with a, b, c, patch.object(sys, "argv", ["chaoscypher", "source"]):
+            _upgrade_guard(ctx)
+        ctx.exit.assert_called_once_with(2)
 
     def test_import_error_returns_without_blocking(self) -> None:
         """If imports fail, guard lets the command run."""

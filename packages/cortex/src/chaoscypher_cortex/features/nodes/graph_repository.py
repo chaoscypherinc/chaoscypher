@@ -30,17 +30,19 @@ class GraphNodeRepository:
         """
         self.graph_repository = graph_repository
 
-    def get_node(self, node_id: str) -> Node | None:
+    def get_node(self, node_id: str, *, include_embedding: bool = True) -> Node | None:
         """Get node by ID.
 
         Args:
             node_id: Node ID
+            include_embedding: Default True. Pass False for existence
+                checks so the 1024-float embedding is never read or decoded.
 
         Returns:
             Node object or None if not found
 
         """
-        return self.graph_repository.get_node(node_id)
+        return self.graph_repository.get_node(node_id, include_embedding=include_embedding)
 
     def update_node_position(self, node_id: str, x: float, y: float) -> Node | None:
         """Update only node position (optimized for layout saving).

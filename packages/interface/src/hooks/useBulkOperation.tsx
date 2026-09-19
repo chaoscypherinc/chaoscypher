@@ -115,6 +115,16 @@ export function useBulkOperation(): UseBulkOperationReturn {
               await new Promise((resolve) => setTimeout(resolve, BATCH_CONFIG.POLLING_WAIT_MS));
               attempts++;
 
+              // The failed-status check lives OUTSIDE the try on purpose. Its
+              // throw carries the backend's specific reason, and a plain
+              // Error satisfies neither arm of `isApiError`, so raising it
+              // inside the try meant the catch swallowed it and the loop kept
+              // polling a task it already knew was dead — for the remaining
+              // ~60s, before reporting a generic timeout. `dataApi.export`
+              // runs the structurally identical loop with the status check
+              // unwrapped; this now matches it.
+              let failureMessage: string | null = null;
+
               try {
                 // Check task status
                 const statusResponse = await apiClient.get(`/queue/tasks/${taskId}`);
@@ -124,7 +134,7 @@ export function useBulkOperation(): UseBulkOperationReturn {
                   const resultResponse = await apiClient.get(`/queue/tasks/${taskId}/result`);
                   result = resultResponse.data.result || resultResponse.data;
                 } else if (statusResponse.data.status === 'failed') {
-                  throw new Error(statusResponse.data.error || 'Batch operation failed');
+                  failureMessage = statusResponse.data.error || 'Batch operation failed';
                 }
               } catch (pollError) {
                 logger.error('Error polling task:', pollError);
@@ -132,6 +142,10 @@ export function useBulkOperation(): UseBulkOperationReturn {
                 if (isApiError(pollError) && pollError.response?.status === 404) {
                   throw pollError;
                 }
+              }
+
+              if (failureMessage !== null) {
+                throw new Error(failureMessage);
               }
             }
 

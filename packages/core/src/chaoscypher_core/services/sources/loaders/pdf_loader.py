@@ -273,13 +273,11 @@ class PdfLoader:
                     pages_attempted=attempted,
                 )
 
-            # Attach accumulated loader warnings (Tasks 1, 3, 4) to metadata
-            # so the indexing handler can surface them via loader_warnings_count.
-            if loader_warnings:
-                metadata["loader_warnings"] = loader_warnings
-
             # Detect images per page using pypdfium2
             page_infos: list[dict[str, Any]] = []
+            # Hoisted: the except arms below report how far the scan got, and
+            # a raise inside the try leaves this at its pre-scan value.
+            image_scan_pages = 0
             try:
                 import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
@@ -314,8 +312,36 @@ class PdfLoader:
                     pdf_doc.close()
             except ImportError:
                 logger.warning("pypdfium2_not_installed", msg="Image detection unavailable")
+                loader_warnings.append(
+                    "image detection unavailable (pypdfium2 not installed); "
+                    "no page was considered for vision processing"
+                )
             except Exception:
-                logger.warning("image_detection_failed", filepath=filepath, exc_info=True)
+                # The scan loop appends per page, so a raise partway through
+                # leaves a PARTIAL list — and it is published below as the
+                # authoritative page inventory. Pages after the failure point
+                # are then never considered for vision, and the vision job
+                # reports itself complete against the truncated count, so
+                # neither the operator nor the reconciler ever sees a signal.
+                # Surface it as a loader warning so the truncation is visible.
+                logger.warning(
+                    "image_detection_failed",
+                    filepath=filepath,
+                    pages_scanned=len(page_infos),
+                    pages_expected=image_scan_pages,
+                    exc_info=True,
+                )
+                loader_warnings.append(
+                    f"image detection stopped after {len(page_infos)} of "
+                    f"{image_scan_pages} pages; later pages were not considered "
+                    "for vision processing"
+                )
+
+            # Attach accumulated loader warnings (Tasks 1, 3, 4) to metadata so
+            # the indexing handler can surface them via loader_warnings_count.
+            # Attached AFTER image detection so a truncated scan is included.
+            if loader_warnings:
+                metadata["loader_warnings"] = loader_warnings
 
             metadata["pages"] = page_infos
             image_page_count = sum(1 for p in page_infos if p.get("has_images"))
