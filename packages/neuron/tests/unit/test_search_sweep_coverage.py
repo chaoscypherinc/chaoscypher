@@ -243,8 +243,8 @@ def test_sweep_drains_node_when_target_gone(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
-    """A pending entry with an unknown kind logs a warning and survives."""
+def test_sweep_warns_and_ages_out_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
+    """An unknown kind logs a warning, bumps attempts, and retires at max_attempts."""
     from chaoscypher_neuron.search_sweep import sweep_search_indexes
 
     adapter, search_repo = _make_db(tmp_path)
@@ -262,14 +262,25 @@ def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog
         with capture_logs() as captured:
             stats = sweep_search_indexes(adapter, search_repo, max_attempts=5)
 
-        # Pending row with an unknown kind is left in place (not drained).
         remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
-        assert remaining is not None, "Unknown-kind pending row must survive"
+        assert remaining is not None, "Unknown-kind row must survive until max_attempts"
+        assert remaining.attempts == 1
+        assert remaining.last_error
+        assert "unhandled pending_search_index kind" in remaining.last_error
         assert stats["pending_drained"] == 0
-        assert stats["pending_failed"] == 0
+        assert stats["pending_exhausted"] == 0
+        assert stats["pending_failed"] == 1
 
         events = [e["event"] for e in captured]
         assert "search_sweep_unknown_kind" in events
+
+        for _ in range(4):
+            stats = sweep_search_indexes(adapter, search_repo, max_attempts=5)
+
+        adapter.session.expire_all()
+        remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
+        assert remaining is None, "Unknown-kind row must leave the queue at max_attempts"
+        assert stats["pending_exhausted"] == 1
     finally:
         adapter.disconnect()
 
