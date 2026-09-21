@@ -266,7 +266,8 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
                     kind=entry.kind,
                     item_id=entry.item_id,
                 )
-                continue
+                error = f"Unsupported pending search index kind: {entry.kind}"
+                raise ValueError(error)
             session.delete(entry)
             session.commit()
             stats["pending_drained"] += 1

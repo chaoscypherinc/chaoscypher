@@ -243,8 +243,8 @@ def test_sweep_drains_node_when_target_gone(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
-    """A pending entry with an unknown kind logs a warning and survives."""
+def test_sweep_retries_then_exhausts_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
+    """Unknown kinds are logged, retried, and removed after max_attempts."""
     from chaoscypher_neuron.search_sweep import sweep_search_indexes
 
     adapter, search_repo = _make_db(tmp_path)
@@ -259,13 +259,23 @@ def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog
         adapter.session.add(pending)
         adapter.session.commit()
 
+        max_attempts = 3
         with capture_logs() as captured:
-            stats = sweep_search_indexes(adapter, search_repo, max_attempts=5)
+            for attempts in range(1, max_attempts):
+                stats = sweep_search_indexes(adapter, search_repo, max_attempts=max_attempts)
+                adapter.session.expire_all()
+                remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
+                assert remaining is not None, "Unknown-kind row should remain until exhausted"
+                assert remaining.attempts == attempts
+                assert "Unsupported pending search index kind" in remaining.last_error
+                assert stats["pending_failed"] == 1
+                assert stats["pending_exhausted"] == 0
 
-        # Pending row with an unknown kind is left in place (not drained).
-        remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
-        assert remaining is not None, "Unknown-kind pending row must survive"
-        assert stats["pending_drained"] == 0
+            stats = sweep_search_indexes(adapter, search_repo, max_attempts=max_attempts)
+
+        adapter.session.expire_all()
+        assert adapter.session.get(PendingSearchIndex, "bogus:thing") is None
+        assert stats["pending_exhausted"] == 1
         assert stats["pending_failed"] == 0
 
         events = [e["event"] for e in captured]
