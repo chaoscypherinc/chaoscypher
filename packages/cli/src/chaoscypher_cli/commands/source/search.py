@@ -206,10 +206,19 @@ def _hydrate_results(ctx: CLIContext, raw_results: list[tuple[str, float]]) -> l
                     }
                 )
 
-    # Hydrate chunks (fetch directly from storage adapter)
+    # Hydrate chunks (one batch read, mirroring the node branch above).
+    # get_chunks_by_ids_batch excludes the ~5 KB `embedding` BLOB and the
+    # `raw_content` TEXT via load_only(); the per-id reader used here before
+    # was unprojected, so a default --limit of 20 pulled both columns 20 times
+    # over to render a 100-character preview.
     if chunk_entries:
+        chunk_ids = [cid for cid, _ in chunk_entries]
+        chunks_by_id = {
+            chunk["id"]: chunk for chunk in ctx.storage_adapter.get_chunks_by_ids_batch(chunk_ids)
+        }
+
         for chunk_uuid, score in chunk_entries:
-            chunk_data = ctx.storage_adapter.get_chunk_by_id(chunk_uuid)
+            chunk_data = chunks_by_id.get(chunk_uuid)
             if chunk_data:
                 # Truncate content for display
                 content = chunk_data.get("content", "")

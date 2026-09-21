@@ -121,19 +121,31 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     else:
         # Blocked DB: start the degraded maintenance-mode server (no Engine).
         # This is the MCP analog of the web maintenance page — never invisible.
-        if mode == "read":
+        # Resolve the EFFECTIVE mode. This branch never builds a context, so
+        # the configured `mcp.mode` has to be read directly — testing the Click
+        # flag alone honoured read-only only when the operator typed it, while
+        # `mode: read` (the MCPSettings default) sailed past the guard. The
+        # documented Claude Desktop invocation passes no flag, so it took the
+        # unguarded path and advertised the destructive `apply_upgrade` tool.
+        from chaoscypher_core.app_config import get_settings
+
+        effective_mode = mode or get_settings().mcp.mode
+
+        if effective_mode == "read":
             # The maintenance server cannot honor read-only: its purpose
             # includes destructive repair (apply_upgrade). Refuse loudly
-            # instead of silently dropping the operator's --mode read.
+            # instead of silently dropping the operator's read-only intent.
+            source = "--mode read" if mode else "the configured mcp.mode: read"
             logger.error(
                 "mcp_maintenance_refuses_read_mode",
                 database=db_name,
                 blocked_on=state.blocked_on,
+                mode_source="flag" if mode else "settings",
             )
             msg = (
                 f"Database '{db_name}' is in maintenance mode, which cannot honor "
-                "--mode read: maintenance tools include destructive repair "
-                "(e.g. apply_upgrade). Re-run without --mode read to use the "
+                f"{source}: maintenance tools include destructive repair "
+                "(e.g. apply_upgrade). Re-run with --mode write to use the "
                 "maintenance server, or repair the database first."
             )
             raise click.ClickException(msg)

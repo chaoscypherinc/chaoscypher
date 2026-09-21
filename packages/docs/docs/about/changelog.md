@@ -12,6 +12,79 @@ Entries from June 2026 onward are grouped by release so you can map them to the 
 
 ### September 2026
 
+#### v0.4.3 (2026-09-21)
+
+A third fixes-only patch release — 54 commits since v0.4.2, 23 of them changing
+shipped code. No new features, no breaking API changes, no schema migrations.
+The queue and extraction paths dominate: several defects that silently lost or
+double-counted work are closed, one MCP sandbox bypass is fixed, and a further
+round of synchronous storage calls is moved off the worker and Cortex event
+loops.
+
+##### Security
+
+- **MCP `add_document` skipped its sandbox containment whenever `content` was supplied** — the tool schema claims that supplying content means the file is never loaded, but nothing implemented that: neither the inline pipeline call nor the processor's `pipeline_callback` forwards content, so `file_path` was read from disk on every path and reached `Loaders.load_text` uncontained. A caller supplying both got an arbitrary-file read that covered `/data/credentials.json`. The containment and dotfile guards are now unconditional, in the server and in the processor's mirror.
+- **The API-key selector and the bearer-token throttle are fixed** — two P1 auth-path defects found on the post-merge sweep.
+- **`decode_session` rejects non-ASCII input, and `summarize` carries the untrusted-document fence** its five sibling handlers already applied.
+- **Dependency advisories cleared** — `image-size` lifted to ≥ 2.0.3 and `sharp` overridden to 0.35.4 (GHSA-rgj7-g3m4-5g8c) in the docs tree, plus the routine interface dependency group update (12 packages).
+- **`chaoscypher mcp` honoured a read-only mount only when the flag was typed** — the guard read the `--mode` flag rather than the effective setting, so the documented Claude Desktop invocation against a `read`-configured install still handed an external MCP client the destructive `apply_upgrade` tool. The guard now reads the configured mode; an explicit `--mode write` still overrides it.
+- **The documented Docker kill switch for user plugins never reached the container** — `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` was declared on no service in the all-in-one or either multi-container stack, so the loader always saw its default. All five plugin-loading services now interpolate the host value.
+
+##### Data correctness
+
+- **Crash recovery spent two units of the retry budget per cycle** — `requeue_atomic.lua` bumped `attempts` on top of the worker's own claim-time increment, so a `max_tries=5` task with `retry_on_crash=True` got **3 dispatches, not 5**, then went terminal reporting "crashed after 5 attempts". The blast radius is the four crash-retryable operations with no owning resource — `execute_workflow`, `execute_step`, `export_graph`, `export_by_sources` — for which the queue budget is the only recovery layer. The reconciler now also resolves `max_tries` from `workers.yaml` rather than the built-in default.
+- **A re-delivered chunk task could double-count and finish the job early** — `OP_EXTRACT_CHUNK` is crash-retryable on the claim that a DB short-circuit makes re-running safe, but the short-circuit only caught a `completed` row; a row in `running` passed straight through and neither write path re-checked. Two deliveries of one chunk produced two terminal writes and two job-counter bumps, satisfying the finalize predicate one chunk early and leaving `completed_chunks` permanently wrong for the progress UI. Both transitions are now guarded updates returning a rowcount, and the handler bails before the billable LLM call when it loses the claim.
+- **A graceful worker restart lost crash-retryable work** — the shutdown drain's `CancelledError` arm wrote terminal `status="cancelled"`, which is exactly the status the requeue script and `retry_task` refuse to resurrect. That inverted the recovery contract: a hard `SIGKILL` recovered the work and a clean restart destroyed it.
+- **A queue heartbeat that lapsed could never be refreshed** — `refresh_heartbeat` issued an `EXPIRE`, which is a silent no-op on a key that has already expired, so a 31-second stall condemned a multi-hour task as abandoned and the reconciler requeued it for duplicate execution. It is now a `SET`-with-`EX`.
+- **Clearing completed-task history raised `WRONGTYPE` whenever any task was running** — `clear_old_completed_tasks` ran `HGETALL` across a glob that also matched the heartbeat strings; it now skips them.
+- **The commit-time orphan filter ignored the source row** — the queued commit task's `file_info` is a narrow projection carrying neither `filtering_mode` nor `protect_orphans`, so the filter always resolved the engine default and dropped orphans for minimal/unfiltered sources and for rows with `protect_orphans=True`. It now mirrors the finalizer's cascade (payload > row > engine default).
+- **"Reset to Indexed" on a stale MCP source broke the whole sources list** — the UI sent `processing_status: "ready"`, which no response model accepts, so that source and every subsequent `GET /sources` returned 500. The hook now sends `indexed`, and a PATCH with a phantom value is a 422.
+- **A rejected `workers.yaml` value collapsed the Operations queue from 8 concurrent to 1** — a bad value fell through to a boolean rather than to the worker type's base default.
+- **Compound archive extensions were silently skipped** — `GenericHandler` now defers member support to the registry, so an inner `.tar.gz` recurses like the `.tgz` spelling always did.
+- **Encoding detection honours `LoaderSettings`** — every `detect_encoding` call site now passes the loader's settings; `max_disk_bytes` and the chardet tunables were silently model defaults, and the size error told the operator to raise a setting that had already been raised.
+- **The vision finalizer's terminality guard is row-based, not counter-based**, so a crash between the page-row update and the counter bump no longer strands the job; vision page retry counters can no longer drift, and vision PNGs survive a failed resume pass.
+- **A pause landing on a vision handler is honoured** — the page and finalize handlers now carry the pause guard the other five source handlers already had, the pause evaluator refuses to resume on a foreign witness, and `SystemPauseStatusResponse` reports `paused_by`.
+- **A cancelled workflow finalizes its execution row**, and the offloaded chunk-progress increment is shielded from cancellation so a cancel delivered mid-write cannot leave the counter short.
+- **Relationship justifications no longer store the model thinking out loud** — a graph edge could carry a "justification" that was deliberation rather than evidence (one `parent_of` edge at confidence 0.9 explained itself with "I will link 9 to 3 via `interacts_with`"). Justifications are now blanked when they carry reasoning markers and otherwise trimmed to two sentences on a sentence or word boundary, so no fragment survives.
+- **A `pending_search_index` row with an unhandled `kind` now ages out** — the sweep's unknown-kind branch skipped the row without touching `attempts`, so the `max_attempts` eviction could never fire; the row occupied a batch slot on every pass and kept its source pinned at `degraded`. It now takes the ordinary failure path: the warning stays, `attempts` and `last_error` advance, and the row is retired at `max_attempts`. Latent today (nothing enqueues the documented `template` kind yet), reported as public issue #29.
+- **Every configured trigger filter evaluated as "match everything"** — `list_triggers` deferred the `filters` and `actions` columns the dispatcher reads, so a trigger scoped to one source fired on every source; the `.ccx` exporter and `GET /workflows/{id}/triggers` were silently losing the same keys. The columns are projected back.
+- **The queue reset promised cancellation and delivered dead letters** — the reset path deleted task hashes without raising the cooperative cancel flag, so a running task re-created a partial hash and landed in the dead-letter set instead of stopping. Reset now runs `cancel_all_tasks` first.
+
+##### Reliability
+
+- **`POST /queue/cancel-all` could freeze the API for the duration of the request** — every cancel path ran a synchronous connect → SELECT → commit → disconnect (with a busy-retry sleep under writer contention) bare on the event loop, once per task. After a large import that is one task per chunk group, so thousands of cycles ran inside one request with zero awaits and Cortex served nothing else meanwhile. All four call sites now go through a worker thread.
+- **The vision-page fan-out is one batch call instead of one enqueue per page** — bounded only by `vision_max_pages` (default 2000), the old path cost up to 4000 sequential round trips; it is now 2. Priorities, correlation IDs and enqueue ordering are preserved.
+- **Per-chunk progress writes no longer block the worker event loop** — a commit that loses the SQLite writer lock parks the loop inside SQLite's busy handler for up to 60 seconds and then adds ~15 seconds of retry sleep, starving every other Operations slot and the heartbeat refresher whose lapse makes live tasks look abandoned. The same offload was applied to the graph-snapshot build on Neuron, two remaining synchronous reads in the trigger dispatch loop, the vision activity checkpoint, and the source-group lookup.
+- **The SIGTERM drain reads the shutdown grace setting** rather than the unrelated LLM instance-drain knob.
+- **The queue API can reach the background priority again** — `QueueTaskRequest.priority` defaults to `None`, so `settings.priorities.background` applies instead of being masked by a hardcoded default.
+
+##### Performance
+
+- **`get_stuck_extracting_sources` defeated its own column projection** — the per-source job lookup calls `expire_all()`, which expired the live rows the loop was iterating; the re-hydration that followed emitted one fully-unprojected `SELECT` per row, re-reading the large JSON columns the projection exists to avoid. Once per stuck source, at every worker boot, restart and redeploy.
+- **`update_step_progress` read all 162 source columns to write three scalars**, once per chunk-task outcome; it is now a plain `UPDATE`.
+- **Two more unprojected node reads** now carry the `include_embedding=False` / `load_only` projections their sibling batch readers already used.
+- **Queue statistics stop rediscovering the keyspace on every call**, and the source-heartbeat write no longer blocks the event loop.
+- **`knowledge_nodes` is counted by subtraction** instead of a non-indexable `NOT IN`; `send_message` stops hydrating 500 messages; the vision-pages poll stops paying for a 160-column read.
+- **`chaoscypher source search` hydrated chunks one unprojected row at a time** — up to 20 sequential full-row reads, embedding and raw content included, to render 100-character previews; it now uses the batch, embedding-free reader its node branch already used.
+- **The stuck-chat reconciler's event emit runs off the event loop**, like the two adapter calls it sits between.
+
+##### Interface
+
+- **An unknown queue depth no longer reads as empty** — `total_in_queue: null` collapsed to 0 and disabled Cancel All. The Clear History copy now says what it does, and the `retried` column sorts.
+- **The Sources page status filter offers only real statuses** — "active" and "archived" are not statuses and always matched nothing; the option list is now typed against the generated schema.
+- **The source pipeline view calls extraction groups what they are** — the chunk band and grid labelled each cell a "chunk" and counted groups as chunks, so the number shown never matched the source's actual chunk count. Cells are now labelled extraction groups and the real chunk count is shown alongside.
+
+##### CLI
+
+- **`source get` / `add` / `delete` read real columns** and match the API's override cascade; the phantom columns they previously selected are gone.
+
+##### Documentation
+
+- The generated Python API reference is regenerated and pinned by a new `docs-generated` CI step, so future drift fails CI instead of shipping quietly.
+- Search docs corrected: the keyword arm indexes graph node labels and properties, never chunk text; the re-ranking claim is scoped to `search_chunks`; the GraphRAG walkthrough describes embedding-based seed matching rather than a non-existent entity-extraction step.
+- Queue, pause, extraction-pipeline, loader and plugin procedure docs, the self-hosted threat model, the MCP tool table and six stale canonical-pattern citations were all corrected against the code they cite.
+- **The disaster-recovery checklist pointed at an empty `uploads/` directory** — staged originals live under the database's `sources/` directory; the checklist now names the real path.
+
 #### v0.4.2 (2026-09-08)
 
 A second fixes-only patch release — 61 commits since v0.4.1. No new features, no

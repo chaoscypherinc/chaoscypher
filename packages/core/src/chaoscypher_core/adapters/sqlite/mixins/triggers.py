@@ -91,7 +91,16 @@ class TriggersMixin(SqliteMixinBase, TriggerStorageProtocol):
                     Trigger.priority,
                     Trigger.created_at,
                     Trigger.updated_at,
-                    # EXCLUDE: filters, workflow_inputs (JSON)
+                    # filters/workflow_inputs are small config dicts and MUST be
+                    # projected: deferred columns are absent from the instance
+                    # __dict__, and entity_to_dict's model_dump reads __dict__
+                    # without triggering SQLAlchemy's lazy-load refresh. Omitting
+                    # them made every dispatch read `trigger.get("filters", {})`
+                    # as {} — which _filters_match treats as "match everything" —
+                    # and dropped workflow_inputs from every dispatched payload.
+                    # List endpoints stay lean via TriggerSummaryResponse, not here.
+                    Trigger.filters,
+                    Trigger.workflow_inputs,
                 )
             )
             .where(Trigger.database_name == database_name)

@@ -262,13 +262,27 @@ class ResetOperations:
         - Health keys (queue:*:health)
         - Token counts, costs, and task history
 
-        Note: This is a fast bulk operation that bypasses individual task cancellation.
+        Non-terminal tasks are cancelled first (best-effort), then the keyspace
+        is cleared. The cancel pass is what makes the documented "all
+        active/queued jobs (cancelled)" true: it sets the cooperative
+        ``queue:cancel:{task_id}`` flag so running handlers actually stop, and
+        CAS-writes the ``cancelled`` status. Without it a running handler
+        finished unaware and its terminal HSET *recreated* the just-deleted
+        task hash carrying only status fields — non-empty, so the worker's
+        ``task_hash_missing`` guard did not fire — after which the retry path
+        read an absent ``operation`` and dead-lettered the task as
+        "No handler registered for operations:" with its payload gone.
+
+        A cancel failure never blocks the reset: this endpoint is the operator's
+        "my queue is stuck" action, so clearing the keyspace has to proceed even
+        when the queue is too unhealthy to cancel through.
 
         SRP: Delegates to queue client.
         """
         from chaoscypher_core.queue import queue_client
 
         stats = {
+            "tasks_cancelled": 0,
             "tasks_deleted": 0,
             "results_deleted": 0,
             "queues_cleared": 0,
@@ -283,6 +297,15 @@ class ResetOperations:
                     attempted_action="reset_queue_stats",
                 )
                 return {"status": "error", "message": "Queue client unavailable"}
+
+            # 0. Cancel non-terminal tasks BEFORE unlinking their hashes, so
+            # running handlers stop cooperatively instead of finishing against
+            # a deleted keyspace and resurrecting a partial hash.
+            try:
+                stats["tasks_cancelled"] = await queue_client.cancel_all_tasks()
+            except Exception:
+                # Deliberately non-fatal — see the docstring.
+                logger.warning("queue_reset_cancel_pass_failed", exc_info=True)
 
             # 1. Collect all keys using KEYS (acceptable for reset operations)
             task_keys = await queue_client.client.keys("queue:task:*")

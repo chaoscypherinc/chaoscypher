@@ -185,24 +185,31 @@ class TestSearchCommand:
         ctx = _make_ctx()
         chunk_uuid = "abc123def456"
         ctx.search_repository.keyword_search.return_value = [(f"chunk:{chunk_uuid}", 0.7)]
-        ctx.storage_adapter.get_chunk_by_id.return_value = {
-            "content": "Some chunk content",
-            "chunk_index": 0,
-            "source_id": "if_src0000000001",
-        }
+        ctx.storage_adapter.get_chunks_by_ids_batch.return_value = [
+            {
+                "id": chunk_uuid,
+                "content": "Some chunk content",
+                "chunk_index": 0,
+                "source_id": "if_src0000000001",
+            }
+        ]
 
         with patch("chaoscypher_cli.commands.source.search.get_context", return_value=ctx):
             result = runner.invoke(search, ["test", "--mode", "keyword"])
 
         assert result.exit_code == 0, result.output
-        ctx.storage_adapter.get_chunk_by_id.assert_called_once_with(chunk_uuid)
+        # One batch read, not one SELECT per hit: the per-id reader is
+        # unprojected and drags the ~5 KB embedding BLOB and raw_content per
+        # chunk, up to --limit (default 20) times, to render a 100-char preview.
+        ctx.storage_adapter.get_chunks_by_ids_batch.assert_called_once_with([chunk_uuid])
+        ctx.storage_adapter.get_chunk_by_id.assert_not_called()
 
     def test_chunk_result_missing_chunk_data_not_included(self) -> None:
-        """If get_chunk_by_id returns None, that entry is silently skipped."""
+        """A chunk id absent from the batch result is silently skipped."""
         runner = CliRunner()
         ctx = _make_ctx()
         ctx.search_repository.keyword_search.return_value = [("chunk:unknown_id", 0.5)]
-        ctx.storage_adapter.get_chunk_by_id.return_value = None
+        ctx.storage_adapter.get_chunks_by_ids_batch.return_value = []
 
         with patch("chaoscypher_cli.commands.source.search.get_context", return_value=ctx):
             result = runner.invoke(search, ["test", "--mode", "keyword"])
@@ -242,11 +249,14 @@ class TestSearchCommand:
         chunk_uuid = "abc123def456"
         long_content = "x" * 200
         ctx.search_repository.keyword_search.return_value = [(f"chunk:{chunk_uuid}", 0.7)]
-        ctx.storage_adapter.get_chunk_by_id.return_value = {
-            "content": long_content,
-            "chunk_index": 1,
-            "source_id": "if_src0000000001",
-        }
+        ctx.storage_adapter.get_chunks_by_ids_batch.return_value = [
+            {
+                "id": chunk_uuid,
+                "content": long_content,
+                "chunk_index": 1,
+                "source_id": "if_src0000000001",
+            }
+        ]
 
         with patch("chaoscypher_cli.commands.source.search.get_context", return_value=ctx):
             result = runner.invoke(search, ["test", "--mode", "keyword"])
@@ -293,11 +303,14 @@ class TestHydrateResultsUnit:
         node.template_id = "Thing"
         node.properties = {}
         ctx.graph_repository.get_nodes_batch.return_value = [node]
-        ctx.storage_adapter.get_chunk_by_id.return_value = {
-            "content": "short",
-            "chunk_index": 0,
-            "source_id": "if_src0000000001",
-        }
+        ctx.storage_adapter.get_chunks_by_ids_batch.return_value = [
+            {
+                "id": "uuid123",
+                "content": "short",
+                "chunk_index": 0,
+                "source_id": "if_src0000000001",
+            }
+        ]
 
         raw = [("node-x", 0.9), ("chunk:uuid123", 0.5)]
         results = _hydrate_results(ctx, raw)

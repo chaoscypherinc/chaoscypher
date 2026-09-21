@@ -196,7 +196,14 @@ async def reconcile_stuck_chats(
                     )
                     continue
                 recovered += 1
-                event_bus.emit(
+                # Offloaded for the same reason as the adapter calls above:
+                # emit writes a system-event row and prunes the table, two
+                # commits whose busy-retry backoff sleeps synchronously. This
+                # loop runs per database on the Cortex event loop and scans
+                # with limit=10_000, so a batch of wedged chats would block
+                # every /api/ request once per recovered chat.
+                await asyncio.to_thread(
+                    event_bus.emit,
                     "recovery",
                     action="Chat recovered from stuck 'processing' state",
                     source="reconciler",

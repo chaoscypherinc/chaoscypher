@@ -121,6 +121,9 @@ services:
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
       - CHAOSCYPHER_EDGE_AUTH_TOKEN_FILE=/run/chaoscypher-edge/.edge_auth_token
       - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-localhost,127.0.0.1,::1}
+      # User-plugin kill switch — declared so the documented
+      # CHAOSCYPHER_ALLOW_USER_PLUGINS=0 actually reaches this service.
+      - CHAOSCYPHER_ALLOW_USER_PLUGINS=${CHAOSCYPHER_ALLOW_USER_PLUGINS:-1}
       # Lexicon package registry base URL. Defaults to the public hub (the
       # same default the app itself uses); override for a local dev registry.
       - LEXICON_URL=${LEXICON_URL:-https://lexicon.chaoscypher.com}
@@ -216,6 +219,9 @@ services:
       - QUEUE_PORT=6379
       - QUEUE_DB=0
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for production}
+      # User-plugin kill switch — the worker loads plugins too, so the
+      # documented CHAOSCYPHER_ALLOW_USER_PLUGINS=0 must reach it as well.
+      - CHAOSCYPHER_ALLOW_USER_PLUGINS=${CHAOSCYPHER_ALLOW_USER_PLUGINS:-1}
       # Lexicon package registry base URL. Defaults to the public hub (the
       # same default the app itself uses); override for a local dev registry.
       - LEXICON_URL=${LEXICON_URL:-https://lexicon.chaoscypher.com}

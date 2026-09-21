@@ -266,7 +266,11 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
                     kind=entry.kind,
                     item_id=entry.item_id,
                 )
-                continue
+                # Route through the failure path below so ``attempts`` and
+                # ``last_error`` advance and the row retires at
+                # ``max_attempts`` instead of occupying a batch slot forever.
+                msg = f"unhandled pending_search_index kind: {entry.kind!r}"
+                raise ValueError(msg)
             session.delete(entry)
             session.commit()
             stats["pending_drained"] += 1

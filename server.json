@@ -8,13 +8,13 @@
     "source": "github"
   },
   "websiteUrl": "https://chaoscypher.com",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "chaoscypher-cli",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

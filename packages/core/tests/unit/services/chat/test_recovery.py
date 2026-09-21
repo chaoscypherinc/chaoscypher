@@ -239,10 +239,19 @@ async def test_no_queue_client_falls_back_to_timestamp_check(in_memory_adapter) 
 
 
 @pytest.mark.asyncio
-async def test_adapter_calls_run_off_event_loop_thread() -> None:
+async def test_adapter_calls_run_off_event_loop_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     """The sweeper runs on the Cortex API event loop; its blocking SQLite
     adapter calls must be offloaded via ``asyncio.to_thread`` so a
     10,000-row scan plus per-chat writes cannot stall request handling.
+
+    ``event_bus.emit`` is in that set and was the one call left inline. It
+    is not a log line: ``record_system_event`` is an INSERT plus a commit,
+    then a ``SELECT COUNT(*)`` and a conditional prune DELETE plus a second
+    commit — two commits whose busy-retry backoff sleeps synchronously, once
+    per recovered chat, on the loop serving every ``/api/`` request. Its
+    ``except Exception`` swallow does not help: that covers failures, not the
+    latency of a *successful* commit that sits in ``time.sleep`` under
+    SQLITE_BUSY.
     """
     loop_thread = threading.get_ident()
     call_threads: dict[str, int] = {}
@@ -257,12 +266,18 @@ async def test_adapter_calls_run_off_event_loop_thread() -> None:
             call_threads["mark_chat_error_if_processing"] = threading.get_ident()
             return True
 
+    def _recording_emit(*_args: Any, **_kwargs: Any) -> None:
+        call_threads["event_bus.emit"] = threading.get_ident()
+
+    monkeypatch.setattr("chaoscypher_core.services.chat.recovery.event_bus.emit", _recording_emit)
+
     adapter = cast("Any", _RecordingAdapter())
     recovered = await reconcile_stuck_chats(adapter, "threading-db")
 
     assert recovered == 1
     assert call_threads["list_chats"] != loop_thread
     assert call_threads["mark_chat_error_if_processing"] != loop_thread
+    assert call_threads["event_bus.emit"] != loop_thread
 
 
 # ============================================================

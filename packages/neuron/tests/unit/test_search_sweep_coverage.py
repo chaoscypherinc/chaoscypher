@@ -243,8 +243,13 @@ def test_sweep_drains_node_when_target_gone(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
-    """A pending entry with an unknown kind logs a warning and survives."""
+def test_sweep_warns_and_ages_out_unknown_kind(tmp_path: Path, structlog_for_caplog: Any) -> None:
+    """An unknown kind logs a warning, counts as a failure, and retires at max_attempts.
+
+    Regression for the drain-wedging gap where the ``else:`` branch skipped the
+    row without touching ``attempts``, so the exhaustion path could never fire
+    and the row occupied a batch slot forever.
+    """
     from chaoscypher_neuron.search_sweep import sweep_search_indexes
 
     adapter, search_repo = _make_db(tmp_path)
@@ -259,17 +264,34 @@ def test_sweep_warns_and_skips_unknown_kind(tmp_path: Path, structlog_for_caplog
         adapter.session.add(pending)
         adapter.session.commit()
 
+        max_attempts = 3
         with capture_logs() as captured:
-            stats = sweep_search_indexes(adapter, search_repo, max_attempts=5)
-
-        # Pending row with an unknown kind is left in place (not drained).
-        remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
-        assert remaining is not None, "Unknown-kind pending row must survive"
-        assert stats["pending_drained"] == 0
-        assert stats["pending_failed"] == 0
+            stats = sweep_search_indexes(adapter, search_repo, max_attempts=max_attempts)
 
         events = [e["event"] for e in captured]
         assert "search_sweep_unknown_kind" in events
+
+        # First pass: the row survives but is now on the retry/exhaustion track.
+        adapter.session.expire_all()
+        remaining = adapter.session.get(PendingSearchIndex, "bogus:thing")
+        assert remaining is not None, "Unknown-kind row must survive until max_attempts"
+        assert remaining.attempts == 1
+        assert remaining.last_error is not None
+        assert "bogus" in remaining.last_error
+        assert stats["pending_drained"] == 0
+        assert stats["pending_failed"] == 1
+        assert stats["pending_exhausted"] == 0
+
+        # Subsequent passes keep bumping attempts until the row is retired.
+        for _ in range(max_attempts - 1):
+            stats = sweep_search_indexes(adapter, search_repo, max_attempts=max_attempts)
+
+        adapter.session.expire_all()
+        assert adapter.session.get(PendingSearchIndex, "bogus:thing") is None, (
+            "Unknown-kind row must leave the queue at max_attempts"
+        )
+        assert stats["pending_exhausted"] == 1
+        assert stats["pending_failed"] == 0
     finally:
         adapter.disconnect()
 

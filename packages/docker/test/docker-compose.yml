@@ -41,6 +41,12 @@ services:
       # host repo has them; only this docker-test tier lacked the directory,
       # so #500's pin passed everywhere except the push gate (2026-09-03).
       - ../config:/app/packages/docker/config:ro
+      # Shipped compose files — the plugin kill-switch pin (#623) parses the
+      # all-in-one and multi-container compose files to assert every
+      # plugin-loading service declares CHAOSCYPHER_ALLOW_USER_PLUGINS. Same
+      # shape as the config mount above: green in local mode, red only here.
+      - ../docker-compose.yml:/app/packages/docker/docker-compose.yml:ro
+      - ../multi-container:/app/packages/docker/multi-container:ro
       # Semgrep ignore list — load-bearing, not a convenience. The Dockerfile
       # COPYs only manifests + src, so anything not mounted here simply does
       # not exist at /app. Without this file semgrep falls back to its

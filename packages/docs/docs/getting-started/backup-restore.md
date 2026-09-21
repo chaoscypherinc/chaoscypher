@@ -21,7 +21,7 @@ What a backup does **not** capture:
 
 - **Configuration** — `settings.yaml` in the data dir (LLM provider, API keys, embedding settings). Back it up separately; it contains secrets, so store the copy securely.
 - **Login and API keys** — `<data_dir>/credentials.json` (operator password hash, hashed API keys) and `<data_dir>/secrets/` (session secret) live outside `app.db`; copy them alongside the backup or you will need to re-run `/setup` and re-mint API keys after a disaster restore.
-- **Uploaded source files** — raw documents under `<data_dir>/databases/<db_name>/uploads/`. Back these up separately if you need to re-run extraction without re-uploading.
+- **Uploaded source files** — raw documents under `<data_dir>/databases/<db_name>/sources/<source_id>/`. Back these up separately if you need to re-run extraction without re-uploading. (The sibling `uploads/` directory is scratch space for in-flight uploads and is empty at rest — backing it up captures nothing.)
 - **Valkey queue state** — in-flight tasks. Drain the queue (wait for the Queue Monitor to show zero pending tasks) before taking a backup you intend to restore from.
 - **Vector index files** — the sqlite-vec virtual tables are embedded in `app.db`, so they are included. Cached embedding model weights under `<data_dir>/models/` are not; they are re-downloaded on demand.
 - **Container logs** — `/data/logs/` is not part of the database backup.
@@ -202,7 +202,7 @@ A database backup alone is not enough to rebuild a working install on a fresh ho
 - **`<data_dir>/settings.yaml`** — all engine configuration: LLM provider choice, API keys, embedding settings. Contains secrets, so store the copy securely.
 - **`<data_dir>/credentials.json`** — the operator password hash and hashed API keys. Without it you must re-run `/setup` and re-mint API keys.
 - **`<data_dir>/secrets/`** — the session secret and other auto-generated tokens.
-- **`<data_dir>/databases/<db_name>/uploads/`** — raw uploaded source files (optional; only needed to re-run extraction without re-uploading).
+- **`<data_dir>/databases/<db_name>/sources/`** — the raw uploaded source files, one directory per source ID (optional; only needed to re-run extraction without re-uploading). This is the directory to copy — **not** the sibling `uploads/`, which holds only transient `.upload` temp files that each request deletes on the way out.
 
 The simplest approach is to periodically snapshot the entire `/data` volume in addition to the API-driven database backups.
 
