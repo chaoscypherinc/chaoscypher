@@ -8,6 +8,9 @@ document processing, and a server factory for stdio and Streamable HTTP
 transports.
 """
 
+# Benchmark bridge
+from chaoscypher_core.mcp.benchmark import BenchmarkBridge
+
 # Bridge
 from chaoscypher_core.mcp.bridge import BridgeResult, MCPToolBridge
 
@@ -31,6 +34,7 @@ from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, ToolDefinition, get_too
 
 __all__ = [
     "TOOL_DEFINITIONS",
+    "BenchmarkBridge",
     "BridgeResult",
     "CompletedFile",
     "DocumentProcessor",

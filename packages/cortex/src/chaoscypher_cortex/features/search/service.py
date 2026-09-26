@@ -114,6 +114,8 @@ class SearchService:
                             content=chunk_data["content"],
                             page_number=chunk_data.get("page_number"),
                             section=chunk_data.get("section"),
+                            start_time=chunk_data.get("start_time"),
+                            end_time=chunk_data.get("end_time"),
                             filename=chunk_data["filename"],
                         ),
                         score=result_dict["score"],

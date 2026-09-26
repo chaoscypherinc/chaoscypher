@@ -29,7 +29,7 @@
     "@docusaurus/module-type-aliases": "^3.7.0",
     "@docusaurus/types": "^3.7.0",
     "typescript": "~5.9.3",
-    "wrangler": "^4.131.0"
+    "wrangler": "^4.134.0"
   },
   "browserslist": {
     "production": [

@@ -25,7 +25,9 @@ patched at their source module path.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -366,3 +368,107 @@ async def test_batch_boundary_yields_to_event_loop(
     assert progress["processed"] == 2
     assert progress["total"] == 4
     assert result["error_count"] == 4
+
+
+@pytest.mark.asyncio
+async def test_per_source_sqlite_work_runs_on_a_worker_thread(
+    worker_harness: WorkerHarness,
+) -> None:
+    """The three SELECTs and the update_file WRITE must run off the loop thread.
+
+    ``asyncio.sleep(0)`` only yields BETWEEN batches, so before the
+    ``asyncio.to_thread`` hoist every blocking call inside a batch ran on the
+    Neuron worker's event loop — the same loop that carries the 8 Operations
+    slots, the LLM slot and every ``_heartbeat_refresher``. The Cortex route
+    for the identical computation already offloads
+    (``features/quality/api.py``: "Awaiting it inline would block the event
+    loop"); this pins the same property on the queue handler.
+
+    If the ``to_thread`` wrapper is replaced with a direct call, the adapter
+    calls run on the event loop's own thread and these assertions fail.
+    """
+    threads: dict[str, int] = {}
+
+    def _record(name: str, retval: Any) -> Any:
+        def _call(*_args: Any, **_kwargs: Any) -> Any:
+            threads[name] = threading.get_ident()
+            return retval
+
+        return _call
+
+    storage = MagicMock(name="storage")
+    storage.get_source_extraction_metadata = _record("read_metadata", {"chunk_count": 4})
+    storage.list_source_entities = _record("list_entities", [{"source_chunks": ["c1"]}])
+    storage.list_source_relationships = _record("list_relationships", [{"id": 1}])
+    storage.update_file = _record("update_file", None)
+
+    cached = {"cached_quality_grade": "A", "cached_quality_score": 0.95}
+    scorer_cls = _patch_scorer(cached_scores=cached)
+
+    handler = _register_handler(worker_harness, storage, _make_settings())
+
+    with (
+        patch("chaoscypher_core.services.quality.QualityScorer", scorer_cls),
+        patch("chaoscypher_core.services.quality.SCORING_VERSION", "v-test"),
+    ):
+        result = await handler({"source_ids": ["s1"], "database_name": "test_db"})
+
+    assert result["recalculated_count"] == 1
+    loop_thread = threading.get_ident()
+    for name in ("read_metadata", "list_entities", "list_relationships", "update_file"):
+        assert name in threads, f"{name} was never called"
+        assert threads[name] != loop_thread, (
+            f"storage_adapter.{name} ran on the event-loop thread — the "
+            "asyncio.to_thread offload in recalculate_quality_scores_handler "
+            "has regressed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_event_loop_stays_live_while_a_source_write_blocks(
+    worker_harness: WorkerHarness,
+) -> None:
+    """The loop must keep running while one source's blocking write stalls.
+
+    ``update_file`` takes SQLite's single-writer lock; commit/service.py
+    documents contention here costing "the full busy_timeout (60s per
+    stall)", which alone exceeds the 30 s heartbeat TTL. The fake blocks
+    until a coroutine running on the event loop releases it: with the
+    offload intact that release is scheduled while the worker thread waits;
+    if the write runs on the loop the releasing coroutine can never run and
+    the ``wait`` below times out — a deadline, not a timing threshold.
+    """
+    release = threading.Event()
+    entered: asyncio.Event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def blocking_update_file(*_args: Any, **_kwargs: Any) -> None:
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=5), (
+            "event loop never released the blocked write — update_file is "
+            "starving the loop it was supposed to be offloaded from"
+        )
+
+    storage = MagicMock(name="storage")
+    storage.get_source_extraction_metadata.return_value = {"chunk_count": 4}
+    storage.list_source_entities.return_value = [{"source_chunks": ["c1"]}]
+    storage.list_source_relationships.return_value = [{"id": 1}]
+    storage.update_file = blocking_update_file
+
+    scorer_cls = _patch_scorer(
+        cached_scores={"cached_quality_grade": "A", "cached_quality_score": 0.95}
+    )
+
+    handler = _register_handler(worker_harness, storage, _make_settings())
+
+    with (
+        patch("chaoscypher_core.services.quality.QualityScorer", scorer_cls),
+        patch("chaoscypher_core.services.quality.SCORING_VERSION", "v-test"),
+    ):
+        async with asyncio.timeout(10):
+            task = asyncio.create_task(handler({"source_ids": ["s1"], "database_name": "test_db"}))
+            await entered.wait()  # the write has started on its worker thread
+            release.set()  # only reachable while the event loop is responsive
+            result = await task
+
+    assert result["recalculated_count"] == 1

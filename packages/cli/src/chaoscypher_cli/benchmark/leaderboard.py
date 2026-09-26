@@ -14,6 +14,7 @@ from chaoscypher_cli.benchmark.composite import (
     CompositeWeights,
     compute_extractor_composites,
 )
+from chaoscypher_cli.benchmark.results import format_harness_settings
 
 
 if TYPE_CHECKING:
@@ -129,10 +130,46 @@ def render_leaderboard(
     if "embedding" in by_kind:
         sections.append(_render_embedding_section(by_kind["embedding"]))
     if "chat" in by_kind:
-        sections.append(_render_chat_section(by_kind["chat"]))
+        judged = [r for r in by_kind["chat"] if not _is_probe_scored_chat(r)]
+        if judged:
+            sections.append(_render_chat_section(judged))
+    if "probes" in by_kind:
+        sections.append(_render_probes_section(by_kind["probes"]))
+    # Chat rows scored by the pass/fail chat probes share the probe renderer;
+    # judged chat rows keep their own section.
+    chat_rows = by_kind.get("chat", [])
+    probe_chat = [r for r in chat_rows if _is_probe_scored_chat(r)]
+    if probe_chat:
+        sections.append(
+            _render_probes_section(
+                probe_chat,
+                title="Grounded Chat Probes",
+                intro=(
+                    "Pass/fail per labelled question against the reference graph: answer "
+                    "from the graph, name nothing outside the retrieved context, lead with "
+                    "the right entity, decline when the sources do not support an answer. "
+                    "Headline = tier-weighted pass rate (single-hop/paraphrase 1, "
+                    "multi-hop/fine-grained 2, out-of-scope 3). Thinking on."
+                ),
+            )
+        )
 
     body = "\n\n".join(sections)
     return preamble + body
+
+
+def _is_probe_scored_chat(row: BenchmarkResult) -> bool:
+    """Whether a chat row belongs to the chat probes rather than the judged table.
+
+    Decided by provenance, not by the metrics: a failed probe-scored run has
+    empty metrics and would otherwise land in the judged section. The chat
+    dataset records ``judge_model`` in its extras (None = probe-scored);
+    legacy rows written before that fall back to whether verdicts exist.
+    """
+    extras = row.extras or {}
+    if "judge_model" in extras:
+        return extras["judge_model"] is None
+    return "verdicts" in (row.metrics or {})
 
 
 def _render_overall_section(
@@ -185,8 +222,12 @@ def _build_header_section(
     """
     dataset_ids = sorted({r.dataset_id for r in rows})
     model_ids = sorted({r.model_id for r in rows})
-    seeds = sorted({r.seed for r in rows})
-    temps = sorted({r.temperature for r in rows})
+    # Pins describe only the rows the benchmark ran itself; harness-track rows
+    # (an MCP client on its own settings) are named separately below.
+    pinned = [r for r in rows if r.pins_applied]
+    unpinned = sorted({r.model_label for r in rows if not r.pins_applied})
+    seeds = sorted({r.seed for r in pinned if r.seed is not None})
+    temps = sorted({r.temperature for r in pinned if r.temperature is not None})
     benchmark_versions = sorted({r.benchmark_version for r in rows})
     scorer_versions = sorted({r.scorer_version for r in rows})
     config_names = sorted({r.config_name for r in rows if r.config_name})
@@ -204,12 +245,23 @@ def _build_header_section(
             f"Benchmark v{','.join(benchmark_versions)} . "
             f"Scorer v{','.join(str(v) for v in scorer_versions)} . "
             f"{len(dataset_ids)} datasets . {len(model_ids)} models . "
-            f"single shot . temp={','.join(str(t) for t in temps)} . "
-            f"seed={','.join(str(s) for s in seeds)} . "
-            f"{_composite_descriptor(weights)}"
+            + (
+                f"thinking={','.join(_thinking_modes(pinned))} . "
+                f"single shot . temp={','.join(str(t) for t in temps)} . "
+                f"seed={','.join(str(s) for s in seeds)} . "
+                if pinned
+                else "pins not applied . "
+            )
+            + _composite_descriptor(weights)
         ),
         "",
     ]
+    if unpinned and pinned:
+        lines.append(
+            "> NOTE pins above apply to locally run models only. Run inside an MCP "
+            "client on its own settings (pins not applied): " + ", ".join(unpinned)
+        )
+        lines.append("")
 
     # Heterogeneous-version warnings.
     dataset_versions: dict[str, set[str]] = {}
@@ -224,6 +276,9 @@ def _build_header_section(
     if len(scorer_versions) > 1:
         lines.append(f"> WARNING heterogeneous run: scorer_version mismatch ({scorer_versions})")
         lines.append("")
+    for warning in _integrity_warnings(rows):
+        lines.append(warning)
+        lines.append("")
     if user_datasets:
         lines.append(
             "> NOTE includes user-overlay datasets (not reproducible from pip alone): "
@@ -231,6 +286,55 @@ def _build_header_section(
         )
         lines.append("")
     return lines
+
+
+def _integrity_warnings(rows: list[BenchmarkResult]) -> list[str]:
+    """Warn about rows whose extraction did not run to completion.
+
+    A chunk that ends on ``finish_reason == "length"`` was cut off mid-answer,
+    and a truncated graph can outscore a complete one - measured 2026-09-22,
+    ``gemma4:31b`` scored 72.09 truncated against 67.02 complete. Ranking such a
+    row against clean ones without saying so is the same class of silent
+    mislabelling as reporting a seed that was never applied.
+    """
+    warnings: list[str] = []
+    truncated = sorted({r.model_label for r in rows if r.chunks_truncated})
+    aborted = sorted({r.model_label for r in rows if r.chunks_aborted_by_loop})
+    if truncated:
+        warnings.append(
+            "> WARNING truncated extraction (finish_reason=length) - scores are not "
+            "comparable with complete runs: " + ", ".join(truncated)
+        )
+    if aborted:
+        warnings.append(
+            "> WARNING stream aborted by loop detector - partial graph: " + ", ".join(aborted)
+        )
+    return warnings
+
+
+def _display_label(r: BenchmarkResult) -> str:
+    """Model label, marked when the row ran in an MCP client without the pins.
+
+    The mark lists the client's reported settings (effort and thinking first)
+    because they can move the score as much as the model does.
+    """
+    if r.pins_applied:
+        return r.model_label
+    parts = ["via MCP client", *format_harness_settings(r.harness_settings), "pins not applied"]
+    return f"{r.model_label} [{', '.join(parts)}]"
+
+
+def _thinking_modes(rows: list[BenchmarkResult]) -> list[str]:
+    """Describe the thinking modes present, flagging rows the model ignored.
+
+    Generated from the rows rather than written by hand: a methodology line
+    typed into a document drifts from the code the moment anything changes,
+    which is exactly how this benchmark came to claim a seed it never set.
+    """
+    modes = sorted({"on" if r.thinking else "off" for r in rows})
+    if any(r.thinking_honoured is False for r in rows):
+        modes.append("(UNHONOURED on some models)")
+    return modes
 
 
 def _composite_descriptor(weights: CompositeWeights | None) -> str:
@@ -336,6 +440,71 @@ def _build_incomplete_section(incomplete: list[ModelAggregate]) -> list[str]:
     )
     lines.append("")
     return lines
+
+
+def _render_probes_section(
+    rows: list[BenchmarkResult],
+    *,
+    title: str = "Instruction Probes",
+    intro: str | None = None,
+) -> str:
+    """Instruction-probe results: tier-weighted pass rate plus per-section rates.
+
+    Each probe is pass/fail against a constructed passage, so unlike the
+    extraction grade nothing here can be raised by emitting more output. The
+    headline weights tiers easy 1 / medium 2 / hard 3 (ordinal difficulty, not a
+    trade-off). Per-section columns show pass rates by tier so a reader can see
+    *which* instructions a model fails, not just a number.
+    """
+    ok = sorted(
+        (r for r in rows if r.success),
+        key=lambda r: (-r.headline_score, r.latency_ms_per_chunk_p50),
+    )
+    lines: list[str] = [f"## {title}", ""]
+    lines.append(
+        intro
+        or (
+            "Pass/fail per probe on hand-written passages, run through the real "
+            "extraction prompts and parser. Headline = tier-weighted pass rate "
+            "(easy 1, medium 2, hard 3)."
+        )
+    )
+    lines.append("")
+
+    # Discover the (section, tier) columns present across rows, in stable order.
+    tier_order = {"easy": 0, "medium": 1, "hard": 2}
+    columns: list[tuple[str, str]] = []
+    for r in ok:
+        for sec, tiers in ((r.metrics or {}).get("section_rates") or {}).items():
+            for tier in tiers:
+                if (sec, tier) not in columns:
+                    columns.append((sec, tier))
+    columns.sort(key=lambda c: (c[0], tier_order.get(c[1], 9)))
+
+    header = ["Rank", "Model", "Pass rate", "Probes"] + [f"{s} {t}" for s, t in columns]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["-----:", "-----"] + ["-----:"] * (len(header) - 2)) + "|")
+    for i, r in enumerate(ok, 1):
+        m = r.metrics or {}
+        rates = m.get("section_rates") or {}
+        cells = [
+            str(i),
+            _display_label(r),
+            f"{r.headline_score:.1f}%",
+            f"{m.get('probes_passed', 0)}/{m.get('probes_total', 0)}",
+        ]
+        for sec, tier in columns:
+            v = (rates.get(sec) or {}).get(tier)
+            cells.append("-" if v is None else f"{v:.0f}%")
+        lines.append("| " + " | ".join(cells) + " |")
+
+    failed = [r for r in rows if not r.success]
+    if failed:
+        lines.append("")
+        lines.append(
+            "Did not complete: " + ", ".join(f"{_display_label(r)} ({r.error})" for r in failed)
+        )
+    return "\n".join(lines)
 
 
 def _render_embedding_section(rows: list[BenchmarkResult]) -> str:

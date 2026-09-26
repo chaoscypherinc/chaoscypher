@@ -9,6 +9,8 @@ import {
   formatDuration,
   formatDurationNullable,
   formatDurationMs,
+  formatMediaTimestamp,
+  formatMediaRange,
   formatRelativeTime,
   formatTaskDuration,
   formatNumber,
@@ -550,5 +552,24 @@ describe('cleanTypeName', () => {
 
   it('handles already title-cased strings gracefully', () => {
     expect(cleanTypeName('Person')).toBe('Person');
+  });
+});
+
+describe('formatMediaTimestamp / formatMediaRange', () => {
+  it('formats seconds as m:ss under an hour and h:mm:ss above', () => {
+    expect(formatMediaTimestamp(0)).toBe('0:00');
+    expect(formatMediaTimestamp(754.6)).toBe('12:34');
+    expect(formatMediaTimestamp(3723)).toBe('1:02:03');
+  });
+
+  it('formats a range, collapsing identical whole seconds', () => {
+    expect(formatMediaRange(754, 785)).toBe('12:34–13:05');
+    expect(formatMediaRange(754.2, 754.9)).toBe('12:34');
+    expect(formatMediaRange(754, null)).toBe('12:34');
+  });
+
+  it('returns null when the chunk carries no media position', () => {
+    expect(formatMediaRange(null, null)).toBeNull();
+    expect(formatMediaRange(undefined, undefined)).toBeNull();
   });
 });

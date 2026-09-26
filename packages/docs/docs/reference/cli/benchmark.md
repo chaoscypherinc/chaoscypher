@@ -77,6 +77,7 @@ chaoscypher benchmark run extraction --out ./bench-out
 | `--out DIR` | path | `<data_dir>/benchmark/results/` | Output directory for JSON and Markdown. |
 | `--estimate` | flag | off | Print the LLM-call estimate and exit without running. |
 | `--rebuild-graphs` | flag | off | Clear the benchmark graph cache before running. |
+| `--model-timeout` | seconds | none | Wall-clock cap per (model, dataset) run. A run over it is recorded as a failed row and the sweep continues; rows are also written to `partial.json` as they land. |
 
 **Output:**
 
@@ -187,6 +188,29 @@ chaoscypher benchmark fixture validate <dataset_id>
 # Validate against a different reference extractor
 chaoscypher benchmark fixture validate <dataset_id> --canonical-extractor ollama/qwen3:14b
 ```
+
+---
+
+## Reference Packs
+
+`benchmark reference` exports the graph a grounded-chat run retrieved from as
+a reference pack, so a model behind an MCP client can answer the same
+questions from the same graph (see
+[Benchmark any MCP client](../extraction-benchmark.md#benchmark-any-mcp-client)).
+
+```bash
+# Export the cached graph gemma4:31b built for Book One, indexed for retrieval
+chaoscypher benchmark reference export --dataset war_and_peace_book1 \
+  --extractor ollama/gemma4:31b --embedder ollama/qwen3-embedding:0.6b
+
+# List the packs under <data_dir>/benchmark/reference/
+chaoscypher benchmark reference list
+```
+
+Options for `export`: `--workspace` (the benchmark workspace holding
+`graph_cache/`, default `<data_dir>/benchmark/workspace`), `--name` (default:
+the dataset id), `--data-dir`, `--force` (replace an existing pack) and
+`--no-index` (skip re-embedding now; the first chat task does it).
 
 ---
 

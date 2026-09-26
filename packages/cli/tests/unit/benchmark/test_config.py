@@ -123,12 +123,15 @@ def test_extractors_only_loads(tmp_path):
     assert cfg.judge is None
 
 
-def test_chats_requires_judge(tmp_path):
+def test_chats_without_judge_is_the_probe_scored_chat_stage(tmp_path):
+    """A judge is optional since 2026-09-25: without one the chat stage is
+    scored by the pass/fail chat probes, so this config must load.
+    """
     from chaoscypher_cli.benchmark.config import load_config
 
     cfg_dir = tmp_path / "config"
     cfg_dir.mkdir()
-    (cfg_dir / "bad.yaml").write_text(
+    (cfg_dir / "nojudge.yaml").write_text(
         "name: x\n"
         "datasets: [d1]\n"
         "extractors:\n"
@@ -137,8 +140,9 @@ def test_chats_requires_judge(tmp_path):
         "  - {provider: openai, model: gpt-4o-mini, label: M}\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="judge.*required"):
-        load_config("bad", builtin_root=tmp_path / "_none", user_root=cfg_dir)
+    cfg = load_config("nojudge", builtin_root=cfg_dir, user_root=tmp_path / "user")
+    assert cfg.judge is None
+    assert [m.model for m in cfg.chats or []] == ["gpt-4o-mini"]
 
 
 def test_embedders_requires_extractors(tmp_path):

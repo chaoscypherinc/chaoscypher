@@ -36,7 +36,7 @@ class TestToolDefinitions:
     """Tool definitions completeness and structure."""
 
     def test_total_tool_count(self):
-        assert len(TOOL_DEFINITIONS) == 31
+        assert len(TOOL_DEFINITIONS) == 36
 
     def test_all_tools_have_required_fields(self):
         for tool in TOOL_DEFINITIONS:
@@ -53,11 +53,11 @@ class TestToolDefinitions:
 
     def test_write_mode_includes_all_tools(self):
         write_tools = get_tools_for_mode("write")
-        assert len(write_tools) == 31
+        assert len(write_tools) == 36
 
     def test_read_tool_count(self):
         read_tools = get_tools_for_mode("read")
-        assert len(read_tools) == 16
+        assert len(read_tools) == 21
 
     def test_write_tool_count(self):
         write_only = [t for t in TOOL_DEFINITIONS if t.write_only]

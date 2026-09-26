@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,8 +73,8 @@ def test_resolve_gold_unresolved():
 async def test_run_records_ranks_and_skips_out_of_scope():
     embedder = ModelConfig(provider="ollama", model="nomic", label="N")
     fake_ctx = MagicMock()
-    fake_ctx.storage_adapter.list_entities = MagicMock(
-        return_value=[{"id": "uuid-1", "name": "ARPA", "aliases": []}]
+    fake_ctx.graph_repository.list_nodes = MagicMock(
+        return_value=[SimpleNamespace(id="uuid-1", label="ARPA", aliases=[])]
     )
     indexed = MagicMock()
     indexed.ctx = fake_ctx

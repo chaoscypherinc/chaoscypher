@@ -297,9 +297,9 @@ def test_benchmark_settings_defaults() -> None:
 
     s = Settings()
     assert s.benchmark.reindex_node_batch_limit == 100_000
-    assert "low_8gb" in s.benchmark.vram_presets
-    assert s.benchmark.vram_presets["mid_24gb"]["chat"] == "qwen3:30b"
-    assert s.benchmark.vram_presets["high_80gb"]["embedding"] == "qwen3-embedding:0.6b"
+    assert not hasattr(
+        s.benchmark, "vram_presets"
+    )  # removed 2026-09-25: the preset plugins are the source of truth
 
 
 def test_batching_bulk_request_max_operations_default() -> None:

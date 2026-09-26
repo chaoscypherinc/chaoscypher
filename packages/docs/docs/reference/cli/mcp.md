@@ -103,5 +103,7 @@ For HTTP-based MCP access (web clients, remote access), use the Cortex API endpo
 
 ## See also
 
+- [Mount](mount.md) — pull a knowledge package and serve it over this same server in one command
+
 - [User guide: MCP Server](../../user-guide/mcp.md) — full list of available tools, write mode, client-driven extraction, and configuration details
 - [API reference: Grounding (MCP)](../../reference/api/grounding.md) — HTTP endpoints for node search, edge traversal, and neighbor discovery (used by the HTTP transport)

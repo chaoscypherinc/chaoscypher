@@ -152,6 +152,53 @@ class TestHealthPauseEvaluator:
         )
 
     @pytest.mark.asyncio
+    async def test_health_change_emits_run_off_the_event_loop(self) -> None:
+        """tick()'s transition emits must also go through asyncio.to_thread.
+
+        ``event_bus.emit`` is not a cheap log line: it INSERTs a
+        ``system_events`` row, commits, runs ``SELECT COUNT(*)`` and may
+        DELETE-prune the table. The trigger executor already offloads this
+        exact callable for that reason (services/workflows/triggers/engine/
+        executor.py: "emit writes a system-event row and prunes the table,
+        two commits whose busy-retry backoff sleeps synchronously"), and
+        tick() itself already offloads the far lighter ``get_system_state``
+        read two dozen lines above. A health tick fires precisely when the
+        system is degraded, i.e. when writer-lock contention is worst.
+        """
+        import threading
+        from unittest.mock import patch
+
+        loop_thread = threading.current_thread()
+        emit_threads: list[threading.Thread] = []
+
+        def _record_emit(*_args: object, **_kwargs: object) -> None:
+            emit_threads.append(threading.current_thread())
+
+        probe = _StubProbe("emitting")
+        # trip=5 keeps set_system_paused out of the way: this test is only
+        # about the two transition emits.
+        evaluator, adapter = _make_evaluator([probe], trip=5)
+
+        with patch(
+            "chaoscypher_core.services.events.health.pause_evaluator.event_bus.emit",
+            side_effect=_record_emit,
+        ):
+            probe.set_status("error")
+            await evaluator.tick()  # first failure -> "degraded" emit
+            probe.set_status("ok")
+            await evaluator.tick()  # first pass after a failure -> "recovered" emit
+
+        adapter.set_system_paused.assert_not_called()
+        assert len(emit_threads) == 2, (
+            f"expected a degraded emit and a recovered emit; got {len(emit_threads)}"
+        )
+        assert all(t is not loop_thread for t in emit_threads), (
+            "event_bus.emit must run in a worker thread, not on the event loop — "
+            "it INSERTs + commits + prunes system_events under the SQLite "
+            "single-writer lock"
+        )
+
+    @pytest.mark.asyncio
     async def test_trips_after_threshold(self) -> None:
         """Error probe triggers pause after trip_threshold consecutive failures."""
         probe = _StubProbe("flaky")

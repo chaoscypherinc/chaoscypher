@@ -6,6 +6,14 @@
 Provides ``create_mcp_server()`` which wires an Engine instance to
 an MCP Server with all tool handlers registered. Supports both
 stdio and Streamable HTTP transports.
+
+Besides the graph tools, two client-driven workflows are routed here: MCP
+extraction (``get_extraction_tasks`` -> ``get_extraction_chunks`` ->
+``submit_chunk_extraction`` -> ``finalize_extraction``, write mode) and the
+MCP benchmark, in which the calling model answers a benchmark suite -
+the extraction instruction probes or grounded chat (``start_benchmark`` -> ``get_benchmark_task`` ->
+``submit_benchmark_output`` ... -> ``finish_benchmark``, read mode too,
+since it never touches the graph).
 """
 
 import asyncio
@@ -17,6 +25,7 @@ import structlog
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
+from chaoscypher_core.mcp.benchmark import BenchmarkBridge
 from chaoscypher_core.mcp.bridge import MCPToolBridge
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
 from chaoscypher_core.mcp.processor import DocumentProcessor
@@ -71,12 +80,15 @@ def create_mcp_server(engine: Engine) -> Server:
 
     bridge = MCPToolBridge(tool_executor=tool_executor)
 
-    # Pipeline callbacks and document processors (only active in write mode)
+    # Pipeline callbacks, document processors and the extraction
+    # orchestrator (only active in write mode)
     full_pipeline: Any = None
     index_only_pipeline: Any = None
     doc_processor: DocumentProcessor | None = None
     index_only_processor: DocumentProcessor | None = None
+    extraction_orchestrator: ExtractionOrchestrator | None = None
     if mode == "write":
+        extraction_orchestrator = ExtractionOrchestrator(engine=engine)
         full_pipeline = _create_pipeline_callback(engine, extract_entities=True)
         index_only_pipeline = _create_pipeline_callback(engine, extract_entities=False)
         doc_processor = DocumentProcessor(
@@ -88,10 +100,9 @@ def create_mcp_server(engine: Engine) -> Server:
             completed_history_limit=settings.mcp.completed_history_limit,
         )
 
-    # Extraction orchestrator (only active in write mode)
-    extraction_orchestrator: ExtractionOrchestrator | None = None
-    if mode == "write":
-        extraction_orchestrator = ExtractionOrchestrator(engine=engine)
+    # Benchmark bridge: file-backed, never touches the graph, so it serves
+    # read mode as well as write mode.
+    benchmark_bridge = BenchmarkBridge(settings)
 
     # Build MCP Server
     server = Server("chaoscypher")
@@ -193,6 +204,17 @@ def create_mcp_server(engine: Engine) -> Server:
                 else None
             )
             return await _handle_extraction_tool(extraction_orchestrator, method, args)
+
+        # MCP benchmark tools
+        _benchmark_methods = {
+            "start_benchmark": benchmark_bridge.start,
+            "get_benchmark_task": benchmark_bridge.next_task,
+            "submit_benchmark_output": benchmark_bridge.submit,
+            "get_benchmark_progress": benchmark_bridge.progress,
+            "finish_benchmark": benchmark_bridge.finish,
+        }
+        if name in _benchmark_methods:
+            return await _handle_benchmark_tool(_benchmark_methods[name], args)
 
         # Delegate to ToolExecutorService via bridge
         bridge_result = await bridge.execute(name, args)
@@ -706,6 +728,20 @@ async def _handle_extraction_tool(
     except (ValueError, KeyError):  # fmt: skip
         result = {"success": False, "error": "Tool execution failed"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
+
+
+async def _handle_benchmark_tool(method: Any, args: dict[str, Any]) -> list[TextContent]:
+    """Call a :class:`BenchmarkBridge` method and JSON-encode its result.
+
+    The bridge maps its own failures to ``success: false`` payloads; this
+    wrapper only turns argument mismatches (a missing or unknown argument)
+    into ``INVALID_ARGUMENT`` instead of an exception.
+    """
+    try:
+        result = await method(**args)
+    except TypeError as exc:
+        result = {"success": False, "error_code": "INVALID_ARGUMENT", "error": str(exc)}
+    return [TextContent(type="text", text=json.dumps(result, default=str))]
 
 
 async def _fetch_url_source(engine: Engine, url: str) -> dict[str, Any]:

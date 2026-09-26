@@ -664,3 +664,27 @@ async def test_chat_connection_error_wrapped_as_llmerror() -> None:
                 messages=[{"role": "user", "content": "hi"}],
                 stream=False,
             )
+
+
+def test_init_llm_passes_request_timeout_to_the_http_client() -> None:
+    """The silence timeout reaches httpx so a hang before the first byte fails.
+
+    2026-09-23: olmo-3.1:32b sat 75 minutes on its first chunk with zero
+    bytes on the wire; the stream-chunk timeout does not cover the
+    non-streaming path, and Ollama ignored ``llm_request_timeout`` while the
+    cloud providers honoured it.
+    """
+    from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
+
+    provider = OllamaProvider({**_BASE_CONFIG, "llm_request_timeout": 42.0})
+    llm = provider._init_llm(temperature=0.0, max_tokens=None, reasoning=False)
+    assert llm.client_kwargs == {"timeout": 42.0}
+
+
+def test_init_llm_without_request_timeout_leaves_the_client_alone() -> None:
+    """No setting, no client kwargs - the default client is unchanged."""
+    from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
+
+    config = {k: v for k, v in _BASE_CONFIG.items() if k != "llm_request_timeout"}
+    llm = OllamaProvider(config)._init_llm(temperature=0.0, max_tokens=None, reasoning=False)
+    assert not llm.client_kwargs

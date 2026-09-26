@@ -16,6 +16,7 @@ additional keys via ``extra_metadata`` (``user_id``, ``chat_id``,
 fields (``database_name``, ``operation_type``, identifier).
 """
 
+import asyncio
 import base64
 from typing import TYPE_CHECKING, Any
 
@@ -195,7 +196,16 @@ async def queue_import_commit(
         Task ID for tracking.
 
     """
-    adapter.set_source_commit_payload(file_id, commit_data, database_name)
+
+    # Offloaded to a worker thread so SafeSession._retry_delay
+    # ``time.sleep`` calls during SQLITE_BUSY contention do not block
+    # other in-flight handlers on the event loop (2026-05-23 perf fix).
+    # ``commit_data`` is MB-scale for large documents, so the json.dumps
+    # plus the TEXT UPDATE + COMMIT is the biggest write on this path.
+    def _persist_commit_payload() -> None:
+        adapter.set_source_commit_payload(file_id, commit_data, database_name)
+
+    await asyncio.to_thread(_persist_commit_payload)
     return await queue_client.enqueue_task(
         queue=QUEUE_OPERATIONS,
         operation=OP_IMPORT_COMMIT,

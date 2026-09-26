@@ -44,27 +44,28 @@ Testing connection... Connected successfully
 
 How much GPU VRAM do you have?
 
-  [1]  16GB  (RTX 4080, 5080)        → phi4:14b
-  [2]  20GB  (RTX A4000, A4500)      → phi4:14b
-  [3]  24GB  (RTX 4090, 3090)        → qwen3:30b
-  [4]  32GB  (RTX 5090)              → qwen3:30b
-  [5]  48GB  (A6000, 2x 4090)        → qwen3:30b
-  [6]  96GB  (RTX 6000 Pro)          → gpt-oss:120b
-  [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b
+  [1]  16GB  (RTX 4080, 5080)        → qwen3.5:9b     → qwen2.5:14b-instruct
+  [2]  20GB  (RTX A4000, A4500)      → qwen3.5:9b     → qwen2.5:14b-instruct
+  [3]  24GB  (RTX 4090, 3090)        → qwen3.8:27b    → gemma4:26b
+  [4]  32GB  (RTX 5090)              → qwen3.6:35b-a3b → gemma4:31b
+  [5]  48GB  (A6000, 2x 4090)        → qwen3.6:35b-a3b → gemma4:31b
+  [6]  96GB  (RTX 6000 Pro)          → gpt-oss:120b   → gemma4:31b
+  [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b → gemma4:31b
   [8]  Custom                        I'll specify models manually
+  How these models were chosen: https://chaoscypher.com/leaderboard
 
 Select VRAM tier [1/2/3/4/5/6/7/8] (3): 3
 Applying 24GB VRAM preset...
   Chat model: qwen3:30b
-  Extraction model: qwen3:30b-instruct
+  Extraction model: gemma4:26b
   Vision model: qwen3-vl:30b
   Context window: 16384
 
 ╭─ ✓ Configuration Complete ───────────────╮
 │ Provider       ollama                     │
 │ URL            http://localhost:11434      │
-│ Chat Model     qwen3:30b                  │
-│ Extraction     qwen3:30b-instruct         │
+│ Chat Model     qwen3.8:27b                │
+│ Extraction     gemma4:26b                 │
 │ Context Window 16384                      │
 │ Settings File  ~/.local/share/chaos.../settings.yaml │
 ╰──────────────────────────────────────────╯
@@ -121,11 +122,11 @@ When using Ollama, specify `--vram` to auto-configure optimal models for your ha
 
 | VRAM | GPUs | Chat Model |
 |------|------|------------|
-| 16 GB | RTX 4080, 5080 | `phi4:14b` |
-| 20 GB | RTX A4000, A4500 | `phi4:14b` |
-| 24 GB | RTX 4090, 3090 | `qwen3:30b` |
-| 32 GB | RTX 5090 | `qwen3:30b` |
-| 48 GB | A6000, 2x 4090 | `qwen3:30b` |
+| 16 GB | RTX 4080, 5080 | `qwen3.5:9b` |
+| 20 GB | RTX A4000, A4500 | `qwen3.5:9b` |
+| 24 GB | RTX 4090, 3090 | `qwen3.8:27b` |
+| 32 GB | RTX 5090 | `qwen3.6:35b-a3b` |
+| 48 GB | A6000, 2x 4090 | `qwen3.6:35b-a3b` |
 | 96 GB | RTX 6000 Pro | `gpt-oss:120b` |
 | 128 GB | DGX Spark, Ryzen AI Max+ 395 | `gpt-oss:120b` |
 

@@ -856,8 +856,32 @@ class TestSessionMode:
         node = _make_node("will-delete", "To Delete", [1.0, 0.0, 0.0, 0.0])
         repo.index_node(node)
 
-        # Delete via session mode, then roll back — the row should survive
-        repo.delete_nodes_batch(["will-delete"], session=session)
+        # Delete via session mode
+        removed = repo.delete_nodes_batch(["will-delete"], session=session)
+        assert removed == 1
+
+        # The delete really happened inside the caller's transaction: it is
+        # visible via the session's own connection before any rollback. Without
+        # this, "rolled back" and "never deleted" are indistinguishable below.
+        row = (
+            session.connection()
+            .execute(
+                text("SELECT node_id FROM fulltext_content WHERE node_id = :id"),
+                {"id": "will-delete"},
+            )
+            .first()
+        )
+        assert row is None, "Session-mode delete must remove the row in the caller's transaction"
+
+        # ...and it is buffered there, not committed behind the caller's back
+        with repo._engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT node_id FROM fulltext_content WHERE node_id = :id"),
+                {"id": "will-delete"},
+            ).first()
+            assert row is not None, "Session-mode delete must not commit independently"
+
+        # Roll back — the row should survive
         session.rollback()
 
         with repo._engine.connect() as conn:

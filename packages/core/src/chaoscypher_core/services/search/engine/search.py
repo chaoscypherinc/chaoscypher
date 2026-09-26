@@ -367,6 +367,8 @@ class SearchService:
                                 "chunk_index": chunk_data["chunk_index"],
                                 "content": chunk_data["content"],
                                 "page_number": chunk_data.get("page_number"),
+                                "start_time": chunk_data.get("start_time"),
+                                "end_time": chunk_data.get("end_time"),
                                 "section": chunk_data.get("section"),
                                 "filename": chunk_data["filename"],
                             },

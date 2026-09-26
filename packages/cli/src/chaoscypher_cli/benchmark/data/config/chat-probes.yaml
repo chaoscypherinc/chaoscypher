@@ -1,0 +1,118 @@
+# ChaosCypher Grounded-Chat Probes
+#
+# Every labelled question is a pass/fail probe: answer from the graph, name
+# nothing the retrieved context does not contain, lead with the right entity
+# when two are confusable, decline when the sources do not support an answer.
+# No judge model: the checks are pure functions (ChatProbeScorer).
+#
+# One reference graph per corpus, built once by the top extractor on the
+# extraction leaderboard, so a chat score means "this model, on a good graph".
+# Chat runs with thinking ON (the product's chat setting); the runner probes
+# each model to confirm it obeyed. Temperature 0, seed 42, single shot.
+name: "ChaosCypher Grounded-Chat Probes"
+description: "Pass/fail grounded-chat probes over the reference graph; the source of the leaderboard's chat column."
+
+seed: 42
+temperature: 0.0
+
+datasets:
+  - tech_encyclopedia_tiny
+  # ~114k chars, far larger than one question's retrieved context
+  - war_and_peace_book1
+
+# Reference graph builder: the extraction leaderboard's top model (2026-09-25).
+extractors:
+  - provider: ollama
+    model: "gemma4:31b"
+    label: "Gemma 4 31B (local)"
+
+# The product's default embedder.
+embedders:
+  - provider: ollama
+    model: "qwen3-embedding:0.6b"
+    label: "Qwen3 Embedding 0.6B (local)"
+
+chats:
+  - provider: ollama
+    model: "gemma4:12b"
+    label: "Gemma 4 12B (local)"
+
+  - provider: ollama
+    model: "gemma4:26b"
+    label: "Gemma 4 26B (local)"
+
+  - provider: ollama
+    model: "qwen3:8b"
+    label: "Qwen3 8B (local)"
+
+  - provider: ollama
+    model: "qwen3:14b"
+    label: "Qwen3 14B (local)"
+
+  - provider: ollama
+    model: "qwen3:30b-instruct"
+    label: "Qwen3 30B Instruct (local)"
+
+  - provider: ollama
+    model: "qwen3.5:27b"
+    label: "Qwen3.5 27B (local)"
+
+  - provider: ollama
+    model: "qwen3.6:27b"
+    label: "Qwen3.6 27B (local)"
+
+  - provider: ollama
+    model: "qwen3.6:35b-a3b"
+    label: "Qwen3.6 35B-A3B MoE (local)"
+
+  - provider: ollama
+    model: "qwen3.8:27b"
+    label: "Qwen3.8 27B (local)"
+
+  - provider: ollama
+    model: "gpt-oss:20b"
+    label: "GPT-OSS 20B (local)"
+
+  - provider: ollama
+    model: "glm4:9b"
+    label: "GLM4 9B (local)"
+
+  - provider: ollama
+    model: "phi4:14b"
+    label: "Phi-4 14B (local)"
+
+  - provider: ollama
+    model: "qwen2.5:14b-instruct"
+    label: "Qwen2.5 14B Instruct (local)"
+
+  - provider: ollama
+    model: "mistral-small3.2:24b"
+    label: "Mistral Small 3.2 24B (local)"
+
+  - provider: ollama
+    model: "deepseek-r1:14b"
+    label: "DeepSeek-R1 14B (local)"
+
+  - provider: ollama
+    model: "llama3.1:8b"
+    label: "Llama 3.1 8B (local)"
+
+  - provider: ollama
+    model: "gemma4:31b"
+    label: "Gemma 4 31B (local)"
+
+  - provider: ollama
+    model: "glm-4.7-flash"
+    label: "GLM 4.7 Flash (local)"
+
+  - provider: ollama
+    model: "granite4.2:30b"
+    label: "Granite 4.2 30B (local)"
+
+  - provider: ollama
+    model: "muse-glimmer:30b"
+    label: "Muse Glimmer 30B (local)"
+
+  - provider: ollama
+    model: "nemotron-3.5-lightning:30b-a3b"
+    label: "Nemotron 3.5 Lightning 30B-A3B (local)"

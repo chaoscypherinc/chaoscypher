@@ -13,7 +13,7 @@
 
   "ollama_settings": {
     "ollama_chat_model": "gpt-oss:120b",
-    "ollama_extraction_model": "gpt-oss:120b",
+    "ollama_extraction_model": "gemma4:31b",
     "ollama_vision_model": "qwen3-vl:30b",
     "ollama_num_ctx": 49152,
     "ollama_num_batch": 4096,

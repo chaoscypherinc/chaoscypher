@@ -4,20 +4,22 @@
 """Compose Commands - Chaos Cypher CLI.
 
 Commands for multi-package orchestration using axiomatize.yaml:
-- build: Compile axiomatize.yaml into a single .ccx package
-- up: Start the composition defined in axiomatize.yaml
-- down: Stop and remove composition services
-- run: Execute a one-off command in the composition
+- init: Write a starter axiomatize.yaml
+- build: Merge the listed packages into one database
+- up: Serve the composition over HTTP (builds if needed)
+- down: Stop the detached HTTP server
+- mcp: Serve the composition to an MCP host over stdio (builds if needed)
+- run: Execute a one-off command with the composition as current database
 
 Compose allows you to combine multiple knowledge packages into
 a unified knowledge system with merged graphs and shared contexts.
 
 Example:
+    chaoscypher compose init ./research.ccx acme/eu-ai-act
     chaoscypher compose build
-    chaoscypher compose up
+    chaoscypher compose mcp
     chaoscypher compose up --detach
     chaoscypher compose down
-    chaoscypher compose run cortex pytest
 """
 
 import click
@@ -26,10 +28,15 @@ from chaoscypher_cli.lazy import LazyGroup
 
 
 LAZY_SUBCOMMANDS = {
-    "build": ("chaoscypher_cli.commands.compose.build:build", "Build composition package"),
-    "up": ("chaoscypher_cli.commands.compose.up:up", "Start composition services"),
-    "down": ("chaoscypher_cli.commands.compose.down:down", "Stop composition services"),
-    "run": ("chaoscypher_cli.commands.compose.run:run", "Run a one-off command"),
+    "init": ("chaoscypher_cli.commands.compose.init:init", "Write a starter axiomatize.yaml"),
+    "build": (
+        "chaoscypher_cli.commands.compose.build:build",
+        "Merge the packages into one database",
+    ),
+    "up": ("chaoscypher_cli.commands.compose.up:up", "Serve the composition over HTTP"),
+    "down": ("chaoscypher_cli.commands.compose.down:down", "Stop the HTTP server"),
+    "mcp": ("chaoscypher_cli.commands.compose.mcp:mcp", "Serve the composition to an MCP host"),
+    "run": ("chaoscypher_cli.commands.compose.run:run", "Run a command against the composition"),
 }
 
 

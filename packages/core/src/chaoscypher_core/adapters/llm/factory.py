@@ -246,6 +246,7 @@ class ProviderFactory:
             # General LLM settings
             "ai_temperature": llm.ai_temperature,
             "ai_max_tokens": llm.ai_max_tokens,
+            "seed": llm.seed,
             # Ollama health check + recovery tuning
             "ollama_health_check_timeout": llm.ollama_health_check_timeout,
             "ollama_recovery_delay": llm.ollama_recovery_delay,

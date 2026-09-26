@@ -1,0 +1,186 @@
+# Section A — Format compliance
+#
+# Instructions under test (system prompt + output-format block):
+#   "Output ONLY the requested format with no additional text."
+#   E|name|type|aliases|confidence|sent_ref|description
+#   P|entity_index|key|value, immediately after its parent E|, 0-based index
+#   R|source_index|target_index|type|confidence|sent_ref|justification
+#   sent_ref forms: S3 / S2-S5 / S1, S5 / S1-S3, S7
+#
+# Calibration lesson from section E (2026-09-23): difficulty must live on the
+# CHECKED axis. Here the checked axis is format discipline, so harder tiers add
+# input that tempts the model to mirror it (tables, bullets, headers, code) or
+# to add commentary (questions, ambiguity), not just more sentences.
+# Tier labels are hypotheses until the multi-model run calibrates them.
+
+section: A
+title: Format compliance
+
+probes:
+  # ---------------------------------------------------------------- A1
+  - id: A1-easy
+    probe: A1
+    tier: easy
+    instruction: "Output ONLY the pipe format — no preamble, fences, or commentary"
+    passage: |
+      Kutuzov commanded the Russian army in 1812. Bagration led the Second Army
+      under him. Barclay de Tolly led the First Army. The three met at
+      Tsarevo-Zaimishche in August.
+    checks:
+      - {type: only_format_lines}
+      - {type: all_lines_parse}
+      - {type: finish_stop}
+
+  - id: A1-hard
+    probe: A1
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 94% pass
+    instruction: "Output ONLY the pipe format — no preamble, fences, or commentary"
+    # Input that invites mirroring: a markdown header, a bullet list, a table
+    # and an explicit question. Models tend to answer the question or reproduce
+    # the formatting.
+    passage: |
+      ## Command structure, August 1812
+
+      - Commander-in-chief: Mikhail Kutuzov
+      - First Army: Barclay de Tolly
+      - Second Army: Pyotr Bagration
+
+      | Army | Commander | Strength |
+      |------|-----------|----------|
+      | First | Barclay de Tolly | 76,000 |
+      | Second | Bagration | 34,000 |
+
+      Which of these commanders was wounded at Borodino? Bagration was struck
+      in the leg by a shell fragment on the seventh of September.
+    checks:
+      - {type: only_format_lines}
+      - {type: all_lines_parse}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- A2
+  - id: A2-easy
+    probe: A2
+    tier: easy
+    instruction: "Every line parses: correct field count and order for E/P/R"
+    passage: |
+      Pierre Bezukhov inherited his father's fortune in 1805. He married Helene
+      Kuragina the same year. Helene's brother Anatole Kuragin was a cavalry
+      officer. Pierre later fought a duel with Dolokhov over Helene.
+    checks:
+      - {type: all_lines_parse}
+      - {type: refs_in_bounds}
+      - {type: finish_stop}
+
+  # CALIBRATION 2026-09-24: A2-hard was disabled because 13/16 models failed
+  # all_lines_parse on a name containing '|' while the prompt never said an
+  # escape exists. Re-enabled 2026-09-24 once the prompt documents \| (rule 5
+  # of the entity block); it now scores an instruction that is given.
+  - id: A2-hard
+    probe: A2
+    tier: hard
+    instruction: "Every line parses: correct field count and order for E/P/R"
+    # Names and descriptions that CONTAIN pipes, colons and quotes: the
+    # separators must not leak into fields. "Rostov | Bolkonsky" is a
+    # deliberately hostile shop name; the quoted dialogue contains a colon.
+    passage: |
+      The shop called "Rostov | Bolkonsky & Sons" stood on the Arbat. Its
+      proprietor, Ilya Rostov, kept a sign reading "Prices: firm; credit: none".
+      His partner Nikolai Bolkonsky handled the accounts. A customer named
+      Anna Mikhailovna Drubetskaya bought a samovar there in 1810 and wrote
+      in her diary: "Paid 40 roubles | too much".
+    checks:
+      - {type: all_lines_parse}
+      - {type: refs_in_bounds}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- A4
+  - id: A4-easy
+    probe: A4
+    tier: easy
+    instruction: "P| lines follow their parent E| with the correct 0-based index"
+    # CALIBRATION 2026-09-23: property_values_from_text dropped here - it flagged
+    # reciprocal inference (daughter-of -> father), which is not a mis-index. A
+    # wrong index surfaces as property_line_invalid_entity_index -> all_lines_parse.
+    passage: |
+      Natasha Rostova was sixteen in 1809. She was the younger daughter of
+      Count Ilya Rostov. Her singing and dancing were admired. Her brother Nikolai Rostov
+      was a hussar officer. He was twenty and served under Denisov.
+    checks:
+      - {type: all_lines_parse}
+      - {type: property_key_unique_per_entity}
+      - {type: finish_stop}
+
+  - id: A4-hard
+    probe: A4
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 88% pass
+    instruction: "P| lines follow their parent E| with the correct 0-based index"
+    # Six entities whose attributes are interleaved across sentences, so the
+    # model must keep its own output order straight to index P| lines
+    # correctly. A P| pointing at the wrong entity shows up as a property
+    # value that is not in the text for that entity's name.
+    passage: |
+      Natasha was sixteen; Sonya, her cousin, was fifteen. Nikolai was twenty
+      and a hussar, while Boris Drubetskoy, twenty-one, served in the Guards.
+      Petya Rostov was nine. Vera Rostova, the eldest sister at twenty-two,
+      was engaged to Berg, a lieutenant of twenty-six. Sonya loved Nikolai;
+      Natasha admired Boris. Petya wanted to be a hussar like Nikolai.
+    checks:
+      - {type: all_lines_parse}
+      - {type: property_key_unique_per_entity}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- A5
+  - id: A5-easy
+    probe: A5
+    tier: easy
+    instruction: "sent_ref uses valid forms and stays in bounds"
+    passage: |
+      Prince Andrei Bolkonsky left for the army in the spring. His wife Lise
+      stayed at Bald Hills with his father and sister. Princess Marya wrote to
+      him every week. Lise died in childbirth in March 1806. Andrei returned to
+      find a son and no wife. He named the boy Nikolai after his father.
+    checks:
+      - {type: refs_in_bounds}
+      - {type: refs_name_entity}
+      - {type: finish_stop}
+
+  - id: A5-hard
+    probe: A5
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 100% pass
+    instruction: "sent_ref uses valid forms and stays in bounds"
+    # Sentence-boundary traps: abbreviations ("Dr.", "St."), quoted speech
+    # with internal periods, a semicolon-chained sentence, and an initial.
+    # The splitter has rules for these; the model's refs must agree with it.
+    passage: |
+      Dr. Metivier attended Prince N. Bolkonsky at Bald Hills. "He will not
+      last the winter. Perhaps not the month," the doctor said; Princess Marya
+      did not answer. St. Petersburg was three days away and Andrei was in
+      the army. Mlle. Bourienne wept in the corridor. On the 12th of December
+      the old prince rose, dressed, and dismissed Dr. Metivier from the house.
+    checks:
+      - {type: refs_in_bounds}
+      - {type: refs_name_entity}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- A6
+  - id: A6-easy
+    probe: A6
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 69% pass
+    instruction: "Format holds over length — no drift to prose or JSON late in output"
+    passage_ref: E8-easy.txt
+    checks:
+      - {type: only_format_lines}
+      - {type: all_lines_parse}
+      - {type: finish_stop}
+
+  - id: A6-hard
+    probe: A6
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 75% pass
+    instruction: "Format holds over length — no drift to prose or JSON late in output"
+    # Long input that is itself JSON-shaped. Models that drift tend to start
+    # emitting the input's format once the output gets long.
+    passage_ref: A6-hard.txt
+    checks:
+      - {type: only_format_lines}
+      - {type: all_lines_parse}
+      - {type: finish_stop}

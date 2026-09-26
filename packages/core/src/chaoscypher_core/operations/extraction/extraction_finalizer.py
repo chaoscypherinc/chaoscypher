@@ -1578,7 +1578,10 @@ async def _queue_commit_phase(
         settings: Application settings.
         chunk_sentences: Per-chunk sentence lists for evidence-based citations.
     """
-    complete_file_info = adapter.get_file(source_id, database_name)
+    # Offloaded to a worker thread so SafeSession._retry_delay
+    # ``time.sleep`` calls during SQLITE_BUSY contention do not block
+    # other in-flight handlers on the event loop (2026-05-23 perf fix).
+    complete_file_info = await asyncio.to_thread(adapter.get_file, source_id, database_name)
     if not complete_file_info:
         logger.warning("commit_file_not_found", source_id=source_id)
         return

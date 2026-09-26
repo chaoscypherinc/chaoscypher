@@ -56,6 +56,8 @@ class ChunkResult(BaseModel):
     content: str
     page_number: int | None = None
     section: str | None = None
+    start_time: float | None = None
+    end_time: float | None = None
     filename: str
 
 

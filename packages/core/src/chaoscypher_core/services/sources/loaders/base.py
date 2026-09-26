@@ -103,8 +103,22 @@ class BaseLoader(Protocol):
                 - metadata: Dict[str, Any] - Document metadata
 
         Raises:
-            FileNotFoundError: If filepath doesn't exist
-            ValueError: If file format is invalid
+            ValidationError: If the file cannot be parsed or yields no usable
+                content (wrap the parser library's own exception with
+                ``raise ValidationError(...) from exc``).
+            ExternalServiceError: If an external parse/transcription service
+                fails.
+            LoaderFileTooLargeError: If the file exceeds
+                ``settings.loader.max_disk_bytes`` (raised by
+                ``check_loader_file_size``).
+
+        Note:
+            Raise only ``ChaosCypherException`` subclasses from
+            ``chaoscypher_core.exceptions``. Bare stdlib raises
+            (``ValueError``, ``FileNotFoundError``, ...) are banned in this
+            tree by CC045 and reach clients as an unstructured HTTP 500.
+            Loaders do not need to check for a missing path: ``LoaderRegistry``
+            verifies existence and raises ``NotFoundError`` before dispatching.
 
         Example:
             >>> chunks = loader.load_document('/path/to/file.pdf')

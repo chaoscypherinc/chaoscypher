@@ -842,7 +842,9 @@ class SourceService:
                 "message": "No active extraction job for this source",
             }
 
-        job = adapter.get_extraction_job(job_id)
+        # Projected read: this endpoint is polled every few seconds while a
+        # source extracts and needs only the scalars unpacked below.
+        job = adapter.get_extraction_job_progress(job_id)
         if not job:
             return {
                 "source_id": source_id,

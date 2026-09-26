@@ -231,7 +231,11 @@ class HealthPauseEvaluator:
         # recoveries independently of the aggregate trip/clear logic.
         for name, result in results.items():
             if self._consecutive_failures[name] == 1 and name not in self._tripped_probes:
-                event_bus.emit(
+                # Offloaded for the same reason as the read above: emit
+                # writes a system-event row and prunes the table, two
+                # commits whose busy-retry backoff sleeps synchronously.
+                await asyncio.to_thread(
+                    event_bus.emit,
                     "health_change",
                     action=f"Probe {name} degraded: {result.message}",
                     source="health_monitor",
@@ -242,7 +246,11 @@ class HealthPauseEvaluator:
                     },
                 )
             elif self._consecutive_passes[name] == 1 and self._previous_failures.get(name, 0) > 0:
-                event_bus.emit(
+                # Offloaded for the same reason as the read above: emit
+                # writes a system-event row and prunes the table, two
+                # commits whose busy-retry backoff sleeps synchronously.
+                await asyncio.to_thread(
+                    event_bus.emit,
                     "health_change",
                     action=f"Probe {name} recovered",
                     source="health_monitor",

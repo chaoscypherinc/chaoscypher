@@ -16,6 +16,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import modelScores from '../../../../data/modelScores.json';
 
 // ---------------------------------------------------------------------------
 // Mocks — declared BEFORE the SUT import so vitest hoists them correctly.
@@ -33,7 +34,7 @@ vi.mock('../ModelConfig', () => ({
   OllamaAutocomplete: (props: {
     label: string;
     value: string;
-    options: { id: string; name: string; description: string }[];
+    options: { id: string; name: string; description: string; usable?: boolean; score?: number }[];
     otherInstalledModels?: { id: string; name: string }[];
     installedModels?: Set<string>;
     onChange: (v: string) => void;
@@ -45,6 +46,9 @@ vi.mock('../ModelConfig', () => ({
     <div data-testid={`autocomplete-${props.label}`}>
       <span data-testid={`autocomplete-value-${props.label}`}>{props.value}</span>
       <span data-testid={`autocomplete-options-count-${props.label}`}>{props.options.length}</span>
+      <span data-testid={`autocomplete-options-${props.label}`}>
+        {JSON.stringify(props.options.map((o) => ({ id: o.id, usable: o.usable, score: o.score, description: o.description })))}
+      </span>
       <span data-testid={`autocomplete-other-count-${props.label}`}>{props.otherInstalledModels?.length ?? 0}</span>
       <button onClick={() => props.onChange('picked-model')}>change-{props.label}</button>
       <button onClick={() => props.onChange('')}>change-empty-{props.label}</button>
@@ -171,6 +175,20 @@ describe('OllamaModelSelector — render shape', () => {
     expect(screen.getByTestId('autocomplete-Vision Model (Optional)')).toBeInTheDocument();
   });
 
+  it('links every model picker to the leaderboard, in a new tab', () => {
+    render(
+      <OllamaModelSelector
+        settings={makeSettings()}
+        setSettings={vi.fn()}
+        showAdvanced={false}
+        currentPreset={preset}
+      />,
+    );
+    const link = screen.getByRole('link', { name: /compare local models on the leaderboard/i });
+    expect(link).toHaveAttribute('href', 'https://chaoscypher.com/leaderboard');
+    expect(link).toHaveAttribute('target', '_blank');
+  });
+
   it('passes current model values through to each autocomplete', () => {
     render(
       <OllamaModelSelector
@@ -212,13 +230,126 @@ describe('OllamaModelSelector — render shape', () => {
   });
 });
 
+describe('OllamaModelSelector — extraction options come from the benchmark', () => {
+  it('lists every measured model that fits the preset, plus the unmeasured group', () => {
+    render(
+      <OllamaModelSelector
+        settings={makeSettings()}
+        setSettings={vi.fn()}
+        showAdvanced={false}
+        currentPreset={preset}
+      />,
+    );
+    // Harness-track rows (a model run through an MCP client) are not Ollama
+    // models: the exporter leaves them out and the picker filters them too.
+    const measured = (modelScores.models as { chunks: unknown; harness?: string | null }[]).filter(
+      (m) => m.chunks && m.harness == null,
+    ).length;
+    // every measured model (Recommended or Needs more VRAM) + the one "not yet measured" entry
+    expect(screen.getByTestId('autocomplete-options-count-Extraction Model').textContent).toBe(String(measured + 1));
+  });
+
+  type ScoredRow = {
+    id: string;
+    chunks: unknown;
+    harness?: string | null;
+    scores: { extraction: number | null; chat: number | null; overall: number | null };
+  };
+
+  function extractionOptions(): ChatOption[] {
+    render(
+      <OllamaModelSelector
+        settings={makeSettings()}
+        setSettings={vi.fn()}
+        showAdvanced={false}
+        currentPreset={preset}
+      />,
+    );
+    return JSON.parse(screen.getByTestId('autocomplete-options-Extraction Model').textContent ?? '[]');
+  }
+
+  it("shows the leaderboard's blended extraction score, with Overall in the description", () => {
+    const row = (modelScores.models as ScoredRow[]).find((m) => m.id === 'gemma4:31b')!;
+    const option = extractionOptions().find((o) => o.id === 'gemma4:31b');
+    expect(option?.score).toBe(Math.round(row.scores.extraction!));
+    expect(option?.description).toMatch(/Overall/);
+  });
+
+  it('puts the highest blended extraction score first', () => {
+    const best = (modelScores.models as ScoredRow[])
+      .filter((m) => m.chunks && m.harness == null)
+      .reduce((a, b) => ((b.scores.extraction ?? -1) > (a.scores.extraction ?? -1) ? b : a));
+    expect(extractionOptions()[0].id).toBe(best.id);
+  });
+
+  it('the interface score file carries no harness-track rows', () => {
+    const harnessRows = (modelScores.models as { harness?: string | null }[]).filter((m) => m.harness != null);
+    expect(harnessRows).toEqual([]);
+  });
+});
+
+type ChatOption = { id: string; usable?: boolean; score?: number; description: string };
+
+function chatOptions(): ChatOption[] {
+  render(
+    <OllamaModelSelector
+      settings={makeSettings()}
+      setSettings={vi.fn()}
+      showAdvanced={false}
+      currentPreset={preset}
+    />,
+  );
+  return JSON.parse(screen.getByTestId('autocomplete-options-Chat Model').textContent ?? '[]');
+}
+
+describe('OllamaModelSelector — chat options come from the benchmark', () => {
+  type ChatRow = {
+    id: string;
+    chat: { pct: number | null; timed_out: boolean } | null;
+    harness?: string | null;
+    scores: { extraction: number | null; chat: number | null; overall: number | null };
+  };
+  const rows = modelScores.models as ChatRow[];
+
+  it('lists every model on the grounded-chat board plus the unmeasured group', () => {
+    const measured = rows.filter((m) => m.chat && m.harness == null).length;
+    expect(chatOptions()).toHaveLength(measured + 1);
+  });
+
+  it('demotes a model without tool calling, whatever it scored', () => {
+    const phi4 = chatOptions().find((o) => o.id === 'phi4:14b');
+    expect(phi4?.usable).toBe(false);
+    expect(phi4?.description).toMatch(/tool calling/);
+  });
+
+  it('demotes a model whose chat run hit the time limit, with no score', () => {
+    const glm = chatOptions().find((o) => o.id === 'glm-4.7-flash');
+    expect(glm?.usable).toBe(false);
+    expect(glm?.score).toBeUndefined();
+    expect(glm?.description).toMatch(/Did not finish/);
+  });
+
+  it("puts the highest finished grounded-chat score first, showing the leaderboard's chat score", () => {
+    const best = rows
+      .filter((m) => m.chat && !m.chat.timed_out && m.harness == null && m.scores.chat !== null)
+      .reduce((a, b) => ((b.scores.chat ?? -1) > (a.scores.chat ?? -1) ? b : a));
+    const first = chatOptions()[0];
+    expect(first.id).toBe(best.id);
+    expect(first.score).toBe(Math.round(best.scores.chat!));
+  });
+
+  it('adds the Overall score to a finished chat description', () => {
+    expect(chatOptions()[0].description).toMatch(/Overall \d+%/);
+  });
+});
+
 describe('OllamaModelSelector — otherInstalledModels filtering', () => {
   it('filters out pretested ids and sorts the rest alphabetically', () => {
     mockUseOllamaModels.mockReturnValue({
       ...defaultHookValue(),
       installedModels: new Set([
-        'qwen3:30b', // pretested chat
-        'phi4:14b',  // pretested extraction
+        'qwen3.6:27b', // measured chat model (src/data/modelScores.json)
+        'gemma4:26b', // measured extraction model (src/data/modelScores.json)
         'zeta:1b',
         'alpha:1b',
       ]),

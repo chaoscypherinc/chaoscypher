@@ -33,6 +33,32 @@ class TestNodeToJsonld:
         assert result["@type"] == "Person"
         assert result["name"] == "Alice"
         assert result["age"] == 30
+        # The template travels as an object reference, minted like the
+        # ``chaoscypher.templates`` graph member it points at.
+        assert result[ccx_mapping.TEMPLATE_REF_KEY] == {
+            "@id": "urn:ccx:chaoscypher:template/t-person"
+        }
+
+    def test_specific_entity_type_wins_over_generic_template(self):
+        """An extracted node keeps its specific type; the template rides along."""
+        node = {
+            "id": "n2",
+            "label": "Valkey",
+            "entity_type": "Package",
+            "template_id": "t-item",
+            "properties": {},
+        }
+        templates_by_id = {"t-item": {"id": "t-item", "name": "Item", "template_type": "node"}}
+        result = ccx_mapping.node_to_jsonld(node, templates_by_id)
+        assert result["@type"] == "Package"
+        assert result[ccx_mapping.TEMPLATE_REF_KEY] == {
+            "@id": "urn:ccx:chaoscypher:template/t-item"
+        }
+
+    def test_no_template_reference_without_a_template(self):
+        node = {"id": "n3", "label": "Loose", "entity_type": "Thing", "template_id": None}
+        result = ccx_mapping.node_to_jsonld(node, {})
+        assert ccx_mapping.TEMPLATE_REF_KEY not in result
 
     def test_type_falls_back_to_entity_type(self):
         """With no template, @type falls back to entity_type."""
@@ -789,3 +815,18 @@ class TestAppNamedGraph:
     def test_empty(self):
         """An empty members list yields an empty graph."""
         assert ccx_mapping.app_named_graph([]) == {"@graph": []}
+
+
+class TestContextTypeTerms:
+    def test_entity_type_terms_are_bound_alongside_template_names(self):
+        """Every @type the knowledge graph uses must resolve through the context."""
+        templates = [{"name": "Item", "properties": [{"name": "version"}]}]
+        ctx = ccx_mapping.templates_to_context(templates, {"Package", "Data Store", "ccx:Entity"})[
+            "@context"
+        ]
+        assert ctx["Item"]["@type"] == "@id"
+        assert ctx["Package"] == {"@id": ccx_mapping._cc_iri("Package"), "@type": "@id"}
+        # Spaces are percent-encoded into the IRI; the term itself keeps its spelling.
+        assert ctx["Data Store"]["@id"].endswith("Data%20Store")
+        assert "ccx:Entity" not in ctx
+        assert ctx["version"] == ccx_mapping._cc_iri("version")

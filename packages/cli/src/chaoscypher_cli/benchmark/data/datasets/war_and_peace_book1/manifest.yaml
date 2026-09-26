@@ -1,0 +1,9 @@
+id: war_and_peace_book1
+kind: extraction
+version: "1.0"
+domain: literary
+corpus_path: war_and_peace_book1.txt
+queries_path: queries.yaml
+source: "Tolstoy, War and Peace, public domain (Project Gutenberg eBook 2600); Book One: 1805, chapters I-XIV (Anna Pávlovna's soirée to the Rostóvs' name day)."
+description: "Literary fiction, ~114k characters: far larger than one question's retrieval window, so grounded chat must find the right passages; confusable names and famous out-of-text facts."
+word_count_approx: 20000

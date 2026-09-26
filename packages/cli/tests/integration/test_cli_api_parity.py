@@ -36,6 +36,27 @@ import pytest
 # ---------------------------------------------------------------------
 
 
+# Upload-setting keys both frontends accept. Omitting a key from an
+# ``options`` dict lets each frontend's own signature default apply, which
+# is how the defaults-parity test reaches the resolution arms.
+_PARITY_OPTION_KEYS = (
+    "auto_analyze",
+    "extraction_depth",
+    "forced_domain",
+    "skip_duplicates",
+    "enable_normalization",
+    "enable_vision",
+    "content_filtering",
+    "filtering_mode",
+)
+
+# The CLI signature names two of them differently.
+_CLI_OPTION_KWARGS = {key: {"forced_domain": "domain"}.get(key, key) for key in _PARITY_OPTION_KEYS}
+
+
+_NOT_FORWARDED = "<not forwarded>"
+
+
 class _ParityStorage:
     """Tiny in-memory adapter that captures upload_source kwargs.
 
@@ -62,11 +83,14 @@ class _ParityStorage:
         title_override: str | None = None,
         staged_file_path: Path | None = None,
         file_size: int | None = None,
-        auto_analyze: bool = True,
-        enable_normalization: bool | None = None,
-        enable_vision: bool = True,
-        content_filtering: bool = True,
-        filtering_mode: str = "balanced",
+        # Sentinel, not a real default: a frontend that stops forwarding
+        # one of these must surface it as drift, not inherit the fake's
+        # guess at what the value should have been.
+        auto_analyze: Any = _NOT_FORWARDED,
+        enable_normalization: Any = _NOT_FORWARDED,
+        enable_vision: Any = _NOT_FORWARDED,
+        content_filtering: Any = _NOT_FORWARDED,
+        filtering_mode: Any = _NOT_FORWARDED,
         **_extra_kwargs: Any,
     ) -> dict[str, Any]:
         # Resolve filesystem path so both paths exercise the same
@@ -196,18 +220,13 @@ class _ParityEnv:
             "chaoscypher_core.services.sources.loaders.factory.get_loader_registry",
             return_value=loader_registry,
         ):
+            kwargs = {
+                cli_name: options[key]
+                for key, cli_name in _CLI_OPTION_KWARGS.items()
+                if key in options
+            }
             service = CLISourceProcessingService(ctx)
-            file_id = service.upload_file(
-                self.sample_file,
-                extraction_depth=options["extraction_depth"],
-                domain=options["forced_domain"],
-                skip_duplicates=options["skip_duplicates"],
-                auto_analyze=options["auto_analyze"],
-                enable_normalization=options["enable_normalization"],
-                enable_vision=options["enable_vision"],
-                content_filtering=options["content_filtering"],
-                filtering_mode=options["filtering_mode"],
-            )
+            file_id = service.upload_file(self.sample_file, **kwargs)
             assert isinstance(file_id, str)
             return file_id
 
@@ -246,17 +265,10 @@ class _ParityEnv:
         result = await service.upload_file(
             file_content=file_content,
             filename=self.sample_file.name,
-            auto_analyze=options["auto_analyze"],
-            extraction_depth=options["extraction_depth"],
             generate_embeddings=True,
-            enable_normalization=options["enable_normalization"],
-            forced_domain=options["forced_domain"],
-            skip_duplicates=options["skip_duplicates"],
-            enable_vision=options["enable_vision"],
-            content_filtering=options["content_filtering"],
-            filtering_mode=options["filtering_mode"],
             content_hash=content_hash,
             file_size=len(file_content),
+            **{key: options[key] for key in _PARITY_OPTION_KEYS if key in options},
         )
         return str(result["id"])
 
@@ -328,16 +340,10 @@ async def test_cli_and_api_default_options_match(
     from ``True`` to ``False``, this test would fail even though
     callers pass nothing for that flag.
     """
-    options: dict[str, Any] = {
-        "auto_analyze": True,
-        "extraction_depth": "full",
-        "forced_domain": None,
-        "skip_duplicates": False,
-        "enable_normalization": None,
-        "enable_vision": True,
-        "content_filtering": True,
-        "filtering_mode": "balanced",
-    }
+    # Empty on purpose: neither helper forwards a key it was not given,
+    # so each frontend resolves its own defaults (the CLI from its
+    # signature, Core from its ``None`` arms).
+    options: dict[str, Any] = {}
 
     cli_src_id = parity_test_env.upload_via_cli(options)
     api_src_id = await parity_test_env.upload_via_api(options)
@@ -359,3 +365,11 @@ async def test_cli_and_api_default_options_match(
         assert cli_row[key] == api_row[key], (
             f"CLI vs API default drift on {key!r}: cli={cli_row[key]!r} api={api_row[key]!r}"
         )
+
+    # Pin the shipped values too, so the two sides cannot drift together.
+    assert cli_row["auto_analyze"] is True
+    assert cli_row["enable_vision"] is True
+    assert cli_row["content_filtering"] is True
+    assert cli_row["enable_normalization"] is None
+    assert cli_row["filtering_mode"] == "balanced"
+    assert cli_row["extraction_depth"] == "full"

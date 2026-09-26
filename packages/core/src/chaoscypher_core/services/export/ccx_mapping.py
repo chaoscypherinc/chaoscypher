@@ -35,6 +35,14 @@ from chaoscypher_core.services.export import ccx_identity
 # resource instead of being attached as a bare top-level key.
 RESERVED_KEYS = {"@id", "@type", "@context", "name", "source"}
 
+# Node key carrying the node's template as an object reference. ``cc`` is the
+# Chaos Cypher prefix every package context binds, so the key is a valid
+# compact IRI. Extraction assigns most nodes to one generic *system* template
+# (``Item``) and keeps the specific type in ``entity_type``; ``@type`` carries
+# the specific term, and this reference lets the importer bind the node to
+# its template as well, instead of collapsing one into the other.
+TEMPLATE_REF_KEY = "cc:template"
+
 # Sentinel the exporter swaps for the real full-text asset path once it has
 # written the text asset into the package. Mapping is pure, so it cannot know
 # the final asset path — it only records that the source HAS a full-text asset.
@@ -66,10 +74,11 @@ _XSD_BY_PROPERTY_TYPE = {
 def node_to_jsonld(node: dict, templates_by_id: dict[str, dict]) -> dict:
     """Map a GraphNode dict to a JSON-LD node object.
 
-    ``@type`` resolves to the node's template name, falling back to the
-    extracted ``entity_type``, then to ``"ccx:Entity"``. Domain
-    ``properties`` are spread as terms but never overwrite the reserved
-    ``@id`` / ``@type`` / ``name`` keys (those win).
+    ``@type`` is the node's most specific type: the extracted ``entity_type``,
+    falling back to the template name, then to ``"ccx:Entity"``. When the node
+    has a template it is also referenced through ``cc:template`` (see
+    :data:`TEMPLATE_REF_KEY`). Domain ``properties`` are spread as terms but
+    never overwrite the reserved ``@id`` / ``@type`` / ``name`` keys (those win).
 
     Args:
         node: A GraphNode dict (``id, ccx_iri?, label, entity_type,
@@ -82,13 +91,18 @@ def node_to_jsonld(node: dict, templates_by_id: dict[str, dict]) -> dict:
     """
     template_id = node.get("template_id")
     template = templates_by_id.get(template_id) if template_id is not None else None
-    type_term = (template or {}).get("name") or node.get("entity_type") or "ccx:Entity"
+    # The specific type first: an extracted node's ``entity_type`` ("Package")
+    # is more specific than its (generic, system) template ("Item"). A user
+    # node with no entity_type takes its template's name, as before.
+    type_term = node.get("entity_type") or (template or {}).get("name") or "ccx:Entity"
 
     obj: dict[str, Any] = {
         "@id": ccx_identity.resolve_iri("node", node),
         "@type": type_term,
         "name": node.get("label"),
     }
+    if template is not None:
+        obj[TEMPLATE_REF_KEY] = {"@id": ccx_identity.mint_iri("template", template["id"])}
     for key, value in (node.get("properties") or {}).items():
         obj.setdefault(key, value)
     return obj
@@ -503,7 +517,7 @@ def _cc_iri(name: str) -> str:
     return f"{_CC_NAMESPACE}{urllib.parse.quote(name, safe='')}"
 
 
-def templates_to_context(templates: list[dict]) -> dict:
+def templates_to_context(templates: list[dict], type_terms: set[str] | None = None) -> dict:
     """Build a JSON-LD ``@context`` from templates.
 
     The ``cc`` prefix binds the Chaos Cypher namespace. Each template
@@ -516,11 +530,17 @@ def templates_to_context(templates: list[dict]) -> dict:
 
     Args:
         templates: Template dicts (``name`` + ``properties`` list).
+        type_terms: Additional ``@type`` terms the knowledge graph uses that
+            are not template names — the extracted ``entity_type`` values —
+            so every type term in the package is bound in the context.
 
     Returns:
         ``{"@context": {...}}``.
     """
     context: dict[str, Any] = {"cc": _CC_NAMESPACE}
+    for term in sorted(type_terms or ()):
+        if term and term != "ccx:Entity":
+            context[term] = {"@id": _cc_iri(term), "@type": "@id"}
     for template in templates:
         name = template.get("name")
         if name:

@@ -398,6 +398,25 @@ class TestLLMProviderLazyInit:
         with pytest.raises(RuntimeError, match="Not connected"):
             _ = ctx.llm_provider
 
+    def test_not_connected_raise_leaves_probe_unpoisoned(self, tmp_path: Path) -> None:
+        """A pre-connect access must not commit the memoized "no LLM" answer.
+
+        ``_llm_checked`` is set only after ``_ensure_connected()`` succeeds, so
+        a context touched before ``connect()`` still probes for real afterwards
+        instead of reporting "no LLM" for the rest of its life.
+        """
+        ctx = CLIContext(database_name="proj", data_dir=tmp_path)
+
+        with pytest.raises(RuntimeError, match="Not connected"):
+            _ = ctx.llm_provider
+        assert ctx._llm_checked is False
+
+        # has_llm runs the same lazy-init path, so it raises too (it is not a
+        # guard against the unconnected case) and likewise leaves no verdict.
+        with pytest.raises(RuntimeError, match="Not connected"):
+            _ = ctx.has_llm
+        assert ctx._llm_checked is False
+
 
 # ---------------------------------------------------------------------------
 # _validate_llm_available

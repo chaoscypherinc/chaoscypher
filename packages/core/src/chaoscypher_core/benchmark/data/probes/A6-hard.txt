@@ -1,0 +1,34 @@
+The staff register listed each officer as a record.
+
+{"name": "Kutuzov", "rank": "commander-in-chief", "born": 1745, "birthplace": "Saint Petersburg"}
+{"name": "Bagration", "rank": "general", "born": 1765, "birthplace": "Kizlyar"}
+{"name": "Barclay de Tolly", "rank": "general", "born": 1761, "birthplace": "Pamūšis"}
+{"name": "Bennigsen", "rank": "general", "born": 1745, "birthplace": "Braunschweig"}
+{"name": "Raevsky", "rank": "general", "born": 1771, "birthplace": "Saint Petersburg"}
+{"name": "Dokhturov", "rank": "general", "born": 1759, "birthplace": "Krutoye"}
+{"name": "Uvarov", "rank": "general", "born": 1773, "birthplace": "Saint Petersburg"}
+{"name": "Konovnitsyn", "rank": "general", "born": 1764, "birthplace": "Saint Petersburg"}
+{"name": "Tuchkov", "rank": "general", "born": 1761, "birthplace": "Saint Petersburg"}
+{"name": "Miloradovich", "rank": "general", "born": 1771, "birthplace": "Saint Petersburg"}
+{"name": "Platov", "rank": "ataman", "born": 1753, "birthplace": "Cherkassk"}
+{"name": "Yermolov", "rank": "general", "born": 1777, "birthplace": "Moscow"}
+{"name": "Davout", "rank": "marshal", "born": 1770, "birthplace": "Annoux"}
+{"name": "Ney", "rank": "marshal", "born": 1769, "birthplace": "Saarlouis"}
+{"name": "Murat", "rank": "marshal", "born": 1767, "birthplace": "Labastide"}
+{"name": "Eugène", "rank": "viceroy", "born": 1781, "birthplace": "Paris"}
+{"name": "Poniatowski", "rank": "general", "born": 1763, "birthplace": "Vienna"}
+{"name": "Junot", "rank": "general", "born": 1771, "birthplace": "Bussy"}
+{"name": "Grouchy", "rank": "general", "born": 1766, "birthplace": "Paris"}
+{"name": "Nansouty", "rank": "general", "born": 1768, "birthplace": "Bordeaux"}
+{"name": "Latour-Maubourg", "rank": "general", "born": 1768, "birthplace": "La Motte"}
+{"name": "Compans", "rank": "general", "born": 1769, "birthplace": "Salies"}
+{"name": "Morand", "rank": "general", "born": 1771, "birthplace": "Pontarlier"}
+{"name": "Gérard", "rank": "general", "born": 1773, "birthplace": "Damvillers"}
+{"name": "Friant", "rank": "general", "born": 1758, "birthplace": "Morlancourt"}
+{"name": "Ledru", "rank": "general", "born": 1770, "birthplace": "Vannes"}
+{"name": "Razout", "rank": "general", "born": 1772, "birthplace": "Tours"}
+{"name": "Dessaix", "rank": "general", "born": 1764, "birthplace": "Thonon"}
+{"name": "Claparède", "rank": "general", "born": 1770, "birthplace": "Gignac"}
+{"name": "Sorbier", "rank": "general", "born": 1762, "birthplace": "Paris"}
+
+The register was closed and sealed by the adjutant at Borodino.

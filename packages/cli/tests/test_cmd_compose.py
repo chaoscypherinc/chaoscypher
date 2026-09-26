@@ -991,6 +991,26 @@ class TestDownHappyPath:
 class TestDownFailurePath:
     """compose down failure paths."""
 
+    def test_nothing_running_is_reported_not_claimed_stopped(self, tmp_path: Path) -> None:
+        """Down must not print "stopped" when the service found nothing to stop."""
+        runner = CliRunner()
+        config_file = tmp_path / "axiomatize.yaml"
+        config_file.write_text("name: test-comp\n")
+        compose_cfg = _make_compose_config(name="test-comp")
+        mock_service_instance = MagicMock()
+        mock_service_instance.down = _make_async(False)
+
+        with (
+            patch(_DOWN_CONFIG) as mock_cfg_cls,
+            patch(_DOWN_SERVICE, return_value=mock_service_instance),
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            result = runner.invoke(down, ["--config", str(config_file)])
+
+        assert result.exit_code == 0, result.output
+        assert "No running composition server found" in result.output
+        assert "Composition stopped" not in result.output
+
     def test_compose_error_exits_1(self, tmp_path: Path) -> None:
         config_file = tmp_path / "axiomatize.yaml"
         config_file.write_text("name: test\n")
@@ -1121,3 +1141,181 @@ class TestComposeHubUnreachable:
         assert result.exit_code == 1
         assert "Cannot reach Lexicon Hub" in result.output
         assert "Traceback" not in result.output
+
+
+# ===========================================================================
+# init command
+# ===========================================================================
+
+
+class TestComposeInit:
+    """compose init — writes a starter axiomatize.yaml."""
+
+    def test_writes_template_with_packages(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.init import init
+
+        target = tmp_path / "axiomatize.yaml"
+        result = CliRunner().invoke(
+            init, ["--name", "research", "-c", str(target), "./a.ccx", "acme/eu-ai-act:1.2.0"]
+        )
+
+        assert result.exit_code == 0, result.output
+        text = target.read_text(encoding="utf-8")
+        assert "name: research" in text
+        assert "  - ./a.ccx" in text
+        assert "  - acme/eu-ai-act:1.2.0" in text
+        assert "output_dir: ./output" in text
+        # The file must be loadable by the real config model.
+        from chaoscypher_core.services.compose import ComposeConfig
+
+        cfg = ComposeConfig.from_yaml(target)
+        assert cfg.name == "research"
+        assert cfg.packages == ["./a.ccx", "acme/eu-ai-act:1.2.0"]
+
+    def test_without_packages_writes_commented_example(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.init import init
+
+        target = tmp_path / "axiomatize.yaml"
+        result = CliRunner().invoke(init, ["-c", str(target)])
+
+        assert result.exit_code == 0, result.output
+        assert "# - ./research.ccx" in target.read_text(encoding="utf-8")
+        assert "edit" in result.output
+
+    def test_refuses_to_overwrite_without_force(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.init import init
+
+        target = tmp_path / "axiomatize.yaml"
+        target.write_text("name: keep\n", encoding="utf-8")
+
+        result = CliRunner().invoke(init, ["-c", str(target)])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+        assert target.read_text(encoding="utf-8") == "name: keep\n"
+
+        result = CliRunner().invoke(init, ["-c", str(target), "--force", "./x.ccx"])
+        assert result.exit_code == 0, result.output
+        assert "./x.ccx" in target.read_text(encoding="utf-8")
+
+
+# ===========================================================================
+# mcp command
+# ===========================================================================
+
+
+_MCP_CONFIG = "chaoscypher_cli.commands.compose.mcp.ComposeConfig"
+_MCP_SERVICE = "chaoscypher_cli.commands.compose.mcp.ComposeService"
+
+
+class TestComposeMcp:
+    """compose mcp — build if needed, then exec into `chaoscypher mcp`."""
+
+    def _config_file(self, tmp_path: Path) -> Path:
+        cfg = tmp_path / "axiomatize.yaml"
+        cfg.write_text("name: test-comp\n", encoding="utf-8")
+        return cfg
+
+    def test_execs_into_mcp_with_composition_env_when_built(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.mcp import mcp
+
+        cfg_file = self._config_file(tmp_path)
+        compose_cfg = _make_compose_config(name="test-comp")
+        compose_cfg.resolved_output_dir = tmp_path / "out"
+        (tmp_path / "out" / "databases" / "default").mkdir(parents=True)
+
+        with (
+            patch(_MCP_CONFIG) as mock_cfg_cls,
+            patch(_MCP_SERVICE) as service_cls,
+            patch("chaoscypher_cli.commands.compose.mcp.os.execve") as execve,
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            service_cls._composition_env.return_value = {
+                "CHAOSCYPHER_DATA_DIR": str(tmp_path / "out"),
+                "CHAOSCYPHER_DATABASE": "default",
+            }
+            result = CliRunner().invoke(mcp, ["-c", str(cfg_file), "--mode", "write"])
+
+        assert result.exit_code == 0, result.output
+        service_cls.return_value.build.assert_not_called()
+        execve.assert_called_once()
+        _exe, args, env = execve.call_args.args
+        assert args[1:4] == ["-m", "chaoscypher_cli", "mcp"]
+        assert args[args.index("--database") + 1] == "default"
+        assert args[args.index("--mode") + 1] == "write"
+        assert env["CHAOSCYPHER_DATA_DIR"] == str(tmp_path / "out")
+        assert env["CHAOSCYPHER_DATABASE"] == "default"
+
+    def test_builds_first_when_database_is_missing(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.mcp import mcp
+
+        cfg_file = self._config_file(tmp_path)
+        compose_cfg = _make_compose_config(name="test-comp")
+        compose_cfg.resolved_output_dir = tmp_path / "out"
+        service = MagicMock()
+        service.build = _make_async(_make_success_result())
+
+        with (
+            patch(_MCP_CONFIG) as mock_cfg_cls,
+            patch(_MCP_SERVICE) as service_cls,
+            patch("chaoscypher_cli.commands.compose.mcp.get_auth_config", return_value=None),
+            patch(
+                "chaoscypher_cli.commands.compose.mcp.get_lexicon_url", return_value="http://hub"
+            ),
+            patch("chaoscypher_cli.commands.compose.mcp.os.execve") as execve,
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            service_cls.return_value = service
+            service_cls._composition_env.return_value = {"CHAOSCYPHER_DATABASE": "default"}
+            result = CliRunner().invoke(mcp, ["-c", str(cfg_file)])
+
+        assert result.exit_code == 0, result.output
+        service.build.assert_awaited_once()
+        execve.assert_called_once()
+        assert "--mode" not in execve.call_args.args[1]
+
+    def test_build_failure_does_not_exec(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.mcp import mcp
+
+        cfg_file = self._config_file(tmp_path)
+        compose_cfg = _make_compose_config(name="test-comp")
+        compose_cfg.resolved_output_dir = tmp_path / "out"
+        service = MagicMock()
+        service.build = _make_async(_make_failure_result(["package not found"]))
+
+        with (
+            patch(_MCP_CONFIG) as mock_cfg_cls,
+            patch(_MCP_SERVICE) as service_cls,
+            patch("chaoscypher_cli.commands.compose.mcp.get_auth_config", return_value=None),
+            patch(
+                "chaoscypher_cli.commands.compose.mcp.get_lexicon_url", return_value="http://hub"
+            ),
+            patch("chaoscypher_cli.commands.compose.mcp.os.execve") as execve,
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            service_cls.return_value = service
+            result = CliRunner().invoke(mcp, ["-c", str(cfg_file)])
+
+        assert result.exit_code == 1
+        assert "package not found" in result.output
+        execve.assert_not_called()
+
+    def test_everything_before_exec_goes_to_stderr(self, tmp_path: Path) -> None:
+        from chaoscypher_cli.commands.compose.mcp import mcp
+
+        cfg_file = self._config_file(tmp_path)
+        compose_cfg = _make_compose_config(name="test-comp")
+        compose_cfg.resolved_output_dir = tmp_path / "out"
+        (tmp_path / "out" / "databases" / "default").mkdir(parents=True)
+
+        with (
+            patch(_MCP_CONFIG) as mock_cfg_cls,
+            patch(_MCP_SERVICE) as service_cls,
+            patch("chaoscypher_cli.commands.compose.mcp.os.execve"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            service_cls._composition_env.return_value = {}
+            result = CliRunner().invoke(mcp, ["-c", str(cfg_file)])
+
+        assert result.exit_code == 0, result.output
+        assert result.stdout == ""
+        assert "Serving composition" in result.stderr

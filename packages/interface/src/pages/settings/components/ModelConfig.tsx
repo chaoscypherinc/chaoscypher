@@ -43,14 +43,32 @@ interface OllamaGroupedOption {
   id: string;
   name: string;
   description?: string;
-  group: 'Recommended' | 'Other Installed';
+  /** Measured benchmark score, 0-100; undefined when never benchmarked or the run did not finish. */
+  score?: number;
+  group: 'Recommended' | 'Needs more VRAM' | 'Not recommended' | 'Not yet measured' | 'Other Installed';
+}
+
+/** A model option as supplied by a selector: measured ones carry a score. */
+export interface OllamaModelOption {
+  id: string;
+  name: string;
+  description: string;
+  score?: number;
+  measured?: boolean;
+  /** Measured, but the weights do not fit the selected VRAM preset. */
+  fits?: boolean;
+  /**
+   * Measured, but the app cannot run it as chosen (the chat benchmark did not
+   * finish, or the model has no tool calling). `false` lands in Not recommended.
+   */
+  usable?: boolean;
 }
 
 interface OllamaAutocompleteProps {
   /** Label for the autocomplete input. */
   label: string;
-  /** Available model options with name and description. */
-  options: { id: string; name: string; description: string }[];
+  /** Available model options with name and description; `measured: false` lands in its own group. */
+  options: OllamaModelOption[];
   /** Currently selected model ID. */
   value: string;
   /** Called when a model option is selected. */
@@ -69,6 +87,8 @@ interface OllamaAutocompleteProps {
   onRemove?: (modelId: string) => void;
   /** Callback to show model info. */
   onShowInfo?: (modelId: string) => void;
+  /** Tooltip on the score chip: what the percentage measures. */
+  scoreTitle?: string;
 }
 
 /** Renders an autocomplete for local Ollama models with install status, pull, and remove. */
@@ -84,6 +104,7 @@ export function OllamaAutocomplete({
   onPull,
   onRemove,
   onShowInfo,
+  scoreTitle = 'Extraction score as on the leaderboard: in chunks counted twice, isolated once',
 }: OllamaAutocompleteProps) {
   const [menuState, setMenuState] = useState<{ modelId: string; top: number; left: number } | null>(null);
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -91,7 +112,18 @@ export function OllamaAutocomplete({
 
   // Merge pretested options with other installed models into grouped list
   const groupedOptions: OllamaGroupedOption[] = [
-    ...options.map((o) => ({ ...o, group: 'Recommended' as const })),
+    ...options
+      .filter((o) => o.measured !== false && o.fits !== false && o.usable !== false)
+      .map((o) => ({ ...o, group: 'Recommended' as const })),
+    ...options
+      .filter((o) => o.measured !== false && o.usable !== false && o.fits === false)
+      .map((o) => ({ ...o, group: 'Needs more VRAM' as const })),
+    ...options
+      .filter((o) => o.measured !== false && o.usable === false)
+      .map((o) => ({ ...o, group: 'Not recommended' as const })),
+    ...options
+      .filter((o) => o.measured === false)
+      .map((o) => ({ ...o, group: 'Not yet measured' as const })),
     ...(otherInstalledModels || []).map((o) => ({ ...o, group: 'Other Installed' as const })),
   ];
 
@@ -137,7 +169,7 @@ export function OllamaAutocomplete({
           const isInstalled = !isPlaceholder && (installedModels?.has(option.id) ?? false);
           const isPulling = !isPlaceholder && (pullProgress?.[option.id] !== undefined);
           const progress = pullProgress?.[option.id];
-          const isPretested = option.group === 'Recommended';
+          const isPretested = option.group !== 'Other Installed';
 
           return (
             <Box component="li" {...props} key={option.id || '__none__'} sx={{ display: 'flex', flexDirection: 'column', alignItems: 'stretch !important', py: 0.5 }}>
@@ -158,6 +190,18 @@ export function OllamaAutocomplete({
                     <Typography variant="caption" noWrap sx={{
                       color: "text.secondary"
                     }}>{option.id}</Typography>
+                    {option.score !== undefined && (
+                      <Chip
+                        label={`${option.score}%`}
+                        size="small"
+                        color={option.score >= 70 ? 'success' : 'default'}
+                        title={scoreTitle}
+                        sx={{ height: 18, fontSize: '0.7rem', fontWeight: 600 }}
+                      />
+                    )}
+                    {option.group === 'Not recommended' && (
+                      <Chip label="Not recommended" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.65rem', color: 'text.secondary', borderColor: 'divider' }} />
+                    )}
                     {!isPretested && (
                       <Chip label="Untested" size="small" variant="outlined" sx={{ height: 18, fontSize: '0.65rem', color: 'text.disabled', borderColor: 'divider' }} />
                     )}

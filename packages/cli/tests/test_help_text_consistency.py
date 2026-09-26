@@ -59,6 +59,7 @@ TOP_LEVEL_COMMANDS: list[str] = [
     "health",
     "lexicon",
     "mcp",
+    "mount",
     "pull",
     "push",
     "render-orchestration",

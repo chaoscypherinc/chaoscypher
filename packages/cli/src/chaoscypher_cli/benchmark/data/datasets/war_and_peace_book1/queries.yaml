@@ -1,0 +1,714 @@
+# Grounded-chat probes over War and Peace, Book One, chapters I-XIV.
+#
+# The corpus (~114k characters) is many times larger than what GraphRAG
+# retrieval returns for one question, so the test is finding the right
+# passages and answering only from them - not reading the whole text.
+#
+# Conventions (same as tech_encyclopedia_tiny):
+# - answer_terms: the most specific words a correct concise answer names,
+#   never the question's own subject. The matcher accepts any significant
+#   word of a term (four letters or more), so terms are distinguishing
+#   names ('Ivánovna', not 'Márya Ivánovna', which 'Márya Fëdorovna' would
+#   satisfy).
+# - Numbers in gold answers are spelled as the text spells them; the only
+#   digits are '1805'.
+# - fine_grained gold_entities / wrong_entities avoid shared words ('Anna',
+#   'Prince', 'Bolkónskaya'), because leads_with_gold matches any
+#   significant word of either list.
+# - out_of_scope decoy_entities never occur in the corpus (a test guards
+#   it): they are what a model remembers from the rest of the novel, from
+#   history, or from Tolstoy's life.
+version: "1.0"
+queries:
+
+# ── FACTUAL SINGLE HOP ──────────────────────────────────────────────────────
+
+  - id: q001
+    band: factual_single_hop
+    question: "In what month and year does Anna Pávlovna Schérer's reception take place?"
+    gold_entities: ["Anna Pávlovna Schérer"]
+    answer_terms: ["July", "1805"]
+    gold_answer: |
+      The reception takes place in July, 1805.
+
+  - id: q002
+    band: factual_single_hop
+    question: "Whose maid of honor and favorite was Anna Pávlovna Schérer?"
+    gold_entities: ["Anna Pávlovna Schérer", "Márya Fëdorovna"]
+    # answer_terms: 'Fëdorovna' alone; 'Márya' would also match the other Máryas
+    answer_terms: ["Fëdorovna"]
+    gold_answer: |
+      She was maid of honor and favorite of the Empress Márya Fëdorovna.
+
+  - id: q003
+    band: factual_single_hop
+    question: "Which post did Prince Vasíli want for his son, the one Baron Funke was being recommended for?"
+    gold_entities: ["Prince Vasíli Kurágin", "Baron Funke"]
+    answer_terms: ["secretary", "Vienna"]
+    gold_answer: |
+      The post of first secretary at Vienna.
+
+  - id: q004
+    band: factual_single_hop
+    question: "How much does Prince Vasíli say Anatole is costing him a year?"
+    gold_entities: ["Prince Vasíli Kurágin", "Anatole Kurágin"]
+    # answer_terms: spelled as the text spells it; '40,000' fails no_unsupported_numbers
+    answer_terms: ["forty thousand"]
+    gold_answer: |
+      Forty thousand rubles a year.
+
+  - id: q005
+    band: factual_single_hop
+    question: "Which book did Pierre take from the shelf in Prince Andrew's study while waiting for him?"
+    gold_entities: ["Pierre", "Prince Andrew"]
+    answer_terms: ["Caesar"]
+    gold_answer: |
+      Caesar's Commentaries, which he began reading in the middle.
+
+  - id: q006
+    band: factual_single_hop
+    question: "What was the name of the doll Natásha brought into the drawing room on her name day?"
+    gold_entities: ["Natásha"]
+    answer_terms: ["Mimi"]
+    gold_answer: |
+      The doll was called Mimi.
+
+  - id: q007
+    band: factual_single_hop
+    question: "Which doctor had come from Petersburg to attend the dying Count Bezúkhov?"
+    gold_entities: ["Count Bezúkhov", "Dr. Lorrain"]
+    answer_terms: ["Lorrain"]
+    gold_answer: |
+      Dr. Lorrain.
+
+  - id: q008
+    band: factual_single_hop
+    question: "Near what building was the large house in which Anatole lived in Petersburg?"
+    gold_entities: ["Anatole Kurágin"]
+    answer_terms: ["Horse Guards"]
+    gold_answer: |
+      It was near the Horse Guards' barracks.
+
+  - id: q009
+    band: factual_single_hop
+    question: "On which Moscow street is the Countess Rostóva's big house?"
+    gold_entities: ["Countess Rostóva"]
+    answer_terms: ["Povarskáya"]
+    gold_answer: |
+      On the Povarskáya.
+
+  - id: q010
+    band: factual_single_hop
+    question: "What did Dólokhov wager he would drink while sitting on the outer window ledge, and for how much?"
+    gold_entities: ["Dólokhov", "Stevens"]
+    answer_terms: ["rum", "fifty"]
+    # must_not_contain: the drink everyone expects of a Russian officer's bet
+    must_not_contain: ["vodka"]
+    gold_answer: |
+      A whole bottle of rum, without taking it from his mouth and without
+      holding on, for fifty imperials.
+
+  - id: q011
+    band: factual_single_hop
+    question: "Into which waterway were the policeman and the bear put, tied back to back?"
+    gold_entities: ["Dólokhov", "Anatole Kurágin", "Pierre"]
+    answer_terms: ["Moyka"]
+    # must_not_contain: the famous Petersburg river retellings put the bear in
+    must_not_contain: ["Neva"]
+    gold_answer: |
+      Into the Moyka Canal.
+
+  - id: q012
+    band: factual_single_hop
+    question: "What are the first name and patronymic of Pierre's father, Count Bezúkhov, as the text gives them?"
+    gold_entities: ["Count Bezúkhov", "Pierre"]
+    answer_terms: ["Cyril", "Vladímirovich"]
+    # must_not_contain: the Russian form of the name most models know him by
+    must_not_contain: ["Kirill"]
+    gold_answer: |
+      Cyril Vladímirovich - Count Cyril Vladímirovich Bezúkhov.
+
+  - id: q013
+    band: factual_single_hop
+    question: "How many children had the Countess Rostóva borne?"
+    gold_entities: ["Countess Rostóva"]
+    answer_terms: ["twelve"]
+    # must_not_contain: the four children the novel follows (Véra, Nicholas, Natásha, Pétya)
+    must_not_contain: ["four children"]
+    gold_answer: |
+      She had had twelve children and was worn out with childbearing.
+
+  - id: q014
+    band: factual_single_hop
+    question: "Who is the colonel of the Pávlograd Hussars dining with the Rostóvs and taking Nicholas back with him?"
+    gold_entities: ["Schubert", "Pávlograd Hussars", "Nicholas Rostóv"]
+    answer_terms: ["Schubert"]
+    # must_not_contain: Nicholas's famous commander in the regiment, who is not in this text
+    must_not_contain: ["Denísov"]
+    gold_answer: |
+      Schubert, the colonel of the Pávlograd Hussars, home on leave.
+
+  - id: q015
+    band: factual_single_hop
+    question: "What nickname was Princess Mary Bolkónskaya's father given after he retired from the army?"
+    gold_entities: ["Prince Bolkónski", "Princess Mary Bolkónskaya"]
+    answer_terms: ["King of Prussia"]
+    gold_answer: |
+      He was nicknamed "the King of Prussia".
+
+# ── PARAPHRASE ──────────────────────────────────────────────────────────────
+
+  - id: q016
+    band: paraphrase
+    question: "The hostess of the July soirée said she was ill with something whose name was then a fashionable new word in the capital. What was it?"
+    gold_entities: ["Anna Pávlovna Schérer"]
+    answer_terms: ["grippe"]
+    gold_answer: |
+      La grippe - a new word in St. Petersburg then, used only by the elite.
+
+  - id: q017
+    band: paraphrase
+    question: "What was the main gossip among the callers congratulating the Rostóvs on the name day?"
+    gold_entities: ["Count Bezúkhov", "Pierre"]
+    answer_terms: ["Bezúkhov", "Pierre"]
+    gold_answer: |
+      The illness of the wealthy Count Bezúkhov and the scandalous conduct of
+      his illegitimate son Pierre in Petersburg.
+
+  - id: q018
+    band: paraphrase
+    question: "What stinging nickname had the Rostóvs' son given his elder sister, which the younger ones shouted at her through the door?"
+    gold_entities: ["Véra", "Nicholas Rostóv"]
+    answer_terms: ["Genlis"]
+    gold_answer: |
+      Madame de Genlis - the nickname Nicholas gave Véra.
+
+  - id: q019
+    band: paraphrase
+    question: "Whose scheme for ending war forever did the awkward young guest call interesting but hardly feasible?"
+    gold_entities: ["Abbé Morio", "Pierre"]
+    answer_terms: ["Morio"]
+    gold_answer: |
+      The Abbé Morio's scheme for perpetual peace.
+
+  - id: q020
+    band: paraphrase
+    question: "Which celebrated actress figured in the émigré's anecdote about the murdered duke and the usurper?"
+    gold_entities: ["Mademoiselle George", "Vicomte de Mortemart", "Duc d'Enghien"]
+    answer_terms: ["George"]
+    gold_answer: |
+      Mademoiselle George, at whose house the Duc d'Enghien was said to have
+      come upon Bonaparte.
+
+  - id: q021
+    band: paraphrase
+    question: "Why did Pierre tell his friend he would not join the present war against Napoleon?"
+    gold_entities: ["Pierre", "Prince Andrew"]
+    answer_terms: ["England", "Austria"]
+    gold_answer: |
+      Because it was not a war for freedom: to help England and Austria against
+      the greatest man in the world was not right.
+
+  - id: q022
+    band: paraphrase
+    question: "Who promised Anna Pávlovna he would be her devoted 'slafe with an f' if she arranged a match for him?"
+    gold_entities: ["Prince Vasíli Kurágin", "Anna Pávlovna Schérer"]
+    # alias: the answer may identify him as Anatole's father (chapter I names him only that way once)
+    answer_terms: [["Vasíli", "Anatole's father", "father of Anatole"]]
+    gold_answer: |
+      Prince Vasíli Kurágin, who wanted her to arrange a marriage for Anatole.
+
+  - id: q023
+    band: paraphrase
+    question: "What position had been waiting for the Rostóvs' eldest son before he chose the army instead?"
+    gold_entities: ["Nicholas Rostóv", "Count Rostóv"]
+    answer_terms: ["Archives"]
+    gold_answer: |
+      A place in the Archives Department; he was leaving the university too.
+
+  - id: q024
+    band: paraphrase
+    question: "The count boasts that his youngest daughter will be a singer, a second whom?"
+    gold_entities: ["Count Rostóv", "Natásha"]
+    answer_terms: ["Salomoni"]
+    gold_answer: |
+      A second Salomoni.
+
+  - id: q025
+    band: paraphrase
+    question: "How much did the widowed princess tell her old friend she needed to fit out her officer son, and how much did she actually have?"
+    gold_entities: ["Anna Mikháylovna Drubetskáya", "Borís"]
+    # answer_terms: 'twenty' because the loose matcher would let 'five' from 'five hundred' satisfy 'twenty-five'
+    answer_terms: ["five hundred", "twenty"]
+    gold_answer: |
+      She needed five hundred rubles and had only one twenty-five-ruble note.
+
+# ── MULTI HOP ───────────────────────────────────────────────────────────────
+
+  - id: q026
+    band: multi_hop
+    question: "The elderly lady who sat beside Anna Pávlovna's aunt pleaded with Prince Vasíli for her son. Into which regiment was the son transferred as a result?"
+    gold_entities: ["Anna Mikháylovna Drubetskáya", "Borís", "Semënov Guards"]
+    # answer_terms: chapters IV (the plea) and X (the transfer)
+    answer_terms: ["Semënov"]
+    gold_answer: |
+      Her son Borís was transferred into the Semënov Guards, with the rank of
+      cornet.
+
+  - id: q027
+    band: multi_hop
+    question: "Who is the godfather of the son for whom Princess Drubetskáya petitioned Prince Vasíli?"
+    gold_entities: ["Borís", "Count Bezúkhov"]
+    # alias: chapter XII calls him Cyril Vladímirovich; either name is the man
+    answer_terms: [["Bezúkhov", "Cyril Vladímirovich"]]
+    gold_answer: |
+      Borís's godfather is Count Cyril Vladímirovich Bezúkhov.
+
+  - id: q028
+    band: multi_hop
+    question: "Whose father hushed up his son's part in the scandal that followed the party where Dólokhov drank the rum, and what happened to that son all the same?"
+    gold_entities: ["Anatole Kurágin", "Prince Vasíli Kurágin"]
+    # answer_terms: the host (IX) is Anatole; his father (I) is Prince Vasíli; the outcome is in X
+    # alias: "Anatole Kurágin's father" identifies Prince Vasíli
+    answer_terms: [["Vasíli", "Anatole's father", "Kurágin's father", "father of Anatole"], "Petersburg"]
+    gold_answer: |
+      Prince Vasíli got his son Anatole's affair hushed up, but even Anatole
+      was ordered out of Petersburg.
+
+  - id: q029
+    band: multi_hop
+    question: "Anna Pávlovna proposed a bride for Prince Vasíli's prodigal son. Who is the bride's brother, and whose aide-de-camp is he going to be?"
+    gold_entities: ["Princess Mary Bolkónskaya", "Prince Andrew", "Kutúzov"]
+    answer_terms: ["Andrew", "Kutúzov"]
+    gold_answer: |
+      The bride, Princess Mary Bolkónskaya, is the sister of Prince Andrew,
+      who is going to the war as General Kutúzov's aide-de-camp.
+
+  - id: q030
+    band: multi_hop
+    question: "Pierre gave Prince Andrew his word of honor not to go somewhere that night. Where did he go instead, and where was he sent afterwards?"
+    gold_entities: ["Pierre", "Anatole Kurágin"]
+    answer_terms: ["Anatole", "Moscow"]
+    gold_answer: |
+      He went to Anatole Kurágin's gathering anyway; after the bear affair he
+      was sent back to Moscow.
+
+  - id: q031
+    band: multi_hop
+    question: "Who is the mother of the officer who drank the bottle of rum on the window ledge?"
+    gold_entities: ["Dólokhov", "Márya Ivánovna Dólokhova"]
+    # answer_terms: 'Ivánovna' alone; 'Márya' would also match Márya Lvóvna and Márya Fëdorovna
+    answer_terms: ["Ivánovna"]
+    gold_answer: |
+      Dólokhov's mother is Márya Ivánovna Dólokhova.
+
+  - id: q032
+    band: multi_hop
+    question: "The man who asked Anna Pávlovna to 'educate this bear' is said in Moscow to be a rival heir to whose fortune?"
+    gold_entities: ["Prince Vasíli Kurágin", "Count Bezúkhov", "Pierre"]
+    answer_terms: ["Bezúkhov"]
+    gold_answer: |
+      Prince Vasíli, the next heir through his wife, is a rival to Pierre for
+      the fortune of Count Bezúkhov.
+
+  - id: q033
+    band: multi_hop
+    question: "In whose house was Pierre staying in Petersburg, and to whom was that family planning to marry the son Pierre caroused with?"
+    gold_entities: ["Prince Vasíli Kurágin", "Anatole Kurágin", "Princess Mary Bolkónskaya"]
+    # answer_terms: chapter VIII says 'Prince Andrew's sister'; her name, Mary, is in chapter I
+    answer_terms: ["Kurágin", ["Mary", "Andrew's sister", "sister of Prince Andrew"]]
+    gold_answer: |
+      At Prince Vasíli Kurágin's; they planned to reform Anatole by marrying
+      him to Prince Andrew's sister, Princess Mary Bolkónskaya.
+
+  - id: q034
+    band: multi_hop
+    question: "What did the little princess promise Anna Pávlovna in the hall ('It is settled'), and whose consent was still needed?"
+    gold_entities: ["Lise Bolkónskaya", "Anatole Kurágin", "Princess Mary Bolkónskaya"]
+    answer_terms: ["Anatole", "father"]
+    gold_answer: |
+      To help with the match between Anatole and her sister-in-law Princess
+      Mary: she would write and find out how Mary's father looked at it.
+
+  - id: q035
+    band: multi_hop
+    question: "Julie Karágina flirted with young Rostóv at the name day. What is her mother's name?"
+    gold_entities: ["Julie Karágina", "Márya Lvóvna Karágina"]
+    # answer_terms: chapter X announces the mother, chapter XII names Julie
+    answer_terms: ["Lvóvna"]
+    gold_answer: |
+      Márya Lvóvna Karágina.
+
+  - id: q036
+    band: multi_hop
+    question: "For whose sake, according to the count, is Nicholas leaving the university, and what rank did that friend receive in the Guards?"
+    gold_entities: ["Borís", "Nicholas Rostóv"]
+    answer_terms: ["Borís", "cornet"]
+    gold_answer: |
+      For his friend Borís, who has become an officer: he was transferred
+      into the Semënov Guards as a cornet.
+
+  - id: q037
+    band: multi_hop
+    question: "Anna Mikháylovna relied on one grandee to get her son into the Guards and hopes another will pay for his equipment. Who are they?"
+    gold_entities: ["Prince Vasíli Kurágin", "Count Bezúkhov"]
+    answer_terms: ["Vasíli", "Bezúkhov"]
+    gold_answer: |
+      Prince Vasíli arranged the transfer; she hopes Count Cyril Vladímirovich
+      Bezúkhov, Borís's godfather, will provide for his equipment.
+
+  - id: q038
+    band: multi_hop
+    question: "In whose house was Borís educated from childhood, and what name do the two people celebrating their name day there share?"
+    gold_entities: ["Borís", "Rostóvs", "Natásha", "Countess Rostóva"]
+    answer_terms: ["Rostóv", "Nataly"]
+    gold_answer: |
+      At the Rostóvs' in Moscow; the name day is that of the countess and her
+      youngest daughter, both named Nataly.
+
+  - id: q039
+    band: multi_hop
+    question: "In what language did Prince Hippolyte tell his Moscow anecdote, and whom had he promised to take home afterwards?"
+    gold_entities: ["Prince Hippolyte", "Vicomte de Mortemart"]
+    # answer_terms: chapter VI says only 'the vicomte'; his name, Mortemart, is in chapters I and II
+    answer_terms: ["Russian", "Mortemart"]
+    gold_answer: |
+      He told it in Russian, and he had promised to take the vicomte,
+      Mortemart, home.
+
+  - id: q040
+    band: multi_hop
+    question: "What does Prince Andrew's wife call Kutúzov, and with whom will she live in the country while Andrew is at the war?"
+    gold_entities: ["Lise Bolkónskaya", "Kutúzov", "Prince Andrew"]
+    answer_terms: ["Uncle", "father", "sister"]
+    gold_answer: |
+      She calls Kutúzov "Uncle"; she will stay in the country with Andrew's
+      father and sister.
+
+  - id: q041
+    band: multi_hop
+    question: "With which man did the Countess Rostóva once act in theatricals, and at whose house?"
+    gold_entities: ["Countess Rostóva", "Prince Vasíli Kurágin"]
+    # answer_terms: 'Rumyántsov' (the theatricals); not 'Rumyántsev', whom Prince Vasíli suggests appealing to
+    answer_terms: ["Vasíli", "Rumyántsov"]
+    gold_answer: |
+      With Prince Vasíli, at the Rumyántsovs' theatricals.
+
+  - id: q042
+    band: multi_hop
+    question: "What is the first name of the Countess Rostóva's husband, and who manages all his affairs?"
+    gold_entities: ["Count Rostóv", "Dmítri Vasílevich"]
+    answer_terms: ["Ilyá", "Dmítri"]
+    gold_answer: |
+      The count is Ilyá; his affairs are managed by Dmítri Vasílevich.
+
+  - id: q043
+    band: multi_hop
+    question: "Who is the girl of fifteen who followed Natásha into the drawing room, and what did Nicholas later copy out for her?"
+    gold_entities: ["Sónya", "Nicholas Rostóv"]
+    answer_terms: ["Sónya", "verses"]
+    gold_answer: |
+      Sónya, the count's niece; Nicholas copied out verses for her, the first
+      he had ever written.
+
+  - id: q044
+    band: multi_hop
+    question: "Borís, for whom Prince Vasíli spoke to the Emperor, stayed in Moscow for his equipment. Where was he to join the Guards on their march?"
+    gold_entities: ["Borís", "Semënov Guards"]
+    answer_terms: ["Radzivílov"]
+    gold_answer: |
+      On the march to Radzivílov.
+
+  - id: q045
+    band: multi_hop
+    question: "Pierre came back to Moscow in disgrace. What does Count Rostóv ask Anna Mikháylovna to do about him when she leaves for Count Bezúkhov's?"
+    gold_entities: ["Count Rostóv", "Pierre", "Anna Mikháylovna Drubetskáya"]
+    answer_terms: ["dine"]
+    gold_answer: |
+      If the old count is better, she should ask Pierre to dine with the
+      Rostóvs.
+
+# ── FINE-GRAINED DISCRIMINATION ─────────────────────────────────────────────
+
+  - id: q046
+    band: fine_grained_discrimination
+    question: "Which Anna hosted the soirée in Petersburg in July 1805?"
+    gold_entities: ["Pávlovna", "Schérer"]
+    wrong_entities: ["Mikháylovna", "Drubetskáya"]
+    answer_terms: ["Pávlovna"]
+    gold_answer: |
+      Anna Pávlovna Schérer.
+
+  - id: q047
+    band: fine_grained_discrimination
+    question: "Which Anna begged Prince Vasíli to have her son transferred to the Guards?"
+    gold_entities: ["Mikháylovna", "Drubetskáya"]
+    wrong_entities: ["Pávlovna", "Schérer"]
+    answer_terms: ["Mikháylovna"]
+    gold_answer: |
+      Anna Mikháylovna, Princess Drubetskáya.
+
+  - id: q048
+    band: fine_grained_discrimination
+    question: "The Countess Rostóva calls her childhood friend 'Annette'. Which Anna is that?"
+    gold_entities: ["Mikháylovna", "Drubetskáya"]
+    # wrong_entities: Prince Vasíli also calls Anna Pávlovna 'Annette'
+    wrong_entities: ["Pávlovna", "Schérer"]
+    answer_terms: ["Mikháylovna"]
+    gold_answer: |
+      Anna Mikháylovna Drubetskáya.
+
+  - id: q049
+    band: fine_grained_discrimination
+    question: "Which of Prince Vasíli's sons did Anna Pávlovna say she did not like?"
+    gold_entities: ["Anatole"]
+    wrong_entities: ["Hippolyte"]
+    answer_terms: ["Anatole"]
+    gold_answer: |
+      Anatole, his youngest.
+
+  - id: q050
+    band: fine_grained_discrimination
+    question: "Which of Prince Vasíli's sons brought the vicomte to Anna Pávlovna's and introduced him?"
+    gold_entities: ["Hippolyte"]
+    wrong_entities: ["Anatole"]
+    answer_terms: ["Hippolyte"]
+    gold_answer: |
+      Hippolyte, who came with Mortemart and introduced him.
+
+  - id: q051
+    band: fine_grained_discrimination
+    question: "Who sat on the outer window ledge and drank a whole bottle of rum for a wager?"
+    gold_entities: ["Dólokhov"]
+    wrong_entities: ["Anatole"]
+    answer_terms: ["Dólokhov"]
+    gold_answer: |
+      Dólokhov, the officer of the Semënov regiment.
+
+  - id: q052
+    band: fine_grained_discrimination
+    question: "Who was the host of the party at which the rum wager took place, translating its terms into English for the Englishman?"
+    gold_entities: ["Anatole"]
+    wrong_entities: ["Dólokhov"]
+    answer_terms: ["Anatole"]
+    gold_answer: |
+      Anatole Kurágin, in whose house the gathering was held.
+
+  - id: q053
+    band: fine_grained_discrimination
+    question: "Which of the young men in the bear affair was degraded to the ranks?"
+    gold_entities: ["Dólokhov"]
+    wrong_entities: ["Anatole"]
+    answer_terms: ["Dólokhov"]
+    gold_answer: |
+      Dólokhov was degraded to the ranks.
+
+  - id: q054
+    band: fine_grained_discrimination
+    question: "Which Rostóv girl is thirteen and ran in with a doll?"
+    gold_entities: ["Natásha"]
+    wrong_entities: ["Sónya"]
+    # alias: the text gives her formal name Nataly as well
+    answer_terms: [["Natásha", "Nataly"]]
+    gold_answer: |
+      Natásha, the youngest daughter.
+
+  - id: q055
+    band: fine_grained_discrimination
+    question: "Which girl at the Rostóvs' is the count's fifteen-year-old niece?"
+    gold_entities: ["Sónya"]
+    wrong_entities: ["Natásha"]
+    answer_terms: ["Sónya"]
+    gold_answer: |
+      Sónya.
+
+  - id: q056
+    band: fine_grained_discrimination
+    question: "In the conservatory, which girl jumped onto a tub and kissed Borís?"
+    gold_entities: ["Natásha"]
+    wrong_entities: ["Sónya"]
+    answer_terms: ["Natásha"]
+    gold_answer: |
+      Natásha, who then made him promise to ask for her hand in four years.
+
+  - id: q057
+    band: fine_grained_discrimination
+    question: "Of the two friends, the student and the officer, which one is short with curly hair?"
+    gold_entities: ["Nicholas"]
+    wrong_entities: ["Borís"]
+    answer_terms: ["Nicholas"]
+    gold_answer: |
+      Nicholas Rostóv, the student; the officer is tall and fair.
+
+  - id: q058
+    band: fine_grained_discrimination
+    question: "Which of the Rostóv daughters did the countess bring up more strictly?"
+    gold_entities: ["Véra"]
+    wrong_entities: ["Natásha"]
+    answer_terms: ["Véra"]
+    gold_answer: |
+      Véra, the elder.
+
+  - id: q059
+    band: fine_grained_discrimination
+    question: "Which grandee of Catherine's time lay dying in Moscow in the summer of 1805?"
+    gold_entities: ["Bezúkhov", "Cyril"]
+    wrong_entities: ["Vasíli"]
+    answer_terms: ["Bezúkhov"]
+    gold_answer: |
+      Count Cyril Vladímirovich Bezúkhov, Pierre's father.
+
+  - id: q060
+    band: fine_grained_discrimination
+    question: "Which nobleman called Pierre a bear and asked Anna Pávlovna to educate him?"
+    gold_entities: ["Vasíli"]
+    # wrong_entities: Pierre's father is the other old grandee the question could evoke
+    wrong_entities: ["Bezúkhov"]
+    answer_terms: ["Vasíli"]
+    gold_answer: |
+      Prince Vasíli, with whom Pierre had been staying for a month.
+
+  - id: q061
+    band: fine_grained_discrimination
+    question: "Which Princess Bolkónskaya is pregnant and was called the most fascinating woman in Petersburg?"
+    gold_entities: ["Lise", "Meinen"]
+    wrong_entities: ["Mary"]
+    # alias: the book's epithet for her is "the little princess"
+    answer_terms: [["Lise", "little princess"]]
+    gold_answer: |
+      Lise, Prince Andrew's wife, the little princess.
+
+  - id: q062
+    band: fine_grained_discrimination
+    question: "Which Princess Bolkónskaya is said to be very unhappy with her father and was proposed as a bride for Anatole?"
+    gold_entities: ["Mary"]
+    wrong_entities: ["Lise"]
+    answer_terms: ["Mary"]
+    gold_answer: |
+      Mary, Prince Andrew's sister.
+
+  - id: q063
+    band: fine_grained_discrimination
+    question: "Which young man in the text is going to the war as General Kutúzov's aide-de-camp?"
+    gold_entities: ["Andrew"]
+    wrong_entities: ["Nicholas", "Borís"]
+    # alias: his surname alone identifies him here (Bolkónski, not Bolkónskaya)
+    answer_terms: [["Andrew", "Bolkónski"]]
+    gold_answer: |
+      Prince Andrew Bolkónski.
+
+  - id: q064
+    band: fine_grained_discrimination
+    question: "Which young man is leaving the university to join the Pávlograd Hussars?"
+    gold_entities: ["Nicholas"]
+    wrong_entities: ["Andrew", "Borís"]
+    answer_terms: ["Nicholas"]
+    gold_answer: |
+      Nicholas Rostóv, the count's eldest son.
+
+  - id: q065
+    band: fine_grained_discrimination
+    question: "Which princess at Anna Pávlovna's wore a white dress trimmed with moss and ivy?"
+    gold_entities: ["Hélène"]
+    wrong_entities: ["Lise"]
+    answer_terms: ["Hélène"]
+    gold_answer: |
+      Hélène, Prince Vasíli's daughter.
+
+# ── OUT OF SCOPE ────────────────────────────────────────────────────────────
+# Every decoy is absent from chapters I-XIV; the test suite checks it.
+
+  - id: q066
+    band: out_of_scope
+    question: "At which battle did Prince Andrew fall wounded while carrying a standard?"
+    # decoy: the battle of Book Three, the novel's most famous scene
+    decoy_entities: ["Austerlitz", "Pratzen"]
+    expect_refusal: true
+
+  - id: q067
+    band: out_of_scope
+    question: "Where was Pierre's duel with Dólokhov fought?"
+    decoy_entities: ["Sokólniki"]
+    expect_refusal: true
+
+  - id: q068
+    band: out_of_scope
+    question: "In what year did Napoleon's Grande Armée invade Russia, and which river did it cross?"
+    decoy_entities: ["1812", "Niemen", "Neman"]
+    expect_refusal: true
+
+  - id: q069
+    band: out_of_scope
+    question: "At which battle did Pierre watch the fighting from the Raévski redoubt?"
+    decoy_entities: ["Borodino"]
+    expect_refusal: true
+
+  - id: q070
+    band: out_of_scope
+    question: "Which governor of Moscow handed Vereshchágin over to the crowd?"
+    decoy_entities: ["Rostopchín"]
+    expect_refusal: true
+
+  - id: q071
+    band: out_of_scope
+    question: "On which family estate did the author write this novel?"
+    decoy_entities: ["Yasnaya Polyana", "Yasnaya"]
+    expect_refusal: true
+
+  - id: q072
+    band: out_of_scope
+    question: "Whom did the author of this novel marry in 1862?"
+    decoy_entities: ["Behrs", "Sophia", "Sofya"]
+    expect_refusal: true
+
+  - id: q073
+    band: out_of_scope
+    question: "What is the name of Prince Bolkónski's country estate, where Lise is to stay?"
+    # decoy: named in chapter XXII of Book One, after this cut; the text here says only 'the country'
+    decoy_entities: ["Bald Hills", "Lysye Gory"]
+    expect_refusal: true
+
+  - id: q074
+    band: out_of_scope
+    question: "What are the first name and patronymic of Prince Andrew's father?"
+    # decoy: 'Nicholas Andréevich' appears only after this cut; 'Nicholas' alone is Rostóv's and in the text
+    decoy_entities: ["Andréevich", "Nikolai"]
+    expect_refusal: true
+
+  - id: q075
+    band: out_of_scope
+    question: "Who commanded Nicholas Rostóv's squadron in the Pávlograd Hussars?"
+    # decoy: Vaska Denísov, Book Two; the text only names Schubert, the colonel
+    decoy_entities: ["Denísov"]
+    expect_refusal: true
+
+  - id: q076
+    band: out_of_scope
+    question: "What did Lise and Prince Andrew name their son?"
+    decoy_entities: ["Nikolenka", "Nikolúshka", "Nikolai"]
+    expect_refusal: true
+
+  - id: q077
+    band: out_of_scope
+    question: "How much did Nicholas Rostóv lose to Dólokhov at cards?"
+    decoy_entities: ["43,000", "43000", "forty-three thousand"]
+    expect_refusal: true
+
+  - id: q078
+    band: out_of_scope
+    question: "Who stopped Natásha's attempt to elope with Anatole Kurágin?"
+    decoy_entities: ["Akhrosímova", "Márya Dmítrievna"]
+    expect_refusal: true
+
+  - id: q079
+    band: out_of_scope
+    question: "In which battle was Nicholas Rostóv first wounded?"
+    decoy_entities: ["Schön Grabern", "Schöngrabern", "Hollabrunn"]
+    expect_refusal: true
+
+  - id: q080
+    band: out_of_scope
+    question: "What did Anna Mikháylovna and Prince Vasíli struggle over outside the dying Count Bezúkhov's room?"
+    # decoy: chapter XXI of Book One, after this cut; Anna Mikháylovna and Borís are only setting out for the count's house at the end of chapter XIV
+    decoy_entities: ["portfolio", "inlaid"]
+    expect_refusal: true

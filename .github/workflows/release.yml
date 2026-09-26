@@ -37,7 +37,7 @@ jobs:
       - name: Extract the changelog section
         run: |
           if ! python3 scripts/changelog_section.py "${{ github.ref_name }}" > release-notes.md; then
-            printf 'Release %s.\n\nFull changelog: https://chaoscypher.com/about/changelog\n' "${{ github.ref_name }}" > release-notes.md
+            printf 'Release %s.\n\nFull changelog: https://chaoscypher.com/docs/about/changelog\n' "${{ github.ref_name }}" > release-notes.md
             echo "::warning::no changelog section for ${{ github.ref_name }} — published a generic body"
           fi
           cat release-notes.md

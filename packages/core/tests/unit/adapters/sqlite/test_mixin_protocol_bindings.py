@@ -90,6 +90,73 @@ MIXIN_PROTOCOL_BINDINGS: list[tuple[type, type, str]] = [
 ]
 
 
+# Protocol members a bound mixin does NOT implement itself because a SIBLING
+# mixin on the composed SqliteAdapter provides them.  The nominal Protocol
+# base hid these gaps (issubclass() is unconditionally True for a nominal
+# subclass); the structural check below surfaces them, so they are recorded
+# explicitly.  Anything missing BEYOND these sets is a lost method.
+# (test_source_protocols_split.py pins that the composed adapter has no gaps.)
+SIBLING_PROVIDED: dict[tuple[str, str], frozenset[str]] = {
+    # Lifecycle/stats half lives in SourceIndexingMixin, SourceLifecycleMixin,
+    # SourceDeletionMixin and SourceCitationsMixin — see the module docstring.
+    ("SourcesMixin", "SourceStorageProtocol"): frozenset(
+        {
+            "complete_commit",
+            "complete_extraction",
+            "complete_indexing",
+            "delete_source_db",
+            "fail_commit",
+            "fail_extraction",
+            "fail_indexing",
+            "get_entity_uris_grouped_by_source",
+            "get_stats",
+            "increment_source_counter",
+            "start_commit",
+            "start_extraction",
+            "start_indexing",
+            "update_source_columns",
+            "update_step_progress",
+            "upload_source",
+        }
+    ),
+    # Bulk job/task maintenance lives in SourceExtractionJobsMixin.
+    ("SourceIndexingMixin", "ExtractionQueueStorageProtocol"): frozenset(
+        {
+            "clear_all_extraction_jobs",
+            "clear_all_extraction_tasks",
+            "count_extraction_jobs",
+            "count_extraction_tasks",
+            "delete_extraction_jobs",
+            "delete_extraction_tasks",
+        }
+    ),
+}
+
+
+def protocol_members(protocol: type) -> set[str]:
+    """Names the Protocol itself declares (``__protocol_attrs__``)."""
+    return set(protocol.__protocol_attrs__)  # type: ignore[attr-defined]
+
+
+def unimplemented_members(cls: type, protocol: type) -> list[str]:
+    """Protocol members ``cls`` does not really implement.
+
+    Every mixin lists its Protocol as an explicit base, so ``issubclass`` /
+    ``isinstance`` short-circuit through the nominal MRO and can never fail —
+    and because the Protocol's method bodies are ``...``, a deleted
+    implementation is silently inherited as a ``None``-returning stub rather
+    than raising AttributeError.  So resolve each member through the MRO and
+    reject any that is still owned by a Protocol class: that member has no
+    real implementation.
+    """
+    missing: list[str] = []
+    for member in sorted(protocol_members(protocol)):
+        owner = next((base for base in cls.__mro__ if member in vars(base)), None)
+        if owner is None or getattr(owner, "_is_protocol", False):
+            missing.append(member)
+    return missing
+
+
 @pytest.mark.parametrize(
     ("mixin_cls", "protocol", "description"),
     [(m, p, d) for m, p, d in MIXIN_PROTOCOL_BINDINGS],
@@ -98,12 +165,14 @@ MIXIN_PROTOCOL_BINDINGS: list[tuple[type, type, str]] = [
 def test_mixin_satisfies_declared_protocol(
     mixin_cls: type, protocol: type, description: str
 ) -> None:
-    """Each mixin class must declare the expected Protocol base.
+    """Each mixin must declare the Protocol base AND implement every member.
 
-    Uses issubclass() rather than isinstance() so no adapter instance is
-    required — the binding is checked purely at the class level.  This
-    catches regressions at import time: if a mixin loses a method that its
-    Protocol declares, issubclass() returns False and this test fails.
+    The ``issubclass`` half pins the declared base.  It cannot pin the
+    methods — a nominal subclass satisfies ``issubclass`` unconditionally —
+    so the structural half compares the Protocol's declared member set
+    against the mixin's real implementations, excluding members that resolve
+    to the Protocol's own ``...``-bodied stubs.  That is the half that fails
+    when a mixin loses or renames a method its Protocol declares.
 
     Args:
         mixin_cls: The mixin class under test.
@@ -112,7 +181,16 @@ def test_mixin_satisfies_declared_protocol(
 
     """
     assert issubclass(mixin_cls, protocol), (
-        f"{mixin_cls.__name__} no longer satisfies {protocol.__name__}. "
-        f"A required method was likely removed or renamed. "
+        f"{mixin_cls.__name__} no longer declares {protocol.__name__} as a base. "
         f"Check {protocol.__module__} for the full method list."
+    )
+
+    expected_gap = SIBLING_PROVIDED.get((mixin_cls.__name__, protocol.__name__), frozenset())
+    lost = sorted(set(unimplemented_members(mixin_cls, protocol)) - expected_gap)
+    assert not lost, (
+        f"{mixin_cls.__name__} no longer implements {protocol.__name__}: {lost} "
+        f"resolve to the Protocol's '...' stubs (which silently return None) "
+        f"instead of a real implementation — a required method was removed or "
+        f"renamed. Check {protocol.__module__} for the full method list; if the "
+        f"method genuinely moved to a sibling mixin, record it in SIBLING_PROVIDED."
     )

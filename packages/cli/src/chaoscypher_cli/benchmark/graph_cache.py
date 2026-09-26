@@ -77,6 +77,45 @@ class GraphCache:
         """Return the on-disk path for a cache key."""
         return self._root / key
 
+    def key_for(
+        self,
+        *,
+        corpus_id: str,
+        corpus_version: str,
+        extractor: ModelConfig,
+    ) -> str:
+        """Return the cache key for one (corpus, extractor) slot.
+
+        Args:
+            corpus_id: Stable dataset identifier.
+            corpus_version: Dataset version string.
+            extractor: The LLM used for extraction.
+
+        Returns:
+            The same 16-char key :func:`cache_key` computes.
+        """
+        return cache_key(corpus_id=corpus_id, corpus_version=corpus_version, extractor=extractor)
+
+    def has(
+        self,
+        *,
+        corpus_id: str,
+        corpus_version: str,
+        extractor: ModelConfig,
+    ) -> bool:
+        """Return whether the slot for this (corpus, extractor) holds a snapshot.
+
+        Args:
+            corpus_id: Stable dataset identifier.
+            corpus_version: Dataset version string.
+            extractor: The LLM used for extraction.
+
+        Returns:
+            True when ``<root>/<key>/app.db`` exists.
+        """
+        key = self.key_for(corpus_id=corpus_id, corpus_version=corpus_version, extractor=extractor)
+        return (self._slot(key) / "app.db").exists()
+
     async def get_or_build(
         self,
         *,

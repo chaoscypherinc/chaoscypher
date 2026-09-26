@@ -13,47 +13,20 @@ Vocabulary:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+from chaoscypher_core.benchmark.types import RawOutput
 
 
 if TYPE_CHECKING:
     from chaoscypher_cli.benchmark.models import ModelConfig
-    from chaoscypher_cli.benchmark.results import ScoreResult
+    from chaoscypher_core.benchmark.types import ScoreResult
 
 
 # Where a dataset was discovered. Affects override semantics (user wins on
 # id collision) and surfaces in the leaderboard so reviewers can tell what's
 # reproducible from the package alone vs what requires a user setup.
 DatasetSource = Literal["builtin", "user"]
-
-
-@dataclass
-class RawOutput:
-    """Raw output of a dataset's run against one model.
-
-    Attributes:
-        entities: Extracted entity dicts (extraction datasets only).
-        relationships: Extracted relationship dicts (extraction datasets only).
-        latency_ms: Total wall-clock for the run.
-        input_tokens: Cumulative LLM input tokens.
-        output_tokens: Cumulative LLM output tokens.
-        error: Failure reason or None.
-        per_chunk_latency_ms: Per-chunk latencies for percentile reporting.
-            Empty when the dataset does not chunk.
-        extras: Kind-specific payload. Embedding datasets pack per-query
-            rank dicts; chat datasets pack per-query answers + judge scores.
-            The runner ignores this field; the paired scorer reads it.
-    """
-
-    entities: list[dict[str, Any]]
-    relationships: list[dict[str, Any]]
-    latency_ms: int
-    input_tokens: int
-    output_tokens: int
-    error: str | None
-    per_chunk_latency_ms: list[int] = field(default_factory=list)
-    extras: dict[str, Any] = field(default_factory=dict)
 
 
 @runtime_checkable

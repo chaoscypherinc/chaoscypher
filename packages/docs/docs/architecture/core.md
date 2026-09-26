@@ -181,7 +181,7 @@ Common features across all providers:
 
 ### MCP Module
 
-Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes 31 tools for AI assistants (plus 2 maintenance-mode tools advertised only during a pending schema upgrade). The Core module provides the server factory, tool definitions, tool bridge, and document processor. Transport binding (stdio or HTTP) is handled by the CLI and Cortex packages respectively.
+Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes 36 tools for AI assistants (plus 2 maintenance-mode tools advertised only during a pending schema upgrade). The Core module provides the server factory, tool definitions, tool bridge, and document processor. Transport binding (stdio or HTTP) is handled by the CLI and Cortex packages respectively.
 
 ### Web Adapter
 

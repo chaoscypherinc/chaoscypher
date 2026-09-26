@@ -40,3 +40,6 @@ export const BATCH_CONFIG = {
   EXPORT_MAX_ATTEMPTS: DEFAULT_PUBLIC_SETTINGS.batch_export_max_attempts,
   IMPORT_MAX_ATTEMPTS: DEFAULT_PUBLIC_SETTINGS.batch_import_max_attempts,
 } as const;
+
+/** Every model picker links here so nobody chooses a model without the numbers. */
+export const LEADERBOARD_URL = 'https://chaoscypher.com/leaderboard';

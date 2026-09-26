@@ -62,7 +62,9 @@ class Loaders:
             loaders, every document's content joined with a blank line.
 
         Raises:
-            FileNotFoundError: If file_path doesn't exist.
+            NotFoundError: If file_path doesn't exist (raised by
+                ``LoaderRegistry.load_document`` before any loader is
+                dispatched).
             ValidationError: If no loader available or document is empty.
 
         """

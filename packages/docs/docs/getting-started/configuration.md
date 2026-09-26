@@ -85,6 +85,9 @@ llm:
   ollama_extraction_model: null  # Uses chat model if null
 ```
 
+Not sure which extraction model to run? The [leaderboard](/leaderboard) ranks local
+models by how well they follow the extraction prompt, filtered by the VRAM you have.
+
 To override the default URL (e.g. talking to an Ollama on another host),
 edit the seeded instance:
 
@@ -507,7 +510,7 @@ MCP:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 16 read tools (search/query). `write` exposes all 31 tools — adding 15 write-only tools for create, update, delete, document upload, and client-driven extraction. |
+| `mode` | `read` | Tool access level. `read` exposes 21 read tools (search/query and the self-benchmark tools). `write` exposes all 36 tools — adding 15 write-only tools for create, update, delete, document upload, and client-driven extraction. |
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |
 
 See [MCP Server](../user-guide/mcp.md) for setup and usage details.

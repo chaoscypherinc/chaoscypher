@@ -154,12 +154,22 @@ class CcxExporter:
                 generator=f"chaoscypher@{self._app_version()}",
             )
 
-            templates = self._templates(include_templates, source_ids)
-            templates_by_id = {tmpl["id"]: tmpl for tmpl in templates}
-
             knowledge_nodes, knowledge_edges = self._read_knowledge(
                 include_knowledge, lens_id, source_ids
             )
+
+            # Every template the exported knowledge references must travel
+            # with it — including the system (domain-seeded) node templates
+            # extraction assigns. Without them a node's ``@type`` names a
+            # template the importer cannot find, and every entity lands on the
+            # far side as a typeless "Imported Entity".
+            referenced_template_ids: set[str] = {
+                str(record["template_id"])
+                for record in (*knowledge_nodes, *knowledge_edges)
+                if record.get("template_id")
+            }
+            templates = self._templates(include_templates, source_ids, referenced_template_ids)
+            templates_by_id = {tmpl["id"]: tmpl for tmpl in templates}
 
             # The default knowledge graph is ALWAYS emitted (an empty graph is
             # the à-la-carte sources-only case — the mapping returns
@@ -174,7 +184,12 @@ class CcxExporter:
             )
 
             if include_templates and templates:
-                builder.extend_context(ccx_mapping.templates_to_context(templates)["@context"])
+                entity_type_terms = {
+                    str(node["entity_type"]) for node in knowledge_nodes if node.get("entity_type")
+                }
+                builder.extend_context(
+                    ccx_mapping.templates_to_context(templates, entity_type_terms)["@context"]
+                )
                 builder.add_shapes(ccx_mapping.templates_to_shacl(templates))
                 builder.add_graph(
                     "chaoscypher",
@@ -311,8 +326,17 @@ class CcxExporter:
         self,
         include_templates: bool,
         source_ids: list[str] | None,
+        referenced_template_ids: set[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return user (non-system) template dicts for context/SHACL/app graph."""
+        """Return the template dicts for context/SHACL/app graph.
+
+        The user (non-system) templates — scoped to ``source_ids`` when the
+        export is — plus every template in ``referenced_template_ids`` that
+        the user list did not already cover. The second set is what keeps an
+        extracted graph typed across export → import: extraction assigns
+        nodes to domain-seeded *system* templates, and a package that omits
+        those turns every entity into a typeless "Imported Entity" on import.
+        """
         if not include_templates:
             return []
         templates = [tmpl.model_dump(mode="json") for tmpl in self.graph.list_templates()]
@@ -322,7 +346,15 @@ class CcxExporter:
             user_templates = [
                 tmpl for tmpl in user_templates if tmpl.get("source_id") in source_id_set
             ]
-        return user_templates
+        if not referenced_template_ids:
+            return user_templates
+        included = {tmpl["id"] for tmpl in user_templates}
+        referenced = [
+            tmpl
+            for tmpl in templates
+            if tmpl["id"] in referenced_template_ids and tmpl["id"] not in included
+        ]
+        return [*user_templates, *referenced]
 
     # ------------------------------------------------------------------
     # Sources

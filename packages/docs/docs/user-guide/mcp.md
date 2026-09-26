@@ -83,6 +83,23 @@ To use a specific database:
 }
 ```
 
+### Mount a package
+
+If the knowledge you want the assistant to use already exists as a `.ccx` package — one you exported on another machine, or one from the [Lexicon Hub](../lexicon-hub/index.md) — you don't need to import it by hand first. `chaoscypher mount` pulls the package, imports it into a database of its own (sources and citations included), indexes it, and serves it over stdio in one step:
+
+```json
+{
+  "mcpServers": {
+    "research": {
+      "command": "chaoscypher",
+      "args": ["mount", "acme/research"]
+    }
+  }
+}
+```
+
+The import runs once; every later launch finds the package unchanged and goes straight to serving. A local file works the same way (`"args": ["mount", "/path/to/research.ccx"]`). See the [Mount command reference](../reference/cli/mount.md) for the options and the difference between mounting and loading a package.
+
 ### HTTP Mode (Streamable HTTP)
 
 When running the full Docker stack, the MCP server is available at the Cortex API endpoint. This is useful for web-based clients or remote access.
@@ -115,7 +132,7 @@ mcp:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 16 search/query tools. `write` exposes all 31 tools including create, update, delete, and client-driven extraction operations. |
+| `mode` | `read` | Tool access level. `read` exposes 21 tools: search/query plus the self-benchmark tools. `write` exposes all 36 tools including create, update, delete, and client-driven extraction operations. |
 | `auto_extract` | `false` | When `true`, the server runs entity extraction after indexing uploaded documents. When `false` (default), the MCP client drives extraction itself using `submit_chunk_extraction` and `finalize_extraction`. |
 | `confirmation_required_default` | `true` | Server-wide default for the [domain-confirmation gate](#document-processing-via-mcp). When `true`, an upload with an auto-detected domain parks at `awaiting_confirmation` until `confirm_extraction` is called; a per-call `auto_confirm: true` on `add_document` overrides it for a single upload. |
 | `max_extraction_payload_bytes` | `10485760` | Maximum combined UTF-8 size (10 MiB) of `entities_text` + `relationships_text` accepted per `submit_chunk_extraction` call. Larger submissions are rejected with `PAYLOAD_TOO_LARGE`. |
@@ -130,7 +147,7 @@ MCP starts in **read-only mode**. Your AI assistant can search and explore your 
 
 ## Available Tools
 
-### Read Tools (16)
+### Read Tools (21)
 
 These tools are available in both modes:
 
@@ -152,6 +169,11 @@ These tools are available in both modes:
 | `traverse_path` | Multi-hop BFS traversal with depth and type filters |
 | `get_summary_context` | Retrieve and cluster document chunks for summarization |
 | `get_document_status` | Check status of queued, in-progress, and completed document uploads |
+| `start_benchmark` | Start an extraction instruction-probe run answered by the calling model itself (see [Benchmark any MCP client](../reference/extraction-benchmark.md#benchmark-any-mcp-client)) |
+| `get_benchmark_task` | Get the next probe prompt (entity or relationship stage) of a benchmark run |
+| `submit_benchmark_output` | Submit the model's answer for one stage; returns the probe's verdict when it completes |
+| `get_benchmark_progress` | Submitted, passed and pending probes of a benchmark run |
+| `finish_benchmark` | Score a benchmark run and write its results file |
 
 ### Write Tools (15)
 

@@ -43,6 +43,11 @@ console = Console()
     help="Import knowledge nodes and edges (default: yes)",
 )
 @click.option("--workflows/--no-workflows", default=True, help="Import workflows (default: yes)")
+@click.option(
+    "--sources/--no-sources",
+    default=True,
+    help="Import sources, chunks and citations (default: yes)",
+)
 @click.option("--database", "-d", default="default", help="Database name")
 def load(
     package: str,
@@ -50,6 +55,7 @@ def load(
     templates: bool,
     knowledge: bool,
     workflows: bool,
+    sources: bool,
     database: str,
 ) -> None:
     r"""Import a .ccx package file into the knowledge graph.
@@ -72,9 +78,12 @@ def load(
         from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
 
         # Create the CCX 3.0 importer (upsert-by-IRI; re-import is idempotent).
+        # The storage adapter is the sources port — the same object the worker
+        # import path uses — so sources.jsonl (chunks + citations) lands and
+        # a loaded package answers with its citations, like `mount` does.
         importer = CcxImporter(
             graph_repository=ctx.graph_repository,
-            sources_repository=None,  # CLI doesn't have sources repo
+            sources_repository=ctx.storage_adapter,
             workflow_db=None,  # CLI doesn't have workflow DB for triggers
         )
 
@@ -84,7 +93,7 @@ def load(
             import_templates=templates,
             import_knowledge=knowledge,
             import_workflows=workflows,
-            import_sources=False,  # Sources not available in CLI
+            import_sources=sources,
             # Use resolved ctx.database_name (honours db switch / env / config)
             # rather than the raw Click default which stays "default".
             database_name=ctx.database_name,
@@ -106,10 +115,9 @@ def load(
             progress.add_task(f"Importing {archive_path.name}...", total=None)
             stats = asyncio.run(importer.import_from_path(archive_path, options))
 
-        # Make the imported knowledge nodes searchable (re-embed + index). The
-        # CLI has no queue, so unlike the worker import paths this runs inline —
-        # matching what OP_INDEX_IMPORTED_NODES does for lexicon imports.
-        _index_imported_nodes(ctx, stats)
+        # Make the imported knowledge searchable (embed + index). The CLI has
+        # no queue, so the two passes the worker enqueues run inline here.
+        _index_imported(ctx, stats)
 
         # Display results
         _display_import_results(stats)
@@ -122,41 +130,48 @@ def load(
         sys.exit(1)
 
 
-def _index_imported_nodes(ctx: Any, stats: ImportStats) -> None:
-    """Re-embed + index the imported knowledge nodes so they are searchable.
+def _index_imported(ctx: Any, stats: ImportStats) -> None:
+    """Embed + vector-index the imported sources and nodes so they are searchable.
 
-    The CLI has no worker/queue, so it runs the same node-indexing the worker
-    enqueues (``OP_INDEX_IMPORTED_NODES``) synchronously. Best-effort: an import
-    is still a success even if the local embedding model is unavailable (the
-    nodes are still keyword-searchable via FTS).
+    Runs the same two passes the worker enqueues after a hub import
+    (``index_imported_package``): every imported source (its nodes and its
+    chunks), then the source-less remainder of the imported nodes. Best-effort:
+    the import is still a success if the local embedding model is unavailable
+    (everything stays keyword-searchable via FTS).
     """
-    if not stats.imported_node_ids:
+    if not stats.imported_node_ids and not stats.imported_source_ids:
         return
-    from types import SimpleNamespace
+    import asyncio
 
     from chaoscypher_core.operations.importing.imported_source_handler import (
-        handle_index_imported_nodes,
+        index_imported_package,
     )
 
+    engine = getattr(ctx, "_engine", None)
+    if engine is None:
+        return
     try:
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            progress.add_task("Indexing nodes for search...", total=None)
-            result = asyncio.run(
-                handle_index_imported_nodes(
-                    data={"node_ids": stats.imported_node_ids},
-                    source_repository=ctx.storage_adapter,
+            progress.add_task("Indexing for search (local embedding model)...", total=None)
+            counts = asyncio.run(
+                index_imported_package(
+                    imported_source_ids=stats.imported_source_ids,
+                    imported_node_ids=stats.imported_node_ids,
+                    storage_adapter=ctx.storage_adapter,
                     graph_repository=ctx.graph_repository,
-                    # The node path only needs the embedding provider off this.
-                    indexing_service=SimpleNamespace(embedding_service=ctx.embedding_service),
+                    indexing_service=engine.indexing_service,
                     search_repository=ctx.search_repository,
-                    metadata={"database_name": ctx.database_name},
+                    database_name=ctx.database_name,
                 )
             )
-        console.print(f"[green]✓ Indexed {result.get('nodes_indexed', 0)} nodes for search[/green]")
+        console.print(
+            f"[green]✓ Indexed {counts['sources_indexed']} sources and "
+            f"{len(stats.imported_node_ids)} nodes for search[/green]"
+        )
     except Exception as e:
         console.print(f"[yellow]⚠ Search indexing skipped: {e}[/yellow]")
 
@@ -177,6 +192,9 @@ def _display_import_results(stats: ImportStats) -> None:
     table.add_row("Edges imported", str(stats.edges_imported))
     table.add_row("Workflows imported", str(stats.workflows_imported))
     table.add_row("Workflow edges imported", str(stats.workflow_edges_imported))
+    table.add_row("Sources imported", str(stats.sources_imported))
+    table.add_row("Chunks imported", str(stats.chunks_imported))
+    table.add_row("Citations imported", str(stats.citations_imported))
 
     console.print(table)
 

@@ -64,10 +64,33 @@ def adapter(tmp_path):
     ],
 )
 def test_sqlite_adapter_satisfies_protocol(adapter, protocol):
-    """SqliteAdapter must structurally satisfy each split Protocol."""
+    """SqliteAdapter must structurally satisfy each split Protocol.
+
+    ``isinstance`` alone cannot prove this: the adapter's mixins list these
+    Protocols as explicit bases, so the check short-circuits through the
+    nominal MRO and is unconditionally True.  Worse, the Protocol's method
+    bodies are ``...``, so a deleted implementation is inherited as a stub
+    that silently returns None rather than raising AttributeError.  The
+    member-set check below is the half that actually fails when a method is
+    removed or renamed.
+    """
     assert isinstance(adapter, protocol), (
         f"SqliteAdapter does not satisfy {protocol.__name__}. "
         "Check that the Protocol method signatures match the adapter's actual implementation."
+    )
+
+    adapter_cls = type(adapter)
+    stubbed = []
+    for member in sorted(protocol.__protocol_attrs__):
+        owner = next((base for base in adapter_cls.__mro__ if member in vars(base)), None)
+        # ``_is_protocol`` is True only on Protocol classes themselves, so an
+        # owner that is a Protocol means the member is an unimplemented stub.
+        if owner is None or getattr(owner, "_is_protocol", False):
+            stubbed.append(member)
+    assert not stubbed, (
+        f"SqliteAdapter does not implement {protocol.__name__}: {stubbed} resolve "
+        f"to the Protocol's '...' stubs (which silently return None) instead of a "
+        f"real implementation. Check {protocol.__module__} for the full method list."
     )
 
 

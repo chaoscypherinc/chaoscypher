@@ -42,6 +42,8 @@ RULES:
    - list:   ``S1, S5`` (comma-separated, for non-adjacent sentences)
    - mixed:  ``S1-S3, S7``
 4. P| lines MUST appear immediately after their parent E| line. Use the entity INDEX (0-based from your output order). Do NOT output a second batch of P| lines.
+5. A literal | inside a field must be written \\| and a literal backslash as \\\\ - the only unescaped | characters are the field separators.
+6. Keep every field even when empty (write `||` for no aliases); never omit a field.
 
 Entity types:
 {node_templates}
@@ -75,7 +77,7 @@ ENTITY GUIDELINES:
 {entity_exclusions}
 - Only extract entities with PROPER NAMES or specific identifiers
 
-EXAMPLE (3 entities, indices 0-2):
+EXAMPLE (4 entities, indices 0-3):
 E|Prince Andrei|Character|Andrei; Prince Andrew; Andrew Bolkonsky|0.9|S1-S2|Military officer and nobleman from a prominent Russian aristocratic family, eldest son of old Prince Bolkonsky. Serves in the army and struggles with questions of purpose and glory.
 P|0|title|Prince
 P|0|occupation|Military Officer
@@ -84,7 +86,8 @@ P|0|nationality|Russian
 E|Napoleon Bonaparte|Character|Napoleon; Emperor Napoleon|1.0|S3|Emperor of France and military commander who led the French forces across Europe. Known for his strategic brilliance and ambition to dominate the continent.
 P|1|title|Emperor
 P|1|nationality|French
-E|Battle of Austerlitz|Event|Austerlitz|1.0|S4|Major battle of the Napoleonic Wars fought in December 1805, also known as the Battle of the Three Emperors. A decisive French victory over Russian and Austrian forces."""
+E|Battle of Austerlitz|Event|Austerlitz|1.0|S4|Major battle of the Napoleonic Wars fought in December 1805, also known as the Battle of the Three Emperors. A decisive French victory over Russian and Austrian forces.
+E|Rousseau|Author||1.0|S7|Author of "Contrat Social", named in the salon argument"""
 
 # ==========================================================================
 # PASS 2: RELATIONSHIP HARVEST PROMPT
@@ -112,6 +115,7 @@ RULES:
    - range:  ``S2-S5``
    - list:   ``S1, S5`` (comma-separated, for non-adjacent sentences)
    - mixed:  ``S1-S3, S7``
+4. A literal | inside a field must be written \\| and a literal backslash as \\\\ - the only unescaped | characters are the field separators.
 
 CRITICAL: The entity list above is the COMPLETE and ONLY set of entities.
 - Do NOT reference entities you remember from the text that are not in the list above.
@@ -136,4 +140,5 @@ R|0|1|enemy_of|0.8|S3-S4|Prince Andrei fought against Napoleon's forces at Auste
 EXTRACTION_RULES_TEMPLATE = """Output format: Pipe-delimited lines (evidence-gated)
 - E|name|type|aliases|confidence|sent_ref|description
 - R|source_index|target_index|type|confidence|sent_ref|justification
-- P|entity_index|key|value"""
+- P|entity_index|key|value
+- A literal | inside a field is written \\| (a literal backslash as \\\\)"""

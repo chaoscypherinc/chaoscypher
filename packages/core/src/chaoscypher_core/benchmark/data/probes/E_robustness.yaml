@@ -1,0 +1,313 @@
+# Section E — Robustness (adversarial runaway suite)
+#
+# Each probe is built to INVITE a failure and pass the model that declines.
+# The instruction under test and the pass criterion are identical across
+# tiers; only the passage gets harder, in ways real documents actually are.
+# Tier labels are provisional until the first multi-model run calibrates
+# them (easy >=90% pass, medium 50-80%, hard 10-50%).
+#
+# Real failure data these are built from (2026-09-22 run): GLM4 9B emitted
+# 33,607 output tokens on a 1,400-word text (clean models: 3-5k); Granite
+# 28,289; Gemma 4 26B 20,792. Loop detector caught only GLM4 9B.
+
+section: E
+title: Robustness
+
+probes:
+  # ---------------------------------------------------------------- E1
+  - id: E1-easy
+    probe: E1
+    tier: easy
+    instruction: "One entity per referent, even under heavy repetition"
+    passage: |
+      Prince Andrei Bolkonsky rode out at dawn. Prince Andrei Bolkonsky did not
+      look back at the house. By noon Prince Andrei Bolkonsky had reached the
+      river. Prince Andrei Bolkonsky watered his horse there. Prince Andrei
+      Bolkonsky ate bread and salt. In the afternoon Prince Andrei Bolkonsky
+      met a courier on the road. Prince Andrei Bolkonsky read the letter twice.
+      That night Prince Andrei Bolkonsky slept under the cart.
+    checks:
+      - {type: entity_count_matching, names: ["Andrei", "Bolkonsky"], max: 1}
+      - {type: entity_count, max: 3}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  - id: E1-hard
+    probe: E1
+    tier: medium  # CALIBRATION 2026-09-23: was hard; 56% pass across 16 models (hard band is 10-50)
+    instruction: "One entity per referent, even under heavy repetition"
+    # Four name variants of one man, plus a DIFFERENT man with the same
+    # surname. Pass = exactly two Bolkonsky entities: Andrei (merged across
+    # variants) and his father Nikolai, kept separate.
+    passage: |
+      Prince Andrei Bolkonsky rode out at dawn. Andrei did not look back at the
+      house. By noon Prince Andrew had reached the river. Andryusha, as his
+      sister called him, watered his horse there. The old prince, Nikolai
+      Bolkonsky, watched from the window long after his son had gone. Prince
+      Nikolai Bolkonsky returned to his study. In the afternoon Prince Andrei
+      met a courier on the road. Andrew read the letter twice. That night
+      Andrei Bolkonsky slept under the cart, while old Prince Nikolai sat up
+      with the lamp.
+    checks:
+      - {type: entity_count_matching, names: ["Andrei", "Andrew", "Andryusha"], max: 1}
+      - {type: entity_count_matching, names: ["Nikolai"], min: 1, max: 1}
+      - {type: entity_count_matching, names: ["Bolkonsky"], min: 2, max: 2}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  # ---------------------------------------------------------------- E2
+  - id: E2-easy
+    probe: E2
+    tier: medium  # CALIBRATION 2026-09-23: was easy; 81% pass (easy band is >=90)
+    instruction: "Handle a dense list of real entities without runaway"
+    # 30 named guests. CALIBRATION 2026-09-23: this probe originally required
+    # <=20 entities (the prompt's over-extraction guard). Qwen3.8 correctly
+    # extracted all 30 and failed. The guard targets invented or split
+    # entities, not real ones; penalising a faithful 30 rewards dropping real
+    # entities. So the count cap is gone. Pass = the guests are extracted AND
+    # the model terminates cleanly within budget.
+    passage: |
+      The guest list for the Rostov ball was read aloud. Count Ilya Rostov,
+      Countess Natalya Rostova, Natasha Rostova, Nikolai Rostov, Sonya, Petya
+      Rostov, Vera Rostova, Boris Drubetskoy, Anna Drubetskaya, Pierre
+      Bezukhov, Helene Kuragina, Anatole Kuragin, Prince Vasili Kuragin, Dolokhov,
+      Denisov, Marya Dmitrievna Akhrosimova, Julie Karagina, Prince Andrei
+      Bolkonsky, Princess Marya Bolkonskaya, Mademoiselle Bourienne, Berg,
+      Shinshin, Bilibin, Kutuzov, Bagration, Rostopchin, Speransky, Arakcheev,
+      Balashev and Lavrushka were all expected. The footman finished reading
+      and closed the book.
+    checks:
+      - {type: entities_present, names: ["Ilya Rostov", "Natasha Rostova", "Pierre Bezukhov", "Kutuzov", "Lavrushka"]}
+      - {type: entity_count, min: 20, max: 40}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+      - {type: output_tokens_ratio, max_ratio: 4.0}
+
+  - id: E2-hard
+    probe: E2
+    tier: medium  # CALIBRATION 2026-09-23: was hard; 75% pass; no real tier gap from E2-easy
+    instruction: "Handle a dense list of real entities without runaway"
+    # Same 30 people, embedded in running prose with roles and relationships
+    # attached to each name. Harder because every sentence invites a
+    # relationship line as well as an entity line.
+    passage: |
+      Count Ilya Rostov received his guests at the top of the stairs while
+      Countess Natalya Rostova stood beside him. Their daughter Natasha Rostova
+      arrived with her cousin Sonya, and their son Nikolai Rostov came in
+      uniform with his friend Denisov. The younger children, Petya Rostov and
+      Vera Rostova, watched from the gallery. Boris Drubetskoy escorted his
+      mother Anna Drubetskaya. Pierre Bezukhov came late and alone; his wife
+      Helene Kuragina had arrived earlier on the arm of her brother Anatole
+      Kuragin, and their father Prince Vasili Kuragin held court by the fire.
+      Dolokhov stood apart. Marya Dmitrievna Akhrosimova announced herself
+      loudly. Julie Karagina whispered to Berg. Prince Andrei Bolkonsky
+      escorted his sister Princess Marya Bolkonskaya, followed by Mademoiselle
+      Bourienne. Shinshin argued with Bilibin about Speransky. Old Kutuzov
+      nodded to Bagration, and Rostopchin cornered Arakcheev, while Balashev
+      searched for Lavrushka to fetch his coat. The orchestra began.
+    checks:
+      - {type: entities_present, names: ["Ilya Rostov", "Natasha Rostova", "Pierre Bezukhov", "Kutuzov", "Lavrushka"]}
+      - {type: entity_count, min: 20, max: 40}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+      - {type: output_tokens_ratio, max_ratio: 4.0}
+
+  # ---------------------------------------------------------------- E3
+  - id: E3-easy
+    probe: E3
+    tier: easy
+    instruction: "Relationship indices must stay within the provided entity list"
+    # entity_exclusions removes most named people from pass 1, so the pass-2
+    # list is small while the text keeps naming the excluded ones. Pass =
+    # no out-of-bounds indices, no relationship built on an excluded name.
+    passage: |
+      Kutuzov commanded the army. Bagration led the rearguard under Kutuzov's
+      orders. Dolokhov served in Bagration's rearguard. Denisov rode beside
+      Dolokhov. Rostov reported to Denisov. Tushin's battery covered Rostov's
+      squadron. Andrei carried Kutuzov's dispatch to Bagration. Bilibin wrote
+      to Andrei about Kutuzov. Speransky read Bilibin's letter aloud.
+    entity_exclusions:
+      - description: "Exclude the junior officers for this probe"
+        examples: ["Dolokhov", "Denisov", "Rostov", "Tushin", "Bilibin", "Speransky"]
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_entity_matching, names: ["Dolokhov", "Denisov", "Rostov", "Tushin", "Bilibin", "Speransky"]}
+      - {type: not_loop_aborted}
+      - {type: finish_stop}
+
+  - id: E3-hard
+    probe: E3
+    tier: easy  # CALIBRATION 2026-09-23: was hard; 94% pass - the exclusion trap does not bite; a harder E3 needs near-duplicate names in the list
+    instruction: "Relationship indices must stay within the provided entity list"
+    # Same exclusion trap, but the excluded people are the ones with the MOST
+    # relationships in the text, so the model is strongly tempted to reference
+    # them anyway.
+    passage: |
+      Dolokhov arranged everything. Dolokhov borrowed the money from Denisov,
+      who had won it from Rostov. Rostov owed Denisov and had promised Dolokhov
+      a horse. Kutuzov knew nothing of it. Bagration knew of it but said
+      nothing to Kutuzov. Andrei suspected Dolokhov and warned Rostov. Rostov
+      told Denisov what Andrei had said. Denisov confronted Dolokhov. Dolokhov
+      laughed and rode off to find Tushin, who owed him too. Tushin paid
+      Dolokhov with Rostov's horse. Bilibin heard the whole story from Rostov
+      and wrote it to Speransky, who told Kutuzov. Kutuzov summoned Bagration
+      and Andrei.
+    entity_exclusions:
+      - description: "Exclude the junior officers for this probe"
+        examples: ["Dolokhov", "Denisov", "Rostov", "Tushin", "Bilibin", "Speransky"]
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_entity_matching, names: ["Dolokhov", "Denisov", "Rostov", "Tushin", "Bilibin", "Speransky"]}
+      - {type: not_loop_aborted}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- E4
+  - id: E4-easy
+    probe: E4
+    tier: medium  # CALIBRATION 2026-09-23: was easy; 56% pass - the plain attribute list invites repeated keys; genuinely discriminating
+    instruction: "Properties: 3-5 per major entity, no repeated key, then stop"
+    passage: |
+      Pierre Bezukhov was a count. Pierre Bezukhov was Russian. Pierre Bezukhov
+      was enormously wealthy. Pierre Bezukhov was the illegitimate son of the
+      old Count Bezukhov. Pierre Bezukhov wore spectacles. Pierre Bezukhov was
+      tall and stout. Pierre Bezukhov had been educated abroad. Pierre Bezukhov
+      spoke French fluently. Pierre Bezukhov was a Freemason for a time. Pierre
+      Bezukhov married Helene Kuragina.
+    checks:
+      - {type: property_key_unique_per_entity}
+      - {type: property_count_per_entity, max: 6}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  - id: E4-hard
+    probe: E4
+    tier: easy  # CALIBRATION 2026-09-23: was hard; 94% pass - prose restatement makes models summarise; easier than the plain list
+    instruction: "Properties: 3-5 per major entity, no repeated key, then stop"
+    # Attributes restated with variation across the passage: the same fact
+    # phrased three ways invites the same key emitted three times.
+    passage: |
+      Pierre Bezukhov, a count by inheritance, arrived at the club. The count
+      was Russian by birth, though everyone remarked how foreign his manners
+      were after years abroad. Bezukhov's fortune was said to be the largest in
+      Moscow; certainly he was very rich, and his wealth was the talk of the
+      evening. He peered through his spectacles at the cards, then took the
+      spectacles off and polished them, then put his glasses back on. Pierre
+      was a big man, tall, heavy, stout in the shoulders. His French was
+      perfect, better than his Russian some said, and he slipped into French
+      whenever he was nervous. The count, the rich count, the stout count in
+      spectacles, lost forty thousand roubles before midnight.
+    checks:
+      - {type: property_key_unique_per_entity}
+      - {type: property_count_per_entity, max: 6}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  # ---------------------------------------------------------------- E5
+  - id: E5-easy
+    probe: E5
+    tier: medium  # CALIBRATION 2026-09-23: was easy; was 19% under a mis-specified check (see E5 checks)
+    instruction: "Bounded relationships per entity pair — no same-pair spam"
+    passage: |
+      Natasha Rostova loved Prince Andrei. Prince Andrei loved Natasha Rostova.
+      Natasha Rostova wrote to Prince Andrei every week. Prince Andrei wrote to
+      Natasha Rostova from the front. Natasha Rostova waited for Prince Andrei
+      for a year. Prince Andrei asked Natasha Rostova to wait. Natasha Rostova
+      danced with Prince Andrei at the ball. Prince Andrei proposed to Natasha
+      Rostova at the Rostov house.
+    checks:
+      - {type: no_duplicate_relationships, max: 1}   # CALIBRATION 2026-09-23: per-pair cap of 3 failed 13/16 by counting distinct types as spam
+      - {type: relationship_count_pair, max: 8}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  - id: E5-hard
+    probe: E5
+    tier: medium  # CALIBRATION 2026-09-23 (16-model re-sweep): was hard; 75% pass (hard band is 10-50); a genuinely hard same-pair probe still needs writing
+    instruction: "Bounded relationships per entity pair — no same-pair spam"
+    # Twelve distinct interactions between the same two people, each a
+    # plausibly different relationship type. A model that emits one R per
+    # sentence has treated events as relationships.
+    passage: |
+      Natasha Rostova first saw Prince Andrei at the ball and he asked her to
+      dance. He called on her the next day and she sang for him. He proposed
+      to her a week later and she accepted. His father demanded a year's delay
+      and Andrei told Natasha to wait. He wrote to her from Petersburg; she
+      wrote back. He sent her a portrait; she kept it by her bed. He fell ill
+      and she nursed him. He forgave her and she forgave him. He died holding
+      her hand.
+    checks:
+      - {type: no_duplicate_relationships, max: 1}   # CALIBRATION 2026-09-23: per-pair cap of 3 failed 13/16 by counting distinct types as spam
+      - {type: relationship_count_pair, max: 8}
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+
+  # ---------------------------------------------------------------- E6
+  - id: E6-easy
+    probe: E6
+    tier: easy
+    instruction: "Terminate cleanly within a budget proportional to the input"
+    passage: |
+      Napoleon crossed the Niemen in June 1812. Alexander I was at Vilna when
+      the news arrived. Barclay de Tolly commanded the First Army. Bagration
+      commanded the Second Army and retreated toward Smolensk. Kutuzov was
+      appointed commander-in-chief in August. The armies met at Borodino on
+      the seventh of September. Moscow was abandoned a week later. Napoleon
+      entered the city on the fourteenth.
+    checks:
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+      - {type: output_tokens_ratio, max_ratio: 4.0}
+
+  # ---------------------------------------------------------------- E7
+  - id: E7-easy
+    probe: E7
+    tier: medium  # CALIBRATION 2026-09-23: was easy; 50% pass, 8/16 fail - real discrimination, not an easy instruction
+    instruction: "Do not invent entities when the passage names none"
+    passage: |
+      The rain had not stopped for three days. Water ran off the roof in a
+      steady sheet and pooled in the yard. Inside, the fire smoked because the
+      wood was damp. Someone had left a boot by the door. The dog would not go
+      out. Evening came early and the lamp was lit before supper.
+    checks:
+      - {type: entity_count, max: 0}
+      - {type: no_entity_matching, names: ["rain", "roof", "fire", "boot", "dog", "lamp", "supper", "yard"]}   # CALIBRATION 2026-09-24: common nouns that get capitalised into entities; explicit so the carrier variant keeps a substantive check
+      - {type: finish_stop}
+
+  - id: E7-hard
+    probe: E7
+    tier: hard
+    instruction: "Do not invent entities when the passage names none"
+    # Capitalised common nouns and sentence-initial words that look like
+    # names: "Mother", "The Doctor", "Winter", "the Company".
+    passage: |
+      Mother said the doctor would come after the rain. The Doctor did not
+      come. Winter arrived instead and the roads closed. Father went to the
+      Company office in the morning and came back with nothing. The cook left.
+      The house grew quiet. By the end of the month even the dog had gone.
+    checks:
+      - {type: entity_count, max: 0}
+      - {type: no_entity_matching, names: ["Mother", "Doctor", "Winter", "Father", "Company", "cook", "dog"]}   # CALIBRATION 2026-09-24: carrier variants drop global counts, so the decoys are named explicitly
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- E8
+  - id: E8-easy
+    probe: E8
+    tier: easy
+    instruction: "No runaway generation under length"
+    passage_ref: E8-easy.txt
+    checks:
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+      - {type: output_tokens_ratio, max_ratio: 3.0}
+
+  - id: E8-hard
+    probe: E8
+    tier: easy  # CALIBRATION 2026-09-23 (16-model re-sweep): was medium; 94% pass; only Gemma 4 31B runs away on the roster - a hard runaway probe needs 100+ list-shaped sentences | # CALIBRATION 2026-09-23: was hard; 94% pass - only Gemma 4 31B ran away; a harder runaway probe needs 100+ list-shaped sentences
+    instruction: "No runaway generation under length"
+    # List-shaped prose: a regimental roster rendered as sentences. This is
+    # the shape that produced 33k output tokens on 2026-09-22.
+    passage_ref: E8-hard.txt
+    checks:
+      - {type: finish_stop}
+      - {type: not_loop_aborted}
+      - {type: output_tokens_ratio, max_ratio: 3.0}

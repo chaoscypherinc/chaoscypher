@@ -69,6 +69,9 @@ class ExtractionDataset:
     corpus_path: Path
     domain: str
     source: DatasetSource = "builtin"
+    thinking: bool = False
+    seed: int = 42
+    temperature: float = 0.0
     keep_db: bool = False
     """When True, preserve the per-run temp DB after the run completes.
 
@@ -77,6 +80,19 @@ class ExtractionDataset:
     When False (default), the temp DB is removed in the run's finally block.
     v7 metrics are already in the result row's metrics dict, so losing the DB
     does not lose the score breakdown.
+    """
+    # Commit the extracted entities into graph nodes and edges after scoring.
+    # Off for the plain extraction benchmark (it scores the pre-commit graph and
+    # needs no commit); the orchestrator turns it on so the cached snapshot the
+    # embedding and chat stages read is a real graph. Until 2026-09-25 those
+    # stages ran against an uncommitted snapshot: zero nodes, zero retrieval.
+    commit_graph: bool = False
+    thinking_honoured: bool | None = field(default=None, init=False)
+    """Whether the model actually honoured the requested thinking mode.
+
+    Set during ``run`` by probing the model. Models accept ``think`` and may
+    silently ignore it, so a run must verify rather than assume — otherwise the
+    result row mislabels its own configuration.
     """
     kind: str = field(default="extraction", init=False)
     scorer: DatasetScorer = field(default_factory=V7ExtractionScorer, init=False)
@@ -100,6 +116,13 @@ class ExtractionDataset:
         temp database, captures the resulting entities/relationships and
         LLM-side metrics, then disconnects.
 
+        The timed call is always the extract-only run (index without
+        embeddings, extract, no commit), so ``latency_ms`` and the per-chunk
+        latencies are the same with and without ``commit_graph``. With
+        ``commit_graph`` a second, untimed step (:meth:`_embed_and_commit`)
+        then embeds the chunks and commits the extracted source; its time is
+        not part of the row.
+
         Returns:
             A RawOutput. On failure, fields are zeroed/empty and ``error``
             is set.
@@ -110,6 +133,27 @@ class ExtractionDataset:
             CLISourceProcessingService,
             SourcePipeline,
         )
+
+        # Reset per-run state first. ``run_benchmark`` reuses one dataset object
+        # across every model, and the probe below only runs for Ollama, so a
+        # stale verdict would otherwise leak into a hosted model's row.
+        self.thinking_honoured = None
+
+        if model.provider == "ollama":
+            from chaoscypher_cli.benchmark.thinking_probe import (
+                probe_thinking,
+                thinking_honoured,
+            )
+
+            probe = await probe_thinking(model.model)
+            self.thinking_honoured = thinking_honoured(probe, requested=self.thinking)
+            if self.thinking_honoured is False:
+                logger.warning(
+                    "thinking_mode_not_honoured",
+                    model=model.model_id,
+                    requested=self.thinking,
+                    probe=probe,
+                )
 
         t0 = time.perf_counter()
         ctx: CLIContext | None = None
@@ -130,8 +174,8 @@ class ExtractionDataset:
                     url=None,
                     skip_index=False,
                     skip_extract=False,
-                    skip_commit=True,  # benchmarking - no graph commit needed
-                    skip_embeddings=True,  # benchmarking - embeddings not scored
+                    skip_commit=True,
+                    skip_embeddings=True,
                     enable_normalization=True,  # benchmark v2: score the post-normalized, pre-commit graph
                     enable_vision=False,
                     index_only=False,
@@ -142,7 +186,12 @@ class ExtractionDataset:
                     quiet=True,
                     verbose=False,
                 )
-            elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                elapsed_ms = int((time.perf_counter() - t0) * 1000)
+                commit_error: str | None = None
+                if result.success and self.commit_graph:
+                    commit_error = await asyncio.to_thread(
+                        self._embed_and_commit, service, pipeline, ctx, result.file_id
+                    )
 
             if not result.success:
                 return RawOutput(
@@ -154,6 +203,16 @@ class ExtractionDataset:
                     error=result.error or "pipeline_failed",
                 )
 
+            if commit_error is not None:
+                return RawOutput(
+                    entities=[],
+                    relationships=[],
+                    latency_ms=elapsed_ms,
+                    input_tokens=result.llm_total_input_tokens,
+                    output_tokens=result.llm_total_output_tokens,
+                    error=commit_error,
+                )
+
             # Read back the extracted entities/relationships from the
             # dedicated per-source tables (migration 0042 retired the
             # heavy extraction_results JSON column).
@@ -163,6 +222,7 @@ class ExtractionDataset:
             )
 
             if not entities and not relationships:
+                truncated, aborted = self._integrity_counters(ctx, result.file_id)
                 return RawOutput(
                     entities=[],
                     relationships=[],
@@ -170,6 +230,17 @@ class ExtractionDataset:
                     input_tokens=result.llm_total_input_tokens,
                     output_tokens=result.llm_total_output_tokens,
                     error="empty_extraction",
+                    chunks_truncated=truncated,
+                    chunks_aborted_by_loop=aborted,
+                )
+
+            truncated, aborted = self._integrity_counters(ctx, result.file_id)
+            if truncated:
+                logger.warning(
+                    "extraction_truncated",
+                    model=model.model_id,
+                    dataset=self.id,
+                    chunks_truncated=truncated,
                 )
 
             return RawOutput(
@@ -179,6 +250,8 @@ class ExtractionDataset:
                 input_tokens=result.llm_total_input_tokens,
                 output_tokens=result.llm_total_output_tokens,
                 error=None,
+                chunks_truncated=truncated,
+                chunks_aborted_by_loop=aborted,
                 per_chunk_latency_ms=self._estimate_per_chunk_latency(
                     elapsed_ms, result.chunks_count
                 ),
@@ -209,6 +282,48 @@ class ExtractionDataset:
                 ctx.disconnect()
                 if not self.keep_db and db_dir.exists():
                     _remove_temp_db_dir(db_dir, dataset_id=self.id)
+
+    @staticmethod
+    def _embed_and_commit(service: Any, pipeline: Any, ctx: Any, file_id: str) -> str | None:
+        """Embed an extracted source's chunks, then commit it to the graph (untimed).
+
+        Runs after the timed extract-only call. The pipeline's index stage is
+        the only place it generates chunk embeddings and a resumed run skips
+        an already-indexed source, so the chunks are embedded here through
+        the same service method that index stage calls; the resumed
+        ``pipeline.run(file_id=..., skip_index=True, skip_extract=True)``
+        then runs only the commit stage. Embeddings are not scored, but the
+        commit stage skips chunks without them and GraphRAG search retrieves
+        chunk text by vector - so a committed reference graph needs them.
+
+        Returns:
+            ``None`` on success, or the error string for the result row.
+        """
+        chunks, _ = ctx.storage_adapter.get_chunks_by_source(
+            file_id, page=1, page_size=ctx.settings.batching.chunk_fetch_limit
+        )
+        if chunks:
+            service._generate_embeddings(file_id, chunks)  # noqa: SLF001 - the index stage's own embedding path
+        committed = pipeline.run(
+            file_path=None,
+            file_id=file_id,
+            url=None,
+            skip_index=True,
+            skip_extract=True,
+            skip_commit=False,
+            skip_embeddings=True,
+            enable_normalization=True,
+            enable_vision=False,
+            index_only=False,
+            extract_only=False,
+            extraction_depth="full",
+            filtering_mode=None,
+            quiet=True,
+            verbose=False,
+        )
+        if committed.success:
+            return None
+        return f"commit_failed: {committed.error or 'pipeline_failed'}"
 
     def expected_snapshot_path(self, model: ModelConfig) -> Path:
         """Return the temp-DB snapshot path that a successful run() will produce.
@@ -264,12 +379,25 @@ class ExtractionDataset:
         if extraction_field:
             setattr(ctx.settings.llm, extraction_field, model.model)
 
-        # Pin determinism. These fields exist on LLMSettings (temperature,
-        # seed); set them to make runs reproducible.
-        if hasattr(ctx.settings.llm, "temperature"):
-            ctx.settings.llm.temperature = 0.0
-        if hasattr(ctx.settings.llm, "seed"):
-            ctx.settings.llm.seed = 42
+        # Pin determinism. Assign by real field name and fail loudly when the
+        # settings schema moves: these were previously guarded by hasattr on
+        # field names that do not exist ("temperature", "seed"), so every run
+        # silently used product defaults while the result rows claimed
+        # temperature 0 and a fixed seed.
+        pins: tuple[tuple[str, object], ...] = (
+            ("extraction_temperature", self.temperature),
+            ("ai_temperature", self.temperature),
+            ("seed", self.seed),
+            ("thinking_for_extraction", self.thinking),
+        )
+        for field_name, value in pins:
+            if not hasattr(ctx.settings.llm, field_name):
+                msg = (
+                    f"LLMSettings has no field {field_name!r}; the benchmark cannot "
+                    f"pin run configuration and its results would be unreproducible."
+                )
+                raise AttributeError(msg)
+            setattr(ctx.settings.llm, field_name, value)
 
         # Force LLM provider to be re-initialized on next access in case
         # CLIContext cached a provider built from the pre-mutation settings.
@@ -277,6 +405,37 @@ class ExtractionDataset:
         ctx._llm_checked = False  # noqa: SLF001 - intentional reset
 
         return ctx
+
+    @staticmethod
+    def _integrity_counters(ctx: CLIContext, source_id: str) -> tuple[int, int]:
+        """Return (chunks_truncated, chunks_aborted_by_loop) for a source.
+
+        Core already records both: the chunk handler increments
+        ``QualityCounter.LLM_CHUNKS_TRUNCATED`` whenever a chunk's LLM call
+        ends with ``finish_reason == "length"``, and
+        ``LLM_CHUNKS_ABORTED_BY_LOOP`` when the stream loop detector cuts a
+        degenerate stream short. The benchmark simply never read them, so a
+        truncated run was indistinguishable from a complete one in every
+        output it produced.
+
+        Reads through ``get_source_counters`` rather than ``get_file``: the
+        latter's narrow ``load_only`` projection omits the counter columns, so
+        it silently returned ``None`` for every one of them.
+
+        Never raises: a missing row yields zeros rather than failing a run
+        that otherwise succeeded.
+        """
+        try:
+            counters = ctx.storage_adapter.get_source_counters(
+                source_id=source_id, database_name=ctx.database_name
+            )
+        except Exception as exc:  # a bookkeeping read must not fail the run
+            logger.warning("integrity_counters_unavailable", source_id=source_id, error=str(exc))
+            return 0, 0
+        return (
+            int(counters.get("llm_chunks_truncated") or 0),
+            int(counters.get("llm_chunks_aborted_by_loop") or 0),
+        )
 
     @staticmethod
     def _estimate_per_chunk_latency(total_ms: int, chunks: int) -> list[int]:

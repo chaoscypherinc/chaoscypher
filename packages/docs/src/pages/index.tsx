@@ -5,6 +5,7 @@ import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import CodeBlock from "@theme/CodeBlock";
 import GraphHero from "../components/GraphHero";
 import GuidedTour from "../components/GuidedTour";
+import LeaderboardTeaser from "../components/LeaderboardTeaser";
 
 function ArrowRight() {
   return <span aria-hidden="true"> &#8594;</span>;
@@ -136,7 +137,7 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
       {
         title: "MCP Server",
         description:
-          "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 31 tools for search, traversal, and graph building.",
+          "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 36 tools for search, traversal, and graph building.",
         linkTo: "/docs/user-guide/mcp",
       },
       {
@@ -451,6 +452,7 @@ export default function Home(): JSX.Element {
         <LexiconHub />
         <hr />
         <IntegrationsStrip />
+        <LeaderboardTeaser />
         <hr />
         <GetStarted />
         <hr />

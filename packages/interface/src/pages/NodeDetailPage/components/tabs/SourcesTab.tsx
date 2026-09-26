@@ -16,6 +16,7 @@ import type { Citation } from '../../../../types';
 import { ghostInfoAlertSx } from '../../../../theme/ghostStyles';
 import { LoadingState } from '../../../../components/LoadingState';
 import { renderChunkWithHighlights } from '../../../../utils/chunkHighlight';
+import { formatMediaRange } from '../../../../utils/formatters';
 
 interface SourcesTabProps {
   citations: Citation[];
@@ -102,6 +103,14 @@ export default function SourcesTab({ citations, citationsTotal, loading }: Sourc
               {citation.chunk.page_number && (
                 <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                   Page {citation.chunk.page_number}
+                </Typography>
+              )}
+              {formatMediaRange(citation.chunk.start_time, citation.chunk.end_time) && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}
+                >
+                  At {formatMediaRange(citation.chunk.start_time, citation.chunk.end_time)}
                 </Typography>
               )}
               {citation.chunk.section && (

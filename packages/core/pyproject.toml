@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chaoscypher-core"
-version = "0.4.3"
+version = "0.5.0"
 description = "Chaos Cypher Core - Knowledge graph library with hexagonal architecture"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -180,6 +180,13 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 chaoscypher_core = ["py.typed", "**/*.jsonld", "**/*.json", "**/*.ini", "**/*.j2", "**/*.mako", "**/*.png", "**/*.ttf", "**/*.lua", "**/*.pem"]
+# Benchmark probe pack: manifest, section files, passage refs and carriers.
+"chaoscypher_core.benchmark" = [
+    "data/probes/*.yaml",
+    "data/probes/*.txt",
+    "data/probes/carriers/*.txt",
+    "data/probes/carriers/*.json",
+]
 
 # Linting configuration - inherits from root pyproject.toml
 # No [tool.ruff] section here - use root config as single source of truth

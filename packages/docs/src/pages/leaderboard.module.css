@@ -1,0 +1,603 @@
+.page {
+  /* a flex item of the layout: without this the tables widen the page on phones */
+  min-width: 0;
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 4rem;
+  color: var(--cc-text-primary);
+}
+
+.page h1 {
+  font-size: 2.4rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.4rem;
+}
+
+.lead {
+  font-size: 1.05rem;
+  line-height: 1.55;
+  color: var(--cc-text-secondary);
+  margin-bottom: 2rem;
+}
+
+.lead a {
+  color: var(--cc-accent-cyan);
+}
+
+/* ---- controls ---------------------------------------------------- */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.25rem 2.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.vram {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.vram legend {
+  float: left;
+  font-weight: 600;
+  padding: 0;
+  margin-right: 0.2rem;
+}
+
+.vramOptions {
+  display: inline-flex;
+  border: 1px solid var(--cc-border-card);
+  border-radius: var(--cc-radius-lg);
+  overflow: hidden;
+}
+
+.vramOptions button {
+  font: inherit;
+  font-family: var(--cc-font-mono);
+  font-size: 0.9rem;
+  padding: 0.45rem 0.8rem;
+  background: var(--cc-bg-surface);
+  color: var(--cc-text-primary);
+  border: 0;
+  border-right: 1px solid var(--cc-border-card);
+  cursor: pointer;
+}
+
+.vramOptions button:last-child {
+  border-right: 0;
+}
+
+.vramOptions button[aria-pressed="true"] {
+  background: var(--cc-accent-cyan);
+  color: #fff;
+}
+
+.vramOptions button:focus-visible {
+  outline: 2px solid var(--cc-accent-magenta);
+  outline-offset: -2px;
+}
+
+/* ---- sortable headers ------------------------------------------- */
+
+.sortBtn {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.sortBtn:hover .hint,
+.sortActive .hint {
+  color: var(--cc-text-primary);
+}
+
+.sortBtn:focus-visible {
+  outline: 2px solid var(--cc-accent-cyan);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.sortArrow {
+  font-size: 0.8em;
+  color: var(--cc-text-muted);
+}
+
+.sortActive .sortArrow {
+  color: var(--cc-accent-cyan);
+}
+
+.count {
+  color: var(--cc-text-muted);
+  font-size: 0.95rem;
+}
+
+/* ---- table -------------------------------------------------------- */
+
+.tableWrap {
+  /* the table is laid out to fit at every width, so nothing clips the hover panels */
+  overflow: visible;
+}
+
+.table {
+  /* Infima makes tables display:block; a real table lets width and <col> apply */
+  display: table;
+  /* fixed layout: the <col> widths are the widths, and the strip gets the rest */
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  vertical-align: middle;
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid var(--cc-border-card);
+}
+
+.table td.num,
+.table td.score,
+.table td.strip,
+.table td.model {
+  white-space: nowrap;
+}
+
+.table th {
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--cc-text-secondary);
+  background: transparent;
+}
+
+.table td.num,
+.table th.num {
+  text-align: right;
+  font-family: var(--cc-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.model {
+  font-weight: 600;
+}
+
+
+.modelFlag {
+  margin-left: 0.4rem;
+  vertical-align: 1px;
+}
+
+/* score = number + proportional bar under it */
+.score {
+  min-width: 7.5rem;
+}
+
+.scoreBar {
+  display: block;
+  height: 4px;
+  margin-top: 0.3rem;
+  background: var(--cc-bg-code-header);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.scoreBar i {
+  display: block;
+  height: 100%;
+  background: var(--cc-accent-cyan);
+}
+
+/* the instruction strip: one cell per probe, the extraction column's bar */
+/* ---- the detail line under each model: three strips of cells --------- */
+
+/* with the detail lines on, the score row hands its bottom border to the detail row */
+.withDetail tbody tr.main td {
+  border-bottom: 0;
+  padding-bottom: 0.15rem;
+}
+
+.detailToggle {
+  margin-left: auto;
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--cc-border-card);
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg-surface);
+  color: var(--cc-text-secondary);
+  cursor: pointer;
+}
+
+.detailToggle[aria-pressed="true"] {
+  color: var(--cc-text-primary);
+  border-color: var(--cc-accent-cyan);
+}
+
+.detailToggle:focus-visible {
+  outline: 2px solid var(--cc-accent-cyan);
+  outline-offset: 2px;
+}
+
+.detail td {
+  padding-top: 0;
+  padding-bottom: 0.55rem;
+  border-bottom: 1px solid var(--cc-border-card);
+}
+
+.detail td > .strip + .strip {
+  margin-left: 1.1rem;
+}
+
+.strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  vertical-align: middle;
+}
+
+.stripLabel {
+  font-family: var(--cc-font-mono);
+  font-size: 0.68rem;
+  color: var(--cc-text-muted);
+  margin-right: 2px;
+}
+
+.stripEmpty {
+  font-size: 0.68rem;
+  color: var(--cc-text-muted);
+}
+
+.stripGroup {
+  display: inline-flex;
+  gap: 1px;
+}
+
+/* a pass is a faint tick on the track; only a fail carries colour */
+.cell {
+  display: inline-block;
+  width: 4px;
+  height: 11px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--cc-text-muted) 18%, transparent);
+}
+
+.cell.floor {
+  background: color-mix(in srgb, var(--cc-accent-orange) 32%, transparent);
+}
+
+.cell.unknown {
+  background: color-mix(in srgb, var(--cc-text-muted) 25%, transparent);
+}
+
+.cell.fail {
+  background: var(--cc-accent-orange);
+}
+
+/* the grounded-chat percent, in the accent of the score bar */
+.chip {
+  display: inline-block;
+  padding: 0 0.35rem;
+  border-radius: 0.6rem;
+  font-family: var(--cc-font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  color: var(--cc-accent-cyan);
+  background: color-mix(in srgb, var(--cc-accent-cyan) 16%, transparent);
+}
+
+.chipOverall {
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+/* ---- gauges: VRAM and speed --------------------------------------- */
+
+.gaugeCell {
+  vertical-align: middle;
+}
+
+.gauge {
+  display: block;
+  height: 6px;
+  background: var(--cc-bg-code-header);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.gauge i {
+  display: block;
+  height: 100%;
+  background: var(--cc-accent-cyan);
+}
+
+.gaugeLow i {
+  background: var(--cc-accent-orange);
+}
+
+.gaugeLabel {
+  display: inline-block;
+  font-family: var(--cc-font-mono);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--cc-text-secondary);
+  white-space: nowrap;
+}
+
+.gaugeCell .gauge {
+  margin-top: 0.3rem;
+}
+
+.phoneOnly {
+  display: none;
+}
+
+/* ---- hover panels ------------------------------------------------- */
+
+.tip {
+  position: relative;
+  display: inline-block;
+  cursor: help;
+}
+
+.tip:focus-visible {
+  outline: 2px solid var(--cc-accent-cyan);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.tipBox {
+  display: none;
+  position: absolute;
+  top: calc(100% + 0.4rem);
+  left: 0;
+  z-index: 30;
+  width: max-content;
+  max-width: 24rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--cc-border-card);
+  border-radius: 8px;
+  background: var(--cc-bg-surface);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  font-family: var(--ifm-font-family-base);
+  font-size: 0.8rem;
+  font-weight: 400;
+  line-height: 1.45;
+  color: var(--cc-text-secondary);
+  text-align: left;
+  white-space: normal;
+}
+
+.tipBox span {
+  display: block;
+}
+
+.tipBox span + span {
+  margin-top: 0.35rem;
+}
+
+.tipBox span:first-child {
+  color: var(--cc-text-primary);
+  font-weight: 600;
+}
+
+.tipRight {
+  left: auto;
+  right: 0;
+}
+
+.tip:hover .tipBox,
+.tip:focus-visible .tipBox,
+.tip:focus-within .tipBox,
+.th:hover > .tipBox,
+.th:focus-within > .tipBox {
+  display: block;
+}
+
+/* a header cell anchors its own panel */
+.th {
+  position: relative;
+}
+
+.th:focus-visible {
+  outline: 2px solid var(--cc-accent-cyan);
+  outline-offset: -2px;
+}
+
+.dnf {
+  font-size: 0.85rem;
+  color: var(--cc-text-muted);
+}
+
+.chatNote {
+  margin-top: 0.8rem;
+  font-size: 0.92rem;
+  color: var(--cc-text-secondary);
+}
+
+.hint {
+  cursor: help;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--cc-text-muted);
+}
+
+.flag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 0.85rem;
+  cursor: help;
+  color: #fff;
+  background: var(--cc-accent-orange);
+}
+
+.flagSmall {
+  width: 1.05rem;
+  height: 1.05rem;
+  font-size: 0.72rem;
+  vertical-align: 1px;
+}
+
+.empty {
+  padding: 2rem 0;
+  color: var(--cc-text-secondary);
+}
+
+/* fixed widths so the column budget is known at every breakpoint */
+/* Budget at the 1160px page width (~70rem inside the padding): the fixed columns
+   total ~43rem and the table spreads the rest; the strips live in the detail row. */
+.colModel {
+  width: 13rem;
+}
+
+.colOverall {
+  width: 5rem;
+}
+
+.colExtraction {
+  width: 7rem;
+}
+
+.colVram {
+  width: 5rem;
+}
+
+.colScore {
+  width: 7rem;
+}
+
+.colSpeed {
+  width: 5.5rem;
+}
+
+
+/* ---- footer ------------------------------------------------------- */
+
+.repro {
+  margin-top: 2.5rem;
+  color: var(--cc-text-secondary);
+  line-height: 1.55;
+}
+
+.repro code {
+  font-family: var(--cc-font-mono);
+}
+
+/* laptop widths: tighter padding, a narrower model column */
+@media (max-width: 1100px) {
+  .colModel {
+    width: 12rem;
+  }
+
+  .table th,
+  .table td {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  /* a long model name wraps instead of setting the column's minimum */
+  .table td.model {
+    white-space: normal;
+  }
+
+  .hideMid {
+    display: none;
+  }
+
+  .detail {
+    display: none;
+  }
+
+  .withDetail tbody tr.main td {
+    border-bottom: 1px solid var(--cc-border-card);
+    padding-bottom: 0.6rem;
+  }
+}
+
+@media (max-width: 1000px) {
+  /* "no tools" and a flag may wrap under the chip */
+  .table td.score {
+    white-space: normal;
+  }
+}
+
+/* the model column takes whatever is left */
+@media (max-width: 900px) {
+  .colModel {
+    width: auto;
+  }
+}
+
+/* phones: Model, Overall, Extraction and Chat; the panels become a sheet at the bottom */
+@media (max-width: 760px) {
+  .hidePhone {
+    display: none;
+  }
+
+  .phoneOnly {
+    display: inline;
+  }
+
+  .colOverall {
+    width: 4.25rem;
+  }
+
+  .colExtraction,
+  .colScore {
+    width: 5.25rem;
+  }
+
+  .table th,
+  .table td {
+    padding-left: 0.4rem;
+    padding-right: 0.4rem;
+  }
+
+  .page h1 {
+    font-size: 1.9rem;
+  }
+
+  .vramOptions button {
+    white-space: nowrap;
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+  }
+
+  .tipBox,
+  .tipRight {
+    position: fixed;
+    top: auto;
+    right: 0.75rem;
+    bottom: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    max-width: none;
+    box-shadow: 0 -8px 32px rgb(0 0 0 / 55%);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .scoreBar i,
+  .gauge i {
+    transition: width 200ms ease-out;
+  }
+}

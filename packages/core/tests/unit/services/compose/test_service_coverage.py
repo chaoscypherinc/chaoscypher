@@ -15,6 +15,7 @@ against ``tmp_path`` so ``resolved_output_dir`` / ``to_yaml`` exercise real I/O.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -47,6 +48,21 @@ def _config(tmp_path: Path, packages: list[str] | None = None) -> ComposeConfig:
         },
         base_path=tmp_path / "axiomatize.yaml",
     )
+
+
+def _composed_db(tmp_path: Path) -> Path:
+    """Pretend `compose build` ran: create the composed database directory."""
+    db_dir = tmp_path / "out" / "databases" / "default"
+    db_dir.mkdir(parents=True, exist_ok=True)
+    return db_dir
+
+
+def _live_proc(pid: int = 4242) -> MagicMock:
+    """A Popen stand-in that is still running after the startup grace period."""
+    proc = MagicMock()
+    proc.pid = pid
+    proc.poll.return_value = None
+    return proc
 
 
 def _patch_resolver(resolved: list | Exception) -> MagicMock:
@@ -181,6 +197,32 @@ class TestBuild:
         assert result.success is False
         # No config copy on failed merge
         assert not (output_dir / "axiomatize.yaml").exists()
+
+
+@pytest.mark.unit
+class TestRuntimeSettings:
+    def test_build_writes_runtime_settings_once(self, tmp_path: Path) -> None:
+        out = tmp_path / "out"
+        out.mkdir()
+        ComposeService._write_runtime_settings(out)
+
+        path = out / service_mod.RUNTIME_SETTINGS_FILENAME
+        text = path.read_text(encoding="utf-8")
+        assert "setup_completed: true" in text
+        assert "connection_max_retries: 1" in text
+
+        # A second build leaves an operator-edited file alone.
+        path.write_text("setup_completed: true\nqueue:\n  queue_host: myvalkey\n", encoding="utf-8")
+        ComposeService._write_runtime_settings(out)
+        assert "myvalkey" in path.read_text(encoding="utf-8")
+
+    def test_runtime_settings_parse_with_the_real_settings_loader(self, tmp_path: Path) -> None:
+        import yaml
+
+        data = yaml.safe_load(service_mod.RUNTIME_SETTINGS)
+        assert data["setup_completed"] is True
+        assert data["queue"]["queue_host"] == "127.0.0.1"
+        assert data["queue"]["connection_max_retries"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +363,134 @@ class TestDownStopServer:
         proc.kill.assert_called_once()
         assert service._server_process is None
 
+    # -- detached server: pid record round-trip -----------------------------
+
+    @pytest.mark.asyncio
+    async def test_down_with_no_pid_file_returns_false(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        service = ComposeService()
+
+        assert await service.down(config) is False
+
+    @pytest.mark.asyncio
+    async def test_down_stops_recorded_pid_from_a_fresh_service(self, tmp_path: Path) -> None:
+        """The `compose down` case: a new process, no Popen handle, only compose.pid."""
+        config = _config(tmp_path)
+        ComposeService()._write_pid_file(config, 4242)
+        service = ComposeService()
+
+        # Alive for the pre-check and the first poll, gone after the signal.
+        import itertools
+
+        calls = itertools.count()
+        with (
+            patch.object(ComposeService, "_pid_alive", side_effect=lambda _pid: next(calls) < 2),
+            patch.object(ComposeService, "_signal") as sig,
+        ):
+            stopped = await service.down(config)
+
+        assert stopped is True
+        sig.assert_called_once_with(4242, service_mod.signal.SIGTERM)
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_down_escalates_to_kill_when_server_ignores_terminate(
+        self, tmp_path: Path
+    ) -> None:
+        config = _config(tmp_path)
+        ComposeService()._write_pid_file(config, 4242)
+        service = ComposeService()
+
+        with (
+            patch.object(ComposeService, "_pid_alive", return_value=True),
+            patch.object(ComposeService, "_pid_is_compose_server", return_value=True),
+            patch.object(ComposeService, "_signal") as sig,
+            patch(
+                "chaoscypher_core.settings.ComposeSettings",
+                return_value=SimpleNamespace(process_terminate_timeout=0.2),
+            ),
+        ):
+            stopped = await service.down(config)
+
+        assert stopped is True
+        assert [c.args[1] for c in sig.call_args_list] == [
+            service_mod.signal.SIGTERM,
+            service_mod.signal.SIGKILL,
+        ]
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_down_cleans_stale_pid_file(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        ComposeService()._write_pid_file(config, 4242)
+        service = ComposeService()
+
+        with (
+            patch.object(ComposeService, "_pid_alive", return_value=False),
+            patch.object(ComposeService, "_signal") as sig,
+        ):
+            stopped = await service.down(config)
+
+        assert stopped is False
+        sig.assert_not_called()
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_down_treats_a_reused_pid_as_stale(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        ComposeService()._write_pid_file(config, 4242)
+
+        with (
+            patch.object(ComposeService, "_pid_alive", return_value=True),
+            patch.object(ComposeService, "_pid_is_compose_server", return_value=False),
+            patch.object(ComposeService, "_signal") as sig,
+        ):
+            stopped = await ComposeService().down(config)
+
+        assert stopped is False
+        sig.assert_not_called()
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_down_ignores_non_integer_pid(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        pid_file = tmp_path / "out" / service_mod.PID_FILENAME
+        pid_file.parent.mkdir(parents=True)
+        pid_file.write_text('{"pid": "not-a-number"}', encoding="utf-8")
+
+        assert await ComposeService().down(config) is False
+
+    @pytest.mark.asyncio
+    async def test_build_refuses_under_a_running_server(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        service = ComposeService()
+        service._write_pid_file(config, 4242)
+
+        with (
+            patch.object(ComposeService, "_pid_alive", return_value=True),
+            patch.object(ComposeService, "_pid_is_compose_server", return_value=True),
+            pytest.raises(ComposeError) as exc_info,
+        ):
+            await service.build(config)
+
+        assert "compose down" in exc_info.value.message
+
+    @pytest.mark.asyncio
+    async def test_down_ignores_corrupt_pid_file(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        pid_file = tmp_path / "out" / service_mod.PID_FILENAME
+        pid_file.parent.mkdir(parents=True)
+        pid_file.write_text("{not json", encoding="utf-8")
+
+        assert await ComposeService().down(config) is False
+
+    def test_pid_alive_probe(self) -> None:
+        assert ComposeService._pid_alive(0) is False
+        assert ComposeService._pid_alive(-1) is False
+        import os
+
+        assert ComposeService._pid_alive(os.getpid()) is True
+
 
 # ---------------------------------------------------------------------------
 # run()
@@ -386,21 +556,143 @@ class TestStartServer:
         assert "Invalid port" in exc_info.value.message
 
     @pytest.mark.asyncio
-    async def test_detach_spawns_background_process(self, tmp_path: Path) -> None:
+    async def test_start_refuses_without_a_composed_database(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
         service = ComposeService()
 
-        fake_proc = MagicMock()
-        fake_proc.pid = 4242
-        with patch.object(service_mod.subprocess, "Popen", return_value=fake_proc) as popen:
+        with (
+            patch.object(service_mod.subprocess, "Popen") as popen,
+            pytest.raises(ComposeError) as exc_info,
+        ):
+            await service._start_server(config, detach=True)
+
+        popen.assert_not_called()
+        assert exc_info.value.stage == "serve"
+        assert "compose build" in exc_info.value.message
+
+    @pytest.mark.asyncio
+    async def test_detach_spawns_background_process(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        _composed_db(tmp_path)
+        service = ComposeService()
+
+        fake_proc = _live_proc()
+        with (
+            patch.object(service_mod.subprocess, "Popen", return_value=fake_proc) as popen,
+            patch.object(
+                ComposeService, "_wait_until_listening", AsyncMock(return_value="listening")
+            ),
+        ):
             await service._start_server(config, detach=True)
 
         popen.assert_called_once()
         assert service._server_process is fake_proc
+        # Launched like `chaoscypher serve`: Cortex's real entrypoint, loopback
+        # host, the port from the config — and the composed database selected
+        # through the environment, not through flags Cortex does not have.
+        cmd = popen.call_args.args[0]
+        assert cmd[1:4] == ["-m", "chaoscypher_cortex.main", "start"]
+        assert cmd[cmd.index("--host") + 1] == "127.0.0.1"
+        assert cmd[cmd.index("--port") + 1] == "8081"
+        assert "--mode" not in cmd
+        env = popen.call_args.kwargs["env"]
+        assert env["CHAOSCYPHER_DATA_DIR"] == str(tmp_path / "out")
+        assert env["CHAOSCYPHER_DATABASE"] == "default"
+        assert env["CHAOSCYPHER_COMPOSE_NAME"] == "test-system"
+        assert popen.call_args.kwargs["start_new_session"] is True
+
+    @pytest.mark.asyncio
+    async def test_detach_reports_a_server_that_dies_during_startup(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        _composed_db(tmp_path)
+        (tmp_path / "out" / service_mod.SERVER_LOG_FILENAME).write_text(
+            "boom: no such option --mode\n", encoding="utf-8"
+        )
+        service = ComposeService()
+
+        dead_proc = MagicMock()
+        dead_proc.pid = 4242
+        dead_proc.poll.return_value = 2
+        with (
+            patch.object(service_mod.subprocess, "Popen", return_value=dead_proc),
+            patch.object(ComposeService, "_wait_until_listening", AsyncMock(return_value="exited")),
+            pytest.raises(ComposeError) as exc_info,
+        ):
+            await service._start_server(config, detach=True)
+
+        assert exc_info.value.stage == "serve"
+        assert "exit code 2" in exc_info.value.message
+        assert "no such option --mode" in exc_info.value.message
+        assert service._server_process is None
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_detach_records_pid_for_a_later_down(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        _composed_db(tmp_path)
+        service = ComposeService()
+
+        fake_proc = _live_proc()
+        with (
+            patch.object(service_mod.subprocess, "Popen", return_value=fake_proc),
+            patch.object(
+                ComposeService, "_wait_until_listening", AsyncMock(return_value="listening")
+            ),
+        ):
+            await service._start_server(config, detach=True)
+
+        record = json.loads(
+            (tmp_path / "out" / service_mod.PID_FILENAME).read_text(encoding="utf-8")
+        )
+        assert record["pid"] == 4242
+        assert record["name"] == "test-system"
+        assert record["port"] == 8081
+
+    @pytest.mark.asyncio
+    async def test_detach_reports_a_server_that_never_listens(self, tmp_path: Path) -> None:
+        """Alive but not bound within the timeout (e.g. port in use): fail and stop it."""
+        config = _config(tmp_path)
+        _composed_db(tmp_path)
+        service = ComposeService()
+
+        hung = _live_proc()
+        with (
+            patch.object(service_mod.subprocess, "Popen", return_value=hung),
+            patch.object(
+                ComposeService, "_wait_until_listening", AsyncMock(return_value="timeout")
+            ),
+            patch.object(ComposeService, "_signal") as sig,
+            pytest.raises(ComposeError) as exc_info,
+        ):
+            await service._start_server(config, detach=True)
+
+        assert "did not start listening" in exc_info.value.message
+        sig.assert_called_once_with(4242, service_mod.signal.SIGTERM)
+        assert not (tmp_path / "out" / service_mod.PID_FILENAME).exists()
+
+    @pytest.mark.asyncio
+    async def test_detach_refuses_while_recorded_server_is_alive(self, tmp_path: Path) -> None:
+        config = _config(tmp_path)
+        _composed_db(tmp_path)
+        service = ComposeService()
+        service._write_pid_file(config, 4242)
+
+        with (
+            patch.object(ComposeService, "_pid_alive", return_value=True),
+            patch.object(ComposeService, "_pid_is_compose_server", return_value=True),
+            patch.object(service_mod.subprocess, "Popen") as popen,
+            pytest.raises(ComposeError) as exc_info,
+        ):
+            await service._start_server(config, detach=True)
+
+        popen.assert_not_called()
+        assert exc_info.value.stage == "serve"
+        assert "already running" in exc_info.value.message
 
     @pytest.mark.asyncio
     async def test_foreground_awaits_child(self, tmp_path: Path) -> None:
         config = _config(tmp_path)
+        _composed_db(tmp_path)
         service = ComposeService()
 
         child = MagicMock()

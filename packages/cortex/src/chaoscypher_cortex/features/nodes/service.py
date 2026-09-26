@@ -457,6 +457,8 @@ class NodeService:
                         content=chunk.content,
                         page_number=chunk.page_number,
                         section=chunk.section,
+                        start_time=getattr(chunk, "start_time", None),
+                        end_time=getattr(chunk, "end_time", None),
                         chunk_metadata=chunk.chunk_metadata,
                     ),
                     confidence=citation.confidence,

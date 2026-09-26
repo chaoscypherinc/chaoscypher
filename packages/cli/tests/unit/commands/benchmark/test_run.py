@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from chaoscypher_cli.commands.benchmark.run import run
@@ -451,7 +452,7 @@ def test_local_only_strips_commercial_models_in_full_mode(tmp_path: Path):
 
     captured_cfg: list[object] = []
 
-    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object) -> list:
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object, **_kwargs) -> list:
         captured_cfg.append(cfg)
         return []
 
@@ -504,6 +505,74 @@ def test_local_only_strips_commercial_models_in_full_mode(tmp_path: Path):
     assert cfg_used.judge is None
 
 
+def test_local_only_keeps_chats_when_commercial_judge_is_stripped(tmp_path: Path):
+    """`--local-only` with chats and a commercial judge runs judge-less.
+
+    The judge is optional (no judge = probe-scored chat stage), so stripping
+    a commercial judge must not abort the run; the local chat models go to
+    the orchestrator with ``judge=None``.
+    """
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    builtin_cfg.mkdir(parents=True, exist_ok=True)
+    (builtin_cfg / "chatty.yaml").write_text(
+        'name: "chatty"\nseed: 42\ntemperature: 0.0\ndatasets:\n  - p1\n'
+        "extractors:\n"
+        "  - provider: ollama\n    model: local-ext\n    label: LocalExt\n"
+        "chats:\n"
+        "  - provider: ollama\n    model: local-chat\n    label: LocalChat\n"
+        "  - provider: openai\n    model: gpt-x\n    label: GPT-X\n"
+        "judge:\n  provider: anthropic\n  model: claude-judge\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out"
+
+    captured_cfg: list[object] = []
+
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object, **_kwargs) -> list:
+        """Capture the config handed to the orchestrator."""
+        captured_cfg.append(cfg)
+        return []
+
+    with (
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.run_full_benchmark",
+            side_effect=_fake_run_full,
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.default_wiring",
+            return_value=object(),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.user_benchmark_root",
+            return_value=tmp_path / "bench",
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["chatty", "--local-only", "--out", str(out_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert len(captured_cfg) == 1
+    cfg_used: BenchmarkConfig = captured_cfg[0]  # type: ignore[assignment]
+    assert cfg_used.judge is None
+    assert cfg_used.chats is not None
+    assert [m.model for m in cfg_used.chats] == ["local-chat"]
+
+
 def test_seed_and_temperature_flags_reach_full_mode_config(tmp_path: Path):
     """`--seed` / `--temperature` overrides must land on the config passed to
     run_full_benchmark (regression: full mode used the raw config values and
@@ -516,7 +585,7 @@ def test_seed_and_temperature_flags_reach_full_mode_config(tmp_path: Path):
 
     captured_cfg: list[object] = []
 
-    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object) -> list:
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object, **_kwargs) -> list:
         captured_cfg.append(cfg)
         return []
 
@@ -590,3 +659,53 @@ def test_estimate_aborts_on_missing_registry_coverage(tmp_path: Path):
 
     assert result.exit_code != 0
     assert "Missing registry price entries" in result.output
+
+
+@pytest.mark.parametrize(("flags", "expected"), [([], False), (["--reuse-graph"], True)])
+def test_reuse_graph_flag_reaches_run_full_benchmark(
+    tmp_path: Path, flags: list[str], expected: bool
+):
+    """`--reuse-graph` is passed through as ``reuse_cached_graph`` (off by default)."""
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    _write_full_config_no_chats(builtin_cfg, "full", ["p1"])
+    out_dir = tmp_path / "out"
+
+    captured: list[object] = []
+
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object, **kwargs) -> list:
+        captured.append(kwargs.get("reuse_cached_graph"))
+        return []
+
+    with (
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.run_full_benchmark",
+            side_effect=_fake_run_full,
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.default_wiring",
+            return_value=object(),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.user_benchmark_root",
+            return_value=tmp_path / "bench",
+        ),
+        patch(
+            "chaoscypher_cli.benchmark.models.assert_registry_coverage",
+            return_value=[],
+        ),
+    ):
+        result = CliRunner().invoke(run, ["full", *flags, "--out", str(out_dir)])
+
+    assert result.exit_code == 0, result.output
+    assert captured == [expected]

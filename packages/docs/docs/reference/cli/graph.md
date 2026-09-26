@@ -750,6 +750,7 @@ chaoscypher graph package export [OPTIONS]
 | `--knowledge/--no-knowledge` | | `--knowledge` | Include knowledge nodes and edges |
 | `--lenses/--no-lenses` | | `--lenses` | Include lens definitions |
 | `--workflows/--no-workflows` | | `--workflows` | Include workflows |
+| `--sources/--no-sources` | | `--sources` | Include sources, chunks and citations (`sources.jsonl` + full text) so answers stay traceable after import or mount |
 | `--embeddings/--no-embeddings` | | `--no-embeddings` | Include embedding vectors (only useful when the importing database uses the same embedding model) |
 | `--lens-id <id>` | | — | Export only a specific lens by ID |
 | `--title` | `-t` | — | Display title for the export (stored in the package manifest) |
@@ -814,6 +815,7 @@ chaoscypher graph package load PACKAGE [OPTIONS]
 | `--templates/--no-templates` | | `--templates` | Import templates |
 | `--knowledge/--no-knowledge` | | `--knowledge` | Import knowledge nodes and edges |
 | `--workflows/--no-workflows` | | `--workflows` | Import workflows |
+| `--sources/--no-sources` | | `--sources` | Import sources, chunks and citations, then index them for search |
 | `--database` | `-d` | current database | Database name |
 
 **Examples:**

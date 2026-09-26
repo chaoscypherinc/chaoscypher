@@ -598,6 +598,7 @@ class TestMcpHappyPath:
 
         with (
             patch("chaoscypher_cli.mcp.command.get_context", return_value=mock_ctx),
+            patch("chaoscypher_cli.mcp.command.asyncio.run") as mock_run,
             patch("chaoscypher_core.utils.logging.configure_logging"),
             # Mock the startup migration gate so the happy-path (state.ready)
             # branch runs deterministically. Without this the command reads the
@@ -624,7 +625,11 @@ class TestMcpHappyPath:
             result = runner.invoke(mcp, [])
 
         # RuntimeError is raised and propagated; Click converts it to exit_code=1
-        assert result.exit_code != 0 or result.exception is not None
+        assert result.exit_code != 0
+        assert isinstance(result.exception, RuntimeError), result.exception
+        assert "Engine not initialized" in str(result.exception)
+        # ...and it fires *before* the event loop is entered
+        mock_run.assert_not_called()
 
     def test_mcp_database_flag_forwarded(self) -> None:
         runner = CliRunner()
@@ -660,7 +665,7 @@ class TestMcpHappyPath:
             result = runner.invoke(mcp, ["--database", "my-db"])
 
         assert result.exit_code == 0, result.output
-        mock_gc.assert_called_once_with(database_name="my-db")
+        mock_gc.assert_called_once_with(database_name="my-db", explicit_database=False)
 
     def test_mcp_help_exits_0(self) -> None:
         runner = CliRunner()
@@ -1175,8 +1180,14 @@ class TestPackageExportHappyPath:
         assert result.exit_code == 0, result.output
         assert "KB" in result.output or "B" in result.output
 
-    def test_export_include_sources_false(self, tmp_path: Path) -> None:
-        """include_sources must always be False from CLI."""
+    def test_export_includes_sources_by_default(self, tmp_path: Path) -> None:
+        """A CLI export carries sources/chunks/citations like a UI export.
+
+        The CLI used to hard-code ``include_sources=False`` on the premise
+        that it "has no sources repo" — but the storage adapter implements
+        SourceStorageProtocol, so a package built here would silently lose
+        every citation on the far side of ``graph package load`` / ``mount``.
+        """
         runner = CliRunner()
         output_file = tmp_path / "out.ccx"
 
@@ -1190,13 +1201,37 @@ class TestPackageExportHappyPath:
             patch(
                 "chaoscypher_core.services.export.CcxExporter",
                 return_value=mock_service,
-            ),
+            ) as exporter_cls,
         ):
             result = runner.invoke(export, ["--output", str(output_file)])
 
         assert result.exit_code == 0, result.output
+        assert exporter_cls.call_args[1]["sources_repository"] is mock_ctx.storage_adapter
         call_kwargs = mock_service.export.call_args[1]
-        assert call_kwargs["include_sources"] is False
+        assert call_kwargs["include_sources"] is True
+
+    def test_export_no_sources_flag(self, tmp_path: Path) -> None:
+        """``--no-sources`` opts out of sources.jsonl for a knowledge-only package."""
+        runner = CliRunner()
+        output_file = tmp_path / "out.ccx"
+
+        mock_service = MagicMock()
+        mock_service.export.return_value = b"CCX"
+
+        with (
+            patch(
+                "chaoscypher_cli.commands.package.export.get_context",
+                return_value=_make_mock_ctx(),
+            ),
+            patch(
+                "chaoscypher_core.services.export.CcxExporter",
+                return_value=mock_service,
+            ),
+        ):
+            result = runner.invoke(export, ["--output", str(output_file), "--no-sources"])
+
+        assert result.exit_code == 0, result.output
+        assert mock_service.export.call_args[1]["include_sources"] is False
 
 
 class TestPackageExportErrors:

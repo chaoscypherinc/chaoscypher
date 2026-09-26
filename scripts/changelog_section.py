@@ -25,7 +25,7 @@ import sys
 from pathlib import Path
 
 
-CHANGELOG_URL = "https://chaoscypher.com/about/changelog"
+CHANGELOG_URL = "https://chaoscypher.com/docs/about/changelog"
 DEFAULT_CHANGELOG = Path("packages/docs/docs/about/changelog.md")
 
 # A release section starts at a level-4 heading naming the version and ends at

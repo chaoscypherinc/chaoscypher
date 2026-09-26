@@ -34,7 +34,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Citation** — a back-reference from a generated answer to the chunk(s) that grounded it.
 
-**MCP** — [Model Context Protocol](https://modelcontextprotocol.io/). Chaos Cypher exposes 31 MCP tools for AI clients (19 read, 12 write).
+**MCP** — [Model Context Protocol](https://modelcontextprotocol.io/). Chaos Cypher exposes 36 MCP tools for AI clients (21 read, 15 write).
 
 **Operations queue / LLM queue** — the two named worker queues. Operations (8 concurrent) handles indexing/dedup/commit; LLM (1 concurrent) handles extraction LLM calls.
 

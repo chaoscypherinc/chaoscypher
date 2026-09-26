@@ -151,3 +151,12 @@ def status() -> None:
 
     click.echo("✗ Cortex returned unexpected status", err=True)
     raise click.Abort
+
+
+if __name__ == "__main__":
+    # `python -m chaoscypher_cortex.main start …` is how `chaoscypher serve`
+    # and `chaoscypher compose up` launch the server (the `cc-cortex` console
+    # script is not guaranteed to be on PATH). Without this guard the module
+    # only builds `app` at import time and exits 0 — a server that "started"
+    # and was never there.
+    cli()

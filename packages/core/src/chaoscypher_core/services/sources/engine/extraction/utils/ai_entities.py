@@ -463,6 +463,138 @@ async def _consume_extraction_stream(
     return content, input_tokens, output_tokens, finish_reason, detector.aborted
 
 
+async def replay_harvest_output(
+    text: str,
+    extraction_cfg: Any,
+    max_entity_count_override: int | None = None,
+) -> tuple[str, str, bool]:
+    """Run a complete harvest answer through the stream loop detector.
+
+    For output that did not arrive over a provider stream (an MCP client's
+    answer), this replays ``text`` one line per chunk through
+    :func:`_consume_extraction_stream` with the same detector
+    :meth:`AIEntityExtractor.call_llm` uses, so a runaway answer is cut where
+    the streaming path would have cut it (at the end of the offending line)
+    and reported the same way.
+
+    Returns:
+        ``(content, finish_reason, aborted_by_loop)``: the content the
+        streaming path would have kept, ``"stop"`` for a complete answer or
+        ``"unknown"`` for an aborted one (an aborted stream never sees the
+        provider's done chunk), and the abort flag.
+    """
+
+    async def _chunks() -> Any:
+        """Yield each line as a content delta, then a done chunk."""
+        for line in text.splitlines(keepends=True):
+            yield {"type": "content", "delta": line}
+        yield {"type": "done", "usage": {}, "finish_reason": "stop"}
+
+    detector = _StreamLoopDetector(
+        extraction_cfg=extraction_cfg,
+        max_entity_count_override=max_entity_count_override,
+    )
+    content, _in, _out, finish_reason, aborted = await _consume_extraction_stream(
+        _chunks(), detector
+    )
+    return content, finish_reason, aborted
+
+
+def combine_finish_reasons(pass1: str, pass2: str) -> str:
+    """Combine the two passes' finish reasons into the chunk's.
+
+    ``"length"`` in either pass wins (any truncation truncated the chunk);
+    otherwise pass 1's reason unless it is ``"stop"``, then pass 2's.
+    """
+    if "length" in (pass1, pass2):
+        return "length"
+    return pass1 if pass1 != "stop" else pass2
+
+
+def format_raw_harvest_response(pass1_content: str, pass2_content: str) -> str:
+    """Join both passes' raw answers the way extraction metrics record them."""
+    return (
+        f"=== PASS 1 (Entities) ===\n{pass1_content}\n\n"
+        f"=== PASS 2 (Relationships) ===\n{pass2_content}"
+    )
+
+
+@dataclass(frozen=True)
+class HarvestPrompts:
+    """The pass-1 prompts for one chunk and the sentences they number.
+
+    Attributes:
+        system_prompt: System prompt both passes are sent under.
+        entity_prompt: Pass-1 (entity harvest) user prompt.
+        sentences: The chunk split into sentences; ``S<n>`` refers to
+            ``sentences[n - 1]``.
+        numbered_text: ``sentences`` formatted as the prompts show them.
+    """
+
+    system_prompt: str
+    entity_prompt: str
+    sentences: list[str]
+    numbered_text: str
+
+
+@dataclass(frozen=True)
+class HarvestLimits:
+    """Per-chunk filtering configuration resolved before pass 1.
+
+    Attributes:
+        filtering_config: Resolved ``FilteringConfig``.
+        max_entity_count: Entity-count cap for the stream loop detector.
+        min_alias_length: Minimum alias length for the line parser.
+    """
+
+    filtering_config: Any
+    max_entity_count: int
+    min_alias_length: int
+
+
+@dataclass
+class EntityHarvest:
+    """Pass-1 output after parsing and the between-pass entity filters.
+
+    Attributes:
+        entities: Entities that survived filtering (what pass 2 sees).
+        property_count: ``P|`` lines parsed and applied.
+        evidence_stats: Evidence/type-rescue statistics; pass 2 adds to it.
+        filtering_log: ``FilteringLog`` recording every removal.
+        parser_stats: Parser counters (``dropped_lines``) shared by both passes.
+    """
+
+    entities: list[dict[str, Any]]
+    property_count: int
+    evidence_stats: dict[str, Any]
+    filtering_log: Any
+    parser_stats: dict[str, int]
+
+
+@dataclass
+class HarvestParse:
+    """Both passes' raw output turned into what ``extract_single_chunk`` returns.
+
+    Attributes:
+        entities: Final entities.
+        relationships: Final relationships (empty when pass 2 did not run).
+        invalid_relationship_count: Relationships dropped as structurally invalid.
+        parser_lines_dropped: Output lines the parser could not read, both passes.
+        evidence_stats: Evidence statistics across both passes.
+        filtering_log: ``FilteringLog`` recording every removal.
+        relationship_prompt: The pass-2 prompt built from ``entities``, or
+            None when there were no entities and pass 2 was skipped.
+    """
+
+    entities: list[dict[str, Any]]
+    relationships: list[dict[str, Any]]
+    invalid_relationship_count: int
+    parser_lines_dropped: int
+    evidence_stats: dict[str, Any]
+    filtering_log: Any
+    relationship_prompt: str | None
+
+
 def _resolve_chunk_filtering_config(
     *,
     filtering_config: Any,
@@ -951,10 +1083,7 @@ def _build_extraction_metrics(
     )
 
     return {
-        "raw_llm_response": (
-            f"=== PASS 1 (Entities) ===\n{pass1_content}\n\n"
-            f"=== PASS 2 (Relationships) ===\n{pass2_content}"
-        ),
+        "raw_llm_response": format_raw_harvest_response(pass1_content, pass2_content),
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
         "entity_count": len(entities),
@@ -1149,6 +1278,7 @@ class AIEntityExtractor:
             stream=True,
             temperature=temperature,
             max_tokens=max_tokens,
+            enable_thinking=self.settings.llm.thinking_for_extraction,
         )
 
         # Stream and monitor for degenerate loops
@@ -1212,6 +1342,336 @@ class AIEntityExtractor:
             else:
                 lines.append(f"{idx}: {name} ({etype})")
         return "\n".join(lines)
+
+    def render_harvest_prompts(
+        self,
+        chunk_content: str,
+        node_templates_formatted: str,
+        *,
+        entity_guidance: str | None = None,
+        entity_examples: str | None = None,
+        entity_exclusions: list[ExclusionRule] | None = None,
+        strict_entity_types: bool = False,
+    ) -> HarvestPrompts:
+        """Render the system prompt and pass-1 prompt exactly as extraction sends them.
+
+        Splits ``chunk_content`` into numbered sentences and formats the
+        entity harvest template with the node templates, exclusions and
+        strict-type instruction. :meth:`extract_single_chunk` sends these
+        prompts; callers that obtain the model's answer some other way (the
+        MCP benchmark) render the same bytes with this method.
+        """
+        from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+            format_numbered_sentences,
+            split_into_sentences,
+        )
+
+        sentences = split_into_sentences(chunk_content)
+        numbered_text = format_numbered_sentences(sentences)
+        entity_prompt = _build_entity_prompt(
+            template=self.ENTITY_HARVEST_TEMPLATE,
+            numbered_text=numbered_text,
+            node_templates_formatted=node_templates_formatted,
+            entity_exclusions=entity_exclusions,
+            strict_entity_types=strict_entity_types,
+            entity_guidance=entity_guidance,
+            entity_examples=entity_examples,
+        )
+        return HarvestPrompts(
+            system_prompt=getattr(self, "_system_prompt", self.SYSTEM_PROMPT),
+            entity_prompt=entity_prompt,
+            sentences=sentences,
+            numbered_text=numbered_text,
+        )
+
+    def resolve_harvest_limits(
+        self,
+        *,
+        domain_extraction_limits: dict[str, float | int] | None = None,
+        filtering_mode: str | None = None,
+        evidence_validation_mode: str | None = None,
+        filtering_config: Any | None = None,
+    ) -> HarvestLimits:
+        """Resolve the filtering config, loop-detector cap and alias length for a chunk.
+
+        Same precedence as :meth:`extract_single_chunk`: a pre-resolved
+        ``filtering_config`` wins, otherwise the preset from
+        ``filtering_mode`` (or settings) with ``domain_extraction_limits`` as
+        overrides; domain limits beat the config for the cap and alias length.
+        """
+        extraction_cfg = self.settings.extraction
+        domain_limits = domain_extraction_limits or {}
+        resolved = _resolve_chunk_filtering_config(
+            filtering_config=filtering_config,
+            filtering_mode=filtering_mode,
+            domain_limits=domain_limits,
+            extraction_cfg=extraction_cfg,
+            evidence_validation_mode=evidence_validation_mode,
+        )
+        return HarvestLimits(
+            filtering_config=resolved,
+            max_entity_count=_resolve_loop_max_entity_count(
+                filtering_config=resolved,
+                domain_limits=domain_limits,
+                extraction_cfg=extraction_cfg,
+            ),
+            min_alias_length=_resolve_minimum_alias_length(
+                filtering_config=resolved,
+                domain_limits=domain_limits,
+                extraction_cfg=extraction_cfg,
+            ),
+        )
+
+    async def parse_entity_harvest(
+        self,
+        pass1_content: str,
+        *,
+        sentences: list[str],
+        chunk_content: str,
+        limits: HarvestLimits,
+        entity_exclusions: list[ExclusionRule] | None = None,
+        strict_entity_types: bool = False,
+        valid_entity_type_names: set[str] | None = None,
+        named_referent_types: set[str] | None = None,
+        normalization_rules: dict[str, list[str]] | None = None,
+        property_type_mapping: dict[str, dict[str, str]] | None = None,
+        parser_stats: dict[str, int] | None = None,
+        filtering_log: Any | None = None,
+        adapter: Any | None = None,
+        source_id: str | None = None,
+        database_name: str | None = None,
+    ) -> EntityHarvest:
+        """Parse pass-1 output and apply the between-pass entity filters.
+
+        Parses ``E|``/``P|`` lines, applies properties to their entities, then
+        runs evidence validation, exclusion filtering, type rescue and the
+        plausibility filter. The surviving entities are what pass 2 lists.
+        """
+        from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
+            FilteringLog,
+        )
+
+        extraction_cfg = self.settings.extraction
+        stats = parser_stats if parser_stats is not None else {"dropped_lines": 0}
+        entities, _pass1_relationships, properties = parse_extraction_output(
+            pass1_content,
+            max_out_of_bounds=extraction_cfg.loop_max_out_of_bounds,
+            max_source_type_repeat=extraction_cfg.loop_max_source_type_repeat,
+            skip_loop_detection=True,
+            minimum_alias_length=limits.min_alias_length,
+            stats=stats,
+        )
+        if properties:
+            apply_properties_to_entities(entities, properties)
+
+        log = filtering_log if filtering_log is not None else FilteringLog()
+        entities, evidence_stats = await _filter_entities(
+            entities=entities,
+            sentences=sentences,
+            chunk_content=chunk_content,
+            filtering_config=limits.filtering_config,
+            entity_exclusions=entity_exclusions,
+            strict_entity_types=strict_entity_types,
+            valid_entity_type_names=valid_entity_type_names,
+            named_referent_types=named_referent_types,
+            normalization_rules=normalization_rules,
+            property_type_mapping=property_type_mapping,
+            filtering_log=log,
+            adapter=adapter,
+            source_id=source_id,
+            database_name=database_name,
+        )
+        return EntityHarvest(
+            entities=entities,
+            property_count=len(properties),
+            evidence_stats=evidence_stats,
+            filtering_log=log,
+            parser_stats=stats,
+        )
+
+    def render_relationship_prompt(
+        self,
+        entities: list[dict[str, Any]],
+        numbered_text: str,
+        edge_templates_formatted: str,
+        *,
+        relationship_guidance: str | None = None,
+        relationship_examples: str | None = None,
+    ) -> str:
+        """Render the pass-2 prompt from the filtered pass-1 entity list."""
+        return _build_relationship_prompt(
+            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
+            numbered_sentences=numbered_text,
+            entity_list=self._serialize_entities_for_prompt(entities),
+            max_entity_index=len(entities) - 1,
+            edge_templates=edge_templates_formatted,
+            relationship_guidance=relationship_guidance,
+            relationship_examples=relationship_examples,
+        )
+
+    def render_relationship_prompt_template(
+        self,
+        edge_templates_formatted: str,
+        *,
+        relationship_guidance: str | None = None,
+        relationship_examples: str | None = None,
+    ) -> str:
+        """Render the reusable pass-2 prompt with placeholder markers.
+
+        The chunk text and the pass-1 entity list are replaced by
+        :data:`PROMPT_CHUNK_TEXT_PLACEHOLDER` and
+        :data:`PROMPT_PASS1_ENTITIES_PLACEHOLDER`; this is what extraction
+        metrics record as ``relationship_instructions``.
+        """
+        return _build_relationship_prompt(
+            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
+            numbered_sentences=PROMPT_CHUNK_TEXT_PLACEHOLDER,
+            entity_list=PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+            max_entity_index="N",
+            edge_templates=edge_templates_formatted,
+            relationship_guidance=relationship_guidance,
+            relationship_examples=relationship_examples,
+        )
+
+    async def parse_relationship_harvest(
+        self,
+        pass2_content: str,
+        *,
+        entities: list[dict[str, Any]],
+        sentences: list[str],
+        limits: HarvestLimits,
+        filtering_log: Any,
+        evidence_stats: dict[str, Any],
+        parser_stats: dict[str, int] | None = None,
+        extraction_cfg: Any | None = None,
+        adapter: Any | None = None,
+        source_id: str | None = None,
+        database_name: str | None = None,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Parse pass-2 output, validate structure and apply the evidence filter.
+
+        Returns the relationships that survive bounds/self-loop validation and
+        the per-chunk evidence filter, and the count of structurally invalid
+        ones. ``evidence_stats`` is updated in place. ``extraction_cfg``
+        defaults to ``settings.extraction``.
+        """
+        from chaoscypher_core.services.sources.engine.extraction.utils.evidence_validator import (
+            filter_relationships_by_evidence,
+        )
+
+        if extraction_cfg is None:
+            extraction_cfg = self.settings.extraction
+        filtering_config = limits.filtering_config
+        _pass2_entities, raw_relationships, _pass2_properties = parse_extraction_output(
+            pass2_content,
+            max_out_of_bounds=extraction_cfg.loop_max_out_of_bounds,
+            max_source_type_repeat=extraction_cfg.loop_max_source_type_repeat,
+            skip_loop_detection=True,
+            minimum_alias_length=limits.min_alias_length,
+            stats=parser_stats,
+        )
+
+        relationships, invalid_count = validate_relationships(
+            raw_relationships,
+            entities,
+            filtering_log=filtering_log,
+            allow_self_loops=getattr(filtering_config, "allow_self_loops", False),
+        )
+
+        # Per-chunk evidence filtering — depends on chunk-local sentences
+        # and so must run here. Type-constraint validation and relationship-
+        # limit enforcement are now applied CROSS-chunk after dedup; see
+        # ``apply_cross_chunk_relationship_filters`` in extractor.py and the
+        # pipeline-order banner above its definition for the rationale.
+        evidence_mode = filtering_config.evidence_validation_mode
+        if evidence_mode != "off":
+            relationships, rel_stats = await filter_relationships_by_evidence(
+                relationships,
+                entities,
+                sentences,
+                mode=evidence_mode,
+                filtering_log=filtering_log,
+                min_significant_word_length=filtering_config.min_significant_word_length,
+                adapter=adapter,
+                source_id=source_id,
+                database_name=database_name,
+            )
+            evidence_stats.update(rel_stats)
+        return relationships, invalid_count
+
+    async def parse_harvest_outputs(
+        self,
+        entities_text: str,
+        relationships_text: str,
+        *,
+        sentences: list[str],
+        chunk_content: str,
+        numbered_text: str,
+        edge_templates_formatted: str,
+        limits: HarvestLimits | None = None,
+        entity_exclusions: list[ExclusionRule] | None = None,
+        strict_entity_types: bool = False,
+        valid_entity_type_names: set[str] | None = None,
+        named_referent_types: set[str] | None = None,
+        normalization_rules: dict[str, list[str]] | None = None,
+        property_type_mapping: dict[str, dict[str, str]] | None = None,
+        relationship_guidance: str | None = None,
+        relationship_examples: str | None = None,
+    ) -> HarvestParse:
+        """Turn both passes' raw answers into the entities and relationships extraction keeps.
+
+        The post-LLM half of :meth:`extract_single_chunk` without the LLM:
+        pass-1 parse and entity filters, then (only when entities survive,
+        as in the pipeline) the pass-2 parse, validation and evidence
+        filter. ``relationships_text`` is ignored when no entity survives,
+        because the pipeline would not have run pass 2. The LLM path adds
+        only the streaming loop detector (see :func:`replay_harvest_output`
+        for answers that did not stream), token accounting and metrics.
+        """
+        resolved = limits or self.resolve_harvest_limits()
+        parser_stats: dict[str, int] = {"dropped_lines": 0}
+        harvest = await self.parse_entity_harvest(
+            entities_text,
+            sentences=sentences,
+            chunk_content=chunk_content,
+            limits=resolved,
+            entity_exclusions=entity_exclusions,
+            strict_entity_types=strict_entity_types,
+            valid_entity_type_names=valid_entity_type_names,
+            named_referent_types=named_referent_types,
+            normalization_rules=normalization_rules,
+            property_type_mapping=property_type_mapping,
+            parser_stats=parser_stats,
+        )
+        relationships: list[dict[str, Any]] = []
+        invalid_count = 0
+        relationship_prompt: str | None = None
+        if harvest.entities:
+            relationship_prompt = self.render_relationship_prompt(
+                harvest.entities,
+                numbered_text,
+                edge_templates_formatted,
+                relationship_guidance=relationship_guidance,
+                relationship_examples=relationship_examples,
+            )
+            relationships, invalid_count = await self.parse_relationship_harvest(
+                relationships_text,
+                entities=harvest.entities,
+                sentences=sentences,
+                limits=resolved,
+                filtering_log=harvest.filtering_log,
+                evidence_stats=harvest.evidence_stats,
+                parser_stats=parser_stats,
+            )
+        return HarvestParse(
+            entities=harvest.entities,
+            relationships=relationships,
+            invalid_relationship_count=invalid_count,
+            parser_lines_dropped=parser_stats["dropped_lines"],
+            evidence_stats=harvest.evidence_stats,
+            filtering_log=harvest.filtering_log,
+            relationship_prompt=relationship_prompt,
+        )
 
     async def extract_single_chunk(
         self,
@@ -1297,54 +1757,37 @@ class AIEntityExtractor:
             Tuple of (entities, relationships, input_tokens, output_tokens, extraction_metrics)
 
         """
-        from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
-            format_numbered_sentences,
-            split_into_sentences,
-        )
-
         logger.info("harvest_extraction_started", chunk_length=len(chunk_content))
 
-        sentences = split_into_sentences(chunk_content)
-        numbered_text = format_numbered_sentences(sentences)
-
-        # Resolve filtering and domain limit overrides
-        extraction_cfg = self.settings.extraction
-        _domain_limits = domain_extraction_limits or {}
-        filtering_config = _resolve_chunk_filtering_config(
-            filtering_config=filtering_config,
-            filtering_mode=filtering_mode,
-            domain_limits=_domain_limits,
-            extraction_cfg=extraction_cfg,
-            evidence_validation_mode=evidence_validation_mode,
-        )
-
-        # Resolve the per-chunk entity-count cap and alias length from the
-        # FilteringConfig (slider-driven) with domain limits as the highest
-        # override and extraction-settings defaults as the final fallback.
-        _max_entity_count_override = _resolve_loop_max_entity_count(
-            filtering_config=filtering_config,
-            domain_limits=_domain_limits,
-            extraction_cfg=extraction_cfg,
-        )
-        _min_alias_len = _resolve_minimum_alias_length(
-            filtering_config=filtering_config,
-            domain_limits=_domain_limits,
-            extraction_cfg=extraction_cfg,
-        )
-
-        # Pass 1: Extract entities + properties
-        entity_prompt = _build_entity_prompt(
-            template=self.ENTITY_HARVEST_TEMPLATE,
-            numbered_text=numbered_text,
-            node_templates_formatted=node_templates_formatted,
-            entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
+        prompts = self.render_harvest_prompts(
+            chunk_content,
+            node_templates_formatted,
             entity_guidance=entity_guidance,
             entity_examples=entity_examples,
+            entity_exclusions=entity_exclusions,
+            strict_entity_types=strict_entity_types,
         )
+        sentences = prompts.sentences
+        numbered_text = prompts.numbered_text
 
+        # Resolve filtering and domain limit overrides: the per-chunk
+        # entity-count cap and alias length come from the FilteringConfig
+        # (slider-driven) with domain limits as the highest override and
+        # extraction-settings defaults as the final fallback.
+        extraction_cfg = self.settings.extraction
+        limits = self.resolve_harvest_limits(
+            domain_extraction_limits=domain_extraction_limits,
+            filtering_mode=filtering_mode,
+            evidence_validation_mode=evidence_validation_mode,
+            filtering_config=filtering_config,
+        )
+        filtering_config = limits.filtering_config
+        _max_entity_count_override = limits.max_entity_count
+        _min_alias_len = limits.min_alias_length
+
+        # Pass 1: Extract entities + properties
         pass1_result = await self.call_llm(
-            entity_prompt,
+            prompts.entity_prompt,
             temperature=temperature_override,
             max_tokens=max_tokens_override,
             max_entity_count_override=_max_entity_count_override,
@@ -1361,47 +1804,33 @@ class AIEntityExtractor:
         # row-level quality counter.
         parser_stats: dict[str, int] = {"dropped_lines": 0}
 
-        entities, _pass1_relationships, properties = parse_extraction_output(
+        # Parse pass 1 and filter entities between passes.
+        harvest = await self.parse_entity_harvest(
             pass1_content,
-            max_out_of_bounds=extraction_cfg.loop_max_out_of_bounds,
-            max_source_type_repeat=extraction_cfg.loop_max_source_type_repeat,
-            skip_loop_detection=True,
-            minimum_alias_length=_min_alias_len,
-            stats=parser_stats,
-        )
-
-        if properties:
-            apply_properties_to_entities(entities, properties)
-
-        logger.info(
-            "harvest_entities_complete",
-            entity_count=len(entities),
-            property_count=len(properties),
-            pass1_input_tokens=pass1_input_tokens,
-            pass1_output_tokens=pass1_output_tokens,
-        )
-
-        # Filter entities between passes
-        from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
-            FilteringLog,
-        )
-
-        filtering_log = FilteringLog()
-        entities, evidence_stats = await _filter_entities(
-            entities=entities,
             sentences=sentences,
             chunk_content=chunk_content,
-            filtering_config=filtering_config,
+            limits=limits,
             entity_exclusions=entity_exclusions,
             strict_entity_types=strict_entity_types,
             valid_entity_type_names=valid_entity_type_names,
             named_referent_types=named_referent_types,
             normalization_rules=normalization_rules,
             property_type_mapping=property_type_mapping,
-            filtering_log=filtering_log,
+            parser_stats=parser_stats,
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+        )
+        entities = harvest.entities
+        evidence_stats = harvest.evidence_stats
+        filtering_log = harvest.filtering_log
+
+        logger.info(
+            "harvest_entities_complete",
+            entity_count=len(entities),
+            property_count=harvest.property_count,
+            pass1_input_tokens=pass1_input_tokens,
+            pass1_output_tokens=pass1_output_tokens,
         )
 
         # Pass 2: Extract relationships using filtered entity list.
@@ -1447,11 +1876,7 @@ class AIEntityExtractor:
         # pass without having to peek at intermediate state. "length"
         # wins over "stop" (any truncation truncated the chunk);
         # "aborted_by_loop" is a logical OR.
-        combined_finish_reason = (
-            "length"
-            if "length" in (pass1_finish_reason, pass2_finish_reason)
-            else (pass1_finish_reason if pass1_finish_reason != "stop" else pass2_finish_reason)
-        )
+        combined_finish_reason = combine_finish_reasons(pass1_finish_reason, pass2_finish_reason)
         combined_aborted_by_loop = pass1_aborted or pass2_aborted
 
         _record_extraction_metrics(
@@ -1477,12 +1902,8 @@ class AIEntityExtractor:
             entity_guidance=entity_guidance,
             entity_examples=entity_examples,
         )
-        relationship_prompt_template = _build_relationship_prompt(
-            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
-            numbered_sentences=PROMPT_CHUNK_TEXT_PLACEHOLDER,
-            entity_list=PROMPT_PASS1_ENTITIES_PLACEHOLDER,
-            max_entity_index="N",
-            edge_templates=edge_templates_formatted,
+        relationship_prompt_template = self.render_relationship_prompt_template(
+            edge_templates_formatted,
             relationship_guidance=relationship_guidance,
             relationship_examples=relationship_examples,
         )
@@ -1500,7 +1921,7 @@ class AIEntityExtractor:
             filtering_log=filtering_log,
             entity_prompt=entity_prompt_template,
             relationship_prompt=relationship_prompt_template,
-            system_prompt=getattr(self, "_system_prompt", self.SYSTEM_PROMPT),
+            system_prompt=prompts.system_prompt,
             extraction_rules_template=self.EXTRACTION_RULES_TEMPLATE,
             node_templates_formatted=node_templates_formatted,
             edge_templates_formatted=edge_templates_formatted,
@@ -1571,10 +1992,6 @@ class AIEntityExtractor:
             Dict with relationships, content, input_tokens, output_tokens,
             and invalid_count.
         """
-        from chaoscypher_core.services.sources.engine.extraction.utils.evidence_validator import (
-            filter_relationships_by_evidence,
-        )
-
         relationships: list[dict[str, Any]] = []
         pass2_input_tokens = 0
         pass2_output_tokens = 0
@@ -1598,14 +2015,10 @@ class AIEntityExtractor:
                 "aborted_by_loop": pass2_aborted,
             }
 
-        entity_list_str = self._serialize_entities_for_prompt(entities)
-
-        relationship_prompt = _build_relationship_prompt(
-            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
-            numbered_sentences=numbered_text,
-            entity_list=entity_list_str,
-            max_entity_index=len(entities) - 1,
-            edge_templates=edge_templates_formatted,
+        relationship_prompt = self.render_relationship_prompt(
+            entities,
+            numbered_text,
+            edge_templates_formatted,
             relationship_guidance=relationship_guidance,
             relationship_examples=relationship_examples,
         )
@@ -1623,41 +2036,23 @@ class AIEntityExtractor:
         pass2_finish_reason = pass2_result.finish_reason
         pass2_aborted = pass2_result.aborted_by_loop
 
-        _pass2_entities, raw_relationships, _pass2_properties = parse_extraction_output(
+        relationships, invalid_count = await self.parse_relationship_harvest(
             pass2_content,
-            max_out_of_bounds=extraction_cfg.loop_max_out_of_bounds,
-            max_source_type_repeat=extraction_cfg.loop_max_source_type_repeat,
-            skip_loop_detection=True,
-            minimum_alias_length=_min_alias_len,
-            stats=parser_stats,
-        )
-
-        relationships, invalid_count = validate_relationships(
-            raw_relationships,
-            entities,
+            entities=entities,
+            sentences=sentences,
+            limits=HarvestLimits(
+                filtering_config=filtering_config,
+                max_entity_count=_max_entity_count_override or 0,
+                min_alias_length=_min_alias_len,
+            ),
             filtering_log=filtering_log,
-            allow_self_loops=getattr(filtering_config, "allow_self_loops", False),
+            evidence_stats=evidence_stats,
+            parser_stats=parser_stats,
+            extraction_cfg=extraction_cfg,
+            adapter=adapter,
+            source_id=source_id,
+            database_name=database_name,
         )
-
-        # Per-chunk evidence filtering — depends on chunk-local sentences
-        # and so must run here. Type-constraint validation and relationship-
-        # limit enforcement are now applied CROSS-chunk after dedup; see
-        # ``apply_cross_chunk_relationship_filters`` in extractor.py and the
-        # pipeline-order banner above its definition for the rationale.
-        evidence_mode = filtering_config.evidence_validation_mode
-        if evidence_mode != "off":
-            relationships, rel_stats = await filter_relationships_by_evidence(
-                relationships,
-                entities,
-                sentences,
-                mode=evidence_mode,
-                filtering_log=filtering_log,
-                min_significant_word_length=filtering_config.min_significant_word_length,
-                adapter=adapter,
-                source_id=source_id,
-                database_name=database_name,
-            )
-            evidence_stats.update(rel_stats)
 
         logger.info(
             "harvest_relationships_complete",

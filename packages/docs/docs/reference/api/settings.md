@@ -383,8 +383,8 @@ curl http://localhost/api/v1/settings/presets
       "author": "ChaosCypher Team",
       "builtin": true,
       "ollama_settings": {
-        "ollama_chat_model": "phi4:14b",
-        "ollama_extraction_model": "phi4:14b",
+        "ollama_chat_model": "qwen3.5:9b",
+        "ollama_extraction_model": "qwen2.5:14b-instruct",
         "ollama_vision_model": "qwen3-vl:8b",
         "ollama_num_ctx": 16384,
         "ollama_num_batch": 2048
@@ -406,8 +406,8 @@ curl http://localhost/api/v1/settings/presets
       "author": "ChaosCypher Team",
       "builtin": true,
       "ollama_settings": {
-        "ollama_chat_model": "qwen3:30b",
-        "ollama_extraction_model": "qwen3:30b-instruct",
+        "ollama_chat_model": "qwen3.8:27b",
+        "ollama_extraction_model": "gemma4:26b",
         "ollama_vision_model": "qwen3-vl:30b",
         "ollama_num_ctx": 16384,
         "ollama_num_batch": 2048
@@ -462,8 +462,8 @@ curl http://localhost/api/v1/settings/presets/vram_24gb
   "author": "ChaosCypher Team",
   "builtin": true,
   "ollama_settings": {
-    "ollama_chat_model": "qwen3:30b",
-    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_chat_model": "qwen3.8:27b",
+    "ollama_extraction_model": "gemma4:26b",
     "ollama_vision_model": "qwen3-vl:30b",
     "ollama_num_ctx": 16384,
     "ollama_num_batch": 2048
@@ -517,8 +517,8 @@ curl -X POST http://localhost/api/v1/settings/presets/apply \
   "preset_id": "vram_24gb",
   "preset_name": "24GB VRAM",
   "settings_updated": {
-    "ollama_chat_model": "qwen3:30b",
-    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_chat_model": "qwen3.8:27b",
+    "ollama_extraction_model": "gemma4:26b",
     "ollama_vision_model": "qwen3-vl:30b",
     "ollama_num_ctx": 16384,
     "ollama_num_batch": 2048,

@@ -3,7 +3,7 @@
 
 """MCP tool definitions for ChaosCypher.
 
-Defines the 31 tools exposed via MCP, each with a JSON Schema for input
+Defines the 36 tools exposed via MCP, each with a JSON Schema for input
 validation and a ``write_only`` flag used by ``get_tools_for_mode()`` to
 filter tools based on server access mode.
 """
@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal
+
+from chaoscypher_core.mcp.benchmark.suites import SUITES, all_stages
 
 
 @dataclass(frozen=True)
@@ -995,6 +997,211 @@ _finalize_extraction = ToolDefinition(
 )
 
 # ============================================================================
+# MCP benchmark tools (read tools: they never touch the graph; run state and
+# results are files under <data_dir>/benchmark/)
+# ============================================================================
+
+_BENCHMARK_LOOP = (
+    "Loop: call get_benchmark_task; answer its user_prompt as the model under "
+    "test, under its system_prompt (none when empty), in exactly the shape its "
+    "answer_format describes - no tool use, no reading other files, nothing "
+    "beyond what the prompt gives you; submit that text verbatim with "
+    "submit_benchmark_output (task_id and stage from the task); repeat until "
+    "the task says done, then call finish_benchmark. Answer each task fresh, "
+    "as if it were the only one."
+)
+
+_SUITE_HELP = "; ".join(f"'{name}' = {spec.description}" for name, spec in SUITES.items())
+
+_start_benchmark = ToolDefinition(
+    name="start_benchmark",
+    description=(
+        "Start a benchmark run of a suite (extraction probes or grounded chat) in "
+        "which YOU (the calling model) are the model under test. Extraction probes "
+        "are short passages with pass/fail checks, prompted byte-identically to the "
+        "ChaosCypher extraction pipeline; grounded chat asks the questions of a "
+        "reference pack with context retrieved from its fixed graph, prompted "
+        "byte-identically to the local chat benchmark. Answers are scored by the "
+        "same checks as local runs. Results are a harness-track row: your client's "
+        "temperature/thinking are not pinned, so record your effort and thinking "
+        "settings and client version in client_settings. Returns run_id, total and "
+        "the first task. " + _BENCHMARK_LOOP
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "suite": {
+                "type": "string",
+                "enum": list(SUITES),
+                "description": _SUITE_HELP + ".",
+            },
+            "reference": {
+                "type": "string",
+                "description": (
+                    "Grounded chat only: the reference pack to retrieve from "
+                    "(defaults to the only one installed)."
+                ),
+            },
+            "client": {
+                "type": "string",
+                "description": (
+                    "The MCP client running you, e.g. 'claude-code', "
+                    "'claude-desktop', 'cursor' (letters, digits, ._:@+-)."
+                ),
+            },
+            "model": {
+                "type": "string",
+                "description": (
+                    "Your exact model id as the client reports it, e.g. 'claude-opus-4-8'."
+                ),
+            },
+            "label": {
+                "type": "string",
+                "description": "Optional display label for the leaderboard row.",
+            },
+            "only": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional task ids (probe or question ids) to run instead of the whole suite."
+                ),
+            },
+            "client_settings": {
+                "type": "object",
+                "additionalProperties": {"type": ["string", "number", "boolean"]},
+                "maxProperties": 20,
+                "description": (
+                    "Your client's settings that can move the score, recorded on the "
+                    "result row: pass at least 'effort' (e.g. 'high') and 'thinking' "
+                    "(e.g. 'adaptive', 'off') when you know them, plus your client's "
+                    "version (e.g. {'effort': 'high', 'thinking': 'adaptive', "
+                    "'client_version': '2.3.1'}). A flat object of at most 20 entries; "
+                    "values are short strings, numbers or booleans. Report only what "
+                    "you actually know - never guess."
+                ),
+            },
+        },
+        "required": ["suite", "client", "model"],
+    },
+)
+
+_get_benchmark_task = ToolDefinition(
+    name="get_benchmark_task",
+    description=(
+        "Get the next benchmark task: task_id, kind, stage, system_prompt, "
+        "user_prompt, answer_format (the shape your answer takes) and how many "
+        "tasks remain. Returns done=true when every task is answered. Safe to call "
+        "again after an interruption - the run resumes where it stopped. " + _BENCHMARK_LOOP
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "string", "description": "Run id from start_benchmark."},
+        },
+        "required": ["run_id"],
+    },
+)
+
+_submit_benchmark_output = ToolDefinition(
+    name="submit_benchmark_output",
+    description=(
+        "Submit your raw answer for one stage of one task, exactly as you "
+        "produced it. Each stage is answered once: a run scores the first answer, "
+        "so a stage already answered, or a completed task, is refused (TASK_FINAL). "
+        "For an extraction probe the 'entities' stage is usually followed by the "
+        "same probe's 'relationships' stage, whose prompt lists the entities parsed "
+        "from your answer; a grounded-chat question has the single stage 'answer'. "
+        "The response confirms acceptance and progress (no verdicts until "
+        "finish_benchmark) and always includes the next task."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "string", "description": "Run id from start_benchmark."},
+            "task_id": {"type": "string", "description": "task_id from the task."},
+            "probe_id": {
+                "type": "string",
+                "description": "Deprecated name of task_id; pass one or the other.",
+            },
+            "stage": {
+                "type": "string",
+                "enum": all_stages(),
+                "description": "stage from the task.",
+            },
+            "output_text": {
+                "type": "string",
+                "description": "Your answer, verbatim, in the task's answer_format.",
+            },
+            "output_tokens": {
+                "type": "integer",
+                "description": (
+                    "Optional output token count for this answer if your client "
+                    "reports it; otherwise it is estimated from the text."
+                ),
+            },
+            "empty_answer": {
+                "type": "boolean",
+                "description": (
+                    "Set true to submit an intentionally empty output_text "
+                    "(the correct answer has no lines). Empty text is rejected otherwise."
+                ),
+                "default": False,
+            },
+            "truncated": {
+                "type": "boolean",
+                "description": (
+                    "Set true when your answer was cut off by your output limit "
+                    "(grounded chat scores it as not completed)."
+                ),
+                "default": False,
+            },
+        },
+        "required": ["run_id", "stage", "output_text"],
+    },
+)
+
+_get_benchmark_progress = ToolDefinition(
+    name="get_benchmark_progress",
+    description=(
+        "Report a benchmark run's progress: tasks submitted, pending tasks and "
+        "stages, and the results file once finished. No pass counts until "
+        "finish_benchmark."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "string", "description": "Run id from start_benchmark."},
+        },
+        "required": ["run_id"],
+    },
+)
+
+_finish_benchmark = ToolDefinition(
+    name="finish_benchmark",
+    description=(
+        "Score the whole run with the suite's scorer and write it as a results "
+        "file the benchmark leaderboard export reads (one row, marked as the MCP "
+        "harness track with pins not applied). Returns the file path, the "
+        "tier-weighted pass rate (headline_score), passed and total, and the "
+        "per-section rates. Refuses while tasks are pending unless "
+        "allow_incomplete=true, in which case they count as fails. A finished run "
+        "takes no more answers."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "run_id": {"type": "string", "description": "Run id from start_benchmark."},
+            "allow_incomplete": {
+                "type": "boolean",
+                "description": "Score pending tasks as fails instead of refusing.",
+                "default": False,
+            },
+        },
+        "required": ["run_id"],
+    },
+)
+
+# ============================================================================
 # Tool registry
 # ============================================================================
 
@@ -1041,6 +1248,12 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     _submit_chunk_extraction,
     _get_extraction_progress,
     _finalize_extraction,
+    # MCP benchmark tools (read)
+    _start_benchmark,
+    _get_benchmark_task,
+    _submit_benchmark_output,
+    _get_benchmark_progress,
+    _finish_benchmark,
 )
 
 

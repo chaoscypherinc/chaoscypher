@@ -21,7 +21,7 @@ import re
 from bisect import bisect_right
 from collections import Counter
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import structlog
 
@@ -60,6 +60,11 @@ class LocationBoundary(TypedDict):
     end_char: int
     page_number: int | None
     section: str | None
+    # Media position of the range (transcribed audio / video), in seconds
+    # from the start of the recording. Absent for paginated / sectioned
+    # documents; the chunker copies them onto ``start_time`` / ``end_time``.
+    start_time: NotRequired[float | None]
+    end_time: NotRequired[float | None]
 
 
 # Ordered list of LocationBoundary entries covering the joined loader content.
@@ -95,6 +100,73 @@ def _lookup_location(
         if boundary["start_char"] <= char_start < boundary["end_char"]:
             return boundary["page_number"], boundary["section"]
     return None, None
+
+
+def _lookup_time_range(
+    location_index: LocationIndex | None,
+    char_start: int,
+    char_end: int,
+    starts: list[int] | None = None,
+) -> tuple[float | None, float | None]:
+    """Return ``(start_time, end_time)`` for the chunk spanning ``[char_start, char_end)``.
+
+    ``start_time`` comes from the boundary containing the chunk's first
+    character and ``end_time`` from the boundary containing its last one,
+    so a chunk that straddles several transcript segments reports the
+    whole span. ``(None, None)`` when the index carries no media times or
+    the chunk falls outside it.
+    """
+    if not location_index:
+        return None, None
+    if starts is None:
+        starts = [boundary["start_char"] for boundary in location_index]
+
+    def _boundary_at(char: int) -> LocationBoundary | None:
+        i = bisect_right(starts, char) - 1
+        if i >= 0:
+            boundary = location_index[i]
+            if boundary["start_char"] <= char < boundary["end_char"]:
+                return boundary
+        return None
+
+    first = _boundary_at(char_start)
+    last = _boundary_at(max(char_start, char_end - 1))
+    start_time = first.get("start_time") if first is not None else None
+    end_time = last.get("end_time") if last is not None else None
+    if start_time is None and end_time is None:
+        return None, None
+    return start_time, end_time
+
+
+def build_transcript_location_index(
+    segments: list[tuple[str, float, float]],
+    separator: str = " ",
+) -> LocationIndex:
+    """Build a LocationIndex from transcript segments joined by ``separator``.
+
+    Each entry maps one segment's char range (in the joined transcript) to
+    its media time span. ``page_number`` / ``section`` are always ``None``.
+    Single source of truth for the audio and video loaders, which join the
+    segment texts the same way so the ranges line up.
+    """
+    index: LocationIndex = []
+    offset = 0
+    sep_len = len(separator)
+    for i, (text, start_time, end_time) in enumerate(segments):
+        index.append(
+            {
+                "start_char": offset,
+                "end_char": offset + len(text),
+                "page_number": None,
+                "section": None,
+                "start_time": start_time,
+                "end_time": end_time,
+            }
+        )
+        offset += len(text)
+        if i < len(segments) - 1:
+            offset += sep_len
+    return index
 
 
 def build_pdf_location_index(
@@ -157,14 +229,17 @@ def merge_location_indexes(
     for i, (content, index) in enumerate(docs_with_indexes):
         if index:
             for boundary in index:
-                merged.append(
-                    {
-                        "start_char": boundary["start_char"] + offset,
-                        "end_char": boundary["end_char"] + offset,
-                        "page_number": boundary["page_number"],
-                        "section": boundary["section"],
-                    }
-                )
+                shifted: LocationBoundary = {
+                    "start_char": boundary["start_char"] + offset,
+                    "end_char": boundary["end_char"] + offset,
+                    "page_number": boundary["page_number"],
+                    "section": boundary["section"],
+                }
+                if "start_time" in boundary:
+                    shifted["start_time"] = boundary["start_time"]
+                if "end_time" in boundary:
+                    shifted["end_time"] = boundary["end_time"]
+                merged.append(shifted)
         offset += len(content)
         # Separator only appears BETWEEN documents — not after the last one.
         if i < len(docs_with_indexes) - 1:
@@ -587,6 +662,11 @@ class ChunkingService:
                     page, section = _lookup_location(location_index, char_start, boundary_starts)
                     chunk["page_number"] = page
                     chunk["section"] = section
+                    # Transcribed media: the chunk's position in the recording.
+                    char_end = chunk.get("char_end") or char_start
+                    chunk["start_time"], chunk["end_time"] = _lookup_time_range(
+                        location_index, char_start, char_end, boundary_starts
+                    )
 
             from chaoscypher_core.models import ChunksResult
 
@@ -987,6 +1067,8 @@ class ChunkingService:
                     "token_count": token_count,
                     "page_number": None,
                     "section": None,
+                    "start_time": None,
+                    "end_time": None,
                     "chunk_metadata": {
                         "chunk_type": "small",  # Mark as small chunk
                         "group_ids": [],  # Will be populated when creating groups

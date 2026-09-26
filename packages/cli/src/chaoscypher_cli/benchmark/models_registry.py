@@ -28,6 +28,10 @@ class RegistryEntry:
     price: dict[str, float] | None = None
     price_dated: str | None = None
     vram_gb: float | None = None
+    # Whether the Ollama manifest lists ``tools`` in Capabilities. The product
+    # chat loop always passes tools, so a model without them cannot chat in
+    # the app however well it scores. None = not checked.
+    tools: bool | None = None
     why: str | None = None
     notes: str | None = None
 
@@ -89,6 +93,7 @@ def _parse(path: Path) -> dict[str, RegistryEntry]:
             price=dict(body["price"]) if body.get("price") is not None else None,
             price_dated=body.get("price_dated"),
             vram_gb=body.get("vram_gb"),
+            tools=body.get("tools"),
             why=body.get("why"),
             notes=body.get("notes"),
         )

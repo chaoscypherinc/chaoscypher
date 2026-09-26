@@ -40,7 +40,7 @@ async def test_run_invokes_pipeline_and_judge():
     indexed = MagicMock()
 
     @asynccontextmanager
-    async def fake_indexed_graph():
+    async def fake_indexed_graph(*, embedder=None):
         yield indexed
 
     provider = MagicMock()
@@ -81,7 +81,7 @@ async def test_run_records_chat_failure_per_query():
     indexed = MagicMock()
 
     @asynccontextmanager
-    async def fake_indexed_graph():
+    async def fake_indexed_graph(*, embedder=None):
         yield indexed
 
     provider = MagicMock()

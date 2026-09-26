@@ -83,6 +83,9 @@ def test_release_notes_appends_the_changelog_link():
     notes = _MOD.release_notes(_CHANGELOG, "v0.4.2")
     assert notes is not None
     assert notes.rstrip().endswith(f"Full changelog: {_MOD.CHANGELOG_URL}")
+    # The docs site serves the page under /docs/; the bare /about/changelog 404'd in
+    # every Release body from v0.4.0 to v0.4.3 (2026-09-21).
+    assert _MOD.CHANGELOG_URL == "https://chaoscypher.com/docs/about/changelog"
 
 
 def test_main_prints_notes_and_fails_loudly_when_missing(

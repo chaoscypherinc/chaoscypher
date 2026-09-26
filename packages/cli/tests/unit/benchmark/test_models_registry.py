@@ -38,3 +38,30 @@ def test_parse_raises_on_price_block_missing_input(tmp_path):
 
     with pytest.raises(ValueError, match="price block missing key 'input'"):
         load_registry(path=p)
+
+
+def test_tools_capability_is_read_and_defaults_to_unknown(tmp_path):
+    """``tools`` mirrors the Ollama manifest; an entry that never checked it stays None."""
+    p = tmp_path / "r.yaml"
+    p.write_text(
+        "ollama/a:\n  provider: ollama\n  model: a\n  label: A\n  tools: false\n"
+        "ollama/b:\n  provider: ollama\n  model: b\n  label: B\n",
+        encoding="utf-8",
+    )
+    reg = load_registry(path=p)
+    assert reg["ollama/a"].tools is False
+    assert reg["ollama/b"].tools is None
+
+
+def test_every_measured_local_model_states_its_tool_support():
+    """Models with a VRAM figure were pulled, so their manifest was available to check."""
+    reg = load_registry()
+    unchecked = [
+        e.model_id
+        for e in reg.values()
+        if e.provider == "ollama" and e.vram_gb and e.tools is None and "embedding" not in e.model
+    ]
+    # The two XL models were never pulled on the benchmark box; embedders never chat.
+    assert unchecked == ["ollama/llama3.1:70b", "ollama/gpt-oss:120b"]
+    assert reg["ollama/phi4:14b"].tools is False
+    assert reg["ollama/olmo-3.1:32b"].tools is False

@@ -45,7 +45,7 @@ async def test_out_of_scope_query_scores_refusal() -> None:
     indexed = MagicMock()
 
     @asynccontextmanager
-    async def fake_indexed_graph():
+    async def fake_indexed_graph(*, embedder=None):
         yield indexed
 
     provider = MagicMock()
@@ -84,7 +84,7 @@ async def test_outer_failure_when_indexed_graph_raises() -> None:
     """If indexed_graph() raises, run returns an error RawOutput (outer except)."""
 
     @asynccontextmanager
-    async def boom_indexed_graph():
+    async def boom_indexed_graph(*, embedder=None):
         raise RuntimeError("graph load failed")
         yield  # pragma: no cover - unreachable, makes it an async generator
 
@@ -146,3 +146,36 @@ def test_format_retrieved_with_and_without_description() -> None:
     )
     assert "- Alpha: first" in text
     assert "- Beta" in text
+
+
+@pytest.mark.asyncio
+async def test_thinking_honoured_resets_between_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An Ollama model's thinking verdict must not leak onto the next model's row."""
+    from chaoscypher_cli.benchmark import thinking_probe
+
+    monkeypatch.setattr(thinking_probe, "probe_thinking", AsyncMock(return_value={}))
+    monkeypatch.setattr(thinking_probe, "thinking_honoured", lambda _probe, *, requested: False)
+
+    @asynccontextmanager
+    async def fake_indexed_graph(*, embedder=None):
+        """Yield a stand-in indexed graph."""
+        yield MagicMock()
+
+    provider = MagicMock()
+    provider.indexed_graph = fake_indexed_graph
+    ds = GraphRAGChatDataset(
+        id="demo",
+        version="1.0",
+        corpus_id="demo",
+        queries=_oos_qs(),
+        graph_provider=provider,
+        graphrag_search=AsyncMock(return_value={"entities": []}),
+        chat=AsyncMock(return_value="answer"),
+        judge=None,
+        judge_call=AsyncMock(),
+    )
+
+    await ds.run(_chat_model())
+    assert ds.thinking_honoured is False
+    await ds.run(ModelConfig(provider="openai", model="gpt-x", label="G"))
+    assert ds.thinking_honoured is None

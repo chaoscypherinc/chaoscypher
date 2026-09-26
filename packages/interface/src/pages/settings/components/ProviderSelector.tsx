@@ -15,6 +15,7 @@ import {
   FormHelperText,
   Button,
   CircularProgress,
+  Link,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutlined';
@@ -22,6 +23,7 @@ import SettingsIcon from '@mui/icons-material/Settings';
 import type { Settings, VRAMPreset, OllamaVerifyResponse, LLMProvider, LLMVerifyResponse } from '../../../types';
 import { settingsApi } from '../../../services/api/settings';
 import { accentPaperSx, ACCENT_COLORS } from '../../../theme/accentStyles';
+import { LEADERBOARD_URL } from '../../../constants/config';
 import { OllamaUrlField } from '../../../components/settings';
 
 /** Check if a value is a masked secret placeholder from the API.
@@ -222,6 +224,10 @@ export default function ProviderSelector({
                 {showAdvanced
                   ? "Select preset to populate defaults (customize below)"
                   : "Select your GPU's VRAM for optimal settings"}
+                {' '}
+                <Link href={LEADERBOARD_URL} target="_blank" rel="noopener">
+                  How the preset models were chosen
+                </Link>
               </FormHelperText>
             </FormControl>
           </>

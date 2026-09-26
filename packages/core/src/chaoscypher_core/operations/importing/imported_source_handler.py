@@ -245,6 +245,61 @@ async def handle_index_imported_nodes(
     return {"success": True, "nodes_indexed": nodes_indexed, "nodes_embedded": nodes_embedded}
 
 
+async def index_imported_package(
+    *,
+    imported_source_ids: list[str],
+    imported_node_ids: list[str],
+    storage_adapter: Any,
+    graph_repository: Any,
+    indexing_service: Any,
+    search_repository: Any,
+    database_name: str,
+) -> dict[str, int]:
+    """Index a whole import inline — the queue-less twin of the worker enqueues.
+
+    The worker follows a CCX import with one ``OP_INDEX_IMPORTED_SOURCE`` per
+    source and an ``OP_INDEX_IMPORTED_NODES`` for source-less knowledge. The
+    CLI (``mount``) and the compose merger have no queue, so they run the
+    same two passes here, in order: every imported source (its nodes and its
+    chunks), then only the imported nodes that belong to none of those
+    sources, so nothing is embedded twice.
+
+    Returns:
+        ``{"sources_indexed", "nodes_indexed"}`` counts.
+    """
+    metadata = {"database_name": database_name}
+    imported_sources = set(imported_source_ids)
+
+    for source_id in imported_source_ids:
+        await handle_index_imported_source(
+            data={"source_id": source_id},
+            source_repository=storage_adapter,
+            graph_repository=graph_repository,
+            indexing_service=indexing_service,
+            search_repository=search_repository,
+            metadata=metadata,
+        )
+
+    remaining = [
+        node.id
+        for node in _fetch_nodes_by_ids(graph_repository, imported_node_ids)
+        if getattr(node, "source_id", None) not in imported_sources
+    ]
+    nodes_indexed = 0
+    if remaining:
+        result = await handle_index_imported_nodes(
+            data={"node_ids": remaining},
+            source_repository=storage_adapter,
+            graph_repository=graph_repository,
+            indexing_service=indexing_service,
+            search_repository=search_repository,
+            metadata=metadata,
+        )
+        nodes_indexed = int(result.get("nodes_indexed", 0))
+
+    return {"sources_indexed": len(imported_sources), "nodes_indexed": nodes_indexed}
+
+
 async def _index_nodes(
     nodes: list[Any],
     *,

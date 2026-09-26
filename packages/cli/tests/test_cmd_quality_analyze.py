@@ -9,7 +9,7 @@ Covers:
 - analyze domain filter
 - analyze min-entities filter
 - analyze JSON output
-- analyze sort options
+- analyze sort options (key map + descending order)
 - analyze score color branches (high/medium/low score, quality)
 - analyze low-quality indicator (>5 low-quality entities)
 - recalculate happy path
@@ -391,6 +391,47 @@ class TestAnalyzeSortOptions:
             result = runner.invoke(analyze, ["--sort", sort_opt])
 
         assert result.exit_code == 0, result.output
+
+    @pytest.mark.parametrize(
+        ("sort_opt", "expected_first"),
+        [
+            ("score", "if_src0000002"),
+            ("entities", "if_src0000001"),
+            ("quality", "if_src0000001"),
+        ],
+    )
+    def test_sort_orders_by_the_requested_key_descending(
+        self, sort_opt: str, expected_first: str
+    ) -> None:
+        """The key map and the descending order are both exercised.
+
+        Two sources whose rankings deliberately disagree across the three
+        keys: seeding one source (as the exit-code test above does) makes
+        the sort unobservable, so the key map, the sort call and
+        ``reverse=True`` were all deletable without failing anything.
+        """
+        runner = CliRunner()
+        mock_ctx = MagicMock()
+        mock_ctx.database_name = "default"
+        mock_ctx.storage_adapter.list_files.return_value = [
+            _make_source(source_id="if_src0000001"),
+            _make_source(source_id="if_src0000002"),
+        ]
+        _wire_extraction(mock_ctx)
+
+        mock_scorer = MagicMock()
+        mock_scorer.score_source.side_effect = [
+            _make_mock_score(entity_count=9, total_score=100.0, avg_entity_quality=90.0),
+            _make_mock_score(entity_count=1, total_score=900.0, avg_entity_quality=10.0),
+        ]
+
+        p1, p2, p3, p4 = _make_analyze_patches(mock_ctx, mock_scorer)
+        with p1, p2, p3, p4:
+            result = runner.invoke(analyze, ["--json", "--sort", sort_opt])
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output.strip())
+        assert parsed["sources"][0]["source_id"] == expected_first
 
 
 class TestAnalyzeScoreColorBranches:

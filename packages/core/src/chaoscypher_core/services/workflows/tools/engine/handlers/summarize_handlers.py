@@ -556,6 +556,8 @@ class SummarizeToolHandlers:
                         "filename": chunk.get("filename", ""),
                         "chunk_index": chunk.get("chunk_index", 0),
                         "page_number": chunk.get("page_number"),
+                        "start_time": chunk.get("start_time"),
+                        "end_time": chunk.get("end_time"),
                         "cluster_id": i if strategy == "cluster" else 0,
                         "score": chunk.get("score", 0.0),
                     }

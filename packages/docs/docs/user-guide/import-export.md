@@ -95,6 +95,9 @@ chaoscypher pull john/medical-ontology
 # Import into your database
 chaoscypher graph package load john-medical-ontology.ccx
 
+# Or mount it for an MCP client in one step (pull + import + serve)
+chaoscypher mount john/medical-ontology
+
 # Publish your own
 chaoscypher push my-knowledge.ccx
 ```

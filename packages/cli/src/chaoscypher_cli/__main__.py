@@ -123,7 +123,9 @@ def _preconfigure_logging() -> None:
 
         configure_logging(
             log_level=os.getenv("LOG_LEVEL", "WARNING"),
-            stream=sys.stderr if "mcp" in sys.argv[1:] else None,
+            # `mount` becomes an MCP stdio server after its import step, so
+            # its stdout is reserved from the first byte too.
+            stream=sys.stderr if {"mcp", "mount"} & set(sys.argv[1:]) else None,
         )
     except Exception:
         pass
@@ -186,6 +188,10 @@ LAZY_COMMANDS = {
     ),
     # MCP server
     "mcp": ("chaoscypher_cli.mcp.command:mcp", "Start MCP server over stdio"),
+    "mount": (
+        "chaoscypher_cli.commands.mount:mount",
+        "Pull a knowledge package and serve it over MCP",
+    ),
     # System health
     "health": ("chaoscypher_cli.commands.health:health", "Check system health status"),
     "doctor": (
@@ -225,6 +231,10 @@ LAZY_COMMANDS = {
 _FIRST_RUN_SAFE_SUBCOMMANDS = frozenset(
     {
         "setup",
+        # `mount` serves a pre-built package to an MCP host whose own model
+        # answers the questions — no chat/extraction LLM is needed, so a
+        # fresh `pipx install` must not be bounced into the setup wizard.
+        "mount",
         "health",
         "doctor",
         "diagnostics",
@@ -256,6 +266,9 @@ _UPGRADE_SAFE_SUBCOMMANDS = frozenset(
         # blocked (see chaoscypher_cli/mcp/command.py), so it must NOT be
         # exited(2) here — that drop is exactly the opaque -32000 we're fixing.
         "mcp",
+        # `mount` targets its own database and hands off to the same server;
+        # the guard would otherwise gate it on whatever the *current* DB is.
+        "mount",
     }
 )
 

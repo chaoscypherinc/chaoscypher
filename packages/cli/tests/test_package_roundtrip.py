@@ -47,14 +47,17 @@ from chaoscypher_core.app_config.engine_factory import build_engine_settings
 class _FakeCtx:
     """Minimal CLIContext stand-in backed by a real adapter + GraphRepository.
 
-    The export() command reads ``graph_repository`` / ``settings`` / ``get_stats``;
-    the load() command reads ``graph_repository`` / ``database_name``. Sources and
-    workflows are intentionally absent (None) — CLI export/import omits both.
+    The export() command reads ``graph_repository`` / ``storage_adapter`` /
+    ``settings`` / ``get_stats``; the load() command reads ``graph_repository``
+    / ``database_name``. Workflows are intentionally absent (None). The
+    adapter doubles as the sources repository, as it does on the real
+    context, so export carries ``sources.jsonl`` like a UI export.
     """
 
     def __init__(self, adapter: SqliteAdapter, database_name: str) -> None:
         self.database_name = database_name
         self._adapter = adapter
+        self.storage_adapter = adapter
         assert adapter.session is not None
         self.graph_repository = GraphRepository(adapter.session, database_name)
         settings = build_engine_settings(get_settings())

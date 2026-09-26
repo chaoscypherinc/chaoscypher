@@ -17,6 +17,7 @@ The flags are pure overrides of values in the config:
   --out DIR            - override output directory
   --estimate           - print LLM-call estimate and exit without running
   --rebuild-graphs     - clear the benchmark graph cache before running
+  --model-timeout S    - wall-clock cap per (model, dataset) run; over it = failed row
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from chaoscypher_cli.benchmark.runner import run_benchmark
 if TYPE_CHECKING:
     from chaoscypher_cli.benchmark.config import BenchmarkConfig
     from chaoscypher_cli.benchmark.discovery import DatasetBundle
+    from chaoscypher_cli.benchmark.results import BenchmarkResult
 
 
 @click.command()
@@ -94,6 +96,20 @@ if TYPE_CHECKING:
     is_flag=True,
     help="Clear the benchmark graph cache before running.",
 )
+@click.option(
+    "--reuse-graph",
+    is_flag=True,
+    help="Skip re-extracting a reference graph the workspace cache already holds.",
+)
+@click.option(
+    "--model-timeout",
+    type=float,
+    default=None,
+    help=(
+        "Wall-clock cap in seconds for one (model, dataset) run. A run over it is "
+        "recorded as a failed row and the sweep continues."
+    ),
+)
 def run(
     name: str | None,
     dataset_id: str | None,
@@ -104,6 +120,8 @@ def run(
     out: Path | None,
     estimate: bool,
     rebuild_graphs: bool,
+    reuse_graph: bool,
+    model_timeout: float | None,
 ) -> None:
     """Run a named benchmark config (default: extraction)."""
     console = Console()
@@ -121,6 +139,12 @@ def run(
     # Apply CLI flag overrides on top of config values.
     effective_seed = seed if seed is not None else cfg.seed
     effective_temp = temperature if temperature is not None else cfg.temperature
+
+    # Default output location: <data_dir>/benchmark/results/. Resolved before the
+    # run so rows can be persisted as they land (a hung model used to take the
+    # whole in-memory sweep with it).
+    out_dir = out if out is not None else (user_benchmark_root() / "results")
+    out_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve dataset bundles by id (built-in + user overlay, user wins).
     try:
@@ -193,12 +217,6 @@ def run(
                 chats=filter_models(cfg.chats or [], local_only=True) or None,
                 judge=filtered_judge,
             )
-            if filtered_cfg.chats and filtered_cfg.judge is None:
-                console.print(
-                    "[red]--local-only stripped the (commercial) judge; configure a local "
-                    "judge or drop the chats role list.[/red]"
-                )
-                raise click.Abort
         else:
             filtered_cfg = cfg
 
@@ -207,7 +225,24 @@ def run(
         # the raw config values here silently ignored both flags.
         filtered_cfg = replace(filtered_cfg, seed=effective_seed, temperature=effective_temp)
 
-        rows = asyncio.run(run_full_benchmark(filtered_cfg, bundles, wiring=wiring))
+        landed_full: list[BenchmarkResult] = []
+        partial_full = out_dir / "partial.json"
+
+        def _persist_full(row: BenchmarkResult) -> None:
+            landed_full.append(row)
+            dump_results(landed_full, partial_full)
+
+        rows = asyncio.run(
+            run_full_benchmark(
+                filtered_cfg,
+                bundles,
+                wiring=wiring,
+                model_timeout=model_timeout,
+                on_row=_persist_full,
+                reuse_cached_graph=reuse_graph,
+            )
+        )
+        partial_full.unlink(missing_ok=True)
     else:
         # Extractors-only path: existing run_benchmark + per-bundle ExtractionDataset.
         models = filter_models(cfg.extractors or [], local_only=local_only)
@@ -230,6 +265,13 @@ def run(
             f"= {len(models) * len(datasets)} runs"
         )
 
+        landed: list[BenchmarkResult] = []
+        partial_path = out_dir / "partial.json"
+
+        def _persist(row: BenchmarkResult) -> None:
+            landed.append(row)
+            dump_results(landed, partial_path)
+
         rows = asyncio.run(
             run_benchmark(
                 models=models,
@@ -237,12 +279,11 @@ def run(
                 config_name=config_name,
                 seed=effective_seed,
                 temperature=effective_temp,
+                model_timeout=model_timeout,
+                on_row=_persist,
             )
         )
-
-    # Default output location: <data_dir>/benchmark/results/.
-    out_dir = out if out is not None else (user_benchmark_root() / "results")
-    out_dir.mkdir(parents=True, exist_ok=True)
+        partial_path.unlink(missing_ok=True)
 
     timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H%MZ")
     json_path = out_dir / f"{timestamp}.json"

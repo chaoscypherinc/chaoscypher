@@ -23,8 +23,8 @@ Document loaders parse different file formats into text for indexing and extract
 | **PPTX** | `.pptx` | python-pptx | One document per slide with shape text concatenated |
 | **EPUB** | `.epub` | (none — hand-rolled) | Reads the EPUB ZIP container directly and parses each XHTML chapter; no AGPL dependency |
 | **Image** | `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.tiff`, `.tif`, `.bmp` | Pillow | Extracts dimensions/format; vision LLM handles description |
-| **Audio** | `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.wma`, `.aac` | faster-whisper, ffmpeg | Transcription via Whisper (CPU, no GPU required) |
-| **Video** | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.wmv`, `.flv` | faster-whisper, ffmpeg | Extracts audio track, then transcribes |
+| **Audio** | `.mp3`, `.wav`, `.m4a`, `.flac`, `.ogg`, `.wma`, `.aac` | faster-whisper, ffmpeg | Transcription via Whisper (CPU, no GPU required); every chunk records the seconds of the recording it came from (`start_time` / `end_time`), so citations point at a moment, not just a file |
+| **Video** | `.mp4`, `.mkv`, `.avi`, `.mov`, `.webm`, `.wmv`, `.flv` | faster-whisper, ffmpeg | Extracts audio track, then transcribes; chunks carry `start_time` / `end_time` like audio |
 | **Archive** | `.zip`, `.tar.gz`, `.tgz` | Built-in | Auto-detects format and dispatches to handler |
 
 :::info[Encoding detection]

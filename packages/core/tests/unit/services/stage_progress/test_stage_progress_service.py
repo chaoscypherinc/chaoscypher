@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from datetime import datetime
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -147,17 +148,22 @@ async def test_tick_subsequent_observations_apply_ema() -> None:
 async def test_tick_without_explicit_duration_uses_monotonic() -> None:
     """When duration_ms is omitted, the helper measures from monotonic clock."""
     storage = _fake_storage()
-    async with StageProgress(
-        storage=storage,
-        parent_id="src-1",
-        stage=StageName.VISION,
-        total=10,
-    ) as progress:
-        await progress.tick()
+    # Drive the helper's clock so the elapsed span is a fixed 250 ms. Reading
+    # the real clock would make the gap sub-millisecond, which collapses to
+    # avg_ms=None — indistinguishable from the monotonic path not existing.
+    ticks = iter([100.0, 100.25])
+    fake_time = SimpleNamespace(monotonic=lambda: next(ticks))
+    with patch("chaoscypher_core.services.stage_progress.service.time", fake_time):
+        async with StageProgress(
+            storage=storage,
+            parent_id="src-1",
+            stage=StageName.VISION,
+            total=10,
+        ) as progress:
+            await progress.tick()
     assert storage.tick_stage.call_args.kwargs["processed"] == 1
-    # Sub-millisecond tick → duration_ms is 0 → EMA update is skipped per the
-    # > 0 guard, so avg_ms stays None.
-    assert storage.tick_stage.call_args.kwargs["avg_ms"] is None
+    # 250 ms measured since stage start, and it IS the first EMA observation.
+    assert storage.tick_stage.call_args.kwargs["avg_ms"] == 250
 
 
 @pytest.mark.asyncio

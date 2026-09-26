@@ -4,9 +4,11 @@
 """Dataset discovery: built-in + user overlay.
 
 Two-layer model:
-  - Built-in datasets ship with the package under
-    ``chaoscypher_cli/benchmark/data/datasets/`` and are accessible via
-    ``importlib.resources``.
+  - Built-in datasets ship with the packages and are accessible via
+    ``importlib.resources``: corpus packs under
+    ``chaoscypher_cli/benchmark/data/datasets/``, the probe pack under
+    ``chaoscypher_core/benchmark/data/`` (Core owns the probe fixtures so
+    other Core consumers can serve and score them without the CLI).
   - User datasets live under ``<chaoscypher_data_dir>/benchmark/datasets/``
     and are discovered if the directory exists.
 
@@ -47,6 +49,11 @@ def builtin_dataset_root() -> Path:
     return Path(str(resources.files("chaoscypher_cli.benchmark").joinpath("data", "datasets")))
 
 
+def core_dataset_root() -> Path:
+    """Path to the Core-bundled dataset packs (the ``probes`` pack)."""
+    return Path(str(resources.files("chaoscypher_core.benchmark").joinpath("data")))
+
+
 def user_dataset_root() -> Path:
     """Path to the user overlay datasets directory under the data dir."""
     return user_benchmark_root() / "datasets"
@@ -80,19 +87,25 @@ def discover_datasets(
 
     Args:
         builtin_root: Override the built-in root (test injection only).
-            Defaults to the package's bundled data directory.
+            Defaults to the package's bundled data directory plus the
+            Core-bundled packs; when given, only this root is scanned.
         user_root: Override the user root (test injection only). Defaults
             to ``<data_dir>/benchmark/datasets/``.
 
     Returns:
         Merged list of datasets, sorted by id.
     """
-    builtin = builtin_root if builtin_root is not None else builtin_dataset_root()
+    builtin_roots = (
+        [builtin_root]
+        if builtin_root is not None
+        else [core_dataset_root(), builtin_dataset_root()]
+    )
     user = user_root if user_root is not None else user_dataset_root()
 
     by_id: dict[str, BenchmarkDataset] = {}
-    for ds in _discover_in_root(builtin, source="builtin"):
-        by_id[ds.id] = ds
+    for root in builtin_roots:
+        for ds in _discover_in_root(root, source="builtin"):
+            by_id[ds.id] = ds
     for ds in _discover_in_root(user, source="user"):
         by_id[ds.id] = ds  # user wins on collision
     return sorted(by_id.values(), key=lambda d: d.id)
@@ -143,7 +156,22 @@ def _load_dataset(manifest: Path, *, source: DatasetSource) -> BenchmarkDataset:
             domain=str(data["domain"]),
             source=source,
         )
-    msg = f"{manifest}: unknown dataset kind '{kind}' (v1 supports 'extraction')"
+    if kind == "probes":
+        from chaoscypher_cli.benchmark.probe_dataset import ProbeDataset, load_probe_sections
+
+        sections = data.get("sections") or []
+        if not isinstance(sections, list) or not sections:
+            msg = f"{manifest}: probes dataset needs a non-empty 'sections' list"
+            raise ValueError(msg)
+        return ProbeDataset(
+            id=str(data["id"]),
+            version=str(data["version"]),
+            domain=str(data.get("domain", "literary")),
+            probes=load_probe_sections(pack_dir, [str(s) for s in sections]),
+            source=source,
+            pack_dir=pack_dir,
+        )
+    msg = f"{manifest}: unknown dataset kind '{kind}' (supports 'extraction', 'probes')"
     raise ValueError(msg)
 
 
@@ -167,6 +195,7 @@ class DatasetBundle:
         queries: Loaded labeled queries if manifest set queries_path,
             else None. Presence of this is what unlocks embedding +
             chat benches for the dataset.
+        queries_path: The queries file those were loaded from, or None.
     """
 
     id: str
@@ -176,6 +205,7 @@ class DatasetBundle:
     source: DatasetSource
     extraction_dataset: ExtractionDataset
     queries: LabeledQuerySet | None
+    queries_path: Path | None = None
 
 
 def load_dataset_bundle(
@@ -241,6 +271,7 @@ def _build_bundle(manifest: Path, *, source: DatasetSource) -> DatasetBundle:
     )
 
     queries: LabeledQuerySet | None = None
+    queries_abs: Path | None = None
     if "queries_path" in data:
         queries_abs = (pack_dir / str(data["queries_path"])).resolve()
         if not queries_abs.exists():
@@ -256,12 +287,14 @@ def _build_bundle(manifest: Path, *, source: DatasetSource) -> DatasetBundle:
         source=source,
         extraction_dataset=extraction_ds,
         queries=queries,
+        queries_path=queries_abs,
     )
 
 
 __all__ = [
     "DatasetBundle",
     "builtin_dataset_root",
+    "core_dataset_root",
     "discover_datasets",
     "load_dataset_bundle",
     "user_benchmark_root",

@@ -55,6 +55,33 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     Configure in Claude Desktop:
         {"mcpServers": {"chaoscypher": {"command": "chaoscypher", "args": ["mcp"]}}}
     """
+    serve_stdio(database=database, mode=mode, server_extraction=server_extraction)
+
+
+def serve_stdio(
+    database: str | None = None,
+    mode: str | None = None,
+    server_extraction: bool = False,
+    *,
+    explicit_database: bool = False,
+) -> None:
+    """Serve the knowledge graph over MCP stdio until the client disconnects.
+
+    The body of ``chaoscypher mcp``, factored out so ``chaoscypher mount``
+    can import a package and then hand the same database to the same
+    server without re-implementing the migration gate or the
+    maintenance-mode routing. Blocks for the lifetime of the MCP session.
+
+    Args:
+        database: Database name (``None`` resolves from settings / env).
+        mode: ``"read"`` / ``"write"`` tool-access override, or ``None`` to
+            use the configured ``mcp.mode``.
+        server_extraction: Use the server's own LLM for extraction instead
+            of the default client-driven flow.
+        explicit_database: Treat ``database`` as the exact database to serve,
+            including the literal ``"default"`` (which the flag-resolution
+            chain would otherwise read as "unset"). ``mount`` passes this.
+    """
     # MCP stdio transport uses stdout for JSON-RPC protocol messages.
     # All logging MUST go to stderr to avoid corrupting the protocol stream.
     from chaoscypher_core.utils.logging import configure_logging
@@ -76,7 +103,7 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     from chaoscypher_core.database.migrations.startup import run_startup_migrations
     from chaoscypher_core.database.migrations.state import get_upgrade_state
 
-    db_name = get_database_name(database)
+    db_name = database if (explicit_database and database) else get_database_name(database)
     db_path = get_db_path(db_name)
     try:
         run_startup_migrations(db_path)
@@ -97,7 +124,7 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     from mcp.server.stdio import stdio_server
 
     if state.ready:
-        ctx = get_context(database_name=database)
+        ctx = get_context(database_name=db_name, explicit_database=explicit_database)
 
         if mode:
             # click.Choice(["read", "write"]) above guarantees the value

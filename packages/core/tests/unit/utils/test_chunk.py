@@ -27,6 +27,8 @@ from chaoscypher_core.utils.chunk import (
     LocationBoundary,
     LocationIndex,
     _lookup_location,
+    _lookup_time_range,
+    build_transcript_location_index,
     merge_location_indexes,
 )
 
@@ -633,3 +635,70 @@ def test_build_pdf_location_index_handles_vision_augmented_page_texts() -> None:
     page_at_p2_start, _ = _lookup_location(index, p1_end + 2)
     assert page_at_p1_end_minus_1 == 1
     assert page_at_p2_start == 2
+
+
+# ---------------------------------------------------------------------------
+# Media time ranges (transcribed audio / video) — 2026-09-21
+# ---------------------------------------------------------------------------
+
+
+def _transcript_index() -> LocationIndex:
+    # "Welcome to the show." (0-20) + " " + "Today we talk about queues." (21-48)
+    return build_transcript_location_index(
+        [("Welcome to the show.", 0.0, 2.5), ("Today we talk about queues.", 2.5, 6.0)]
+    )
+
+
+def test_lookup_time_range_spans_first_and_last_segment() -> None:
+    index = _transcript_index()
+    assert _lookup_time_range(index, 0, 20) == (0.0, 2.5)
+    assert _lookup_time_range(index, 21, 48) == (2.5, 6.0)
+    # A chunk straddling both segments reports the whole span.
+    assert _lookup_time_range(index, 8, 30) == (0.0, 6.0)
+
+
+def test_lookup_time_range_is_none_for_paginated_indexes_and_gaps() -> None:
+    pages: LocationIndex = [_make_page_boundary(0, 100, 1)]
+    assert _lookup_time_range(pages, 0, 50) == (None, None)
+    assert _lookup_time_range(None, 0, 5) == (None, None)
+    assert _lookup_time_range(_transcript_index(), 500, 600) == (None, None)
+
+
+def test_merge_location_indexes_keeps_media_times() -> None:
+    merged = merge_location_indexes(
+        [("Welcome to the show.", _transcript_index()[:1]), ("x", None)]
+    )
+    assert merged[0]["start_time"] == 0.0
+    assert merged[0]["end_time"] == 2.5
+    assert merged[0]["page_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_chunks_assigns_media_times_from_transcript_index() -> None:
+    service = _build_service()
+    text = "Welcome to the show. Today we talk about queues."
+    result = await service.create_chunks(
+        full_text=text,
+        source_id="src_media",
+        analysis_depth="full",
+        store=False,
+        location_index=_transcript_index(),
+    )
+    assert result.small_chunks, "expected at least one chunk"
+    first = result.small_chunks[0]
+    assert first["start_time"] == 0.0
+    assert first["end_time"] == 6.0
+    assert first["page_number"] is None
+
+
+@pytest.mark.asyncio
+async def test_create_chunks_leaves_media_times_unset_without_index() -> None:
+    service = _build_service()
+    result = await service.create_chunks(
+        full_text="Plain text with no recording behind it.",
+        source_id="src_text",
+        analysis_depth="full",
+        store=False,
+    )
+    assert result.small_chunks[0]["start_time"] is None
+    assert result.small_chunks[0]["end_time"] is None

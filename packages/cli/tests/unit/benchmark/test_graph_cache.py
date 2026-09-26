@@ -75,3 +75,21 @@ def test_clear_removes_root(tmp_path):
     (cache._root / "marker").write_text("x")
     cache.clear()
     assert not (cache._root / "marker").exists()
+
+
+def test_has_reports_whether_slot_holds_a_snapshot(tmp_path):
+    cache = GraphCache(root=tmp_path / "cache")
+    ext = ModelConfig(provider="ollama", model="m", label="M")
+    other = ModelConfig(provider="ollama", model="n", label="N")
+    assert not cache.has(corpus_id="c", corpus_version="1", extractor=ext)
+
+    key = cache.key_for(corpus_id="c", corpus_version="1", extractor=ext)
+    assert key == cache_key(corpus_id="c", corpus_version="1", extractor=ext)
+    # An empty slot directory is not a snapshot.
+    (tmp_path / "cache" / key).mkdir(parents=True)
+    assert not cache.has(corpus_id="c", corpus_version="1", extractor=ext)
+
+    (tmp_path / "cache" / key / "app.db").write_bytes(b"x")
+    assert cache.has(corpus_id="c", corpus_version="1", extractor=ext)
+    assert not cache.has(corpus_id="c", corpus_version="2", extractor=ext)
+    assert not cache.has(corpus_id="c", corpus_version="1", extractor=other)

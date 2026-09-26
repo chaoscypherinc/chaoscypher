@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from chaoscypher_cli.benchmark.leaderboard import (
@@ -28,6 +29,8 @@ def _row(
     dataset_source: str = "builtin",
     config_name: str | None = "extraction",
     scorer_version: int = 7,
+    chunks_truncated: int = 0,
+    chunks_aborted_by_loop: int = 0,
 ) -> BenchmarkResult:
     return BenchmarkResult(
         model_id=model_id,
@@ -51,6 +54,10 @@ def _row(
         scorer_version=scorer_version,
         seed=42,
         temperature=0.0,
+        thinking=False,
+        thinking_honoured=True,
+        chunks_truncated=chunks_truncated,
+        chunks_aborted_by_loop=chunks_aborted_by_loop,
     )
 
 
@@ -225,6 +232,10 @@ def _result_row(
         scorer_version=1,
         seed=42,
         temperature=0.0,
+        thinking=False,
+        thinking_honoured=True,
+        chunks_truncated=0,
+        chunks_aborted_by_loop=0,
     )
 
 
@@ -379,3 +390,180 @@ def test_header_pins_custom_weights():
     assert "weights extraction=0.50" in md
     assert "speed=0.05" in md
     assert "cost=0.05" in md
+
+
+def test_render_leaderboard_warns_on_truncated_extraction() -> None:
+    """A truncated run must be flagged, not silently ranked.
+
+    Measured 2026-09-22: gemma4:31b scored 72.09 with two of six chunks cut off
+    at the token budget, against 67.02 for the complete run. Truncation can
+    raise a score, so a table that ranks a truncated row beside clean ones
+    without saying so is actively misleading.
+    """
+    rows = [
+        _row(
+            model_id="ollama/clean",
+            model_label="Clean Model",
+            dataset_id="d1",
+            headline_score=67.0,
+        ),
+        _row(
+            model_id="ollama/cut",
+            model_label="Cut Off Model",
+            dataset_id="d1",
+            headline_score=72.1,
+            chunks_truncated=2,
+        ),
+    ]
+
+    out = render_leaderboard(rows)
+
+    assert "WARNING truncated extraction" in out
+    assert "Cut Off Model" in out.split("WARNING truncated extraction")[1].split("\n")[0]
+    # The clean model must not be named in the truncation warning.
+    assert "Clean Model" not in out.split("WARNING truncated extraction")[1].split("\n")[0]
+
+
+def test_render_leaderboard_no_integrity_warning_when_all_complete() -> None:
+    """No warning noise when every row ran to completion."""
+    rows = [
+        _row(
+            model_id="ollama/a",
+            model_label="Model A",
+            dataset_id="d1",
+            headline_score=70.0,
+        )
+    ]
+
+    out = render_leaderboard(rows)
+
+    assert "WARNING truncated extraction" not in out
+    assert "aborted by loop detector" not in out
+
+
+def test_render_probes_section_shows_pass_rate_and_tier_columns() -> None:
+    """A probes row renders its own section with per-section/tier pass rates."""
+    row = _row(
+        model_id="ollama/m",
+        model_label="Model M",
+        dataset_id="probes",
+        headline_score=62.5,
+    )
+    row = replace(
+        row,
+        dataset_kind="probes",
+        metrics={
+            "probes_total": 8,
+            "probes_passed": 5,
+            "section_rates": {"E": {"easy": 100.0, "hard": 25.0}},
+        },
+    )
+
+    out = render_leaderboard([row])
+
+    assert "## Instruction Probes" in out
+    assert "62.5%" in out and "5/8" in out
+    assert "E easy" in out and "E hard" in out
+    assert "| 100% | 25% |" in out
+
+
+def test_render_marks_harness_track_rows_and_keeps_them_out_of_the_pin_line() -> None:
+    """An MCP-client row is labelled unpinned and the header says which rows are."""
+    metrics = {"probes_total": 2, "probes_passed": 1, "section_rates": {"A": {"easy": 50.0}}}
+    local = replace(
+        _row(model_id="ollama/m", model_label="Model M", dataset_id="probes", headline_score=50.0),
+        dataset_kind="probes",
+        metrics=metrics,
+    )
+    mcp = replace(
+        local,
+        model_id="mcp/claude-code/claude-x",
+        model_label="claude-x via claude-code (MCP)",
+        temperature=None,
+        thinking=None,
+        thinking_honoured=None,
+        pins_applied=False,
+        harness="mcp:claude-code",
+    )
+
+    out = render_leaderboard([local, mcp])
+
+    assert "| claude-x via claude-code (MCP) [via MCP client, pins not applied] |" in out
+    assert "| Model M |" in out
+    assert "temp=0.0" in out and "thinking=off" in out  # from the pinned row only
+    assert "pins not applied): claude-x via claude-code (MCP)" in out
+
+    only_mcp = render_leaderboard([mcp])
+    assert "pins not applied . " in only_mcp and "temp=" not in only_mcp
+
+
+def test_harness_row_note_lists_the_client_settings_effort_and_thinking_first() -> None:
+    """The client's reported settings sit in the mark: effort, thinking, then A-Z."""
+    metrics = {"probes_total": 2, "probes_passed": 1, "section_rates": {"A": {"easy": 50.0}}}
+    mcp = replace(
+        _row(
+            model_id="mcp/c/x",
+            model_label="x via c (MCP)",
+            dataset_id="probes",
+            headline_score=50.0,
+        ),
+        dataset_kind="probes",
+        metrics=metrics,
+        temperature=None,
+        thinking=None,
+        pins_applied=False,
+        harness="mcp:c",
+        harness_settings={
+            "client_version": "2.3.1",
+            "thinking": "adaptive",
+            "budget": 8000,
+            "effort": "high",
+        },
+    )
+
+    out = render_leaderboard([mcp])
+
+    assert (
+        "| x via c (MCP) [via MCP client, effort high, thinking adaptive, budget 8000, "
+        "client_version 2.3.1, pins not applied] |"
+    ) in out
+
+
+def test_failed_probe_scored_chat_row_lands_in_the_chat_probes_section() -> None:
+    """A failed judge-less chat run is listed under Grounded Chat Probes, not the judged table.
+
+    Its metrics are empty, so classifying by ``verdicts`` put it in the judged
+    Chat Leaderboard; provenance (``extras["judge_model"]``) decides now.
+    """
+    ok_probe = replace(
+        _result_row(
+            dataset_kind="chat",
+            model_label="Probe OK",
+            headline_score=70.0,
+            metrics={"verdicts": [], "probes_total": 2, "probes_passed": 1},
+        ),
+        extras={"judge_model": None, "per_query": []},
+    )
+    failed_probe = replace(
+        _result_row(dataset_kind="chat", model_label="Probe Failed", success=False),
+        error="TimeoutError: slow",
+        extras={"judge_model": None, "per_query": []},
+    )
+    judged = replace(
+        _result_row(
+            dataset_kind="chat",
+            model_label="Judged",
+            headline_score=80.0,
+            metrics={"faithfulness_avg": 4.0, "judge_model": "claude-judge"},
+        ),
+        extras={"judge_model": "claude-judge", "per_query": []},
+    )
+
+    out = render_leaderboard([ok_probe, failed_probe, judged])
+
+    probes_part = out.split("## Grounded Chat Probes", 1)[1]
+    judged_part = out.split("## Chat Leaderboard", 1)[1].split("## Grounded Chat Probes", 1)[0]
+    assert "Did not complete: Probe Failed (TimeoutError: slow)" in probes_part
+    assert "Probe Failed" not in judged_part
+    assert "Judged" in judged_part
+    assert "Probe OK" in probes_part

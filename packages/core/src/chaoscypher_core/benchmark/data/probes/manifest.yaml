@@ -1,0 +1,18 @@
+id: probes
+kind: probes
+version: "0.1"
+domain: literary
+description: >
+  Instruction-probe suite. Each probe is a hand-written passage constructed so
+  the correct extraction is unambiguous, plus pass/fail checks a reader can
+  verify by reading the passage. Probes call the real extraction prompts and
+  the real line parser, so "pass" means the product could use the output.
+  Each probe exists at up to three difficulty tiers that change only the
+  passage, never the instruction or the checks.
+sections:
+  - A_format.yaml
+  - B_evidence.yaml
+  - C_entities.yaml
+  - D_relationships.yaml
+  - E_robustness.yaml
+  - H_carrier.yaml

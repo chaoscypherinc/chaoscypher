@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.benchmark.snapshot import snapshot_database_name
 from chaoscypher_core.utils.id import generate_id
 
 
@@ -82,8 +83,13 @@ class GraphProvider:
         """
         ws = self.workspace if self.workspace is not None else Path.cwd() / ".bench_workspace"
         ws.mkdir(parents=True, exist_ok=True)
-        copy_dir = ws / f"graph_{generate_id()[:8]}"
-        copy_dir.mkdir()
+        # The engine names the database after its directory, and every row in
+        # the snapshot is scoped by the name of the run that built it - so the
+        # copy must live in a directory of that exact name (2026-09-25: a
+        # random folder name meant every repository query matched nothing).
+        run_dir = ws / f"graph_{generate_id()[:8]}"
+        copy_dir = run_dir / (snapshot_database_name(self.snapshot_path) or "app")
+        copy_dir.mkdir(parents=True)
         copy_path = copy_dir / "app.db"
         shutil.copyfile(self.snapshot_path, copy_path)
 
@@ -99,9 +105,9 @@ class GraphProvider:
             except Exception:
                 logger.warning("graph_provider_disconnect_failed", exc_info=True)
             try:
-                shutil.rmtree(copy_dir)
+                shutil.rmtree(run_dir)
             except Exception:
                 logger.warning("graph_provider_workspace_cleanup_failed", exc_info=True)
 
 
-__all__ = ["GraphProvider", "IndexedGraph"]
+__all__ = ["GraphProvider", "IndexedGraph", "snapshot_database_name"]

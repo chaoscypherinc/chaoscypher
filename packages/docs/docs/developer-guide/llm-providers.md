@@ -176,6 +176,9 @@ settings = EngineSettings(llm={"ollama_chat_model": "llama3:70b"})
 | `ollama_num_ctx` | `32768` |
 | `ollama_extraction_model` | same as `ollama_chat_model` |
 
+Pick the extraction model from the [leaderboard](/leaderboard): it ranks local models
+by measured prompt compliance, with the VRAM each one needs.
+
 The default instance `base_url` honors the `CHAOSCYPHER_OLLAMA_URL` environment variable when set. The Docker images and compose stack set it to `http://host.docker.internal:11434` so containers reach an Ollama running on the host.
 
 To override the URL programmatically, edit the seeded instance directly:

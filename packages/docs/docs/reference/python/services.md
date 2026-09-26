@@ -1397,9 +1397,11 @@ coordinate systems align when `original_text` is provided.
 **Attributes:**
 
 - `end_char`: `int`
+- `end_time`: `NotRequired[float | None]`
 - `page_number`: `int | None`
 - `section`: `str | None`
 - `start_char`: `int`
+- `start_time`: `NotRequired[float | None]`
 
 ### `build_pdf_location_index(page_texts: list[str], separator: str = '\n\n') -> LocationIndex`
 
@@ -1420,6 +1422,20 @@ occupy in the joined content". Used by:
 | Parameter | Type | Description |
 |---|---|---|
 | `page_texts` | `list[str]` |  |
+| `separator` | `str` |  |
+
+### `build_transcript_location_index(segments: list[tuple[str, float, float]], separator: str = ' ') -> LocationIndex`
+
+Build a LocationIndex from transcript segments joined by `separator`.
+
+Each entry maps one segment's char range (in the joined transcript) to
+its media time span. `page_number` / `section` are always `None`.
+Single source of truth for the audio and video loaders, which join the
+segment texts the same way so the ranges line up.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `segments` | `list[tuple[str, float, float]]` |  |
 | `separator` | `str` |  |
 
 ### `merge_location_indexes(docs_with_indexes: list[tuple[str, LocationIndex | None]], separator: str = '\n\n') -> LocationIndex`

@@ -85,6 +85,8 @@ class ChunkReference(BaseModel):
     id: str
     content: str
     page_number: int | None
+    start_time: float | None = None
+    end_time: float | None = None
     section: str | None
     chunk_metadata: dict[str, Any] | None
 

@@ -10,6 +10,7 @@ import type { ChunkCitationSummary } from '../../types';
 import { CardColors, hexToRgba } from '../../theme/cardStyles';
 import { ChatTheme } from '../../theme/chatTheme';
 import { apiClient, API_BASE } from '../../services/api/client';
+import { formatMediaRange } from '../../utils/formatters';
 
 interface ChunkCitationProps {
   citation: ChunkCitationSummary;
@@ -57,6 +58,11 @@ function CitationTooltipContent({ citation, imageUrl }: { citation: ChunkCitatio
           color: "text.secondary"
         }}>
           Page {citation.page_number}
+        </Typography>
+      )}
+      {formatMediaRange(citation.start_time, citation.end_time) && (
+        <Typography variant="caption" sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}>
+          At {formatMediaRange(citation.start_time, citation.end_time)}
         </Typography>
       )}
       {/* Validation status */}

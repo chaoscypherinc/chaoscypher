@@ -1,0 +1,328 @@
+# Section C — Entity discipline
+#
+# Instructions under test (entity harvest prompt):
+#   named entities only; most-complete name form; aliases = proper-name
+#   variants only (never roles/groups/descriptions/null markers);
+#   description 100+ chars and factual; confidence bands 1.0 / 0.7-0.9 /
+#   0.5-0.6; strict types; "5-15 expected"; properties 3-5, no repeated key;
+#   exclusions honoured.
+#
+# Checked axis: what the model chooses to call an entity, and how it fills
+# each field. Harder tiers make the WRONG choice look right: capitalised
+# roles, near-duplicate referents, hedged facts, tempting off-list types.
+
+section: C
+title: Entity discipline
+
+probes:
+  # ---------------------------------------------------------------- C1
+  - id: C1-easy
+    probe: C1
+    tier: easy
+    instruction: "Named entities only — no pronouns, roles, or abstractions"
+    passage: |
+      Natasha Rostova ran into the room. She was laughing. The soldiers in the
+      yard looked up. Her brother Nikolai Rostov followed her in. Their father
+      Count Ilya Rostov called for the servants. Everyone felt a great
+      happiness that evening.
+    checks:
+      - {type: entities_present, names: ["Natasha", "Nikolai", "Ilya Rostov"]}
+      - {type: no_entity_matching, names: ["soldiers", "servants", "happiness", "everyone", "brother", "father"]}
+      - {type: entity_count, max: 5}
+      - {type: finish_stop}
+
+  - id: C1-hard
+    probe: C1
+    tier: hard
+    instruction: "Named entities only — no pronouns, roles, or abstractions"
+    # Capitalised roles used as names throughout ("The Colonel", "Mother",
+    # "the Company"), a place-adjective, and an abstraction with a capital.
+    # Pass = only the three actual people.
+    passage: |
+      The Colonel called Mother into the study. Mother did not sit. The
+      Colonel said the Company would not pay, and that Denisov had signed for
+      it. Mother asked whether Rostov knew. The Colonel said Rostov had been
+      told by Bagration himself. Duty, the Colonel said, was the only thing
+      that mattered now. A French tailor waited outside.
+    checks:
+      - {type: entities_present, names: ["Denisov", "Rostov", "Bagration"]}
+      - {type: no_entity_matching, names: ["Colonel", "Mother", "Company", "Duty", "tailor", "French"]}
+      - {type: entity_count, max: 4}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C2
+  - id: C2-easy
+    probe: C2
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 56% pass
+    instruction: "Most-complete name form; one entity per referent"
+    passage: |
+      Prince Nikolai Bolkonsky lived at Bald Hills. The old prince rose at
+      six. The old prince taught his daughter geometry. Prince Nikolai
+      Bolkonsky distrusted doctors. The old prince died in 1812.
+    checks:
+      - {type: entity_count_matching, names: ["Bolkonsky", "old prince", "Nikolai"], min: 1, max: 1}
+      - {type: entities_present, names: ["Nikolai Bolkonsky"]}
+      # CALIBRATION 2026-09-23: no_entity_matching("old prince") matched the
+      # entity's ALIAS and failed a correct single-entity extraction. Same fix as
+      # C2-hard: alias hygiene is C3's job; C2 tests one entity per referent.
+      - {type: finish_stop}
+
+  - id: C2-hard
+    probe: C2
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 75% pass
+    instruction: "Most-complete name form; one entity per referent"
+    # Two different men share a surname and a title; each is referred to by
+    # role, first name, patronymic and full name. Pass = exactly two
+    # Bolkonsky entities under their full names.
+    passage: |
+      Prince Nikolai Andreevich Bolkonsky, the old prince, received his son
+      Prince Andrei Nikolaevich Bolkonsky at Bald Hills. Nikolai Andreevich
+      was seventy; Andrei Nikolaevich was thirty. The old prince lectured; the
+      young prince listened. Andrei left the next day. Nikolai Andreevich
+      watched from the window. Prince Bolkonsky the elder did not write to
+      Prince Bolkonsky the younger for a year.
+    checks:
+      - {type: entity_count_matching, names: ["Bolkonsky"], min: 2, max: 2}
+      - {type: entities_present, names: ["Nikolai Andreevich Bolkonsky", "Andrei Nikolaevich Bolkonsky"]}
+      # CALIBRATION 2026-09-23: a forbid-list on "old prince"/"elder" matched the
+      # entities' ALIASES and failed a correct two-entity extraction. Alias hygiene
+      # is C3's job; C2 tests one-entity-per-referent under the full name.
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C3
+  - id: C3-easy
+    probe: C3
+    tier: easy
+    instruction: "Aliases are proper-name variants only, never roles or null markers"
+    passage: |
+      Prince Andrei Bolkonsky, known to his family as Andryusha and to the
+      French as Prince Andrew, commanded a regiment. The colonel was
+      respected by his men. Andrei wrote to his sister weekly.
+    checks:
+      - {type: aliases_include, name: "Andrei", aliases: ["Andryusha", "Andrew"]}
+      - {type: aliases_exclude, aliases: ["colonel", "his men", "n/a", "none", "unknown", "brother"]}
+      - {type: finish_stop}
+
+  - id: C3-hard
+    probe: C3
+    tier: hard
+    instruction: "Aliases are proper-name variants only, never roles or null markers"
+    # Many legitimate variants (patronymic, diminutive, title+surname,
+    # French form) mixed with tempting non-aliases: a nickname that is a
+    # role ("the Captain"), a group ("the Bolkonskys"), and an epithet.
+    passage: |
+      Nikolai Ilyich Rostov, called Nikolenka at home and Kolya by his sister,
+      was known in the regiment as the Captain and to his creditors as young
+      Rostov. The French called him Nicolas. The Bolkonskys called him the
+      hussar. Nikolai Rostov paid his debts in 1810.
+    checks:
+      - {type: aliases_include, name: "Rostov", aliases: ["Nikolenka", "Kolya", "Nicolas"]}
+      - {type: aliases_exclude, aliases: ["captain", "hussar", "bolkonskys", "creditors", "young rostov", "n/a", "none"]}
+      - {type: entity_count_matching, names: ["Rostov"], min: 1, max: 1}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C4
+  - id: C4-easy
+    probe: C4
+    tier: hard  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 19% pass
+    instruction: "Description is 100+ characters and factual"
+    passage: |
+      Pierre Bezukhov was the illegitimate son of Count Kirill Bezukhov. He was
+      educated abroad, returned to Russia in 1805, inherited an enormous
+      fortune, married Helene Kuragina, and later joined the Freemasons. He
+      was tall, stout, and wore spectacles.
+    checks:
+      - {type: description_min_length, min: 100, names: ["Pierre"]}   # CALIBRATION 2026-09-24: minor entities have one stated fact; only Pierre supports 100+ chars
+      - {type: property_values_from_text}
+      - {type: finish_stop}
+
+  - id: C4-hard
+    probe: C4
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 50% pass
+    instruction: "Description is 100+ characters and factual"
+    # Sparse passage: three entities with ONE stated fact each. A 100-char
+    # description must be filled from the text alone; the temptation is to
+    # pad with invented or world-knowledge detail. property_values_from_text
+    # and the absence of world facts are the guards.
+    passage: |
+      Platov commanded the Cossacks. Yermolov was chief of staff. Miloradovich
+      held the rearguard. The three did not meet that day.
+    checks:
+      - {type: property_values_from_text}
+      - {type: relationship_type_absent, types: ["born", "died", "defeated", "won"]}
+      - {type: entity_count, min: 3, max: 4}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C5
+  - id: C5-easy
+    probe: C5
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 69% pass
+    instruction: "Confidence bands: 1.0 explicit, 0.7-0.9 implied, 0.5-0.6 uncertain"
+    passage: |
+      Kutuzov was the commander-in-chief. Bennigsen was said to want the
+      command for himself. Someone, possibly Toll, had drawn the map.
+    # CALIBRATION 2026-09-23: the prompt's bands describe confidence that the
+    # ENTITY exists, not confidence in claims about it. Bennigsen is named
+    # outright (1.0 is correct even though the claim is hedged); only "possibly
+    # Toll" makes the entity itself uncertain. Bennigsen check dropped.
+    checks:
+      - {type: confidence_in_band, name: "Kutuzov", min: 0.95, max: 1.0}
+      - {type: confidence_in_band, name: "Toll", min: 0.4, max: 0.75}
+      - {type: finish_stop}
+
+  - id: C5-hard
+    probe: C5
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 69% pass
+    instruction: "Confidence bands: 1.0 explicit, 0.7-0.9 implied, 0.5-0.6 uncertain"
+    # Two sentences disagree about one person; another is hedged twice.
+    # Pass = the contested entity is NOT rated 1.0 and the hedged one sits
+    # in the uncertain band.
+    passage: |
+      Bagration was wounded at Borodino. Some accounts say Bagration was not
+      at Borodino at all. Kutuzov certainly commanded there. A man, perhaps
+      Raevsky, perhaps someone else, held the mound; the records are unclear.
+    # CALIBRATION 2026-09-23: Bagration is named outright - the CLAIM about him
+    # is contested, the entity is not. Only "perhaps Raevsky" is an uncertain
+    # entity. Bagration check dropped.
+    checks:
+      - {type: confidence_in_band, name: "Kutuzov", min: 0.95, max: 1.0}
+      - {type: confidence_in_band, name: "Raevsky", min: 0.4, max: 0.75}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C6
+  - id: C6-easy
+    probe: C6
+    tier: easy
+    instruction: "Strict types: no type outside the provided list"
+    entity_types: ["Character", "Place"]
+    strict_types: true
+    passage: |
+      Prince Andrei Bolkonsky rode from Bald Hills to Moscow. Natasha Rostova
+      met him at the Rostov house. Moscow was quiet that spring.
+    checks:
+      - {type: types_within, types: ["Character", "Place"]}
+      - {type: entity_count, min: 3}
+      - {type: finish_stop}
+
+  - id: C6-hard
+    probe: C6
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 94% pass
+    instruction: "Strict types: no type outside the provided list"
+    # The passage is full of things that scream for an "Event", "Organization"
+    # or "Date" type. With only Character and Place allowed, the model must
+    # either type them as one of those or leave them out — never invent a type.
+    entity_types: ["Character", "Place"]
+    strict_types: true
+    passage: |
+      The Battle of Borodino was fought on the seventh of September 1812. The
+      Russian Army under Kutuzov met the Grande Armée under Napoleon near the
+      village of Borodino. The Semyonovskoye flèches changed hands three times.
+      The Treaty of Tilsit, signed five years earlier, was forgotten.
+    checks:
+      - {type: types_within, types: ["Character", "Place"]}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C7
+  - id: C7-easy
+    probe: C7
+    tier: easy
+    instruction: "Over-extraction guard: extract the named entities, not fragments of them"
+    # Exactly 6 named entities. Pass = 5..8 (tolerance for a place split).
+    passage: |
+      Kutuzov and Bagration met Barclay de Tolly at Tsarevo-Zaimishche. Toll
+      brought the maps. Bennigsen arrived after dark. Nobody else was present.
+    checks:
+      - {type: entity_count, min: 5, max: 8}
+      - {type: entities_present, names: ["Kutuzov", "Bagration", "Barclay", "Tsarevo", "Toll", "Bennigsen"]}
+      - {type: finish_stop}
+
+  - id: C7-hard
+    probe: C7
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 50% pass
+    instruction: "Over-extraction guard: extract the named entities, not fragments of them"
+    # Same 6 people, but each is described by attributes that LOOK like
+    # entities: a regiment number, a decoration, a rank, a horse's name.
+    # Pass = still 5..9; the decorations and ranks are properties, not
+    # entities.
+    passage: |
+      Kutuzov, wearing the Order of St. George, met Bagration of the Second
+      Army and Barclay de Tolly of the First at Tsarevo-Zaimishche. Toll, a
+      colonel of the quartermaster staff, brought maps. Bennigsen, a general
+      of cavalry, arrived after dark on a grey horse called Sultan. Nobody
+      else was present.
+    checks:
+      - {type: entity_count, min: 5, max: 9}
+      - {type: no_entity_matching, names: ["Order of St", "quartermaster", "general of cavalry", "colonel"]}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C8
+  - id: C8-easy
+    probe: C8
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 81% pass
+    instruction: "Properties: 3-5 per major entity, no repeated key, values from text"
+    passage: |
+      Pierre Bezukhov was a count. He was Russian. He was thirty years old. He
+      was a Freemason. He lived in Petersburg.
+    checks:
+      - {type: property_key_unique_per_entity}
+      - {type: property_count_per_entity, max: 6}
+      - {type: property_values_from_text}
+      - {type: finish_stop}
+
+  - id: C8-hard
+    probe: C8
+    tier: hard
+    expected_entities: ["Pierre", "Andrei", "Nikolai"]   # for carrier variants: scope traceability to these
+    instruction: "Properties: 3-5 per major entity, no repeated key, values from text"
+    # Attributes for THREE people interleaved in one paragraph, several
+    # sharing a key ("age", "rank"). A property on the wrong entity shows up
+    # as a value not in the text for that entity; a repeated key shows up
+    # directly.
+    passage: |
+      Pierre was thirty and a count; Andrei was thirty-one and a colonel;
+      Nikolai was twenty and a cornet. Pierre was Russian, Andrei was Russian,
+      and Nikolai was Russian. Pierre lived in Petersburg, Andrei at Bald
+      Hills, Nikolai in the regiment. Pierre was a Freemason; Andrei was not;
+      Nikolai had never heard of them.
+    checks:
+      - {type: property_key_unique_per_entity}
+      - {type: property_count_per_entity, max: 6}
+      - {type: property_values_from_text}
+      - {type: entity_count, min: 3, max: 7}   # CALIBRATION 2026-09-24: Petersburg, Bald Hills and the Freemasons are legitimately named too
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- C9
+  - id: C9-easy
+    probe: C9
+    tier: easy
+    instruction: "Entity exclusions are honoured"
+    entity_exclusions:
+      - description: "Do not extract military ranks or units as entities"
+        examples: ["Second Army", "First Army"]
+    passage: |
+      Bagration commanded the Second Army. Barclay de Tolly commanded the
+      First Army. Kutuzov commanded both.
+    checks:
+      - {type: no_entity_matching, names: ["Second Army", "First Army"]}
+      - {type: entities_present, names: ["Bagration", "Barclay", "Kutuzov"]}
+      - {type: finish_stop}
+
+  - id: C9-hard
+    probe: C9
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 88% pass
+    instruction: "Entity exclusions are honoured"
+    # The excluded entity is the most-mentioned thing in the passage and has
+    # relationships hanging off it; the model must leave it out AND not
+    # reintroduce it under an alias.
+    entity_exclusions:
+      - description: "Do not extract the regiment as an entity"
+        examples: ["Pavlograd Hussars", "Pavlograd regiment", "the Pavlograds"]
+    passage: |
+      The Pavlograd Hussars marched at dawn. Denisov commanded the Pavlograd
+      regiment's second squadron. Rostov joined the Pavlograds in 1805. The
+      Pavlograd Hussars fought at Schöngrabern under Bagration. Everyone in the
+      Pavlograds knew Rostov's horse.
+    checks:
+      - {type: no_entity_matching, names: ["Pavlograd"]}
+      - {type: entities_present, names: ["Denisov", "Rostov", "Bagration"]}
+      - {type: finish_stop}

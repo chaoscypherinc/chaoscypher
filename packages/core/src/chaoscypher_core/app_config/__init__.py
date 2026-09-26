@@ -1263,31 +1263,6 @@ class BenchmarkSettings(BaseModel):
         description="Max nodes loaded per batch when reindexing embeddings during benchmark runs.",
     )
 
-    vram_presets: dict[str, dict[str, str]] = Field(
-        default_factory=lambda: {
-            "low_8gb": {
-                "chat": "phi4:14b",
-                "extraction": "phi4:14b",
-                "embedding": "qwen3-embedding:0.6b",
-            },
-            "mid_24gb": {
-                "chat": "qwen3:30b",
-                "extraction": "qwen3:30b-instruct",
-                "embedding": "qwen3-embedding:0.6b",
-            },
-            "high_80gb": {
-                "chat": "gpt-oss:120b",
-                "extraction": "gpt-oss:120b",
-                "embedding": "qwen3-embedding:0.6b",
-            },
-        },
-        description=(
-            "VRAM-tier presets used by the setup wizard. Each tier maps to a "
-            "dict of model role → model name. Operators can override or add tiers "
-            "via settings.yaml."
-        ),
-    )
-
 
 # Settings keys removed from the schema; old settings.yaml files may still
 # carry them. Scrubbed (with a warning) instead of failing the sections'
@@ -1624,7 +1599,7 @@ class Settings(BaseSettings):
         # UPPERCASE while YAML sections keep their written case. Field names
         # on the settings models are all lowercase, so normalise the section's
         # top-level keys — deeper levels (user-defined dict keys like
-        # benchmark.vram_presets tiers) are left untouched.
+        # user-defined dict keys) are left untouched.
         def get_section(key: str) -> dict[str, Any]:
             section = get_ci(key, {})
             if not isinstance(section, dict):

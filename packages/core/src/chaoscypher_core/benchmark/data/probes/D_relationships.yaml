@@ -1,0 +1,215 @@
+# Section D — Relationship discipline
+#
+# Instructions under test (relationship harvest prompt):
+#   indices valid and no self-relationships; only entities in the provided
+#   list; specific types over generic; justification one sentence, 50-300
+#   chars, evidence only; every entity >=1 relationship when supported;
+#   no invented relationships.
+#
+# Checked axis: which pairs get linked, with what type, and how they are
+# justified. Harder tiers make a wrong link look right: an entity missing
+# from the list but prominent in the text, near-duplicate names in the
+# list, a strongly implied but unstated link, generic types that "cover"
+# a specific one.
+
+section: D
+title: Relationship discipline
+
+probes:
+  # ---------------------------------------------------------------- D1
+  - id: D1-easy
+    probe: D1
+    tier: easy
+    instruction: "Valid indices; no self-relationships"
+    passage: |
+      Kutuzov commanded Bagration. Bagration commanded Denisov. Denisov
+      commanded Rostov. Rostov reported to Denisov every evening.
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_self_relationships}
+      - {type: relationship_count, min: 2}
+      - {type: finish_stop}
+
+  - id: D1-hard
+    probe: D1
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 94% pass
+    instruction: "Valid indices; no self-relationships"
+    # A person described in terms of himself ("Rostov was his own worst
+    # enemy", "Denisov answered only to Denisov") invites a self-link; twelve
+    # entities make the index space large enough to slip.
+    passage: |
+      Kutuzov commanded Bagration, Barclay, Dokhturov and Raevsky. Bagration
+      commanded Denisov, Tushin and Konovnitsyn. Denisov commanded Rostov and
+      Lavrushka. Rostov was his own worst enemy, and Denisov answered only to
+      Denisov. Tushin's battery covered Raevsky's mound. Uvarov and Platov rode
+      into the French rear on Kutuzov's order.
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_self_relationships}
+      - {type: relationship_count, min: 6}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- D2
+  - id: D2-easy
+    probe: D2
+    tier: easy
+    instruction: "Only entities in the provided list — never reference one that is missing"
+    # entity_exclusions removes Kutuzov from pass 1, so the pass-2 list has
+    # no Kutuzov while the text is full of him. Pass = no out-of-bounds R and
+    # no Kutuzov entity smuggled back in.
+    entity_exclusions:
+      - description: "Kutuzov is deliberately excluded for this probe"
+        examples: ["Kutuzov"]
+    passage: |
+      Kutuzov commanded Bagration. Kutuzov commanded Barclay. Bagration and
+      Barclay disliked each other. Kutuzov knew it. Bagration wrote to Barclay
+      once.
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_entity_matching, names: ["Kutuzov"]}
+      - {type: finish_stop}
+
+  - id: D2-hard
+    probe: D2
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 75% pass
+    instruction: "Only entities in the provided list — never reference one that is missing"
+    # The excluded entity is the hub of every relationship in the text.
+    # Everything the model wants to say involves him.
+    entity_exclusions:
+      - description: "Napoleon is deliberately excluded for this probe"
+        examples: ["Napoleon", "Bonaparte", "the Emperor"]
+    passage: |
+      Napoleon ordered Davout forward. Napoleon sent Murat's cavalry to screen
+      Davout. Ney waited for Napoleon's signal. Napoleon held back the Guard
+      against Berthier's advice. Eugène reported to Napoleon at noon. Poniatowski
+      asked Napoleon for reinforcements and was refused.
+    checks:
+      - {type: no_invalid_relationship_indices}
+      - {type: no_entity_matching, names: ["Napoleon", "Bonaparte", "Emperor"]}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- D3
+  - id: D3-easy
+    probe: D3
+    tier: easy
+    instruction: "Prefer specific relationship types over generic ones"
+    passage: |
+      Pierre Bezukhov married Helene Kuragina in 1805. Helene's father, Prince
+      Vasili Kuragin, arranged the match. Pierre's friend Andrei Bolkonsky
+      advised against it.
+    checks:
+      - {type: relationship_type_present, types: ["spouse", "married", "husband", "wife"]}
+      - {type: relationship_type_absent, types: ["related_to", "associated", "connected", "knows"]}
+      - {type: finish_stop}
+
+  - id: D3-hard
+    probe: D3
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 88% pass
+    instruction: "Prefer specific relationship types over generic ones"
+    # Every relationship here has an obvious specific type, but the passage
+    # is written in a vague register ("had dealings with", "was connected to")
+    # that hands the model the generic word. Pass = specific types anyway.
+    passage: |
+      Pierre was connected to Helene by marriage. Vasili had dealings with
+      Pierre concerning the fortune. Andrei was associated with Pierre through
+      long friendship. Helene was related to Anatole, being his sister.
+    checks:
+      - {type: relationship_type_present, types: ["spouse", "married", "sibling", "brother", "sister", "friend"]}
+      - {type: relationship_type_absent, types: ["related_to", "associated_with", "connected_to", "dealings", "has_dealings"]}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- D4
+  - id: D4-easy
+    probe: D4
+    tier: easy
+    instruction: "Justification: one sentence, 50-300 chars, evidence only"
+    passage: |
+      Nikolai Rostov served under Denisov in the Pavlograd hussars. Denisov
+      proposed to Natasha Rostova and was refused. Rostov lost forty-three
+      thousand roubles to Dolokhov at cards.
+    checks:
+      - {type: justification_length, min: 30, max: 300}   # CALIBRATION 2026-09-23: 47-char justifications failed a literal 50; the instruction's spirit is 'not a fragment'
+      - {type: justification_evidence_only}
+      - {type: relationship_count, min: 2}
+      - {type: finish_stop}
+
+  - id: D4-hard
+    probe: D4
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 81% pass
+    instruction: "Justification: one sentence, 50-300 chars, evidence only"
+    # Ambiguous evidence tempts the model to deliberate in the justification
+    # ("this could mean...", "alternatively..."). Pass = it cites, it does
+    # not reason.
+    passage: |
+      Dolokhov and Rostov were seen together at the club; whether as friends
+      or as creditor and debtor, the servants could not say. Denisov spoke of
+      Rostov as a son, though some said as a rival. Natasha received Denisov
+      once and then not again.
+    checks:
+      - {type: justification_length, min: 30, max: 300}   # CALIBRATION 2026-09-23: 47-char justifications failed a literal 50; the instruction's spirit is 'not a fragment'
+      - {type: justification_evidence_only}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- D5
+  - id: D5-easy
+    probe: D5
+    tier: easy
+    instruction: "Coverage: every entity has at least one relationship when the text supports it"
+    passage: |
+      Kutuzov commanded Bagration. Bagration commanded Denisov. Denisov
+      commanded Rostov. Rostov owed money to Dolokhov.
+    checks:
+      - {type: every_entity_has_relationship}
+      - {type: relationship_count, min: 3}
+      - {type: finish_stop}
+
+  - id: D5-hard
+    probe: D5
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 75% pass
+    instruction: "Coverage: every entity has at least one relationship when the text supports it"
+    # Each of eight entities has exactly one link, and the links are buried
+    # in clauses rather than stated as "X did Y to Z". Missing any one fails.
+    passage: |
+      Kutuzov, who had appointed Bennigsen chief of staff, listened while Toll,
+      Bennigsen's protégé, argued with Barclay. Barclay's aide Wolzogen took
+      notes. Bagration, whom Barclay had refused to reinforce, sent Denisov to
+      find Rostov, Denisov's best rider.
+    checks:
+      - {type: every_entity_has_relationship}
+      - {type: relationship_count, min: 6}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- D6
+  - id: D6-easy
+    probe: D6
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 62% pass
+    instruction: "No invented relationships — entities that never interact stay unlinked"
+    # CALIBRATION 2026-09-23: the first version named places, and models
+    # correctly emitted person->place links (slept_at Fili). Places removed so
+    # zero relationships is the only correct answer. Second pass: "None of them
+    # knew what the others were doing" co-mentions them and the model emitted a
+    # relation per pair; no sentence may relate them at all.
+    passage: |
+      Kutuzov slept. Napoleon dined. Alexander wrote letters. It was a quiet
+      night and the rain did not stop.
+    checks:
+      - {type: relationship_count, max: 0}
+      - {type: entity_count, min: 3}
+      - {type: finish_stop}
+
+  - id: D6-hard
+    probe: D6
+    tier: hard
+    instruction: "No invented relationships — entities that never interact stay unlinked"
+    # Three people who OBVIOUSLY relate in the real world (a father, his son,
+    # the son's wife), each in a separate scene with no stated interaction.
+    # World knowledge screams "father_of"; the text does not say it.
+    # CALIBRATION 2026-09-23: places removed for the same reason as D6-easy.
+    passage: |
+      Prince Nikolai Bolkonsky read the newspaper. Prince Andrei Bolkonsky
+      inspected a redoubt. Lise Bolkonskaya embroidered. The afternoon was
+      warm and the roads were dry.
+    checks:
+      - {type: relationship_count, max: 0}
+      - {type: entity_count, min: 3}
+      - {type: finish_stop}

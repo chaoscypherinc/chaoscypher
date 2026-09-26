@@ -42,6 +42,24 @@ def test_entity_to_node_maps_type_name_and_properties() -> None:
     assert kwargs["properties"] == {"age": 30, "city": "Berlin"}
     # local_id recovered for one of our own IRIs.
     assert kwargs["local_id"] == "n1"
+    assert kwargs["template_iri"] is None
+
+
+def test_entity_to_node_reads_template_reference_and_keeps_it_out_of_properties() -> None:
+    """``cc:template`` is the node's template IRI — not a property, not an edge."""
+    obj = {
+        "@id": "urn:ccx:chaoscypher:node/n2",
+        "@type": "Package",
+        "name": "Valkey",
+        "cc:template": {"@id": "urn:ccx:chaoscypher:template/t-item"},
+        "version": "8.1",
+    }
+    _iri, kwargs = m.jsonld_entity_to_node(obj)
+
+    assert kwargs["entity_type"] == "Package"
+    assert kwargs["template_iri"] == "urn:ccx:chaoscypher:template/t-item"
+    assert kwargs["properties"] == {"version": "8.1"}
+    assert m.plain_triples_to_edges(obj) == []
 
 
 def test_entity_to_node_drops_reserved_keys_and_object_refs() -> None:

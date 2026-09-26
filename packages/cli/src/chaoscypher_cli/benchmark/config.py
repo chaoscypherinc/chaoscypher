@@ -54,7 +54,8 @@ class BenchmarkConfig:
             by V7 in the extraction leaderboard.
         embedders: Models indexed against each extractor's graph (stage 2).
         chats: Chat models evaluated end-to-end (stage 3).
-        judge: Judge LLM for chat scoring; required iff ``chats`` is set.
+        judge: Judge LLM for chat scoring; optional - without one the chat
+            stage is scored by the pass/fail chat probes.
         config_name: The slug used to load this config.
         source: Where the config was discovered.
         default_embedder: ``<provider>/<model>`` held fixed when attributing
@@ -225,9 +226,8 @@ def _validate_role_lists(
     if (embedders or chats) and not extractors:
         msg = f"{path}: 'extractors' is required when embedders or chats is set"
         raise ValueError(msg)
-    if chats and judge is None:
-        msg = f"{path}: 'judge' is required when 'chats' is non-empty"
-        raise ValueError(msg)
+    # No judge with chats is allowed: the chat stage is then scored by the
+    # pass/fail chat probes (ChatProbeScorer) instead of a judge model.
     allow_via_env = os.environ.get("CHAOSCYPHER_BENCHMARK_ALLOW_SELF_JUDGE") == "1"
     if judge is not None and chats and not (allow_self_judge or allow_via_env):
         for c in chats:

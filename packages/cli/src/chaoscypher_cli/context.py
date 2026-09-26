@@ -347,14 +347,21 @@ class CLIContext:
     def llm_provider(self) -> LLMProvider | None:
         """Get the LLM provider (lazy-initialized).
 
-        Returns None if LLM is not configured or unavailable.
-        Does not raise - caller should check has_llm first or handle None.
+        Returns None if LLM is not configured or unavailable — a missing
+        ``chat_provider``, a failed availability check, or a provider that
+        blows up during construction all yield None rather than an error.
+
+        Raises:
+            RuntimeError: If the context is not connected. ``has_llm`` is not
+                a guard against this — it runs this same lazy-init path — so
+                call ``connect()`` (or use ``get_context()``, which connects
+                for you) before touching either.
         """
         if self._llm_checked:
             return self._llm_provider
 
-        self._llm_checked = True
         self._ensure_connected()
+        self._llm_checked = True
 
         provider_name = self.settings.llm.chat_provider
         if not provider_name:

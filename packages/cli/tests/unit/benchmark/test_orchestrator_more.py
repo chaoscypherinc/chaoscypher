@@ -286,13 +286,22 @@ async def test_default_wiring_chat_builds_prompt_from_context(tmp_path: Path) ->
     ):
         answer = await wiring.chat(chat_model, "What is Alpha?", retrieved, ctx)
 
-    assert answer == "the answer"
+    assert answer["answer"] == "the answer"
+    assert answer["finish_reason"] == "stop"
     # The prompt fed to the provider includes both retrieved entities + question.
     (messages,), _ = provider.chat.call_args
     prompt = messages[0]["content"]
     assert "Alpha" in prompt
     assert "Beta" in prompt
     assert "What is Alpha?" in prompt
+    # One prompt for the local run and the MCP bridge: Core builds both.
+    from chaoscypher_core.benchmark.chat_prompt import (
+        format_retrieved_context,
+        grounded_chat_prompt,
+    )
+
+    assert prompt == grounded_chat_prompt("What is Alpha?", format_retrieved_context(retrieved))
+    assert messages == [{"role": "user", "content": prompt}]
 
 
 @pytest.mark.asyncio
@@ -330,7 +339,7 @@ async def test_default_wiring_chat_non_ollama_carries_api_keys(tmp_path: Path) -
     ):
         answer = await wiring.chat(chat_model, "q?", {"graph_context": {}}, ctx)
 
-    assert answer == "ans"
+    assert answer["answer"] == "ans"
     # The openai api key was carried into the LLMSettings kwargs.
     assert captured["openai_api_key"] == "sk-openai"
     assert captured["chat_provider"] == "openai"
@@ -386,6 +395,7 @@ async def test_default_wiring_reindex_batch_embeds_nodes(tmp_path: Path) -> None
     ctx = MagicMock()
     ctx.settings.embedding = SimpleNamespace(provider=None, model=None)
     ctx.graph_repository.list_nodes.return_value = nodes
+    ctx.storage_adapter.list_sources.return_value = ([], 0)
 
     embed_provider = MagicMock()
     embed_provider.batch_embed = AsyncMock(return_value=SimpleNamespace(embeddings=[[0.1], [0.2]]))
@@ -410,3 +420,101 @@ async def test_default_wiring_reindex_batch_embeds_nodes(tmp_path: Path) -> None
     # Each node embedding indexed.
     calls = ctx.search_repository.index_node_embedding.call_args_list
     assert [c.args for c in calls] == [("n1", [0.1]), ("n2", [0.2])]
+
+
+@pytest.mark.asyncio
+async def test_default_wiring_reindex_reembeds_chunks_with_stage_embedder(tmp_path: Path) -> None:
+    """_reindex re-embeds every source's chunks with the stage embedder.
+
+    The committed extraction wrote chunk vectors with the settings' default
+    embedder; without a chunk re-embed, chunk retrieval compared vectors from
+    two models. The chunks go through the product's IndexingService with the
+    stage provider, then into vec_search_chunks; a chunkless source is skipped.
+    """
+    import base64
+
+    import numpy as np
+
+    from chaoscypher_core.exceptions import ValidationError
+
+    wiring = default_wiring(workspace=tmp_path)
+    reindex = wiring.graph_provider_factory(tmp_path / "g" / "app.db").reindex
+
+    ctx = MagicMock()
+    ctx.settings.embedding = SimpleNamespace(provider=None, model=None)
+    ctx.settings.batching.chunk_fetch_limit = 500
+    ctx.graph_repository.list_nodes.return_value = []
+    ctx.storage_adapter.list_sources.return_value = ([{"id": "s1"}, {"id": "empty"}], 2)
+    vec = base64.b64encode(np.array([0.5, 0.25], dtype=np.float32).tobytes()).decode()
+    ctx.storage_adapter.iter_chunk_embeddings.return_value = iter([("c1", vec)])
+
+    embed_provider = MagicMock()
+    embed_provider.batch_embed = AsyncMock(return_value=SimpleNamespace(embeddings=[]))
+    built: list[dict[str, Any]] = []
+    indexed_sources: list[str] = []
+
+    class _FakeIndexing:
+        """Records the provider it was built with and the sources it indexes."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            """Capture the constructor kwargs."""
+            built.append(kwargs)
+
+        async def create_index(self, source_id: str) -> dict[str, Any]:
+            """Record the source; the chunkless one raises like the real service."""
+            if source_id == "empty":
+                raise ValidationError("no chunks", field="source_id")
+            indexed_sources.append(source_id)
+            return {}
+
+    fake_embedding_mod = SimpleNamespace(
+        create_embedding_provider=MagicMock(return_value=embed_provider)
+    )
+    fake_index_mod = SimpleNamespace(IndexingService=_FakeIndexing)
+    embedder = ModelConfig(provider="ollama", model="nomic", label="N")
+    with patch.dict(
+        "sys.modules",
+        {
+            "chaoscypher_core.adapters.embedding": fake_embedding_mod,
+            "chaoscypher_core.services.search.engine.index": fake_index_mod,
+        },
+    ):
+        await reindex(ctx, embedder)
+
+    assert len(built) == 1
+    assert built[0]["embedding_service"] is embed_provider
+    assert built[0]["repository"] is ctx.storage_adapter
+    assert indexed_sources == ["s1"]
+    ctx.search_repository.index_embeddings_batch.assert_called_once_with(
+        [("chunk:c1", [0.5, 0.25])], item_type="chunk"
+    )
+
+
+async def test_indexed_graph_copies_the_snapshot_under_its_database_name(tmp_path: Path) -> None:
+    """The copy's directory carries the snapshot's database_name, so the engine reads its rows.
+
+    2026-09-25: the copy sat in a random folder, the engine named the
+    database after it, and every repository query matched nothing.
+    """
+    import sqlite3
+    from unittest.mock import MagicMock
+
+    from chaoscypher_cli.benchmark.graph_provider import GraphProvider, snapshot_database_name
+
+    snap = tmp_path / "snapshot.db"
+    with sqlite3.connect(snap) as conn:
+        conn.execute("CREATE TABLE sources (id TEXT, database_name TEXT)")
+        conn.execute("INSERT INTO sources VALUES ('s1', 'benchmark_corpus_ollama_m_123')")
+    assert snapshot_database_name(snap) == "benchmark_corpus_ollama_m_123"
+    seen: dict = {}
+
+    def ctx_factory(db_path: Path) -> MagicMock:
+        seen["db_path"] = db_path
+        return MagicMock()
+
+    provider = GraphProvider(
+        snapshot_path=snap, ctx_factory=ctx_factory, reindex=MagicMock(), workspace=tmp_path / "ws"
+    )
+    async with provider.indexed_graph():
+        assert seen["db_path"].parent.name == "benchmark_corpus_ollama_m_123"
+        assert seen["db_path"].exists()

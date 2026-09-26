@@ -110,6 +110,7 @@ Each graph member is a JSON-LD document, typically `{"@graph": [ ... ]}`.
 **The default graph** (`ccx`/`knowledge`, at `knowledge.jsonld`) holds the knowledge itself:
 
 - **Node objects:** `{"@id": <iri>, "@type": <type>, "name": <label>, ...properties}`. Producers must not let free-form properties shadow the reserved keys `@id`, `@type`, `@context`, `name`, `source`.
+- **Template reference (optional):** a node may carry `"cc:template": {"@id": <template iri>}` pointing at a member of the producer's `chaoscypher.templates` named graph. `@type` stays the node's most specific type term; the reference binds the node to the schema template it was created under when the two differ (a Chaos Cypher extraction files most entities under one generic system template and keeps the specific type in `@type`). Consumers that do not model templates ignore it; the reference is neither a property nor a relationship.
 - **Simple relationships** are attached to their subject node as a bare predicate key (`"worksFor": {"@id": ...}`); a repeated predicate becomes a list.
 - **Reified relationships** are standalone `ccx:Relationship` resources — `{"@id", "@type": "Relationship", "subject": {"@id"}, "predicate", "object": {"@id"}, ...properties}` — used whenever a relationship carries its own properties or its predicate would collide with a reserved or existing key.
 
@@ -191,6 +192,7 @@ For consumers of ChaosCypher-produced packages specifically:
 - The default graph is always present (empty for a sources-only export). `chaoscypher.statistics` is always present; `chaoscypher.lenses` only when non-empty.
 - `chaoscypher.workflows` currently carries **workflow trigger rows only** — not full workflow definitions — and ChaosCypher's own importer skips that member with a warning. Do not expect workflows to round-trip through CCX today.
 - Source full text is retained as content-addressed assets, `sourceMode` is `derived-only`, and chunk records use offset selectors into that text.
+- A node's `@type` is its most specific type: the entity type extraction assigned, or the template name when the node has no entity type. Every template the exported knowledge references — including the generic system templates extraction files entities under — is emitted in `chaoscypher.templates`, and each node points at its template through `cc:template` (§ 4), so an import restores both the template binding and the specific type.
 - Embedding descriptors are emitted only when an export explicitly includes embeddings; signatures are not emitted at all today, so the `signed` class is currently unreachable from ChaosCypher-produced packages.
 
 ## 11. Versioning and compatibility

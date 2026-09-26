@@ -388,6 +388,7 @@ def test_extraction():
         graph_repository=Mock(spec=GraphRepositoryProtocol),
         llm_provider=Mock(),
         settings=Mock(),
+        embedding_service=None,  # required keyword-only; None disables semantic dedup
     )
     # Test business logic with mocked dependencies
 ```

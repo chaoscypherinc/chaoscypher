@@ -420,6 +420,8 @@ class NodeToolHandlers:
                         "chunk_index": chunk_data.get("chunk_index"),
                         "page_number": chunk_data.get("page_number"),
                         "section": chunk_data.get("section"),
+                        "start_time": chunk_data.get("start_time"),
+                        "end_time": chunk_data.get("end_time"),
                         "sentence_count": sentence_count,
                         "chunk_metadata": chunk_meta,
                         "score": score,

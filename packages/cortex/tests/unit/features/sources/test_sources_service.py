@@ -344,7 +344,7 @@ class TestExtractionStatus:
             "status": "extracting",
             "current_extraction_job_id": "job-1",
         }
-        adapter.get_extraction_job.return_value = {
+        adapter.get_extraction_job_progress.return_value = {
             "status": "running",
             "total_chunks": 10,
             "completed_chunks": 4,
@@ -369,6 +369,38 @@ class TestExtractionStatus:
         assert result["failed_chunks"] == 1
         assert result["progress_percent"] == 50.0
         assert result["total_entities"] == 12
+
+    def test_get_extraction_status_uses_the_projected_job_read(self) -> None:
+        """The 3s poll must take the projected read, never the 29-column one.
+
+        ``get_extraction_job`` hauls ten prompt/template/config TEXT columns
+        that this endpoint never looks at; ``get_extraction_job_progress``
+        is the load_only sibling for exactly this path.
+        """
+        adapter = MagicMock()
+        adapter.get_file.return_value = {
+            "id": "s1",
+            "status": "extracting",
+            "current_extraction_job_id": "job-1",
+        }
+        adapter.get_extraction_job_progress.return_value = {
+            "status": "running",
+            "total_chunks": 4,
+            "completed_chunks": 2,
+            "failed_chunks": 0,
+            "extraction_depth": "full",
+            "started_at": "2026-01-01T00:00:00",
+            "completed_at": None,
+        }
+        adapter.get_chunk_tasks_summary.return_value = {"by_status": {}}
+        adapter.get_running_chunk_task.return_value = None
+
+        service = _make_service(storage_adapter=adapter)
+        result = service.get_extraction_status("s1")
+
+        assert result["progress_percent"] == 50.0
+        adapter.get_extraction_job_progress.assert_called_once_with("job-1")
+        adapter.get_extraction_job.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

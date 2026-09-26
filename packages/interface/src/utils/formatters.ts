@@ -60,6 +60,34 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Format a position inside a recording as a clock timestamp.
+ * @param seconds - Offset from the start of the media, in seconds
+ * @returns "m:ss" under an hour, "h:mm:ss" above (e.g. "12:34", "1:02:03")
+ */
+export function formatMediaTimestamp(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  const mmss = `${minutes}:${String(secs).padStart(2, '0')}`;
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}` : mmss;
+}
+
+/**
+ * Format a chunk's media time span ("12:34–13:05", or "12:34" when start and end match).
+ * Returns null when the chunk carries no media position (every non-media loader).
+ */
+export function formatMediaRange(
+  start: number | null | undefined,
+  end: number | null | undefined,
+): string | null {
+  if (start == null && end == null) return null;
+  const from = formatMediaTimestamp(start ?? end ?? 0);
+  if (end == null || start == null || Math.floor(end) === Math.floor(start)) return from;
+  return `${from}–${formatMediaTimestamp(end)}`;
+}
+
+/**
  * Format a nullable duration in seconds to a human-readable string.
  * Supports sub-second values (displayed as ms). Returns null for invalid input.
  * @param seconds - Duration in seconds (can be null/undefined)
@@ -247,4 +275,3 @@ export function cleanTypeName(type: string | null | undefined): string {
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ');
 }
-

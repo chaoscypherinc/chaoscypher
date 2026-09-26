@@ -137,6 +137,37 @@ def _strip_markdown_decoration(value: str) -> str:
     return value
 
 
+def split_fields(body: str, maxsplit: int) -> list[str]:
+    r"""Split a line body on unescaped ``|`` only, at most ``maxsplit`` times.
+
+    A backslash escapes the character after it, so ``\|`` stays inside its
+    field (``unescape_field`` resolves it later) and ``\\|`` is a literal
+    backslash followed by a separator. Until 2026-09-24 the parser split on
+    every ``|`` and only unescaped afterwards, so the escape it documented
+    worked in the last field alone - a name such as ``Rostov \| Bolkonsky``
+    produced one field too many and the line was dropped.
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\" and i + 1 < n:
+            buf.append(c)
+            buf.append(body[i + 1])
+            i += 2
+            continue
+        if c == "|" and len(parts) < maxsplit:
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(c)
+        i += 1
+    parts.append("".join(buf))
+    return parts
+
+
 def unescape_field(value: str) -> str:
     r"""Unescape pipe and backslash characters in a field value.
 
@@ -248,6 +279,73 @@ def sanitize_justification(
     return kept.rstrip()
 
 
+# Generous maxsplit for entity lines: the fields are located by anchoring on
+# confidence + sent_ref rather than by position, so a missing or doubled
+# aliases field still parses. Anything past the split stays in the tail,
+# which becomes the description.
+_ENTITY_MAXSPLIT = 8
+
+_CONFIDENCE_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _looks_like_confidence(value: str) -> bool:
+    """Check if value reads as a confidence score in ``[0, 1]``.
+
+    Mirrors ``safe_float``'s tolerance (the first number in the field,
+    trailing text allowed, e.g. ``0.9 (High)``) but, unlike it, does not
+    clamp: ``1812 campaign`` is an alias, not a confidence.
+
+    Args:
+        value: Field value to check.
+
+    Returns:
+        True if the first number in value lies in ``[0, 1]``.
+
+    """
+    match = _CONFIDENCE_NUMBER.search(value.strip())
+    if match is None:
+        return False
+    try:
+        return 0.0 <= float(match.group(1)) <= 1.0
+    except ValueError:  # pragma: no cover - the pattern only matches floats
+        return False
+
+
+def _find_entity_anchor(parts: list[str]) -> int | None:
+    """Locate the confidence field of a split entity line.
+
+    The anchor is the smallest index ``i >= 2`` where ``parts[i]`` reads as
+    a confidence and ``parts[i + 1]`` as a sentence reference, with a
+    description field after them. Requiring the pair keeps a numeric alias
+    (``Chapter 1``) from being taken as the confidence. Three shapes are
+    accepted: ``i == 2`` (aliases omitted), ``i == 3`` (canonical) and
+    ``i > 3`` only when every field between the aliases and the confidence
+    is blank (a doubled ``||``). A non-blank extra field is an unescaped
+    ``|`` inside a name or alias (``Natasha|Rostov``, ``Rostov | Bolkonsky``)
+    and realigning it would store a corrupt entity, so it stays rejected.
+    When no field reads as a confidence, the canonical position (index 3,
+    sent_ref at index 4) is accepted as before, so a word confidence such as
+    ``High`` still falls back to ``safe_float``'s default.
+
+    Args:
+        parts: Fields of the line body after ``E|``.
+
+    Returns:
+        Index of the confidence field, or None when no anchor exists.
+
+    """
+    for i in range(2, len(parts) - 2):
+        if (
+            _looks_like_confidence(parts[i])
+            and _looks_like_sent_ref(parts[i + 1])
+            and all(not p.strip() for p in parts[3:i])
+        ):
+            return i
+    if len(parts) >= 6 and _looks_like_sent_ref(parts[4]):
+        return 3
+    return None
+
+
 def parse_entity_line(
     line: str, minimum_alias_length: int = _DEFAULT_MIN_ALIAS_LENGTH
 ) -> dict[str, Any] | None:
@@ -259,7 +357,14 @@ def parse_entity_line(
     the LLM is prompted to always supply it. Lines without a valid
     sent_ref are rejected as malformed.
 
-    Uses maxsplit to ensure description (last field) can contain unescaped pipes.
+    Fields are located by anchoring on the confidence + sent_ref pair (see
+    ``_find_entity_anchor``) rather than by position: local models omit the
+    aliases field (``E|Rousseau|Author|1.0|S7|...``) or add an empty one
+    after it (``E|Anna|Character|Anna||1.0|S1|...``), and a positional
+    parse dropped the whole entity. Everything between type and confidence
+    is aliases (non-empty fields joined with ``; ``); everything after the
+    sent_ref is the description, so unescaped pipes in prose survive. An
+    unescaped pipe in the name or aliases is still rejected.
 
     Args:
         line: Line starting with "E|"
@@ -274,9 +379,9 @@ def parse_entity_line(
     if not line.startswith("E|"):
         return None
 
-    parts = line[2:].split("|", 5)
+    parts = split_fields(line[2:], _ENTITY_MAXSPLIT)
 
-    if len(parts) != 6:
+    if len(parts) < 5:
         logger.warning(
             "entity_line_malformed",
             reason="part_count",
@@ -285,17 +390,31 @@ def parse_entity_line(
             expected=6,
         )
         return None
-    if not _looks_like_sent_ref(parts[4]):
+    if parts[0] != parts[0].rstrip() and parts[1] != parts[1].lstrip():
+        # ``Rostov | Bolkonsky & Sons``: a spaced, unescaped pipe inside the
+        # name. Parsed, it would yield name "Rostov", type "Bolkonsky & Sons".
         logger.warning(
             "entity_line_malformed",
-            reason="bad_sent_ref",
+            reason="unescaped_pipe_in_name",
             line=line[:100],
-            sent_ref=parts[4][:40],
+        )
+        return None
+    anchor = _find_entity_anchor(parts)
+    if anchor is None:
+        has_sent_ref = any(_looks_like_sent_ref(p) for p in parts[2:])
+        logger.warning(
+            "entity_line_malformed",
+            reason="no_confidence_anchor" if has_sent_ref else "bad_sent_ref",
+            line=line[:100],
+            sent_ref=parts[4][:40] if len(parts) > 4 else "",
         )
         return None
 
-    name_raw, type_raw, aliases_str, confidence_str, sent_ref_raw, description_raw = parts
-    sent_ref = sent_ref_raw.strip()
+    name_raw, type_raw = parts[0], parts[1]
+    aliases_str = "; ".join(p.strip() for p in parts[2:anchor] if p.strip())
+    confidence_str = parts[anchor]
+    sent_ref = parts[anchor + 1].strip()
+    description_raw = "|".join(parts[anchor + 2 :])
 
     name = unescape_field(name_raw.strip())
     entity_type = unescape_field(type_raw.strip())
@@ -476,7 +595,7 @@ def parse_relationship_line(line: str) -> dict[str, Any] | None:
     if not line.startswith("R|"):
         return None
 
-    parts = line[2:].split("|", 5)
+    parts = split_fields(line[2:], 5)
 
     if len(parts) != 6:
         logger.warning(
@@ -544,7 +663,7 @@ def parse_property_line(line: str) -> dict[str, Any] | None:
     if not line.startswith("P|"):
         return None
 
-    parts = line[2:].split("|", 2)
+    parts = split_fields(line[2:], 2)
 
     if len(parts) < 3:
         logger.warning(
@@ -606,7 +725,7 @@ def parse_rename_line(line: str) -> dict[str, Any] | None:
     if not line.startswith("A|"):
         return None
 
-    parts = line[2:].split("|", 4)
+    parts = split_fields(line[2:], 4)
 
     if len(parts) != 5:
         logger.warning(

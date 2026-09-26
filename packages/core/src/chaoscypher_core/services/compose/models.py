@@ -297,6 +297,10 @@ class ResolvedPackage(BaseModel):
         name: Package name.
         version: Resolved version.
         path: Local path to the package (file or directory).
+        archive_path: The ``.ccx`` archive the package came from, when there
+            is one (a local file or a hub download). ``None`` for a package
+            given as an extracted directory; the merger packs the directory
+            back into an in-memory archive in that case.
         manifest: Package manifest data.
         dependencies: List of dependency package names.
     """
@@ -305,6 +309,9 @@ class ResolvedPackage(BaseModel):
     name: str = Field(description="Package name")
     version: str = Field(description="Resolved version")
     path: Path = Field(description="Local path to package")
+    archive_path: Path | None = Field(
+        default=None, description="Source .ccx archive, when the package came from one"
+    )
     manifest: dict[str, Any] = Field(
         default_factory=dict,
         description="Package manifest data",

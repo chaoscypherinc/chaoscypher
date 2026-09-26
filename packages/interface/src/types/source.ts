@@ -282,6 +282,9 @@ export interface SourceChunk {
   source_id?: string;
   chunk_index: number;
   content: string;
+  /** Seconds into the recording for transcribed audio/video chunks. */
+  start_time?: number | null;
+  end_time?: number | null;
   page_number?: number;
   section?: string;
   group_index?: number;

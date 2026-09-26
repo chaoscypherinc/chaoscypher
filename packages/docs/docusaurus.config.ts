@@ -45,7 +45,12 @@ const config: Config = {
     [
       "@docusaurus/plugin-client-redirects",
       {
-        redirects: [],
+        redirects: [
+          // The v0.4.0–v0.4.3 Release notes and the root CHANGELOG.md linked the
+          // changelog without the /docs prefix (fixed 2026-09-21); keep the old
+          // path resolving for anyone who copied it.
+          { from: "/about/changelog", to: "/docs/about/changelog" },
+        ],
         createRedirects(existingPath: string) {
           if (existingPath.startsWith("/docs/reference/api/")) {
             return [existingPath.replace("/docs/reference/api/", "/docs/api/")];
@@ -119,6 +124,7 @@ const config: Config = {
       title: "Chaos Cypher",
       logo: { alt: "Chaos Cypher Logo", src: "img/logo.png" },
       items: [
+        { to: "/leaderboard", label: "Leaderboard", position: "left" },
         { to: "/blog", label: "Blog", position: "left" },
         {
           type: "docSidebar",
@@ -214,6 +220,7 @@ const config: Config = {
         {
           title: "More",
           items: [
+            { label: "Leaderboard", to: "/leaderboard" },
             { label: "Blog", to: "/blog" },
             { label: "Changelog", to: "/docs/about/changelog" },
             { label: "Roadmap", to: "/docs/about/roadmap" },

@@ -347,17 +347,21 @@ class GraphRAGToolHandlers:
             return {}
 
     def _resolve_template_names(self, nodes: list[Any]) -> dict[str, str]:
-        """Build a mapping from node ID to human-readable template name.
+        """Build a mapping from node ID to a human-readable type name.
 
-        Resolves template IDs to their display names (e.g. "Character",
-        "Location") instead of raw UUIDs, making the graph summary
-        useful for the LLM.
+        A node's specific ``entity_type`` ("Package", "Character") wins;
+        extraction files most nodes under one generic system template
+        ("Item") and keeps the real type there, so labelling by template
+        alone told the LLM nothing. Nodes without an entity type fall back
+        to their template's display name (e.g. "Character", "Location")
+        instead of a raw UUID.
 
         Args:
-            nodes: List of node objects with ``id`` and ``template_id``.
+            nodes: List of node objects with ``id``, ``template_id`` and
+                optionally ``entity_type``.
 
         Returns:
-            Dict mapping node ID to template name (empty string if none).
+            Dict mapping node ID to type name (empty string if none).
 
         """
         template_ids = {n.template_id for n in nodes if n.template_id}
@@ -365,7 +369,13 @@ class GraphRAGToolHandlers:
         for tid in template_ids:
             tmpl = self.graph.get_template(tid)
             name_cache[tid] = tmpl.name if tmpl else tid
-        return {n.id: name_cache.get(n.template_id, "") if n.template_id else "" for n in nodes}
+        return {
+            n.id: (
+                getattr(n, "entity_type", None)
+                or (name_cache.get(n.template_id, "") if n.template_id else "")
+            )
+            for n in nodes
+        }
 
     @staticmethod
     def _build_summary(
@@ -480,6 +490,8 @@ class GraphRAGToolHandlers:
                         "chunk_index": chunk_data.get("chunk_index"),
                         "page_number": chunk_data.get("page_number"),
                         "section": chunk_data.get("section"),
+                        "start_time": chunk_data.get("start_time"),
+                        "end_time": chunk_data.get("end_time"),
                         "sentence_count": sentence_count,
                         "chunk_metadata": chunk_meta,
                         "score": 1.0,  # provenance chunks get max score
@@ -573,6 +585,8 @@ class GraphRAGToolHandlers:
                         "chunk_index": chunk_data.get("chunk_index"),
                         "page_number": chunk_data.get("page_number"),
                         "section": chunk_data.get("section"),
+                        "start_time": chunk_data.get("start_time"),
+                        "end_time": chunk_data.get("end_time"),
                         "sentence_count": sentence_count,
                         "chunk_metadata": chunk_meta,
                         "score": score,

@@ -11,6 +11,7 @@ doesn't kill the run.
 
 from __future__ import annotations
 
+import asyncio
 import statistics
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -18,19 +19,16 @@ from typing import TYPE_CHECKING
 import structlog
 
 from chaoscypher_cli.benchmark.models import ModelConfig, compute_cost
-from chaoscypher_cli.benchmark.results import BenchmarkResult
+from chaoscypher_cli.benchmark.results import BENCHMARK_VERSION, BenchmarkResult
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from chaoscypher_cli.benchmark.dataset import BenchmarkDataset
 
 
 logger = structlog.get_logger(__name__)
-
-
-BENCHMARK_VERSION = "2.0"
 
 
 async def run_benchmark(
@@ -40,6 +38,8 @@ async def run_benchmark(
     config_name: str | None = None,
     seed: int = 42,
     temperature: float = 0.0,
+    model_timeout: float | None = None,
+    on_row: Callable[[BenchmarkResult], None] | None = None,
 ) -> list[BenchmarkResult]:
     """Run every (model, dataset) pair sequentially and return result rows.
 
@@ -51,6 +51,12 @@ async def run_benchmark(
         seed: Pinned in every result row; used by the dataset runtime where
             the provider supports it.
         temperature: Pinned in every result row.
+        model_timeout: Wall-clock cap in seconds for one (model, dataset) run.
+            A run that exceeds it is recorded as a failed row and the loop
+            moves on; without it one hung model stalls the whole sweep
+            (2026-09-23: 75 minutes at 100% GPU with no output).
+        on_row: Called with each row as soon as it exists, so a caller can
+            persist incrementally instead of holding a sweep in memory.
 
     Returns:
         List of BenchmarkResult rows in (model, dataset) iteration order.
@@ -69,14 +75,23 @@ async def run_benchmark(
                     model_kinds=model.kinds,
                 )
                 continue
+            # Keep the run and the recorded row in agreement: the row below
+            # records `seed`/`temperature`, so the dataset must actually use
+            # them rather than its own defaults.
+            for attr, value in (("seed", seed), ("temperature", temperature)):
+                if hasattr(dataset, attr):
+                    setattr(dataset, attr, value)
             row = await _run_one(
                 model,
                 dataset,
                 config_name=config_name,
                 seed=seed,
                 temperature=temperature,
+                timeout=model_timeout,
             )
             rows.append(row)
+            if on_row is not None:
+                on_row(row)
     return rows
 
 
@@ -87,15 +102,17 @@ async def _run_one(
     config_name: str | None,
     seed: int,
     temperature: float,
+    timeout: float | None = None,
 ) -> BenchmarkResult:
     """Execute one (model, dataset) pair, scoring the output.
 
     Catches any exception from ``dataset.run`` so the loop continues; records
     the exception in the failed row's ``error`` field.
+    A ``timeout`` (seconds) bounds the run; exceeding it is one such failure.
     """
     timestamp = datetime.now(tz=UTC)
     try:
-        raw = await dataset.run(model)
+        raw = await asyncio.wait_for(dataset.run(model), timeout=timeout)
     except Exception as exc:
         logger.exception(
             "dataset_run_raised",
@@ -125,6 +142,10 @@ async def _run_one(
             scorer_version=dataset.scorer.version,
             seed=seed,
             temperature=temperature,
+            thinking=getattr(dataset, "thinking", False),
+            thinking_honoured=getattr(dataset, "thinking_honoured", None),
+            chunks_truncated=0,
+            chunks_aborted_by_loop=0,
         )
 
     if raw.error is not None:
@@ -152,6 +173,14 @@ async def _run_one(
             scorer_version=dataset.scorer.version,
             seed=seed,
             temperature=temperature,
+            thinking=getattr(dataset, "thinking", False),
+            thinking_honoured=getattr(dataset, "thinking_honoured", None),
+            # `raw` exists on this path, so report what actually happened: an
+            # empty extraction caused by truncation is the case most worth
+            # seeing, and zeroing it here would hide it.
+            chunks_truncated=raw.chunks_truncated,
+            chunks_aborted_by_loop=raw.chunks_aborted_by_loop,
+            extras=raw.extras,
         )
 
     score = dataset.scorer.score(raw, dataset.fixture)
@@ -178,6 +207,11 @@ async def _run_one(
         scorer_version=dataset.scorer.version,
         seed=seed,
         temperature=temperature,
+        thinking=getattr(dataset, "thinking", False),
+        thinking_honoured=getattr(dataset, "thinking_honoured", None),
+        chunks_truncated=raw.chunks_truncated,
+        chunks_aborted_by_loop=raw.chunks_aborted_by_loop,
+        extras=raw.extras,
     )
 
 

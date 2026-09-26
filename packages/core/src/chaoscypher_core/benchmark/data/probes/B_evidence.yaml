@@ -1,0 +1,179 @@
+# Section B — Evidence discipline
+#
+# Instructions under test:
+#   "Every E| MUST include sent_ref pointing to supporting sentence(s)"
+#   "Every R| MUST include sent_ref pointing to sentence(s) containing BOTH entities"
+#   "Only extract facts explicitly stated in the sentences — do NOT infer"
+#
+# Checked axis: whether citations point at real evidence and whether the
+# model adds facts the text does not state. Harder tiers make the WRONG
+# citation more tempting (referential distance, a decoy sentence that names
+# the entity but not the fact) and the inference more natural (a strongly
+# implied relation, a famous entity with well-known facts omitted).
+
+section: B
+title: Evidence discipline
+
+probes:
+  # ---------------------------------------------------------------- B1
+  - id: B1-easy
+    probe: B1
+    tier: easy
+    instruction: "Every E| carries an in-bounds sent_ref"
+    passage: |
+      Marya Bolkonskaya lived at Bald Hills with her father. Prince Nikolai
+      Bolkonsky taught her geometry every morning. Mademoiselle Bourienne was
+      her companion. Julie Karagina wrote to her from Moscow.
+    checks:
+      - {type: refs_in_bounds}
+      - {type: entity_count, min: 3}
+      - {type: finish_stop}
+
+  - id: B1-hard
+    probe: B1
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 81% pass
+    instruction: "Every E| carries an in-bounds sent_ref"
+    # 25 sentences; entities named early and late. Refs like S30 (beyond the
+    # end) or list forms that run past N are the failure.
+    passage_ref: E8-easy.txt
+    checks:
+      - {type: refs_in_bounds}
+      - {type: entity_count, min: 6}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- B2
+  - id: B2-easy
+    probe: B2
+    tier: easy
+    instruction: "The cited sentence actually names the entity"
+    passage: |
+      Kutuzov received the dispatch on the seventeenth. It was raining. The
+      staff waited in the yard. Bagration arrived at nine. He had ridden
+      through the night. Toll unrolled the maps. Bennigsen came after dark.
+    checks:
+      - {type: refs_name_entity}
+      - {type: refs_in_bounds}
+      - {type: finish_stop}
+
+  - id: B2-hard
+    probe: B2
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 100% pass
+    instruction: "The cited sentence actually names the entity"
+    # Each person is named exactly once, then referred to by pronoun or role
+    # for several sentences that carry most of the detail. The tempting wrong
+    # citation is the detail-rich pronoun sentence.
+    passage: |
+      Bagration read the order in silence. He folded it, put it in his coat,
+      and said nothing for a long time. He was tired and his leg hurt. He had
+      not slept. Kutuzov watched him from the doorway. The old man's one eye
+      was half closed and he seemed asleep. He was not asleep. He was counting
+      the hours to Moscow. Toll waited with the maps. The young colonel was
+      impatient and it showed in how he held the pencil. He said the ridge was
+      the place. Nobody answered him.
+    checks:
+      - {type: refs_name_entity}
+      - {type: refs_in_bounds}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- B3
+  - id: B3-easy
+    probe: B3
+    tier: easy
+    instruction: "R| cites a sentence containing BOTH endpoints"
+    passage: |
+      Nikolai Rostov served in the Pavlograd hussars. Denisov commanded his
+      squadron. Rostov admired Denisov greatly. Dolokhov was in a different
+      regiment. Rostov lost money to Dolokhov at cards in Moscow.
+    checks:
+      - {type: rel_refs_contain_both}
+      - {type: relationship_count, min: 1}
+      - {type: finish_stop}
+
+  - id: B3-hard
+    probe: B3
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 88% pass
+    instruction: "R| cites a sentence containing BOTH endpoints"
+    # The two people co-occur in exactly ONE sentence (S6). Every other
+    # sentence mentions one of them with detail about the relationship,
+    # tempting a citation that names only one endpoint.
+    passage: |
+      Pierre Bezukhov was rich and unhappy. He gave money to anyone who asked.
+      Dolokhov was poor and proud. He borrowed from everyone and repaid no one.
+      Dolokhov had once been a guest at Pierre's house for a month. It was at
+      Pierre's dinner that Dolokhov raised his glass to Helene and Pierre
+      challenged him. The duel was fixed for the morning. Pierre had never held
+      a pistol. Dolokhov had fought four times before.
+    checks:
+      - {type: rel_refs_contain_both}
+      - {type: relationship_count, min: 1}
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- B4
+  - id: B4-easy
+    probe: B4
+    tier: medium  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 81% pass
+    instruction: "Do NOT infer — only facts explicitly stated"
+    # Stated: Nikolai is Andrei's father; Andrei is Nikolenka's father.
+    # Implied only: Nikolai is Nikolenka's grandfather. Pass = no grandparent
+    # relationship.
+    passage: |
+      Prince Nikolai Bolkonsky was the father of Prince Andrei Bolkonsky.
+      Prince Andrei Bolkonsky was the father of a boy named Nikolenka. The
+      old prince lived at Bald Hills. Andrei served in the army. Nikolenka was
+      raised by his aunt Marya.
+    checks:
+      - {type: relationship_type_absent, types: ["grandparent", "grandfather", "grandchild", "grandson"]}
+      - {type: relationship_type_present, types: ["parent", "father", "child", "son"]}
+      - {type: finish_stop}
+
+  - id: B4-hard
+    probe: B4
+    tier: easy  # CALIBRATION 2026-09-24 (16-model sweep): was hard; 94% pass
+    instruction: "Do NOT infer — only facts explicitly stated"
+    # Reported speech that is false within the passage's own frame, plus a
+    # negation. Pass = no death/deceased fact for Andrei, no sibling relation
+    # for Pierre and Andrei, and no marriage between Natasha and Anatole.
+    passage: |
+      Pierre insisted that Andrei was dead; he had heard it from a courier.
+      Andrei arrived the next morning on horseback. Pierre embraced him and
+      wept. People often assumed the two were brothers, but they were not
+      related at all. Natasha had nearly eloped with Anatole Kuragin, but the
+      elopement never happened and they were never married.
+    checks:
+      - {type: relationship_type_absent, types: ["sibling", "brother", "spouse", "married", "husband", "wife"]}
+      # CALIBRATION 2026-09-23: property_values_from_text dropped - it failed
+      # "status=initially believed dead", a faithful summary of the passage.
+      - {type: finish_stop}
+
+  # ---------------------------------------------------------------- B5
+  - id: B5-easy
+    probe: B5
+    tier: hard  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 12% pass
+    instruction: "No world-knowledge injection — only what the passage states"
+    # Napoleon is named but the passage says nothing about France, Emperor,
+    # Corsica, or any battle. Pass = no such property or relationship.
+    passage: |
+      Napoleon dined at a folding table in the open air. Rain fell after
+      midnight. He rose before dawn and rode to the mound. He said nothing for
+      a long time. Berthier stood behind him with the orders.
+    checks:
+      - {type: property_values_from_text}
+      - {type: relationship_type_absent, types: ["emperor", "rules", "ruler_of", "commands_france"]}
+      - {type: finish_stop}
+
+  - id: B5-hard
+    probe: B5
+    tier: hard
+    instruction: "No world-knowledge injection — only what the passage states"
+    # Famous people and places with well-known facts deliberately absent, in
+    # a passage that mentions dates and titles for OTHER things — so the
+    # model has "permission" to add detail and must still not import it.
+    passage: |
+      Kutuzov, Bagration and Barclay met on the seventeenth of August. Toll
+      brought maps dated the twelfth. Napoleon's staff was reported at Gzhatsk.
+      Alexander was at Petersburg and had written twice. Moscow was six days'
+      march. Nobody at the meeting mentioned Austerlitz, and nobody would.
+    checks:
+      - {type: property_values_from_text}
+      - {type: relationship_type_absent, types: ["emperor", "tsar", "defeated", "victor", "won"]}
+      - {type: finish_stop}

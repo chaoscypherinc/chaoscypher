@@ -1365,6 +1365,48 @@ class CLISourceProcessingService:
             self.ctx.storage_adapter.fail_extraction(file_id, str(e))
             raise
 
+    async def _record_integrity_counters(
+        self, file_id: str, chunk_metrics: dict[str, Any] | None
+    ) -> None:
+        """Bump the source's truncation / loop-abort counters for one chunk.
+
+        ``AIEntityExtractor`` reports ``finish_reason`` ("length" means the
+        model ran out of generation budget mid-answer) and ``aborted_by_loop``
+        on every chunk. The queue path acts on both; the CLI path dropped them,
+        so truncation was invisible for every ``chaoscypher load``.
+
+        Never raises: bookkeeping must not fail an extraction that succeeded.
+        """
+        if not chunk_metrics:
+            return
+        from chaoscypher_core.services.quality.counters import (
+            QualityCounter,
+            increment_quality_counter,
+        )
+
+        wanted: list[QualityCounter] = []
+        if chunk_metrics.get("finish_reason") == "length":
+            wanted.append(QualityCounter.LLM_CHUNKS_TRUNCATED)
+        if chunk_metrics.get("aborted_by_loop"):
+            wanted.append(QualityCounter.LLM_CHUNKS_ABORTED_BY_LOOP)
+
+        for counter in wanted:
+            try:
+                await increment_quality_counter(
+                    adapter=self.ctx.storage_adapter,
+                    source_id=file_id,
+                    database_name=self.ctx.database_name,
+                    counter=counter,
+                    n=1,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "quality_counter_increment_failed",
+                    source_id=file_id,
+                    counter=str(counter),
+                    error=str(exc),
+                )
+
     async def _extract_and_finalize(
         self,
         groups_to_process: list[dict[str, Any]],
@@ -1473,7 +1515,7 @@ class CLISourceProcessingService:
                     relationships,
                     in_tokens,
                     out_tokens,
-                    _metrics,
+                    chunk_metrics,
                 ) = await extractor.extract_single_chunk(
                     chunk_content=group_text,
                     node_templates_formatted=node_templates,
@@ -1489,6 +1531,13 @@ class CLISourceProcessingService:
                     strict_entity_types=strict_entity_types,
                     valid_entity_type_names=valid_entity_type_names,
                 )
+
+                # Record extraction-integrity counters. The queue path does
+                # this in chunk_extraction_service; the CLI path discarded the
+                # metrics dict entirely, so a chunk cut off at the token budget
+                # left no trace on the source row and `chaoscypher source get`
+                # reported a clean ingest.
+                await self._record_integrity_counters(file_id, chunk_metrics)
 
                 # Tag entities with chunk_index for citations
                 for entity in entities:

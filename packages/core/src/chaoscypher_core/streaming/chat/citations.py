@@ -278,6 +278,9 @@ class ChunkCitationData(TypedDict, total=False):
     sentence_text: str | None
     source_id: str | None
     page_number: int | None
+    # Media position (seconds) when the cited chunk is transcribed audio/video.
+    start_time: float | None
+    end_time: float | None
     has_vision_image: bool  # True if chunk contains vision-described image content
 
 
@@ -1405,6 +1408,8 @@ def enrich_chunk_citations_from_tool_results(
 
         citation["source_id"] = chunk_info.get("source_id")
         citation["page_number"] = chunk_info.get("page_number")
+        citation["start_time"] = chunk_info.get("start_time")
+        citation["end_time"] = chunk_info.get("end_time")
 
         # Check if chunk content came from vision processing
         chunk_content = chunk_info.get("content") or chunk_info.get("original_content") or ""

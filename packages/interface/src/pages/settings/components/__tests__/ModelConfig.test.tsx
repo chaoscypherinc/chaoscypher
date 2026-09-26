@@ -149,6 +149,41 @@ describe('OllamaAutocomplete', () => {
   });
 });
 
+describe('OllamaAutocomplete — Not recommended group and score title', () => {
+  it('puts a measured option with usable: false under Not recommended, with a visible chip', () => {
+    renderOllama({
+      options: [
+        { id: 'good:8b', name: 'Good', description: 'Answers 60/80', score: 75, measured: true },
+        { id: 'notools:14b', name: 'No Tools', description: 'No tool calling', score: 65, measured: true, usable: false },
+      ],
+    });
+    fireEvent.mouseDown(screen.getByLabelText('Chat Model'));
+    expect(screen.getByText('Recommended')).toBeInTheDocument();
+    // One group header plus one chip on the demoted row.
+    expect(screen.getAllByText('Not recommended')).toHaveLength(2);
+    const row = screen.getByText('notools:14b').closest('li');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText('Not recommended')).toBeInTheDocument();
+    const goodRow = screen.getByText('good:8b').closest('li');
+    expect(within(goodRow as HTMLElement).queryByText('Not recommended')).not.toBeInTheDocument();
+  });
+
+  it('uses scoreTitle for the score chip, and the extraction wording by default', () => {
+    const scored = [{ id: 'good:8b', name: 'Good', description: 'x', score: 75, measured: true }];
+    const { unmount } = renderOllama({ options: scored, scoreTitle: 'Answers grounded questions' });
+    fireEvent.mouseDown(screen.getByLabelText('Chat Model'));
+    expect(screen.getByText('75%').closest('[title]')).toHaveAttribute('title', 'Answers grounded questions');
+    unmount();
+
+    renderOllama({ options: scored });
+    fireEvent.mouseDown(screen.getByLabelText('Chat Model'));
+    expect(screen.getByText('75%').closest('[title]')).toHaveAttribute(
+      'title',
+      'Extraction score as on the leaderboard: in chunks counted twice, isolated once',
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // CloudModelAutocomplete
 // ---------------------------------------------------------------------------

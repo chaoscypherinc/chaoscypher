@@ -44,6 +44,8 @@ console = Console()
 # Reading via .model_fields[...].default keeps the CLI in sync when operators bump
 # the central defaults; nothing here should re-declare these literals.
 _LLM_DEFAULTS = _CoreLLMSettings.model_fields
+# Every model prompt below points here so nobody picks a model without the numbers.
+LEADERBOARD_URL = "https://chaoscypher.com/leaderboard"
 _DEFAULT_OLLAMA_CHAT_MODEL: str = _LLM_DEFAULTS["ollama_chat_model"].default
 _DEFAULT_OLLAMA_EXTRACTION_MODEL: str = (
     _LLM_DEFAULTS["ollama_extraction_model"].default or _DEFAULT_OLLAMA_CHAT_MODEL
@@ -196,11 +198,11 @@ PROVIDERS = {
 # VRAM preset mappings (GPU examples and models must match the preset JSONs
 # in core/services/presets/plugins/ — pinned by TestVramPresetTableAccuracy)
 VRAM_PRESETS = [
-    {"vram": 16, "preset": "vram_16gb", "gpus": "RTX 4080, 5080", "model": "phi4:14b"},
-    {"vram": 20, "preset": "vram_20gb", "gpus": "RTX A4000, A4500", "model": "phi4:14b"},
-    {"vram": 24, "preset": "vram_24gb", "gpus": "RTX 4090, 3090", "model": "qwen3:30b"},
-    {"vram": 32, "preset": "vram_32gb", "gpus": "RTX 5090", "model": "qwen3:30b"},
-    {"vram": 48, "preset": "vram_48gb", "gpus": "A6000, 2x 4090", "model": "qwen3:30b"},
+    {"vram": 16, "preset": "vram_16gb", "gpus": "RTX 4080, 5080", "model": "qwen3.5:9b"},
+    {"vram": 20, "preset": "vram_20gb", "gpus": "RTX A4000, A4500", "model": "qwen3.5:9b"},
+    {"vram": 24, "preset": "vram_24gb", "gpus": "RTX 4090, 3090", "model": "qwen3.8:27b"},
+    {"vram": 32, "preset": "vram_32gb", "gpus": "RTX 5090", "model": "qwen3.6:35b-a3b"},
+    {"vram": 48, "preset": "vram_48gb", "gpus": "A6000, 2x 4090", "model": "qwen3.6:35b-a3b"},
     {"vram": 96, "preset": "vram_96gb", "gpus": "RTX 6000 Pro", "model": "gpt-oss:120b"},
     {
         "vram": 128,
@@ -434,19 +436,27 @@ def _select_vram_interactive() -> tuple[str | None, dict | None]:
     table.add_column("#", style="dim", width=4)
     table.add_column("VRAM", width=8)
     table.add_column("GPUs", style="dim")
-    table.add_column("Model", style="green")
+    table.add_column("Chat", style="green")
+    table.add_column("Extraction", style="green")
 
     for i, preset in enumerate(VRAM_PRESETS, 1):
+        # The extraction default is set from the leaderboard; read it from the
+        # preset plugin so this table can never disagree with what gets applied.
+        extraction = _get_vram_preset_settings(str(preset["preset"])).get(
+            "ollama_extraction_model", ""
+        )
         table.add_row(
             f"[{i}]",
             f"{preset['vram']}GB",
             f"({preset['gpus']})",
             f"→ {preset['model']}",
+            f"→ {extraction}",
         )
 
-    table.add_row(f"[{len(VRAM_PRESETS) + 1}]", "Custom", "", "I'll specify models manually")
+    table.add_row(f"[{len(VRAM_PRESETS) + 1}]", "Custom", "", "I'll specify models manually", "")
 
     console.print(table)
+    console.print(f"  How these models were chosen: [cyan]{LEADERBOARD_URL}[/cyan]")
     console.print()
 
     try:
@@ -533,6 +543,9 @@ def _configure_ollama_interactive(
     else:
         # Custom configuration
         state.llm.ollama_url = ollama_url
+        console.print(
+            f"  Compare extraction models by VRAM and quality: [cyan]{LEADERBOARD_URL}[/cyan]"
+        )
         state.llm.ollama_chat_model = Prompt.ask(
             "Chat model",
             default=state.llm.ollama_chat_model or _DEFAULT_OLLAMA_CHAT_MODEL,
@@ -650,6 +663,7 @@ def _configure_cloud_provider_interactive(
 
     if provider == "openai":
         state.llm.openai_api_key = SecretStr(existing_key) if existing_key else None
+        console.print(f"  Compare extraction models: [cyan]{LEADERBOARD_URL}[/cyan]")
         state.llm.openai_chat_model = Prompt.ask("Chat model", default=state.llm.openai_chat_model)
         extraction_default = state.llm.openai_extraction_model or state.llm.openai_chat_model
         state.llm.openai_extraction_model = Prompt.ask(
@@ -662,6 +676,7 @@ def _configure_cloud_provider_interactive(
         state.llm.openai_vision_model = None if vision_choice == "disabled" else vision_choice
     elif provider == "anthropic":
         state.llm.anthropic_api_key = SecretStr(existing_key) if existing_key else None
+        console.print(f"  Compare extraction models: [cyan]{LEADERBOARD_URL}[/cyan]")
         state.llm.anthropic_chat_model = Prompt.ask(
             "Chat model", default=state.llm.anthropic_chat_model
         )

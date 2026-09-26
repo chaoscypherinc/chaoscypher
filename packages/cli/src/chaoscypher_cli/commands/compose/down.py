@@ -53,14 +53,21 @@ def down(config: str) -> None:
 
     console.print(f"[cyan]Stopping composition:[/cyan] {compose_config.name}")
 
-    async def do_down() -> None:
-        """Run the async ComposeService.down call."""
+    async def do_down() -> bool:
+        """Run the async ComposeService.down call; True when a server was stopped."""
         service = ComposeService()
-        await service.down(compose_config)
+        return await service.down(compose_config)
 
     try:
-        asyncio.run(do_down())
-        print_success("Composition stopped")
+        stopped = asyncio.run(do_down())
+        if stopped:
+            print_success("Composition stopped")
+        else:
+            console.print(
+                "[yellow]No running composition server found[/yellow] "
+                "(nothing recorded in "
+                f"{compose_config.resolved_output_dir / 'compose.pid'})"
+            )
 
     except ComposeError as e:
         print_error(f"Failed to stop: {e.message}")

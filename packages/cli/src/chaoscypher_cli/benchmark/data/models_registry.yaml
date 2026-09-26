@@ -111,7 +111,7 @@ gemini/gemini-2.5-flash:
   why: "Cheap, fast Google tier to complement Haiku/GPT-4o-Mini in the small-model slot."
 
 # ---------------------------------------------------------------------------
-# Ollama — local text extractors (all fit ≤24 GB VRAM)
+# Ollama — local text extractors (all fit ≤32 GB VRAM)
 # ---------------------------------------------------------------------------
 
 ollama/gemma4:12b:
@@ -122,6 +122,7 @@ ollama/gemma4:12b:
   open_weight: true
   license: gemma
   vram_gb: 7.6
+  tools: true
   why: "Google Gemma 4 12B; strong instruction-following at 7.6 GB."
 
 ollama/gemma4:26b:
@@ -132,6 +133,7 @@ ollama/gemma4:26b:
   open_weight: true
   license: gemma
   vram_gb: 17.0
+  tools: true
   why: "Google Gemma 4 26B; best quality in the Gemma family that fits ≤24 GB."
 
 ollama/qwen3:8b:
@@ -142,6 +144,7 @@ ollama/qwen3:8b:
   open_weight: true
   license: apache-2.0
   vram_gb: 5.2
+  tools: true
   why: "Qwen3 8B; efficient general-purpose local extractor at 5.2 GB."
 
 ollama/qwen3:14b:
@@ -152,7 +155,41 @@ ollama/qwen3:14b:
   open_weight: true
   license: apache-2.0
   vram_gb: 9.3
+  tools: true
   why: "Qwen3 14B; quality step-up from 8B while staying ≤10 GB."
+
+ollama/qwen3:30b-instruct:
+  provider: ollama
+  model: "qwen3:30b-instruct"
+  label: "Qwen3 30B Instruct (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 18.6
+  tools: true
+  why: "Qwen3 30B instruct tune; a distinct checkpoint from the 30b-a3b base and the gen-3 rung of the 27-30B ladder."
+
+ollama/qwen3.5:27b:
+  provider: ollama
+  model: "qwen3.5:27b"
+  label: "Qwen3.5 27B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 17.0
+  tools: true
+  why: "Qwen3.5 27B dense; oldest rung of the 27B Qwen ladder that isolates generation from scale."
+
+ollama/qwen3.6:27b:
+  provider: ollama
+  model: "qwen3.6:27b"
+  label: "Qwen3.6 27B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 18.0
+  tools: true
+  why: "Qwen3.6 27B dense; middle rung of the 27B ladder and the dense counterpart to the 35B-A3B MoE."
 
 ollama/qwen3.6:35b-a3b:
   provider: ollama
@@ -162,7 +199,19 @@ ollama/qwen3.6:35b-a3b:
   open_weight: true
   license: apache-2.0
   vram_gb: 23.0
+  tools: true
   why: "Qwen3.6 35B MoE; near-frontier quality at 23 GB via sparse activation."
+
+ollama/qwen3.8:27b:
+  provider: ollama
+  model: "qwen3.8:27b"
+  label: "Qwen3.8 27B (local)"
+  tier: frontier
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 17.0
+  tools: true
+  why: "Qwen3.8 27B dense; highest-scoring open-weight model that fits a single 32 GB GPU."
 
 ollama/gpt-oss:20b:
   provider: ollama
@@ -172,6 +221,7 @@ ollama/gpt-oss:20b:
   open_weight: true
   license: mit
   vram_gb: 13.0
+  tools: true
   why: "OpenAI OSS 20B; mid-tier open-weight baseline at 13 GB."
 
 ollama/glm4:9b:
@@ -182,7 +232,75 @@ ollama/glm4:9b:
   open_weight: true
   license: mit
   vram_gb: 5.5
+  tools: true
   why: "GLM4 9B; compact Chinese-lineage model, good entity coverage."
+
+ollama/gemma4:31b:
+  provider: ollama
+  model: "gemma4:31b"
+  label: "Gemma 4 31B (local)"
+  tier: frontier
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 20.0
+  tools: true
+  why: "Google Gemma 4 31B; highest-scoring open-weight model that still fits a single 32 GB GPU."
+
+ollama/glm-4.7-flash:
+  provider: ollama
+  model: "glm-4.7-flash"
+  label: "GLM 4.7 Flash (local)"
+  tier: frontier
+  open_weight: true
+  license: mit
+  vram_gb: 19.0
+  tools: true
+  why: "Z.ai GLM 4.7 Flash; the GLM line leads open-weight rankings and our only other GLM is the 2024-era 9B."
+
+ollama/granite4.2:30b:
+  provider: ollama
+  model: "granite4.2:30b"
+  label: "Granite 4.2 30B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 17.0
+  tools: true
+  why: "IBM Granite 4.2 30B; enterprise line built around structured output, which is the extraction job."
+
+ollama/muse-glimmer:30b:
+  provider: ollama
+  model: "muse-glimmer:30b"
+  label: "Muse Glimmer 30B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 18.0
+  tools: true
+  notes: "Apache 2.0 per the Ollama library page (2026-09-25); no license text ships with the model itself."
+  why: "Meta's locally deployable model for tool use and long tasks; 27.9B params, 131K context."
+
+ollama/nemotron-3.5-lightning:30b-a3b:
+  provider: ollama
+  model: "nemotron-3.5-lightning:30b-a3b"
+  label: "Nemotron 3.5 Lightning 30B-A3B (local)"
+  tier: mid
+  open_weight: true
+  license: nvidia-open-model
+  vram_gb: 25.0
+  tools: true
+  why: "NVIDIA MoE tuned for always-on agents; largest of the 32 GB-class entries."
+
+ollama/olmo-3.1:32b:
+  provider: ollama
+  model: "olmo-3.1:32b"
+  label: "OLMo 3.1 32B (local)"
+  tier: mid
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 19.0
+  tools: false
+  why: "AI2 OLMo 3.1 32B; fully open data and training code, the reproducibility reference point."
 
 # ---------------------------------------------------------------------------
 # Ollama — local embedding models
@@ -233,3 +351,97 @@ ollama/gpt-oss:120b:
   vram_gb: 80.0
   notes: "Requires ~80 GB VRAM; not pulled by default. Use workstation.yaml config."
   why: "OpenAI OSS 120B; maximum-scale open-weight extractor for workstation benchmarking."
+
+ollama/phi4:14b:
+  provider: ollama
+  model: "phi4:14b"
+  label: "Phi-4 14B (local)"
+  tier: small
+  released: "2024-12"
+  open_weight: true
+  license: mit
+  vram_gb: 9.1
+  tools: false
+  why: "Microsoft Phi-4; the 16/20 GB preset default, never measured before 2026-09-24."
+
+ollama/qwen2.5:14b-instruct:
+  provider: ollama
+  model: "qwen2.5:14b-instruct"
+  label: "Qwen2.5 14B Instruct (local)"
+  tier: small
+  released: "2024-09"
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 9.0
+  tools: true
+  why: "Previous-generation Qwen instruct; was in the interface Recommended list unmeasured."
+
+ollama/mistral-small3.2:24b:
+  provider: ollama
+  model: "mistral-small3.2:24b"
+  label: "Mistral Small 3.2 24B (local)"
+  tier: mid
+  released: "2025-06"
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 15.0
+  tools: true
+  why: "Strongest non-Qwen mid-size instruct family under the 32 GB bar."
+
+ollama/deepseek-r1:14b:
+  provider: ollama
+  model: "deepseek-r1:14b"
+  label: "DeepSeek-R1 14B (local)"
+  tier: small
+  released: "2025-01"
+  open_weight: true
+  license: mit
+  vram_gb: 9.0
+  tools: true
+  why: "Thinking-family distill; tests whether think=off holds outside Qwen/Gemma."
+
+ollama/llama3.1:8b:
+  provider: ollama
+  model: "llama3.1:8b"
+  label: "Llama 3.1 8B (local)"
+  tier: small
+  released: "2024-07"
+  open_weight: true
+  license: llama3.1
+  vram_gb: 4.9
+  tools: true
+  why: "The baseline everyone knows; anchors the small tier."
+
+
+ollama/qwen3.5:9b:
+  provider: ollama
+  model: "qwen3.5:9b"
+  label: "Qwen3.5 9B (local)"
+  tier: small
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 6.6
+  tools: true
+  why: "Qwen3.5 9B; the newest Qwen under 10B, successor to Qwen3 8B for the 16/20 GB chat slot."
+
+ollama/gemma4:e4b:
+  provider: ollama
+  model: "gemma4:e4b"
+  label: "Gemma 4 E4B (local)"
+  tier: small
+  open_weight: true
+  license: gemma
+  vram_gb: 9.6
+  tools: true
+  why: "Google Gemma 4 E4B; the small Gemma 4 rung, to see whether the family's chat behaviour holds at 4B effective parameters."
+
+ollama/granite4.2:8b:
+  provider: ollama
+  model: "granite4.2:8b"
+  label: "Granite 4.2 8B (local)"
+  tier: small
+  open_weight: true
+  license: apache-2.0
+  vram_gb: 5.3
+  tools: true
+  why: "IBM Granite 4.2 8B; the small rung of the enterprise structured-output line."

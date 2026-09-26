@@ -417,3 +417,146 @@ class TestSanitizeJustification:
         )
         assert result is not None
         assert result["justification"] == "Petrushka is identified as Prince Andrew's valet."
+
+
+def test_escaped_pipe_in_a_name_round_trips_as_the_prompt_now_documents() -> None:
+    r"""The prompt tells the model to write a literal | as \|; the parser must agree.
+
+    Probe A2-hard scored this before the prompt said an escape existed
+    (13/16 models failed); the rule and this test keep the two in step.
+    """
+    from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+        parse_entity_line,
+    )
+
+    parsed = parse_entity_line(
+        r"E|Rostov \| Bolkonsky & Sons|organization||0.9|S1|A shop on the Arbat with a sign"
+    )
+    assert parsed is not None
+    assert parsed["name"] == "Rostov | Bolkonsky & Sons"
+
+
+def test_split_fields_honours_escapes_and_maxsplit() -> None:
+    r"""``\|`` stays in its field, ``\\|`` is a backslash then a separator."""
+    from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+        split_fields,
+    )
+
+    assert split_fields(r"a \| b|c|d", 5) == [r"a \| b", "c", "d"]
+    assert split_fields(r"C:\\|org|x", 5) == [r"C:\\", "org", "x"]
+    assert split_fields("k|v|prose | with | pipes", 2) == ["k", "v", "prose | with | pipes"]
+    assert split_fields("", 5) == [""]
+
+
+class TestEntityLineAnchoring:
+    """Entity fields are located from the confidence + sent_ref pair, not by position."""
+
+    def test_omitted_aliases_field_parses_with_no_aliases(self) -> None:
+        """``E|name|type|conf|ref|desc`` (aliases slot dropped) keeps the entity."""
+        entity = parse_entity_line(
+            "E|Rousseau|Author|1.0|S7|The author of the Contrat Social, argued over"
+        )
+        assert entity is not None
+        assert entity["name"] == "Rousseau"
+        assert entity["type"] == "Author"
+        assert entity["aliases"] == []
+        assert entity["confidence"] == 1.0
+        assert entity["sent_ref"] == "S7"
+        assert entity["description"] == "The author of the Contrat Social, argued over"
+
+    def test_extra_empty_field_after_aliases_parses(self) -> None:
+        """A doubled ``||`` after the alias no longer shifts the sent_ref slot."""
+        entity = parse_entity_line(
+            "E|Anna Pávlovna|Character|Anna Pávlovna||1.0|S1, S9|The hostess of the soirée"
+        )
+        assert entity is not None
+        assert entity["name"] == "Anna Pávlovna"
+        assert entity["aliases"] == ["Anna Pávlovna"]
+        assert entity["confidence"] == 1.0
+        assert entity["sent_ref"] == "S1, S9"
+        assert entity["description"] == "The hostess of the soirée"
+
+    def test_canonical_seven_field_line_unchanged(self) -> None:
+        """The documented layout parses exactly as before."""
+        entity = parse_entity_line(
+            "E|Prince Andrei|Character|Andrei; Prince Andrew|0.9|S1-S3|The eldest son"
+        )
+        assert entity == {
+            "name": "Prince Andrei",
+            "type": "Character",
+            "description": "The eldest son",
+            "aliases": ["Andrei", "Prince Andrew"],
+            "confidence": 0.9,
+            "sent_ref": "S1-S3",
+        }
+
+    def test_unescaped_pipes_in_description_survive(self) -> None:
+        """Prose after the sent_ref keeps its pipes, even ones that look like fields."""
+        entity = parse_entity_line(
+            "E|Pierre|Character|Pierre Bezukhov|0.9|S2|Arrives late | awkward | 0.5|S4 aside"
+        )
+        assert entity is not None
+        assert entity["aliases"] == ["Pierre Bezukhov"]
+        assert entity["sent_ref"] == "S2"
+        assert entity["description"] == "Arrives late | awkward | 0.5|S4 aside"
+
+    def test_numeric_alias_is_not_taken_for_the_confidence(self) -> None:
+        """``1812 Campaign`` / ``Chapter 1`` stay aliases: the anchor needs a sent_ref next."""
+        entity = parse_entity_line(
+            "E|Russian campaign|Event|1812 Campaign; Louis XVI era|0.8|S3|Napoleon's invasion"
+        )
+        assert entity is not None
+        assert entity["aliases"] == ["1812 Campaign", "Louis XVI era"]
+        assert entity["confidence"] == 0.8
+        assert entity["sent_ref"] == "S3"
+
+        entity = parse_entity_line("E|Opening|Event|Chapter 1|0.7|S1|The soirée opens the book")
+        assert entity is not None
+        assert entity["aliases"] == ["Chapter 1"]
+        assert entity["confidence"] == 0.7
+        assert entity["sent_ref"] == "S1"
+
+    def test_escaped_pipe_with_omitted_aliases(self) -> None:
+        r"""``\|`` in a name still round-trips when the aliases slot is also dropped."""
+        entity = parse_entity_line(r"E|Rostov \| Bolkonsky & Sons|organization|0.9|S1|A shop")
+        assert entity is not None
+        assert entity["name"] == "Rostov | Bolkonsky & Sons"
+        assert entity["aliases"] == []
+        assert entity["description"] == "A shop"
+
+    def test_word_confidence_in_canonical_position_still_parses(self) -> None:
+        """No numeric confidence: the canonical slot is used and safe_float defaults."""
+        entity = parse_entity_line("E|Anna|Character|Annette|High|S1|A character")
+        assert entity is not None
+        assert entity["aliases"] == ["Annette"]
+        assert entity["confidence"] == 0.8
+        assert entity["sent_ref"] == "S1"
+
+    def test_line_without_any_anchor_is_rejected(self) -> None:
+        """Neither a sent_ref nor a confidence + sent_ref pair: dropped."""
+        assert parse_entity_line("E|Anna|Character|0.9|A character|more") is None
+        assert parse_entity_line("E|Anna|Character|0.9") is None
+
+    def test_unescaped_pipe_in_a_name_is_still_rejected(self) -> None:
+        """Realignment must not turn a leaked ``|`` into a corrupt entity.
+
+        Shapes seen from local models on probe A2-hard and Book One: a spaced
+        pipe in the name (with populated, empty or omitted aliases) and an
+        unspaced one (``Natasha|Rostov``) that pushes a non-blank field in
+        front of the confidence.
+        """
+        for line in (
+            "E|Rostov | Bolkonsky & Sons|Location|The shop; The store|1.0|S1|A shop",
+            "E|Rostov | Bolkonsky & Sons|Location||1.0|S1|A shop on the Arbat",
+            "E|Rostov | Bolkonsky & Sons|Location|1.0|S1|A shop on the Arbat",
+            "E|Natasha|Rostov|Natasha Rostova; Natasha|Rostov|1.0|S1|Young noblewoman",
+            "E|Montmorencys|Rohans|Location|Montmorencys; Rohans|1.0|S7|A noble family",
+        ):
+            assert parse_entity_line(line) is None, line
+
+    def test_several_blank_fields_before_the_confidence_are_tolerated(self) -> None:
+        """``|||`` after the alias is the doubled-field drift, not a pipe leak."""
+        entity = parse_entity_line("E|Kutuzov|Character|Kutuzov| ||1.0|S1, S2|The commander")
+        assert entity is not None
+        assert entity["aliases"] == ["Kutuzov"]
+        assert entity["sent_ref"] == "S1, S2"

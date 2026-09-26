@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -83,8 +85,8 @@ async def test_full_run_invokes_all_three_stages(tmp_path):
 
     indexed = MagicMock()
     indexed.ctx = MagicMock()
-    indexed.ctx.storage_adapter.list_entities = MagicMock(
-        return_value=[{"id": "u1", "name": "A", "aliases": []}]
+    indexed.ctx.graph_repository.list_nodes = MagicMock(
+        return_value=[SimpleNamespace(id="u1", label="A", aliases=[])]
     )
 
     @asynccontextmanager
@@ -155,8 +157,8 @@ async def test_downstream_rows_stamped_with_extractor_and_embedder_id(tmp_path):
 
     indexed = MagicMock()
     indexed.ctx = MagicMock()
-    indexed.ctx.storage_adapter.list_entities = MagicMock(
-        return_value=[{"id": "u1", "name": "A", "aliases": []}]
+    indexed.ctx.graph_repository.list_nodes = MagicMock(
+        return_value=[SimpleNamespace(id="u1", label="A", aliases=[])]
     )
 
     @asynccontextmanager
@@ -261,7 +263,9 @@ async def test_no_double_extraction_on_cold_cache(tmp_path):
 
     # Prepare a fake snapshot file that expected_snapshot_path will point to.
     snapshot_file = tmp_path / "snapshot.db"
-    snapshot_file.write_bytes(b"fake-db")
+    sqlite3.connect(
+        snapshot_file
+    ).close()  # a real (empty) SQLite file: the cache copies via backup()
 
     run_call_count = 0
 
@@ -311,4 +315,129 @@ async def test_no_double_extraction_on_cold_cache(tmp_path):
     assert run_call_count == 1, (
         f"extraction_dataset.run was called {run_call_count} times; expected 1. "
         "Double extraction regression detected."
+    )
+
+
+def _reuse_cfg() -> BenchmarkConfig:
+    return BenchmarkConfig(
+        name="full",
+        description="",
+        seed=42,
+        temperature=0.0,
+        dataset_ids=["demo"],
+        extractors=[ModelConfig(provider="ollama", model="ext", label="E")],
+        embedders=[ModelConfig(provider="ollama", model="emb", label="M")],
+        chats=[ModelConfig(provider="ollama", model="chat", label="C")],
+        judge=None,
+        config_name="full",
+        source="builtin",
+    )
+
+
+def _reuse_wiring(cache, snapshots: list[Path]) -> OrchestratorWiring:
+    indexed = MagicMock()
+    indexed.ctx = MagicMock()
+    indexed.ctx.graph_repository.list_nodes = MagicMock(
+        return_value=[SimpleNamespace(id="u1", label="A", aliases=[])]
+    )
+
+    @asynccontextmanager
+    async def fake_indexed_graph(*, embedder=None):
+        yield indexed
+
+    provider = MagicMock()
+    provider.indexed_graph = fake_indexed_graph
+
+    def _factory(snapshot: Path):
+        snapshots.append(snapshot)
+        return provider
+
+    return OrchestratorWiring(
+        cache=cache,
+        graph_provider_factory=_factory,
+        embed_query=AsyncMock(return_value=[0.1]),
+        vector_search=AsyncMock(return_value=[("u1", 0.9)]),
+        graphrag_search=AsyncMock(return_value={"entities": [{"id": "u1", "name": "A"}]}),
+        chat=AsyncMock(return_value="answer"),
+        judge_call=AsyncMock(return_value="5"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_reuse_cached_graph_skips_extraction_when_slot_is_populated(tmp_path):
+    """With reuse_cached_graph and a cached slot, Stage 1 does not run; 2 and 3 do."""
+    from chaoscypher_cli.benchmark.graph_cache import GraphCache
+
+    bundle = _bundle(tmp_path)
+    cfg = _reuse_cfg()
+    assert cfg.extractors is not None
+    cache = GraphCache(root=tmp_path / "cache")
+    key = cache.key_for(
+        corpus_id=bundle.id, corpus_version=bundle.version, extractor=cfg.extractors[0]
+    )
+    cached = tmp_path / "cache" / key / "app.db"
+    cached.parent.mkdir(parents=True)
+    cached.write_bytes(b"cached")
+
+    fake_extraction_run = AsyncMock(side_effect=AssertionError("extraction must not run"))
+    bundle.extraction_dataset.run = fake_extraction_run  # type: ignore[method-assign]
+
+    snapshots: list[Path] = []
+    rows = await run_full_benchmark(
+        cfg, [bundle], wiring=_reuse_wiring(cache, snapshots), reuse_cached_graph=True
+    )
+
+    fake_extraction_run.assert_not_called()
+    kinds = [r.dataset_kind for r in rows]
+    assert "extraction" not in kinds
+    assert "embedding" in kinds
+    assert "chat" in kinds
+    assert snapshots
+    assert all(s == cached for s in snapshots)
+    assert cached.read_bytes() == b"cached"
+
+
+@pytest.mark.asyncio
+async def test_reuse_cached_graph_extracts_when_cache_is_empty(tmp_path):
+    """With reuse_cached_graph but no cached slot, extraction runs as before."""
+    from chaoscypher_cli.benchmark.graph_cache import GraphCache
+
+    bundle = _bundle(tmp_path)
+    cfg = _reuse_cfg()
+    cache = GraphCache(root=tmp_path / "cache")
+
+    fake_extraction_run = AsyncMock(
+        return_value=MagicMock(
+            error=None,
+            success=True,
+            latency_ms=1,
+            input_tokens=0,
+            output_tokens=0,
+            per_chunk_latency_ms=[],
+            extras={},
+            entities=[{"id": "u1", "name": "A", "aliases": []}],
+            relationships=[],
+        )
+    )
+    bundle.extraction_dataset.run = fake_extraction_run  # type: ignore[method-assign]
+
+    src = tmp_path / "kept.db"
+    with sqlite3.connect(src) as conn:
+        conn.execute("CREATE TABLE t (x INTEGER)")
+    conn.close()
+    bundle.extraction_dataset.expected_snapshot_path = lambda _m: src  # type: ignore[method-assign]
+
+    snapshots: list[Path] = []
+    rows = await run_full_benchmark(
+        cfg, [bundle], wiring=_reuse_wiring(cache, snapshots), reuse_cached_graph=True
+    )
+
+    fake_extraction_run.assert_called()
+    kinds = [r.dataset_kind for r in rows]
+    assert "extraction" in kinds
+    assert "embedding" in kinds
+    assert "chat" in kinds
+    assert cfg.extractors is not None
+    assert cache.has(
+        corpus_id=bundle.id, corpus_version=bundle.version, extractor=cfg.extractors[0]
     )

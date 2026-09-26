@@ -10,6 +10,7 @@ import click
 from chaoscypher_cli.commands.benchmark.fixture import fixture_group
 from chaoscypher_cli.commands.benchmark.init import init_cmd
 from chaoscypher_cli.commands.benchmark.list import list_cmd
+from chaoscypher_cli.commands.benchmark.reference import reference_group
 from chaoscypher_cli.commands.benchmark.run import run
 from chaoscypher_cli.commands.benchmark.show import show
 
@@ -24,6 +25,7 @@ benchmark.add_command(list_cmd, name="list")
 benchmark.add_command(show, name="show")
 benchmark.add_command(init_cmd, name="init")
 benchmark.add_command(fixture_group, name="fixture")
+benchmark.add_command(reference_group, name="reference")
 
 
 __all__ = ["benchmark"]

@@ -37,6 +37,10 @@ def _row() -> BenchmarkResult:
         scorer_version=7,
         seed=42,
         temperature=0.0,
+        thinking=False,
+        thinking_honoured=True,
+        chunks_truncated=0,
+        chunks_aborted_by_loop=0,
     )
 
 

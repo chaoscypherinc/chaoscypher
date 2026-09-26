@@ -271,7 +271,16 @@ class TestGetDefaultConfig:
         caplog: pytest.LogCaptureFixture,
         structlog_for_caplog: None,
     ) -> None:
-        """An error reading settings falls back to max_concurrent=1 + debug log."""
+        """An error reading settings falls back to max_concurrent=1 + debug log.
+
+        The operations worker is the other half: `get_settings()` raising
+        leaves the real `WorkerSettings()` built at `config.py:149` in
+        place, so its value flows from the shipped Pydantic Field default
+        rather than from anything this test wrote. That is the one place
+        the number is reachable unmocked, which is why it is asserted
+        here — every other test that names 8 patches `_get_defaults` with
+        a literal it supplied itself and asserts that literal back.
+        """
         from chaoscypher_neuron import config
 
         with (
@@ -286,6 +295,11 @@ class TestGetDefaultConfig:
         # Inner except swallows the error and keeps the single-instance default,
         # but the rest of the config still comes from TimeoutSettings/etc.
         assert result["llm_worker"]["max_concurrent"] == 1
+        # The shipped WorkerSettings.operations_max_concurrent default,
+        # reached unmocked. This also pins it against config.py's hardcoded
+        # outer-fallback literal, which the next test asserts — the two are
+        # required to match and nothing checked that they did.
+        assert result["operations_worker"]["max_concurrent"] == 8
         assert any("could_not_determine_instance_count" in r.message for r in caplog.records)
 
     def test_outer_except_uses_hardcoded_fallback(

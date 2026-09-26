@@ -257,7 +257,7 @@ Key settings that control pipeline behavior:
 | `analysis.quick_sample_size` | Settings | Max groups for `quick` depth |
 | `llm.extraction_examples_enabled` | Settings | Include domain examples in prompts |
 | `priorities.background` | Settings | Queue priority for pipeline tasks |
-| `batching.max_upload_bytes` | Settings | Maximum upload file size (unified across file uploads + URL fetches; default 5 GB). The separate in-process parser cap `loader.max_disk_bytes` (default 500 MiB) bounds PDF/CSV/DOCX/text parsing; video/audio stream via ffmpeg and are bounded only by the upload cap. The legacy `source_processing.source_processing_max_file_size_gb` is deprecated as of 2026-05-06 and no longer honored. |
+| `batching.max_upload_bytes` | Settings | Maximum upload file size (unified across file uploads + URL fetches; default 5 GB). The separate in-process parser cap `loader.max_disk_bytes` (engine default 500 MiB; not settable from `settings.yaml`) bounds PDF/CSV/DOCX/text parsing; video/audio stream via ffmpeg and are bounded only by the upload cap. The legacy `source_processing.source_processing_max_file_size_gb` is deprecated as of 2026-05-06 and no longer honored. |
 
 ## Content Filtering
 

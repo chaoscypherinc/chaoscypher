@@ -3,13 +3,21 @@
 
 """Namespace Merger - Merges knowledge from multiple packages.
 
-Provides strategies for combining knowledge graphs, entities, and relationships
-from multiple packages into a unified runtime database.
+Builds the composition's runtime database — a real Chaos Cypher SQLite
+database at ``<output_dir>/databases/default`` — by importing each resolved
+CCX 3.0 package through the same ``CcxImporter`` that ``chaoscypher graph
+package load`` and ``chaoscypher mount`` use. Every entity, relationship,
+source, chunk and citation lands with its stable CCX IRI intact, so the
+composed database answers with the same citations as the packages it was
+built from.
 
-Merge Strategies:
-- NAMESPACE: Prefix all entities with package name for isolation (default)
-- MERGE: Combine entities, deduplicating by URI/identifier
-- REPLACE: Later packages override earlier ones for conflicts
+How packages meet: templates are unified by name (the importer keys them
+on ``(name, template_type)``), and entities, relationships, sources and
+chunks are upserted by their stable CCX IRIs — independently built packages
+never collide, and a same-IRI record present in several packages is stored
+once with the later package winning. ``settings.merge_strategy`` is recorded
+in ``composition.json`` but does not change that result today; it is kept
+as the seam for cross-package entity resolution.
 
 Example:
     from chaoscypher_core.services.compose import NamespaceMerger, MergeStrategy
@@ -19,15 +27,18 @@ Example:
         strategy=MergeStrategy.NAMESPACE,
     )
 
-    # Merge resolved packages
     result = await merger.merge(resolved_packages)
     print(f"Merged {result.total_entities} entities")
 """
 
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import shutil
+import zipfile
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -46,6 +57,13 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# The composed database is always the output directory's ``default`` database,
+# which is what ``compose up`` serves and ``compose run`` points tools at.
+COMPOSED_DATABASE_NAME = "default"
+
+# Written next to ``databases/`` after a successful merge: what went in.
+COMPOSITION_MANIFEST_FILENAME = "composition.json"
+
 
 class MergerError(ChaosCypherException):
     """Error during package merging.
@@ -54,42 +72,32 @@ class MergerError(ChaosCypherException):
         package: Package that caused the error.
     """
 
-    def __init__(self, message: str, package: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        package: str | None = None,
+        details: dict | None = None,
+    ) -> None:
         """Initialize merger error.
 
         Args:
             message: Error description.
             package: Package that caused the error.
+            details: Additional error details.
         """
-        details: dict = {}
+        error_details = details or {}
         if package:
-            details["package"] = package
-        super().__init__(message=message, code="MERGER_ERROR", details=details)
+            error_details["package"] = package
+        super().__init__(message=message, code="MERGER_ERROR", details=error_details)
         self.package = package
 
 
 class NamespaceMerger:
-    """Merges knowledge packages into a unified runtime database.
-
-    Handles the merging of knowledge graphs, entities, relationships,
-    and search indices from multiple packages using the specified strategy.
-
-    The default NAMESPACE strategy prefixes all entity URIs with the package
-    namespace to ensure data isolation and prevent conflicts.
+    """Merges resolved packages into one runtime database.
 
     Attributes:
-        output_dir: Directory for the merged database.
-        strategy: Merge strategy to use.
-
-    Example:
-        merger = NamespaceMerger(
-            output_dir=Path(".chaoscypher/db"),
-            strategy=MergeStrategy.NAMESPACE,
-        )
-
-        result = await merger.merge(packages)
-        if result.success:
-            print(f"Database ready at {result.output_dir}")
+        output_dir: Directory holding the composed ``databases/default``.
+        strategy: How templates and same-IRI entities are reconciled.
     """
 
     def __init__(
@@ -105,6 +113,13 @@ class NamespaceMerger:
         """
         self.output_dir = output_dir
         self.strategy = strategy
+        # Import stats of the current merge, consumed by the indexing pass.
+        self._import_stats: list[Any] = []
+
+    @property
+    def database_dir(self) -> Path:
+        """Directory of the composed runtime database."""
+        return self.output_dir / "databases" / COMPOSED_DATABASE_NAME
 
     async def merge(
         self,
@@ -114,14 +129,11 @@ class NamespaceMerger:
         """Merge multiple packages into a unified database.
 
         Args:
-            packages: List of resolved packages to merge.
-            clean: Whether to clean output directory before merging.
+            packages: List of resolved packages to merge, in order.
+            clean: Whether to clean the output directory before merging.
 
         Returns:
             CompositionResult with merge statistics.
-
-        Raises:
-            MergerError: If merging fails.
         """
         logger.info(
             "merger_starting",
@@ -133,84 +145,78 @@ class NamespaceMerger:
         errors: list[str] = []
         warnings: list[str] = []
         packages_included: list[str] = []
+        package_records: list[dict[str, Any]] = []
         total_entities = 0
         total_relationships = 0
+        self._import_stats = []
 
         try:
-            # Prepare output directory
-            if clean and self.output_dir.exists():
-                shutil.rmtree(self.output_dir)
+            # "Clean" means the artefacts a build owns: the composed database
+            # and the composition manifest. The resolver cache (filled moments
+            # ago), the runtime settings, the pid record and the server log
+            # all live in the same output directory and must survive.
+            if clean:
+                self._remove_build_artefacts()
+            self.database_dir.mkdir(parents=True, exist_ok=True)
 
-            self.output_dir.mkdir(parents=True, exist_ok=True)
+            # The Engine builds the schema through the Alembic runner (never a
+            # bare create_all), so the database `compose up` serves is exactly
+            # what Cortex's own init_database would produce.
+            from chaoscypher_core.bootstrap import Engine
 
-            # Create database subdirectories
-            db_dir = self.output_dir / "databases" / "default"
-            db_dir.mkdir(parents=True, exist_ok=True)
+            engine = Engine(data_dir=self.database_dir)
+            try:
+                for pkg in packages:
+                    try:
+                        stats = await self._merge_package(engine, pkg)
+                    except Exception as e:
+                        errors.append(f"Failed to merge {pkg.name}: {e}")
+                        logger.exception("merger_package_failed", package=pkg.name)
+                        continue
 
-            # Initialize merged data structures
-            merged_entities: dict[str, Any] = {}
-            merged_relationships: list[dict[str, Any]] = []
-            merged_sources: dict[str, Any] = {}
-            merged_metadata: dict[str, Any] = {
-                "packages": [],
-                "strategy": self.strategy.value,
-            }
-
-            # Process each package
-            for pkg in packages:
-                try:
-                    pkg_stats = await self._merge_package(
-                        pkg,
-                        merged_entities,
-                        merged_relationships,
-                        merged_sources,
-                    )
-
-                    total_entities += pkg_stats["entities"]
-                    total_relationships += pkg_stats["relationships"]
                     packages_included.append(f"{pkg.name}:{pkg.version}")
-
-                    merged_metadata["packages"].append(
+                    warnings.extend(f"{pkg.name}: {w}" for w in stats["warnings"])
+                    package_records.append(
                         {
                             "name": pkg.name,
                             "version": pkg.version,
                             "namespace": pkg.namespace,
-                            "entities": pkg_stats["entities"],
-                            "relationships": pkg_stats["relationships"],
+                            "entities": stats["entities"],
+                            "relationships": stats["relationships"],
+                            "sources": stats["sources"],
+                            "citations": stats["citations"],
                         }
                     )
-
                     logger.info(
                         "merger_package_merged",
                         package=pkg.name,
-                        entities=pkg_stats["entities"],
-                        relationships=pkg_stats["relationships"],
+                        entities=stats["entities"],
+                        relationships=stats["relationships"],
+                        sources=stats["sources"],
                     )
 
-                except Exception as e:
-                    error_msg = f"Failed to merge {pkg.name}: {e}"
-                    errors.append(error_msg)
-                    logger.exception("merger_package_failed", package=pkg.name)
+                # Totals come from the database, not the per-package counters:
+                # under MERGE / REPLACE a same-IRI entity present in several
+                # packages is stored once.
+                total_entities = engine.graph_repository.count_nodes()
+                total_relationships = engine.graph_repository.count_edges()
 
-            # Derive totals from the merged structures, not the per-package
-            # counters: under REPLACE (or same-namespace collisions) a
-            # duplicate id increments the counter once per package while the
-            # dict keeps a single entry, overstating CompositionResult totals.
-            total_entities = len(merged_entities)
-            total_relationships = len(merged_relationships)
+                if not errors:
+                    await self._index_for_search(engine, warnings)
+            finally:
+                engine.close()
 
-            # Write merged data to database files
-            if not errors:
-                await self._write_database(
-                    db_dir,
-                    merged_entities,
-                    merged_relationships,
-                    merged_sources,
-                    merged_metadata,
+            if errors:
+                # Never leave a half-built database behind: `up` keys on the
+                # database directory's existence and would serve the partial
+                # composition without rebuilding.
+                self._remove_build_artefacts()
+            else:
+                self._write_composition_manifest(
+                    package_records, total_entities, total_relationships
                 )
 
-            success = len(errors) == 0
-
+            success = not errors
             logger.info(
                 "merger_completed",
                 success=success,
@@ -218,7 +224,6 @@ class NamespaceMerger:
                 total_relationships=total_relationships,
                 packages=packages_included,
             )
-
             return CompositionResult(
                 success=success,
                 output_dir=self.output_dir,
@@ -231,6 +236,7 @@ class NamespaceMerger:
 
         except Exception as e:
             logger.exception("merger_failed")
+            self._remove_build_artefacts()
             return CompositionResult(
                 success=False,
                 output_dir=self.output_dir,
@@ -241,263 +247,142 @@ class NamespaceMerger:
                 warnings=warnings,
             )
 
-    async def _merge_package(
-        self,
-        pkg: ResolvedPackage,
-        merged_entities: dict[str, Any],
-        merged_relationships: list[dict[str, Any]],
-        merged_sources: dict[str, Any],
-    ) -> dict[str, int]:
-        """Merge a single package into the merged data structures.
+    def _remove_build_artefacts(self) -> None:
+        """Delete the composed database and manifest (and nothing else)."""
+        if self.database_dir.exists():
+            shutil.rmtree(self.database_dir)
+        manifest = self.output_dir / COMPOSITION_MANIFEST_FILENAME
+        if manifest.exists():
+            manifest.unlink()
 
-        Args:
-            pkg: Package to merge.
-            merged_entities: Accumulated entities dict.
-            merged_relationships: Accumulated relationships list.
-            merged_sources: Accumulated sources dict.
+    # ------------------------------------------------------------------
+    # Per-package import
+    # ------------------------------------------------------------------
 
-        Returns:
-            Statistics dict with entity and relationship counts.
-        """
-        stats = {"entities": 0, "relationships": 0}
-
-        # Look for data directory in package
-        data_dir = pkg.path / "data"
-        if not data_dir.exists():
-            logger.warning("merger_no_data_dir", package=pkg.name)
-            return stats
-
-        # Merge entities
-        entities_file = data_dir / "entities.json"
-        if entities_file.exists():
-            with entities_file.open() as f:
-                entities = json.load(f)
-
-            for entity_id, entity_data in entities.items():
-                namespaced_id = self._namespace_id(entity_id, pkg)
-                namespaced_entity = self._namespace_entity(entity_data, pkg)
-
-                if self._should_include(namespaced_id, merged_entities):
-                    merged_entities[namespaced_id] = namespaced_entity
-                    stats["entities"] += 1
-
-        # Merge relationships
-        relationships_file = data_dir / "relationships.json"
-        if relationships_file.exists():
-            with relationships_file.open() as f:
-                relationships = json.load(f)
-
-            for rel in relationships:
-                namespaced_rel = self._namespace_relationship(rel, pkg)
-                merged_relationships.append(namespaced_rel)
-                stats["relationships"] += 1
-
-        # Merge sources
-        sources_file = data_dir / "sources.json"
-        if sources_file.exists():
-            with sources_file.open() as f:
-                sources = json.load(f)
-
-            for source_id, source_data in sources.items():
-                namespaced_id = self._namespace_id(source_id, pkg)
-                namespaced_source = self._namespace_source(source_data, pkg)
-
-                if self._should_include(namespaced_id, merged_sources):
-                    merged_sources[namespaced_id] = namespaced_source
-
-        # Copy any additional data files
-        await self._copy_package_data(pkg, data_dir)
-
-        return stats
-
-    def _namespace_id(self, entity_id: str, pkg: ResolvedPackage) -> str:
-        """Add namespace prefix to an entity ID.
-
-        Args:
-            entity_id: Original entity ID.
-            pkg: Package providing the entity.
+    async def _merge_package(self, engine: Any, pkg: ResolvedPackage) -> dict[str, Any]:
+        """Import one package into the composed database.
 
         Returns:
-            Namespaced entity ID.
+            Per-package counts plus the importer's warnings.
+
+        Raises:
+            MergerError: If the package cannot be read or fails validation.
         """
-        if self.strategy == MergeStrategy.NAMESPACE:
-            return f"{pkg.namespace}:{entity_id}"
-        return entity_id
+        from chaoscypher_core.services.package.importer import CcxImporter, ImportOptions
 
-    def _namespace_entity(
-        self,
-        entity: dict[str, Any],
-        pkg: ResolvedPackage,
-    ) -> dict[str, Any]:
-        """Add namespace metadata to an entity.
+        data = await asyncio.to_thread(self._package_bytes, pkg)
 
-        Args:
-            entity: Entity data dict.
-            pkg: Package providing the entity.
+        importer = CcxImporter(
+            graph_repository=engine.graph_repository,
+            sources_repository=engine.storage_adapter,
+        )
+        options = ImportOptions(
+            import_sources=True,
+            database_name=COMPOSED_DATABASE_NAME,
+        )
+        stats = await importer.import_from_bytes(data, options)
+        if stats.errors:
+            raise MergerError("; ".join(stats.errors), package=pkg.name)
 
-        Returns:
-            Entity with namespace metadata.
+        self._import_stats.append(stats)
+        return {
+            "entities": stats.nodes_imported,
+            "relationships": stats.edges_imported,
+            "sources": stats.sources_imported,
+            "citations": stats.citations_imported,
+            "warnings": list(stats.warnings),
+        }
+
+    @staticmethod
+    def _package_bytes(pkg: ResolvedPackage) -> bytes:
+        """Return the package as ``.ccx`` archive bytes.
+
+        A package that came from an archive is read back from it. A package
+        given as a directory (an extracted tree) is packed into an in-memory
+        archive in the CCX container layout: ``mimetype`` first and stored
+        uncompressed, everything else deflated.
+
+        Raises:
+            MergerError: If neither the archive nor the directory exists.
         """
-        if self.strategy == MergeStrategy.NAMESPACE:
-            entity = entity.copy()
-            entity["_source_package"] = pkg.name
-            entity["_source_version"] = pkg.version
-            entity["_namespace"] = pkg.namespace
+        if pkg.archive_path is not None and pkg.archive_path.is_file():
+            return pkg.archive_path.read_bytes()
+        if pkg.path.is_file():
+            return pkg.path.read_bytes()
+        if not pkg.path.is_dir():
+            msg = f"Package path not found: {pkg.path}"
+            raise MergerError(msg, package=pkg.name)
 
-            # Namespace any referenced entity IDs
-            if "relationships" in entity:
-                entity["relationships"] = [
-                    self._namespace_id(r, pkg) for r in entity["relationships"]
-                ]
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            mimetype = pkg.path / "mimetype"
+            if mimetype.is_file():
+                archive.writestr(
+                    "mimetype", mimetype.read_bytes(), compress_type=zipfile.ZIP_STORED
+                )
+            for member in sorted(p for p in pkg.path.rglob("*") if p.is_file()):
+                relative = member.relative_to(pkg.path).as_posix()
+                if relative == "mimetype":
+                    continue
+                archive.write(member, relative, compress_type=zipfile.ZIP_DEFLATED)
+        return buffer.getvalue()
 
-        return entity
+    # ------------------------------------------------------------------
+    # Post-merge: search indexing + composition manifest
+    # ------------------------------------------------------------------
 
-    def _namespace_relationship(
+    async def _index_for_search(self, engine: Any, warnings: list[str]) -> None:
+        """Embed and vector-index everything that was imported (best-effort)."""
+        from chaoscypher_core.operations.importing.imported_source_handler import (
+            index_imported_package,
+        )
+
+        source_ids: list[str] = []
+        node_ids: list[str] = []
+        for stats in self._import_stats:
+            source_ids.extend(stats.imported_source_ids)
+            node_ids.extend(stats.imported_node_ids)
+        if not source_ids and not node_ids:
+            return
+        try:
+            await index_imported_package(
+                imported_source_ids=source_ids,
+                imported_node_ids=node_ids,
+                storage_adapter=engine.storage_adapter,
+                graph_repository=engine.graph_repository,
+                indexing_service=engine.indexing_service,
+                search_repository=engine.search_repository,
+                database_name=COMPOSED_DATABASE_NAME,
+            )
+        except Exception as e:
+            # The knowledge is in the database and FTS keyword search works
+            # without vectors; a missing embedding model must not fail the build.
+            warnings.append(f"search indexing skipped: {e}")
+            logger.warning("merger_index_skipped", error=str(e))
+
+    def _write_composition_manifest(
         self,
-        rel: dict[str, Any],
-        pkg: ResolvedPackage,
-    ) -> dict[str, Any]:
-        """Add namespace to relationship source and target.
-
-        Args:
-            rel: Relationship data dict.
-            pkg: Package providing the relationship.
-
-        Returns:
-            Relationship with namespaced IDs.
-        """
-        if self.strategy == MergeStrategy.NAMESPACE:
-            rel = rel.copy()
-            if "source" in rel:
-                rel["source"] = self._namespace_id(rel["source"], pkg)
-            if "target" in rel:
-                rel["target"] = self._namespace_id(rel["target"], pkg)
-            rel["_source_package"] = pkg.name
-            rel["_namespace"] = pkg.namespace
-
-        return rel
-
-    def _namespace_source(
-        self,
-        source: dict[str, Any],
-        pkg: ResolvedPackage,
-    ) -> dict[str, Any]:
-        """Add namespace metadata to a source.
-
-        Args:
-            source: Source data dict.
-            pkg: Package providing the source.
-
-        Returns:
-            Source with namespace metadata.
-        """
-        if self.strategy == MergeStrategy.NAMESPACE:
-            source = source.copy()
-            source["_source_package"] = pkg.name
-            source["_namespace"] = pkg.namespace
-
-        return source
-
-    def _should_include(
-        self,
-        entity_id: str,
-        existing: dict[str, Any],
-    ) -> bool:
-        """Determine if an entity should be included based on merge strategy.
-
-        Args:
-            entity_id: Entity ID (possibly namespaced).
-            existing: Existing merged entities.
-
-        Returns:
-            True if entity should be included.
-        """
-        if entity_id not in existing:
-            return True
-
-        # NAMESPACE: unique IDs, REPLACE: always replace, MERGE: skip duplicates
-        return self.strategy in (MergeStrategy.NAMESPACE, MergeStrategy.REPLACE)
-
-    async def _copy_package_data(
-        self,
-        pkg: ResolvedPackage,
-        data_dir: Path,
+        package_records: list[dict[str, Any]],
+        total_entities: int,
+        total_relationships: int,
     ) -> None:
-        """Copy additional package data files (embeddings, graphs, etc.).
-
-        Args:
-            pkg: Package being merged.
-            data_dir: Package data directory.
-        """
-        # Copy knowledge graph files
-        graph_dir = data_dir / "graphs"
-        if graph_dir.exists():
-            dest = self.output_dir / "databases" / "default" / "graphs" / pkg.namespace
-            dest.mkdir(parents=True, exist_ok=True)
-            for graph_file in graph_dir.glob("*.ttl"):
-                shutil.copy2(graph_file, dest / graph_file.name)
-            for graph_file in graph_dir.glob("*.json"):
-                shutil.copy2(graph_file, dest / graph_file.name)
-
-        # Search indices (vector + FTS5) now live in app.db — no separate
-        # directory to copy.  They are rebuilt automatically from the
-        # committed graph data on first access.
-
-        # Copy embeddings
-        embeddings_dir = data_dir / "embeddings"
-        if embeddings_dir.exists():
-            dest = self.output_dir / "databases" / "default" / "embeddings" / pkg.namespace
-            dest.mkdir(parents=True, exist_ok=True)
-            for emb_file in embeddings_dir.iterdir():
-                if emb_file.is_file():
-                    shutil.copy2(emb_file, dest / emb_file.name)
-
-    async def _write_database(
-        self,
-        db_dir: Path,
-        entities: dict[str, Any],
-        relationships: list[dict[str, Any]],
-        sources: dict[str, Any],
-        metadata: dict[str, Any],
-    ) -> None:
-        """Write merged data to database files.
-
-        Args:
-            db_dir: Database directory path.
-            entities: Merged entities dict.
-            relationships: Merged relationships list.
-            sources: Merged sources dict.
-            metadata: Composition metadata.
-        """
-        # Write entities
-        entities_file = db_dir / "entities.json"
-        with entities_file.open("w") as f:
-            json.dump(entities, f, indent=2)
-
-        # Write relationships
-        relationships_file = db_dir / "relationships.json"
-        with relationships_file.open("w") as f:
-            json.dump(relationships, f, indent=2)
-
-        # Write sources
-        sources_file = db_dir / "sources.json"
-        with sources_file.open("w") as f:
-            json.dump(sources, f, indent=2)
-
-        # Write composition metadata
-        metadata_file = db_dir / "composition.json"
-        with metadata_file.open("w") as f:
-            json.dump(metadata, f, indent=2)
-
-        logger.debug(
-            "merger_database_written",
-            path=str(db_dir),
-            entities=len(entities),
-            relationships=len(relationships),
+        """Record what was composed, for `compose` tooling and for humans."""
+        payload = {
+            "strategy": self.strategy.value,
+            "database": str(self.database_dir),
+            "composed_at": datetime.now(UTC).isoformat(),
+            "total_entities": total_entities,
+            "total_relationships": total_relationships,
+            "packages": package_records,
+        }
+        (self.output_dir / COMPOSITION_MANIFEST_FILENAME).write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
         )
 
 
 __all__ = [
+    "COMPOSED_DATABASE_NAME",
+    "COMPOSITION_MANIFEST_FILENAME",
     "MergerError",
     "NamespaceMerger",
 ]

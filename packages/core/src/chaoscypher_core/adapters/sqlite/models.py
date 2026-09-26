@@ -1237,6 +1237,10 @@ class DocumentChunk(SQLModel, table=True):
     # Location metadata
     page_number: int | None = None
     section: str | None = None
+    # Media position for chunks of transcribed audio / video (seconds from the
+    # start of the recording); NULL for every other loader. Added 0007.
+    start_time: float | None = None
+    end_time: float | None = None
     group_index: int | None = None  # Hierarchical group index for UI grouping
     chunk_metadata: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
 

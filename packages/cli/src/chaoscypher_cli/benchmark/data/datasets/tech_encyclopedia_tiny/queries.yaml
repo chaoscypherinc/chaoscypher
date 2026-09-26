@@ -7,6 +7,7 @@ queries:
     band: factual_single_hop
     question: "Which agency funded the development of ARPANET?"
     gold_entities: ["ARPA", "ARPANET"]
+    answer_terms: ["ARPA"]
     gold_answer: |
       The Advanced Research Projects Agency (ARPA), an arm of the United States
       Department of Defense, funded the development of ARPANET.
@@ -15,6 +16,7 @@ queries:
     band: factual_single_hop
     question: "What company was awarded the contract to build the ARPANET switching equipment in December 1968?"
     gold_entities: ["Bolt, Beranek and Newman", "ARPANET"]
+    answer_terms: ["Bolt, Beranek and Newman"]
     gold_answer: |
       The contract to build the network's switching equipment was awarded to
       Bolt, Beranek and Newman in December 1968.
@@ -23,6 +25,8 @@ queries:
     band: factual_single_hop
     question: "What was the IMP and what hardware was it based on?"
     gold_entities: ["IMP", "Honeywell DDP-516"]
+    # answer_terms: the IMP is the question's subject; the hardware is the only thing to name, 'what was it' is description
+    answer_terms: ["Honeywell DDP-516"]
     gold_answer: |
       The IMP (Interface Message Processor) was a Honeywell DDP-516 minicomputer
       modified to run BBN's networking software; it sat between a host computer
@@ -33,6 +37,8 @@ queries:
     band: factual_single_hop
     question: "On what date was the first IMP delivered, and to which institution?"
     gold_entities: ["IMP", "UCLA"]
+    # answer_terms: 'August 30' rather than the full date: the loose matcher would accept the year alone
+    answer_terms: ["August 30", "UCLA"]
     gold_answer: |
       The first IMP was delivered to UCLA on August 30, 1969.
 
@@ -40,6 +46,7 @@ queries:
     band: factual_single_hop
     question: "What was the first message ever transmitted over ARPANET?"
     gold_entities: ["ARPANET", "Charley Kline"]
+    answer_terms: ["lo"]
     gold_answer: |
       The first transmitted message was "lo" — the first two letters of "login"
       — after the system crashed when graduate student Charley Kline at UCLA
@@ -50,6 +57,7 @@ queries:
     band: factual_single_hop
     question: "What protocol replaced NCP on ARPANET, and in what year did the transition occur?"
     gold_entities: ["NCP", "TCP/IP", "ARPANET"]
+    answer_terms: ["TCP/IP", "1983"]
     gold_answer: |
       TCP/IP replaced NCP on ARPANET in 1983 in a transition known as flag day,
       displacing NCP entirely.
@@ -58,6 +66,7 @@ queries:
     band: factual_single_hop
     question: "Who coined the term 'packet' and in what year?"
     gold_entities: ["Donald Davies"]
+    answer_terms: ["Donald Davies", "1965"]
     gold_answer: |
       Donald Davies coined the term "packet" in 1965 and built a small network
       at NPL to demonstrate the technique.
@@ -66,6 +75,8 @@ queries:
     band: factual_single_hop
     question: "What was the Network Working Group, and who convened it?"
     gold_entities: ["Network Working Group", "Steve Crocker", "UCLA"]
+    # answer_terms: 'what was it' is description (an informal body); only the convener is a nameable term
+    answer_terms: ["Steve Crocker"]
     gold_answer: |
       The Network Working Group was an informal body convened by Steve Crocker
       at UCLA in 1968 that produced what became known as the Network Control
@@ -75,6 +86,10 @@ queries:
     band: factual_single_hop
     question: "Which four universities formed the original four nodes of ARPANET by the end of 1969?"
     gold_entities: ["UCLA", "Stanford Research Institute", "University of California at Santa Barbara", "University of Utah"]
+    # answer_terms: distinguishing words only; 'University' would match any of the four
+    answer_terms: ["UCLA", "SRI", "Santa Barbara", "Utah"]
+    # must_not_contain: SRI is widely misremembered as Stanford University; the corpus never says so
+    must_not_contain: ["Stanford University"]
     gold_answer: |
       By the end of 1969, four nodes were connected: UCLA, SRI, the University
       of California at Santa Barbara, and the University of Utah.
@@ -83,6 +98,8 @@ queries:
     band: factual_single_hop
     question: "What Turing Award did Robert Kahn and Vinton Cerf share, and for what contribution?"
     gold_entities: ["Robert Kahn", "Vinton Cerf"]
+    # answer_terms: 'what Turing Award' is answered by its year
+    answer_terms: ["2004", "TCP/IP"]
     gold_answer: |
       Robert Kahn and Vinton Cerf shared the 2004 Turing Award for the design
       of TCP/IP.
@@ -91,6 +108,8 @@ queries:
     band: factual_single_hop
     question: "Who invented electronic mail on ARPANET and what symbol did he choose as a separator?"
     gold_entities: ["Ray Tomlinson", "BBN"]
+    # answer_terms: the separator is matched as 'at sign'; an answer giving only '@' fails (one term cannot hold both spellings)
+    answer_terms: ["Ray Tomlinson", "at-sign"]
     gold_answer: |
       Ray Tomlinson, working at BBN in 1971, modified the existing SNDMSG and
       CPYNET programs to send messages between hosts and chose the at-sign
@@ -100,6 +119,7 @@ queries:
     band: factual_single_hop
     question: "Where is the original IMP preserved today?"
     gold_entities: ["IMP", "Computer History Museum"]
+    answer_terms: ["Computer History Museum"]
     gold_answer: |
       The IMP, decorated with hand-drawn lightning bolts by the BBN engineers,
       is preserved at the Computer History Museum in Mountain View, California.
@@ -108,6 +128,8 @@ queries:
     band: factual_single_hop
     question: "What RFC number did Steve Crocker author, and what was its title?"
     gold_entities: ["Steve Crocker", "RFC 1"]
+    # answer_terms: 'RFC 1' is loose (any 'RFC' matches); the title carries the check
+    answer_terms: ["RFC 1", "Host Software"]
     gold_answer: |
       Steve Crocker authored RFC 1, titled "Host Software," which began the
       Request for Comments document series in April 1969.
@@ -116,6 +138,7 @@ queries:
     band: factual_single_hop
     question: "In what year did ARPANET service end?"
     gold_entities: ["ARPANET"]
+    answer_terms: ["1990"]
     gold_answer: |
       ARPANET service ended in 1990.
 
@@ -123,6 +146,8 @@ queries:
     band: factual_single_hop
     question: "What RFC number specified FTP, and who authored it?"
     gold_entities: ["Abhay Bhushan", "FTP"]
+    # answer_terms: '114', not 'RFC 114': the matcher accepts any significant word, so 'RFC' alone would pass
+    answer_terms: ["114", "Abhay Bhushan"]
     gold_answer: |
       FTP was originally specified by Abhay Bhushan in RFC 114.
 
@@ -132,6 +157,7 @@ queries:
     band: paraphrase
     question: "Which defense research body provided the money that built the first packet-switched wide-area network?"
     gold_entities: ["ARPA", "ARPANET"]
+    answer_terms: ["ARPA"]
     gold_answer: |
       The Advanced Research Projects Agency (ARPA), an arm of the United States
       Department of Defense, funded the development of ARPANET.
@@ -140,6 +166,7 @@ queries:
     band: paraphrase
     question: "The Cambridge acoustics firm that had previously employed Licklider was later awarded the contract to manufacture the ARPANET routers. Name that firm."
     gold_entities: ["Bolt, Beranek and Newman"]
+    answer_terms: ["Bolt, Beranek and Newman"]
     gold_answer: |
       Bolt, Beranek and Newman — Licklider's former employer — was awarded the
       contract to build the network's switching equipment in December 1968.
@@ -148,6 +175,7 @@ queries:
     band: paraphrase
     question: "What piece of purpose-built hardware sat between each host and the telephone-line backbone and forwarded packets on the host's behalf?"
     gold_entities: ["IMP"]
+    answer_terms: ["IMP"]
     gold_answer: |
       The Interface Message Processor (IMP) sat between a host computer and
       the network's leased telephone lines and handled packet routing on the
@@ -157,6 +185,7 @@ queries:
     band: paraphrase
     question: "Which British researcher at a national measurement laboratory independently invented the idea of splitting messages into discrete chunks for transmission, and what did he name those chunks?"
     gold_entities: ["Donald Davies", "National Physical Laboratory"]
+    answer_terms: ["Donald Davies", "packet"]
     gold_answer: |
       Donald Davies at the National Physical Laboratory in the United Kingdom
       coined the term "packet" in 1965 and built a small network at NPL to
@@ -166,6 +195,9 @@ queries:
     band: paraphrase
     question: "The informal standards body that met at UCLA in 1968 produced the first host-to-host protocol. What did that protocol come to be called?"
     gold_entities: ["Network Working Group", "NCP"]
+    answer_terms: ["NCP"]
+    # must_not_contain: world knowledge usually expands NCP as 'Network Control Protocol'; the corpus says Program
+    must_not_contain: ["Network Control Protocol"]
     gold_answer: |
       The Network Working Group, convened by Steve Crocker at UCLA in 1968,
       produced what became known as the Network Control Program, or NCP, in 1970.
@@ -174,6 +206,7 @@ queries:
     band: paraphrase
     question: "Which person moved from MIT Lincoln Laboratory to lead the ARPANET design effort after Robert Taylor proposed the network?"
     gold_entities: ["Lawrence Roberts", "MIT Lincoln Laboratory"]
+    answer_terms: ["Lawrence Roberts"]
     gold_answer: |
       Robert Taylor brought in Lawrence Roberts, then at MIT Lincoln Laboratory,
       to lead the project.
@@ -182,6 +215,8 @@ queries:
     band: paraphrase
     question: "A BBN engineer's 1971 modifications to two existing programs, SNDMSG and CPYNET, gave rise to which now-universal communication tool?"
     gold_entities: ["Ray Tomlinson", "BBN"]
+    # answer_terms: an answer saying only 'email' fails (one term cannot hold both spellings)
+    answer_terms: ["electronic mail"]
     gold_answer: |
       Ray Tomlinson, working at BBN in 1971, modified the existing SNDMSG and
       CPYNET programs to send messages between hosts, giving rise to electronic
@@ -191,6 +226,7 @@ queries:
     band: paraphrase
     question: "Two researchers — one who had moved from UCLA to Stanford — jointly designed the successor to NCP. Name them and the layered protocol they created."
     gold_entities: ["Robert Kahn", "Vinton Cerf", "TCP/IP"]
+    answer_terms: ["Robert Kahn", "Vinton Cerf", "TCP/IP"]
     gold_answer: |
       Robert Kahn, by then at ARPA, and Vinton Cerf, who had moved from UCLA
       to Stanford, designed the Transmission Control Program, later split into
@@ -200,6 +236,7 @@ queries:
     band: paraphrase
     question: "The laboratory at the first ARPANET node was led by the researcher who had developed the mathematical theory of queuing that underpins packet networks. Who was he?"
     gold_entities: ["Leonard Kleinrock", "UCLA"]
+    answer_terms: ["Leonard Kleinrock"]
     gold_answer: |
       Leonard Kleinrock, who had developed the queueing theory underlying packet
       networks in his 1962 MIT doctoral dissertation, led the laboratory at UCLA
@@ -209,6 +246,7 @@ queries:
     band: paraphrase
     question: "What widely used document series, still maintained by the body that oversees Internet standards, did the NWG introduce to share protocol proposals?"
     gold_entities: ["RFC series", "Internet Engineering Task Force"]
+    answer_terms: ["Request for Comments"]
     gold_answer: |
       The Network Working Group introduced the Request for Comments document
       series, which began in April 1969 and is now maintained by the Internet
@@ -218,6 +256,9 @@ queries:
     band: paraphrase
     question: "The second ARPANET node was installed in the laboratory of the researcher who created an early networked application system at a Menlo Park institute. Identify the researcher and the system."
     gold_entities: ["Douglas Engelbart", "NLS", "Stanford Research Institute"]
+    answer_terms: ["Douglas Engelbart", "NLS"]
+    # must_not_contain: the Menlo Park institute is SRI, which models often misname as Stanford University
+    must_not_contain: ["Stanford University"]
     gold_answer: |
       The second node was installed at Stanford Research Institute in Menlo Park,
       in the laboratory of Douglas Engelbart, whose NLS system hosted some of
@@ -227,6 +268,7 @@ queries:
     band: paraphrase
     question: "A distributed, survivable message-block network described in 1964 reports influenced the ARPANET design. Who authored those reports and at which think-tank?"
     gold_entities: ["Paul Baran", "RAND Corporation"]
+    answer_terms: ["Paul Baran", "RAND Corporation"]
     gold_answer: |
       Paul Baran at the RAND Corporation described a "distributed adaptive
       message block network" intended to survive partial destruction in a nuclear
@@ -236,6 +278,8 @@ queries:
     band: paraphrase
     question: "A 1974 joint paper by the two TCP/IP designers described a layered model for interconnecting diverse networks. What was the paper's title?"
     gold_entities: ["Robert Kahn", "Vinton Cerf", "TCP/IP"]
+    # answer_terms: the title's distinguishing word; the full title would pass on 'Protocol' alone
+    answer_terms: ["Intercommunication"]
     gold_answer: |
       Their May 1974 paper was titled "A Protocol for Packet Network
       Intercommunication."
@@ -247,6 +291,7 @@ queries:
     band: multi_hop
     question: "Which institution employed the engineer who led the team that built the IMP, and what hardware did that team modify to build it?"
     gold_entities: ["Frank Heart", "Bolt, Beranek and Newman", "Honeywell DDP-516"]
+    answer_terms: ["Bolt, Beranek and Newman", "Honeywell DDP-516"]
     gold_answer: |
       Frank Heart led the BBN team that built the IMP. The team modified a
       Honeywell DDP-516 minicomputer to run BBN's networking software, producing
@@ -256,6 +301,7 @@ queries:
     band: multi_hop
     question: "The person who became ARPA director in 1966 observed a problem with incompatible terminals and proposed a shared network. Who had held that ARPA director role immediately before him?"
     gold_entities: ["Robert Taylor", "Ivan Sutherland", "ARPA"]
+    answer_terms: ["Ivan Sutherland"]
     gold_answer: |
       Robert Taylor took office in 1966. He had been preceded as director of
       the Information Processing Techniques Office at ARPA by Ivan Sutherland,
@@ -265,6 +311,7 @@ queries:
     band: multi_hop
     question: "Licklider wrote his 'Intergalactic Computer Network' memos while at a particular company, and that same company later built the ARPANET routers. Name the company and the router device."
     gold_entities: ["Bolt, Beranek and Newman", "IMP"]
+    answer_terms: ["Bolt, Beranek and Newman", "IMP"]
     gold_answer: |
       Licklider wrote the memos while at Bolt, Beranek and Newman in 1962.
       That same firm was later awarded the contract to build the network's
@@ -275,6 +322,7 @@ queries:
     band: multi_hop
     question: "The researcher who developed packet-queueing theory as a doctoral dissertation later hosted the first ARPANET node in his laboratory. At which university was his lab, and at which university did he write his dissertation?"
     gold_entities: ["Leonard Kleinrock", "UCLA", "MIT"]
+    answer_terms: ["UCLA", "MIT"]
     gold_answer: |
       Leonard Kleinrock developed the queueing theory in his 1962 MIT doctoral
       dissertation. His laboratory was at UCLA, where the first ARPANET node
@@ -284,6 +332,7 @@ queries:
     band: multi_hop
     question: "Robert Kahn co-invented TCP/IP and shared a Turing Award for it. Before joining ARPA, at which organization did Kahn work when he helped design the IMP?"
     gold_entities: ["Robert Kahn", "Bolt, Beranek and Newman", "ARPA", "TCP/IP"]
+    answer_terms: ["Bolt, Beranek and Newman"]
     gold_answer: |
       Robert Kahn was a member of the BBN team that designed and built the IMP.
       He later moved to ARPA, where he and Vinton Cerf designed TCP/IP and shared
@@ -293,6 +342,8 @@ queries:
     band: multi_hop
     question: "The second ARPANET node was at SRI, and the graduate student who sent the first ARPANET message was at the first node. Name the student and the date of that transmission."
     gold_entities: ["Charley Kline", "UCLA", "Stanford Research Institute"]
+    # answer_terms: 'October 29' rather than the full date: the loose matcher would accept the year alone
+    answer_terms: ["Charley Kline", "October 29"]
     gold_answer: |
       Charley Kline, a graduate student at UCLA (the first node), attempted to
       log in to the SRI host on October 29, 1969, and his partial transmission
@@ -302,6 +353,7 @@ queries:
     band: multi_hop
     question: "Which two independent researchers developed the concept of packet switching that Roberts incorporated into the ARPANET design, and at which institutions did they work?"
     gold_entities: ["Paul Baran", "Donald Davies", "RAND Corporation", "National Physical Laboratory"]
+    answer_terms: ["Paul Baran", "Donald Davies", "RAND Corporation", "National Physical Laboratory"]
     gold_answer: |
       Paul Baran at the RAND Corporation and Donald Davies at the National
       Physical Laboratory in the United Kingdom independently developed packet
@@ -311,6 +363,7 @@ queries:
     band: multi_hop
     question: "Licklider left ARPA in 1964 and was replaced by two successive directors before the network proposal was made. Name both successors and which one proposed funding the shared network."
     gold_entities: ["Ivan Sutherland", "Robert Taylor", "ARPA"]
+    answer_terms: ["Ivan Sutherland", "Robert Taylor"]
     gold_answer: |
       Licklider was succeeded by Ivan Sutherland and then by Robert Taylor.
       Taylor, who took office in 1966, proposed funding a single shared network
@@ -320,6 +373,8 @@ queries:
     band: multi_hop
     question: "Vinton Cerf co-designed TCP/IP while at Stanford. At which institution had Cerf previously worked before moving to Stanford, and which ARPA program was he collaborating on when he co-wrote the 1974 paper?"
     gold_entities: ["Vinton Cerf", "UCLA", "Stanford", "TCP/IP"]
+    # answer_terms: the gold answer names no ARPA program, so only the prior institution is required
+    answer_terms: ["UCLA"]
     gold_answer: |
       Vinton Cerf had moved from UCLA to Stanford before co-designing TCP/IP.
       He and Robert Kahn co-authored the May 1974 paper "A Protocol for Packet
@@ -329,6 +384,8 @@ queries:
     band: multi_hop
     question: "The NCP protocol was produced by the Network Working Group in 1970, but was eventually replaced. What specific limitation of NCP drove the replacement effort, and what was the replacement?"
     gold_entities: ["NCP", "TCP/IP", "Network Working Group"]
+    # answer_terms: the limitation as the corpus words it ('inability to interconnect'); the reliable-network dependence is not also required
+    answer_terms: ["interconnect", "TCP/IP"]
     gold_answer: |
       NCP's shortcomings were its dependence on a reliable network and its
       inability to interconnect with other networks. These drove the design of
@@ -339,7 +396,9 @@ queries:
   - id: q039
     band: fine_grained_discrimination
     question: "Both Paul Baran and Donald Davies independently developed packet switching. Which one coined the word 'packet' itself?"
+    wrong_entities: ["Paul Baran"]
     gold_entities: ["Donald Davies"]
+    answer_terms: ["Donald Davies"]
     gold_answer: |
       Donald Davies coined the term "packet" in 1965. Paul Baran independently
       developed distributed switching earlier but used the term "message block,"
@@ -348,7 +407,9 @@ queries:
   - id: q040
     band: fine_grained_discrimination
     question: "Licklider was succeeded as ARPA director by two people in sequence. Which of those two successors actually proposed building the shared ARPANET?"
+    wrong_entities: ["Ivan Sutherland"]
     gold_entities: ["Robert Taylor"]
+    answer_terms: ["Robert Taylor"]
     gold_answer: |
       Robert Taylor, the second successor, proposed funding a single shared
       network after observing that ARPA-funded labs had incompatible terminals
@@ -358,7 +419,9 @@ queries:
   - id: q041
     band: fine_grained_discrimination
     question: "Robert Kahn and Vinton Cerf both contributed to ARPANET. Which one was a member of the original BBN team that built the IMP before later moving to ARPA?"
+    wrong_entities: ["Vinton Cerf"]
     gold_entities: ["Robert Kahn"]
+    answer_terms: ["Robert Kahn"]
     gold_answer: |
       Robert Kahn was a member of the BBN team that built the IMP. Vinton Cerf
       was not part of the BBN team; he worked at UCLA and then Stanford.
@@ -366,7 +429,10 @@ queries:
   - id: q042
     band: fine_grained_discrimination
     question: "The first and second ARPANET nodes were at UCLA and SRI respectively. The laboratory at one of these nodes belonged to the researcher who developed queueing theory for packet networks. Which node was that?"
+    wrong_entities: ["SRI"]
     gold_entities: ["UCLA", "Leonard Kleinrock"]
+    # answer_terms: the question asks which node; naming Kleinrock is not required
+    answer_terms: ["UCLA"]
     gold_answer: |
       The first node (UCLA) was in Leonard Kleinrock's laboratory. Kleinrock had
       developed the queueing theory underlying packet networks. The second node
@@ -375,7 +441,10 @@ queries:
   - id: q043
     band: fine_grained_discrimination
     question: "FTP and Telnet were both early ARPANET applications, but only one was specified in a numbered RFC cited in the corpus. Which application was that, and what was the RFC number?"
+    wrong_entities: ["Telnet"]
     gold_entities: ["FTP", "Abhay Bhushan"]
+    # answer_terms: '114', not 'RFC 114': 'RFC' alone would satisfy the loose matcher
+    answer_terms: ["FTP", "114"]
     gold_answer: |
       FTP was originally specified by Abhay Bhushan in RFC 114. Telnet is
       mentioned as a remote-login application but no specific RFC number is cited
@@ -385,6 +454,7 @@ queries:
     band: fine_grained_discrimination
     question: "Licklider described his 'Intergalactic Computer Network' idea at two different employers in succession. At which employer did he write those memoranda, and at which did he fund follow-on research?"
     gold_entities: ["Bolt, Beranek and Newman", "ARPA"]
+    answer_terms: ["Bolt, Beranek and Newman", "ARPA"]
     gold_answer: |
       Licklider wrote the memoranda while at Bolt, Beranek and Newman in 1962.
       Later that year he became director of the Information Processing Techniques
@@ -394,7 +464,9 @@ queries:
   - id: q045
     band: fine_grained_discrimination
     question: "Two Turing Awards mentioned in the corpus went to ARPANET contributors: one in 2004 and one in 2013. The 2013 award was NOT for TCP/IP. What was it for and who received it?"
+    wrong_entities: ["Robert Kahn", "Vinton Cerf"]
     gold_entities: ["Leslie Lamport"]
+    answer_terms: ["distributed systems", "Leslie Lamport"]
     gold_answer: |
       Leslie Lamport received the 2013 Turing Award for his foundational
       contributions to distributed systems theory, not for TCP/IP. The 2004
@@ -406,6 +478,7 @@ queries:
     band: out_of_scope
     expect_refusal: true
     question: "What was Vint Cerf's undergraduate major at Stanford?"
+    decoy_entities: ["mathematics"]
 
   - id: q047
     band: out_of_scope
@@ -416,6 +489,7 @@ queries:
     band: out_of_scope
     expect_refusal: true
     question: "Which successor protocol to IPv4 is widely deployed today for Internet addressing?"
+    decoy_entities: ["IPv6"]
 
   - id: q049
     band: out_of_scope
@@ -426,3 +500,318 @@ queries:
     band: out_of_scope
     expect_refusal: true
     question: "Which company acquired BBN Technologies after the ARPANET era?"
+    decoy_entities: ["Raytheon"]
+
+# ── HARDER PROBES (2026-09-25) ───────────────────────────────────────────────
+# Added after a 21-model sweep saturated q001-q050 (seven models at 50/50).
+# must_not_contain holds a wrong fact a correct answer has no reason to state:
+# the famous wrong year, or the answer a wrong join between two facts gives.
+# It is matched as a whole phrase, so each term is the wrong fact itself.
+
+# ── FACTUAL SINGLE HOP: traps ────────────────────────────────────────────────
+
+  - id: q051
+    band: factual_single_hop
+    question: "What was the full name of NCP, the ARPANET's first host-to-host protocol?"
+    gold_entities: ["NCP", "Network Working Group"]
+    # answer_terms: 'Program' is the word that separates the corpus's name from the familiar one
+    answer_terms: ["Program"]
+    # must_not_contain: world knowledge expands NCP as 'Network Control Protocol'; the corpus says Program
+    must_not_contain: ["Network Control Protocol"]
+    gold_answer: |
+      NCP was the Network Control Program, produced by the Network Working
+      Group in 1970.
+
+  - id: q052
+    band: factual_single_hop
+    question: "In what year did Licklider write the memoranda describing an 'Intergalactic Computer Network'?"
+    gold_entities: ["Joseph Carl Robnett Licklider", "Bolt, Beranek and Newman"]
+    answer_terms: ["1962"]
+    # must_not_contain: the best-known Intergalactic memo is dated 1963; the corpus says 1962
+    must_not_contain: ["1963"]
+    gold_answer: |
+      Licklider wrote the memoranda in 1962, while at Bolt, Beranek and Newman
+      in Cambridge, Massachusetts.
+
+  - id: q053
+    band: factual_single_hop
+    question: "At which institution was the second ARPANET node installed?"
+    gold_entities: ["Stanford Research Institute", "Douglas Engelbart"]
+    answer_terms: ["SRI"]
+    # must_not_contain: SRI is routinely misnamed as Stanford University
+    must_not_contain: ["Stanford University"]
+    gold_answer: |
+      The second node was installed at Stanford Research Institute (SRI) in
+      Menlo Park, in the laboratory of Douglas Engelbart.
+
+  - id: q054
+    band: factual_single_hop
+    question: "When was Bolt, Beranek and Newman awarded the contract to build the IMPs?"
+    gold_entities: ["Bolt, Beranek and Newman", "IMP"]
+    answer_terms: ["December", "1968"]
+    # must_not_contain: many histories date the award to January 1969; the corpus says December 1968
+    must_not_contain: ["January 1969"]
+    gold_answer: |
+      The contract was awarded to Bolt, Beranek and Newman in December 1968.
+
+  - id: q055
+    band: factual_single_hop
+    question: "By when had electronic mail become responsible for the majority of the ARPANET's traffic?"
+    gold_entities: ["ARPANET", "Ray Tomlinson"]
+    answer_terms: ["mid-1970s"]
+    # must_not_contain: the famous '1973 study' figure; 1973 is in the corpus (Kahn and Cerf), so only this check catches it
+    must_not_contain: ["1973"]
+    gold_answer: |
+      By the mid-1970s, electronic mail was responsible for the majority of
+      the ARPANET's traffic.
+
+# ── MULTI HOP: two facts from different paragraphs ───────────────────────────
+
+  - id: q056
+    band: multi_hop
+    question: "The first IMP went to the institution whose laboratory belonged to the researcher who had developed queueing theory for packet networks. On what date did it arrive, and what minicomputer was it built from?"
+    gold_entities: ["IMP", "UCLA", "Leonard Kleinrock", "Honeywell DDP-516"]
+    answer_terms: ["August 30", "Honeywell DDP-516"]
+    # must_not_contain: the other famous UCLA date (the first message); a wrong join gives it as the arrival
+    must_not_contain: ["October 29"]
+    gold_answer: |
+      The first IMP, a modified Honeywell DDP-516 minicomputer, was delivered
+      to UCLA, home of Leonard Kleinrock's laboratory, on August 30, 1969.
+
+  - id: q057
+    band: multi_hop
+    question: "Vinton Cerf moved to Stanford from another university before co-designing the Transmission Control Program. In whose laboratory at that earlier university was an ARPANET node installed?"
+    gold_entities: ["Vinton Cerf", "UCLA", "Leonard Kleinrock"]
+    answer_terms: ["Leonard Kleinrock"]
+    # must_not_contain: joining on Stanford instead of UCLA leads to the SRI node's lab
+    must_not_contain: ["Engelbart"]
+    gold_answer: |
+      Cerf had moved from UCLA to Stanford. The first ARPANET node was
+      installed at UCLA, in the laboratory of Leonard Kleinrock.
+
+  - id: q058
+    band: multi_hop
+    question: "Among the institutions where Licklider's office funded time-sharing research, which one later hosted the second ARPANET node, and whose laboratory was that node in?"
+    gold_entities: ["Joseph Carl Robnett Licklider", "Stanford Research Institute", "Douglas Engelbart"]
+    answer_terms: ["SRI", "Douglas Engelbart"]
+    # must_not_contain: SRI misnamed as Stanford University
+    must_not_contain: ["Stanford University"]
+    gold_answer: |
+      Licklider funded work at Stanford Research Institute (SRI), among others.
+      The second ARPANET node was installed at SRI in Menlo Park, in the
+      laboratory of Douglas Engelbart.
+
+  - id: q059
+    band: multi_hop
+    question: "The engineer who chose the at-sign as the separator in email addresses worked for the company that built the IMP. What minicomputer was the IMP based on, and in what year did that engineer do his email work?"
+    gold_entities: ["Ray Tomlinson", "Bolt, Beranek and Newman", "Honeywell DDP-516"]
+    answer_terms: ["Honeywell DDP-516", "1971"]
+    # must_not_contain: the at-sign is often dated to 1972; 1972 is in the corpus (1966-1972), so the number check passes it
+    must_not_contain: ["1972"]
+    gold_answer: |
+      Ray Tomlinson did the work at BBN in 1971. BBN's IMP was a Honeywell
+      DDP-516 minicomputer modified to run BBN's networking software.
+
+  - id: q060
+    band: multi_hop
+    question: "The first IMP was delivered to a university where, the year before, an informal protocol group had been convened. Who convened that group, and what document series did it introduce?"
+    gold_entities: ["Steve Crocker", "Network Working Group", "UCLA", "RFC series"]
+    answer_terms: ["Steve Crocker", "Request for Comments"]
+    # must_not_contain: the lab head at UCLA; naming him as the convener is the wrong join
+    must_not_contain: ["Kleinrock"]
+    gold_answer: |
+      The first IMP was delivered to UCLA in 1969. The Network Working Group
+      had been convened there by Steve Crocker in 1968, and it introduced the
+      Request for Comments document series.
+
+  - id: q061
+    band: multi_hop
+    question: "One of the two co-designers of the Transmission Control Program had been on the BBN team that built the IMP. Who was his co-designer, and in what year did the two share a Turing Award?"
+    gold_entities: ["Robert Kahn", "Vinton Cerf", "Bolt, Beranek and Newman", "TCP/IP"]
+    answer_terms: ["Vinton Cerf", "2004"]
+    # must_not_contain: the corpus's other Turing Award year (Lamport's)
+    must_not_contain: ["2013"]
+    gold_answer: |
+      Robert Kahn had been on the BBN IMP team; his co-designer was Vinton
+      Cerf. Kahn and Cerf shared the 2004 Turing Award for the design of TCP/IP.
+
+  - id: q062
+    band: multi_hop
+    question: "Which member of the team that built the IMP later worked at the agency that commissioned the ARPANET, and in what year did he begin designing a new protocol with Vinton Cerf?"
+    gold_entities: ["Robert Kahn", "Bolt, Beranek and Newman", "ARPA", "Vinton Cerf"]
+    answer_terms: ["Robert Kahn", "1973"]
+    # must_not_contain: Licklider also went from BBN to ARPA, but was never on the IMP team
+    must_not_contain: ["Licklider"]
+    gold_answer: |
+      Robert Kahn, a member of the BBN team that built the IMP, was by 1973
+      at ARPA, where he and Vinton Cerf began designing the Transmission
+      Control Program that year.
+
+  - id: q063
+    band: multi_hop
+    question: "Leslie Lamport later worked at the institution that hosted the second ARPANET node. Whose laboratory hosted that node, and in what year did Lamport receive his Turing Award?"
+    gold_entities: ["Leslie Lamport", "Stanford Research Institute", "Douglas Engelbart"]
+    answer_terms: ["Douglas Engelbart", "2013"]
+    # must_not_contain: the corpus's other Turing Award year (Kahn and Cerf's)
+    must_not_contain: ["2004"]
+    gold_answer: |
+      Lamport later worked at SRI, where the second ARPANET node was installed
+      in the laboratory of Douglas Engelbart. Lamport received the 2013 Turing
+      Award.
+
+  - id: q064
+    band: multi_hop
+    question: "The firm where Licklider wrote his memoranda later won the contract to build the network's switching equipment. Who led that firm's team, and to which institution was the first unit delivered?"
+    gold_entities: ["Bolt, Beranek and Newman", "Frank Heart", "IMP", "UCLA"]
+    answer_terms: ["Frank Heart", "UCLA"]
+    # must_not_contain: Roberts led the ARPANET project, not the BBN team; the tempting wrong 'who led'
+    must_not_contain: ["Lawrence Roberts"]
+    gold_answer: |
+      Licklider wrote the memoranda at Bolt, Beranek and Newman, which won the
+      contract in December 1968. The BBN team was led by Frank Heart, and the
+      first IMP was delivered to UCLA on August 30, 1969.
+
+  - id: q065
+    band: multi_hop
+    question: "Leonard Kleinrock wrote his doctoral dissertation at an institution that also housed the laboratory Lawrence Roberts came from. Name that laboratory and the person who brought Roberts in to lead the project."
+    gold_entities: ["Leonard Kleinrock", "MIT", "MIT Lincoln Laboratory", "Lawrence Roberts", "Robert Taylor"]
+    answer_terms: ["Lincoln", "Robert Taylor"]
+    # must_not_contain: Taylor's predecessor; a wrong join on 'the ARPA director'
+    must_not_contain: ["Ivan Sutherland"]
+    gold_answer: |
+      Kleinrock's dissertation was at MIT. Lawrence Roberts came from MIT
+      Lincoln Laboratory, and Robert Taylor brought him in to lead the project.
+
+# ── FINE GRAINED DISCRIMINATION: two entities in similar roles ───────────────
+
+  - id: q066
+    band: fine_grained_discrimination
+    question: "Paul Baran and Donald Davies both developed packet switching independently. Which of them built a small network to demonstrate the technique, and at which laboratory?"
+    wrong_entities: ["Paul Baran"]
+    gold_entities: ["Donald Davies", "National Physical Laboratory"]
+    answer_terms: ["Donald Davies", "NPL"]
+    gold_answer: |
+      Donald Davies built a small network at the National Physical Laboratory
+      (NPL) in the United Kingdom to demonstrate the technique.
+
+  - id: q067
+    band: fine_grained_discrimination
+    question: "Of Paul Baran and Donald Davies, whose work was meant to let a network survive partial destruction in a nuclear exchange, and at which organisation did he work?"
+    wrong_entities: ["Donald Davies"]
+    gold_entities: ["Paul Baran", "RAND Corporation"]
+    answer_terms: ["Paul Baran", "RAND"]
+    gold_answer: |
+      Paul Baran's 1964 reports at the RAND Corporation described a distributed
+      adaptive message block network intended to survive partial destruction
+      in a nuclear exchange.
+
+  - id: q068
+    band: fine_grained_discrimination
+    question: "The first two ARPANET nodes were in the laboratories of Leonard Kleinrock and Douglas Engelbart. Whose laboratory ran the system that hosted some of the earliest networked applications, and what was it called?"
+    wrong_entities: ["Leonard Kleinrock"]
+    gold_entities: ["Douglas Engelbart", "NLS"]
+    answer_terms: ["Douglas Engelbart", "NLS"]
+    # must_not_contain: the world-knowledge name of Engelbart's lab, which the corpus never gives
+    must_not_contain: ["Augmentation Research Center"]
+    gold_answer: |
+      Douglas Engelbart's laboratory at Stanford Research Institute ran the NLS
+      system, which hosted some of the earliest networked applications.
+
+  - id: q069
+    band: fine_grained_discrimination
+    question: "Steve Crocker and Abhay Bhushan both authored early RFCs. Which of them convened the Network Working Group, and in what year?"
+    wrong_entities: ["Abhay Bhushan"]
+    gold_entities: ["Steve Crocker", "Network Working Group"]
+    answer_terms: ["Steve Crocker", "1968"]
+    gold_answer: |
+      Steve Crocker convened the Network Working Group, an informal body, at
+      UCLA in 1968.
+
+  - id: q070
+    band: fine_grained_discrimination
+    question: "Robert Kahn and Vinton Cerf began designing the Transmission Control Program together. Which of them was at ARPA at the time, and where was the other one?"
+    wrong_entities: ["Vinton Cerf"]
+    gold_entities: ["Robert Kahn", "ARPA"]
+    answer_terms: ["Robert Kahn", "Stanford"]
+    gold_answer: |
+      Robert Kahn was by then at ARPA; Vinton Cerf had moved from UCLA to
+      Stanford.
+
+  - id: q071
+    band: fine_grained_discrimination
+    question: "Frank Heart and Robert Kahn were both on the BBN team that built the IMP. Which of them led the team?"
+    wrong_entities: ["Robert Kahn"]
+    gold_entities: ["Frank Heart", "Bolt, Beranek and Newman"]
+    answer_terms: ["Frank Heart"]
+    gold_answer: |
+      Frank Heart led the BBN team; Robert Kahn, Severo Ornstein and David
+      Walden were members of it.
+
+  - id: q072
+    band: fine_grained_discrimination
+    question: "Robert Taylor and Lawrence Roberts both shaped the early ARPANET. Which of them incorporated Paul Baran's and Donald Davies's packet-switching work into the network's design?"
+    wrong_entities: ["Robert Taylor"]
+    gold_entities: ["Lawrence Roberts"]
+    answer_terms: ["Lawrence Roberts"]
+    gold_answer: |
+      Lawrence Roberts, whom Taylor brought in to lead the project,
+      incorporated both lines of work into the ARPANET design.
+
+  - id: q073
+    band: fine_grained_discrimination
+    question: "Leonard Kleinrock and Douglas Engelbart each hosted one of the first two ARPANET nodes. Which of them had developed queueing theory in a doctoral dissertation, and in what year?"
+    wrong_entities: ["Douglas Engelbart"]
+    gold_entities: ["Leonard Kleinrock", "MIT"]
+    answer_terms: ["Leonard Kleinrock", "1962"]
+    # must_not_contain: Kleinrock's MIT doctorate is usually dated 1963; the corpus dates the dissertation 1962
+    must_not_contain: ["1963"]
+    gold_answer: |
+      Leonard Kleinrock developed the queueing theory underlying packet
+      networks in his 1962 MIT doctoral dissertation.
+
+# ── OUT OF SCOPE: famous world knowledge the corpus does not contain ─────────
+
+  - id: q074
+    band: out_of_scope
+    expect_refusal: true
+    question: "Who founded Bolt, Beranek and Newman?"
+    decoy_entities: ["Leo Beranek", "Richard Bolt", "Robert Newman"]
+
+  - id: q075
+    band: out_of_scope
+    expect_refusal: true
+    question: "In what year was IPv6 standardised?"
+    decoy_entities: ["1995", "1998", "2017"]
+
+  - id: q076
+    band: out_of_scope
+    expect_refusal: true
+    question: "Where was Leonard Kleinrock born?"
+    decoy_entities: ["New York", "Manhattan", "Bronx"]
+
+  # q077: 'what does BBN stand for' was the brief's example, but the corpus
+  # introduces 'The BBN team' right after 'Bolt, Beranek and Newman', so the
+  # expansion is inferable; NLS is never expanded.
+  - id: q077
+    band: out_of_scope
+    expect_refusal: true
+    question: "What does the acronym NLS stand for?"
+    decoy_entities: ["on-line system", "online system"]
+
+  - id: q078
+    band: out_of_scope
+    expect_refusal: true
+    question: "In what year was the NSFNET backbone decommissioned?"
+    decoy_entities: ["1995"]
+
+  - id: q079
+    band: out_of_scope
+    expect_refusal: true
+    question: "What was the title of Leonard Kleinrock's doctoral dissertation?"
+    decoy_entities: ["Information Flow", "Communication Nets"]
+
+  - id: q080
+    band: out_of_scope
+    expect_refusal: true
+    question: "Who invented the World Wide Web?"
+    decoy_entities: ["Berners-Lee"]

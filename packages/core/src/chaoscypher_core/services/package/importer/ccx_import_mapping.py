@@ -41,6 +41,11 @@ from chaoscypher_core.services.export import ccx_identity
 # inverse mapping never treats framing/structural keys as domain data.
 _RESERVED_KEYS = {"@id", "@type", "@context", "name", "source"}
 
+# Mirrors ``ccx_mapping.TEMPLATE_REF_KEY``: the node's template as an object
+# reference. Reserved so it is neither a property nor a plain-triple edge.
+_TEMPLATE_REF_KEY = "cc:template"
+_RESERVED_KEYS.add(_TEMPLATE_REF_KEY)
+
 # The relationship-resource terms the exporter writes — stripped before the
 # remaining terms are collected as edge ``properties``.
 _RELATIONSHIP_KEYS = {
@@ -107,10 +112,17 @@ def jsonld_entity_to_node(obj: dict) -> tuple[str, dict]:
             continue
         properties[key] = value
 
+    template_ref = obj.get(_TEMPLATE_REF_KEY)
+    template_iri = template_ref.get("@id") if isinstance(template_ref, dict) else None
+
     kwargs: dict[str, Any] = {
         "label": obj.get("name"),
         "entity_type": entity_type,
         "type_term": type_term,
+        # The template IRI when the exporter recorded one; resolved ahead of
+        # the ``type_term`` name match so a node keeps BOTH its template and
+        # its specific entity_type across the round-trip.
+        "template_iri": template_iri,
         "properties": properties,
         "local_id": ccx_identity.local_id_from_iri(ccx_iri),
     }

@@ -37,11 +37,11 @@ Select provider [1]:
 
 How much GPU VRAM do you have?
 
- [1]  16GB  (RTX 4080, 5080)    → phi4:14b
- [2]  20GB  (RTX A4000, A4500)  → phi4:14b
- [3]  24GB  (RTX 4090, 3090)    → qwen3:30b
- [4]  32GB  (RTX 5090)          → qwen3:30b
- [5]  48GB  (A6000, 2x 4090)    → qwen3:30b
+ [1]  16GB  (RTX 4080, 5080)    → qwen3.5:9b
+ [2]  20GB  (RTX A4000, A4500)  → qwen3.5:9b
+ [3]  24GB  (RTX 4090, 3090)    → qwen3.8:27b
+ [4]  32GB  (RTX 5090)          → qwen3.6:35b-a3b
+ [5]  48GB  (A6000, 2x 4090)    → qwen3.6:35b-a3b
  [6]  96GB  (RTX 6000 Pro)      → gpt-oss:120b
  [7]  128GB (DGX Spark, Ryzen AI Max+ 395) → gpt-oss:120b
  [8]  Custom                    I'll specify models manually
@@ -49,8 +49,8 @@ How much GPU VRAM do you have?
 Select VRAM tier [3]:
 
 Applying 24GB VRAM preset...
-  Chat model: qwen3:30b
-  Extraction model: qwen3:30b-instruct
+  Chat model: qwen3.8:27b
+  Extraction model: gemma4:26b
   Vision model: qwen3-vl:30b
   Context window: 16384
 
@@ -61,8 +61,8 @@ Configure embedding provider? [y/N]:
 ╭─────────────── Configuration Complete ──────────────────╮
 │  Provider          ollama                               │
 │  URL               http://localhost:11434               │
-│  Chat Model        qwen3:30b                            │
-│  Extraction Model  qwen3:30b-instruct                   │
+│  Chat Model        qwen3.8:27b                          │
+│  Extraction Model  gemma4:26b                           │
 │  Context Window    16384                                │
 │                                                         │
 │  Embedding Provider  ollama                             │
@@ -102,13 +102,13 @@ When using Ollama, select a VRAM tier to automatically apply the optimal model c
 
 | VRAM | Example GPUs | Chat Model | Extraction Model | Vision Model | Context Window |
 |------|-------------|------------|------------------|--------------|----------------|
-| 16 GB | RTX 4080, 5080 | phi4:14b | phi4:14b | qwen3-vl:8b | 16384 |
-| 20 GB | RTX A4000, A4500 | phi4:14b | phi4:14b | qwen3-vl:8b | 24576 |
-| 24 GB | RTX 4090, 3090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 16384 |
-| 32 GB | RTX 5090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 32768 |
-| 48 GB | A6000, 2x 4090 | qwen3:30b | qwen3:30b-instruct | qwen3-vl:30b | 49152 |
-| 96 GB | RTX 6000 Pro | gpt-oss:120b | gpt-oss:120b | qwen3-vl:30b | 49152 |
-| 128 GB | DGX Spark, Ryzen AI Max+ 395 | gpt-oss:120b | gpt-oss:120b | qwen3-vl:30b | 65536 |
+| 16 GB | RTX 4080, 5080 | qwen3.5:9b | qwen2.5:14b-instruct | qwen3-vl:8b | 16384 |
+| 20 GB | RTX A4000, A4500 | qwen3.5:9b | qwen2.5:14b-instruct | qwen3-vl:8b | 24576 |
+| 24 GB | RTX 4090, 3090 | qwen3.8:27b | gemma4:26b | qwen3-vl:30b | 16384 |
+| 32 GB | RTX 5090 | qwen3.6:35b-a3b | gemma4:31b | qwen3-vl:30b | 32768 |
+| 48 GB | A6000, 2x 4090 | qwen3.6:35b-a3b | gemma4:31b | qwen3-vl:30b | 49152 |
+| 96 GB | RTX 6000 Pro | gpt-oss:120b | gemma4:31b | qwen3-vl:30b | 49152 |
+| 128 GB | DGX Spark, Ryzen AI Max+ 395 | gpt-oss:120b | gemma4:31b | qwen3-vl:30b | 65536 |
 
 Beyond the models, each preset also tunes per-tier LLM limits — Ollama batch size, `llm.ai_context_window` (matching the Ollama context window), `llm.ai_max_tokens`, and `llm.extraction_max_tokens` — and disables chat "thinking" (`llm.thinking_for_chat: false`). The presets ship as JSON plugins in `chaoscypher_core/services/presets/plugins/vram_*.json`; every value they set can be adjusted afterwards with [`chaoscypher config set`](config.md#set-a-value).
 

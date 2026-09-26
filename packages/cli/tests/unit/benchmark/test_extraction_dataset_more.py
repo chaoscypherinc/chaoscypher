@@ -289,8 +289,10 @@ def test_build_temp_context_overrides_model_fields(tmp_path: Path) -> None:
     llm_settings = SimpleNamespace(
         openai_chat_model="old",
         openai_extraction_model="old",
-        temperature=0.7,
+        extraction_temperature=0.7,
+        ai_temperature=0.7,
         seed=1,
+        thinking_for_extraction=True,
     )
     fake_ctx = MagicMock()
     fake_ctx.settings = SimpleNamespace(llm=llm_settings)
@@ -308,9 +310,14 @@ def test_build_temp_context_overrides_model_fields(tmp_path: Path) -> None:
     # Model fields overridden post-connect.
     assert llm_settings.openai_chat_model == "gpt-4o"
     assert llm_settings.openai_extraction_model == "gpt-4o"
-    # Determinism pinned.
-    assert llm_settings.temperature == 0.0
+    # Determinism pinned, on the field names LLMSettings actually has. The
+    # earlier version asserted `llm_settings.temperature`, a field that does not
+    # exist on LLMSettings, so it passed against a stub while the real code
+    # pinned nothing.
+    assert llm_settings.extraction_temperature == 0.0
+    assert llm_settings.ai_temperature == 0.0
     assert llm_settings.seed == 42
+    assert llm_settings.thinking_for_extraction is False
     # Provider cache reset.
     assert fake_ctx._llm_provider is None
     assert fake_ctx._llm_checked is False
@@ -323,20 +330,25 @@ def test_build_temp_context_unknown_provider_skips_model_fields(tmp_path: Path) 
     ds = _ds(tmp_path)
     model = ModelConfig(provider="mystery", model="m1", label="M")
 
-    # No temperature/seed attrs -> hasattr branches are False.
+    # Settings without the pinning fields must RAISE, not skip silently. This
+    # test previously asserted the opposite, which is how the benchmark shipped
+    # for months claiming temperature 0 and a fixed seed while applying neither:
+    # the guards keyed on field names ("temperature", "seed") that LLMSettings
+    # never had, so both assignments quietly no-opped.
     llm_settings = SimpleNamespace()
     fake_ctx = MagicMock()
     fake_ctx.settings = SimpleNamespace(llm=llm_settings)
     ctx_factory = MagicMock(return_value=fake_ctx)
     fake_context_mod = SimpleNamespace(CLIContext=ctx_factory)
 
-    with patch.dict("sys.modules", {"chaoscypher_cli.context": fake_context_mod}):
-        out = ds._build_temp_context(model)
+    with (
+        patch.dict("sys.modules", {"chaoscypher_cli.context": fake_context_mod}),
+        pytest.raises(AttributeError, match="extraction_temperature"),
+    ):
+        ds._build_temp_context(model)
 
-    assert out is fake_ctx
-    # Unknown provider -> no model fields set; settings.llm stays empty.
+    # Unknown provider -> no model fields set before the pin check raised.
     assert not hasattr(llm_settings, "mystery_chat_model")
-    assert fake_ctx._llm_provider is None
 
 
 def test_remove_temp_db_dir_evicts_and_removes(tmp_path: Path) -> None:
@@ -401,3 +413,121 @@ def test_remove_temp_db_dir_retries_then_warns_on_persistent_failure(
 
     # Directory still present because rmtree was stubbed to always fail.
     assert db_dir.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("commit_graph", [False, True])
+async def test_commit_graph_does_not_change_extraction_latency(
+    tmp_path: Path, commit_graph: bool
+) -> None:
+    """The timed call is extract-only either way; embed + commit run untimed after it.
+
+    Before the split, ``commit_graph`` folded chunk embedding and the commit
+    stage into the timed pipeline call, so the orchestrated extraction row's
+    latency differed from the plain benchmark's for the same model.
+    """
+    from chaoscypher_cli.benchmark import extraction_dataset as mod
+
+    ds = _ds(tmp_path)
+    ds.commit_graph = commit_graph
+    ctx = _fake_ctx(tmp_path, entities=[{"id": "e1", "name": "Pierre"}], relationships=[])
+    chunks = [{"id": "c1", "content": "Pierre visited Moscow."}]
+    ctx.storage_adapter.get_chunks_by_source.return_value = (chunks, 1)
+    now = [0.0]
+
+    def _clock() -> float:
+        """Fake perf_counter driven by the pipeline fakes."""
+        return now[0]
+
+    extracted = SimpleNamespace(
+        success=True,
+        error=None,
+        file_id="file-9",
+        llm_total_input_tokens=10,
+        llm_total_output_tokens=5,
+        chunks_count=2,
+    )
+    committed = SimpleNamespace(success=True, error=None)
+
+    def _run(**kwargs: Any) -> SimpleNamespace:
+        """Extract takes 2s, the resumed commit 50s."""
+        if kwargs.get("file_id") is None:
+            now[0] += 2.0
+            return extracted
+        now[0] += 50.0
+        return committed
+
+    service_factory, pipeline_factory, pipeline = _patch_pipeline(extracted)
+    pipeline.run = MagicMock(side_effect=_run)
+    service = service_factory.return_value
+    service._generate_embeddings = MagicMock(
+        side_effect=lambda *_a: now.__setitem__(0, now[0] + 30)
+    )
+    fake_sources = SimpleNamespace(
+        CLISourceProcessingService=service_factory,
+        SourcePipeline=pipeline_factory,
+    )
+
+    with (
+        patch.dict("sys.modules", {"chaoscypher_cli.sources": fake_sources}),
+        patch.object(ds, "_build_temp_context", return_value=ctx),
+        patch.object(mod, "time", SimpleNamespace(perf_counter=_clock)),
+    ):
+        out = await ds.run(ModelConfig(provider="openai", model="gpt-x", label="G"))
+
+    assert out.error is None
+    assert out.latency_ms == 2000
+    assert out.per_chunk_latency_ms == [1000, 1000]
+    first = pipeline.run.call_args_list[0].kwargs
+    assert (first["skip_commit"], first["extract_only"], first["skip_embeddings"]) == (
+        True,
+        True,
+        True,
+    )
+    if not commit_graph:
+        assert pipeline.run.call_count == 1
+        service._generate_embeddings.assert_not_called()
+        return
+    assert pipeline.run.call_count == 2
+    service._generate_embeddings.assert_called_once_with("file-9", chunks)
+    second = pipeline.run.call_args_list[1].kwargs
+    assert second["file_id"] == "file-9"
+    assert second["file_path"] is None
+    assert (second["skip_index"], second["skip_extract"], second["skip_commit"]) == (
+        True,
+        True,
+        False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_commit_graph_failure_is_reported_on_the_row(tmp_path: Path) -> None:
+    """A failed resumed commit fails the row rather than caching an uncommitted graph."""
+    ds = _ds(tmp_path)
+    ds.commit_graph = True
+    ctx = _fake_ctx(tmp_path, entities=[{"id": "e1", "name": "Pierre"}], relationships=[])
+    ctx.storage_adapter.get_chunks_by_source.return_value = ([], 0)
+    extracted = SimpleNamespace(
+        success=True,
+        error=None,
+        file_id="file-9",
+        llm_total_input_tokens=0,
+        llm_total_output_tokens=0,
+        chunks_count=1,
+    )
+    service_factory, pipeline_factory, pipeline = _patch_pipeline(extracted)
+    pipeline.run = MagicMock(
+        side_effect=[extracted, SimpleNamespace(success=False, error="graph locked")]
+    )
+    fake_sources = SimpleNamespace(
+        CLISourceProcessingService=service_factory,
+        SourcePipeline=pipeline_factory,
+    )
+
+    with (
+        patch.dict("sys.modules", {"chaoscypher_cli.sources": fake_sources}),
+        patch.object(ds, "_build_temp_context", return_value=ctx),
+    ):
+        out = await ds.run(ModelConfig(provider="openai", model="gpt-x", label="G"))
+
+    assert out.error == "commit_failed: graph locked"

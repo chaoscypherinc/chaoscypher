@@ -52,6 +52,8 @@ class IndexingProtocol(Protocol):
                 - embedding_dimensions: Vector dimensions (may be None)
                 - page_number: Optional page number
                 - section: Optional section name
+                - start_time / end_time: Media position in seconds for
+                  transcribed audio / video chunks (None otherwise)
                 - chunk_metadata: Optional metadata dict
                 - status: 'staged' | 'indexed' | 'committed'
                 - created_at: Creation datetime
@@ -139,7 +141,8 @@ class IndexingProtocol(Protocol):
             Chunk dictionary with keys, or None if not found:
                 - id, source_id, database_name, chunk_index
                 - content, embedding, embedding_model, embedding_dimensions
-                - page_number, section, chunk_metadata, status, created_at
+                - page_number, section, start_time, end_time, chunk_metadata,
+                  status, created_at
 
         Notes:
             - Used by SearchService to hydrate chunk results

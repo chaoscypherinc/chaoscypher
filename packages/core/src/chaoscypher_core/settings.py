@@ -573,6 +573,14 @@ class LLMSettings(BaseModel):
         le=2.0,
         description="LLM temperature for extraction and structured output (lower = more deterministic)",
     )
+    seed: int | None = Field(
+        default=None,
+        description=(
+            "Sampling seed for LLM calls. None means the provider picks one per "
+            "request, so output varies between identical runs. Only Ollama honours "
+            "this today; hosted providers ignore it."
+        ),
+    )
 
     # Extraction-specific limits
     extraction_max_tokens: int = Field(

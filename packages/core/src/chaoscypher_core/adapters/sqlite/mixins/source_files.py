@@ -857,6 +857,45 @@ class SourceLifecycleMixin(SqliteMixinBase):
         )
         self._maybe_commit()
 
+    def get_source_counters(
+        self,
+        *,
+        source_id: str,
+        database_name: str,
+    ) -> dict[str, int]:
+        """Return every quality-counter column for one source.
+
+        The counters are incremented by pipeline stages through
+        ``increment_source_counter``, but nothing could read them back:
+        ``get_file`` uses a narrow ``load_only`` projection that omits them, so
+        the key is simply absent from its dict and a caller's ``.get()``
+        returns ``None``. Every counter written was effectively write-only.
+
+        Column names come from the same allowlist the increment validates
+        against, so the interpolation is safe and the two cannot drift.
+
+        Returns:
+            ``{column: value}`` for all integer counter columns, zero-filled.
+            An unknown source yields zeros rather than raising - these are
+            observability counters, not a lookup callers branch on.
+        """
+        self._ensure_connected()
+        columns = sorted(self._COUNTER_COLUMN_ALLOWLIST)
+        if not columns:
+            return {}
+        projection = ", ".join(columns)
+        sql = (
+            f"SELECT {projection} FROM sources "  # column names are allowlisted
+            "WHERE id = :sid AND database_name = :db"
+        )
+        row = self.session.execute(
+            text(sql),
+            {"sid": source_id, "db": database_name},
+        ).first()
+        if row is None:
+            return dict.fromkeys(columns, 0)
+        return {col: int(getattr(row, col, 0) or 0) for col in columns}
+
     def update_source_columns(
         self,
         *,

@@ -77,6 +77,9 @@ export interface ChunkReference {
   content: string;
   page_number?: number;
   section?: string;
+  /** Seconds into the recording for transcribed audio/video chunks. */
+  start_time?: number | null;
+  end_time?: number | null;
   chunk_metadata?: Record<string, unknown>;
 }
 

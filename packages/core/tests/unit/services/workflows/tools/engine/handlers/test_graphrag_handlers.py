@@ -713,3 +713,31 @@ class TestEdgeCases:
         # Mode: seeds were found but PPR produced no entities → vector_only
         assert result["retrieval_stats"]["mode"] == "vector_only"
         assert result["success"] is True
+
+
+# ===========================================================================
+# Type labels in the graph context
+# ===========================================================================
+
+
+def test_type_label_prefers_entity_type_over_generic_template(
+    graph_repo: MagicMock, search_repo: MagicMock, settings: EngineSettings
+) -> None:
+    """Extraction files most nodes under one system template ("Item") and keeps
+    the specific type on ``entity_type``; the summary must say "(Package)",
+    not "(Item)". A node without an entity type still gets its template name.
+    """
+    handler = _make_handler(graph_repo, search_repo, settings)
+    graph_repo.get_template.side_effect = lambda tid: SimpleNamespace(
+        name={"tpl_item": "Item", "tpl_person": "Person"}[tid]
+    )
+    valkey = make_node("n1", "Valkey", template_id="tpl_item")
+    valkey.entity_type = "Package"
+    alice = make_node("n2", "Alice", template_id="tpl_person")
+    alice.entity_type = None
+    loose = make_node("n3", "Loose", template_id=None)
+    loose.entity_type = None
+
+    labels = handler._resolve_template_names([valkey, alice, loose])
+
+    assert labels == {"n1": "Package", "n2": "Person", "n3": ""}

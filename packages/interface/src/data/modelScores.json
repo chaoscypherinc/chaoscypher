@@ -1,0 +1,834 @@
+{
+ "generated": "2026-09-26",
+ "vram_headroom_gb": 4,
+ "score_weights": {
+  "extraction": {
+   "carrier": 0.6666666666666666,
+   "native": 0.3333333333333333
+  },
+  "overall": {
+   "extraction": 0.6,
+   "chat": 0.4
+  }
+ },
+ "models": [
+  {
+   "id": "deepseek-r1:14b",
+   "label": "DeepSeek-R1 14B",
+   "vram_gb": 9.0,
+   "license": "mit",
+   "tools": true,
+   "isolated": {
+    "passed": 51,
+    "total": 65,
+    "pct": 78
+   },
+   "chunks": {
+    "passed": 4,
+    "total": 21,
+    "pct": 19
+   },
+   "chat": {
+    "passed": 50,
+    "total": 80,
+    "pct": 62.5,
+    "timed_out": false
+   },
+   "chat_pct": 62.5,
+   "scores": {
+    "extraction": 38.9,
+    "chat": 62.5,
+    "overall": 48.3
+   },
+   "notes": [
+    "2 cut off isolated",
+    "1 looped isolated",
+    "thought despite think=off",
+    "7 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "gemma4:12b",
+   "label": "Gemma 4 12B",
+   "vram_gb": 7.6,
+   "license": "gemma",
+   "tools": true,
+   "isolated": {
+    "passed": 53,
+    "total": 65,
+    "pct": 82
+   },
+   "chunks": {
+    "passed": 13,
+    "total": 21,
+    "pct": 62
+   },
+   "chat": {
+    "passed": 51,
+    "total": 80,
+    "pct": 63.8,
+    "timed_out": false
+   },
+   "chat_pct": 63.8,
+   "scores": {
+    "extraction": 68.4,
+    "chat": 63.8,
+    "overall": 66.6
+   },
+   "notes": [
+    "2 cut off isolated",
+    "1 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "gemma4:26b",
+   "label": "Gemma 4 26B",
+   "vram_gb": 17.0,
+   "license": "gemma",
+   "tools": true,
+   "isolated": {
+    "passed": 58,
+    "total": 65,
+    "pct": 89
+   },
+   "chunks": {
+    "passed": 16,
+    "total": 21,
+    "pct": 76
+   },
+   "chat": {
+    "passed": 55,
+    "total": 80,
+    "pct": 68.8,
+    "timed_out": false
+   },
+   "chat_pct": 68.8,
+   "scores": {
+    "extraction": 80.5,
+    "chat": 68.8,
+    "overall": 75.8
+   },
+   "notes": [
+    "1 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "gemma4:31b",
+   "label": "Gemma 4 31B",
+   "vram_gb": 20.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 58,
+    "total": 65,
+    "pct": 89
+   },
+   "chunks": {
+    "passed": 17,
+    "total": 21,
+    "pct": 81
+   },
+   "chat": {
+    "passed": 59,
+    "total": 80,
+    "pct": 73.8,
+    "timed_out": false
+   },
+   "chat_pct": 73.8,
+   "scores": {
+    "extraction": 83.7,
+    "chat": 73.8,
+    "overall": 79.7
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "gemma4:e4b",
+   "label": "Gemma 4 E4B",
+   "vram_gb": 9.6,
+   "license": "gemma",
+   "tools": true,
+   "isolated": {
+    "passed": 46,
+    "total": 65,
+    "pct": 71
+   },
+   "chunks": {
+    "passed": 12,
+    "total": 21,
+    "pct": 57
+   },
+   "chat": {
+    "passed": 46,
+    "total": 80,
+    "pct": 57.5,
+    "timed_out": false
+   },
+   "chat_pct": 57.5,
+   "scores": {
+    "extraction": 61.7,
+    "chat": 57.5,
+    "overall": 60.0
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "glm-4.7-flash",
+   "label": "GLM 4.7 Flash",
+   "vram_gb": 19.0,
+   "license": "mit",
+   "tools": true,
+   "isolated": {
+    "passed": 33,
+    "total": 65,
+    "pct": 51
+   },
+   "chunks": {
+    "passed": 3,
+    "total": 21,
+    "pct": 14
+   },
+   "chat": {
+    "passed": null,
+    "total": 80,
+    "pct": null,
+    "timed_out": true
+   },
+   "chat_pct": null,
+   "scores": {
+    "extraction": 26.4,
+    "chat": 0.0,
+    "overall": 15.9
+   },
+   "notes": [
+    "10 cut off isolated",
+    "4 looped isolated",
+    "13 cut off in chunks",
+    "12 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "glm4:9b",
+   "label": "GLM4 9B",
+   "vram_gb": 5.5,
+   "license": "mit",
+   "tools": true,
+   "isolated": {
+    "passed": 36,
+    "total": 65,
+    "pct": 55
+   },
+   "chunks": {
+    "passed": 12,
+    "total": 21,
+    "pct": 57
+   },
+   "chat": {
+    "passed": 50,
+    "total": 80,
+    "pct": 62.5,
+    "timed_out": false
+   },
+   "chat_pct": 62.5,
+   "scores": {
+    "extraction": 56.6,
+    "chat": 62.5,
+    "overall": 58.9
+   },
+   "notes": [
+    "2 cut off isolated",
+    "2 cut off in chunks",
+    "1 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "gpt-oss:20b",
+   "label": "GPT-OSS 20B",
+   "vram_gb": 13.0,
+   "license": "mit",
+   "tools": true,
+   "isolated": {
+    "passed": 39,
+    "total": 65,
+    "pct": 60
+   },
+   "chunks": {
+    "passed": 3,
+    "total": 21,
+    "pct": 14
+   },
+   "chat": {
+    "passed": 54,
+    "total": 80,
+    "pct": 67.5,
+    "timed_out": false
+   },
+   "chat_pct": 67.5,
+   "scores": {
+    "extraction": 29.5,
+    "chat": 67.5,
+    "overall": 44.7
+   },
+   "notes": [
+    "20 cut off isolated",
+    "thought despite think=off",
+    "18 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "granite4.2:30b",
+   "label": "Granite 4.2 30B",
+   "vram_gb": 17.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 49,
+    "total": 65,
+    "pct": 75
+   },
+   "chunks": {
+    "passed": 9,
+    "total": 21,
+    "pct": 43
+   },
+   "chat": {
+    "passed": null,
+    "total": 80,
+    "pct": null,
+    "timed_out": true
+   },
+   "chat_pct": null,
+   "scores": {
+    "extraction": 53.7,
+    "chat": 0.0,
+    "overall": 32.2
+   },
+   "notes": [
+    "1 cut off isolated",
+    "2 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "granite4.2:8b",
+   "label": "Granite 4.2 8B",
+   "vram_gb": 5.3,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 30,
+    "total": 65,
+    "pct": 46
+   },
+   "chunks": {
+    "passed": 7,
+    "total": 21,
+    "pct": 33
+   },
+   "chat": {
+    "passed": 52,
+    "total": 80,
+    "pct": 65.0,
+    "timed_out": false
+   },
+   "chat_pct": 65.0,
+   "scores": {
+    "extraction": 37.6,
+    "chat": 65.0,
+    "overall": 48.6
+   },
+   "notes": [
+    "2 looped isolated",
+    "1 cut off in chunks",
+    "8 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "llama3.1:8b",
+   "label": "Llama 3.1 8B",
+   "vram_gb": 4.9,
+   "license": "llama3.1",
+   "tools": true,
+   "isolated": {
+    "passed": 36,
+    "total": 65,
+    "pct": 55
+   },
+   "chunks": {
+    "passed": 8,
+    "total": 21,
+    "pct": 38
+   },
+   "chat": {
+    "passed": 45,
+    "total": 80,
+    "pct": 56.2,
+    "timed_out": false
+   },
+   "chat_pct": 56.2,
+   "scores": {
+    "extraction": 43.9,
+    "chat": 56.2,
+    "overall": 48.8
+   },
+   "notes": [
+    "8 cut off isolated",
+    "7 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "mistral-small3.2:24b",
+   "label": "Mistral Small 3.2 24B",
+   "vram_gb": 15.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 49,
+    "total": 65,
+    "pct": 75
+   },
+   "chunks": {
+    "passed": 14,
+    "total": 21,
+    "pct": 67
+   },
+   "chat": {
+    "passed": 50,
+    "total": 80,
+    "pct": 62.5,
+    "timed_out": false
+   },
+   "chat_pct": 62.5,
+   "scores": {
+    "extraction": 69.6,
+    "chat": 62.5,
+    "overall": 66.7
+   },
+   "notes": [
+    "1 cut off isolated"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "muse-glimmer:30b",
+   "label": "Muse Glimmer 30B",
+   "vram_gb": 18.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 59,
+    "total": 65,
+    "pct": 91
+   },
+   "chunks": {
+    "passed": 12,
+    "total": 21,
+    "pct": 57
+   },
+   "chat": {
+    "passed": 61,
+    "total": 80,
+    "pct": 76.2,
+    "timed_out": false
+   },
+   "chat_pct": 76.2,
+   "scores": {
+    "extraction": 68.4,
+    "chat": 76.2,
+    "overall": 71.5
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "nemotron-3.5-lightning:30b-a3b",
+   "label": "Nemotron 3.5 Lightning 30B-A3B",
+   "vram_gb": 25.0,
+   "license": "nvidia-open-model",
+   "tools": true,
+   "isolated": {
+    "passed": 46,
+    "total": 65,
+    "pct": 71
+   },
+   "chunks": {
+    "passed": 3,
+    "total": 21,
+    "pct": 14
+   },
+   "chat": {
+    "passed": 53,
+    "total": 80,
+    "pct": 66.2,
+    "timed_out": false
+   },
+   "chat_pct": 66.2,
+   "scores": {
+    "extraction": 33.1,
+    "chat": 66.2,
+    "overall": 46.4
+   },
+   "notes": [
+    "1 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "phi4:14b",
+   "label": "Phi-4 14B",
+   "vram_gb": 9.1,
+   "license": "mit",
+   "tools": false,
+   "isolated": {
+    "passed": 43,
+    "total": 65,
+    "pct": 66
+   },
+   "chunks": {
+    "passed": 14,
+    "total": 21,
+    "pct": 67
+   },
+   "chat": {
+    "passed": 52,
+    "total": 80,
+    "pct": 65.0,
+    "timed_out": false
+   },
+   "chat_pct": 65.0,
+   "scores": {
+    "extraction": 66.5,
+    "chat": 65.0,
+    "overall": 65.9
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen2.5:14b-instruct",
+   "label": "Qwen2.5 14B Instruct",
+   "vram_gb": 9.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 47,
+    "total": 65,
+    "pct": 72
+   },
+   "chunks": {
+    "passed": 16,
+    "total": 21,
+    "pct": 76
+   },
+   "chat": {
+    "passed": 54,
+    "total": 80,
+    "pct": 67.5,
+    "timed_out": false
+   },
+   "chat_pct": 67.5,
+   "scores": {
+    "extraction": 74.9,
+    "chat": 67.5,
+    "overall": 71.9
+   },
+   "notes": [
+    "1 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3.5:27b",
+   "label": "Qwen3.5 27B",
+   "vram_gb": 17.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 53,
+    "total": 65,
+    "pct": 82
+   },
+   "chunks": {
+    "passed": 14,
+    "total": 21,
+    "pct": 67
+   },
+   "chat": {
+    "passed": 58,
+    "total": 80,
+    "pct": 72.5,
+    "timed_out": false
+   },
+   "chat_pct": 72.5,
+   "scores": {
+    "extraction": 71.6,
+    "chat": 72.5,
+    "overall": 72.0
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3.5:9b",
+   "label": "Qwen3.5 9B",
+   "vram_gb": 6.6,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 48,
+    "total": 65,
+    "pct": 74
+   },
+   "chunks": {
+    "passed": 14,
+    "total": 21,
+    "pct": 67
+   },
+   "chat": {
+    "passed": 57,
+    "total": 80,
+    "pct": 71.2,
+    "timed_out": false
+   },
+   "chat_pct": 71.2,
+   "scores": {
+    "extraction": 69.1,
+    "chat": 71.2,
+    "overall": 69.9
+   },
+   "notes": [
+    "1 cut off in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3.6:27b",
+   "label": "Qwen3.6 27B",
+   "vram_gb": 18.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 50,
+    "total": 65,
+    "pct": 77
+   },
+   "chunks": {
+    "passed": 14,
+    "total": 21,
+    "pct": 67
+   },
+   "chat": {
+    "passed": 60,
+    "total": 80,
+    "pct": 75.0,
+    "timed_out": false
+   },
+   "chat_pct": 75.0,
+   "scores": {
+    "extraction": 70.1,
+    "chat": 75.0,
+    "overall": 72.1
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3.6:35b-a3b",
+   "label": "Qwen3.6 35B-A3B MoE",
+   "vram_gb": 23.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 49,
+    "total": 65,
+    "pct": 75
+   },
+   "chunks": {
+    "passed": 13,
+    "total": 21,
+    "pct": 62
+   },
+   "chat": {
+    "passed": 63,
+    "total": 80,
+    "pct": 78.8,
+    "timed_out": false
+   },
+   "chat_pct": 78.8,
+   "scores": {
+    "extraction": 66.4,
+    "chat": 78.8,
+    "overall": 71.3
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3.8:27b",
+   "label": "Qwen3.8 27B",
+   "vram_gb": 17.0,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 54,
+    "total": 65,
+    "pct": 83
+   },
+   "chunks": {
+    "passed": 15,
+    "total": 21,
+    "pct": 71
+   },
+   "chat": {
+    "passed": 62,
+    "total": 80,
+    "pct": 77.5,
+    "timed_out": false
+   },
+   "chat_pct": 77.5,
+   "scores": {
+    "extraction": 75.3,
+    "chat": 77.5,
+    "overall": 76.2
+   },
+   "notes": [],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3:14b",
+   "label": "Qwen3 14B",
+   "vram_gb": 9.3,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 46,
+    "total": 65,
+    "pct": 71
+   },
+   "chunks": {
+    "passed": 12,
+    "total": 21,
+    "pct": 57
+   },
+   "chat": {
+    "passed": 51,
+    "total": 80,
+    "pct": 63.8,
+    "timed_out": false
+   },
+   "chat_pct": 63.8,
+   "scores": {
+    "extraction": 61.7,
+    "chat": 63.8,
+    "overall": 62.5
+   },
+   "notes": [
+    "1 cut off isolated"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3:30b-instruct",
+   "label": "Qwen3 30B Instruct",
+   "vram_gb": 18.6,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 49,
+    "total": 65,
+    "pct": 75
+   },
+   "chunks": {
+    "passed": 10,
+    "total": 21,
+    "pct": 48
+   },
+   "chat": {
+    "passed": 58,
+    "total": 80,
+    "pct": 72.5,
+    "timed_out": false
+   },
+   "chat_pct": 72.5,
+   "scores": {
+    "extraction": 56.9,
+    "chat": 72.5,
+    "overall": 63.1
+   },
+   "notes": [
+    "1 cut off isolated"
+   ],
+   "pins_applied": true,
+   "harness": null
+  },
+  {
+   "id": "qwen3:8b",
+   "label": "Qwen3 8B",
+   "vram_gb": 5.2,
+   "license": "apache-2.0",
+   "tools": true,
+   "isolated": {
+    "passed": 40,
+    "total": 65,
+    "pct": 62
+   },
+   "chunks": {
+    "passed": 5,
+    "total": 21,
+    "pct": 24
+   },
+   "chat": {
+    "passed": 55,
+    "total": 80,
+    "pct": 68.8,
+    "timed_out": false
+   },
+   "chat_pct": 68.8,
+   "scores": {
+    "extraction": 36.4,
+    "chat": 68.8,
+    "overall": 49.3
+   },
+   "notes": [
+    "4 cut off isolated",
+    "2 looped isolated",
+    "4 cut off in chunks",
+    "9 looped in chunks"
+   ],
+   "pins_applied": true,
+   "harness": null
+  }
+ ]
+}

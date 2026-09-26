@@ -42,6 +42,7 @@ Reimplement agent execution with LangChain agents for autonomous multi-step reas
 
 ## Completed Recently
 
+- **`chaoscypher mount` (September 2026)** — pull a `.ccx` package (local file or Lexicon Hub reference), import it into its own database with sources and citations, index it, and serve it over MCP stdio in one idempotent command; the "build it once, mount it anywhere" wedge (see the [Mount reference](../reference/cli/mount.md))
 - **Chat reliability/UX overhaul (v0.1.1, June 2026)** — cancel, retry, regenerate, export, edit-and-resend, and chat title search
 - **Model benchmark v2 (v0.1.1, June 2026)** — composite Overall scoring; model metadata consolidated in `models_registry.yaml`
 - **Parallel workflow execution (June 2026)** — DAG fan-out with AND-join semantics in the LangGraph executor
@@ -59,7 +60,7 @@ Reimplement agent execution with LangChain agents for autonomous multi-step reas
 - **Alembic Migration Framework (April 2026)** — Schema migrations now ship as Alembic revisions under `packages/core/src/chaoscypher_core/database/migrations/versions/`; Cortex runs `alembic upgrade head` on startup. The reflective auto-migrator was retired (see [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md)).
 - [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) Client-Driven Extraction — Default to client-driven extraction, no server LLM required
 - Batch Embedding Processing — Concurrent embedding generation with per-chunk progress
-- MCP Server — 31 tools for AI assistants via stdio and Streamable HTTP transports
+- MCP Server — 36 tools for AI assistants via stdio and Streamable HTTP transports
 - Local CPU Embedding Service — sentence-transformers based embeddings replacing LLM-provider embeddings
 - GraphRAG Search — graph-enhanced retrieval fusing knowledge graph traversal with vector search
 - DX Zero-Boilerplate — typed Pydantic returns, `ChaosCypher` convenience namespace, `check_health()`

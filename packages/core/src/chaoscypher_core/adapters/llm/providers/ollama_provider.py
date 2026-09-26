@@ -173,6 +173,10 @@ class OllamaProvider(BaseLLMProvider):
             kwargs["temperature"] = temp
         if tokens is not None:
             kwargs["num_predict"] = tokens
+        # A pinned seed makes repeated runs reproducible; None lets Ollama pick
+        # one per request, which is the product default.
+        if self.config.get("seed") is not None:
+            kwargs["seed"] = self.config.get("seed")
 
         # Ollama-specific performance options
         # These can be passed to improve GPU utilization
@@ -193,6 +197,16 @@ class OllamaProvider(BaseLLMProvider):
         # Non-thinking models (Llama, Mistral instruct) raise on reasoning=True; the
         # caller falls back via _invoke_with_thinking_fallback in that case.
         kwargs["reasoning"] = reasoning
+
+        # Silence timeout on every socket read, streaming or not. Measured
+        # 2026-09-23: olmo-3.1:32b sat 75 minutes on its first chunk at 100%
+        # GPU with zero bytes on the wire; the per-chunk stream timeout never
+        # ran because the non-streaming path does not go through it. httpx
+        # enforces this one on both paths, and a progressing generation never
+        # trips it. Same setting the cloud providers already honour.
+        request_timeout = self.config.get("llm_request_timeout")
+        if request_timeout is not None:
+            kwargs["client_kwargs"] = {"timeout": float(request_timeout)}
 
         logger.debug(
             "ollama_initialized",

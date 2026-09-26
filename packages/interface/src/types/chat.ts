@@ -42,6 +42,8 @@ export interface ChunkCitationSummary {
   sentence_text?: string | null; // Resolved sentence text for tooltip
   source_id?: string | null;
   page_number?: number | null;
+  start_time?: number | null;  // Seconds into the recording (audio/video chunks)
+  end_time?: number | null;
   validation_verdict?: 'correct' | 'wrong' | null; // Per-citation grounding verdict
   has_vision_image?: boolean;  // True if chunk contains vision-described image content
 }

@@ -11,6 +11,7 @@ import pytest
 
 from chaoscypher_cli.benchmark.discovery import (
     builtin_dataset_root,
+    core_dataset_root,
     discover_datasets,
     load_dataset_bundle,
     user_benchmark_root,
@@ -156,3 +157,15 @@ def test_bundle_builtin_used_when_no_user_override(tmp_path: Path) -> None:
     assert bundle.source == "builtin"
     assert bundle.queries is None
     assert bundle.domain == "technical"
+
+
+def test_core_dataset_root_holds_the_probe_pack() -> None:
+    assert (core_dataset_root() / "probes" / "manifest.yaml").is_file()
+
+
+def test_default_discovery_includes_core_probe_pack(tmp_path: Path) -> None:
+    datasets = discover_datasets(user_root=tmp_path / "none")
+    probes = [d for d in datasets if d.kind == "probes"]
+    assert len(probes) == 1
+    assert probes[0].id == "probes"
+    assert probes[0].source == "builtin"

@@ -19,8 +19,10 @@ import {
   DialogContentText,
   DialogActions,
   Button,
+  Link,
 } from '@mui/material';
 import TuneIcon from '@mui/icons-material/Tune';
+
 import type { Settings, VRAMPreset, OllamaModelShowResponse } from '../../../types';
 import { ContextBreakdownBar } from '../../../components';
 import { useOllamaModels } from '../../../hooks/useOllamaModels';
@@ -30,27 +32,128 @@ import {
 } from './ModelConfig';
 import { accentPaperSx, ACCENT_COLORS } from '../../../theme/accentStyles';
 import { logger } from '../../../utils/logger';
+import { LEADERBOARD_URL } from '../../../constants/config';
+import modelScores from '../../../data/modelScores.json';
+import type { OllamaModelOption } from './ModelConfig';
 
-// Pre-tested chat models (non-instruct, optimized for reasoning/thinking)
-const PRETESTED_CHAT_MODELS = [
-  { id: 'qwen3.6:35b-a3b', name: 'Qwen3.6 35B-A3B', description: 'Top MoE, 3B active, 24GB+ VRAM' },
-  { id: 'qwen3.6:27b', name: 'Qwen3.6 27B', description: 'Strong dense reasoning, 16-24GB VRAM' },
-  { id: 'qwen3.5:30b', name: 'Qwen3.5 30B', description: 'MoE 3B active, 24GB+' },
-  { id: 'qwen3.5:27b', name: 'Qwen3.5 27B', description: 'Multimodal, 16-20GB' },
-  { id: 'qwen3:30b', name: 'Qwen3 30B', description: 'Proven performer, 24GB+ VRAM' },
-  { id: 'qwen3:14b', name: 'Qwen3 14B', description: 'Low tier, 16-20GB VRAM' },
-  { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', description: 'Best quality, 96GB+ VRAM' },
-];
+type ModelScore = {
+  id: string;
+  label: string;
+  vram_gb: number | null;
+  license: string | null;
+  isolated: { passed: number; total: number; pct: number } | null;
+  chunks: { passed: number; total: number; pct: number } | null;
+  notes: string[];
+  // Whether `ollama show` lists `tools` under Capabilities; null when unknown.
+  tools: boolean | null;
+  // Grounded-chat board; pct and passed are null when the run hit the time limit.
+  chat: { passed: number | null; total: number | null; pct: number | null; timed_out: boolean } | null;
+  // Set on harness-track rows (a model run through an MCP client such as
+  // Claude Code). The exporter already leaves them out of this file; the
+  // picker filters too, because they are not Ollama models.
+  harness?: string | null;
+  // The leaderboard's blended percentages (one decimal); null where a board was not run.
+  // Extraction = in chunks x 2/3 + isolated x 1/3; Overall = 0.6 x extraction + 0.4 x chat.
+  scores: { extraction: number | null; chat: number | null; overall: number | null };
+};
 
-// Pre-tested extraction models (instruct models for structured output)
-const PRETESTED_EXTRACTION_MODELS = [
-  { id: 'qwen3.6:35b-a3b', name: 'Qwen3.6 35B-A3B', description: 'Top MoE for extraction, 24GB+ VRAM' },
-  { id: 'qwen3.6:27b', name: 'Qwen3.6 27B', description: 'Strong dense, 16-24GB VRAM' },
-  { id: 'qwen3:30b-instruct', name: 'Qwen3 30B Instruct', description: 'High tier, 24GB+ VRAM' },
-  { id: 'phi4:14b', name: 'Phi-4 14B', description: 'Low tier, 16-20GB VRAM' },
-  { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', description: 'Best quality, 96GB+ VRAM' },
-  { id: 'qwen2.5:14b-instruct', name: 'Qwen2.5 14B Instruct', description: 'Good instruction following, 16GB' },
+// Chat and extraction models come from the benchmark (src/data/modelScores.json,
+// written by scripts/benchmark/export_leaderboard.py): every measured model, best
+// first, with `fits` saying whether it fits the selected VRAM preset. Both
+// dropdowns show the leaderboard's blended scores, read from `scores` in the
+// JSON so the app and the site agree: Extraction (in chunks counted twice,
+// isolated once) ranks the extraction list, grounded Chat ranks the chat list,
+// and each description adds the Overall score. A chat model the app cannot run (no tool calling, or the benchmark
+// run did not finish) is marked `usable: false` so it lands in Not recommended.
+// Familiar names without a measurement are listed separately so nobody mistakes
+// "in the list" for "tested".
+const NOT_YET_MEASURED_CHAT_MODELS = [
+  { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', description: 'No benchmark data yet, 96GB+ VRAM' },
 ];
+const NOT_YET_MEASURED_EXTRACTION_MODELS = [
+  { id: 'gpt-oss:120b', name: 'GPT-OSS 120B', description: 'No benchmark data yet, 96GB+ VRAM' },
+];
+// Weights alone are not the whole footprint: the context window needs room too.
+// The number comes from the exporter so the leaderboard page uses the same one.
+const VRAM_HEADROOM_GB: number = modelScores.vram_headroom_gb;
+
+const rate = (s: { passed: number; total: number } | null) => (s ? s.passed / s.total : -1);
+
+/** A blended score for sorting; null (board not run) sorts last. */
+const blended = (v: number | null) => v ?? -1;
+
+const overallSuffix = (m: ModelScore) =>
+  typeof m.scores.overall === 'number' ? ` Overall ${Math.round(m.scores.overall)}%.` : '';
+
+const notesSuffix = (m: ModelScore) => (m.notes.length ? `. ${m.notes.join(', ')}` : '');
+
+function extractionScore(m: ModelScore): number {
+  return typeof m.scores.extraction === 'number' ? Math.round(m.scores.extraction) : m.chunks!.pct;
+}
+
+function extractionDescription(m: ModelScore): string {
+  const chunks = m.chunks!;
+  const isolated = m.isolated ? `, ${m.isolated.passed}/${m.isolated.total} isolated` : '';
+  return (
+    `Extraction ${extractionScore(m)}%: ${chunks.passed}/${chunks.total} in chunks${isolated}.` +
+    `${overallSuffix(m)} ${m.vram_gb ?? '?'} GB weights${notesSuffix(m)}`
+  );
+}
+
+const fitsVram = (m: ModelScore, vramGb: number | undefined) =>
+  vramGb === undefined || m.vram_gb === null || m.vram_gb <= vramGb - VRAM_HEADROOM_GB;
+
+/** Every measured model, best first; `fits` says whether it belongs in Recommended. */
+function measuredExtractionModels(vramGb: number | undefined): OllamaModelOption[] {
+  return (modelScores.models as ModelScore[])
+    .filter((m) => m.chunks && m.harness == null)
+    .sort(
+      (a, b) =>
+        blended(b.scores.extraction) - blended(a.scores.extraction) ||
+        rate(b.chunks) - rate(a.chunks) ||
+        rate(b.isolated) - rate(a.isolated),
+    )
+    .map((m) => ({
+      id: m.id,
+      name: m.label,
+      description: extractionDescription(m),
+      score: extractionScore(m),
+      measured: true,
+      fits: fitsVram(m, vramGb),
+    }));
+}
+
+/** The leaderboard's chat score, rounded; undefined when the run did not finish. */
+function chatScore(m: ModelScore): number | undefined {
+  if (m.chat!.timed_out) return undefined;
+  return typeof m.scores.chat === 'number' ? Math.round(m.scores.chat) : undefined;
+}
+
+function chatDescription(m: ModelScore): string {
+  const chat = m.chat!;
+  const weights = `${m.vram_gb ?? '?'} GB weights`;
+  if (m.tools === false) return `No tool calling, so the app's chat cannot use it. ${weights}`;
+  if (chat.timed_out) return `Did not finish the chat benchmark (hit the time limit). ${weights}`;
+  const score = chatScore(m);
+  return `Chat ${score}%: ${chat.passed}/${chat.total} grounded questions answered right.${overallSuffix(m)} ${weights}${notesSuffix(m)}`;
+}
+
+/** Every model on the grounded-chat board, best first; `usable: false` marks one the app cannot run. */
+function measuredChatModels(vramGb: number | undefined): OllamaModelOption[] {
+  return (modelScores.models as ModelScore[])
+    .filter((m) => m.chat && m.harness == null)
+    // A run that did not finish scores 0 for chat, so it sorts below every finished one.
+    .sort((a, b) => blended(b.scores.chat) - blended(a.scores.chat) || rate(b.chunks) - rate(a.chunks))
+    .map((m) => ({
+      id: m.id,
+      name: m.label,
+      description: chatDescription(m),
+      score: chatScore(m),
+      measured: true,
+      fits: fitsVram(m, vramGb),
+      usable: !(m.chat!.timed_out || m.tools === false),
+    }));
+}
 
 // Pre-tested vision models (multimodal models that can describe images)
 const PRETESTED_VISION_MODELS = [
@@ -81,15 +184,28 @@ export function OllamaModelSelector({ settings, setSettings, showAdvanced, curre
   // Remove confirmation dialog state
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
 
-  // Build set of all pretested model IDs for filtering
+  const chatOptions = useMemo<OllamaModelOption[]>(
+    () => [
+      ...measuredChatModels(currentPreset?.vram_gb),
+      ...NOT_YET_MEASURED_CHAT_MODELS.map((m) => ({ ...m, measured: false })),
+    ],
+    [currentPreset?.vram_gb],
+  );
+  const extractionOptions = useMemo<OllamaModelOption[]>(
+    () => [
+      ...measuredExtractionModels(currentPreset?.vram_gb),
+      ...NOT_YET_MEASURED_EXTRACTION_MODELS.map((m) => ({ ...m, measured: false })),
+    ],
+    [currentPreset?.vram_gb],
+  );
   const pretestedIds = useMemo(() => {
     const ids = new Set<string>();
-    for (const m of PRETESTED_CHAT_MODELS) ids.add(m.id);
-    for (const m of PRETESTED_EXTRACTION_MODELS) ids.add(m.id);
+    for (const m of chatOptions) ids.add(m.id);
+    for (const m of extractionOptions) ids.add(m.id);
     return ids;
-  }, []);
+  }, [chatOptions, extractionOptions]);
 
-  // Models installed but not in any pretested list
+  // Models installed but in neither the chat nor the extraction list
   const otherInstalledModels = useMemo(() => {
     const result: { id: string; name: string }[] = [];
     for (const name of installedModels) {
@@ -133,12 +249,20 @@ export function OllamaModelSelector({ settings, setSettings, showAdvanced, curre
         }}>
           {currentPreset.description}
         </Typography>
+        <Typography variant="body2" gutterBottom sx={{ color: 'text.secondary' }}>
+          Not sure which chat or extraction model to run?{' '}
+          <Link href={LEADERBOARD_URL} target="_blank" rel="noopener">
+            Compare local models on the leaderboard
+          </Link>
+          , filtered by the VRAM you have.
+        </Typography>
 
         {/* Model Selection - Chat, Extraction, and Vision side by side */}
         <Box sx={{ display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: 2, my: 2 }}>
           <OllamaAutocomplete
             label="Chat Model"
-            options={PRETESTED_CHAT_MODELS}
+            options={chatOptions}
+            scoreTitle="Grounded chat score as on the leaderboard"
             value={settings.llm.ollama_chat_model}
             onChange={(modelId) => setSettings({ ...settings, llm: { ...settings.llm, ollama_chat_model: modelId } })}
             onInputChange={(value) => setSettings({ ...settings, llm: { ...settings.llm, ollama_chat_model: value } })}
@@ -151,7 +275,8 @@ export function OllamaModelSelector({ settings, setSettings, showAdvanced, curre
           />
           <OllamaAutocomplete
             label="Extraction Model"
-            options={PRETESTED_EXTRACTION_MODELS}
+            options={extractionOptions}
+            scoreTitle="Extraction score as on the leaderboard: in chunks counted twice, isolated once"
             value={settings.llm.ollama_extraction_model || ''}
             onChange={(modelId) => setSettings({ ...settings, llm: { ...settings.llm, ollama_extraction_model: modelId || null } })}
             onInputChange={(value) => setSettings({ ...settings, llm: { ...settings.llm, ollama_extraction_model: value || null } })}

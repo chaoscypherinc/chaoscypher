@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.exceptions import ExternalServiceError
+from chaoscypher_core.utils.chunk import build_transcript_location_index
 
 
 if TYPE_CHECKING:
@@ -181,8 +182,13 @@ class VideoLoader:
                 model = self._get_model()
                 segments, info = model.transcribe(temp_audio_path)
 
-                # Concatenate all segments into full transcript
-                segment_texts = [segment.text.strip() for segment in segments]
+                # Keep each segment's media times: the chunker maps every
+                # chunk back to the seconds of the recording it came from.
+                segment_spans = [
+                    (segment.text.strip(), float(segment.start), float(segment.end))
+                    for segment in segments
+                ]
+                segment_texts = [span[0] for span in segment_spans]
                 text = " ".join(segment_texts)
             finally:
                 # Clean up temp audio file
@@ -208,6 +214,9 @@ class VideoLoader:
                 "total_characters": len(text),
                 "extraction_method": "ffmpeg_faster_whisper",
                 "extraction_time_seconds": round(extraction_time, 3),
+                # Char range → media time span per transcript segment; the
+                # chunker turns this into chunk start_time / end_time.
+                "location_index": build_transcript_location_index(segment_spans),
             }
 
             return [{"content": text, "metadata": metadata}]

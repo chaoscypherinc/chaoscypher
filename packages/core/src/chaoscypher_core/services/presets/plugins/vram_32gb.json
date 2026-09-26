@@ -12,8 +12,8 @@
   ],
 
   "ollama_settings": {
-    "ollama_chat_model": "qwen3:30b",
-    "ollama_extraction_model": "qwen3:30b-instruct",
+    "ollama_chat_model": "qwen3.6:35b-a3b",
+    "ollama_extraction_model": "gemma4:31b",
     "ollama_vision_model": "qwen3-vl:30b",
     "ollama_num_ctx": 32768,
     "ollama_num_batch": 2048

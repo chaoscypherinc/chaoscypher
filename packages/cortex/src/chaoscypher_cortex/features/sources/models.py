@@ -889,6 +889,9 @@ class ChunkResponse(BaseModel):
     content: str
     page_number: int | None = None
     section: str | None = None
+    # Media position (seconds) for chunks of transcribed audio / video.
+    start_time: float | None = None
+    end_time: float | None = None
     group_index: int | None = None
     # Phase 5a: char offsets into original upload text (NULL when method is 'none').
     char_start: int | None = None

@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import tempfile
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -340,6 +339,7 @@ class PackageResolver:
             name=manifest.name,
             version=manifest.package_version,
             path=extract_dir,
+            archive_path=archive_path,
             manifest=manifest.to_dict(),
             dependencies=_dependency_specs(manifest.dependencies),
         )
@@ -437,14 +437,16 @@ class PackageResolver:
 
                 version_dir.mkdir(parents=True, exist_ok=True)
 
-                with tempfile.NamedTemporaryFile(suffix=".ccx", delete=False) as tmp:
-                    tmp.write(archive_bytes)
-                    tmp_path = Path(tmp.name)
+                # Keep the archive itself next to the extracted tree: the
+                # merger imports packages from their .ccx bytes.
+                cached_archive = cache_path / f"{actual_version}.ccx"
+                await asyncio.to_thread(cached_archive.write_bytes, archive_bytes)
 
                 try:
-                    extract_archive(tmp_path, version_dir)
-                finally:
-                    await asyncio.to_thread(tmp_path.unlink, True)
+                    extract_archive(cached_archive, version_dir)
+                except Exception:
+                    await asyncio.to_thread(cached_archive.unlink, True)
+                    raise
 
                 logger.info(
                     "resolver_downloaded",
@@ -453,11 +455,13 @@ class PackageResolver:
                     path=str(version_dir),
                 )
 
+            cached_archive = cache_path / f"{actual_version}.ccx"
             return ResolvedPackage(
                 spec=spec,
                 name=spec.name,
                 version=actual_version,
                 path=version_dir,
+                archive_path=cached_archive if cached_archive.is_file() else None,
                 manifest=manifest.to_dict(),
                 dependencies=_dependency_specs(manifest.dependencies),
             )

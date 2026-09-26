@@ -137,6 +137,7 @@ const sidebars: SidebarsConfig = {
           items: [
             "reference/cli/chat",
             "reference/cli/mcp",
+            "reference/cli/mount",
             "reference/cli/quality",
             "reference/cli/compose",
           ],

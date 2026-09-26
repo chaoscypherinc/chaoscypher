@@ -38,6 +38,11 @@ console = Console()
 @click.option("--lenses/--no-lenses", default=True, help="Include lens definitions (default: yes)")
 @click.option("--workflows/--no-workflows", default=True, help="Include workflows (default: yes)")
 @click.option(
+    "--sources/--no-sources",
+    default=True,
+    help="Include sources, chunks and citations (default: yes)",
+)
+@click.option(
     "--embeddings/--no-embeddings",
     default=False,
     help="Include embedding vectors (default: no, for same-model migration)",
@@ -56,6 +61,7 @@ def export(
     knowledge: bool,
     lenses: bool,
     workflows: bool,
+    sources: bool,
     embeddings: bool,
     lens_id: str | None,
     database: str,
@@ -89,7 +95,10 @@ def export(
             graph_repository=ctx.graph_repository,
             settings=ctx.settings,
             workflow_db=None,  # CLI doesn't have workflow DB for triggers
-            sources_repository=None,  # CLI doesn't have sources repo
+            # The storage adapter implements SourceStorageProtocol — the same
+            # object the worker export path passes — so a CLI export carries
+            # sources.jsonl (chunks + citations) exactly like a UI export does.
+            sources_repository=ctx.storage_adapter,
         )
 
         # Generate output filename if not provided
@@ -115,7 +124,7 @@ def export(
                 include_knowledge=knowledge,
                 include_lenses=lenses,
                 include_workflows=workflows,
-                include_sources=False,  # Sources not available in CLI
+                include_sources=sources,
                 include_embeddings=embeddings,
                 lens_id=lens_id,
                 title=title,

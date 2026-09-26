@@ -66,6 +66,9 @@ chaoscypher pull john/medical-ontology
 
 # Import into your database
 chaoscypher graph package load john-medical-ontology.ccx
+
+# Or mount it straight into an AI assistant over MCP (pull + import + serve)
+chaoscypher mount john/medical-ontology
 ```
 
 </TabItem>

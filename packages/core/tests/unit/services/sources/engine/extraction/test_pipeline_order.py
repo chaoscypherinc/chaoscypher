@@ -17,12 +17,12 @@ only edge.
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from chaoscypher_core.services.sources.engine.extraction.extractor import (
-    apply_cross_chunk_relationship_filters,
-    run_deduplication,
+    extract_entities_from_groups,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
     FilteringConfig,
@@ -41,6 +41,17 @@ def minimal_extraction_settings() -> EngineSettings:
     return EngineSettings()
 
 
+def _fake_extractor(extraction_result: dict[str, Any]) -> MagicMock:
+    """AIEntityExtractor stand-in returning a fixed extraction result."""
+    instance = MagicMock()
+
+    async def _extract(*_: object, **__: object) -> dict[str, Any]:
+        return extraction_result
+
+    instance.extract_from_chunks = _extract
+    return MagicMock(return_value=instance)
+
+
 async def run_pipeline(
     *,
     entities: list[dict[str, Any]],
@@ -49,16 +60,20 @@ async def run_pipeline(
     edge_type_constraints: dict[str, dict[str, list[str]]] | None = None,
     filtering_config: FilteringConfig | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Run the new pipeline order: dedup -> relationship-dropping filters.
+    """Drive the REAL production pipeline: ``extract_entities_from_groups``.
 
-    This mirrors the call ordering in ``extract_entities_from_groups`` and
-    ``_finalize_extraction_inner`` after the Phase 6 reorder. Tests call
+    The ordering under test (dedup BEFORE the relationship-dropping filters)
+    lives in ``extract_entities_from_groups``, so this helper must not
+    re-implement it — a helper that called ``run_deduplication`` and then
+    ``apply_cross_chunk_relationship_filters`` itself would stay green with
+    the pre-Phase-6 order restored in production. Only the LLM call is
+    stubbed; every step after it is the production code path. Tests drive
     this rather than poking at per-chunk filters because per-chunk filters
     are intentionally narrowed to evidence-only (which depends on chunk-local
     sentences) post-Phase 6.
 
     Args:
-        entities: Raw extracted entities.
+        entities: Raw extracted entities (as if emitted by the LLM).
         relationships: Raw extracted relationships.
         settings: EngineSettings instance.
         edge_type_constraints: Optional edge-type constraints dict.
@@ -67,23 +82,38 @@ async def run_pipeline(
     Returns:
         Tuple of (final_entities, final_relationships).
     """
-    deduplicated, remapped, _, _ = await run_deduplication(
-        entities=entities,
-        relationships=relationships,
-        detected_domain=None,
-        settings=settings,
-        embedding_service=None,  # exact name dedup is enough for these tests
-    )
-
+    extraction_result: dict[str, Any] = {
+        "entities": entities,
+        "relationships": relationships,
+        "domain": "generic",
+        "domain_confidence": 0.0,
+        "normalization_rules": {},
+        "edge_type_constraints": edge_type_constraints,
+    }
     cfg = filtering_config or FilteringConfig()
 
-    final_entities, final_relationships = apply_cross_chunk_relationship_filters(
-        entities=deduplicated,
-        relationships=remapped,
-        edge_type_constraints=edge_type_constraints,
-        filtering_config=cfg,
-    )
-    return final_entities, final_relationships
+    with (
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.extractor.AIEntityExtractor",
+            _fake_extractor(extraction_result),
+        ),
+        # resolve_filtering_config is imported inside the production function,
+        # so patch it at its definition site to inject the test's config.
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.utils.filtering_config.resolve_filtering_config",
+            return_value=cfg,
+        ),
+    ):
+        result = await extract_entities_from_groups(
+            hierarchical_groups=[
+                {"combined_content": "war and peace excerpt", "small_chunk_ids": ["chunk-1"]}
+            ],
+            settings=settings,
+            # exact-name dedup is enough for these tests
+            embedding_service=None,
+        )
+
+    return result["entities"], result["relationships"]
 
 
 # --------------------------------------------------------------------- #
@@ -233,4 +263,78 @@ async def test_dedup_runs_before_filters(
     # cross-chunk ones with different chunk_index survive separately.)
     assert len(pierre_rels) >= 1, (
         f"canonical Pierre should keep at least one edge, got {pierre_rels}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_filters_receive_dedup_output_not_raw_extraction(
+    minimal_extraction_settings: EngineSettings,
+) -> None:
+    """``extract_entities_from_groups`` calls dedup, THEN the filters, on its output.
+
+    The behavioural tests above cannot see the ordering directly — a
+    fixture's surviving edges can look the same under either order. This
+    pins the call site itself, the way the service path is pinned in
+    test_extraction_service.py: spy on both production functions, assert
+    the order, and assert by IDENTITY that the filters were handed the
+    dedup output. Restoring the pre-Phase-6 order (filters on the raw
+    extraction, before dedup) fails both assertions.
+    """
+    call_order: list[str] = []
+    dedup_entities = [{"name": "Princess Drubetskáya", "type": "Person"}]
+    dedup_rels = [{"source": 0, "target": 0, "type": "parent_of", "confidence": 0.9}]
+    seen: dict[str, Any] = {}
+
+    async def _spy_dedup(**_: object) -> tuple[Any, Any, list[Any], dict[str, Any]]:
+        call_order.append("run_deduplication")
+        return dedup_entities, dedup_rels, [], {}
+
+    def _spy_filters(**kwargs: Any) -> tuple[Any, Any]:
+        call_order.append("apply_cross_chunk_relationship_filters")
+        seen["entities"] = kwargs["entities"]
+        seen["relationships"] = kwargs["relationships"]
+        return kwargs["entities"], kwargs["relationships"]
+
+    extraction_result: dict[str, Any] = {
+        "entities": [{"name": "Princess Anna Mikháylovna Drubetskáya", "type": "Person"}],
+        "relationships": [],
+        "domain": "generic",
+        "domain_confidence": 0.0,
+        "normalization_rules": {},
+        "edge_type_constraints": None,
+    }
+
+    with (
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.extractor.AIEntityExtractor",
+            _fake_extractor(extraction_result),
+        ),
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.extractor.run_deduplication",
+            side_effect=_spy_dedup,
+        ),
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.extractor.apply_cross_chunk_relationship_filters",
+            side_effect=_spy_filters,
+        ),
+    ):
+        await extract_entities_from_groups(
+            hierarchical_groups=[
+                {"combined_content": "war and peace excerpt", "small_chunk_ids": ["chunk-1"]}
+            ],
+            settings=minimal_extraction_settings,
+            embedding_service=None,
+        )
+
+    assert call_order == [
+        "run_deduplication",
+        "apply_cross_chunk_relationship_filters",
+    ], f"dedup must run before the relationship-dropping filters; got {call_order}"
+    assert seen["entities"] is dedup_entities, (
+        "the filters must see the DEDUPLICATED entities — they were handed "
+        f"{seen['entities']} instead, i.e. the pre-Phase-6 order is back"
+    )
+    assert seen["relationships"] is dedup_rels, (
+        "the filters must see the REMAPPED relationships — they were handed "
+        f"{seen['relationships']} instead, i.e. the pre-Phase-6 order is back"
     )

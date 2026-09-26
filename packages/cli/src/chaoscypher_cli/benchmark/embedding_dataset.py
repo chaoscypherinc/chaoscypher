@@ -33,6 +33,29 @@ def _normalize(s: str) -> str:
     return _NORMALIZE_RE.sub("", s.lower())
 
 
+def _live_entities(ctx: Any) -> list[dict[str, Any]]:
+    """Every node in the graph as ``{id, name, aliases}`` for gold resolution.
+
+    Read through the graph repository, the interface the rest of the
+    benchmark uses; the storage adapter never had a ``list_entities`` and the
+    stage crashed on it until 2026-09-25.
+    """
+    from chaoscypher_core.app_config import get_settings
+
+    nodes = ctx.graph_repository.list_nodes(
+        limit=get_settings().benchmark.reindex_node_batch_limit,
+        include_embedding=False,
+    )
+    return [
+        {
+            "id": str(n.id),
+            "name": n.label or "",
+            "aliases": list(getattr(n, "aliases", None) or []),
+        }
+        for n in nodes
+    ]
+
+
 def resolve_gold_entity(gold_name: str, entities: list[dict[str, Any]]) -> str | None:
     """Resolve a gold entity name to a live entity id.
 
@@ -132,7 +155,7 @@ class EmbeddingRetrievalDataset:
         try:
             async with self.graph_provider.indexed_graph(embedder=model) as graph:
                 ctx = graph.ctx
-                entities = ctx.storage_adapter.list_entities()
+                entities = _live_entities(ctx)
                 for q in self.queries.queries:
                     if q.band == "out_of_scope":
                         continue

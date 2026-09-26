@@ -237,6 +237,7 @@ class CcxImporter:
                 node_iri_to_type,
                 relationship_edges,
                 plain_triple_edges,
+                template_iri_to_id=template_iri_to_id,
             )
             # 4. Edges (after every node IRI is resolvable).
             self._import_edges(
@@ -267,6 +268,7 @@ class CcxImporter:
             node_iri_to_id,
             node_iri_to_label,
             node_iri_to_type,
+            template_iri_to_id=template_iri_to_id,
         )
 
         # 4b. Workflows app graph (triggers). The current export shape is
@@ -416,6 +418,7 @@ class CcxImporter:
         node_iri_to_type: dict[str, str | None],
         relationship_edges: list[dict[str, Any]],
         plain_triple_edges: list[dict[str, Any]],
+        template_iri_to_id: dict[str, str] | None = None,
     ) -> None:
         """Upsert nodes from the default knowledge graph; buffer edges.
 
@@ -440,6 +443,7 @@ class CcxImporter:
                 node_iri_to_id,
                 node_iri_to_label,
                 node_iri_to_type,
+                template_iri_to_id=template_iri_to_id,
             )
             stats.nodes_imported += 1
 
@@ -453,6 +457,7 @@ class CcxImporter:
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
+        template_iri_to_id: dict[str, str] | None = None,
     ) -> str:
         """Upsert one JSON-LD node member by IRI; record id + label + type maps.
 
@@ -462,7 +467,11 @@ class CcxImporter:
         """
         ccx_iri, node_kwargs = ccx_import_mapping.jsonld_entity_to_node(member)
         template_id = self._resolve_node_template(
-            node_kwargs.get("type_term"), template_name_to_id, database_name
+            node_kwargs.get("type_term"),
+            template_name_to_id,
+            database_name,
+            template_iri=node_kwargs.get("template_iri"),
+            template_iri_to_id=template_iri_to_id,
         )
         label = node_kwargs.get("label") or ccx_iri
         node_create = NodeCreate(
@@ -486,15 +495,23 @@ class CcxImporter:
         type_term: str | None,
         template_name_to_id: dict[str, str],
         database_name: str,
+        *,
+        template_iri: str | None = None,
+        template_iri_to_id: dict[str, str] | None = None,
     ) -> str:
-        """Resolve a node's ``@type`` term to a template id.
+        """Resolve a node's template id.
 
-        A type term that matches an imported template name uses that
-        template. Otherwise (a bare entity, or a type term with no template —
-        common for neutral CCX packages) a single shared default node
-        template is synthesized/selected and cached in
+        An explicit ``cc:template`` reference (the exporter records the
+        node's template IRI) wins, so an extracted node keeps its generic
+        system template while ``@type`` carries its specific entity type.
+        Otherwise a ``@type`` term that matches an imported template name
+        uses that template. Otherwise (a bare entity, or a type term with no
+        template — common for neutral CCX packages) a single shared default
+        node template is synthesized/selected and cached in
         ``template_name_to_id`` under :data:`_DEFAULT_NODE_TEMPLATE_NAME`.
         """
+        if template_iri and template_iri_to_id and template_iri in template_iri_to_id:
+            return template_iri_to_id[template_iri]
         if type_term and type_term in template_name_to_id:
             return template_name_to_id[type_term]
         return self._default_node_template_id(template_name_to_id, database_name)
@@ -539,6 +556,7 @@ class CcxImporter:
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
+        template_iri_to_id: dict[str, str] | None = None,
     ) -> None:
         """Import lens nodes from the ``chaoscypher.lenses`` named graph.
 
@@ -565,6 +583,7 @@ class CcxImporter:
                 node_iri_to_id,
                 node_iri_to_label,
                 node_iri_to_type,
+                template_iri_to_id=template_iri_to_id,
             )
             stats.nodes_imported += 1
 

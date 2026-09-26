@@ -459,6 +459,12 @@ max-statements = 60   # Maximum statements in function
     "PIE810", # startswith(tuple) — micro-opt not worth the readability cost
     "PLC0415", # Local imports inside functions — fine in single-use helpers
 ]
+# Entrypoint smoke test: runs `python -m chaoscypher_cortex.main` with a fixed
+# argv (our own interpreter, no shell, no untrusted input). Listed here rather
+# than with a `# noqa: S603` because the pre-commit ruff (v0.15.0) flags the
+# call and the project ruff (0.15.12) does not, so a noqa trips RUF100 on one
+# of them whichever way it is written.
+"**/cortex/tests/unit/test_main_entrypoint.py" = ["S603"]
 # Internal/company-only operational scripts: same posture as scripts/ above.
 "internal/scripts/**/*.py" = [
     "T201",   # print() — primary output channel

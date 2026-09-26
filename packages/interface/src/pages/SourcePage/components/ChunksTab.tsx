@@ -24,6 +24,7 @@ import ErrorOutlinedIcon from '@mui/icons-material/ErrorOutlined';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
 import { SyntaxHighlighter, vscDarkPlus } from '../../../utils/syntaxHighlighter';
+import { formatMediaRange } from '../../../utils/formatters';
 import {
   useSourceImages,
   pageNumberFromFilename,
@@ -223,6 +224,15 @@ function MemberChunkRow({
             {chunk.page_number && (
               <Typography variant="caption" sx={{ color: 'text.secondary' }}>
                 p.{chunk.page_number}
+              </Typography>
+            )}
+            {formatMediaRange(chunk.start_time, chunk.end_time) && (
+              <Typography
+                variant="caption"
+                sx={{ color: 'text.secondary', fontVariantNumeric: 'tabular-nums' }}
+                title="Position in the recording"
+              >
+                {formatMediaRange(chunk.start_time, chunk.end_time)}
               </Typography>
             )}
           </Box>

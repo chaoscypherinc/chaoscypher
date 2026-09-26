@@ -72,6 +72,9 @@ chaoscypher graph package export --output my-knowledge.ccx
 # Import knowledge graph
 chaoscypher graph package load my-knowledge.ccx
 
+# Mount a package for an MCP client (pull + import + serve over stdio)
+chaoscypher mount my-knowledge.ccx
+
 # Search the graph
 chaoscypher source search "artificial intelligence"
 ```

@@ -12,7 +12,66 @@ Example:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
+
+
+class PackageExistsError(FileExistsError):
+    """The target archive already exists and ``force`` was not given."""
+
+
+def download_package(
+    package: str,
+    version: str | None,
+    output_dir: Path,
+    *,
+    force: bool = False,
+) -> tuple[Path, str]:
+    """Download a hub package to ``output_dir`` and return ``(path, version)``.
+
+    Shared by ``pull`` and ``mount``. The file is named
+    ``<owner>-<name>-<version>.ccx`` (``<owner>-<name>.ccx`` when no
+    version was requested), so a version-pinned download is a stable cache
+    key. Raises ``PackageExistsError`` when the target exists and ``force``
+    is False, ``LexiconClientError`` on hub errors and
+    ``ExternalServiceError`` when the hub is unreachable.
+    """
+    import asyncio
+
+    from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
+    from chaoscypher_core.services.lexicon import LexiconClient
+
+    auth = get_auth_config()
+    lexicon_url = get_lexicon_url()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = package.replace("/", "-")
+    filename = f"{safe_name}-{version}.ccx" if version else f"{safe_name}.ccx"
+    archive_path = output_dir / filename
+    if archive_path.exists() and not force:
+        raise PackageExistsError(str(archive_path))
+
+    if "/" in package:
+        owner_username, repo_name = package.split("/", 1)
+    else:
+        owner_username, repo_name = "", package
+
+    async def do_download() -> tuple[bytes, str]:
+        """Fetch the package archive and its resolved version from Lexicon."""
+        async with LexiconClient(base_url=lexicon_url, auth=auth) as client:
+            info = await client.get_package_info(owner_username, repo_name, version)
+            # Download with the RESOLVED owner: for a bare package name the
+            # local owner_username is "", and get_package_info's name-only
+            # fallback is what recovered the real owner — reusing "" here
+            # built a malformed …/packages//<name>/… download URL.
+            resolved_owner = info.owner_username or owner_username
+            archive_bytes = await client.download(resolved_owner, repo_name, version or "latest")
+            return archive_bytes, info.version
+
+    archive_bytes, actual_version = asyncio.run(do_download())
+    archive_path.write_bytes(archive_bytes)
+    return archive_path, actual_version
 
 
 @click.command()
@@ -41,25 +100,20 @@ def pull(
         chaoscypher pull medical-ontology --extract
     """
     # Defer heavy imports to runtime (not completion time)
-    import asyncio
     import sys
-    from pathlib import Path
 
     from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn
 
     from chaoscypher_cli.commands.lexicon.login import get_auth_config, get_lexicon_url
     from chaoscypher_cli.utils.console import get_console, print_error, print_success
     from chaoscypher_core.exceptions import ExternalServiceError
-    from chaoscypher_core.services.lexicon import LexiconClient, LexiconClientError
+    from chaoscypher_core.services.lexicon import LexiconClientError
     from chaoscypher_core.services.package import extract_archive, format_size
 
     console = get_console()
-
-    # Get auth and hub URL
-    auth = get_auth_config()
     lexicon_url = get_lexicon_url()
 
-    if not auth:
+    if not get_auth_config():
         console.print(
             "[yellow]Warning:[/yellow] Not logged in. Some packages may require authentication."
         )
@@ -69,46 +123,6 @@ def pull(
     console.print(f"  [dim]Version:[/dim] {version or 'latest'}")
     console.print(f"  [dim]Output:[/dim] {output}")
 
-    # Prepare output directory
-    output_path = Path(output)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Determine output filename
-    safe_name = package.replace("/", "-")
-    filename = f"{safe_name}-{version}.ccx" if version else f"{safe_name}.ccx"
-
-    archive_path = output_path / filename
-
-    # Check if file exists
-    if archive_path.exists() and not force:
-        print_error(f"File already exists: {archive_path}")
-        console.print("[dim]Use --force to overwrite[/dim]")
-        sys.exit(1)
-
-    # Parse owner/name from package string
-    if "/" in package:
-        owner_username, repo_name = package.split("/", 1)
-    else:
-        owner_username = ""
-        repo_name = package
-
-    async def do_download() -> tuple[bytes, str]:
-        """Fetch the package archive and its resolved version from Lexicon."""
-        async with LexiconClient(base_url=lexicon_url, auth=auth) as client:
-            # Get package info first to get the actual version
-            info = await client.get_package_info(owner_username, repo_name, version)
-            actual_version = info.version
-
-            # Download with the RESOLVED owner: for a bare package name the
-            # local owner_username is "", and get_package_info's name-only
-            # fallback is what recovered the real owner — reusing "" here
-            # built a malformed …/packages//<name>/… download URL.
-            resolved_owner = info.owner_username or owner_username
-
-            # Download the archive
-            archive_bytes = await client.download(resolved_owner, repo_name, version or "latest")
-            return archive_bytes, actual_version
-
     try:
         with Progress(
             TextColumn("[progress.description]{task.description}"),
@@ -117,21 +131,20 @@ def pull(
             transient=True,
         ) as progress:
             task = progress.add_task(f"Downloading {package}...", total=None)
-
-            archive_bytes, actual_version = asyncio.run(do_download())
-
-            progress.update(task, completed=len(archive_bytes), total=len(archive_bytes))
-
-        # Write the archive file
-        archive_path.write_bytes(archive_bytes)
+            archive_path, actual_version = download_package(
+                package, version, Path(output), force=force
+            )
+            size = archive_path.stat().st_size
+            progress.update(task, completed=size, total=size)
 
         print_success(f"Downloaded {package} v{actual_version}")
         console.print(f"  [dim]File:[/dim] {archive_path}")
-        console.print(f"  [dim]Size:[/dim] {format_size(len(archive_bytes))}")
+        console.print(f"  [dim]Size:[/dim] {format_size(size)}")
 
         # Extract if requested
         if extract:
-            extract_dir = output_path / safe_name
+            safe_name = package.replace("/", "-")
+            extract_dir = Path(output) / safe_name
             console.print(f"\n[dim]Extracting to {extract_dir}...[/dim]")
 
             extract_archive(archive_path, extract_dir)
@@ -143,7 +156,12 @@ def pull(
         else:
             console.print("\n[dim]Next steps:[/dim]")
             console.print(f"  chaoscypher graph package load {archive_path}")
+            console.print(f"  chaoscypher mount {archive_path}")
 
+    except PackageExistsError as e:
+        print_error(f"File already exists: {e}")
+        console.print("[dim]Use --force to overwrite[/dim]")
+        sys.exit(1)
     except LexiconClientError as e:
         print_error(f"Download failed: {e}")
         sys.exit(1)

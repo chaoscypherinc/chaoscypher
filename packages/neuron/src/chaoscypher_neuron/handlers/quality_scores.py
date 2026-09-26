@@ -87,6 +87,66 @@ def register_quality_score_handler(
         success_count = 0
         errors: list[dict[str, Any]] = []
 
+        # Offloaded to a worker thread: the three SELECTs and the update_file
+        # WRITE are synchronous SQLite, and the write takes the single-writer
+        # lock — SafeSession._retry_delay's ``time.sleep`` under SQLITE_BUSY
+        # contention would otherwise stall every other Operations slot, the
+        # LLM slot and the heartbeat refreshers that share this loop. The
+        # ``asyncio.sleep(0)`` below only yields BETWEEN batches, never for
+        # the blocking calls inside one.
+        def _rescore_source(source_id: str) -> tuple[str, dict[str, Any] | None]:
+            """Run one source's reads, scoring and write off the event loop.
+
+            Returns ``("not_found", None)`` when the source is missing,
+            ``("skipped", None)`` when it has no entities, and
+            ``("ok", cached_scores)`` after a successful update.
+            """
+            source = storage_adapter.get_source_extraction_metadata(source_id, database_name)
+            if not source:
+                return ("not_found", None)
+
+            # Migration 0042: per-source entity / relationship rows
+            # live in dedicated tables.
+            entities = storage_adapter.list_source_entities(source_id, database_name)
+            relationships = storage_adapter.list_source_relationships(source_id, database_name)
+
+            if not entities:
+                return ("skipped", None)
+
+            domain = source.get("extraction_domain")
+            quality_config = {}
+            if domain:
+                try:
+                    from chaoscypher_core.services.sources.engine.extraction.domains import (
+                        get_domain_registry,
+                    )
+
+                    registry = get_domain_registry(database_name=database_name)
+                    analyzer = registry.get_domain(domain)
+                    if analyzer and hasattr(analyzer, "get_quality_scoring"):
+                        quality_config = analyzer.get_quality_scoring()
+                except Exception:
+                    logger.debug("domain_quality_scoring_lookup_failed", domain=domain)
+
+            # Canonical chunk-mention map (handles the table rows'
+            # ``source_chunk_indices`` key as well as the legacy aliases).
+            entity_chunk_mentions = build_entity_chunk_mentions(entities)
+
+            chunk_count = source.get("chunk_count", 0) or 0
+
+            scorer = QualityScorer(quality_config)
+            cached_scores = scorer.get_cacheable_scores(
+                source_id=source_id,
+                entities=entities,
+                relationships=relationships,
+                entity_chunk_mentions=entity_chunk_mentions,
+                chunk_count=chunk_count,
+            )
+            storage_adapter.update_file(
+                source_id, database_name=database_name, updates=cached_scores
+            )
+            return ("ok", cached_scores)
+
         for i, source_id in enumerate(source_ids):
             # Yield to event loop between batches so other tasks aren't starved
             if i > 0 and i % batch_size == 0:
@@ -97,51 +157,13 @@ def register_quality_score_handler(
                 )
                 await asyncio.sleep(0)
             try:
-                source = storage_adapter.get_source_extraction_metadata(source_id, database_name)
-                if not source:
+                status, cached_scores = await asyncio.to_thread(_rescore_source, source_id)
+                if status == "not_found":
                     errors.append({"source_id": source_id, "error": "Source not found"})
                     continue
-
-                # Migration 0042: per-source entity / relationship rows
-                # live in dedicated tables.
-                entities = storage_adapter.list_source_entities(source_id, database_name)
-                relationships = storage_adapter.list_source_relationships(source_id, database_name)
-
-                if not entities:
+                if status == "skipped" or cached_scores is None:
                     continue
 
-                domain = source.get("extraction_domain")
-                quality_config = {}
-                if domain:
-                    try:
-                        from chaoscypher_core.services.sources.engine.extraction.domains import (
-                            get_domain_registry,
-                        )
-
-                        registry = get_domain_registry(database_name=database_name)
-                        analyzer = registry.get_domain(domain)
-                        if analyzer and hasattr(analyzer, "get_quality_scoring"):
-                            quality_config = analyzer.get_quality_scoring()
-                    except Exception:
-                        logger.debug("domain_quality_scoring_lookup_failed", domain=domain)
-
-                # Canonical chunk-mention map (handles the table rows'
-                # ``source_chunk_indices`` key as well as the legacy aliases).
-                entity_chunk_mentions = build_entity_chunk_mentions(entities)
-
-                chunk_count = source.get("chunk_count", 0) or 0
-
-                scorer = QualityScorer(quality_config)
-                cached_scores = scorer.get_cacheable_scores(
-                    source_id=source_id,
-                    entities=entities,
-                    relationships=relationships,
-                    entity_chunk_mentions=entity_chunk_mentions,
-                    chunk_count=chunk_count,
-                )
-                storage_adapter.update_file(
-                    source_id, database_name=database_name, updates=cached_scores
-                )
                 success_count += 1
 
                 logger.debug(

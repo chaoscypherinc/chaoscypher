@@ -52,6 +52,7 @@ Commands:
   health                Check system health status
   lexicon               Lexicon Hub - login, search, manage packages
   mcp                   Start MCP server over stdio
+  mount                 Pull a knowledge package and serve it over MCP
   pull                  Download a package from Lexicon Hub
   push                  Upload a package to Lexicon Hub
   render-orchestration  Render nginx/supervisord/valkey configs from
@@ -152,8 +153,8 @@ chaoscypher health
   Chaos Cypher System Health
   -----------------------------------
   + Ollama          Connected at http://localhost:11434
-  + Chat Model      qwen3:30b
-  + Extraction      qwen3:30b-instruct
+  + Chat Model      qwen3.8:27b
+  + Extraction      gemma4:26b
   + Embeddings      qwen3-embedding:0.6b configured
   + Search Index    18,432 docs / 18,432 vectors
   + Database        247 entities / 612 relationships

@@ -28,7 +28,7 @@ share, or load into another instance.
   self-contained package. Your knowledge is yours to move, version, and keep.
 - **MCP server built in** — plug Claude Desktop, Cursor, or any
   [MCP](https://modelcontextprotocol.io/) client straight into your graph:
-  [31 tools](https://chaoscypher.com/docs/user-guide/mcp) for search,
+  [36 tools](https://chaoscypher.com/docs/user-guide/mcp) for search,
   traversal, and graph building.
 - **Self-hosted control** — you choose where data lives and which models touch
   it. The all-in-one container runs the whole stack on hardware you control.
@@ -61,7 +61,7 @@ share, or load into another instance.
 
 - **[Automations](https://chaoscypher.com/docs/user-guide/automations)** —
   visual workflow builder with triggers and conditional logic
-- **[MCP server](https://chaoscypher.com/docs/user-guide/mcp)** — 31 tools for
+- **[MCP server](https://chaoscypher.com/docs/user-guide/mcp)** — 36 tools for
   Claude Desktop, Cursor, ChatGPT, and other MCP clients
 - **[Plugin system](https://chaoscypher.com/docs/user-guide/domains)** —
   drop-in Python document loaders, extraction domains, and workflow tools
@@ -133,6 +133,7 @@ docker run -d --name chaoscypher \
   -p 80:80 \
   -p 443:443 \
   -v chaoscypher-data:/data \
+  --add-host=host.docker.internal:host-gateway \
   ghcr.io/chaoscypherinc/chaoscypher:latest
 
 # Then open http://localhost  (443 is published so HTTPS works if you enable TLS)
@@ -151,6 +152,10 @@ services:
       - "443:443"
     volumes:
       - chaoscypher-data:/data
+    extra_hosts:
+      # Lets the container reach an Ollama running on the host (Linux engines
+      # don't resolve host.docker.internal without this)
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 volumes:
   chaoscypher-data:
