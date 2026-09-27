@@ -122,4 +122,32 @@ jobs:
           git config user.email "denis@chaoscypher.com"
           git tag -a "v$VERSION" "$GITHUB_SHA" -m "v$VERSION"
           git push "https://x-access-token:${RELEASE_TAG_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "refs/tags/v$VERSION"
-          echo "Tagged v$VERSION at $GITHUB_SHA — release.yml, publish-ghcr.yml and publish-pypi.yml fire on the tag push." >> "$GITHUB_STEP_SUMMARY"
+          echo "Tagged v$VERSION at $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+
+      # A tag pushed from inside a workflow does not always start the tag-triggered
+      # workflows (v0.5.0, 2026-09-26: the tag landed and nothing fired for an hour).
+      # So this job finishes the release itself when the tag push started nothing:
+      # the Release from the changelog section, then the image and PyPI publishes,
+      # which the MCP Registry publish follows on its own.
+      - name: Start the publishes if the tag push started nothing
+        if: steps.version.outputs.new == 'true' && env.RELEASE_TAG_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG_TOKEN: ${{ secrets.RELEASE_TAG_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -u
+          TAG="v$VERSION"
+          sleep 120
+          started=$(gh run list -R "$GITHUB_REPOSITORY" --workflow "Publish to PyPI" --branch "$TAG" --limit 1 --json databaseId --jq 'length')
+          if [ "${started:-0}" != "0" ]; then
+            echo "The tag push started the publish workflows itself." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if ! gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            python3 scripts/changelog_section.py "$TAG" > release-notes.md
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --notes-file release-notes.md
+          fi
+          gh workflow run publish-ghcr.yml -R "$GITHUB_REPOSITORY" --ref "$TAG" -f publish=true
+          gh workflow run publish-pypi.yml -R "$GITHUB_REPOSITORY" --ref "$TAG" -f target=pypi
+          echo "The tag push started nothing after two minutes, so this job created the Release and dispatched publish-ghcr.yml and publish-pypi.yml on $TAG; publish-mcp-registry.yml follows the PyPI run." >> "$GITHUB_STEP_SUMMARY"

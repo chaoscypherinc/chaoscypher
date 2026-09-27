@@ -1,0 +1,114 @@
+name: Publish to MCP Registry
+
+# Publishes server.json to registry.modelcontextprotocol.io after each PyPI
+# release, so the registry entry (io.github.chaoscypherinc/chaoscypher) never
+# lags the shipped version. Auth is GitHub Actions OIDC: a workflow in this
+# organisation's repository holds the io.github.chaoscypherinc/* namespace,
+# so no token or human login is involved. The registry verifies PyPI
+# ownership by reading the `mcp-name` marker in chaoscypher-cli's long
+# description, which is why this waits for the package to be visible on PyPI.
+
+on:
+  workflow_run:
+    workflows: ["Publish to PyPI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag or branch whose server.json to publish (default: the ref this workflow runs on)."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-mcp-registry
+  cancel-in-progress: false
+
+env:
+  MCP_PUBLISHER_VERSION: "1.8.1"
+  SERVER_NAME: io.github.chaoscypherinc/chaoscypher
+  PYPI_PACKAGE: chaoscypher-cli
+
+jobs:
+  publish:
+    name: Publish server.json
+    # After a PyPI publish: only a successful run on a release tag. By hand: always.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref || github.event.workflow_run.head_branch || github.ref }}
+
+      - name: Read the manifest version and check it matches the packages
+        id: version
+        run: |
+          v=$(python3 -c "import json; print(json.load(open('server.json'))['version'])")
+          pv=$(python3 -c "import json; print(json.load(open('server.json'))['packages'][0]['version'])")
+          core=$(python3 -c "import tomllib; print(tomllib.load(open('packages/core/pyproject.toml','rb'))['project']['version'])")
+          if [ "$v" != "$pv" ] || [ "$v" != "$core" ]; then
+            echo "::error::server.json says $v / $pv but packages/core is $core — bump server.json in the release commit."
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Manifest version $v matches the packages." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install mcp-publisher
+        run: |
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          sudo mv mcp-publisher /usr/local/bin/
+          mcp-publisher --version
+
+      - name: Validate server.json
+        run: mcp-publisher validate
+
+      - name: Skip when the registry already has this version
+        id: registry
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          have=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}&version=${VERSION}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(any((s.get('server') or s).get('version')=='${VERSION}' and (s.get('server') or s).get('name')=='${SERVER_NAME}' for s in d.get('servers',[])))" || echo False)
+          echo "present=$have" >> "$GITHUB_OUTPUT"
+          [ "$have" = "True" ] && echo "Registry already lists ${SERVER_NAME} ${VERSION} — nothing to do." >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Wait for the package on PyPI (ownership is verified against its long description)
+        if: steps.registry.outputs.present != 'True'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/${VERSION}/json" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if 'mcp-name: ${SERVER_NAME}' in (d['info']['description'] or '') else 1)"; then
+              echo "PyPI has ${PYPI_PACKAGE} ${VERSION} with the mcp-name marker."; exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::${PYPI_PACKAGE} ${VERSION} is not on PyPI with the mcp-name marker after 15 minutes."
+          exit 1
+
+      - name: Log in with GitHub Actions OIDC
+        if: steps.registry.outputs.present != 'True'
+        run: mcp-publisher login github-oidc
+
+      - name: Publish
+        if: steps.registry.outputs.present != 'True'
+        run: mcp-publisher publish
+
+      - name: Verify the registry entry
+        if: steps.registry.outputs.present != 'True'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sleep 10
+          curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}&version=${VERSION}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); ok=any((s.get('server') or s).get('version')=='${VERSION}' for s in d.get('servers',[])); print('registry shows ${VERSION}:', ok); sys.exit(0 if ok else 1)"
+          echo "Published ${SERVER_NAME} ${VERSION} to the MCP Registry." >> "$GITHUB_STEP_SUMMARY"
