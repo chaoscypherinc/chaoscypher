@@ -92,6 +92,36 @@ async def handle_index_imported_source(
     adapter = source_repository
     logger.info("index_imported_source_processing", source_id=source_id, database=database_name)
 
+    # Pause guard. Enforcement is per handler — there is no dispatcher-level
+    # gate — so this runs before the no-search-repo branch below, which
+    # already writes to the source row.
+    from chaoscypher_core.operations.pause_guard import check_paused
+
+    pause_check = check_paused(
+        source_id=source_id,
+        database_name=database_name,
+        adapter=adapter,
+    )
+    if pause_check.paused:
+        logger.info(
+            "handler_skipped_paused",
+            handler="handle_index_imported_source",
+            source_id=source_id,
+            scope=pause_check.scope,
+            reason=pause_check.reason,
+        )
+        # Nothing re-drives this on resume: imported sources land at
+        # "committed", which SourceRecovery.NON_TERMINAL_STATUSES excludes,
+        # so `resume_source` would not pick it up. Mark it degraded — the
+        # same marker the no-search-repo branch below uses for the same
+        # reason — so the source shows "search degraded" and the operator's
+        # POST /api/v1/search/indexes clears it, rather than the skip being
+        # silent and permanent.
+        mark_search_indexing_degraded(
+            adapter=adapter, source_id=source_id, database_name=database_name
+        )
+        return {"skipped": "paused"}
+
     if search_repository is None:
         # Nothing can be vector-indexed without the search repo; degrade so the
         # UI shows "search degraded" rather than a false "indexed".

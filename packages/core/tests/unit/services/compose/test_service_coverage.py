@@ -385,6 +385,15 @@ class TestDownStopServer:
         calls = itertools.count()
         with (
             patch.object(ComposeService, "_pid_alive", side_effect=lambda _pid: next(calls) < 2),
+            # down() gates on TWO predicates, and the identity one reads the
+            # host's real /proc/{pid}/cmdline: unpatched it returns True only
+            # because nothing happens to hold pid 4242, and returns False the
+            # moment something does — under `-n auto` that is a coin flip.
+            # Stubbed here (as the three sibling pid-file cases already do) so
+            # this test pins the pid-file round-trip and the SIGTERM sequence
+            # it is named for; the identity gate has its own coverage in
+            # test_down_treats_a_reused_pid_as_stale.
+            patch.object(ComposeService, "_pid_is_compose_server", return_value=True),
             patch.object(ComposeService, "_signal") as sig,
         ):
             stopped = await service.down(config)

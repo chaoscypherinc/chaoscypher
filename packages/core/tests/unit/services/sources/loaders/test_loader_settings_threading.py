@@ -185,9 +185,23 @@ def test_image_loader_closes_the_image_handle(tmp_path: Path) -> None:
 
     assert docs[0]["metadata"]["width"] == 4
     assert docs[0]["metadata"]["height"] == 3
-    assert not [w for w in caught if issubclass(w.category, ResourceWarning)], (
-        "ImageLoader leaked the file handle"
-    )
+    # Scoped to THIS file's handle. `gc.collect()` inside catch_warnings(record=True)
+    # finalizes every unreachable object in the interpreter, so an unrelated leak
+    # elsewhere in the suite — an unclosed sqlite connection on the same xdist
+    # worker, say — lands in `caught` too. Filtering on the category alone
+    # reddened this test for a leak ImageLoader cannot cause and pointed whoever
+    # debugged it at the wrong module.
+    #
+    # Measured on PIL 12.3.0 while narrowing this: a leaked `Image` on its own
+    # emits NO ResourceWarning, so the only shape that reaches `caught` from
+    # this loader is an unclosed underlying handle — whose message carries the
+    # path, which is what makes the scoping both sound and the assertion's only
+    # true-positive route. Unscoped, the filter had no true-positive route at
+    # all and only a false-positive one.
+    leaked = [
+        w for w in caught if issubclass(w.category, ResourceWarning) and png.name in str(w.message)
+    ]
+    assert not leaked, f"ImageLoader leaked the file handle: {[str(w.message) for w in leaked]}"
 
 
 # ---------------------------------------------------------------------------

@@ -254,7 +254,18 @@ class TestMaskedRoundTripPathFields:
         assertions above were written for, generalised to every field. Path
         fields all carry non-None defaults, so keyword-walk overreach on any of
         them shows up here as a diff at a non-declared key.
+
+        Two things this test needs to be able to fail at all, both learned the
+        hard way: ``mask_settings_dict`` and ``strip_masked_values`` BOTH
+        mutate and return the same object, so the "before" side has to be an
+        independent deepcopy or the diff compares one dict against itself and
+        is a tautology; and on a bare default dump every secret is ``None``
+        while the keyword walk masks only ``str``/``SecretStr``, so pass 2 —
+        the pass this oracle exists to police — never runs unless at least one
+        credential carries a string.
         """
+        import copy
+
         from chaoscypher_core.app_config import (
             _SECRET_FIELD_PATHS,
             Settings,
@@ -262,6 +273,12 @@ class TestMaskedRoundTripPathFields:
         )
 
         dump = Settings().model_dump(mode="json")
+        # Assigned via a variable so the keyword and the quoted literal never
+        # share a line (see the sibling below) — and set at all so the keyword
+        # walk has something to mask.
+        sentinel = "swordfish-nine"
+        dump["logs"]["supervisor_password"] = sentinel
+        before = copy.deepcopy(dump)
         stripped = strip_masked_values(mask_settings_dict(dump))
 
         def _diff_paths(before: object, after: object, prefix: str = "") -> list[str]:
@@ -273,10 +290,15 @@ class TestMaskedRoundTripPathFields:
                 return paths
             return [] if before == after else [prefix]
 
-        undeclared = [
-            path for path in _diff_paths(dump, stripped) if path not in _SECRET_FIELD_PATHS
-        ]
-        assert not undeclared, (
+        undeclared = sorted(
+            path for path in _diff_paths(before, stripped) if path not in _SECRET_FIELD_PATHS
+        )
+        # One known gap, filed as a judgment item and pinned field-by-field by
+        # the strict xfail below: logs.supervisor_password is keyword-masked but
+        # absent from _SECRET_FIELD_PATHS. Asserted as an equality rather than
+        # allowlisted away, so adding the field to _SECRET_FIELD_PATHS fails
+        # here too and this allowance is deleted alongside that xfail.
+        assert undeclared == ["logs.supervisor_password"], (
             "mask->strip corrupted fields outside _SECRET_FIELD_PATHS "
             f"(placeholder would persist through PATCH /settings): {undeclared}"
         )

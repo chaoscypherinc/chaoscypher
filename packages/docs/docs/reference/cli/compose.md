@@ -73,7 +73,7 @@ chaoscypher compose build [OPTIONS]
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
 | `--config PATH` | `-c` | `axiomatize.yaml` | Path to composition config file |
-| `--clean` | | off | Replace the composed database and manifest before building (the package cache, `settings.yaml`, pid record and server log in the output directory are kept) |
+| `--clean / --no-clean` | | on | Replace the composed database and manifest before building (the package cache, `settings.yaml`, pid record and server log in the output directory are kept). `--no-clean` upserts onto the previous composition instead, which leaves entities from packages you have since removed from `axiomatize.yaml` still being served |
 
 ### Examples
 
@@ -111,11 +111,13 @@ Next steps:
 chaoscypher compose build --config research-compose.yaml
 ```
 
-**Clean rebuild (delete previous output first):**
+**Incremental build (upsert onto the previous composition):**
 
 ```bash
-chaoscypher compose build --clean
+chaoscypher compose build --no-clean
 ```
+
+A plain `chaoscypher compose build` already replaces the composed database. Use `--no-clean` only when you want to add to the existing one — note that entities from a package you have removed from `axiomatize.yaml` will still be served, because the merge is upsert-only and nothing prunes.
 
 :::note[Lexicon authentication]
 
@@ -133,7 +135,7 @@ Unauthenticated builds can still access public Lexicon packages.
 
 Build the composition (if the database does not exist) and start the knowledge server: a Cortex API bound to `127.0.0.1` on the configured port, serving the composed database. With `--detach`, the server runs in the background and the command returns immediately.
 
-A detached server's output goes to `server.log` in the output directory. `up --detach` waits until the server accepts a connection on its port (up to 60 seconds) and fails, quoting the log, if the process exits first or never binds — a port already in use is reported as a failure, not as a running server. A rebuild (`--build`, or `build --clean`) refuses to run while a recorded server is alive; stop it with `down` first.
+A detached server's output goes to `server.log` in the output directory. `up --detach` waits until the server accepts a connection on its port (up to 60 seconds) and fails, quoting the log, if the process exits first or never binds — a port already in use is reported as a failure, not as a running server. A rebuild (`--build`, or `build` (which now rebuilds by default)) refuses to run while a recorded server is alive; stop it with `down` first.
 
 ```bash
 chaoscypher compose up [OPTIONS]

@@ -21,7 +21,12 @@ from sqlmodel import SQLModel
 
 from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
 from chaoscypher_core.adapters.sqlite.engine import evict_engine, get_engine
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate
+from chaoscypher_core.adapters.sqlite.models import (
+    GraphEdge,
+    GraphNode,
+    GraphTemplate,
+    SourceRow,
+)
 from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.app_config.engine_factory import build_engine_settings
@@ -186,3 +191,96 @@ async def test_round_trip_keeps_nodes_typed(
         "Cortex": "Service",
         "Valkey": "Package",
     }
+
+
+def _seed_source_scoped_template(
+    adapter: SqliteAdapter, *, source_id: str, enabled: bool, template_id: str, name: str
+) -> None:
+    """One source owning one user template, with one node typed by it."""
+    assert adapter.session is not None
+    session = adapter.session
+    session.add(
+        SourceRow(
+            id=source_id,
+            database_name="default",
+            filename=f"{source_id}.md",
+            filepath=f"/tmp/{source_id}.md",
+            source_type="text",
+            enabled=enabled,
+        )
+    )
+    # Flush the source before the template: the FK is declared on
+    # graph_templates.source_id, and SQLAlchemy does not order the two
+    # inserts for us.
+    session.flush()
+    session.add(
+        GraphTemplate(
+            id=template_id,
+            database_name="default",
+            source_id=source_id,
+            name=name,
+            template_type="node",
+            is_system=False,
+        )
+    )
+    session.flush()
+    session.add(
+        GraphNode(
+            id=f"node_{source_id}",
+            database_name="default",
+            graph_name="knowledge",
+            template_id=template_id,
+            entity_type=name,
+            label=f"Entity from {source_id}",
+            source_id=source_id,
+        )
+    )
+    session.commit()
+
+
+def test_disabled_source_template_still_exports(source_adapter: SqliteAdapter) -> None:
+    """Disabling a source must not strip its schema from the package.
+
+    ``list_templates()`` hides disabled sources' templates by default, but
+    the exporter ships a disabled source's row and its nodes regardless —
+    so the schema half went missing while the data half travelled, and the
+    node's ``@type`` term arrived unbound.
+    """
+    _seed_source_scoped_template(
+        source_adapter, source_id="src_off", enabled=False, template_id="tpl_off", name="Statute"
+    )
+
+    names = _template_names(_export(source_adapter))
+
+    assert ("node", "Statute") in names
+
+
+def test_disabled_source_template_binds_its_context_term(source_adapter: SqliteAdapter) -> None:
+    """The ``include_templates and templates`` gate also controlled @context.
+
+    When a disabled source owned the *only* user template, the whole
+    templates branch short-circuited: no extended ``@context``, no
+    ``shapes.ttl``, while the knowledge graph still emitted the ``@type``
+    term that context was supposed to bind.
+    """
+    _seed_source_scoped_template(
+        source_adapter, source_id="src_off", enabled=False, template_id="tpl_off", name="Statute"
+    )
+
+    pkg = ccx.open_package(_export(source_adapter))
+    bound = False
+    for doc in pkg.graph_documents():
+        if doc.namespace == "ccx" and doc.name == "knowledge":
+            bound = "Statute" in (doc.doc.get("@context") or {})
+    assert bound, "@type term shipped without a binding in the package's own @context"
+
+
+def test_enabled_source_template_unaffected(source_adapter: SqliteAdapter) -> None:
+    """The change is additive — enabled sources behave exactly as before."""
+    _seed_source_scoped_template(
+        source_adapter, source_id="src_on", enabled=True, template_id="tpl_on", name="Contract"
+    )
+
+    names = _template_names(_export(source_adapter))
+
+    assert ("node", "Contract") in names

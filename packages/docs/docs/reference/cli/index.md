@@ -289,14 +289,14 @@ chaoscypher compose build
 | Option | Description |
 |--------|-------------|
 | `--config, -c` | Path to composition config file (default: `axiomatize.yaml`) |
-| `--clean` | Clean output directory before building |
+| `--clean / --no-clean` | Replace the composed database before building (default: on) |
 
 ```bash
 # Build from a custom config file
 chaoscypher compose build --config my-compose.yaml
 
-# Clean build (removes previous output first)
-chaoscypher compose build --clean
+# Upsert onto the previous composition instead of replacing it
+chaoscypher compose build --no-clean
 ```
 
 ### compose up

@@ -37,6 +37,7 @@ from chaoscypher_core.services.sources.engine.extraction.content_categories impo
     CONTENT_CATEGORIES,
     validate_custom_patterns,
 )
+from chaoscypher_core.services.sources.engine.extraction.safe_user_regex import compile_safe
 from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
     VALID_PRESETS,
     FilteringConfig,
@@ -130,6 +131,28 @@ def test_detection_regexes_compile(path: Path) -> None:
             re.compile(regex)
         except re.error as exc:  # pragma: no cover - failure path
             pytest.fail(f"{path.stem}: detection regex does not compile: {regex!r} ({exc})")
+
+
+@pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
+def test_detection_regexes_compile_inside_the_sandbox(path: Path) -> None:
+    """Every shipped detection regex must survive ``compile_safe``.
+
+    ``_compile_patterns`` routes this field through the length-capped,
+    timeout-guarded sandbox that ``safe_user_regex`` calls "the ONLY
+    boundary at which user-supplied regex text crosses into the
+    extraction pipeline". This mirrors ``test_content_exclusions_are_registered``,
+    which has always pinned the same property for the *other* user-regex
+    field. ``flags=0`` matches the call site: the shipped patterns are
+    case-sensitive by design.
+    """
+    cfg = _load(path)
+    for spec in cfg.get("detection", {}).get("patterns", []):
+        regex = spec.get("regex")
+        assert regex, f"{path.stem}: detection pattern with empty regex"
+        try:
+            compile_safe(regex, flags=0)
+        except Exception as exc:  # pragma: no cover - failure path
+            pytest.fail(f"{path.stem}: detection regex rejected by sandbox: {regex!r} ({exc})")
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)

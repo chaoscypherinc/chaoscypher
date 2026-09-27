@@ -327,6 +327,38 @@ class TestMerge:
         assert result.success is True, result.errors
         assert keep.exists()
 
+    @pytest.mark.asyncio
+    async def test_rebuild_drops_a_package_removed_from_the_composition(
+        self, tmp_path: Path
+    ) -> None:
+        """A clean rebuild stops serving a package you removed.
+
+        The importer behind the merger is upsert-by-IRI with no delete
+        path, so a `clean=False` rebuild adds the current package set on
+        top of whatever the previous build left: the removed package's
+        entities keep being served while `composition.json` reports it
+        gone. `clean=True` — what `compose build` now passes by default —
+        is the only thing that reconciles the two.
+        """
+        out = tmp_path / "out"
+        alpha = _package(tmp_path, "alpha", ("Alice",))
+        beta = _package(tmp_path, "beta", ("Bob",))
+
+        first = await NamespaceMerger(output_dir=out).merge([alpha, beta], clean=True)
+        assert first.success is True, first.errors
+        assert _count(out)[0] == 2
+        # The merger opens the composed database through Engine(); a second
+        # build in the same process must not reuse an engine bound to the
+        # directory clean=True is about to remove.
+        evict_engine(out / "databases" / "default" / "app.db")
+
+        second = await NamespaceMerger(output_dir=out).merge([alpha], clean=True)
+
+        assert second.success is True, second.errors
+        assert second.packages_included == ["alpha:1.0.0"]
+        # Beta's entity is gone, not merely unlisted in the manifest.
+        assert _count(out)[0] == 1
+
 
 # ---------------------------------------------------------------------------
 # _package_bytes: archives and extracted directories

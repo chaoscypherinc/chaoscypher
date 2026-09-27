@@ -159,7 +159,9 @@ class TestBuildHappyPath:
             mock_cfg_cls.from_yaml.return_value = compose_cfg
             runner.invoke(build, ["--config", str(config_file)])
             mock_svc_cls.assert_called_once()
-            mock_service_instance.build.assert_called_once_with(compose_cfg, clean=False)
+            # The documented default: a bare `compose build` is a full
+            # rebuild, matching ComposeService.build/GraphMerger.merge.
+            mock_service_instance.build.assert_called_once_with(compose_cfg, clean=True)
 
     def test_happy_path_output_mentions_composition_name(self, tmp_path: Path) -> None:
         config_file = tmp_path / "axiomatize.yaml"
@@ -201,6 +203,27 @@ class TestBuildHappyPath:
             mock_cfg_cls.from_yaml.return_value = compose_cfg
             runner.invoke(build, ["--config", str(config_file), "--clean"])
             mock_service_instance.build.assert_called_once_with(compose_cfg, clean=True)
+
+    def test_no_clean_flag_forwarded_to_service(self, tmp_path: Path) -> None:
+        """`--no-clean` is the only way to get the upsert build."""
+        config_file = tmp_path / "axiomatize.yaml"
+        config_file.write_text("name: test\n")
+
+        compose_cfg = _make_compose_config()
+        mock_result = _make_success_result()
+        mock_service_instance = MagicMock()
+        mock_service_instance.build = _make_async(mock_result)
+
+        runner = CliRunner()
+        with (
+            patch(_BUILD_CONFIG) as mock_cfg_cls,
+            patch(_BUILD_SERVICE, return_value=mock_service_instance),
+            patch(_BUILD_AUTH, return_value=None),
+            patch(_BUILD_LEXICON, return_value="https://lexicon.example.com"),
+        ):
+            mock_cfg_cls.from_yaml.return_value = compose_cfg
+            runner.invoke(build, ["--config", str(config_file), "--no-clean"])
+            mock_service_instance.build.assert_called_once_with(compose_cfg, clean=False)
 
     def test_with_auth_creates_service_with_credentials(self, tmp_path: Path) -> None:
         config_file = tmp_path / "axiomatize.yaml"

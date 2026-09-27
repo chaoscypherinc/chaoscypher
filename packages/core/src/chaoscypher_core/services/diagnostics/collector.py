@@ -37,6 +37,12 @@ logger = structlog.get_logger(__name__)
 
 _VALID_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
+# Per-file ceiling on log content pulled into a diagnostics bundle. logrotate
+# rotates daily with no size directive (packages/docker/config/logrotate.conf),
+# so a single day's file is unbounded; mirrors the bounded-read discipline of
+# ``LogService._read_file_lines``.
+_MAX_LOG_BYTES = 8 * 1024 * 1024
+
 
 # ---------------------------------------------------------------------------
 # Log-line scrubbing — applied before including log content in ZIP exports
@@ -205,12 +211,42 @@ class DiagnosticCollector:
                 continue
 
             try:
-                raw = log_file.read_text(errors="replace")
-                logs[key] = "\n".join(_scrub_log_line(ln) for ln in raw.splitlines())
+                logs[key] = self._read_log_tail(log_file)
             except OSError:
                 logger.warning("log_read_failed", file=str(log_file))
 
         return logs
+
+    @staticmethod
+    def _read_log_tail(log_file: Path) -> str:
+        """Return the scrubbed tail of *log_file*, bounded by ``_MAX_LOG_BYTES``.
+
+        ``LogService._read_file_lines`` was rewritten away from a whole-file
+        read for a reason it states in its own docstring: logrotate rotates
+        these files daily with no size ceiling, so a day of structlog output
+        is unbounded. This collector still carried the pre-rewrite shape, and
+        was strictly worse — it held ``raw``, the list ``splitlines()``
+        produces, and the joined scrubbed copy simultaneously, for every log
+        file at once, until the ZIP was assembled.
+
+        Reading only the tail also keeps the useful half: a diagnostics
+        bundle is collected to explain something that just happened.
+        """
+        size = log_file.stat().st_size
+        with log_file.open("rb") as handle:
+            if size > _MAX_LOG_BYTES:
+                handle.seek(size - _MAX_LOG_BYTES)
+            data = handle.read()
+
+        if size > _MAX_LOG_BYTES:
+            # The window starts mid-line, and possibly mid-character. Drop
+            # that fragment rather than emit a truncated line (the recovery
+            # ``LogService._read_file_lines`` uses).
+            data = data.partition(b"\n")[2]
+
+        # Scrub while iterating so the decoded text and the scrubbed copy are
+        # the only things alive, and only ever for the bounded window.
+        return "\n".join(_scrub_log_line(ln) for ln in data.decode(errors="replace").splitlines())
 
     def sanitize_settings(
         self,

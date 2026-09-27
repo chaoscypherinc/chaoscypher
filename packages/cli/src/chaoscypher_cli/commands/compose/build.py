@@ -9,7 +9,7 @@ and merge into a unified knowledge database.
 Example:
     chaoscypher compose build
     chaoscypher compose build --config my-compose.yaml
-    chaoscypher compose build --clean
+    chaoscypher compose build --no-clean
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ from chaoscypher_core.services.compose import ComposeConfig, ComposeError, Compo
     help="Path to composition config file",
 )
 @click.option(
-    "--clean",
-    is_flag=True,
-    help="Clean output directory before building",
+    "--clean/--no-clean",
+    default=True,
+    help="Replace the composed database before building (default: yes)",
 )
 def build(config: str, clean: bool) -> None:
     """Compile axiomatize.yaml into a runtime database.
@@ -50,7 +50,7 @@ def build(config: str, clean: bool) -> None:
     Example:
         chaoscypher compose build
         chaoscypher compose build --config my-compose.yaml
-        chaoscypher compose build --clean
+        chaoscypher compose build --no-clean
     """
     console = get_console()
 
@@ -70,8 +70,7 @@ def build(config: str, clean: bool) -> None:
     console.print(f"  [dim]Strategy:[/dim] {compose_config.settings.merge_strategy.value}")
     console.print(f"  [dim]Output:[/dim] {compose_config.resolved_output_dir}")
 
-    if clean:
-        console.print("  [dim]Clean build:[/dim] Yes")
+    console.print(f"  [dim]Clean build:[/dim] {'Yes' if clean else 'No (upsert)'}")
 
     console.print()
 

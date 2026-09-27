@@ -1,36 +1,240 @@
-.teaser {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem 1rem 3rem;
+/* The homepage leaderboard: a section in the same idiom as the Lexicon Hub block
+   (eyebrow, statement, lede) with the top of the board in one card. The vertical
+   rhythm comes from the <hr>s around it, like every other homepage section. */
+
+.section {
+  padding: 0.5rem 0 1rem;
 }
 
-.teaser h2 {
-  margin-bottom: 0.5rem;
+.section h2 {
+  margin-bottom: 0.6rem;
 }
 
-.teaser p {
-  max-width: 66ch;
+/* full width, the same measure as the board below it */
+.lede {
+  margin: 0 0 1.5rem;
   color: var(--cc-text-secondary);
+  text-wrap: pretty;
 }
 
-.table {
+.lede a {
+  color: var(--cc-accent-cyan);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lede a:hover {
+  text-decoration: underline;
+}
+
+/* ---- the card ------------------------------------------------------ */
+
+.board {
+  border: 1px solid var(--cc-border-card);
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg-card);
+  overflow: hidden;
+}
+
+/* Infima makes tables display:block with stripes, and the theme puts a purple
+   rule under every header. `.board .table` outranks both, so the card sets its
+   own table. */
+.board .table {
+  display: table;
+  table-layout: fixed;
   width: 100%;
-  max-width: 640px;
+  margin: 0;
   border-collapse: collapse;
-  margin: 1rem 0 1.25rem;
   font-size: 0.95rem;
 }
 
-.table th,
-.table td {
-  text-align: left;
-  padding: 0.45rem 0.6rem;
+.board .table th,
+.board .table td {
+  padding: 0.75rem 1rem;
+  border: 0;
   border-bottom: 1px solid var(--cc-border-card);
+  background: transparent;
+  color: var(--cc-text-primary);
+  font-size: inherit;
+  text-align: left;
+  vertical-align: middle;
 }
 
-.table td:not(:first-child),
-.table th:not(:first-child) {
+.board .table th {
+  padding-top: 0.8rem;
+  padding-bottom: 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--cc-text-muted);
+}
+
+.board .table th abbr {
+  text-decoration: none;
+}
+
+.board .table tbody tr,
+.board .table tbody tr:hover td {
+  background: transparent;
+}
+
+/* the winner's row is lifted a shade */
+.board .table tbody tr.first {
+  background: color-mix(in srgb, var(--cc-accent-purple) 7%, transparent);
+}
+
+/* ---- columns ------------------------------------------------------- */
+
+.board .table .rank {
+  width: 2.75rem;
+  padding-right: 0;
   text-align: right;
   font-family: var(--cc-font-mono);
   font-variant-numeric: tabular-nums;
+  color: var(--cc-text-faint);
+}
+
+.board .table .model {
+  width: 14rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.board .table .num {
+  width: 6.5rem;
+  text-align: right;
+  font-family: var(--cc-font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-text-secondary);
+}
+
+/* the column names stay in the text face; the mono is for the numbers */
+.board .table th.rank,
+.board .table th.num {
+  font-family: inherit;
+}
+
+/* Overall has no width: it takes what the fixed columns leave, so the bars
+   are as long as the card allows. */
+
+/* the score: its number, then a bar that fills the rest of the cell */
+.meter {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.value {
+  flex: none;
+  min-width: 2.6rem;
+  text-align: right;
+  font-family: var(--cc-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--cc-text-primary);
+}
+
+.bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--cc-text-muted) 14%, transparent);
+  overflow: hidden;
+}
+
+.bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--cc-accent-cyan);
+}
+
+/* only the winner's bar carries the brand gradient */
+.first .bar i {
+  background: linear-gradient(90deg, var(--cc-accent-magenta), var(--cc-accent-purple), var(--cc-accent-cyan));
+}
+
+/* ---- card footer --------------------------------------------------- */
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 2rem;
+  padding: 0.85rem 1rem;
+}
+
+.repro {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--cc-text-muted);
+}
+
+/* the theme boxes inline code in cyan; here it is a quiet mono line, one action below the link */
+.board .repro code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--cc-text-secondary);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+/* ---- narrower screens ---------------------------------------------- */
+
+@media (max-width: 900px) {
+  .board .table .model {
+    width: 11rem;
+  }
+}
+
+/* phones: rank, model, Overall and VRAM; Extraction and Chat are on the full page */
+@media (max-width: 760px) {
+  .board .table .wide {
+    display: none;
+  }
+
+  .board .table .model {
+    width: 9.5rem;
+    white-space: normal;
+  }
+
+  .board .table .num {
+    width: 5rem;
+  }
+
+  .board .table th,
+  .board .table td {
+    padding-left: 0.7rem;
+    padding-right: 0.7rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .board .table .model {
+    width: 7.5rem;
+  }
+
+  .repro {
+    flex-basis: 100%;
+    overflow-x: auto;
+  }
+
+  .board .repro code {
+    display: block;
+    margin-top: 0.2rem;
+    font-size: 0.72rem;
+  }
+
+  .board .table .rank {
+    width: 2.25rem;
+  }
+
+  .meter {
+    gap: 0.6rem;
+  }
 }

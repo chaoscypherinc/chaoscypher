@@ -41,9 +41,21 @@ def _node(node_id: str, *, embedding=None) -> SimpleNamespace:
     return SimpleNamespace(id=node_id, label=f"label-{node_id}", properties={}, embedding=embedding)
 
 
+def _unpaused_adapter() -> MagicMock:
+    """An adapter that reads as not paused.
+
+    A bare MagicMock answers truthy for every attribute, so `check_paused`
+    would classify it as paused and the handler would skip.
+    """
+    adapter = MagicMock()
+    adapter.get_source.return_value = {"id": "src1", "is_paused": False}
+    adapter.get_system_state.return_value = {"processing_paused": False}
+    return adapter
+
+
 def _service_with(*, nodes, vectors) -> tuple:
     """Build the (adapter, graph_repo, indexing_service, search_repo) mocks."""
-    adapter = MagicMock()
+    adapter = _unpaused_adapter()
     adapter.list_unembedded_chunks.return_value = [{"id": "c1", "content": "hello"}]
     # Content-free streaming fetch: (chunk_id, embedding) tuples only.
     adapter.iter_chunk_embeddings.return_value = [("c1", _chunk_embedding_b64())]
@@ -148,7 +160,7 @@ async def test_handle_index_imported_source_degrades_without_search_repo() -> No
 
     result = await handle_index_imported_source(
         data={"source_id": "src1"},
-        source_repository=MagicMock(),
+        source_repository=_unpaused_adapter(),
         graph_repository=MagicMock(),
         indexing_service=indexing_service,
         search_repository=None,

@@ -13,8 +13,16 @@ type Model = {
 };
 
 const WEIGHTS = data.score_weights.overall;
-
+const CHAT_TOTAL = data.suites.chat.total;
 const TOP = 5;
+const REPRO_CMD = "chaoscypher benchmark run probes --local-only";
+
+const pct = (v: number) => `${Math.round(v)}%`;
+const share = (w: number) => `${Math.round(100 * w)}%`;
+
+function ArrowRight() {
+  return <span aria-hidden="true"> &#8594;</span>;
+}
 
 /** The first checkable claim on the homepage: the top of the leaderboard by Overall. */
 export default function LeaderboardTeaser() {
@@ -25,42 +33,75 @@ export default function LeaderboardTeaser() {
     .filter((m) => m.scores.overall != null)
     .sort((a, b) => b.scores.overall! - a.scores.overall! || (b.carrier?.passed ?? 0) - (a.carrier?.passed ?? 0))
     .slice(0, TOP);
+
   return (
-    <section className={styles.teaser}>
-      <h2>Which local model does the whole job?</h2>
-      <p>
-        We do not make models, so we have no favourite. Every model on the leaderboard ran the real
-        extraction pipeline against pass/fail instruction probes, then the same instructions inside
-        production-sized chunks, then answered 80 questions from one fixed reference graph. Overall is{" "}
-        {Math.round(100 * WEIGHTS.extraction)}% extraction and {Math.round(100 * WEIGHTS.chat)}% grounded chat. Top {TOP} of {pinned.length}, last run {data.generated}:
+    <section className={styles.section} id="leaderboard" aria-labelledby="leaderboard-heading">
+      <p className="feature-row-label">Model leaderboard</p>
+      <h2 id="leaderboard-heading">Pick a local model that does the whole job.</h2>
+      <p className={styles.lede}>
+        Every model here ran the real extraction pipeline, then answered {CHAT_TOTAL} grounded questions from
+        one reference graph. Overall is {share(WEIGHTS.extraction)} extraction and {share(WEIGHTS.chat)} grounded
+        chat. Top {TOP} of {pinned.length} models, last run {data.generated}.{" "}
+        <Link to="/docs/reference/extraction-benchmark">
+          How it is scored
+          <ArrowRight />
+        </Link>
       </p>
-      <table className={styles.table}>
-        <thead>
-          <tr>
-            <th>Model</th>
-            <th>Overall</th>
-            <th>Extraction</th>
-            <th>Chat</th>
-            <th>VRAM</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((m) => (
-            <tr key={m.id}>
-              <td>{m.label}</td>
-              <td>{Math.round(m.scores.overall!)}%</td>
-              <td>{Math.round(m.scores.extraction!)}%</td>
-              <td>{Math.round(m.scores.chat!)}%</td>
-              <td>{m.vram_gb != null ? `${m.vram_gb} GB` : "—"}</td>
+
+      <div className={styles.board}>
+        <table className={styles.table} aria-label={`Top ${TOP} local models by Overall score`}>
+          <thead>
+            <tr>
+              <th scope="col" className={styles.rank}>
+                <abbr title="Rank">#</abbr>
+              </th>
+              <th scope="col" className={styles.model}>
+                Model
+              </th>
+              <th scope="col" className={styles.overall}>
+                Overall
+              </th>
+              <th scope="col" className={`${styles.num} ${styles.wide}`}>
+                Extraction
+              </th>
+              <th scope="col" className={`${styles.num} ${styles.wide}`}>
+                Chat
+              </th>
+              <th scope="col" className={styles.num}>
+                VRAM
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <p>
-        <Link to="/leaderboard">Full leaderboard, filtered by the VRAM you have</Link>
-        {" · "}
-        <code>chaoscypher benchmark run probes --local-only</code> reproduces it.
-      </p>
+          </thead>
+          <tbody>
+            {rows.map((m, i) => (
+              <tr key={m.id} className={i === 0 ? styles.first : undefined}>
+                <td className={styles.rank}>{i + 1}</td>
+                <td className={styles.model}>{m.label}</td>
+                <td className={styles.overall}>
+                  <span className={styles.meter}>
+                    <span className={styles.value}>{pct(m.scores.overall!)}</span>
+                    <span className={styles.bar} aria-hidden="true">
+                      <i style={{ width: `${Math.round(m.scores.overall!)}%` }} />
+                    </span>
+                  </span>
+                </td>
+                <td className={`${styles.num} ${styles.wide}`}>{pct(m.scores.extraction!)}</td>
+                <td className={`${styles.num} ${styles.wide}`}>{pct(m.scores.chat!)}</td>
+                <td className={styles.num}>{m.vram_gb != null ? `${m.vram_gb} GB` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className={styles.foot}>
+          <Link className="feature-card-link" to="/leaderboard">
+            Full leaderboard, filtered by the VRAM you have
+            <ArrowRight />
+          </Link>
+          <p className={styles.repro}>
+            Reproduce it: <code>{REPRO_CMD}</code>
+          </p>
+        </div>
+      </div>
     </section>
   );
 }

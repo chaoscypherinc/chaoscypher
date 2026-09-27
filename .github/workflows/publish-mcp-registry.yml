@@ -75,7 +75,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          have=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}&version=${VERSION}" \
+          have=$(curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}" \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print(any((s.get('server') or s).get('version')=='${VERSION}' and (s.get('server') or s).get('name')=='${SERVER_NAME}' for s in d.get('servers',[])))" || echo False)
           echo "present=$have" >> "$GITHUB_OUTPUT"
           [ "$have" = "True" ] && echo "Registry already lists ${SERVER_NAME} ${VERSION} — nothing to do." >> "$GITHUB_STEP_SUMMARY" || true
@@ -103,12 +103,19 @@ jobs:
         if: steps.registry.outputs.present != 'True'
         run: mcp-publisher publish
 
+      # The registry indexes a new version with a delay (v0.5.0 was not listed
+      # ten seconds after a successful publish), so this polls for a few minutes.
       - name: Verify the registry entry
         if: steps.registry.outputs.present != 'True'
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          sleep 10
-          curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}&version=${VERSION}" \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); ok=any((s.get('server') or s).get('version')=='${VERSION}' for s in d.get('servers',[])); print('registry shows ${VERSION}:', ok); sys.exit(0 if ok else 1)"
-          echo "Published ${SERVER_NAME} ${VERSION} to the MCP Registry." >> "$GITHUB_STEP_SUMMARY"
+          for i in $(seq 1 18); do
+            if curl -fsSL "https://registry.modelcontextprotocol.io/v0/servers?search=${SERVER_NAME}" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if any((s.get('server') or s).get('version')=='${VERSION}' and (s.get('server') or s).get('name')=='${SERVER_NAME}' for s in d.get('servers',[])) else 1)"; then
+              echo "Published ${SERVER_NAME} ${VERSION} to the MCP Registry." | tee -a "$GITHUB_STEP_SUMMARY"; exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::The registry does not list ${SERVER_NAME} ${VERSION} three minutes after a successful publish."
+          exit 1

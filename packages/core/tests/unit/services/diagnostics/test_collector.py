@@ -229,6 +229,74 @@ class TestCollectLogs:
         assert "cortex" in logs
         assert "cortex.1" in logs
 
+    def test_large_log_is_truncated_to_its_tail(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """A log past the cap contributes only its newest bytes.
+
+        logrotate rotates these files daily with no size directive, so a
+        single day's file is unbounded. The cap is monkeypatched down so
+        the test does not have to write 8 MB.
+        """
+        from chaoscypher_core.services.diagnostics import collector as collector_mod
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        monkeypatch.setattr(collector_mod, "_MAX_LOG_BYTES", 2048)
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        filler = "\n".join(f"INFO line {i:05d}" for i in range(500))
+        (log_dir / "cortex.log").write_text(f"OLDEST-MARKER\n{filler}\nNEWEST-MARKER\n")
+
+        logs = DiagnosticCollector(log_dir=log_dir).collect_logs()
+
+        assert len(logs["cortex"].encode()) <= 2048
+        # Tail, not head: the newest line survives and the oldest is dropped.
+        assert "NEWEST-MARKER" in logs["cortex"]
+        assert "OLDEST-MARKER" not in logs["cortex"]
+
+    def test_truncated_log_never_starts_mid_line(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """The window opens mid-line; that fragment is dropped, not emitted."""
+        from chaoscypher_core.services.diagnostics import collector as collector_mod
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        monkeypatch.setattr(collector_mod, "_MAX_LOG_BYTES", 512)
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        lines = [f"INFO this is log line number {i:04d}" for i in range(100)]
+        (log_dir / "cortex.log").write_text("\n".join(lines) + "\n")
+
+        logs = DiagnosticCollector(log_dir=log_dir).collect_logs()
+
+        first = logs["cortex"].splitlines()[0]
+        assert first in lines, f"first line is a fragment: {first!r}"
+
+    def test_small_log_is_read_whole(self, tmp_path: Path) -> None:
+        """Below the cap nothing changes — a negative seek must not fire."""
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "cortex.log").write_text("FIRST\nmiddle\nLAST\n")
+
+        logs = DiagnosticCollector(log_dir=log_dir).collect_logs()
+
+        assert logs["cortex"].splitlines() == ["FIRST", "middle", "LAST"]
+
+    def test_scrubbing_survives_truncation(self, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """Truncation must not become a way around the secret scrubber."""
+        from chaoscypher_core.services.diagnostics import collector as collector_mod
+        from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+
+        monkeypatch.setattr(collector_mod, "_MAX_LOG_BYTES", 1024)
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        filler = "\n".join(f"INFO line {i:05d}" for i in range(300))
+        (log_dir / "cortex.log").write_text(
+            f"{filler}\nINFO Authorization: Bearer sk-secret-value-123\n"
+        )
+
+        logs = DiagnosticCollector(log_dir=log_dir).collect_logs()
+
+        assert "sk-secret-value-123" not in logs["cortex"]
+
 
 class TestExportBundle:
     """Tests for ZIP bundle export."""

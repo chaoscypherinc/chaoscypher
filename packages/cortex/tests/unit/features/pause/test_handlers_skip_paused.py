@@ -330,3 +330,63 @@ async def test_vision_finalize_handler_skips_when_source_paused() -> None:
     # The guard runs before the job lookup, so no state is read or mutated.
     adapter.get_vision_job.assert_not_called()
     adapter.transition_source_status.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 8. handle_index_imported_source — the handler this suite's claim missed
+# ---------------------------------------------------------------------------
+#
+# The suite's docstring says "every source-processing handler", but the list
+# is hand-written and this one was never on it. It is classified
+# ``source_bound`` in ``upgrade_recovery`` and dispatched on QUEUE_LLM — the
+# queue the LLM-health evaluator auto-pauses — and it had no guard at all,
+# so an operator pause did not stop it re-embedding an imported source.
+
+
+@pytest.mark.asyncio
+async def test_imported_source_indexing_skips_when_source_paused() -> None:
+    from chaoscypher_core.operations.importing.imported_source_handler import (
+        handle_index_imported_source,
+    )
+
+    adapter = _paused_source_adapter()
+    indexing_service = MagicMock()
+
+    result = await handle_index_imported_source(
+        data={"source_id": "s-1"},
+        source_repository=adapter,
+        graph_repository=MagicMock(),
+        indexing_service=indexing_service,
+        search_repository=MagicMock(),
+        metadata={"database_name": "default"},
+    )
+    assert result == {"skipped": "paused"}
+    indexing_service.embed_chunks.assert_not_called()
+    # The skip is recorded, not silent: imported sources land at "committed",
+    # which SourceRecovery does not re-drive, so resume would not pick this up.
+    adapter.update_source_columns.assert_called_once_with(
+        source_id="s-1",
+        database_name="default",
+        updates={"vector_indexing_status": "degraded"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_imported_source_indexing_skips_when_system_paused() -> None:
+    from chaoscypher_core.operations.importing.imported_source_handler import (
+        handle_index_imported_source,
+    )
+
+    adapter = _system_paused_adapter()
+    indexing_service = MagicMock()
+
+    result = await handle_index_imported_source(
+        data={"source_id": "s-1"},
+        source_repository=adapter,
+        graph_repository=MagicMock(),
+        indexing_service=indexing_service,
+        search_repository=MagicMock(),
+        metadata={"database_name": "default"},
+    )
+    assert result == {"skipped": "paused"}
+    indexing_service.embed_chunks.assert_not_called()

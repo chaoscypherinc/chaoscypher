@@ -339,7 +339,15 @@ class CcxExporter:
         """
         if not include_templates:
             return []
-        templates = [tmpl.model_dump(mode="json") for tmpl in self.graph.list_templates()]
+        # include_disabled_sources=True mirrors the importer, which passes it
+        # on all three of its template reads. The port hides disabled sources'
+        # templates by default, but export ships a disabled source's rows and
+        # nodes regardless — so filtering only the schema half shipped data
+        # whose @type terms the package's own @context no longer bound.
+        templates = [
+            tmpl.model_dump(mode="json")
+            for tmpl in self.graph.list_templates(include_disabled_sources=True)
+        ]
         user_templates = [tmpl for tmpl in templates if not tmpl.get("is_system", False)]
         if source_ids is not None:
             source_id_set = set(source_ids)

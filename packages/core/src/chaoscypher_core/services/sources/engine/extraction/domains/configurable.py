@@ -39,6 +39,11 @@ from chaoscypher_core.plugins import PluginMetadata, metadata_from_dict
 from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
     ExclusionRule,
 )
+from chaoscypher_core.services.sources.engine.extraction.safe_user_regex import (
+    PatternTooLongError,
+    SafeUserRegex,
+    compile_safe,
+)
 
 
 if TYPE_CHECKING:
@@ -71,7 +76,7 @@ class ConfigurableDomain:
         """
         self.config = config
         self.settings = settings
-        self._compiled_patterns: list[tuple[re.Pattern[str], float]] = []
+        self._compiled_patterns: list[tuple[SafeUserRegex, float]] = []
         self._compile_patterns()
         self._keyword_groups: list[tuple[list[str], list[re.Pattern[str]], float]] = []
         self._preprocess_keywords()
@@ -86,10 +91,23 @@ class ConfigurableDomain:
             regex = pattern_spec.get("regex")
             weight = pattern_spec.get("weight", 1.0)
             if regex:
+                # flags=0 keeps the stdlib `re.compile(regex)` semantics this
+                # call had: compile_safe defaults to IGNORECASE|MULTILINE for
+                # parity with compile_custom_patterns, but the shipped
+                # detection patterns are case-sensitive by design (the
+                # `reference` domain matches RFC-2119 MUST/SHALL, `literary`
+                # anchors ^chapter), so the defaults would change what matches.
                 try:
-                    compiled = re.compile(regex)
+                    compiled = compile_safe(regex, flags=0)
                     self._compiled_patterns.append((compiled, weight))
-                except re.error as e:
+                except PatternTooLongError as e:
+                    logger.warning(
+                        "detection_pattern_too_long",
+                        domain=self.config.get("name", "unknown"),
+                        length=len(regex),
+                        error=str(e),
+                    )
+                except Exception as e:  # covers regex.error and any wrapper error
                     logger.warning(
                         "invalid_regex_pattern",
                         domain=self.config.get("name", "unknown"),

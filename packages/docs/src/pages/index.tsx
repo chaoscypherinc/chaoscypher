@@ -452,6 +452,7 @@ export default function Home(): JSX.Element {
         <LexiconHub />
         <hr />
         <IntegrationsStrip />
+        <hr />
         <LeaderboardTeaser />
         <hr />
         <GetStarted />
