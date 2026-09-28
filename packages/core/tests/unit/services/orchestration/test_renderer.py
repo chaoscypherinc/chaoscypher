@@ -67,7 +67,7 @@ def test_ccx_import_endpoint_gets_upload_body_limit() -> None:
     """
     settings = Settings()
     settings.batching.max_upload_bytes = 5 * 1024 * 1024 * 1024  # 5 GB -> "5g"
-    for template_name in ("nginx-http.conf", "nginx-https.conf"):
+    for template_name in ("nginx-http.conf", "nginx-https.conf", "multi-interface-nginx.conf"):
         out = render_template(template_name, settings)
         # The server default stays small; only uploads + import lift the cap.
         assert "client_max_body_size 1m;" in out, template_name
@@ -76,7 +76,10 @@ def test_ccx_import_endpoint_gets_upload_body_limit() -> None:
         assert idx != -1, template_name
         block = out[idx : idx + 400]
         assert "client_max_body_size 5g;" in block, template_name
-        if "location /api/" in out:
+        # multi-interface has `location /api/` but no proxy_intercept_errors at
+        # all (the SPA is static there), so the SPA-scoping check applies only
+        # where the directive exists.
+        if "proxy_intercept_errors on;" in out and "location /api/" in out:
             assert out.index("proxy_intercept_errors on;") > out.rindex("location /api/"), (
                 f"{template_name}: proxy_intercept_errors must be scoped to the SPA "
                 "block, not /api/"

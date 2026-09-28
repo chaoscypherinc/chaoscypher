@@ -251,8 +251,12 @@ async def embed(
 
     settings = _get_default_settings()
     if model is not None:
+        # model_copy stores the update value unvalidated, so the override must
+        # be an EmbeddingSettings, not a dict — the factory reads
+        # settings.embedding.provider and a dict raised AttributeError on every
+        # call (2026-09-24 llm audit filing, fixed 2026-09-28).
         settings = settings.model_copy(
-            update={"embedding": {**settings.embedding.model_dump(), "model": model}},
+            update={"embedding": settings.embedding.model_copy(update={"model": model})},
         )
     provider = create_embedding_provider(settings)
     if isinstance(text, list):
@@ -290,8 +294,12 @@ async def embed_batch(
 
     settings = _get_default_settings()
     if model is not None:
+        # model_copy stores the update value unvalidated, so the override must
+        # be an EmbeddingSettings, not a dict — the factory reads
+        # settings.embedding.provider and a dict raised AttributeError on every
+        # call (2026-09-24 llm audit filing, fixed 2026-09-28).
         settings = settings.model_copy(
-            update={"embedding": {**settings.embedding.model_dump(), "model": model}},
+            update={"embedding": settings.embedding.model_copy(update={"model": model})},
         )
     provider = create_embedding_provider(settings)
     return await provider.batch_embed(texts, **kwargs)

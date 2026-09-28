@@ -109,7 +109,15 @@ fi
 [ -z "$SUPERVISOR_PASSWORD" ] && [ -f "$SUPER_PW_FILE" ] && export SUPERVISOR_PASSWORD="$(cat "$SUPER_PW_FILE")"
 
 if [ -f /etc/nginx/nginx.conf ]; then
-    printf 'set $chaoscypher_edge_auth_token "%s";\n' "$CHAOSCYPHER_EDGE_AUTH_TOKEN" > "${RUNTIME_DIR}/edge-auth-token-var.conf"
+    # Stage + same-directory mv. RUNTIME_DIR is appuser-writable and this still
+    # runs as root, so a shell `>` at the fixed path would follow a planted
+    # symlink and overwrite whatever it points at (O_TRUNC). mktemp is
+    # O_CREAT|O_EXCL, so a pre-planted link cannot be followed, and rename(2)
+    # replaces the destination entry instead of following it.
+    EDGE_TOKEN_STAGE="$(mktemp "${RUNTIME_DIR}/.edge-auth-token.XXXXXX")"
+    printf 'set $chaoscypher_edge_auth_token "%s";\n' "$CHAOSCYPHER_EDGE_AUTH_TOKEN" > "$EDGE_TOKEN_STAGE"
+    chmod 644 "$EDGE_TOKEN_STAGE"
+    mv -f "$EDGE_TOKEN_STAGE" "${RUNTIME_DIR}/edge-auth-token-var.conf"
 fi
 
 # ============================================================================
@@ -197,11 +205,21 @@ if [ -f /etc/nginx/nginx.conf ]; then
     if [ -f "${TLS_DIR}/server.crt" ] && [ -f "${TLS_DIR}/server.key" ]; then
         DH_PERSIST="${TLS_DIR}/dhparam.pem"
         DH_LINK="/etc/nginx/dhparam.pem"
-        if [ ! -f "$DH_PERSIST" ]; then
+        # TLS_DIR is 0770 root:appuser by design (Cortex drops the cert there),
+        # so a planted symlink at dhparam.pem would have been followed by
+        # `openssl -out`, chown and chmod. Refuse a link outright, and generate
+        # through a mktemp stage + same-directory mv (see the edge-token write).
+        if [ -L "$DH_PERSIST" ]; then
+            echo "[entrypoint] FATAL: ${DH_PERSIST} is a symlink; refusing to write DH parameters through it" >&2
+            exit 1
+        fi
+        if [ ! -e "$DH_PERSIST" ]; then
             echo "Generating DH parameters (2048-bit)... this may take a moment."
-            openssl dhparam -out "$DH_PERSIST" 2048
-            [ "$(id -u)" = "0" ] && chown root:appuser "$DH_PERSIST"
-            chmod 644 "$DH_PERSIST"
+            DH_STAGE="$(mktemp "${TLS_DIR}/.dhparam.XXXXXX")"
+            openssl dhparam -out "$DH_STAGE" 2048
+            [ "$(id -u)" = "0" ] && chown root:appuser "$DH_STAGE"
+            chmod 644 "$DH_STAGE"
+            mv -f "$DH_STAGE" "$DH_PERSIST"
         fi
         ln -sf "$DH_PERSIST" "$DH_LINK"
     fi

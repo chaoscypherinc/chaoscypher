@@ -38,16 +38,19 @@ _BASE_CONFIG: dict[str, Any] = {
 def _make_fake_response(finish_reason: str | None = "STOP") -> MagicMock:
     """Return a minimal fake LangChain AIMessage for Gemini ainvoke().
 
-    Gemini surfaces finish_reason under response_metadata["candidates"][0]["finish_reason"]
-    as uppercase enum strings (STOP, MAX_TOKENS, SAFETY, …).
+    langchain-google-genai writes finish_reason at the top level of
+    response_metadata (``response_metadata["finish_reason"]``) as uppercase
+    enum strings (STOP, MAX_TOKENS, SAFETY, …). The 2026-07 mock nested it
+    under ``candidates[0]`` — a shape the adapter never produces — so the
+    sync path read ``unknown`` for every real response while this test
+    stayed green (2026-09-24 llm audit).
     """
     response = MagicMock()
     response.content = "E|Alice|Person|||\n"
     response.tool_calls = []
     response.additional_kwargs = {}
-    # Gemini nests finish_reason under candidates[0]
     if finish_reason is not None:
-        response.response_metadata = {"candidates": [{"finish_reason": finish_reason}]}
+        response.response_metadata = {"finish_reason": finish_reason}
     else:
         response.response_metadata = {}
     response.usage_metadata = {

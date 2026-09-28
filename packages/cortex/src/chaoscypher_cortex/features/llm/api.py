@@ -98,7 +98,7 @@ async def delete_llm_queue_stats(
         default=None, ge=0, le=8760, description="Clear tasks older than this many hours"
     ),
 ) -> Response:
-    """Clear all LLM queue stats and old completed tasks.
+    """Clear LLM queue stats and old completed tasks.
 
     **RESTful Design:**
     - DELETE /stats removes the stats resource
@@ -108,9 +108,9 @@ async def delete_llm_queue_stats(
     - `older_than_hours`: Clear tasks older than N hours (max: 8760)
 
     **Side Effects:**
-    - Clears LLM queue stats
-    - Clears old completed tasks
-    - Clears workflow stats (if available)
+    - Clears the LLM queue's cumulative token/cost totals
+    - Clears the recent-task history lists and completed task records
+      older than the cutoff (all queues)
 
     **Returns:**
     - 204 No Content on success
@@ -197,7 +197,8 @@ async def cancel_task(
     - 204 No Content on success
 
     **Errors:**
-    - 400: Task could not be cancelled (not found or already completed)
+    - 400: Task not found (a task that already finished returns 204 — the
+      cancel is a no-op on a terminal task, not an error)
     - 503: LLM queue service unavailable
     """
     await llm_service.cancel_task(task_id)

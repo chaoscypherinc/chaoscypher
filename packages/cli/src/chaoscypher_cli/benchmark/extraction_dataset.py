@@ -144,8 +144,14 @@ class ExtractionDataset:
                 probe_thinking,
                 thinking_honoured,
             )
+            from chaoscypher_core.app_config import get_settings
 
-            probe = await probe_thinking(model.model)
+            # Probe the Ollama the benchmark will actually extract with —
+            # the default localhost silently yielded thinking_honoured=None
+            # for every row on a remote / Docker-hosted Ollama.
+            probe = await probe_thinking(
+                model.model, base_url=get_settings().llm.primary_ollama_url
+            )
             self.thinking_honoured = thinking_honoured(probe, requested=self.thinking)
             if self.thinking_honoured is False:
                 logger.warning(
@@ -194,6 +200,11 @@ class ExtractionDataset:
                     )
 
             if not result.success:
+                # A failure caused by truncation must still report it; the
+                # counters live on the source row whenever one was created.
+                truncated, aborted = (
+                    self._integrity_counters(ctx, result.file_id) if result.file_id else (0, 0)
+                )
                 return RawOutput(
                     entities=[],
                     relationships=[],
@@ -201,6 +212,8 @@ class ExtractionDataset:
                     input_tokens=result.llm_total_input_tokens,
                     output_tokens=result.llm_total_output_tokens,
                     error=result.error or "pipeline_failed",
+                    chunks_truncated=truncated,
+                    chunks_aborted_by_loop=aborted,
                 )
 
             if commit_error is not None:

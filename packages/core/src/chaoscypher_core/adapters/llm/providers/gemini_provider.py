@@ -16,6 +16,8 @@ from chaoscypher_core.adapters.llm.providers.base import (
     BaseLLMProvider,
     extract_streaming_finish_reason,
     extract_streaming_usage,
+    merge_stream_chunks,
+    message_text,
     normalize_finish_reason,
 )
 from chaoscypher_core.adapters.llm.providers.error_classifier import (
@@ -289,20 +291,15 @@ class GeminiProvider(BaseLLMProvider):
                 "total_tokens": usage_metadata.get("total_tokens", 0),
             }
 
-        # Extract finish_reason from response_metadata.
-        # LangChain's Gemini adapter nests it under candidates[0].finish_reason
-        # (uppercase enum-style: STOP, MAX_TOKENS, SAFETY, …).
-        raw_finish_reason: str | None = None
-        resp_metadata = getattr(response, "response_metadata", None)
-        if isinstance(resp_metadata, dict):
-            candidates = resp_metadata.get("candidates")
-            if isinstance(candidates, list) and candidates:
-                cand = candidates[0]
-                if isinstance(cand, dict):
-                    raw_finish_reason = cand.get("finish_reason")
+        # Extract finish_reason from response_metadata. langchain-google-genai
+        # writes it at the top level (``response_metadata["finish_reason"]``,
+        # uppercase enum-style: STOP, MAX_TOKENS, SAFETY, …); the shared helper
+        # checks that first and still falls back to the older
+        # ``candidates[0].finish_reason`` nesting.
+        raw_finish_reason = extract_streaming_finish_reason(response)
 
         return {
-            "content": response.content,
+            "content": message_text(response),
             "thinking": None,  # Gemini doesn't have separate thinking mode
             "tool_calls": tool_calls,
             "model": self.chat_model,
@@ -338,16 +335,17 @@ class GeminiProvider(BaseLLMProvider):
         accumulated_content = ""
         tool_calls = None
         usage: dict[str, int] = {}
-        last_chunk = None
+        aggregated = None
         raw_finish_reason: str | None = None
 
         try:
             # Use LangChain's async streaming
             async for chunk in llm_with_tools.astream(lc_messages):
-                last_chunk = chunk
+                aggregated = merge_stream_chunks(aggregated, chunk)
 
-                # Extract content delta
-                delta_content = chunk.content if hasattr(chunk, "content") else ""
+                # Extract content delta (gemini-3* / thought-signature
+                # responses carry list content — take its text parts).
+                delta_content = message_text(chunk)
 
                 if delta_content:
                     accumulated_content += delta_content
@@ -358,18 +356,20 @@ class GeminiProvider(BaseLLMProvider):
                         "accumulated": accumulated_content,
                     }
 
-                # Check for tool calls in chunk
-                if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                    tool_calls = format_tool_calls_response(chunk.tool_calls)
-
                 # Gemini exposes finish_reason on its candidate metadata
                 # (uppercase enum tokens like MAX_TOKENS / SAFETY).
                 chunk_finish = extract_streaming_finish_reason(chunk)
                 if chunk_finish:
                     raw_finish_reason = chunk_finish
 
-            # Extract usage from last streaming chunk's metadata
-            usage = extract_streaming_usage(last_chunk) or usage
+            # Tool calls only parse whole on the summed chunk.
+            aggregated_tool_calls = getattr(aggregated, "tool_calls", None)
+            if aggregated_tool_calls:
+                tool_calls = format_tool_calls_response(aggregated_tool_calls)
+
+            # langchain-google-genai puts per-chunk usage *deltas* on each
+            # streaming chunk; the sum is the only chunk with real totals.
+            usage = extract_streaming_usage(aggregated) or usage
 
             # Yield final chunk
             yield {

@@ -1107,10 +1107,11 @@ class TestFinalizeStateSafety:
     async def test_successful_finalize_evicts_per_source_caches(self, orchestrator, mock_engine):
         """finalize() evicts both per-source cache entries it may hold.
 
-        ``_filtering_configs`` and ``_submission_timestamps`` are keyed by
-        source_id and only exist to bridge get_tasks/submit_chunk into
-        finalize; leaving either behind leaks one entry per finalized
-        source for the lifetime of a long-lived MCP server process.
+        ``_filtering_configs``, ``_submission_timestamps`` and
+        ``_group_indices`` are keyed by source_id and only exist to bridge
+        get_tasks/submit_chunk into finalize; leaving any of them behind leaks
+        one entry per finalized source for the lifetime of a long-lived MCP
+        server process.
         """
         from collections import deque
 
@@ -1148,9 +1149,115 @@ class TestFinalizeStateSafety:
         # Simulate prior get_tasks / submit_chunk activity for this source.
         orchestrator._filtering_configs["src_001"] = MagicMock(minimum_alias_length=2)
         orchestrator._submission_timestamps["src_001"] = deque([0.0])
+        orchestrator._group_indices["src_001"] = {0}
 
         result = await orchestrator.finalize("src_001")
 
         assert result["success"] is True
         assert "src_001" not in orchestrator._filtering_configs
         assert "src_001" not in orchestrator._submission_timestamps
+        assert "src_001" not in orchestrator._group_indices
+
+
+# ------------------------------------------------------------------ #
+#  TestGroupIndicesMemo
+# ------------------------------------------------------------------ #
+
+
+class TestGroupIndicesMemo:
+    """The chunk-group index set is derived once per protocol span.
+
+    ``_build_source_groups`` reads every chunk of the source WITH content,
+    does a full ``get_source``, runs the content-exclusion pass over all of
+    them and re-packs token-budget groups. Four of the five MCP entry points
+    want only the integer index set, and ``submit_chunk`` probes it once per
+    chunk group purely to test one integer — so an N-group source paid N+3
+    full rebuilds, quadratic in the document's content bytes. Pre-0030 the
+    value was a column on the source row; re-deriving it is identical.
+
+    These tests deliberately do NOT install the conftest chunk-indices
+    shortcut, which bypasses the very chain under test.
+    """
+
+    @pytest.fixture
+    def orchestrator(self, mock_engine):
+        """An orchestrator with the real ``_build_source_groups`` chain."""
+        return ExtractionOrchestrator(engine=mock_engine)
+
+    @staticmethod
+    def _wire(mock_engine, n_chunks: int) -> None:
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="indexed", filename="report.pdf", domain="generic"
+        )
+        # Real prose, not "chunk N": the generic domain's boilerplate
+        # exclusion strips the latter, which leaves zero groups and would
+        # make these tests pass vacuously.
+        mock_engine.storage_adapter.get_chunks_for_extraction.return_value = [
+            {
+                "id": f"c{i}",
+                "chunk_index": i,
+                "content": (
+                    f"Section {i}. Alice Marchetti joined the Riverside Institute in "
+                    f"March and began work on the sediment survey with Boris Petrov. "
+                    f"Their report was filed with the regional council that autumn."
+                ),
+            }
+            for i in range(n_chunks)
+        ]
+        mock_engine.graph_repository.list_templates.side_effect = [[], []]
+
+    @pytest.mark.asyncio
+    async def test_indices_are_derived_once_for_the_whole_span(self, orchestrator, mock_engine):
+        """get_tasks + every later probe costs ONE full-source read, not N+3."""
+        self._wire(mock_engine, 6)
+
+        await orchestrator.get_tasks("src_001")
+        reads_after_get_tasks = mock_engine.storage_adapter.get_chunks_for_extraction.call_count
+
+        # The probe submit_chunk / get_progress / finalize each make.
+        for _ in range(5):
+            assert orchestrator._get_group_indices("src_001")
+
+        assert reads_after_get_tasks == 1
+        assert mock_engine.storage_adapter.get_chunks_for_extraction.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_the_memo_returns_a_copy(self, orchestrator, mock_engine):
+        """A caller mutating the returned set cannot poison the memo."""
+        self._wire(mock_engine, 4)
+        await orchestrator.get_tasks("src_001")
+
+        first = orchestrator._get_group_indices("src_001")
+        first.add(999)
+
+        assert 999 not in orchestrator._get_group_indices("src_001")
+
+    @pytest.mark.asyncio
+    async def test_get_tasks_refreshes_a_stale_memo(self, orchestrator, mock_engine):
+        """A force=True re-extract after a re-chunk must not reuse the old set."""
+        self._wire(mock_engine, 2)
+        await orchestrator.get_tasks("src_001")
+        before = orchestrator._get_group_indices("src_001")
+
+        # Re-chunked: many more chunks, so more groups.
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="committed", filename="report.pdf", domain="generic"
+        )
+        mock_engine.storage_adapter.get_chunks_for_extraction.return_value = [
+            {
+                "id": f"c{i}",
+                "chunk_index": i,
+                "content": (
+                    f"Paragraph {i}. Alice Marchetti and Boris Petrov reviewed the "
+                    "sediment cores collected along the eastern bank. "
+                )
+                * 20,
+            }
+            for i in range(40)
+        ]
+        mock_engine.graph_repository.list_templates.side_effect = [[], []]
+
+        await orchestrator.get_tasks("src_001", force=True)
+        after = orchestrator._get_group_indices("src_001")
+
+        assert len(after) > len(before)

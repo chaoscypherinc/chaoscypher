@@ -194,6 +194,9 @@ probes:
       night and the rain did not stop.
     checks:
       - {type: relationship_count, max: 0}
+      # CALIBRATION 2026-09-27: the carrier generator drops global counts, so the
+      # probe's own people are named explicitly or the carrier variant tests nothing.
+      - {type: relationship_count_matching, names: ["Kutuzov", "Napoleon", "Alexander"], max: 0}
       - {type: entity_count, min: 3}
       - {type: finish_stop}
 
@@ -211,5 +214,8 @@ probes:
       warm and the roads were dry.
     checks:
       - {type: relationship_count, max: 0}
+      # CALIBRATION 2026-09-27: as D6-easy — named so the carrier variant keeps a
+      # substantive check after the global count is dropped.
+      - {type: relationship_count_matching, names: ["Nikolai Bolkonsky", "Andrei Bolkonsky", "Lise Bolkonskaya"], max: 0}
       - {type: entity_count, min: 3}
       - {type: finish_stop}

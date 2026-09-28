@@ -102,8 +102,9 @@ export default function InstanceManager({
 
               {/* Load Balancing Strategy */}
               <FormControl fullWidth size="small">
-                <InputLabel>Load Balancing Strategy</InputLabel>
+                <InputLabel id="load-balancing-strategy-label">Load Balancing Strategy</InputLabel>
                 <Select
+                  labelId="load-balancing-strategy-label"
                   value={settings.llm.ollama_load_balancing || 'round_robin'}
                   label="Load Balancing Strategy"
                   onChange={(e) =>

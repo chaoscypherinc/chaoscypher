@@ -291,7 +291,13 @@ async def test_no_double_extraction_on_cold_cache(tmp_path):
     cache_target = tmp_path / "cache_target.db"
 
     async def _fake_get_or_build(
-        *, corpus_id: str, corpus_version: str, extractor: ModelConfig, builder: object
+        *,
+        corpus_id: str,
+        corpus_version: str,
+        extractor: ModelConfig,
+        seed: int,
+        temperature: float,
+        builder: object,
     ) -> Path:
         # Invoke the builder so the copy logic runs.
         await builder(cache_target)  # type: ignore[operator]
@@ -373,7 +379,11 @@ async def test_reuse_cached_graph_skips_extraction_when_slot_is_populated(tmp_pa
     assert cfg.extractors is not None
     cache = GraphCache(root=tmp_path / "cache")
     key = cache.key_for(
-        corpus_id=bundle.id, corpus_version=bundle.version, extractor=cfg.extractors[0]
+        corpus_id=bundle.id,
+        corpus_version=bundle.version,
+        extractor=cfg.extractors[0],
+        seed=cfg.seed,
+        temperature=cfg.temperature,
     )
     cached = tmp_path / "cache" / key / "app.db"
     cached.parent.mkdir(parents=True)
@@ -439,5 +449,9 @@ async def test_reuse_cached_graph_extracts_when_cache_is_empty(tmp_path):
     assert "chat" in kinds
     assert cfg.extractors is not None
     assert cache.has(
-        corpus_id=bundle.id, corpus_version=bundle.version, extractor=cfg.extractors[0]
+        corpus_id=bundle.id,
+        corpus_version=bundle.version,
+        extractor=cfg.extractors[0],
+        seed=cfg.seed,
+        temperature=cfg.temperature,
     )

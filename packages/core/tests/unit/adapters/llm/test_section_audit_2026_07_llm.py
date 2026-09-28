@@ -290,6 +290,8 @@ async def test_reload_config_produces_provider_consumable_config() -> None:
         stream_chunk_timeout=30.0,
         ollama_health_check_timeout=5.0,
         ollama_recovery_delay=0.0,
+        seed=None,
+        llm_request_timeout=300.0,
         llm_reserved_interactive=0,
         llm_enable_priority=False,
         ollama_load_balancing="round_robin",

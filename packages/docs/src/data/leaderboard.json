@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-26",
+ "generated": "2026-09-28",
  "thinking": "off",
  "chat_thinking": "on",
  "vram_headroom_gb": 4,
@@ -1825,7 +1825,7 @@
     }
    },
    "carrier": {
-    "passed": 16,
+    "passed": 15,
     "total": 21,
     "p50_ms": 5538,
     "minutes": 3.4,
@@ -1853,7 +1853,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": true,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
@@ -1960,9 +1960,9 @@
     "1 cut off in chunks"
    ],
    "scores": {
-    "extraction": 80.5,
+    "extraction": 77.4,
     "chat": 68.8,
-    "overall": 75.8
+    "overall": 73.9
    }
   },
   {
@@ -2054,7 +2054,7 @@
     }
    },
    "carrier": {
-    "passed": 17,
+    "passed": 16,
     "total": 21,
     "p50_ms": 33490,
     "minutes": 12.2,
@@ -2083,7 +2083,7 @@
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
      "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
      "E7-easy-carrier": true,
@@ -2187,9 +2187,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 83.7,
+    "extraction": 80.5,
     "chat": 73.8,
-    "overall": 79.7
+    "overall": 77.8
    }
   },
   {
@@ -2281,7 +2281,7 @@
     }
    },
    "carrier": {
-    "passed": 12,
+    "passed": 11,
     "total": 21,
     "p50_ms": 10374,
     "minutes": 3.7,
@@ -2310,7 +2310,7 @@
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
      "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": false,
      "E7-easy-carrier": true,
@@ -2414,9 +2414,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 61.7,
+    "extraction": 58.5,
     "chat": 57.5,
-    "overall": 60.0
+    "overall": 58.1
    }
   },
   {
@@ -2890,7 +2890,7 @@
     }
    },
    "carrier": {
-    "passed": 3,
+    "passed": 2,
     "total": 21,
     "p50_ms": 130965,
     "minutes": 51.9,
@@ -2918,7 +2918,7 @@
      "D1-easy-carrier": false,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": false,
      "E4-easy-carrier": false,
@@ -3027,9 +3027,9 @@
     "18 cut off in chunks"
    ],
    "scores": {
-    "extraction": 29.5,
+    "extraction": 26.3,
     "chat": 67.5,
-    "overall": 44.7
+    "overall": 42.8
    }
   },
   {
@@ -3121,7 +3121,7 @@
     }
    },
    "carrier": {
-    "passed": 9,
+    "passed": 7,
     "total": 21,
     "p50_ms": 73552,
     "minutes": 48.5,
@@ -3149,8 +3149,8 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-easy-carrier": false,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": false,
      "E4-easy-carrier": false,
      "E7-easy-carrier": true,
@@ -3176,9 +3176,9 @@
     "2 cut off in chunks"
    ],
    "scores": {
-    "extraction": 53.7,
+    "extraction": 47.4,
     "chat": 0.0,
-    "overall": 32.2
+    "overall": 28.4
    }
   },
   {
@@ -3270,7 +3270,7 @@
     }
    },
    "carrier": {
-    "passed": 7,
+    "passed": 6,
     "total": 21,
     "p50_ms": 56842,
     "minutes": 26.8,
@@ -3298,7 +3298,7 @@
      "D1-easy-carrier": false,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": false,
@@ -3407,9 +3407,9 @@
     "8 looped in chunks"
    ],
    "scores": {
-    "extraction": 37.6,
+    "extraction": 34.4,
     "chat": 65.0,
-    "overall": 48.6
+    "overall": 46.7
    }
   },
   {
@@ -3501,7 +3501,7 @@
     }
    },
    "carrier": {
-    "passed": 8,
+    "passed": 7,
     "total": 21,
     "p50_ms": 15399,
     "minutes": 28.5,
@@ -3529,7 +3529,7 @@
      "D1-easy-carrier": false,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": false,
@@ -3637,9 +3637,9 @@
     "7 cut off in chunks"
    ],
    "scores": {
-    "extraction": 43.9,
+    "extraction": 40.7,
     "chat": 56.2,
-    "overall": 48.8
+    "overall": 46.9
    }
   },
   {
@@ -3731,7 +3731,7 @@
     }
    },
    "carrier": {
-    "passed": 14,
+    "passed": 13,
     "total": 21,
     "p50_ms": 27683,
     "minutes": 9.5,
@@ -3759,7 +3759,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": true,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
@@ -3866,9 +3866,9 @@
     "1 cut off isolated"
    ],
    "scores": {
-    "extraction": 69.6,
+    "extraction": 66.4,
     "chat": 62.5,
-    "overall": 66.7
+    "overall": 64.8
    }
   },
   {
@@ -3960,7 +3960,7 @@
     }
    },
    "carrier": {
-    "passed": 12,
+    "passed": 11,
     "total": 21,
     "p50_ms": 66320,
     "minutes": 23.4,
@@ -3988,7 +3988,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": true,
      "E1-easy-carrier": true,
      "E4-easy-carrier": false,
@@ -4093,9 +4093,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 68.4,
+    "extraction": 65.2,
     "chat": 76.2,
-    "overall": 71.5
+    "overall": 69.6
    }
   },
   {
@@ -4416,7 +4416,7 @@
     }
    },
    "carrier": {
-    "passed": 14,
+    "passed": 13,
     "total": 21,
     "p50_ms": 11358,
     "minutes": 4.0,
@@ -4444,7 +4444,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": true,
      "E1-easy-carrier": false,
      "E4-easy-carrier": false,
@@ -4549,9 +4549,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 66.5,
+    "extraction": 63.3,
     "chat": 65.0,
-    "overall": 65.9
+    "overall": 64.0
    }
   },
   {
@@ -4643,7 +4643,7 @@
     }
    },
    "carrier": {
-    "passed": 16,
+    "passed": 15,
     "total": 21,
     "p50_ms": 12561,
     "minutes": 4.6,
@@ -4671,7 +4671,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
@@ -4778,9 +4778,9 @@
     "1 looped in chunks"
    ],
    "scores": {
-    "extraction": 74.9,
+    "extraction": 71.7,
     "chat": 67.5,
-    "overall": 71.9
+    "overall": 70.0
    }
   },
   {
@@ -4872,7 +4872,7 @@
     }
    },
    "carrier": {
-    "passed": 14,
+    "passed": 13,
     "total": 21,
     "p50_ms": 40229,
     "minutes": 14.3,
@@ -4900,7 +4900,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": true,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
@@ -5005,9 +5005,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 71.6,
+    "extraction": 68.4,
     "chat": 72.5,
-    "overall": 72.0
+    "overall": 70.1
    }
   },
   {
@@ -5099,7 +5099,7 @@
     }
    },
    "carrier": {
-    "passed": 14,
+    "passed": 13,
     "total": 21,
     "p50_ms": 9443,
     "minutes": 5.9,
@@ -5128,7 +5128,7 @@
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
      "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
      "E7-easy-carrier": true,
@@ -5234,9 +5234,9 @@
     "1 cut off in chunks"
    ],
    "scores": {
-    "extraction": 69.1,
+    "extraction": 65.9,
     "chat": 71.2,
-    "overall": 69.9
+    "overall": 68.0
    }
   },
   {
@@ -5328,7 +5328,7 @@
     }
    },
    "carrier": {
-    "passed": 14,
+    "passed": 12,
     "total": 21,
     "p50_ms": 18372,
     "minutes": 6.7,
@@ -5356,8 +5356,8 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-easy-carrier": false,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
      "E7-easy-carrier": true,
@@ -5461,9 +5461,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 70.1,
+    "extraction": 63.7,
     "chat": 75.0,
-    "overall": 72.1
+    "overall": 68.2
    }
   },
   {
@@ -5555,7 +5555,7 @@
     }
    },
    "carrier": {
-    "passed": 13,
+    "passed": 11,
     "total": 21,
     "p50_ms": 9803,
     "minutes": 3.8,
@@ -5583,8 +5583,8 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-easy-carrier": false,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": false,
      "E7-easy-carrier": true,
@@ -5688,9 +5688,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 66.4,
+    "extraction": 60.0,
     "chat": 78.8,
-    "overall": 71.3
+    "overall": 67.5
    }
   },
   {
@@ -5782,7 +5782,7 @@
     }
    },
    "carrier": {
-    "passed": 15,
+    "passed": 13,
     "total": 21,
     "p50_ms": 16510,
     "minutes": 6.7,
@@ -5810,8 +5810,8 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
-     "D6-hard-carrier": true,
+     "D6-easy-carrier": false,
+     "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
      "E7-easy-carrier": true,
@@ -5915,9 +5915,9 @@
    "harness_settings": null,
    "notes": [],
    "scores": {
-    "extraction": 75.3,
+    "extraction": 69.0,
     "chat": 77.5,
-    "overall": 76.2
+    "overall": 72.4
    }
   },
   {
@@ -6009,7 +6009,7 @@
     }
    },
    "carrier": {
-    "passed": 12,
+    "passed": 11,
     "total": 21,
     "p50_ms": 21331,
     "minutes": 8.2,
@@ -6037,7 +6037,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": true,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": false,
      "E4-easy-carrier": true,
@@ -6144,9 +6144,9 @@
     "1 cut off isolated"
    ],
    "scores": {
-    "extraction": 61.7,
+    "extraction": 58.5,
     "chat": 63.8,
-    "overall": 62.5
+    "overall": 60.6
    }
   },
   {
@@ -6238,7 +6238,7 @@
     }
    },
    "carrier": {
-    "passed": 10,
+    "passed": 9,
     "total": 21,
     "p50_ms": 14164,
     "minutes": 6.2,
@@ -6266,7 +6266,7 @@
      "D1-easy-carrier": true,
      "D2-easy-carrier": true,
      "D3-easy-carrier": false,
-     "D6-easy-carrier": true,
+     "D6-easy-carrier": false,
      "D6-hard-carrier": false,
      "E1-easy-carrier": true,
      "E4-easy-carrier": true,
@@ -6373,9 +6373,9 @@
     "1 cut off isolated"
    ],
    "scores": {
-    "extraction": 56.9,
+    "extraction": 53.7,
     "chat": 72.5,
-    "overall": 63.1
+    "overall": 61.2
    }
   },
   {

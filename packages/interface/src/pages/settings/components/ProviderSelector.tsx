@@ -154,8 +154,9 @@ export default function ProviderSelector({
       </Typography>
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
         <FormControl fullWidth variant="outlined">
-          <InputLabel>Chat Provider</InputLabel>
+          <InputLabel id="chat-provider-label">Chat Provider</InputLabel>
           <Select
+            labelId="chat-provider-label"
             value={settings.llm.chat_provider}
             label="Chat Provider"
             onChange={(e) => onChatProviderChange(e.target.value)}
@@ -189,8 +190,9 @@ export default function ProviderSelector({
 
             {/* VRAM Preset Selection */}
             <FormControl fullWidth variant="outlined">
-              <InputLabel>GPU VRAM</InputLabel>
+              <InputLabel id="gpu-vram-label">GPU VRAM</InputLabel>
               <Select
+                labelId="gpu-vram-label"
                 value={settings.llm.ollama_quick_preset || ''}
                 label="GPU VRAM"
                 onChange={(e) => onApplyPreset(e.target.value)}

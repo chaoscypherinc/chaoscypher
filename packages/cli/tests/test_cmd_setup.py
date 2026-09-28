@@ -391,6 +391,7 @@ class TestNonInteractive:
         preset_settings = {
             "ollama_chat_model": "qwen3:30b",
             "ollama_extraction_model": "qwen3:30b-instruct",
+            "ollama_vision_model": "llava:13b",
             "ollama_num_ctx": 32768,
         }
         with patch.object(
@@ -403,6 +404,9 @@ class TestNonInteractive:
         mock_preset.assert_called_once_with("vram_24gb")
         assert save_mock.captured_state.llm.ollama_chat_model == "qwen3:30b"
         assert save_mock.captured_state.llm.ollama_num_ctx == 32768
+        # The interactive path copied the preset's vision model; the
+        # non-interactive one silently dropped it (2026-09-24 llm audit).
+        assert save_mock.captured_state.llm.ollama_vision_model == "llava:13b"
         save_mock.assert_called_once()
 
     def test_ollama_with_nonmatching_vram_skips_preset(self, isolated_settings) -> None:
@@ -413,8 +417,23 @@ class TestNonInteractive:
             )
         assert result.exit_code == 0, result.output
         mock_preset.assert_not_called()
-        # Unchanged because no preset matched VRAM=999
+        # Unchanged because no preset matched VRAM=999 — and the operator is told so.
         assert save_mock.captured_state.llm.ollama_chat_model == original_model
+        assert "No VRAM preset for 999" in result.output
+
+    def test_non_interactive_ollama_keeps_environment_url(
+        self, isolated_settings, monkeypatch
+    ) -> None:
+        """With no prompt to answer, the persisted instance URL is the
+        environment's default (CHAOSCYPHER_OLLAMA_URL, host.docker.internal
+        in the Docker images) — not the wizard's localhost prompt default,
+        which written to settings.yaml overrode the env default and pointed
+        containers at themselves (2026-09-24 llm audit).
+        """
+        monkeypatch.setenv("CHAOSCYPHER_OLLAMA_URL", "http://host.docker.internal:11434")
+        result, save_mock = _run_setup(["--non-interactive", "--provider", "ollama"])
+        assert result.exit_code == 0, result.output
+        assert save_mock.captured_state.llm.ollama_url == "http://host.docker.internal:11434"
 
 
 # ===========================================================================

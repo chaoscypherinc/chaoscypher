@@ -812,12 +812,35 @@ async def test_run_chat_tool_loop_reports_cancelled() -> None:
         _stream({"type": "done", "content": "", "tool_calls": [_TC1]}),
     )
     deps, _sink = _deps(provider, _executor(), _mock_settings())
-    deps.cancel_check = _cancel_after(0)
+    # The pre-flight boundary passes; the first tool boundary trips.
+    deps.cancel_check = _cancel_after(1)
     result = await run_chat_tool_loop([{"role": "user", "content": "q"}], deps)
     assert result.cancelled is True
     assert result.error_occurred is False
     assert any(w["kind"] == "cancelled" for w in result.warnings)
     assert provider.chat.await_count == 1  # the initial call only
+
+
+async def test_run_chat_tool_loop_honours_a_cancel_raised_before_the_turn_starts() -> None:
+    """A cancel already up on entry costs zero provider calls.
+
+    The endpoint accepts ``POST /chats/{id}/cancel`` as soon as the chat row
+    reads ``processing``, which the send path sets before enqueueing — so the
+    flag can be up for the whole queue wait, and the turn must not open with a
+    provider stream. This is also the only boundary a tool-less turn reaches.
+    """
+    from chaoscypher_core.streaming.chat.loop import run_chat_tool_loop
+
+    provider = _provider(_stream({"type": "done", "content": "never reached", "tool_calls": None}))
+    deps, sink = _deps(provider, _executor(), _mock_settings())
+    deps.cancel_check = _cancel_after(0)
+    result = await run_chat_tool_loop([{"role": "user", "content": "q"}], deps)
+    assert result.cancelled is True
+    assert result.error_occurred is False
+    assert result.content == ""
+    provider.chat.assert_not_awaited()
+    assert [w["kind"] for w in result.warnings] == ["cancelled"]
+    assert len(sink.of_type("warning")) == 1
 
 
 async def test_default_deps_have_no_cancel_check() -> None:

@@ -111,7 +111,13 @@ async def run_full_benchmark(
         ext_results: list[BenchmarkResult] = []
         # Stage 1: extraction (also produces the cache snapshots used downstream).
         to_extract = (
-            _extractors_without_cached_graph(config.extractors or [], bundle, wiring.cache)
+            _extractors_without_cached_graph(
+                config.extractors or [],
+                bundle,
+                wiring.cache,
+                seed=config.seed,
+                temperature=config.temperature,
+            )
             if reuse_cached_graph
             else list(config.extractors or [])
         )
@@ -163,6 +169,8 @@ async def run_full_benchmark(
                     corpus_id=bundle.id,
                     corpus_version=bundle.version,
                     extractor=extractor,
+                    seed=config.seed,
+                    temperature=config.temperature,
                     builder=_build,
                 )
 
@@ -181,6 +189,8 @@ async def run_full_benchmark(
                     corpus_id=bundle.id,
                     corpus_version=bundle.version,
                     extractor=extractor,
+                    seed=config.seed,
+                    temperature=config.temperature,
                     builder=_noop_builder,
                 )
                 provider = wiring.graph_provider_factory(snapshot)
@@ -224,6 +234,8 @@ async def run_full_benchmark(
                     corpus_id=bundle.id,
                     corpus_version=bundle.version,
                     extractor=extractor,
+                    seed=config.seed,
+                    temperature=config.temperature,
                     builder=_noop_builder,
                 )
                 for embedder in config.embedders:
@@ -265,21 +277,38 @@ async def run_full_benchmark(
 
 
 def _extractors_without_cached_graph(
-    extractors: list[ModelConfig], bundle: DatasetBundle, cache: GraphCache
+    extractors: list[ModelConfig],
+    bundle: DatasetBundle,
+    cache: GraphCache,
+    *,
+    seed: int,
+    temperature: float,
 ) -> list[ModelConfig]:
     """Return the extractors whose graph for ``bundle`` is not in ``cache`` yet.
 
-    Each extractor left out is logged as reusing its cached graph.
+    The lookup is keyed on the run's decoding pins too: a seed-7 run must not
+    reuse the graph a seed-42 run produced. Each extractor left out is logged
+    as reusing its cached graph.
     """
     to_extract: list[ModelConfig] = []
     for extractor in extractors:
-        if cache.has(corpus_id=bundle.id, corpus_version=bundle.version, extractor=extractor):
+        if cache.has(
+            corpus_id=bundle.id,
+            corpus_version=bundle.version,
+            extractor=extractor,
+            seed=seed,
+            temperature=temperature,
+        ):
             logger.info(
                 "orchestrator_reusing_cached_graph",
                 corpus_id=bundle.id,
                 extractor_id=extractor.model_id,
                 key=cache.key_for(
-                    corpus_id=bundle.id, corpus_version=bundle.version, extractor=extractor
+                    corpus_id=bundle.id,
+                    corpus_version=bundle.version,
+                    extractor=extractor,
+                    seed=seed,
+                    temperature=temperature,
                 ),
             )
         else:

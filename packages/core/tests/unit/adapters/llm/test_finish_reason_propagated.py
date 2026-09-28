@@ -36,7 +36,12 @@ _VALID_FINISH_REASONS = {
 
 
 class _FakeStreamChunk:
-    """Minimal AIMessageChunk stand-in for streaming tests."""
+    """Minimal AIMessageChunk stand-in for streaming tests.
+
+    Addable like the real chunk, because the providers fold every chunk into
+    one aggregate (``merge_stream_chunks``): content concatenates, metadata
+    dicts merge with the later chunk winning, usage takes the latest value.
+    """
 
     def __init__(
         self,
@@ -49,6 +54,16 @@ class _FakeStreamChunk:
         self.usage_metadata = usage_metadata
         self.tool_calls: list[Any] = []
         self.additional_kwargs: dict[str, Any] = {}
+
+    def __add__(self, other: _FakeStreamChunk) -> _FakeStreamChunk:
+        merged = _FakeStreamChunk(
+            content=self.content + other.content,
+            response_metadata={**self.response_metadata, **other.response_metadata},
+            usage_metadata=other.usage_metadata or self.usage_metadata,
+        )
+        merged.tool_calls = [*self.tool_calls, *other.tool_calls]
+        merged.additional_kwargs = {**self.additional_kwargs, **other.additional_kwargs}
+        return merged
 
 
 class _FakeAsyncStream:

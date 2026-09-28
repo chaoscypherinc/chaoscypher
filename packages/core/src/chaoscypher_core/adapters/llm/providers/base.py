@@ -31,6 +31,50 @@ logger = structlog.get_logger(__name__)
 
 
 # ------------------------------------------------------------------ #
+#  Streaming chunk aggregation
+# ------------------------------------------------------------------ #
+
+
+def message_text(message: Any) -> str:
+    """Return a LangChain message's text whether ``content`` is a str or a block list.
+
+    Anthropic switches ``content`` to a list of typed blocks as soon as
+    tools or extended thinking are bound, and Gemini does the same on
+    gemini-3* models and any response carrying a thought signature.
+    ``accumulated += chunk.content`` then raises ``TypeError`` (str +
+    list) mid-stream and the non-streaming path fails ``LLMChatResponse``
+    validation. Only ``text`` blocks are text; tool-use and thinking
+    blocks are surfaced through their own channels.
+    """
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return str(content) if content else ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif isinstance(block, dict) and block.get("type", "text") == "text":
+            parts.append(str(block.get("text", "")))
+    return "".join(parts)
+
+
+def merge_stream_chunks(aggregate: Any, chunk: Any) -> Any:
+    """Sum LangChain streaming chunks so fragments combine.
+
+    OpenAI and Anthropic stream a tool call's arguments as JSON fragments
+    across several chunks, and Gemini puts per-chunk usage *deltas* on each
+    chunk; ``AIMessageChunk.__add__`` merges both. Reading them off the last
+    chunk alone yields a nameless, argument-less tool call and an
+    under-counted usage.
+    """
+    if aggregate is None:
+        return chunk
+    return aggregate + chunk
+
+
+# ------------------------------------------------------------------ #
 #  Streaming token usage extraction
 # ------------------------------------------------------------------ #
 

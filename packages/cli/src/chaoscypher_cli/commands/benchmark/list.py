@@ -25,10 +25,10 @@ def list_cmd() -> None:
     """List available benchmark configs and datasets."""
     console = Console()
 
-    # Configs first - they're what `bench run` accepts as a positional arg.
+    # Configs first - they're what `benchmark run` accepts as a positional arg.
     configs = list_configs()
     if configs:
-        config_table = Table(title="Benchmark configs (`bench run [NAME]`)")
+        config_table = Table(title="Benchmark configs (`chaoscypher benchmark run [NAME]`)")
         config_table.add_column("Name", style="cyan")
         config_table.add_column("Source")
         config_table.add_column("Description")
@@ -54,7 +54,9 @@ def list_cmd() -> None:
             src_label = (
                 "[green]builtin[/green]" if ds.source == "builtin" else "[yellow]user[/yellow]"
             )
-            domain = ds.domain if isinstance(ds, ExtractionDataset) else "-"
+            # Every dataset kind declares a domain (probes too); only
+            # extraction datasets have a single corpus file.
+            domain = getattr(ds, "domain", None) or "-"
             corpus = ds.corpus_path.name if isinstance(ds, ExtractionDataset) else "-"
             ds_table.add_row(ds.id, src_label, ds.kind, ds.version, domain, corpus)
         console.print(ds_table)

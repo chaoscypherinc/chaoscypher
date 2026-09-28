@@ -90,6 +90,52 @@ def test_relationship_count_pair_is_direction_agnostic() -> None:
     assert not ok and "=4" in why
 
 
+def test_relationship_count_matching_is_scoped_to_the_named_people() -> None:
+    """The carrier-surviving twin of ``relationship_count``: only named-to-named counts.
+
+    A carrier splices the probe's passage into a real chunk with its own
+    legitimate relationships, so the global count is dropped by
+    ``make_carrier_variants.py``. This check has to ignore those and still
+    catch a link invented between the probe's own people.
+    """
+    rec = _rec(
+        entities=[_ent("Kutuzov"), _ent("Napoleon"), _ent("Prince Vasili"), _ent("his son")],
+        relationships=[
+            {"source": 0, "target": 1, "type": "knows"},  # both named -> counted
+            {"source": 2, "target": 3, "type": "father_of"},  # the carrier's own -> ignored
+        ],
+    )
+    args = {"names": ["Kutuzov", "Napoleon", "Alexander"], "max": 0}
+    ok, why = probe_checks.relationship_count_matching(rec, args)
+    assert not ok and "=1" in why
+    # With the invented link removed, the carrier's legitimate one still passes.
+    rec["relationships"] = [{"source": 2, "target": 3, "type": "father_of"}]
+    assert probe_checks.relationship_count_matching(rec, args)[0]
+
+
+def test_every_carrier_probe_keeps_a_substantive_check() -> None:
+    """A carrier variant whose checks are ALL generic tests nothing it is named for.
+
+    The generator drops global counts (``entity_count``,
+    ``relationship_count``, ``every_entity_has_relationship``) because the
+    carrier adds its own entities and links. A probe whose only substantive
+    check was one of those comes out of the generator with nothing but
+    ``finish_stop`` / ``carrier_coverage`` / ``no_invention`` and then reads
+    as a pass at every density. It has happened twice — E7 (caught
+    2026-09-24) and D6 (missed in the same pass) — so the invariant is
+    asserted against the shipped pack rather than only guarded in the
+    generator, which a hand-edit of the generated file would bypass.
+    """
+    from chaoscypher_core.benchmark.probes import load_probe_sections
+    from chaoscypher_core.mcp.benchmark.suites.probes import PROBE_PACK_DIR
+
+    generic = {"finish_stop", "not_loop_aborted", "carrier_coverage", "no_invention"}
+    carriers = load_probe_sections(PROBE_PACK_DIR, ["H_carrier.yaml"])
+    assert carriers, "carrier section is empty — the pack or the loader moved"
+    vacuous = [p.id for p in carriers if not [c for c in p.checks if c["type"] not in generic]]
+    assert vacuous == []
+
+
 def test_output_tokens_ratio_infinite_when_no_input() -> None:
     assert not probe_checks.output_tokens_ratio(
         _rec(input_tokens=0, output_tokens=5), {"max_ratio": 3}

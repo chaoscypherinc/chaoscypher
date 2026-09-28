@@ -1270,6 +1270,7 @@ class BenchmarkSettings(BaseModel):
 _RETIRED_KEYS: dict[str, frozenset[str]] = {
     "llm": frozenset({"thinking_auto_detect", "chat_interactive_streaming"}),
     "chat": frozenset({"enable_response_validation"}),
+    "benchmark": frozenset({"vram_presets"}),
 }
 
 
@@ -1660,7 +1661,7 @@ class Settings(BaseSettings):
         pause_data = get_section("PAUSE")
         quality_data = get_section("QUALITY")
         cli_data = get_section("CLI")
-        benchmark_data = get_section("BENCHMARK")
+        benchmark_data = _scrub_retired_keys("benchmark", get_section("BENCHMARK"))
 
         # Create validated Settings instance
         return cls(

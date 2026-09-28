@@ -224,6 +224,74 @@ async def test_handler_processing_status_set_before_run(
 
 
 @pytest.mark.asyncio
+async def test_handler_clears_the_cancel_flag_at_turn_end_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag is cleared after the turn, not before it.
+
+    The flag is per-CHAT, and the cancel endpoint accepts a Stop from the
+    moment the chat row reads ``processing`` — which the send path sets before
+    enqueueing. Clearing on entry silently destroyed a Stop raised during the
+    queue wait; clearing at the end still stops a flag leaking into the next
+    turn, because the terminal chat status is written by then.
+    """
+    handler, _storage = _register_and_capture_handler()
+
+    class _FakeService:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def update_chat_status(self, chat_id: str, status: str) -> None:
+            pass
+
+    order: list[str] = []
+    clear = AsyncMock(side_effect=lambda _cid: order.append("clear"))
+
+    async def _fake_run(**kwargs: Any) -> dict[str, Any]:
+        order.append("run")
+        return {"success": True}
+
+    monkeypatch.setattr(
+        "chaoscypher_core.services.chat.management.service.ChatService", _FakeService
+    )
+    monkeypatch.setattr(cc, "_run_chat_completion", _fake_run)
+    monkeypatch.setattr("chaoscypher_core.streaming.chat.cancellation.clear_cancel", clear)
+
+    await handler({"chat_id": "c1"}, None, None)
+
+    assert order == ["run", "clear"]
+    clear.assert_awaited_once_with("c1")
+
+
+@pytest.mark.asyncio
+async def test_handler_clears_the_cancel_flag_even_when_the_turn_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed turn must not leave its flag behind for the retry to trip on."""
+    handler, _storage = _register_and_capture_handler()
+
+    class _FakeService:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def update_chat_status(self, chat_id: str, status: str) -> None:
+            pass
+
+    clear = AsyncMock()
+    monkeypatch.setattr(
+        "chaoscypher_core.services.chat.management.service.ChatService", _FakeService
+    )
+    monkeypatch.setattr(cc, "_run_chat_completion", AsyncMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(cc, "publish_chat_event", AsyncMock())
+    monkeypatch.setattr("chaoscypher_core.streaming.chat.cancellation.clear_cancel", clear)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await handler({"chat_id": "c1"}, None, None)
+
+    clear.assert_awaited_once_with("c1")
+
+
+@pytest.mark.asyncio
 async def test_handler_exception_sets_error_publishes_and_reraises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

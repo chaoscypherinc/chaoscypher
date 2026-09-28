@@ -76,11 +76,14 @@ repos:
         # The mp4 master stays private (internal/); the gif + webm ship public.
         # The internal path segment is a wildcard because this file ships and
         # the no-internal-refs guard forbids naming private subdirs here.
+        # Raw benchmark runs (run-benchmark.md) carry every model response and
+        # weigh 1-30 MB each; they are private and must stay rescorable.
         exclude: >-
           (?x)^(
             packages/docs/static/img/demo\.gif|
             packages/docs/static/video/demo\.webm|
-            internal/[^/]+/assets/demo/demo\.mp4
+            internal/[^/]+/assets/demo/demo\.mp4|
+            internal/[^/]+/runs/\d{4}-\d{2}-\d{2}-[^/]+\.json
           )$
       - id: check-merge-conflict
         name: check for merge conflicts

@@ -1,12 +1,12 @@
 ---
 id: llm-providers
 title: LLM Providers
-description: Configure Ollama, OpenAI, Anthropic, and Gemini as LLM backends in chaoscypher-core using the factory pattern with caching and automatic fallbacks.
+description: Configure Ollama, OpenAI, Anthropic, and Gemini as LLM backends in chaoscypher-core using the factory pattern with per-configuration caching.
 ---
 
 # LLM Providers
 
-Chaos Cypher supports multiple LLM providers for chat and entity extraction. The provider system uses a factory pattern with caching and automatic fallbacks.
+Chaos Cypher supports multiple LLM providers for chat and entity extraction. The provider system uses a factory pattern with per-configuration caching. One provider is active at a time — there is no automatic fallback from one provider to another; transient failures are classified as retryable and retried by the queue against the same provider.
 
 ## Available Providers
 
@@ -114,9 +114,14 @@ response = await llm.chat(
     stream=True,
 )
 
-# response.stream is an async generator
+# response.stream is an async generator of dicts, not message objects
 async for chunk in response.stream:
-    print(chunk.content, end="", flush=True)
+    if chunk["type"] == "content":
+        print(chunk["delta"], end="", flush=True)   # chunk["accumulated"] holds the text so far
+    elif chunk["type"] == "done":
+        usage, tool_calls = chunk["usage"], chunk["tool_calls"]   # plus finish_reason, model, provider
+    elif chunk["type"] == "error":
+        raise RuntimeError(chunk["error"])
 ```
 
 ### Tool Calling
@@ -499,7 +504,7 @@ from chaoscypher_core import BaseLLMProvider
 |--------|-------------|
 | `metadata` (property) | Returns a `PluginMetadata` instance whose `plugin_id` is the provider name used by `ProviderRegistry` and the `chaoscypher.providers` entry-point group. Return a cached instance (a classvar or an attribute set in `__init__`). |
 | `_init_llm()` | Initialize the LangChain chat model |
-| `chat(messages, tools, stream, **kwargs)` | Chat completion (streaming and non-streaming) |
+| `chat(messages, tools, stream, enable_thinking, high_priority, temperature, max_tokens)` | Chat completion (streaming and non-streaming); the parameters are explicit keywords, not `**kwargs` |
 
 All three are abstract -- a subclass implementing only `_init_llm()` and `chat()` cannot be instantiated.
 

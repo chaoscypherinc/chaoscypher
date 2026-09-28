@@ -21,6 +21,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from chaoscypher_cli.benchmark.config import DEFAULT_SEED, DEFAULT_TEMPERATURE
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.benchmark.reference import ReferencePack
@@ -92,6 +94,20 @@ def reference_group() -> None:
     show_default=True,
     help="Re-embed the pack with its embedder now (needs the embedder running).",
 )
+@click.option(
+    "--seed",
+    type=int,
+    default=DEFAULT_SEED,
+    show_default=True,
+    help="Decoding seed the cached graph was extracted with (part of its cache key).",
+)
+@click.option(
+    "--temperature",
+    type=float,
+    default=DEFAULT_TEMPERATURE,
+    show_default=True,
+    help="Decoding temperature the cached graph was extracted with (part of its cache key).",
+)
 def export_cmd(
     workspace: Path | None,
     dataset_id: str,
@@ -101,6 +117,8 @@ def export_cmd(
     data_dir: Path | None,
     force: bool,
     index: bool,
+    seed: int,
+    temperature: float,
 ) -> None:
     """Export a cached reference graph and its chat fixture as a reference pack."""
     from chaoscypher_cli.benchmark.discovery import load_dataset_bundle, user_benchmark_root
@@ -137,12 +155,19 @@ def export_cmd(
     workspace = workspace or (user_benchmark_root() / "workspace")
     cache = GraphCache(root=workspace / "graph_cache")
     model = ModelConfig(provider=ext_provider, model=ext_model, label=extractor)
-    key = cache.key_for(corpus_id=bundle.id, corpus_version=bundle.version, extractor=model)
+    key = cache.key_for(
+        corpus_id=bundle.id,
+        corpus_version=bundle.version,
+        extractor=model,
+        seed=seed,
+        temperature=temperature,
+    )
     snapshot = workspace / "graph_cache" / key / "app.db"
     if not snapshot.is_file():
         msg = (
             f"no cached graph for {dataset_id} {bundle.version} by {extractor} "
-            f"(looked for {snapshot}); run the chat benchmark with that extractor first"
+            f"at seed {seed} / temperature {temperature} (looked for {snapshot}); "
+            "run the chat benchmark with that extractor and those pins first"
         )
         raise click.ClickException(msg)
 

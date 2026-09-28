@@ -182,12 +182,12 @@ class TestLLMService:
     # _check_available
     # ------------------------------------------------------------------ #
 
-    def test_check_available_returns_manager(self, llm_service, llm_manager):
+    async def test_check_available_returns_manager(self, llm_service, llm_manager):
         result = llm_service._check_available()
 
         assert result is llm_manager
 
-    def test_check_available_raises_when_none(self):
+    async def test_check_available_raises_when_none(self):
         service = LLMService(llm_manager=None)
 
         with pytest.raises(ExternalServiceError):

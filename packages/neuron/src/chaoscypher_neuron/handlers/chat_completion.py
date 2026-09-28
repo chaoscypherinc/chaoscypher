@@ -151,6 +151,30 @@ def register_chat_completion_handler(
             # failed without retry.
             raise
 
+        finally:
+            # Clear the cancel flag at turn END, not at turn start. The flag
+            # is per-CHAT, not per-turn, and `POST /chats/{id}/cancel` is
+            # accepted from the moment the chat row reads `processing` — which
+            # the send path sets BEFORE enqueueing — so a Stop clicked during
+            # the queue wait belongs to THIS turn. Deleting it on entry
+            # destroyed it silently: the turn then read False at every
+            # boundary, ran to completion and reported `completed`. By here the
+            # turn has written its terminal chat status, so a later Stop gets
+            # the endpoint's 409 rather than leaving a flag for the next turn.
+            #
+            # Residual, bounded and strictly better than the silent loss: a
+            # hard kill mid-turn leaves the flag set until `_CANCEL_TTL_SECONDS`
+            # (600 s) expires it, so a Retry inside that window stops at its
+            # first boundary with a spurious "stopped" notice. Closing that
+            # completely needs a per-turn identity the chat row does not carry
+            # (filed on this branch).
+            try:
+                from chaoscypher_core.streaming.chat.cancellation import clear_cancel
+
+                await clear_cancel(chat_id)
+            except Exception:
+                logger.exception("chat_completion_cancel_clear_failed", chat_id=chat_id)
+
     queue_client.register_handlers(QUEUE_LLM, {OP_CHAT_BACKGROUND: chat_completion_handler})
 
 
@@ -282,7 +306,7 @@ async def _run_chat_completion(
         setup_chat_providers,
     )
     from chaoscypher_core.streaming.chat.approval_broker import ValkeyApprovalBroker
-    from chaoscypher_core.streaming.chat.cancellation import clear_cancel, is_cancel_requested
+    from chaoscypher_core.streaming.chat.cancellation import is_cancel_requested
     from chaoscypher_core.streaming.chat.loop import ChatLoopDeps, run_chat_tool_loop
     from chaoscypher_core.streaming.chat.sinks import ValkeyPubSubSink
 
@@ -295,9 +319,6 @@ async def _run_chat_completion(
         )
         msg = f"Chat {chat_id} not found"
         raise ValueError(msg)
-
-    # A stale cancel flag from a previous turn must never kill this one.
-    await clear_cancel(chat_id)
 
     # Resolve source scope for scoped chats
     source_ids = chat.get("source_ids")
@@ -424,6 +445,16 @@ async def _run_chat_completion(
     stream_start = time.monotonic()
     loop_result = await run_chat_tool_loop(messages_for_llm, deps)
 
+    # Record before the error check — the tokens were spent whether or not the
+    # turn produced an answer, and the error arm below RETURNS. Deferring the
+    # record past it left an errored turn recording zero for everything it
+    # burned, so the next turn's cap guard read a counter that had not moved.
+    # This is the CLI turn's order on the same shared loop
+    # (cli/commands/chat.py: "Record before the error check — tokens were
+    # spent even on a failed turn"), pinned there by
+    # test_run_chat_turn_raises_chat_turn_error_on_loop_error.
+    await _record_turn_spend(settings, messages_for_llm, loop_result.content)
+
     if loop_result.error_occurred:
         await asyncio.to_thread(chat_service.update_chat_status, chat_id, "error")
         error_msg = (
@@ -436,7 +467,7 @@ async def _run_chat_completion(
     # Per-tool durations feed the Telemetry HUD (llm_debug.timing.tool_calls)
     llm_debug.timing["tool_calls"] = loop_result.tool_timings
 
-    result = await _finalize_and_publish(
+    return await _finalize_and_publish(
         content=loop_result.content,
         thinking=loop_result.thinking,
         chat_id=chat_id,
@@ -450,12 +481,6 @@ async def _run_chat_completion(
         settings=settings,
         done_status="cancelled" if loop_result.cancelled else "completed",
     )
-
-    # Record this turn's tokens against the daily spend cap (success path only —
-    # the error bail-out above returns before here).
-    await _record_turn_spend(settings, messages_for_llm, loop_result.content)
-
-    return result
 
 
 async def _finalize_and_publish(

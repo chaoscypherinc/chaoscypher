@@ -121,8 +121,14 @@ class ProbeDataset:
                     probe_thinking,
                     thinking_honoured,
                 )
+                from chaoscypher_core.app_config import get_settings
 
-                verdict = await probe_thinking(model.model)
+                # Same Ollama the probes will run against, not the default
+                # localhost (which read as "probe unreachable" on remote /
+                # Docker-hosted Ollama and left every row unverified).
+                verdict = await probe_thinking(
+                    model.model, base_url=get_settings().llm.primary_ollama_url
+                )
                 self.thinking_honoured = thinking_honoured(verdict, requested=self.thinking)
 
             ctx = shim._build_temp_context(model)  # noqa: SLF001 - shared builder

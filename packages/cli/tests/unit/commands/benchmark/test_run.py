@@ -9,6 +9,7 @@ tests that hit a real LLM live in the Phase 7 smoke test, not here.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -341,6 +342,35 @@ def test_run_writes_json_and_markdown(tmp_path: Path):
     assert len(json_files) == 1
     assert len(md_files) == 2  # <timestamp>.md and latest.md
     assert (out_dir / "latest.md").exists()
+    # Second-resolution stamp: two runs in one minute must not overwrite each other.
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{6}Z\.json", json_files[0].name), json_files[0].name
+
+
+def test_run_reports_bad_dataset_without_traceback(tmp_path: Path):
+    """A dataset the bundle loader rejects (malformed manifest, or a kind that
+    is not a primary dataset such as `probes`) is a clean abort, not a raw
+    ValueError traceback (2026-09-24 llm audit).
+    """
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_config(builtin_cfg, "extraction", ["probes"], with_commercial=False)
+
+    with (
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=ValueError("manifest: only kind='extraction' supported as primary kind"),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+    ):
+        runner = CliRunner()
+        result = runner.invoke(run, ["extraction", "--estimate"])
+    assert result.exit_code != 0
+    assert "Bad dataset" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_estimate_prints_breakdown_and_exits(tmp_path: Path):

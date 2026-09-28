@@ -16,6 +16,8 @@ from chaoscypher_core.adapters.llm.providers.base import (
     BaseLLMProvider,
     extract_streaming_finish_reason,
     extract_streaming_usage,
+    merge_stream_chunks,
+    message_text,
     normalize_finish_reason,
 )
 from chaoscypher_core.adapters.llm.providers.error_classifier import (
@@ -279,7 +281,7 @@ class AnthropicProvider(BaseLLMProvider):
             raw_finish_reason = response.response_metadata.get("stop_reason")
 
         return {
-            "content": response.content,
+            "content": message_text(response),
             "thinking": None,  # Claude doesn't have separate thinking mode
             "tool_calls": tool_calls,
             "model": self.chat_model,
@@ -315,16 +317,17 @@ class AnthropicProvider(BaseLLMProvider):
         accumulated_content = ""
         tool_calls = None
         usage: dict[str, int] = {}
-        last_chunk = None
+        aggregated = None
         raw_finish_reason: str | None = None
 
         try:
             # Use LangChain's async streaming
             async for chunk in llm_with_tools.astream(lc_messages):
-                last_chunk = chunk
+                aggregated = merge_stream_chunks(aggregated, chunk)
 
-                # Extract content delta
-                delta_content = chunk.content if hasattr(chunk, "content") else ""
+                # Extract content delta. With tools bound, Anthropic chunk
+                # content is a list of typed blocks — take its text parts.
+                delta_content = message_text(chunk)
 
                 if delta_content:
                     accumulated_content += delta_content
@@ -335,10 +338,6 @@ class AnthropicProvider(BaseLLMProvider):
                         "accumulated": accumulated_content,
                     }
 
-                # Check for tool calls in chunk
-                if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                    tool_calls = format_tool_calls_response(chunk.tool_calls)
-
                 # Anthropic surfaces ``stop_reason`` on the
                 # message_stop event (LangChain stashes it in
                 # response_metadata). Capture as we go.
@@ -346,8 +345,15 @@ class AnthropicProvider(BaseLLMProvider):
                 if chunk_finish:
                     raw_finish_reason = chunk_finish
 
-            # Extract usage from last streaming chunk's metadata
-            usage = extract_streaming_usage(last_chunk) or usage
+            # Tool-call arguments arrive as input_json_delta fragments;
+            # only the summed chunk parses to a complete call.
+            aggregated_tool_calls = getattr(aggregated, "tool_calls", None)
+            if aggregated_tool_calls:
+                tool_calls = format_tool_calls_response(aggregated_tool_calls)
+
+            # Extract usage from the summed chunks' metadata (input tokens
+            # ride message_start, output tokens message_delta).
+            usage = extract_streaming_usage(aggregated) or usage
 
             # Yield final chunk
             yield {

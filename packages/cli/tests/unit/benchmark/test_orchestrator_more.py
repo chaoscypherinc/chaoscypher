@@ -158,7 +158,7 @@ async def test_missing_snapshot_raises_in_cache_builder(tmp_path: Path) -> None:
     missing = tmp_path / "nope" / "app.db"
     bundle.extraction_dataset.expected_snapshot_path = lambda _m: missing  # type: ignore[method-assign]
 
-    async def _invoke_builder(*, corpus_id, corpus_version, extractor, builder):
+    async def _invoke_builder(*, corpus_id, corpus_version, extractor, seed, temperature, builder):
         await builder(tmp_path / "target.db")  # triggers the missing-snapshot RuntimeError
         return tmp_path / "target.db"
 

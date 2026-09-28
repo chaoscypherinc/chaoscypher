@@ -152,6 +152,12 @@ def run(
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
         raise click.Abort from exc
+    except ValueError as exc:
+        # A malformed manifest, or a dataset kind the bundle loader does not
+        # accept as a primary dataset (e.g. `probes`), used to escape as a
+        # raw traceback.
+        console.print(f"[red]Bad dataset:[/red] {exc}")
+        raise click.Abort from exc
 
     # Apply --dataset filter if requested.
     if dataset_id is not None:
@@ -285,7 +291,9 @@ def run(
         )
         partial_path.unlink(missing_ok=True)
 
-    timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H%MZ")
+    # Second resolution: two runs finishing in the same minute (a `quick`
+    # smoke straight after an `--estimate`d re-run) overwrote each other.
+    timestamp = datetime.now(tz=UTC).strftime("%Y-%m-%dT%H%M%SZ")
     json_path = out_dir / f"{timestamp}.json"
     md_path = out_dir / f"{timestamp}.md"
     dump_results(rows, json_path)

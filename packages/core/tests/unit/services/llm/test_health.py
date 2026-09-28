@@ -60,6 +60,36 @@ async def test_ollama_reachable_flips_verified_true() -> None:
 
 
 @pytest.mark.asyncio
+async def test_untagged_configured_model_matches_tagged_pull() -> None:
+    """``ollama_chat_model: llama3`` is the model /api/tags lists as ``llama3:latest``.
+
+    Literal comparison flagged every untagged setting as missing and
+    ``require_extraction_ready`` then blocked chat send and import against
+    a perfectly working Ollama (2026-09-24 llm audit).
+    """
+    settings = _make_settings(
+        llm={
+            "ollama_chat_model": "llama3",
+            "ollama_extraction_model": "qwen3:30b-instruct",
+            "ollama_vision_model": None,
+        }
+    )
+    with patch(
+        "chaoscypher_core.services.llm.health._ollama_pulled_models",
+        return_value={"llama3:latest", "qwen3:30b-instruct"},
+    ):
+        health = await get_llm_health(settings)
+    assert health.missing_models == ()
+
+    with patch(
+        "chaoscypher_core.services.llm.health._ollama_pulled_models",
+        return_value={"llama3:8b"},  # a different tag is a different model
+    ):
+        health = await get_llm_health(settings)
+    assert health.missing_models == ("llama3", "qwen3:30b-instruct")
+
+
+@pytest.mark.asyncio
 async def test_openai_unconfigured_when_no_key() -> None:
     settings = _make_settings(llm={"chat_provider": "openai"})
     health = await get_llm_health(settings)

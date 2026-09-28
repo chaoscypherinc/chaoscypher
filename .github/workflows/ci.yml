@@ -186,3 +186,88 @@ jobs:
         # drifted from it twice in one day (#402/#404/#405) — invoke the
         # runner instead of mirroring it.
         run: uv run python scripts/run_ci.py --steps security
+
+  public-gates:
+    name: Public Gates (internal-ref scan, license policy, docs build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen, with dev extras for pip-licenses)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Install frontend deps (the license policy reads the production tree)
+        working-directory: packages/interface
+        run: npm ci
+
+      - name: Internal-ref scan, license policy, docs build
+        # Single source of truth: the same three steps of scripts/run_ci.py the
+        # pre-push gate runs, invoked instead of mirrored (the `security` job's
+        # pattern). Until 2026-09-28 public CI ran none of them although
+        # chaoscypher.com deploys from this tree's packages/docs, so a Docusaurus
+        # break passed CI green and surfaced as a site outage (#609 D3). The
+        # metrics/media checks inside lint-internal-refs no-op when internal/
+        # is absent, which it is on the public tree.
+        run: uv run python scripts/run_ci.py --steps lint-internal-refs,license-check,docs-build
+
+  docker-image:
+    name: Production Image Build (image-relevant changes only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect image-relevant changes
+        id: changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch -q origin "$BASE_REF"
+            RANGE="origin/${BASE_REF}...HEAD"
+          elif [ -n "$BEFORE_SHA" ] && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
+            RANGE="${BEFORE_SHA}..HEAD"
+          else
+            RANGE="HEAD~1..HEAD"
+          fi
+          # The paths that change what `docker build` produces: the docker tree
+          # itself (Dockerfile, entrypoint, nginx/supervisor configs, digest
+          # bumps), the Python manifests and lockfile the image installs from,
+          # and the frontend manifest it builds from.
+          if git diff --name-only "$RANGE" | grep -E '^(packages/docker/|pyproject\.toml$|uv\.lock$|packages/[^/]+/pyproject\.toml$|packages/interface/package(-lock)?\.json$)'; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker=false" >> "$GITHUB_OUTPUT"
+            echo "No image-relevant change in $RANGE; skipping the build."
+          fi
+
+      - name: Build the production image
+        if: steps.changed.outputs.docker == 'true'
+        # The `docker-image-build` step of scripts/run_ci.py, which is in no
+        # default plan because the routine sandbox has no Docker daemon — so a
+        # Dockerfile digest bump (Dependabot, weekly) could only ever be verified
+        # by a human build (#673; ruled 2026-09-28: build it here, mechanically).
+        # run_ci.py is stdlib-only, so no workspace sync is needed for this step.
+        run: python3 scripts/run_ci.py --steps docker-image-build

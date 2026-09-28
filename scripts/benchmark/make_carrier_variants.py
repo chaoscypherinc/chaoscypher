@@ -22,6 +22,8 @@ import yaml
 
 
 D = Path("packages/core/src/chaoscypher_core/benchmark/data/probes")
+# The checks every carrier variant gets for free; anything else is substantive.
+GENERIC_CHECKS = frozenset({"finish_stop", "not_loop_aborted", "carrier_coverage", "no_invention"})
 with open(sys.argv[1], encoding="utf-8") as fh:
     spec = json.load(fh)  # {"carrier": "carriers/wp_g2.txt", "cast": [...], "probes": [...]}
 want = set(spec["probes"])
@@ -73,6 +75,16 @@ for f in (
             for c in checks:
                 if c["type"] == "property_values_from_text" and names:
                     c["names"] = sorted(set(names))
+        # A variant whose substantive checks were ALL dropped tests nothing the two
+        # generic checks below do not already cover, and reads as a pass at every
+        # density (E7 2026-09-24, then D6 — the same class twice).
+        if not [c for c in checks if c["type"] not in GENERIC_CHECKS]:
+            msg = (
+                f"{p['id']}: every substantive check is a global count, so its carrier "
+                "variant would be vacuous - give the base probe a carrier-surviving "
+                "check (e.g. the name-scoped twin of the count being dropped)"
+            )
+            raise SystemExit(msg)
         checks += [
             {"type": "carrier_coverage", "min_fraction": 0.6},
             {"type": "no_invention", "names": sorted(set(names))},

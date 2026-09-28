@@ -8,7 +8,10 @@ the shared chat tool loop (running in the neuron worker) polls it at step
 boundaries through the worker's ``cancel_check`` dep. Reads fail OPEN
 (False) — a broken transport keeps the turn running rather than killing
 it. The flag self-expires so an unconsumed cancel cannot leak into a
-later turn, and the worker also clears it explicitly at turn start.
+later turn, and the worker also clears it explicitly when the turn ENDS
+(not when it starts — the endpoint accepts a cancel from the moment the
+chat row reads ``processing``, which is before the task is enqueued, so a
+flag raised during the queue wait belongs to the turn about to run).
 """
 
 from typing import Any

@@ -1030,6 +1030,14 @@ def setup(
 
             if provider == "ollama":
                 state.llm.provider = "ollama"
+                # The wizard seed deliberately uses plain localhost as the
+                # *prompt default* when no operator instance exists; with no
+                # prompt to answer, persist the environment's default instead
+                # (CHAOSCYPHER_OLLAMA_URL — host.docker.internal in the Docker
+                # images). Writing localhost here overrode that env default
+                # in settings.yaml and pointed containers at themselves.
+                if "ollama_instances" not in backend.llm.model_fields_set:
+                    state.llm.ollama_url = backend.llm.primary_ollama_url
                 if vram:
                     settings = None
                     for p in VRAM_PRESETS:
@@ -1043,8 +1051,17 @@ def setup(
                         state.llm.ollama_extraction_model = settings.get(
                             "ollama_extraction_model", state.llm.ollama_extraction_model
                         )
+                        state.llm.ollama_vision_model = settings.get(
+                            "ollama_vision_model", state.llm.ollama_vision_model
+                        )
                         state.llm.ollama_num_ctx = settings.get(
                             "ollama_num_ctx", state.llm.ollama_num_ctx
+                        )
+                    else:
+                        known = ", ".join(str(p["vram"]) for p in VRAM_PRESETS)
+                        console.print(
+                            f"[yellow]No VRAM preset for {vram} GB (presets: {known}); "
+                            "keeping the current models.[/yellow]"
                         )
             else:
                 import os

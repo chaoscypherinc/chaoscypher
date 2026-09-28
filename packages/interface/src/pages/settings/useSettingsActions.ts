@@ -199,9 +199,12 @@ export function useSettingsActions(): UseSettingsActionsReturn {
           const data = await settingsApi.reset();
           setSettings(data);
           await refreshSettings();
+          // Same as save: the reset changes provider + keys, so the LLM
+          // health banner must re-evaluate now, not on its next interval.
+          await queryClient.invalidateQueries({ queryKey: LLM_HEALTH_KEY });
         } catch (error) {
           logger.error('Failed to reset settings:', error);
-          showAlert('Error', 'Failed to reset settings');
+          showAlert('Error', getApiErrorMessage(error) || 'Failed to reset settings');
         } finally {
           setSaving(false);
         }

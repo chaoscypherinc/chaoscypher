@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING
 import httpx
 import structlog
 
+from chaoscypher_core.utils.ollama_model_tags import ollama_model_present
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.app_config import Settings
@@ -152,7 +154,10 @@ def _missing_models_from_pulled(pulled: set[str] | None, settings: Settings) -> 
     configured = _configured_ollama_models(settings)
     if not configured:
         return ()
-    return tuple(name for name in configured if name not in pulled)
+    # /api/tags always reports "name:tag"; a configured "llama3" means
+    # "llama3:latest", so compare tag-normalized or every untagged setting
+    # reads as missing and the extraction-ready gate blocks chat + import.
+    return tuple(name for name in configured if not ollama_model_present(name, pulled))
 
 
 # Minimum lengths for cloud-provider API-key format checks. Real keys are

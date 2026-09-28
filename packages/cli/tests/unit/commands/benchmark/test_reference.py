@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from chaoscypher_cli.benchmark.config import DEFAULT_SEED, DEFAULT_TEMPERATURE
 from chaoscypher_cli.benchmark.discovery import load_dataset_bundle
 from chaoscypher_cli.benchmark.graph_cache import cache_key
 from chaoscypher_cli.benchmark.models import ModelConfig
@@ -32,6 +33,9 @@ def _cached_graph(workspace: Path) -> str:
         corpus_id=bundle.id,
         corpus_version=bundle.version,
         extractor=ModelConfig(provider="ollama", model="gemma4:31b", label="x"),
+        # `reference export` defaults to the same pins `benchmark run` does.
+        seed=DEFAULT_SEED,
+        temperature=DEFAULT_TEMPERATURE,
     )
     slot = workspace / "graph_cache" / key
     slot.mkdir(parents=True)

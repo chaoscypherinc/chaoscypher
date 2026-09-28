@@ -16,6 +16,8 @@ from chaoscypher_core.adapters.llm.providers.base import (
     BaseLLMProvider,
     extract_streaming_finish_reason,
     extract_streaming_usage,
+    merge_stream_chunks,
+    message_text,
     normalize_finish_reason,
 )
 from chaoscypher_core.adapters.llm.providers.error_classifier import (
@@ -34,6 +36,9 @@ if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
 
 logger = structlog.get_logger(__name__)
+
+# The real OpenAI endpoint; anything else is an OpenAI-compatible server.
+_OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
 # OpenAI-specific error indicator patterns
 _PATTERNS = ProviderErrorPatterns(
@@ -125,6 +130,15 @@ class OpenAIProvider(BaseLLMProvider):
             "api_key": self.api_key,
             "base_url": self.base_url,
         }
+        # langchain-openai only auto-enables usage on streams when no
+        # base_url is set; ours always is, so streamed chats reported zero
+        # tokens (spend cap, cost, context-overflow warning all blind). Ask
+        # for it explicitly against the real OpenAI endpoint; an
+        # OpenAI-compatible server (custom base_url) may not accept
+        # `stream_options`, so there the library default stands
+        # (TODO.md 2026-07-23 llm audit, decided conservative 2026-09-24).
+        if not self.base_url or self.base_url.rstrip("/") == _OPENAI_DEFAULT_BASE_URL:
+            kwargs["stream_usage"] = True
 
         # Add generic LLM settings
         if self.config.get("ai_temperature") is not None:
@@ -274,7 +288,7 @@ class OpenAIProvider(BaseLLMProvider):
             raw_finish_reason = meta.get("finish_reason")
 
         return {
-            "content": response.content,
+            "content": message_text(response),
             "thinking": None,  # OpenAI doesn't have thinking mode yet
             "tool_calls": tool_calls,
             "model": self.chat_model,
@@ -310,16 +324,16 @@ class OpenAIProvider(BaseLLMProvider):
         accumulated_content = ""
         tool_calls = None
         usage: dict[str, int] = {}
-        last_chunk = None
+        aggregated = None
         raw_finish_reason: str | None = None
 
         try:
             # Use LangChain's async streaming
             async for chunk in llm_with_tools.astream(lc_messages):
-                last_chunk = chunk
+                aggregated = merge_stream_chunks(aggregated, chunk)
 
-                # Extract content delta
-                delta_content = chunk.content if hasattr(chunk, "content") else ""
+                # Extract content delta (text blocks only once content is a list)
+                delta_content = message_text(chunk)
 
                 if delta_content:
                     accumulated_content += delta_content
@@ -330,10 +344,6 @@ class OpenAIProvider(BaseLLMProvider):
                         "accumulated": accumulated_content,
                     }
 
-                # Check for tool calls in chunk
-                if hasattr(chunk, "tool_calls") and chunk.tool_calls:
-                    tool_calls = format_tool_calls_response(chunk.tool_calls)
-
                 # OpenAI emits finish_reason on the last delta (not a
                 # separate marker chunk), so capture as we go and let
                 # the last seen value win.
@@ -341,8 +351,14 @@ class OpenAIProvider(BaseLLMProvider):
                 if chunk_finish:
                     raw_finish_reason = chunk_finish
 
-            # Extract usage from last streaming chunk's metadata
-            usage = extract_streaming_usage(last_chunk) or usage
+            # Tool-call arguments arrive as fragments spread over many
+            # chunks; only the summed chunk parses to a complete call.
+            aggregated_tool_calls = getattr(aggregated, "tool_calls", None)
+            if aggregated_tool_calls:
+                tool_calls = format_tool_calls_response(aggregated_tool_calls)
+
+            # Extract usage from the summed chunks' metadata
+            usage = extract_streaming_usage(aggregated) or usage
 
             # Yield final chunk
             yield {

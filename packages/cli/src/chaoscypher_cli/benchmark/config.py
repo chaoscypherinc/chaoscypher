@@ -31,6 +31,12 @@ from chaoscypher_cli.benchmark.models import ModelConfig
 # The name resolved when ``bench run`` is called with no positional argument.
 DEFAULT_CONFIG_NAME = "extraction"
 
+# Decoding pins a config falls back to when it names neither. They are part of
+# the graph-cache key, so every command that looks a cached graph up by hand
+# (``benchmark reference export``) must default to the same two values.
+DEFAULT_SEED = 42
+DEFAULT_TEMPERATURE = 0.0
+
 
 ConfigSource = Literal["builtin", "user"]
 
@@ -286,8 +292,8 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
     return BenchmarkConfig(
         name=str(raw["name"]),
         description=str(raw.get("description", "")),
-        seed=int(raw.get("seed", 42)),
-        temperature=float(raw.get("temperature", 0.0)),
+        seed=int(raw.get("seed", DEFAULT_SEED)),
+        temperature=float(raw.get("temperature", DEFAULT_TEMPERATURE)),
         dataset_ids=[str(d) for d in raw_datasets],
         extractors=extractors,
         embedders=embedders,

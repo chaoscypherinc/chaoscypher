@@ -19,6 +19,7 @@ from chaoscypher_core.adapters.embedding._retry import request_with_retry
 from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
+from chaoscypher_core.utils.ollama_model_tags import ollama_model_present
 
 
 logger = structlog.get_logger(__name__)
@@ -241,8 +242,12 @@ class OllamaEmbeddingProvider:
                     response_time_ms=elapsed_ms,
                 )
 
-            installed_names = {m.get("name") for m in response.json().get("models", [])}
-            if self.model_name not in installed_names:
+            installed_names = {
+                str(name) for m in response.json().get("models", []) if (name := m.get("name"))
+            }
+            # The curated registry ships untagged ids ("bge-m3"); /api/tags
+            # reports "bge-m3:latest" — compare tag-normalized.
+            if not ollama_model_present(self.model_name, installed_names):
                 return EmbeddingHealthStatus(
                     healthy=False,
                     provider="ollama",

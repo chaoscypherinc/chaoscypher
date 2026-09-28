@@ -516,7 +516,14 @@ class LLMQueueService:
         }
 
     async def clear_stats(self, older_than_hours: int = 24) -> None:
-        """Clear all queue statistics and old completed tasks.
+        """Clear LLM queue statistics and old completed tasks.
+
+        Clears the recent-task history lists, the LLM queue's cumulative
+        token/cost counters (``queue:llm:stats`` — what ``get_stats``
+        reports as ``total_*_tokens`` / ``total_cost_usd``), and the LLM
+        queue's completed task records older than the cutoff — never the
+        operations queue's (this is the LLM page's Clear; a ``queue=None``
+        sweep emptied the operations history too until 2026-09-28).
 
         Args:
             older_than_hours: Clear tasks older than this many hours (default: 24)
@@ -524,13 +531,17 @@ class LLMQueueService:
         """
         logger.info("clearing_statistics_started", older_than_hours=older_than_hours)
 
-        # Clear queue statistics
+        # Clear recent-task history lists (all queues)
         await queue_client.clear_all_stats()
+        # ``clear_all_stats`` only drops the recent lists; the token/cost
+        # totals live in a separate hash and survived every "Clear stats"
+        # until now, so the UI kept showing the old spend after clearing.
+        await queue_client.clear_token_stats(QUEUE_LLM)
 
         # Clear old completed tasks from queue
         cleared_count = await queue_client.clear_old_completed_tasks(
-            queue=None,
-            older_than_hours=older_than_hours,  # All queues
+            queue=QUEUE_LLM,
+            older_than_hours=older_than_hours,
         )
 
         logger.info("statistics_cleared", removed_task_count=cleared_count)

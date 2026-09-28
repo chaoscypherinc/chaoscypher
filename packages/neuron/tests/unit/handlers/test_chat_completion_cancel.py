@@ -5,8 +5,11 @@
 
 Drives ``_run_chat_completion`` with the cancel seams patched to prove:
 
-* a stale cancel flag is cleared at turn start (an old Stop click can
-  never kill a fresh turn);
+* a cancel raised while the turn sat in the LLM queue stops it before a
+  single provider call (the endpoint accepts a Stop as soon as the chat row
+  reads ``processing``, which is set before the task is enqueued — so the
+  flag must survive to the loop; clearing it belongs to turn END, and is
+  covered in ``test_chat_completion_pipeline``);
 * a cancelled loop still persists the partial answer + warnings, flips
   the chat back to ``active``, and publishes ``done {status: "cancelled"}``
   — the queue task completes normally (not orphaned);
@@ -72,10 +75,17 @@ def _publish_mock(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_stale_cancel_flag_cleared_at_turn_start(
+async def test_cancel_raised_while_queued_stops_the_turn_before_any_spend(
     chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The worker clears any leftover flag before the loop can read it."""
+    """A Stop clicked during the queue wait costs zero provider calls.
+
+    ``POST /chats/{id}/cancel`` is accepted from the moment the chat row
+    reads ``processing``, which every send path sets BEFORE enqueueing — so
+    the flag can already be up when the handler starts. The turn must honour
+    it at the pre-flight boundary rather than burn a full stream first, and
+    the run must not delete the flag on the way in.
+    """
     from chaoscypher_neuron.handlers.chat_completion import _run_chat_completion
 
     chat_provider = MagicMock()
@@ -86,13 +96,22 @@ async def test_stale_cancel_flag_cleared_at_turn_start(
         monkeypatch,
         setup_chat_providers=lambda *a, **k: (chat_provider, MagicMock(), []),
     )
+    publish = _publish_mock(monkeypatch)
     clear = AsyncMock()
     monkeypatch.setattr(f"{_CANCEL_MOD}.clear_cancel", clear)
+    monkeypatch.setattr(f"{_CANCEL_MOD}.is_cancel_requested", AsyncMock(return_value=True))
 
     result = await _run_chat_completion(**_run_kwargs(chat_service))
 
     assert result["success"] is True
-    clear.assert_awaited_once_with("chat-1")
+    chat_provider.chat.assert_not_awaited()  # not one token spent
+    done = _done_events(publish)
+    assert len(done) == 1
+    assert done[0]["status"] == "cancelled"
+    assert chat_service.get_chat("chat-1")["status"] == "active"
+    # Clearing is the outer handler's job, at turn END — never here, where it
+    # would destroy the very cancel this turn was asked to honour.
+    clear.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -115,6 +134,7 @@ async def test_cancelled_turn_persists_partial_and_publishes_cancelled(
     )
     tool_executor = MagicMock()
     tool_executor.execute_tool = AsyncMock(return_value={"hits": []})
+    _cancel_calls: list[int] = []
 
     _patch_streaming_seams(
         monkeypatch,
@@ -122,7 +142,12 @@ async def test_cancelled_turn_persists_partial_and_publishes_cancelled(
     )
     publish = _publish_mock(monkeypatch)
     monkeypatch.setattr(f"{_CANCEL_MOD}.clear_cancel", AsyncMock())
-    monkeypatch.setattr(f"{_CANCEL_MOD}.is_cancel_requested", AsyncMock(return_value=True))
+    # False at the pre-flight boundary, True from the first tool boundary on:
+    # this is the mid-turn Stop, not the queued one above.
+    monkeypatch.setattr(
+        f"{_CANCEL_MOD}.is_cancel_requested",
+        AsyncMock(side_effect=lambda *_a, **_k: _cancel_calls.append(1) or len(_cancel_calls) > 1),
+    )
 
     result = await _run_chat_completion(**_run_kwargs(chat_service))
 

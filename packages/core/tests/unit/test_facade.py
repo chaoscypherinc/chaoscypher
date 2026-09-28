@@ -3,6 +3,7 @@
 
 """Tests for ChaosCypher/CC namespace facade."""
 
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -336,3 +337,65 @@ class TestGetDefaultSettings:
         settings = _get_default_settings()
         # Default is ollama (unless CHAOSCYPHER_LLM_PROVIDER env var is set)
         assert settings is not None
+
+
+@pytest.mark.unit
+@pytest.mark.core
+class TestEmbedModelOverride:
+    """``embed(model=...)`` / ``embed_batch(model=...)`` must build a usable provider.
+
+    The override used to be a plain dict dropped into ``Settings.model_copy``,
+    which stores it unvalidated; the factory then read ``settings.embedding.provider``
+    and raised ``AttributeError`` on every call (2026-09-24 llm audit filing).
+    """
+
+    @staticmethod
+    def _capture_factory(captured: dict[str, Any]) -> Any:
+        class _Provider:
+            async def embed(self, text: str, **kwargs: Any) -> EmbedResult:
+                return EmbedResult(embedding=[0.0], provider="fake")
+
+            async def batch_embed(self, texts: list[str], **kwargs: Any) -> Any:
+                return "batch-result"
+
+        def _factory(settings: Any) -> _Provider:
+            captured["settings"] = settings
+            return _Provider()
+
+        return _factory
+
+    @pytest.mark.asyncio
+    async def test_embed_override_keeps_a_validated_embedding_settings(self):
+        """The factory receives an EmbeddingSettings whose model is the override."""
+        import chaoscypher_core
+        from chaoscypher_core import embed
+        from chaoscypher_core.facade import _get_default_settings
+
+        captured: dict[str, Any] = {}
+        with patch.object(
+            chaoscypher_core, "create_embedding_provider", self._capture_factory(captured)
+        ):
+            result = await embed("x", model="BAAI/bge-large-en-v1.5")
+
+        assert isinstance(result, EmbedResult)
+        override = captured["settings"].embedding
+        assert not isinstance(override, dict)
+        assert override.model == "BAAI/bge-large-en-v1.5"
+        assert override.provider == _get_default_settings().embedding.provider
+
+    @pytest.mark.asyncio
+    async def test_embed_batch_override_keeps_a_validated_embedding_settings(self):
+        """Same contract on the batch entry point."""
+        import chaoscypher_core
+        from chaoscypher_core import embed_batch
+
+        captured: dict[str, Any] = {}
+        with patch.object(
+            chaoscypher_core, "create_embedding_provider", self._capture_factory(captured)
+        ):
+            result = await embed_batch(["a", "b"], model="BAAI/bge-large-en-v1.5")
+
+        assert result == "batch-result"
+        override = captured["settings"].embedding
+        assert not isinstance(override, dict)
+        assert override.model == "BAAI/bge-large-en-v1.5"

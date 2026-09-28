@@ -179,10 +179,12 @@ class CostTracker:
         # Get pricing for specific model
         model_pricing = pricing_table.get(model)
         if not model_pricing:
-            # Try to find a matching model by prefix (for versioned models)
-            for model_key, pricing in pricing_table.items():
+            # Try to find a matching model by prefix (for versioned models).
+            # Longest prefix wins: "gpt-4.1-mini-2025-04-14" must bill as
+            # gpt-4.1-mini, not as the shorter "gpt-4.1" that also matches.
+            for model_key in sorted(pricing_table, key=len, reverse=True):
                 if model.startswith(model_key):
-                    model_pricing = pricing
+                    model_pricing = pricing_table[model_key]
                     break
 
         if not model_pricing:

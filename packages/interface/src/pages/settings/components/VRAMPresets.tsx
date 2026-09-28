@@ -302,10 +302,16 @@ export default function VRAMPresets({
             <TextField
               label="Max Retries"
               type="number"
-              value={settings.llm.llm_max_retries || 3}
-              onChange={(e) =>
-                setSettings({ ...settings, llm: { ...settings.llm, llm_max_retries: parseInt(e.target.value) || 3 } })
-              }
+              value={settings.llm.llm_max_retries ?? 3}
+              onChange={(e) => {
+                // `|| 3` turned a typed 0 into 3 (and displayed a stored 0
+                // as 3), although the backend accepts 0 and min is 0.
+                const parsed = parseInt(e.target.value, 10);
+                setSettings({
+                  ...settings,
+                  llm: { ...settings.llm, llm_max_retries: Number.isNaN(parsed) ? 3 : parsed },
+                });
+              }}
               fullWidth
               helperText="Retry failed LLM operations"
               slotProps={{ htmlInput: { min: 0, max: 10 } }}

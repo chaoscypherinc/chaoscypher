@@ -241,6 +241,20 @@ describe('VRAMPresets', () => {
     expect(setSettings.mock.calls[0][0].llm.llm_max_retries).toBe(7);
   });
 
+  it('accepts 0 for Max Retries and renders a stored 0 as 0', () => {
+    // Backend allows ge=0 and the input's min is 0; `|| 3` used to coerce
+    // both the typed and the stored value to 3 (2026-09-24 llm audit).
+    const { unmount } = render(
+      <VRAMPresets settings={makeSettings({ llm_max_retries: 0 })} setSettings={setSettings} />
+    );
+    expect(getNumberInput(/Max Retries/i).value).toBe('0');
+    unmount();
+
+    render(<VRAMPresets settings={makeSettings()} setSettings={setSettings} />);
+    fireEvent.change(getNumberInput(/Max Retries/i), { target: { value: '0' } });
+    expect(setSettings.mock.calls[0][0].llm.llm_max_retries).toBe(0);
+  });
+
   it('falls back to default 3 for Max Retries when input is non-numeric', () => {
     render(<VRAMPresets settings={makeSettings()} setSettings={setSettings} />);
     fireEvent.change(getNumberInput(/Max Retries/i), { target: { value: 'abc' } });

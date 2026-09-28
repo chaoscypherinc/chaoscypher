@@ -89,6 +89,7 @@ def patched_queue_client(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
         }
     )
     qc.clear_all_stats = AsyncMock(return_value=None)
+    qc.clear_token_stats = AsyncMock(return_value=None)
     qc.clear_old_completed_tasks = AsyncMock(return_value=3)
     qc.get_recent_tasks = AsyncMock(return_value=[])
     qc.cancel_all_tasks = AsyncMock(return_value=5)
@@ -381,12 +382,21 @@ async def test_cancel_all_tasks_returns_count(
 async def test_clear_stats_clears_and_prunes(
     patched_queue_client: MagicMock,
 ) -> None:
-    """clear_stats clears all stats and prunes old completed tasks."""
+    """clear_stats clears the recent lists AND the LLM token/cost totals, then prunes.
+
+    ``clear_all_stats`` only deletes the ``queue:*:recent`` lists; the
+    ``total_*_tokens`` / ``total_cost_usd`` that ``get_stats`` reports live
+    in ``queue:llm:stats`` and survived every "Clear stats" until the
+    2026-09-24 audit added the explicit ``clear_token_stats("llm")``.
+    """
     service = _make_service()
     await service.clear_stats(older_than_hours=12)
     patched_queue_client.clear_all_stats.assert_awaited_once()
+    patched_queue_client.clear_token_stats.assert_awaited_once_with("llm")
+    # Scoped to the LLM queue: a Clear on the LLM page must not empty the
+    # operations history (ruled 2026-09-28).
     patched_queue_client.clear_old_completed_tasks.assert_awaited_once_with(
-        queue=None, older_than_hours=12
+        queue="llm", older_than_hours=12
     )
 
 

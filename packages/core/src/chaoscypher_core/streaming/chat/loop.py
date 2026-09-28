@@ -308,6 +308,18 @@ async def run_chat_tool_loop(
     if deps.spend_guard is not None:
         await deps.spend_guard()
 
+    # A step boundary BEFORE any spend. ``POST /chats/{id}/cancel`` is accepted
+    # as soon as the chat row reads ``processing``, which every send path sets
+    # before it enqueues the task — so the whole queue wait is a window in which
+    # a Stop is accepted, and until this check existed the first thing the turn
+    # did with it was spend a full provider stream. It also covers the tool-less
+    # turn, which reaches no other boundary: the other two
+    # ``_cancel_requested_mid_loop`` checks sit inside the tool loop, one per
+    # iteration in each of its two drivers.
+    if await _cancel_requested_mid_loop(deps, 0, result.warnings):
+        result.cancelled = True
+        return result
+
     llm_result = await deps.provider.chat(
         messages=messages_for_llm,
         tools=deps.tools,

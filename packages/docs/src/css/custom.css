@@ -672,12 +672,9 @@ html[data-theme="dark"] .alert--danger [class*="admonitionIcon"] {
 /* ---- Search ---- */
 
 html[data-theme="dark"] .navbar__search-input {
-  /* magnifier icon (the card-bg fill had stripped Infima's default icon) */
+  /* No background-image magnifier here: the search plugin renders its own SVG
+     icon (.searchIcon), and a second one stacked on it showed as a doubled icon. */
   background-color: var(--cc-bg-card);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ea0c2' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: left 0.6rem center;
-  background-size: 0.9rem 0.9rem;
   padding-left: 1.95rem;
   padding-right: 1.85rem;   /* leave room for the clear (X) button so typed text doesn't run under it */
   text-align: right;   /* park the label opposite the icon to balance the box */
@@ -694,8 +691,12 @@ html[data-theme="dark"] .navbar__search-input {
 html[data-theme="dark"] .navbar__search-input:focus {
   border-color: var(--cc-accent-purple);
   box-shadow: 0 0 10px var(--cc-glow-purple);
-  background-color: var(--cc-bg-surface);   /* keep the magnifier icon on focus */
+  background-color: var(--cc-bg-surface);
   outline: none;
+}
+
+html[data-theme="dark"] [class*="searchIcon"] {
+  color: var(--cc-text-muted);
 }
 
 html[data-theme="dark"] .navbar__search-input::placeholder {

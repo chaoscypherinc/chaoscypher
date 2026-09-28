@@ -85,7 +85,7 @@ curl http://localhost/api/v1/llm/stats
 DELETE /api/v1/llm/stats
 ```
 
-Clear all LLM queue statistics and remove old completed tasks from Valkey. Also clears workflow stats if available.
+Reset the LLM queue's cumulative token and cost totals (what [Get LLM Queue Stats](#get-llm-queue-stats) reports as `total_*_tokens` / `total_cost_usd`), clear the recent-task history lists, and remove completed task records older than the cutoff from Valkey.
 
 ```bash
 # Clear tasks older than 48 hours
@@ -134,25 +134,31 @@ curl http://localhost/api/v1/llm/tasks
       "queue": "llm",
       "operation": "chat_completion",
       "status": "running",
-      "priority": "10",
+      "priority": 100,
       "created_at": "2026-03-09T14:30:00.000000+00:00",
       "started_at": "2026-03-09T14:30:01.500000+00:00",
-      "metadata": "{\"source\": \"interactive_chat\"}",
-      "attempts": "1"
+      "metadata": {"source": "interactive_chat", "correlation_id": "…"},
+      "data": {"messages": ["…"], "task_type": "CHAT"},
+      "attempts": 1,
+      "payload_version": 1
     },
     {
       "task_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
       "queue": "llm",
-      "operation": "generate_embedding",
+      "operation": "chat_background",
       "status": "queued",
-      "priority": "50",
+      "priority": 50,
       "created_at": "2026-03-09T14:30:05.000000+00:00",
-      "metadata": "{}",
-      "attempts": "0"
+      "metadata": {},
+      "data": {"messages": ["…"], "task_type": "CHAT"},
+      "attempts": 0,
+      "payload_version": 1
     }
   ]
 }
 ```
+
+`priority`, `attempts` and `payload_version` are integers; `metadata` and `data` are decoded objects (`data` is the task's full request payload). `started_at` is present once a task has started.
 
 **Errors:**
 
@@ -186,19 +192,24 @@ curl http://localhost/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef1234567890
     "task_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "queue": "llm",
     "operation": "chat_completion",
-    "status": "running",
-    "priority": "10",
+    "status": "failed",
+    "priority": 100,
     "created_at": "2026-03-09T14:30:00.000000+00:00",
     "started_at": "2026-03-09T14:30:01.500000+00:00",
-    "data": "{\"messages\": [...], \"task_type\": \"CHAT\"}",
-    "metadata": "{\"source\": \"interactive_chat\"}",
-    "result_ttl": "3600",
-    "attempts": "1"
+    "completed_at": "2026-03-09T14:30:09.200000+00:00",
+    "data": {"messages": ["…"], "task_type": "CHAT"},
+    "metadata": {"source": "interactive_chat"},
+    "attempts": 1,
+    "payload_version": 1,
+    "error": "Task failed",
+    "error_type": "LLMServiceError"
   }
 }
 ```
 
-**Task statuses:** `queued`, `running`, `completed`, `failed`, `cancelled`
+`completed_at`, `error` and `error_type` appear only on terminal tasks; `error` is always the fixed string `"Task failed"` (the detail is in `error_type` and the logs). There is no `result_ttl` field.
+
+**Task statuses:** `queued`, `running`, `retried`, `completed`, `failed`, `cancelled`
 
 **Errors:**
 
@@ -231,7 +242,7 @@ curl -X DELETE http://localhost/api/v1/llm/tasks/a1b2c3d4-e5f6-7890-abcd-ef12345
 
 | Status | Description |
 |--------|-------------|
-| `400`  | Task could not be cancelled (not found or already completed) |
+| `400`  | Task not found. Cancelling a task that has already finished (`completed`, `failed`, `cancelled`) is a no-op and returns `204`. |
 | `503`  | LLM queue service unavailable |
 
 ---
@@ -334,7 +345,7 @@ curl -X DELETE http://localhost/api/v1/llm/semaphore
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `data` | object | Full task metadata including `task_id`, `queue`, `operation`, `status`, `priority`, `created_at`, `started_at`, `data`, `metadata`, `result_ttl`, and `attempts` |
+| `data` | object | Full task record: `task_id`, `queue`, `operation`, `status`, `priority` (int), `created_at`, `metadata` (object), `data` (object — the request payload), `attempts` (int), `payload_version` (int); plus `started_at`, `completed_at`, `error`, `error_type` when set |
 
 ### CancelAllTasksResponse
 

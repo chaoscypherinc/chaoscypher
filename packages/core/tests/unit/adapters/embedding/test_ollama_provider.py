@@ -142,6 +142,33 @@ class TestOllamaEmbeddingProvider:
         assert result.response_time_ms is not None
 
     @pytest.mark.asyncio
+    async def test_check_health_matches_tagged_listing(
+        self, provider: OllamaEmbeddingProvider
+    ) -> None:
+        """/api/tags reports ``test-model:latest`` for an untagged pull.
+
+        The curated registry ships untagged ids (``bge-m3``), so a literal
+        comparison reported every curated Ollama embedding model as "not
+        installed" (2026-09-24 llm audit).
+        """
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"models": [{"name": "test-model:latest"}]}
+
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_response
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "chaoscypher_core.adapters.embedding.ollama_provider.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            result = await provider.check_health()
+
+        assert result.healthy is True
+
+    @pytest.mark.asyncio
     async def test_check_health_connection_refused(self, provider: OllamaEmbeddingProvider) -> None:
         """check_health() returns unhealthy status with the base URL when unreachable."""
         mock_client = AsyncMock()

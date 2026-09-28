@@ -322,9 +322,10 @@ client, not on your GPU.
   cleaner) can score similarly to one that emits 22 clean ones. A raw-vs-cleaned
   amplification ratio is a v1.5 feature.
 - **Variance.** Single shot per `(model, dataset)` at `temperature=0` with
-  a fixed seed. Two models within a few grade points of each other should
-  be considered tied; if a tie matters operationally, re-run those two
-  specifically.
+  a fixed seed (the seed is honoured by Ollama; the hosted providers accept
+  no seed, so their rows are pinned by temperature alone). Two models
+  within a few grade points of each other should be considered tied; if a
+  tie matters operationally, re-run those two specifically.
 - **Cross-host hardware variance** for local models. Speed numbers depend
   on the host. Cross-host comparisons are advisory; same-host re-runs are
   the trustworthy comparison.
@@ -360,6 +361,13 @@ Every result row pins:
   changes.
 - `scorer_version` — currently `7`.
 - `seed` and `temperature` — deterministic decoding parameters.
+- `thinking` and `thinking_honoured` — whether thinking mode was requested,
+  and (Ollama only, measured by a probe before the run) whether the model
+  actually honoured the request; `null` when it could not be verified.
+- `chunks_truncated` and `chunks_aborted_by_loop` — chunks whose LLM call
+  ended on `finish_reason == "length"` or was cut short by the stream loop
+  detector. The renderer warns on any non-zero count: such a row scored
+  incomplete output.
 - `config_name` — the named config (e.g. `extraction`, `quick`) that
   produced the row.
 - `dataset_source` — `builtin` (ships in the pip package) or `user`
@@ -393,7 +401,7 @@ so `pip install chaoscypher-cli` is enough to run the canonical leaderboard.
 ## Running the benchmark
 
 ```bash
-# Canonical leaderboard (14 models, 3 datasets):
+# Canonical leaderboard (29 models, 3 datasets):
 chaoscypher benchmark run
 
 # Smoke test (3 models, 1 dataset):

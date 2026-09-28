@@ -7,8 +7,8 @@ Stores the raw SQLite database file produced by an extraction run so that
 follow-up embedding + chat benches can re-use it instead of re-extracting.
 
 Key: SHA-256 of (corpus_id, corpus_version, extractor.provider,
-extractor.model, EXT_PIPELINE_VERSION). Bumping EXT_PIPELINE_VERSION
-invalidates all cached graphs.
+extractor.model, seed, temperature, EXT_PIPELINE_VERSION). Bumping
+EXT_PIPELINE_VERSION invalidates all cached graphs.
 """
 
 from __future__ import annotations
@@ -32,7 +32,10 @@ logger = structlog.get_logger(__name__)
 
 # Bump when the extraction pipeline output shape changes in a way that
 # invalidates cached graphs (e.g. schema migration, new entity fields).
-EXT_PIPELINE_VERSION = "1"
+# "2" (2026-09-24): graphs cached before #650 were extracted unpinned
+# (temperature 0.1, no seed) and keyed without the pins, so stages 2/3 of
+# a `full` run kept scoring them after extraction was made deterministic.
+EXT_PIPELINE_VERSION = "2"
 
 
 def cache_key(
@@ -40,6 +43,8 @@ def cache_key(
     corpus_id: str,
     corpus_version: str,
     extractor: ModelConfig,
+    seed: int,
+    temperature: float,
 ) -> str:
     """Return a 16-char hex digest uniquely identifying the cache slot.
 
@@ -48,11 +53,18 @@ def cache_key(
         corpus_version: Dataset version string (e.g. ``"1.0"``).
         extractor: The LLM used for extraction; provider and model are
             incorporated into the key so swapping models yields a new slot.
+        seed: Decoding seed the extraction ran with.
+        temperature: Decoding temperature the extraction ran with. Both
+            pins are part of the key: a ``--seed 7`` run must not reuse the
+            graph a seed-42 run produced.
 
     Returns:
         First 16 hex characters of SHA-256 over the joined input fields.
     """
-    payload = f"{corpus_id}|{corpus_version}|{extractor.provider}|{extractor.model}|{EXT_PIPELINE_VERSION}"
+    payload = (
+        f"{corpus_id}|{corpus_version}|{extractor.provider}|{extractor.model}"
+        f"|{seed}|{temperature}|{EXT_PIPELINE_VERSION}"
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -83,18 +95,28 @@ class GraphCache:
         corpus_id: str,
         corpus_version: str,
         extractor: ModelConfig,
+        seed: int,
+        temperature: float,
     ) -> str:
-        """Return the cache key for one (corpus, extractor) slot.
+        """Return the cache key for one (corpus, extractor, decoding pins) slot.
 
         Args:
             corpus_id: Stable dataset identifier.
             corpus_version: Dataset version string.
             extractor: The LLM used for extraction.
+            seed: Decoding seed the extraction ran with (part of the key).
+            temperature: Decoding temperature (part of the key).
 
         Returns:
             The same 16-char key :func:`cache_key` computes.
         """
-        return cache_key(corpus_id=corpus_id, corpus_version=corpus_version, extractor=extractor)
+        return cache_key(
+            corpus_id=corpus_id,
+            corpus_version=corpus_version,
+            extractor=extractor,
+            seed=seed,
+            temperature=temperature,
+        )
 
     def has(
         self,
@@ -102,18 +124,28 @@ class GraphCache:
         corpus_id: str,
         corpus_version: str,
         extractor: ModelConfig,
+        seed: int,
+        temperature: float,
     ) -> bool:
-        """Return whether the slot for this (corpus, extractor) holds a snapshot.
+        """Return whether the slot for this (corpus, extractor, pins) holds a snapshot.
 
         Args:
             corpus_id: Stable dataset identifier.
             corpus_version: Dataset version string.
             extractor: The LLM used for extraction.
+            seed: Decoding seed the extraction ran with (part of the key).
+            temperature: Decoding temperature (part of the key).
 
         Returns:
             True when ``<root>/<key>/app.db`` exists.
         """
-        key = self.key_for(corpus_id=corpus_id, corpus_version=corpus_version, extractor=extractor)
+        key = self.key_for(
+            corpus_id=corpus_id,
+            corpus_version=corpus_version,
+            extractor=extractor,
+            seed=seed,
+            temperature=temperature,
+        )
         return (self._slot(key) / "app.db").exists()
 
     async def get_or_build(
@@ -122,6 +154,8 @@ class GraphCache:
         corpus_id: str,
         corpus_version: str,
         extractor: ModelConfig,
+        seed: int,
+        temperature: float,
         builder: Callable[[Path], Awaitable[None]],
     ) -> Path:
         """Return the cached snapshot path; call builder on cache miss.
@@ -135,6 +169,8 @@ class GraphCache:
             corpus_id: Stable dataset identifier.
             corpus_version: Dataset version string.
             extractor: The LLM used for extraction.
+            seed: Decoding seed the extraction ran with (part of the key).
+            temperature: Decoding temperature (part of the key).
             builder: Async callable ``(target: Path) -> None`` that writes
                 the SQLite snapshot to *target*.
 
@@ -149,6 +185,8 @@ class GraphCache:
             corpus_id=corpus_id,
             corpus_version=corpus_version,
             extractor=extractor,
+            seed=seed,
+            temperature=temperature,
         )
         slot = self._slot(key)
         snapshot = slot / "app.db"

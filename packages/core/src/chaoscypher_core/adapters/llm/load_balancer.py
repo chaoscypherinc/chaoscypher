@@ -160,6 +160,12 @@ class OllamaLoadBalancer:
                 "stream_chunk_timeout": llm_settings.stream_chunk_timeout,
                 "ollama_health_check_timeout": llm_settings.ollama_health_check_timeout,
                 "ollama_recovery_delay": llm_settings.ollama_recovery_delay,
+                # Per-instance providers read these two like the single-
+                # instance factory path does; omitting them silently dropped
+                # the determinism pin and the request timeout on multi-
+                # instance setups.
+                "seed": llm_settings.seed,
+                "llm_request_timeout": llm_settings.llm_request_timeout,
                 "llm_max_concurrent": instance_count,  # Match instance count
                 "llm_reserved_interactive": llm_settings.llm_reserved_interactive,
                 "llm_enable_priority": llm_settings.llm_enable_priority,

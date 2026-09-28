@@ -391,6 +391,14 @@ class ExtractionOrchestrator:
         # finalize() so cross-chunk filtering and commit-side orphan-drop
         # honour the upload-time preset rather than engine defaults.
         self._filtering_configs: dict[str, Any] = {}
+        # source_id -> the source's derived chunk-group index set, memoized for
+        # the same get_tasks -> finalize span as _filtering_configs above.
+        # Pre-0030 this value lived on the source row as
+        # ``extraction_chunk_indices``; re-deriving it means a full-source
+        # chunk read, a content-exclusion pass over every chunk and a re-pack,
+        # and ``submit_chunk`` probes it once per chunk group purely to test one
+        # integer. Refreshed at get_tasks, evicted at finalize.
+        self._group_indices: dict[str, set[int]] = {}
 
     # ------------------------------------------------------------------ #
     #  Helpers
@@ -486,6 +494,12 @@ class ExtractionOrchestrator:
     def _get_group_indices(self, source_id: str) -> set[int]:
         """Get all distinct chunk group indices for a source.
 
+        Memoized per source for the protocol span (see ``_group_indices``):
+        the value is stable across it — ``get_tasks`` already freezes the
+        matching ``total`` into stage progress, which ``submit_chunk`` reads
+        back — and rebuilt on a miss, so a ``finalize`` landing in a different
+        process than its ``get_tasks`` still resolves.
+
         Args:
             source_id: Source identifier.
 
@@ -493,8 +507,13 @@ class ExtractionOrchestrator:
             Set of distinct group index values.
 
         """
+        cached = self._group_indices.get(source_id)
+        if cached is not None:
+            return set(cached)
         groups = self._build_source_groups(source_id)
-        return {g["group_index"] for g in groups}
+        indices = {g["group_index"] for g in groups}
+        self._group_indices[source_id] = set(indices)
+        return indices
 
     def _count_chunk_groups(self, source_id: str) -> int:
         """Count distinct chunk groups for a source.
@@ -791,7 +810,10 @@ class ExtractionOrchestrator:
             },
         )
 
-        # Count chunk groups and apply depth strategy
+        # Count chunk groups and apply depth strategy. Re-derive on every
+        # get_tasks: a force=True re-extract may follow a re-chunk, so the
+        # previous span's memo must not be reused.
+        self._group_indices.pop(source_id, None)
         all_group_indices = self._get_group_indices(source_id)
 
         if extraction_depth == "quick":
@@ -1502,6 +1524,8 @@ class ExtractionOrchestrator:
         # long-lived MCP server process), which is a slow leak we don't
         # need — the cache only exists to bridge get_tasks → finalize.
         self._filtering_configs.pop(source_id, None)
+        # Same bound for the group-index memo, for the same reason.
+        self._group_indices.pop(source_id, None)
         # Same lifetime bound for the rate-limit bucket: submissions are done
         # once finalize commits, so the per-source timestamp deque is dead
         # weight from here on.

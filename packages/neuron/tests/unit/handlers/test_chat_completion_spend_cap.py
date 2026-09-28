@@ -209,3 +209,47 @@ async def test_run_chat_completion_records_spend_on_success(
     record.assert_called_once()
     # Second positional arg is the estimated input+output token total.
     assert record.call_args.args[1] > 0
+
+
+@pytest.mark.asyncio
+async def test_run_chat_completion_records_spend_when_the_loop_errors(
+    chat_service: ChatService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed turn records what it burned — the error arm used to return first.
+
+    The handler's only record call sat AFTER the ``error_occurred`` bail-out,
+    which returns, so a turn that ran tool iterations and then hit a stream
+    error recorded zero tokens and the next turn's cap guard read a counter
+    that had not moved. The CLI turn on this same shared loop records before
+    its error check (``cli/commands/chat.py``), pinned there by
+    ``test_run_chat_turn_raises_chat_turn_error_on_loop_error``.
+    """
+    tool_call = {"function": {"name": "search", "arguments": "{}"}, "id": "tc-1"}
+    provider = MagicMock()
+    provider.chat = AsyncMock(
+        side_effect=[
+            # A first call that spends tokens and asks for a tool…
+            _stream({"type": "done", "content": "Looking that up.", "tool_calls": [tool_call]}),
+            # …then the follow-up call fails. Everything above was still billed.
+            _stream({"type": "error", "error": "transient LLM outage"}),
+        ]
+    )
+    tool_executor = MagicMock()
+    tool_executor.execute_tool = AsyncMock(return_value={"hits": ["a result the LLM was sent"]})
+
+    _patch_streaming_seams(
+        monkeypatch,
+        setup_chat_providers=lambda *a, **k: (provider, tool_executor, [tool_call]),
+    )
+    monkeypatch.setattr(cc, "_spend_check", lambda settings: None)
+    record = MagicMock()
+    monkeypatch.setattr(cc, "_spend_record", record)
+
+    result = await cc._run_chat_completion(**_run_kwargs(chat_service))
+
+    # Spend is recorded even for a failed turn — tokens were consumed.
+    assert result["success"] is False
+    assert provider.chat.await_count == 2
+    record.assert_called_once()
+    # The tool result the second call was sent is part of what was billed.
+    assert record.call_args.args[1] > 0

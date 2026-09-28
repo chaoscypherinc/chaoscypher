@@ -28,7 +28,14 @@ def test_retired_keys_in_old_yaml_are_scrubbed(tmp_path: Path) -> None:
         "  ollama_num_ctx: 12345\n"
         "chat:\n"
         "  enable_response_validation: false\n"
-        "  max_tool_iterations: 7\n",
+        "  max_tool_iterations: 7\n"
+        # benchmark.vram_presets shipped in v0.4.3 telling operators to
+        # override tiers here, and was deleted from the schema in v0.5.0.
+        "benchmark:\n"
+        "  vram_presets:\n"
+        "    low_8gb:\n"
+        "      chat: phi4:14b\n"
+        "  reindex_node_batch_limit: 50000\n",
         encoding="utf-8",
     )
     settings = Settings.load_from_yaml(yaml_path)
@@ -36,9 +43,11 @@ def test_retired_keys_in_old_yaml_are_scrubbed(tmp_path: Path) -> None:
     assert not hasattr(settings.llm, "thinking_auto_detect")
     assert not hasattr(settings.llm, "chat_interactive_streaming")
     assert not hasattr(settings.chat, "enable_response_validation")
+    assert not hasattr(settings.benchmark, "vram_presets")
     # …while the surviving keys in the same sections still load.
     assert settings.llm.ollama_num_ctx == 12345
     assert settings.chat.max_tool_iterations == 7
+    assert settings.benchmark.reindex_node_batch_limit == 50000
 
 
 def test_nested_typo_in_app_local_group_raises(tmp_path: Path) -> None:

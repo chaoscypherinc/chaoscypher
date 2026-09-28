@@ -159,6 +159,30 @@ def relationship_count_pair(rec: dict[str, Any], args: dict[str, Any]) -> tuple[
     return ok, f"max relationships on one pair={worst} (max={hi})"
 
 
+def relationship_count_matching(rec: dict[str, Any], args: dict[str, Any]) -> tuple[bool, str]:
+    """Relationships whose BOTH endpoints match ``names`` lie within [min, max].
+
+    The name-scoped twin of ``relationship_count``, for the carrier tier: a
+    carrier splices the probe's passage into a real chunk that has its own
+    legitimate relationships, so the global count is dropped by
+    ``make_carrier_variants.py`` and a "these people stay unlinked"
+    instruction loses its only substantive check. Scoping the count to the
+    probe's own people survives the splice.
+    """
+    wanted = [str(n) for n in args.get("names", [])]
+    n = 0
+    for r in rec.get("relationships") or []:
+        source = _entity_by_index(rec, r.get("source"))
+        target = _entity_by_index(rec, r.get("target"))
+        if source is None or target is None:
+            continue
+        if _matches(source, wanted) and _matches(target, wanted):
+            n += 1
+    lo, hi = args.get("min", 0), args.get("max")
+    ok = n >= lo and (hi is None or n <= hi)
+    return ok, f"relationships among {wanted}={n} (min={lo}, max={hi})"
+
+
 def no_duplicate_relationships(rec: dict[str, Any], args: dict[str, Any]) -> tuple[bool, str]:
     """No (source, target, type) emitted more than ``max`` times.
 
@@ -582,6 +606,7 @@ class ProbeScorer:
         "property_count_per_entity": property_count_per_entity,
         "relationship_count": relationship_count,
         "relationship_count_pair": relationship_count_pair,
+        "relationship_count_matching": relationship_count_matching,
         "no_duplicate_relationships": no_duplicate_relationships,
         "no_invalid_relationship_indices": no_invalid_relationship_indices,
         "output_tokens_ratio": output_tokens_ratio,

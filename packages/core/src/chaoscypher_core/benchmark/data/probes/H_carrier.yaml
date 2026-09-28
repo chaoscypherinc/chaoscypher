@@ -498,6 +498,12 @@ probes:
 
     '
   checks:
+  - type: relationship_count_matching
+    names:
+    - Kutuzov
+    - Napoleon
+    - Alexander
+    max: 0
   - type: finish_stop
   - type: carrier_coverage
     min_fraction: 0.6
@@ -518,6 +524,12 @@ probes:
 
     '
   checks:
+  - type: relationship_count_matching
+    names:
+    - Nikolai Bolkonsky
+    - Andrei Bolkonsky
+    - Lise Bolkonskaya
+    max: 0
   - type: finish_stop
   - type: carrier_coverage
     min_fraction: 0.6

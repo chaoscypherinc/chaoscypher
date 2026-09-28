@@ -27,7 +27,7 @@ from chaoscypher_core.adapters.llm.utils import (
     convert_to_langchain_messages,
     format_tool_calls_response,
 )
-from chaoscypher_core.exceptions import LLMError, ToolCallingNotSupportedError
+from chaoscypher_core.exceptions import LLMError, LLMServiceError, ToolCallingNotSupportedError
 from chaoscypher_core.plugins.base import PluginMetadata
 
 
@@ -408,14 +408,33 @@ class OllamaProvider(BaseLLMProvider):
                 error_message=error_msg,
             )
 
-            if "connect" in error_msg.lower() or "connection" in error_msg.lower():
+            # Connection and timeout failures are transient (an Ollama
+            # restart, a busy GPU) — raise the retryable LLMServiceError the
+            # cloud providers raise for the same situation, so the queue's
+            # ``is_retryable`` classification retries the chunk instead of
+            # failing it permanently.
+            lowered = error_msg.lower()
+            if "connect" in lowered or "connection" in lowered:
                 docker_url = "http://host.docker.internal:11434"
                 msg = (
                     f"Cannot connect to Ollama at {self.base_url}. "
                     "Please ensure Ollama is running and accessible. "
                     f"If using Docker, try '{docker_url}'."
                 )
-                raise LLMError(msg) from e
+                raise LLMServiceError(
+                    provider="ollama",
+                    reason=msg,
+                    model=self.chat_model,
+                    details={"error_type": error_type},
+                ) from e
+            if isinstance(e, TimeoutError | httpx.TimeoutException) or "timed out" in lowered:
+                raise LLMServiceError(
+                    provider="ollama",
+                    reason=f"Request timed out [{error_type}]: {error_msg}",
+                    model=self.chat_model,
+                    is_timeout=True,
+                    details={"error_type": error_type},
+                ) from e
             msg = f"Ollama error [{error_type}]: {error_msg}"
             raise LLMError(msg) from e
 

@@ -100,6 +100,8 @@ def _fake_llm_settings(
         stream_chunk_timeout=30.0,
         ollama_health_check_timeout=5.0,
         ollama_recovery_delay=0.0,
+        seed=None,
+        llm_request_timeout=300.0,
         llm_reserved_interactive=0,
         llm_enable_priority=False,
         ollama_load_balancing=strategy,
@@ -529,3 +531,37 @@ class _AsyncCM:
 
 def _async_cm() -> _AsyncCM:
     return _AsyncCM()
+
+
+@pytest.mark.asyncio
+async def test_reload_config_forwards_seed_and_request_timeout() -> None:
+    """Each per-instance provider receives the determinism pin and the request
+    timeout from LLMSettings, exactly as the single-instance factory path
+    forwards them (2026-09 llm section audit: multi-instance setups silently
+    dropped both).
+    """
+    bal = _bare_balancer()
+    settings = _fake_llm_settings(instances=[_instance_obj(id="a", base_url="http://a:11434")])
+    settings.seed = 7
+    settings.llm_request_timeout = 123.0
+
+    provider_configs: list[dict[str, Any]] = []
+
+    def _record(cfg: dict[str, Any]) -> MagicMock:
+        provider_configs.append(cfg)
+        return MagicMock(name="provider")
+
+    with (
+        patch(
+            "chaoscypher_core.adapters.llm.providers.ollama_provider.OllamaProvider",
+            side_effect=_record,
+        ),
+        patch.object(lb_mod, "update_llm_semaphore_config", AsyncMock()),
+        patch.object(lb_mod, "PrioritySemaphore", side_effect=lambda **kw: _fake_semaphore()),
+    ):
+        await bal.reload_config(settings)
+
+    assert len(provider_configs) == 1
+    assert provider_configs[0]["seed"] == 7
+    assert provider_configs[0]["llm_request_timeout"] == 123.0
+    assert provider_configs[0]["base_url"] == "http://a:11434"
