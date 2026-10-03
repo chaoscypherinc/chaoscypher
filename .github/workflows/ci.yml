@@ -98,19 +98,24 @@ jobs:
           fi
 
   frontend:
-    name: Frontend
+    name: Frontend (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The supported floor (24, LTS to 2028-04) and the newest release.
+        node: ["24", "26"]
     defaults:
       run:
         working-directory: packages/interface
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js ${{ matrix.node }}
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: packages/interface/package-lock.json
 
@@ -159,10 +164,10 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: packages/interface/package-lock.json
 
@@ -199,10 +204,10 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 24
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6

@@ -487,19 +487,47 @@ def test_quality_counter_sites_audit() -> None:
 
     # __file__ = packages/cli/tests/test_*.py
     # parents[2] = packages/
-    core_root = Path(__file__).parents[2] / "core" / "src" / "chaoscypher_core"
+    packages_root = Path(__file__).parents[2]
+    core_root = packages_root / "core" / "src" / "chaoscypher_core"
     assert core_root.exists(), f"core source root not found at {core_root}"
 
-    def _count_increments(subdir: str) -> int:
-        root = core_root / subdir
+    def _count_under(root: Path) -> int:
         total = 0
         for p in root.rglob("*.py"):
             text = p.read_text(encoding="utf-8")
             total += len(re.findall(r"counter=QualityCounter\.\w+", text))
         return total
 
+    def _count_increments(subdir: str) -> int:
+        return _count_under(core_root / subdir)
+
     services_count = _count_increments("services")
     operations_count = _count_increments("operations")
+
+    # The CLI's OWN increment sites. Until 2026-09-29 this audit globbed
+    # `packages/core` only, so the CLI site that #651 added
+    # (`CLISourceProcessingService._record_integrity_counters`) was
+    # structurally invisible to the test that exists to notice counter-site
+    # changes — deleting it left this file's whole suite green. Behavioural
+    # cover for that site lives in
+    # `tests/unit/sources/test_integrity_counters_cli.py`; this baseline is
+    # the canary for the site simply disappearing.
+    # Counted by CALL SITE rather than by the `counter=QualityCounter.X`
+    # literal the core globs use: the CLI site builds its counter list first
+    # (`wanted.append(QualityCounter...)`) and then calls with `counter=counter`,
+    # so the core regex matches it zero times.
+    cli_root = packages_root / "cli" / "src" / "chaoscypher_cli"
+    assert cli_root.exists(), f"cli source root not found at {cli_root}"
+    cli_count = 0
+    for p in cli_root.rglob("*.py"):
+        cli_count += len(re.findall(r"increment_quality_counter\(", p.read_text(encoding="utf-8")))
+
+    assert cli_count >= 1, (
+        f"CLI-side counter call sites dropped to {cli_count} (expected >=1). "
+        "The CLI extraction path records truncation / loop-abort counters "
+        "directly; if that was retired, update this baseline and the "
+        "behavioural tests in tests/unit/sources/test_integrity_counters_cli.py."
+    )
 
     # CLI-reachable sites. Treat as a baseline — a real Bug 8 fix raises this.
     assert services_count >= 11, (

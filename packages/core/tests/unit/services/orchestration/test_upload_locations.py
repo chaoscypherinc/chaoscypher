@@ -66,3 +66,22 @@ def test_static_multi_interface_conf_carries_both_upload_locations(path: str) ->
     assert size is not None, path
     assert size.group(2) == "g", f"{path}: static cap is not in the gigabyte range"
     assert "include /etc/nginx/edge-auth-proxy.conf;" in block, path
+
+
+def _duplicate_exact_locations(text: str) -> list[str]:
+    paths = re.findall(r"^\s*location\s*=\s*(\S+)\s*\{", text, re.MULTILINE)
+    return sorted({p for p in paths if paths.count(p) > 1})
+
+
+def test_static_multi_interface_conf_has_no_duplicate_exact_locations() -> None:
+    """A duplicated exact-match location stops nginx from starting.
+
+    A 2026-09-28 merge left both upload blocks twice in the checked-in copy,
+    so the multi-container edge could not start.
+    """
+    assert _duplicate_exact_locations(_STATIC_CONF.read_text(encoding="utf-8")) == []
+
+
+@pytest.mark.parametrize("template_name", _TEMPLATES)
+def test_rendered_templates_have_no_duplicate_exact_locations(template_name: str) -> None:
+    assert _duplicate_exact_locations(render_template(template_name, Settings())) == []

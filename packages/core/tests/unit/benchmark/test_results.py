@@ -9,9 +9,12 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from chaoscypher_core.benchmark.results import (
     BENCHMARK_VERSION,
     BenchmarkResult,
+    current_app_version,
     dump_results,
     format_harness_settings,
     load_results,
@@ -75,12 +78,63 @@ def test_legacy_rows_load_as_pinned(tmp_path: Path) -> None:
     dump_results([_row()], path)
     payload = json.loads(path.read_text())
     for r in payload["results"]:
-        del r["pins_applied"], r["harness"], r["harness_settings"]
+        del r["pins_applied"], r["harness"], r["harness_settings"], r["app_version"]
     path.write_text(json.dumps(payload))
     (row,) = load_results(path)
     assert row.pins_applied is True
     assert row.harness is None
     assert row.harness_settings is None
+    # An unrecorded build stays unknown, not stamped with the reader's build.
+    assert row.app_version is None
+
+
+def test_new_rows_record_the_app_build(tmp_path: Path) -> None:
+    """A row is stamped with the build that made it, and the stamp round-trips."""
+    row = _row()
+    assert row.app_version == current_app_version()
+    path = tmp_path / "r.json"
+    dump_results([row], path)
+    assert load_results(path)[0].app_version == row.app_version
+
+
+@pytest.mark.parametrize(("status", "suffix"), [("", ""), (" M results.py", ".dirty")])
+def test_app_version_in_a_checkout_names_the_commit(
+    monkeypatch: Any, status: str, suffix: str
+) -> None:
+    """From a source checkout the stamp is version+g<sha>, marked .dirty when edited."""
+    import shutil
+    import subprocess
+
+    from chaoscypher_core import __version__
+
+    def fake_git(argv: list[str], **_k: Any) -> subprocess.CompletedProcess[str]:
+        out = "abc123def\n" if "rev-parse" in argv else status
+        return subprocess.CompletedProcess(argv, 0, stdout=out, stderr="")
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/git")
+    monkeypatch.setattr(subprocess, "run", fake_git)
+    current_app_version.cache_clear()
+    try:
+        assert current_app_version() == f"{__version__}+gabc123def{suffix}"
+    finally:
+        current_app_version.cache_clear()
+
+
+def test_app_version_falls_back_to_package_version_without_git(monkeypatch: Any) -> None:
+    """An installed wheel (no git, or not a checkout) records the package version alone."""
+    import subprocess
+
+    from chaoscypher_core import __version__
+
+    def no_git(*_a: Any, **_k: Any) -> None:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", no_git)
+    current_app_version.cache_clear()
+    try:
+        assert current_app_version() == __version__
+    finally:
+        current_app_version.cache_clear()
 
 
 def test_harness_settings_render_effort_and_thinking_first() -> None:

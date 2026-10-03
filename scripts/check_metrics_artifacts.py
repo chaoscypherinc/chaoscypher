@@ -29,10 +29,19 @@ pre-commit.
 
 No-ops when `internal/` is absent: the private tree is stripped from the
 public export, where this script still ships and runs.
+
+Target resolution (2026-09-29): the checked tree defaults to the checkout
+this script lives in. A routine that ran it from a worktree of the metrics
+branch silently checked the MAIN checkout's files and printed the same OK, so
+`--root PATH` names the checkout to check, and every run prints the absolute
+directory it actually checked -- a wrong target is visible in the output.
+
+Usage:  python scripts/check_metrics_artifacts.py [--root PATH]
 """
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -41,7 +50,8 @@ from typing import Any
 import yaml
 
 
-_METRICS_DIR = Path(__file__).resolve().parent.parent / "internal" / "metrics"
+_DEFAULT_ROOT = Path(__file__).resolve().parent.parent
+_METRICS_SUBPATH = Path("internal") / "metrics"
 _CHECKED_SUFFIXES = (".md", ".yaml", ".yml")
 
 # The collector stamps guardrail-10 self-metering into these files. When a run
@@ -64,8 +74,11 @@ _PLACEHOLDER_PATTERNS = (
 
 
 class _DuplicateKeyLoader(yaml.SafeLoader):
-    """SafeLoader that rejects duplicate mapping keys instead of silently
-    keeping the last one (the 2026-07-23 `collection_gaps` defect)."""
+    """SafeLoader that rejects duplicate mapping keys.
+
+    It reports them instead of silently keeping the last one (the 2026-07-23
+    `collection_gaps` defect).
+    """
 
 
 def _no_duplicate_keys(loader: _DuplicateKeyLoader, node: Any) -> dict[Any, Any]:
@@ -124,28 +137,37 @@ def _check_file(path: Path) -> list[str]:
             # tags are still rejected -- this is as safe as `safe_load`, which
             # cannot be used here because it silently keeps the last of a
             # duplicated key rather than reporting it.
-            yaml.load(text, Loader=_DuplicateKeyLoader)
+            yaml.load(text, Loader=_DuplicateKeyLoader)  # noqa: S506 -- SafeLoader subclass
         except yaml.YAMLError as exc:
             problems.append(f"{path}: does not parse -- {exc}")
 
     return problems
 
 
-def main() -> int:
-    if not _METRICS_DIR.is_dir():
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=_DEFAULT_ROOT,
+        help="checkout whose metrics tree to check (default: the one holding this script)",
+    )
+    args = parser.parse_args(argv)
+    metrics_dir = (args.root / _METRICS_SUBPATH).resolve()
+    if not metrics_dir.is_dir():
         # Public export: internal/ is stripped. Nothing to check.
-        print("check_metrics_artifacts: internal/metrics absent, skipped")
+        print(f"check_metrics_artifacts: {metrics_dir} absent, skipped")
         return 0
 
     problems: list[str] = []
     checked = 0
-    for path in sorted(_METRICS_DIR.rglob("*")):
+    for path in sorted(metrics_dir.rglob("*")):
         if path.is_file() and path.suffix in _CHECKED_SUFFIXES:
             checked += 1
             problems.extend(_check_file(path))
 
     if problems:
-        print("Malformed cc-metrics-collector artifact(s):\n", flush=True)
+        print(f"Malformed cc-metrics-collector artifact(s) in {metrics_dir}:\n", flush=True)
         for problem in problems:
             print(f"  {problem}", flush=True)
         print(
@@ -155,7 +177,7 @@ def main() -> int:
         )
         return 1
 
-    print(f"check_metrics_artifacts: OK ({checked} artifact files checked)")
+    print(f"check_metrics_artifacts: OK ({checked} artifact files checked in {metrics_dir})")
     return 0
 
 

@@ -10,18 +10,58 @@ the MCP benchmark bridge - writes the same file the leaderboard reads.
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from functools import cache
+from pathlib import Path
+from typing import Any
 
 from chaoscypher_core.benchmark.types import ScoreResult
 
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
 BENCHMARK_VERSION = "2.0"
+
+
+@cache
+def current_app_version() -> str:
+    """The ChaosCypher build that produced a row: package version plus git commit.
+
+    The package version alone does not pin a build - every commit between two
+    releases reports the same one - so a source checkout appends ``+g<sha>``
+    and ``.dirty`` when the tree has uncommitted changes (PEP 440 local label).
+    An installed wheel, or a checkout git cannot read, gives the version alone.
+    """
+    from chaoscypher_core import __version__
+
+    git = shutil.which("git")
+    if git is None:
+        return __version__
+    repo = Path(__file__).resolve().parent
+    try:
+        sha = subprocess.run(  # noqa: S603 - fixed git argv, no user input
+            [git, "rev-parse", "--short=9", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+        dirty = subprocess.run(  # noqa: S603
+            [git, "status", "--porcelain", "--untracked-files=no"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=5,
+        ).stdout.strip()
+    except OSError, subprocess.SubprocessError:
+        return __version__
+    if not sha:
+        return __version__
+    return f"{__version__}+g{sha}" + (".dirty" if dirty else "")
+
 
 _ALLOWED_TOP_LEVEL_KEYS = {"results", "schema_version"}
 _RESULTS_SCHEMA_VERSION = 1
@@ -75,6 +115,9 @@ class BenchmarkResult:
     """What the harness reported about its own settings - effort, thinking
     mode, client version - since any of them can move the score. None when
     the benchmark ran the model itself or the harness reported nothing."""
+    app_version: str | None = field(default_factory=current_app_version)
+    """The ChaosCypher build the row was measured on (see
+    :func:`current_app_version`). None on rows written before it was recorded."""
 
 
 HARNESS_SETTINGS_LEAD = ("effort", "thinking")
@@ -129,6 +172,9 @@ def _result_from_jsonable(d: dict[str, Any]) -> BenchmarkResult:
     payload.setdefault("pins_applied", True)
     payload.setdefault("harness", None)
     payload.setdefault("harness_settings", None)
+    # Rows written before 2026-10-01 did not record the build; None says
+    # "unknown" rather than stamping them with whatever build reads them.
+    payload.setdefault("app_version", None)
     return BenchmarkResult(**payload)
 
 

@@ -285,6 +285,12 @@ uv run python scripts/benchmark/run_mcp_suite.py --suite chat \
   --label "Sonnet 5 via Claude Code"
 ```
 
+A complete leaderboard row takes three suites with the same `--model`:
+`chat`, `probes` (the isolated probes, sections A-E) and `probes-carrier`
+(the same instructions inside production-size chunks, section H), or
+`probes-all` in place of the last two. A row without a carrier run shows no
+"in chunks" score, and that column is two thirds of the extraction score.
+
 A row produced this way is a **harness track** row. The benchmark cannot
 pin the client's temperature, seed or thinking, and the model name is
 whatever the client reports. The row records `pins_applied: false` and

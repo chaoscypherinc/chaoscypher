@@ -44,7 +44,7 @@ automatically.
 
 ## Development setup
 
-Prerequisites: Docker, Make, Python 3.14+, Node.js 22+, **uv 0.11+**.
+Prerequisites: Docker, Make, Python 3.14+, Node.js 24+, **uv 0.11+**.
 
 uv replaces pip for dependency management — it manages the workspace `.venv`
 and resolves the committed `uv.lock`. Install it via the official standalone

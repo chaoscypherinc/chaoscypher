@@ -78,12 +78,15 @@ repos:
         # the no-internal-refs guard forbids naming private subdirs here.
         # Raw benchmark runs (run-benchmark.md) carry every model response and
         # weigh 1-30 MB each; they are private and must stay rescorable.
+        # Benchmark reference graphs (a ~13 MB SQLite snapshot each) are the
+        # graph every grounded-chat row was scored on; also private.
         exclude: >-
           (?x)^(
             packages/docs/static/img/demo\.gif|
             packages/docs/static/video/demo\.webm|
             internal/[^/]+/assets/demo/demo\.mp4|
-            internal/[^/]+/runs/\d{4}-\d{2}-\d{2}-[^/]+\.json
+            internal/[^/]+/runs/\d{4}-\d{2}-\d{2}-[^/]+\.json|
+            internal/[^/]+/reference/[^/]+/app\.db
           )$
       - id: check-merge-conflict
         name: check for merge conflicts

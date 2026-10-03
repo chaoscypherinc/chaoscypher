@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import event, inspect
 
 
 if TYPE_CHECKING:
@@ -39,13 +41,52 @@ def test_complete_extraction_writes_status_and_flag_atomically(
         }
     )
 
-    in_memory_adapter.complete_extraction(
-        source_id=source_id,
-        entities=[],
-        relationships=[],
-        forced_domain=None,
-        detected_domain="technical",
-    )
+    # Capture every UPDATE against the sources table issued during the call.
+    # A split-commit refactor necessarily issues more than one UPDATE (one per
+    # flush), so pinning "exactly one UPDATE carrying all three columns" is
+    # what actually exercises the atomic-write contract — the end-state
+    # asserts below hold identically whether the writes are split or not.
+    source_updates: list[str] = []
+    assert in_memory_adapter.session is not None
+    engine = in_memory_adapter.session.get_bind()
+    table = SourceRow.__tablename__
+
+    def _capture(
+        _conn: Any,
+        _cursor: Any,
+        statement: str,
+        _params: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        normalized = " ".join(statement.split())
+        if normalized.upper().startswith(f"UPDATE {table.upper()} "):
+            source_updates.append(normalized)
+
+    event.listen(engine, "before_cursor_execute", _capture)
+    try:
+        in_memory_adapter.complete_extraction(
+            source_id=source_id,
+            entities=[],
+            relationships=[],
+            forced_domain=None,
+            detected_domain="technical",
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", _capture)
+
+    assert len(source_updates) == 1, source_updates
+    (update_sql,) = source_updates
+    set_clause = update_sql.split(" SET ", 1)[1].split(" WHERE ", 1)[0]
+    set_columns = {part.split("=", 1)[0].strip() for part in set_clause.split(",")}
+    # Map ORM attribute names to their DB column names (``status`` is stored
+    # as ``processing_status``).
+    mapper_columns = inspect(SourceRow).columns
+    expected = {
+        mapper_columns[attr].name
+        for attr in ("status", "extraction_complete", "extraction_completed_at")
+    }
+    assert expected <= set_columns, update_sql
 
     in_memory_adapter.session.expire_all()
     row = in_memory_adapter.session.get(SourceRow, source_id)

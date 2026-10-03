@@ -215,7 +215,7 @@ after a one-time model download).
 ### Development setup (with hot-reload)
 
 For contributors who need per-service hot-reload (requires Python 3.14+,
-Node.js 22+, and [uv](https://docs.astral.sh/uv/) 0.11+ — uv replaces pip and
+Node.js 24+, and [uv](https://docs.astral.sh/uv/) 0.11+ — uv replaces pip and
 reads the committed `uv.lock`):
 
 ```bash

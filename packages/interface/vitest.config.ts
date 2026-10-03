@@ -9,6 +9,11 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    // Node 25+ ships a global `localStorage` (Web Storage) that is undefined-backed
+    // unless `--localstorage-file` is given, and it shadows jsdom's, so tests that
+    // touch storage throw. Turning it off lets jsdom's apply; on Node 22-24, where
+    // it is opt-in, the flag is a no-op.
+    execArgv: ['--no-experimental-webstorage'],
     // MUI's ESM build (@mui/material/internal/Transition.mjs from v9.1.1) does a
     // bare directory import of react-transition-group/TransitionGroupContext that
     // Node's native ESM resolver rejects under vitest. Inlining both packages

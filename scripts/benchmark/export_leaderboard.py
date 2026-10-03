@@ -107,6 +107,7 @@ def _suite_rows(paths: list[Path] | None, keep: Any) -> dict[str, dict[str, Any]
             "pins_applied": row.pins_applied,
             "harness": row.harness,
             "harness_settings": row.harness_settings,
+            "app_version": row.app_version,
             "model_label": row.model_label,
             "verdicts": verdicts,
         }
@@ -248,6 +249,7 @@ def main() -> None:
                 {
                     "harness": row.harness,
                     "harness_settings": row.harness_settings,
+                    "app_version": row.app_version,
                     "pins_applied": row.pins_applied,
                     "model_label": row.model_label,
                 }
@@ -284,6 +286,9 @@ def main() -> None:
         model["harness_settings"] = next(
             (m["harness_settings"] for m in measured if m["harness_settings"]), None
         )
+        # The ChaosCypher builds the scores were measured on; empty for runs
+        # from before builds were recorded.
+        model["app_versions"] = sorted({m["app_version"] for m in measured if m.get("app_version")})
         models.append(model)
     for model in models:
         model["notes"] = _notes(model)
@@ -357,6 +362,7 @@ def _slim(model: dict[str, Any]) -> dict[str, Any]:
         "notes": model["notes"],
         "pins_applied": model["pins_applied"],
         "harness": model["harness"],
+        "app_versions": model["app_versions"],
     }
 
 

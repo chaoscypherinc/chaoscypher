@@ -165,3 +165,44 @@ def test_main_exit_codes(tmp_path: Path, capsys) -> None:
     assert "b.png" in capsys.readouterr().out
     (repo / "packages" / "docs" / "static" / "img" / "screenshots" / "b.png").unlink()
     assert _GATE.main(["--root", str(repo)]) == 0
+
+
+def test_json_counts_match_the_board_shape(tmp_path: Path, capsys) -> None:
+    rows = (
+        _row("a.png", "ok")
+        + _row("b.png", "broken: error card")
+        + _row("c.png", "docs-only: clipped title")
+        + _row("d.png", "ok", verified="2026-06-30")  # 91 days before --now: stale
+        + _row("e.png", "ok", verified="2026-07-01")  # exactly 90 days: not stale
+        + _row("f.png", "ok", verified="n/a")  # no verified date: stale
+    )
+    repo = _repo(tmp_path, rows, shots=("a.png", "b.png", "c.png", "d.png", "e.png", "f.png"))
+    # A broken reference would fail the gate; --json still exits 0.
+    _doc(repo, "packages/docs/docs/page.md", "![x](/img/screenshots/b.png)\n")
+    assert _GATE.main(["--root", str(repo), "--json", "--now", "2026-09-29T12:00:00Z"]) == 0
+    out = capsys.readouterr().out
+    assert out == (
+        "{\n"
+        '  "media_library": {\n'
+        '    "rows_total": 6,\n'
+        '    "not_ok": 2,\n'
+        '    "broken": 1,\n'
+        '    "docs_only": 1,\n'
+        '    "stale_over_90d": 2\n'
+        "  }\n"
+        "}\n"
+    )
+
+
+def test_json_without_manifest_reports_unavailable(tmp_path: Path, capsys) -> None:
+    repo = _repo(tmp_path, manifest_rows=None)
+    assert _GATE.main(["--root", str(repo), "--json"]) == 0
+    assert '"unavailable": "no manifest at ' in capsys.readouterr().out
+
+
+def test_now_moves_the_stale_warning(tmp_path: Path, capsys) -> None:
+    repo = _repo(tmp_path, _row("a.png", "ok", verified="2026-06-01"))
+    assert _GATE.main(["--root", str(repo), "--now", "2026-08-01T00:00:00Z"]) == 0
+    assert "warning" not in capsys.readouterr().out
+    assert _GATE.main(["--root", str(repo), "--now", "2026-09-29T00:00:00Z"]) == 0
+    assert "verified 120 days ago" in capsys.readouterr().out

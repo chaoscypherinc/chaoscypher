@@ -26,19 +26,101 @@ def _probe(pid, tier, checks, section="E"):
     )
 
 
-def test_only_filter_restricts_probe_selection() -> None:
-    """`only` was shipped without a test (review note on #655)."""
+def _stub_run_context(monkeypatch, ds):
+    """Neutralise everything ``ProbeDataset.run`` needs except the filter.
+
+    ``run`` defers its imports, so each one is patched at its source module.
+    Returns the list ``_run_probe`` appends the probe ids it is handed to.
+    """
+    from types import SimpleNamespace
+
+    from chaoscypher_cli.benchmark import extraction_dataset as ed_mod
+    from chaoscypher_core.services.sources.engine.extraction import orchestration as orch_mod
+    from chaoscypher_core.services.sources.engine.extraction.domains import factory as factory_mod
+    from chaoscypher_core.services.sources.engine.extraction.utils import ai_entities as ai_mod
+
+    settings = SimpleNamespace(
+        llm=SimpleNamespace(extraction_examples_enabled=False, extraction_examples_max_chars=0)
+    )
+    ctx = SimpleNamespace(settings=settings, database_name="db")
+
+    monkeypatch.setattr(
+        ed_mod.ExtractionDataset, "_build_temp_context", lambda self, model: ctx, raising=True
+    )
+    monkeypatch.setattr(
+        factory_mod,
+        "get_domain_registry",
+        lambda s, d: SimpleNamespace(get_domain=lambda name: SimpleNamespace(name=name)),
+    )
+    monkeypatch.setattr(
+        orch_mod,
+        "format_extraction_templates",
+        lambda *a, **kw: {"node_templates": "", "edge_templates": ""},
+    )
+    monkeypatch.setattr(ai_mod, "AIEntityExtractor", lambda settings: SimpleNamespace())
+    monkeypatch.setattr(ds, "_teardown", lambda ctx: None)
+
+    ran: list[str] = []
+
+    async def fake_run_probe(probe, extractor, templates, model):
+        ran.append(probe.id)
+        return {"latency_ms": 1, "input_tokens": 0, "output_tokens": 0}
+
+    monkeypatch.setattr(ds, "_run_probe", fake_run_probe)
+    return ran
+
+
+def _probe_dataset(only):
     from chaoscypher_cli.benchmark.probe_dataset import ProbeDataset
 
-    probes = [
-        _probe("A-easy", "easy", [{"type": "finish_stop"}]),
-        _probe("B-easy", "easy", [{"type": "finish_stop"}]),
-    ]
-    ds = ProbeDataset(
-        id="p", version="1", domain="literary", probes=probes, only=frozenset({"B-easy"})
+    return ProbeDataset(
+        id="p",
+        version="1",
+        domain="literary",
+        probes=[
+            _probe("A-easy", "easy", [{"type": "finish_stop"}]),
+            _probe("B-easy", "easy", [{"type": "finish_stop"}]),
+        ],
+        only=only,
     )
-    selected = [p for p in ds.probes if ds.only is None or p.id in ds.only]
-    assert [p.id for p in selected] == ["B-easy"]
+
+
+@pytest.mark.asyncio
+async def test_only_filter_restricts_probe_selection(monkeypatch) -> None:
+    """`only` was shipped without a test (review note on #655).
+
+    Drives ``run()`` so the production filter at probe_dataset.py:144 is the
+    code under test. The previous version of this test evaluated a copy of
+    that comprehension in its own body, so replacing the production line with
+    ``list(self.probes)`` left it green.
+    """
+    from types import SimpleNamespace
+
+    ds = _probe_dataset(frozenset({"B-easy"}))
+    ran = _stub_run_context(monkeypatch, ds)
+    model = SimpleNamespace(provider="openai", model="m", model_id="openai/m", label="m")
+
+    out = await ds.run(model)
+
+    assert out.error is None, out.error
+    assert ran == ["B-easy"], "only the selected probe may reach the extractor"
+    assert out.extras["selected_ids"] == ["B-easy"]
+
+
+@pytest.mark.asyncio
+async def test_only_unset_runs_every_probe(monkeypatch) -> None:
+    """The ``only is None`` arm of the same filter, and its selected_ids stamp."""
+    from types import SimpleNamespace
+
+    ds = _probe_dataset(None)
+    ran = _stub_run_context(monkeypatch, ds)
+    model = SimpleNamespace(provider="openai", model="m", model_id="openai/m", label="m")
+
+    out = await ds.run(model)
+
+    assert out.error is None, out.error
+    assert ran == ["A-easy", "B-easy"]
+    assert out.extras["selected_ids"] == ["A-easy", "B-easy"]
 
 
 @pytest.mark.asyncio

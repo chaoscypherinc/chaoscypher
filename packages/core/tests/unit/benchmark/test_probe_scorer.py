@@ -276,6 +276,24 @@ def test_rel_refs_contain_both_endpoints() -> None:
     assert probe_checks.rel_refs_contain_both(rec, {})[0]
 
 
+def test_citation_checks_fold_accents_in_the_source_text() -> None:
+    """The carrier chunks are Tolstoy's accented text; a name written without the accents still matches.
+
+    Names were accent-folded but sentences only lowercased, so "Novosiltsev"
+    citing "...Novosíltsev got no answer..." failed (Opus 5.5, B2-easy-carrier).
+    """
+    rec = _rec(
+        sentences=["Novosíltsev got no answer from Rostóv.", "The rain fell."],
+        entities=[_ent("Novosiltsev", aliases=["Novosíltsev"]), _ent("Rostov")],
+        relationships=[_rel(0, 1, "interacts_with", ref="S1")],
+    )
+    assert probe_checks.refs_name_entity(rec, {})[0]
+    assert probe_checks.rel_refs_contain_both(rec, {})[0]
+    # Still a fail when the cited sentence really does not name the entity.
+    rec["entities"][1]["sent_ref"] = "S2"
+    assert not probe_checks.refs_name_entity(rec, {})[0]
+
+
 def test_relationship_type_absent_and_present_are_substring_matches() -> None:
     rec = _rec(relationships=[_rel(0, 1, "grandparent_of")])
     assert not probe_checks.relationship_type_absent(rec, {"types": ["grandparent"]})[0]
@@ -344,6 +362,35 @@ def test_property_values_accept_faithful_paraphrase_but_not_world_knowledge() ->
     assert (
         "emperor" in why and "age=16" not in why and "singing" not in why and "commander" not in why
     )
+
+
+def test_property_values_majority_rule_grades_compound_values() -> None:
+    """Compound values are graded by the fraction of supported tokens (>= 0.6).
+
+    Single-token values only ever produce a ratio of 0 or 1, so they cannot
+    distinguish the majority rule from "any token" or "every token". Here
+    "blue", "silk" and "grey" trace to the passage; "gown", "cloak",
+    "velvet" and "crimson" do not.
+    """
+    e = _ent(
+        "Natasha",
+        props={
+            "two_of_three": "blue silk gown",  # 0.67 -> supported
+            "three_of_five": "blue silk grey velvet cloak",  # exactly 0.6 -> supported
+            "one_of_two": "silk cloak",  # 0.5 -> unsupported
+            "one_of_three": "crimson velvet silk",  # 0.33 -> unsupported
+        },
+    )
+    rec = _rec(
+        entities=[e],
+        sentences=["Natasha wore a blue silk dress.", "She rode a grey horse."],
+    )
+    ok, why = probe_checks.property_values_from_text(rec, {})
+    assert not ok
+    assert "Natasha.one_of_two=" in why
+    assert "Natasha.one_of_three=" in why
+    assert "two_of_three" not in why
+    assert "three_of_five" not in why
 
 
 def test_relationship_type_absent_ignores_negated_types() -> None:

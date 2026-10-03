@@ -135,6 +135,9 @@ _STEPS: dict[str, list[Command] | str] = {
         ("npm run test:coverage -- --run", INTERFACE),
     ],
     "docker-test": [
+        # Ours, not the daemon's: a root-owned dir is unwritable for the
+        # container's uid-1000 user (same step as `make docker-test`).
+        ("mkdir -p packages/docker/test-output", None),
         (
             "docker compose -f docker-compose.yml run --rm test make test-cov-internal",
             "packages/docker/test",

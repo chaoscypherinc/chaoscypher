@@ -25,12 +25,26 @@ routines' own sweep runs it; pre-commit alone is not enough in the sandbox.
 
 No-ops when the manifest is absent: the private tree is stripped from the
 public export, where this script still ships.
+
+``--json`` (2026-09-29) is a metering mode for the metrics collector's media
+row: it prints the manifest's row counts as one JSON object and always exits
+0 instead of running the gate. Keys and order are the ``media_library`` block
+the collector already publishes on its scoreboard (``rows_total``,
+``not_ok``, ``broken``, ``docs_only``, ``stale_over_90d``); ``not_ok`` is every
+row whose verdict is not exactly ``ok`` (so it also catches a malformed
+verdict), and ``stale_over_90d`` is every row whose ``verified`` date is more
+than 90 days before ``--now``, or that has no ``verified`` date -- the same two
+cases the gate warns "view it again" on.
+
+Usage:  python scripts/check_media_manifest.py [--root PATH]
+        python scripts/check_media_manifest.py --json [--root PATH] [--now ISO-UTC]
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import re
 import sys
 from collections.abc import Iterator
@@ -132,7 +146,7 @@ def find_problems(repo_root: Path, today: dt.date | None = None) -> tuple[list[s
     for path in _iter_reference_files(repo_root, manifest):
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError, UnicodeDecodeError:
+        except (OSError, UnicodeDecodeError):
             continue
         rel = path.relative_to(repo_root).as_posix()
         for name in sorted(set(_REF.findall(text))):
@@ -150,13 +164,60 @@ def find_problems(repo_root: Path, today: dt.date | None = None) -> tuple[list[s
     return errors, warnings
 
 
+def media_counts(repo_root: Path, today: dt.date) -> dict[str, object]:
+    """Return the collector's ``media_library`` counts, keys in board order."""
+    manifest = repo_root / _MANIFEST
+    if not manifest.is_file():
+        return {"unavailable": f"no manifest at {manifest.resolve()}"}
+    rows = parse_manifest(manifest.read_text(encoding="utf-8"))
+    verdicts = [verdict for verdict, _ in rows.values()]
+    stale = 0
+    for _, verified in rows.values():
+        if verified is None or (today - dt.date.fromisoformat(verified)).days > _STALE_AFTER_DAYS:
+            stale += 1
+    return {
+        "rows_total": len(rows),
+        "not_ok": sum(1 for v in verdicts if v != "ok"),
+        "broken": sum(1 for v in verdicts if v.startswith("broken")),
+        "docs_only": sum(1 for v in verdicts if v.startswith("docs-only")),
+        "stale_over_90d": stale,
+    }
+
+
+def _parse_now(value: str) -> dt.date:
+    try:
+        return dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(dt.UTC).date()
+    except ValueError as exc:
+        msg = f"--now must be ISO-8601 UTC, got {value!r}"
+        raise argparse.ArgumentTypeError(msg) from exc
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--root", type=Path, default=Path(__file__).resolve().parent.parent, help="repo root"
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the media_library counts as JSON and exit 0 (no gate)",
+    )
+    parser.add_argument(
+        "--now",
+        type=_parse_now,
+        default=None,
+        help="reference time for staleness, ISO-8601 UTC (default: now)",
+    )
     args = parser.parse_args(argv)
-    errors, warnings = find_problems(args.root)
+    today = args.now or dt.datetime.now(tz=dt.UTC).date()
+    if args.json:
+        try:
+            counts = media_counts(args.root, today)
+        except (OSError, UnicodeDecodeError, ValueError) as exc:  # metering never raises
+            counts = {"unavailable": f"{type(exc).__name__}: {exc}"}
+        print(json.dumps({"media_library": counts}, indent=2))
+        return 0
+    errors, warnings = find_problems(args.root, today)
     for w in warnings:
         print(f"check_media_manifest: warning: {w}")
     for e in errors:

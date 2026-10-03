@@ -127,6 +127,9 @@ typecheck:
 
 docker-test:
 	@echo "=== Running Tests in Docker (isolated) ==="
+	@# Created here so it is ours: left to the daemon it is made root-owned and the
+	@# container's appuser (uid 1000) cannot write the coverage report into it.
+	mkdir -p packages/docker/test-output
 	cd packages/docker/test && docker compose -f docker-compose.yml run --rm test make test-cov-internal
 	cd packages/docker/test && docker compose -f docker-compose.yml down
 	@echo ""

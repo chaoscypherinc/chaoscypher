@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-28",
+ "generated": "2026-10-01",
  "thinking": "off",
  "chat_thinking": "on",
  "vram_headroom_gb": 4,
@@ -1038,6 +1038,260 @@
  ],
  "models": [
   {
+   "id": "mcp/claude-code/claude-opus-5-5",
+   "label": "Opus 5.5 via Claude Code",
+   "vram_gb": null,
+   "license": null,
+   "open_weight": null,
+   "tools": null,
+   "native": {
+    "passed": 58,
+    "total": 65,
+    "p50_ms": 0,
+    "minutes": 0.0,
+    "output_tokens": 33215,
+    "truncated": 0,
+    "aborted": 0,
+    "thinking_honoured": null,
+    "pins_applied": false,
+    "harness": "mcp:claude-code",
+    "harness_settings": {
+     "effort": "high",
+     "client_version": "2.1.286",
+     "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+     "thinking": "adaptive"
+    },
+    "app_version": "0.5.0+g9fabab5c3",
+    "model_label": "Opus 5.5 via Claude Code",
+    "verdicts": {
+     "A1-easy": true,
+     "A1-hard": true,
+     "A2-easy": true,
+     "A2-hard": true,
+     "A4-easy": true,
+     "A4-hard": true,
+     "A5-easy": true,
+     "A5-hard": true,
+     "A6-easy": true,
+     "A6-hard": true,
+     "B1-easy": true,
+     "B1-hard": true,
+     "B2-easy": true,
+     "B2-hard": true,
+     "B3-easy": false,
+     "B3-hard": true,
+     "B4-easy": true,
+     "B4-hard": true,
+     "B5-easy": false,
+     "B5-hard": true,
+     "C1-easy": true,
+     "C1-hard": false,
+     "C2-easy": true,
+     "C2-hard": true,
+     "C3-easy": false,
+     "C3-hard": false,
+     "C4-easy": true,
+     "C4-hard": true,
+     "C5-easy": true,
+     "C5-hard": true,
+     "C6-easy": true,
+     "C6-hard": true,
+     "C7-easy": true,
+     "C7-hard": false,
+     "C8-easy": true,
+     "C8-hard": true,
+     "C9-easy": true,
+     "C9-hard": true,
+     "D1-easy": true,
+     "D1-hard": true,
+     "D2-easy": true,
+     "D2-hard": true,
+     "D3-easy": true,
+     "D3-hard": true,
+     "D4-easy": true,
+     "D4-hard": true,
+     "D5-easy": true,
+     "D5-hard": true,
+     "D6-easy": true,
+     "D6-hard": true,
+     "E1-easy": true,
+     "E1-hard": true,
+     "E2-easy": true,
+     "E2-hard": true,
+     "E3-easy": true,
+     "E3-hard": true,
+     "E4-easy": true,
+     "E4-hard": true,
+     "E5-easy": true,
+     "E5-hard": true,
+     "E6-easy": true,
+     "E7-easy": true,
+     "E7-hard": false,
+     "E8-easy": true,
+     "E8-hard": true
+    }
+   },
+   "carrier": {
+    "passed": 16,
+    "total": 21,
+    "p50_ms": 0,
+    "minutes": 0.0,
+    "output_tokens": 37843,
+    "truncated": 0,
+    "aborted": 0,
+    "thinking_honoured": null,
+    "pins_applied": false,
+    "harness": "mcp:claude-code",
+    "harness_settings": {
+     "effort": "high",
+     "client_version": "2.1.286",
+     "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+     "thinking": "adaptive"
+    },
+    "app_version": "0.5.0+g9fabab5c3",
+    "model_label": "Opus 5.5 via Claude Code",
+    "verdicts": {
+     "A1-easy-carrier": true,
+     "B2-easy-carrier": true,
+     "B4-easy-carrier": false,
+     "B5-easy-carrier": false,
+     "B5-hard-carrier": false,
+     "C1-easy-carrier": true,
+     "C1-hard-carrier": false,
+     "C2-easy-carrier": true,
+     "C3-hard-carrier": false,
+     "C4-easy-carrier": true,
+     "C8-hard-carrier": true,
+     "C9-easy-carrier": true,
+     "D1-easy-carrier": true,
+     "D2-easy-carrier": true,
+     "D3-easy-carrier": true,
+     "D6-easy-carrier": true,
+     "D6-hard-carrier": true,
+     "E1-easy-carrier": true,
+     "E4-easy-carrier": true,
+     "E7-easy-carrier": true,
+     "E7-hard-carrier": true
+    }
+   },
+   "chat": {
+    "passed": 69,
+    "total": 80,
+    "pct": 86.2,
+    "minutes": 0.0,
+    "truncated": 0,
+    "timed_out": false,
+    "thinking": null,
+    "unsupported_names": 0,
+    "verdicts": {
+     "q001": true,
+     "q002": true,
+     "q003": true,
+     "q004": true,
+     "q005": true,
+     "q006": true,
+     "q007": true,
+     "q008": true,
+     "q009": true,
+     "q010": true,
+     "q011": true,
+     "q012": true,
+     "q013": true,
+     "q014": true,
+     "q015": true,
+     "q016": true,
+     "q017": true,
+     "q018": true,
+     "q019": true,
+     "q020": true,
+     "q021": true,
+     "q022": false,
+     "q023": false,
+     "q024": true,
+     "q025": true,
+     "q026": false,
+     "q027": true,
+     "q028": true,
+     "q029": true,
+     "q030": false,
+     "q031": true,
+     "q032": false,
+     "q033": true,
+     "q034": true,
+     "q035": true,
+     "q036": false,
+     "q037": false,
+     "q038": false,
+     "q039": false,
+     "q040": false,
+     "q041": true,
+     "q042": true,
+     "q043": false,
+     "q044": true,
+     "q045": true,
+     "q046": true,
+     "q047": true,
+     "q048": true,
+     "q049": true,
+     "q050": true,
+     "q051": true,
+     "q052": true,
+     "q053": true,
+     "q054": true,
+     "q055": true,
+     "q056": true,
+     "q057": true,
+     "q058": true,
+     "q059": true,
+     "q060": true,
+     "q061": true,
+     "q062": true,
+     "q063": true,
+     "q064": true,
+     "q065": true,
+     "q066": true,
+     "q067": true,
+     "q068": true,
+     "q069": true,
+     "q070": true,
+     "q071": true,
+     "q072": true,
+     "q073": true,
+     "q074": true,
+     "q075": true,
+     "q076": true,
+     "q077": true,
+     "q078": true,
+     "q079": true,
+     "q080": true
+    }
+   },
+   "pins_applied": false,
+   "harness": "mcp:claude-code",
+   "harness_settings": {
+    "effort": "high",
+    "client_version": "2.1.286",
+    "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+    "thinking": "adaptive"
+   },
+   "app_versions": [
+    "0.5.0+g9fabab5c3"
+   ],
+   "notes": [
+    "harness: mcp:claude-code",
+    "effort high",
+    "thinking adaptive",
+    "client_version 2.1.286",
+    "isolation one session per task, two tools allowed, empty cwd, own MCP config only",
+    "pins not applied"
+   ],
+   "scores": {
+    "extraction": 80.5,
+    "chat": 86.2,
+    "overall": 82.8
+   }
+  },
+  {
    "id": "mcp/claude-code/claude-sonnet-5",
    "label": "Sonnet 5 via Claude Code",
    "vram_gb": null,
@@ -1058,6 +1312,7 @@
     "harness_settings": {
      "effort": "high"
     },
+    "app_version": null,
     "model_label": "Sonnet 5 via Claude Code",
     "verdicts": {
      "A1-easy": true,
@@ -1141,6 +1396,7 @@
     "harness_settings": {
      "effort": "high"
     },
+    "app_version": null,
     "model_label": "Sonnet 5 via Claude Code",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -1263,6 +1519,7 @@
    "harness_settings": {
     "effort": "high"
    },
+   "app_versions": [],
    "notes": [
     "harness: mcp:claude-code",
     "effort high",
@@ -1272,6 +1529,260 @@
     "extraction": 98.5,
     "chat": 82.5,
     "overall": 92.1
+   }
+  },
+  {
+   "id": "mcp/claude-code/claude-sonnet-5-5",
+   "label": "Sonnet 5.5 via Claude Code",
+   "vram_gb": null,
+   "license": null,
+   "open_weight": null,
+   "tools": null,
+   "native": {
+    "passed": 60,
+    "total": 65,
+    "p50_ms": 0,
+    "minutes": 0.0,
+    "output_tokens": 25404,
+    "truncated": 0,
+    "aborted": 0,
+    "thinking_honoured": null,
+    "pins_applied": false,
+    "harness": "mcp:claude-code",
+    "harness_settings": {
+     "effort": "high",
+     "client_version": "2.1.286",
+     "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+     "thinking": "adaptive"
+    },
+    "app_version": "0.5.0+g9fabab5c3",
+    "model_label": "Sonnet 5.5 via Claude Code",
+    "verdicts": {
+     "A1-easy": true,
+     "A1-hard": true,
+     "A2-easy": true,
+     "A2-hard": true,
+     "A4-easy": true,
+     "A4-hard": true,
+     "A5-easy": true,
+     "A5-hard": true,
+     "A6-easy": true,
+     "A6-hard": true,
+     "B1-easy": true,
+     "B1-hard": true,
+     "B2-easy": true,
+     "B2-hard": true,
+     "B3-easy": true,
+     "B3-hard": true,
+     "B4-easy": true,
+     "B4-hard": true,
+     "B5-easy": false,
+     "B5-hard": true,
+     "C1-easy": true,
+     "C1-hard": false,
+     "C2-easy": true,
+     "C2-hard": true,
+     "C3-easy": true,
+     "C3-hard": false,
+     "C4-easy": true,
+     "C4-hard": true,
+     "C5-easy": true,
+     "C5-hard": true,
+     "C6-easy": true,
+     "C6-hard": true,
+     "C7-easy": true,
+     "C7-hard": false,
+     "C8-easy": true,
+     "C8-hard": true,
+     "C9-easy": true,
+     "C9-hard": true,
+     "D1-easy": true,
+     "D1-hard": true,
+     "D2-easy": true,
+     "D2-hard": true,
+     "D3-easy": true,
+     "D3-hard": true,
+     "D4-easy": true,
+     "D4-hard": true,
+     "D5-easy": true,
+     "D5-hard": true,
+     "D6-easy": true,
+     "D6-hard": true,
+     "E1-easy": true,
+     "E1-hard": true,
+     "E2-easy": true,
+     "E2-hard": true,
+     "E3-easy": true,
+     "E3-hard": true,
+     "E4-easy": true,
+     "E4-hard": true,
+     "E5-easy": true,
+     "E5-hard": true,
+     "E6-easy": true,
+     "E7-easy": true,
+     "E7-hard": false,
+     "E8-easy": true,
+     "E8-hard": true
+    }
+   },
+   "carrier": {
+    "passed": 16,
+    "total": 21,
+    "p50_ms": 0,
+    "minutes": 0.0,
+    "output_tokens": 31454,
+    "truncated": 0,
+    "aborted": 0,
+    "thinking_honoured": null,
+    "pins_applied": false,
+    "harness": "mcp:claude-code",
+    "harness_settings": {
+     "effort": "high",
+     "client_version": "2.1.286",
+     "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+     "thinking": "adaptive"
+    },
+    "app_version": "0.5.0+g9fabab5c3",
+    "model_label": "Sonnet 5.5 via Claude Code",
+    "verdicts": {
+     "A1-easy-carrier": true,
+     "B2-easy-carrier": true,
+     "B4-easy-carrier": true,
+     "B5-easy-carrier": true,
+     "B5-hard-carrier": false,
+     "C1-easy-carrier": true,
+     "C1-hard-carrier": true,
+     "C2-easy-carrier": true,
+     "C3-hard-carrier": false,
+     "C4-easy-carrier": true,
+     "C8-hard-carrier": true,
+     "C9-easy-carrier": true,
+     "D1-easy-carrier": true,
+     "D2-easy-carrier": true,
+     "D3-easy-carrier": false,
+     "D6-easy-carrier": false,
+     "D6-hard-carrier": false,
+     "E1-easy-carrier": true,
+     "E4-easy-carrier": true,
+     "E7-easy-carrier": true,
+     "E7-hard-carrier": true
+    }
+   },
+   "chat": {
+    "passed": 70,
+    "total": 80,
+    "pct": 87.5,
+    "minutes": 0.0,
+    "truncated": 0,
+    "timed_out": false,
+    "thinking": null,
+    "unsupported_names": 0,
+    "verdicts": {
+     "q001": true,
+     "q002": true,
+     "q003": true,
+     "q004": true,
+     "q005": true,
+     "q006": true,
+     "q007": true,
+     "q008": true,
+     "q009": true,
+     "q010": true,
+     "q011": true,
+     "q012": true,
+     "q013": true,
+     "q014": true,
+     "q015": true,
+     "q016": true,
+     "q017": true,
+     "q018": true,
+     "q019": true,
+     "q020": true,
+     "q021": true,
+     "q022": true,
+     "q023": false,
+     "q024": true,
+     "q025": true,
+     "q026": false,
+     "q027": true,
+     "q028": true,
+     "q029": true,
+     "q030": false,
+     "q031": true,
+     "q032": true,
+     "q033": true,
+     "q034": true,
+     "q035": true,
+     "q036": false,
+     "q037": false,
+     "q038": false,
+     "q039": false,
+     "q040": false,
+     "q041": true,
+     "q042": true,
+     "q043": false,
+     "q044": true,
+     "q045": true,
+     "q046": true,
+     "q047": true,
+     "q048": true,
+     "q049": true,
+     "q050": false,
+     "q051": true,
+     "q052": true,
+     "q053": true,
+     "q054": true,
+     "q055": true,
+     "q056": true,
+     "q057": true,
+     "q058": true,
+     "q059": true,
+     "q060": true,
+     "q061": true,
+     "q062": true,
+     "q063": true,
+     "q064": true,
+     "q065": true,
+     "q066": true,
+     "q067": true,
+     "q068": true,
+     "q069": true,
+     "q070": true,
+     "q071": true,
+     "q072": true,
+     "q073": true,
+     "q074": true,
+     "q075": true,
+     "q076": true,
+     "q077": true,
+     "q078": true,
+     "q079": true,
+     "q080": true
+    }
+   },
+   "pins_applied": false,
+   "harness": "mcp:claude-code",
+   "harness_settings": {
+    "effort": "high",
+    "client_version": "2.1.286",
+    "isolation": "one session per task, two tools allowed, empty cwd, own MCP config only",
+    "thinking": "adaptive"
+   },
+   "app_versions": [
+    "0.5.0+g9fabab5c3"
+   ],
+   "notes": [
+    "harness: mcp:claude-code",
+    "effort high",
+    "thinking adaptive",
+    "client_version 2.1.286",
+    "isolation one session per task, two tools allowed, empty cwd, own MCP config only",
+    "pins not applied"
+   ],
+   "scores": {
+    "extraction": 81.6,
+    "chat": 87.5,
+    "overall": 83.9
    }
   },
   {
@@ -1293,6 +1804,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "DeepSeek-R1 14B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -1374,6 +1886,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "DeepSeek-R1 14B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -1400,14 +1913,14 @@
     }
    },
    "chat": {
-    "passed": 50,
+    "passed": 53,
     "total": 80,
-    "pct": 62.5,
+    "pct": 66.2,
     "minutes": 6.5,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 1,
+    "unsupported_names": 0,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -1436,7 +1949,7 @@
      "q025": false,
      "q026": false,
      "q027": true,
-     "q028": false,
+     "q028": true,
      "q029": false,
      "q030": false,
      "q031": true,
@@ -1482,10 +1995,10 @@
      "q071": false,
      "q072": true,
      "q073": false,
-     "q074": false,
+     "q074": true,
      "q075": false,
      "q076": false,
-     "q077": false,
+     "q077": true,
      "q078": true,
      "q079": true,
      "q080": true
@@ -1494,6 +2007,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "2 cut off isolated",
     "1 looped isolated",
@@ -1502,8 +2016,8 @@
    ],
    "scores": {
     "extraction": 38.9,
-    "chat": 62.5,
-    "overall": 48.3
+    "chat": 66.2,
+    "overall": 49.8
    }
   },
   {
@@ -1525,6 +2039,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 12B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -1606,6 +2121,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 12B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -1726,6 +2242,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "2 cut off isolated",
     "1 cut off in chunks"
@@ -1755,6 +2272,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 26B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -1836,6 +2354,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 26B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -1956,6 +2475,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off in chunks"
    ],
@@ -1984,6 +2504,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 31B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -2065,6 +2586,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 31B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -2185,6 +2707,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 80.5,
@@ -2211,6 +2734,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 E4B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -2292,6 +2816,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Gemma 4 E4B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -2318,9 +2843,9 @@
     }
    },
    "chat": {
-    "passed": 46,
+    "passed": 47,
     "total": 80,
-    "pct": 57.5,
+    "pct": 58.8,
     "minutes": 3.7,
     "truncated": 0,
     "timed_out": false,
@@ -2401,7 +2926,7 @@
      "q072": true,
      "q073": true,
      "q074": true,
-     "q075": false,
+     "q075": true,
      "q076": true,
      "q077": true,
      "q078": true,
@@ -2412,11 +2937,12 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 58.5,
-    "chat": 57.5,
-    "overall": 58.1
+    "chat": 58.8,
+    "overall": 58.6
    }
   },
   {
@@ -2438,6 +2964,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GLM 4.7 Flash (local)",
     "verdicts": {
      "A1-easy": true,
@@ -2519,6 +3046,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GLM 4.7 Flash (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -2558,6 +3086,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "10 cut off isolated",
     "4 looped isolated",
@@ -2589,6 +3118,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GLM4 9B (local)",
     "verdicts": {
      "A1-easy": false,
@@ -2670,6 +3200,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GLM4 9B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -2696,14 +3227,14 @@
     }
    },
    "chat": {
-    "passed": 50,
+    "passed": 52,
     "total": 80,
-    "pct": 62.5,
+    "pct": 65.0,
     "minutes": 1.1,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 1,
+    "unsupported_names": 0,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -2732,7 +3263,7 @@
      "q025": true,
      "q026": false,
      "q027": true,
-     "q028": false,
+     "q028": true,
      "q029": false,
      "q030": false,
      "q031": true,
@@ -2771,7 +3302,7 @@
      "q064": true,
      "q065": true,
      "q066": true,
-     "q067": false,
+     "q067": true,
      "q068": true,
      "q069": true,
      "q070": true,
@@ -2790,6 +3321,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "2 cut off isolated",
     "2 cut off in chunks",
@@ -2797,8 +3329,8 @@
    ],
    "scores": {
     "extraction": 56.6,
-    "chat": 62.5,
-    "overall": 58.9
+    "chat": 65.0,
+    "overall": 59.9
    }
   },
   {
@@ -2820,6 +3352,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GPT-OSS 20B (local)",
     "verdicts": {
      "A1-easy": false,
@@ -2901,6 +3434,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "GPT-OSS 20B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -2927,14 +3461,14 @@
     }
    },
    "chat": {
-    "passed": 54,
+    "passed": 55,
     "total": 80,
-    "pct": 67.5,
+    "pct": 68.8,
     "minutes": 5.6,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 1,
+    "unsupported_names": 0,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -3007,7 +3541,7 @@
      "q069": true,
      "q070": true,
      "q071": true,
-     "q072": false,
+     "q072": true,
      "q073": true,
      "q074": true,
      "q075": false,
@@ -3021,6 +3555,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "20 cut off isolated",
     "thought despite think=off",
@@ -3028,8 +3563,8 @@
    ],
    "scores": {
     "extraction": 26.3,
-    "chat": 67.5,
-    "overall": 42.8
+    "chat": 68.8,
+    "overall": 43.3
    }
   },
   {
@@ -3051,6 +3586,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Granite 4.2 30B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -3132,6 +3668,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Granite 4.2 30B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -3171,6 +3708,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off isolated",
     "2 cut off in chunks"
@@ -3200,6 +3738,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Granite 4.2 8B (local)",
     "verdicts": {
      "A1-easy": false,
@@ -3281,6 +3820,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Granite 4.2 8B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -3314,7 +3854,7 @@
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 4,
+    "unsupported_names": 2,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -3401,6 +3941,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "2 looped isolated",
     "1 cut off in chunks",
@@ -3431,6 +3972,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Llama 3.1 8B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -3512,6 +4054,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Llama 3.1 8B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -3632,6 +4175,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "8 cut off isolated",
     "7 cut off in chunks"
@@ -3661,6 +4205,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Mistral Small 3.2 24B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -3742,6 +4287,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Mistral Small 3.2 24B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -3768,9 +4314,9 @@
     }
    },
    "chat": {
-    "passed": 50,
+    "passed": 53,
     "total": 80,
-    "pct": 62.5,
+    "pct": 66.2,
     "minutes": 2.7,
     "truncated": 0,
     "timed_out": false,
@@ -3849,10 +4395,10 @@
      "q070": true,
      "q071": true,
      "q072": true,
-     "q073": false,
+     "q073": true,
      "q074": true,
-     "q075": false,
-     "q076": false,
+     "q075": true,
+     "q076": true,
      "q077": true,
      "q078": true,
      "q079": true,
@@ -3862,13 +4408,14 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off isolated"
    ],
    "scores": {
     "extraction": 66.4,
-    "chat": 62.5,
-    "overall": 64.8
+    "chat": 66.2,
+    "overall": 66.3
    }
   },
   {
@@ -3890,6 +4437,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Muse Glimmer 30B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -3971,6 +4519,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Muse Glimmer 30B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -3997,9 +4546,9 @@
     }
    },
    "chat": {
-    "passed": 61,
+    "passed": 63,
     "total": 80,
-    "pct": 76.2,
+    "pct": 78.8,
     "minutes": 19.9,
     "truncated": 0,
     "timed_out": false,
@@ -4078,9 +4627,9 @@
      "q070": true,
      "q071": true,
      "q072": true,
-     "q073": false,
+     "q073": true,
      "q074": true,
-     "q075": false,
+     "q075": true,
      "q076": true,
      "q077": true,
      "q078": true,
@@ -4091,11 +4640,12 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 65.2,
-    "chat": 76.2,
-    "overall": 69.6
+    "chat": 78.8,
+    "overall": 70.6
    }
   },
   {
@@ -4117,6 +4667,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Nemotron 3.5 Lightning 30B-A3B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -4198,6 +4749,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Nemotron 3.5 Lightning 30B-A3B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -4224,14 +4776,14 @@
     }
    },
    "chat": {
-    "passed": 53,
+    "passed": 55,
     "total": 80,
-    "pct": 66.2,
+    "pct": 68.8,
     "minutes": 22.4,
     "truncated": 6,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 7,
+    "unsupported_names": 6,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -4302,13 +4854,13 @@
      "q067": true,
      "q068": false,
      "q069": true,
-     "q070": false,
+     "q070": true,
      "q071": true,
      "q072": true,
      "q073": false,
      "q074": true,
      "q075": false,
-     "q076": false,
+     "q076": true,
      "q077": true,
      "q078": true,
      "q079": true,
@@ -4318,13 +4870,14 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 looped in chunks"
    ],
    "scores": {
     "extraction": 33.1,
-    "chat": 66.2,
-    "overall": 46.4
+    "chat": 68.8,
+    "overall": 47.4
    }
   },
   {
@@ -4346,6 +4899,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Phi-4 14B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -4427,6 +4981,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Phi-4 14B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -4453,14 +5008,14 @@
     }
    },
    "chat": {
-    "passed": 52,
+    "passed": 53,
     "total": 80,
-    "pct": 65.0,
+    "pct": 66.2,
     "minutes": 2.8,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 2,
+    "unsupported_names": 1,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -4489,7 +5044,7 @@
      "q025": true,
      "q026": false,
      "q027": true,
-     "q028": false,
+     "q028": true,
      "q029": false,
      "q030": false,
      "q031": false,
@@ -4547,11 +5102,12 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 63.3,
-    "chat": 65.0,
-    "overall": 64.0
+    "chat": 66.2,
+    "overall": 64.5
    }
   },
   {
@@ -4573,6 +5129,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen2.5 14B Instruct (local)",
     "verdicts": {
      "A1-easy": true,
@@ -4654,6 +5211,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen2.5 14B Instruct (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -4680,9 +5238,9 @@
     }
    },
    "chat": {
-    "passed": 54,
+    "passed": 56,
     "total": 80,
-    "pct": 67.5,
+    "pct": 70.0,
     "minutes": 2.1,
     "truncated": 0,
     "timed_out": false,
@@ -4762,8 +5320,8 @@
      "q071": true,
      "q072": true,
      "q073": true,
-     "q074": false,
-     "q075": false,
+     "q074": true,
+     "q075": true,
      "q076": true,
      "q077": true,
      "q078": true,
@@ -4774,13 +5332,14 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 looped in chunks"
    ],
    "scores": {
     "extraction": 71.7,
-    "chat": 67.5,
-    "overall": 70.0
+    "chat": 70.0,
+    "overall": 71.0
    }
   },
   {
@@ -4802,6 +5361,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.5 27B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -4883,6 +5443,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.5 27B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -5003,6 +5564,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 68.4,
@@ -5029,6 +5591,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.5 9B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -5110,6 +5673,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.5 9B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -5230,6 +5794,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off in chunks"
    ],
@@ -5258,6 +5823,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.6 27B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -5339,6 +5905,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.6 27B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -5365,9 +5932,9 @@
     }
    },
    "chat": {
-    "passed": 60,
+    "passed": 61,
     "total": 80,
-    "pct": 75.0,
+    "pct": 76.2,
     "minutes": 13.4,
     "truncated": 0,
     "timed_out": false,
@@ -5448,7 +6015,7 @@
      "q072": true,
      "q073": true,
      "q074": true,
-     "q075": false,
+     "q075": true,
      "q076": true,
      "q077": true,
      "q078": true,
@@ -5459,11 +6026,12 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 63.7,
-    "chat": 75.0,
-    "overall": 68.2
+    "chat": 76.2,
+    "overall": 68.7
    }
   },
   {
@@ -5485,6 +6053,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.6 35B-A3B MoE (local)",
     "verdicts": {
      "A1-easy": true,
@@ -5566,6 +6135,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.6 35B-A3B MoE (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -5686,6 +6256,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 60.0,
@@ -5712,6 +6283,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.8 27B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -5793,6 +6365,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3.8 27B (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -5913,6 +6486,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [],
    "scores": {
     "extraction": 69.0,
@@ -5939,6 +6513,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 14B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -6020,6 +6595,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 14B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -6046,14 +6622,14 @@
     }
    },
    "chat": {
-    "passed": 51,
+    "passed": 53,
     "total": 80,
-    "pct": 63.8,
+    "pct": 66.2,
     "minutes": 8.7,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 2,
+    "unsupported_names": 1,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -6082,7 +6658,7 @@
      "q025": false,
      "q026": false,
      "q027": true,
-     "q028": false,
+     "q028": true,
      "q029": false,
      "q030": false,
      "q031": true,
@@ -6122,7 +6698,7 @@
      "q065": false,
      "q066": true,
      "q067": true,
-     "q068": false,
+     "q068": true,
      "q069": true,
      "q070": true,
      "q071": true,
@@ -6140,13 +6716,14 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off isolated"
    ],
    "scores": {
     "extraction": 58.5,
-    "chat": 63.8,
-    "overall": 60.6
+    "chat": 66.2,
+    "overall": 61.6
    }
   },
   {
@@ -6168,6 +6745,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 30B Instruct (local)",
     "verdicts": {
      "A1-easy": true,
@@ -6249,6 +6827,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 30B Instruct (local)",
     "verdicts": {
      "A1-easy-carrier": true,
@@ -6275,14 +6854,14 @@
     }
    },
    "chat": {
-    "passed": 58,
+    "passed": 59,
     "total": 80,
-    "pct": 72.5,
+    "pct": 73.8,
     "minutes": 1.1,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 1,
+    "unsupported_names": 0,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -6311,7 +6890,7 @@
      "q025": true,
      "q026": false,
      "q027": true,
-     "q028": false,
+     "q028": true,
      "q029": false,
      "q030": false,
      "q031": true,
@@ -6369,13 +6948,14 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "1 cut off isolated"
    ],
    "scores": {
     "extraction": 53.7,
-    "chat": 72.5,
-    "overall": 61.2
+    "chat": 73.8,
+    "overall": 61.7
    }
   },
   {
@@ -6397,6 +6977,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 8B (local)",
     "verdicts": {
      "A1-easy": true,
@@ -6478,6 +7059,7 @@
     "pins_applied": true,
     "harness": null,
     "harness_settings": null,
+    "app_version": null,
     "model_label": "Qwen3 8B (local)",
     "verdicts": {
      "A1-easy-carrier": false,
@@ -6504,14 +7086,14 @@
     }
    },
    "chat": {
-    "passed": 55,
+    "passed": 56,
     "total": 80,
-    "pct": 68.8,
+    "pct": 70.0,
     "minutes": 8.8,
     "truncated": 0,
     "timed_out": false,
     "thinking": true,
-    "unsupported_names": 1,
+    "unsupported_names": 0,
     "verdicts": {
      "q001": true,
      "q002": true,
@@ -6558,7 +7140,7 @@
      "q043": false,
      "q044": true,
      "q045": false,
-     "q046": false,
+     "q046": true,
      "q047": true,
      "q048": false,
      "q049": false,
@@ -6598,6 +7180,7 @@
    "pins_applied": true,
    "harness": null,
    "harness_settings": null,
+   "app_versions": [],
    "notes": [
     "4 cut off isolated",
     "2 looped isolated",
@@ -6606,8 +7189,8 @@
    ],
    "scores": {
     "extraction": 36.4,
-    "chat": 68.8,
-    "overall": 49.3
+    "chat": 70.0,
+    "overall": 49.8
    }
   }
  ]

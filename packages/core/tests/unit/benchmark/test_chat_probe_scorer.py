@@ -103,6 +103,39 @@ def test_declines_when_unsupported_needs_both_signals() -> None:
     assert not cp.declines_when_unsupported(_rec("BBN was acquired later."), q)[0]
 
 
+def test_declines_when_unsupported_accepts_every_common_wording() -> None:
+    """Declines worded as 'does not provide/specify/name', 'don't say/give', 'not present'.
+
+    Each is a real answer that scorer v2 failed though it declined and asserted
+    no decoy (Opus 5.5, Mistral Small 3.2, Gemma 4 E4B, GPT-OSS, Muse runs).
+    """
+    q = _q(band="out_of_scope", gold_entities=[], decoy_entities=["Raytheon"])
+    for answer in (
+        "The sources don't say which estate the author wrote this novel on.",
+        "The sources don\u2019t give the name of the estate.",
+        "The context does not provide the name of the son.",
+        "The context does not specify who commanded the squadron.",
+        "The retrieved context does not name a squadron commander.",
+        "The information about the marriage in 1862 is not present in the sources.",
+    ):
+        assert cp.declines_when_unsupported(_rec(answer), q)[0], answer
+    # A decoy still fails however politely it is wrapped.
+    assert not cp.declines_when_unsupported(
+        _rec("The sources don't say, but Raytheon acquired it."), q
+    )[0]
+
+
+def test_no_unsupported_names_ignores_sentence_openers() -> None:
+    """Capitalised discourse words at a sentence start are not names."""
+    for answer in (
+        "BBN built it. Afterwards the IMP shipped.",
+        "Beyond that, BBN built it.",
+        "Despite the delay, BBN built it. Actually, Newman led it.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, why
+
+
 def test_scorer_gates_on_completion_and_weights_tiers() -> None:
     """Same shape as the extraction probes: verdicts, section rates, tier-weighted headline."""
     qs = LabeledQuerySet(

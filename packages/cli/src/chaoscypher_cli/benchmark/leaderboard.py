@@ -230,6 +230,7 @@ def _build_header_section(
     temps = sorted({r.temperature for r in pinned if r.temperature is not None})
     benchmark_versions = sorted({r.benchmark_version for r in rows})
     scorer_versions = sorted({r.scorer_version for r in rows})
+    app_versions = sorted({r.app_version for r in rows if r.app_version})
     config_names = sorted({r.config_name for r in rows if r.config_name})
     user_datasets = sorted({r.dataset_id for r in rows if r.dataset_source == "user"})
     run_date = max(r.timestamp for r in rows).strftime("%Y-%m-%d")
@@ -244,7 +245,8 @@ def _build_header_section(
         (
             f"Benchmark v{','.join(benchmark_versions)} . "
             f"Scorer v{','.join(str(v) for v in scorer_versions)} . "
-            f"{len(dataset_ids)} datasets . {len(model_ids)} models . "
+            + (f"ChaosCypher {','.join(app_versions)} . " if app_versions else "")
+            + f"{len(dataset_ids)} datasets . {len(model_ids)} models . "
             + (
                 f"thinking={','.join(_thinking_modes(pinned))} . "
                 f"single shot . temp={','.join(str(t) for t in temps)} . "

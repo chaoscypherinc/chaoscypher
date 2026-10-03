@@ -71,6 +71,9 @@ __pycache__/
 # Guardrail-14 heartbeat logs are repo data on routine/heartbeat, not local
 # logs — without this carve-out `git add` silently no-ops on them (issue #325).
 !internal/metrics/heartbeats/*.log
+# Benchmark driver logs archived beside the runs they record are repo data too;
+# the first ones (2026-10-01) were silently left out by `*.log`.
+!internal/*/runs/**/*.log
 
 # ============================================================================
 # LOCAL DATABASES (fixtures must be explicitly allow-listed)
@@ -87,6 +90,8 @@ __pycache__/
 !e2e/fixtures/snapshots/*.db
 !e2e/fixtures/snapshots/*.sqlite
 !e2e/fixtures/snapshots/*.sqlite3
+# Benchmark reference graphs are committed, checksummed snapshots (private tree).
+!internal/*/reference/*/app.db
 
 # ============================================================================
 # OS FILES

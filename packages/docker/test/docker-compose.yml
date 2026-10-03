@@ -15,38 +15,40 @@ services:
       context: ../../..
       dockerfile: packages/docker/test/Dockerfile
     container_name: chaoscypher-test-runner
+    # `z`: SELinux hosts (Fedora, RHEL) deny the container reads of unlabelled bind
+    # mounts, so the run fails with "Makefile: Permission denied". Ignored elsewhere.
     volumes:
       # Mount source code
-      - ../../core/src/chaoscypher_core:/app/packages/core/src/chaoscypher_core:ro
-      - ../../cortex/src/chaoscypher_cortex:/app/packages/cortex/src/chaoscypher_cortex:ro
-      - ../../neuron/src/chaoscypher_neuron:/app/packages/neuron/src/chaoscypher_neuron:ro
-      - ../../cli/src/chaoscypher_cli:/app/packages/cli/src/chaoscypher_cli:ro
-      - ../../interface/src:/app/packages/interface/src:ro
+      - ../../core/src/chaoscypher_core:/app/packages/core/src/chaoscypher_core:ro,z
+      - ../../cortex/src/chaoscypher_cortex:/app/packages/cortex/src/chaoscypher_cortex:ro,z
+      - ../../neuron/src/chaoscypher_neuron:/app/packages/neuron/src/chaoscypher_neuron:ro,z
+      - ../../cli/src/chaoscypher_cli:/app/packages/cli/src/chaoscypher_cli:ro,z
+      - ../../interface/src:/app/packages/interface/src:ro,z
       # Mount test directories
-      - ../../core/tests:/app/packages/core/tests:ro
-      - ../../cortex/tests:/app/packages/cortex/tests:ro
-      - ../../cli/tests:/app/packages/cli/tests:ro
-      - ../../neuron/tests:/app/packages/neuron/tests:ro
+      - ../../core/tests:/app/packages/core/tests:ro,z
+      - ../../cortex/tests:/app/packages/cortex/tests:ro,z
+      - ../../cli/tests:/app/packages/cli/tests:ro,z
+      - ../../neuron/tests:/app/packages/neuron/tests:ro,z
       # Mount configs and scripts
-      - ../../../pyproject.toml:/app/pyproject.toml:ro
-      - ../../../uv.lock:/app/uv.lock:ro
-      - ../../../Makefile:/app/Makefile:ro
-      - ../../../scripts:/app/scripts:ro
+      - ../../../pyproject.toml:/app/pyproject.toml:ro,z
+      - ../../../uv.lock:/app/uv.lock:ro,z
+      - ../../../Makefile:/app/Makefile:ro,z
+      - ../../../scripts:/app/scripts:ro,z
       # Semgrep rules — the rule self-tests assert /app/tools/semgrep/rules
       # is populated; without this mount they fail only inside Docker CI.
-      - ../../../tools:/app/tools:ro
+      - ../../../tools:/app/tools:ro,z
       # Shipped static nginx/supervisor configs — contract tests pin the files
       # the production Dockerfile COPYs (e.g. proxy-public.conf must forward
       # X-Auth-Edge-Token). Routine sandboxes sweep in local mode where the
       # host repo has them; only this docker-test tier lacked the directory,
       # so #500's pin passed everywhere except the push gate (2026-09-03).
-      - ../config:/app/packages/docker/config:ro
+      - ../config:/app/packages/docker/config:ro,z
       # Shipped compose files — the plugin kill-switch pin (#623) parses the
       # all-in-one and multi-container compose files to assert every
       # plugin-loading service declares CHAOSCYPHER_ALLOW_USER_PLUGINS. Same
       # shape as the config mount above: green in local mode, red only here.
-      - ../docker-compose.yml:/app/packages/docker/docker-compose.yml:ro
-      - ../multi-container:/app/packages/docker/multi-container:ro
+      - ../docker-compose.yml:/app/packages/docker/docker-compose.yml:ro,z
+      - ../multi-container:/app/packages/docker/multi-container:ro,z
       # Semgrep ignore list — load-bearing, not a convenience. The Dockerfile
       # COPYs only manifests + src, so anything not mounted here simply does
       # not exist at /app. Without this file semgrep falls back to its
@@ -57,9 +59,9 @@ services:
       # .semgrepignore was added to fix. The rule self-tests
       # (packages/core/tests/unit/scripts/test_semgrep_rule_selftests.py)
       # detect its absence and fail loudly.
-      - ../../../.semgrepignore:/app/.semgrepignore:ro
+      - ../../../.semgrepignore:/app/.semgrepignore:ro,z
       # Output directory for coverage reports (writable)
-      - ../test-output:/app/coverage_html
+      - ../test-output:/app/coverage_html:z
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app

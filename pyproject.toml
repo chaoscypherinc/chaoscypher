@@ -216,6 +216,11 @@ torch = [{ index = "pytorch-cpu" }]
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+# Scripts the cloud routines run with the sandbox's system `python3` (3.11,
+# before any `uv sync`) must parse on 3.11: no PEP 701 nested f-string quotes,
+# no PEP 758 unparenthesised `except A, B`. Found 2026-09-29 when a sandbox
+# smoke test hit SyntaxErrors in two tools that passed every 3.14 check.
+per-file-target-version = { "internal/scripts/**/*.py" = "py311", "scripts/check_media_manifest.py" = "py311", "scripts/check_metrics_artifacts.py" = "py311" }
 
 # Directories to exclude from linting
 exclude = [
@@ -476,6 +481,8 @@ max-statements = 60   # Maximum statements in function
     "PIE810", # startswith(tuple) — micro-opt not worth the readability cost
     "PLC0415", # Local imports inside functions — fine in single-use helpers
 ]
+# Benchmark sweep drivers and the reference-pack installer: same posture.
+"internal/benchmarks/**/*.py" = ["T201", "D103", "PLC0415"]
 # Module entry points (`python -m <pkg>`): print() is the intended output channel.
 "**/__main__.py" = ["T201"]
 "**/e2e/**/*.py" = [

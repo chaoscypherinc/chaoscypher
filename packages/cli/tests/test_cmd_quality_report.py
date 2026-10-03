@@ -751,7 +751,97 @@ class TestAvgEntityQualityBranch:
 
         assert result.exit_code == 0
         parsed = json.loads(result.output)
-        assert parsed["summary"]["avg_entity_quality"] >= 0
+        # The expected value is exact and knowable: one source, mock avg 65.0.
+        # The previous `>= 0` bound left three mutations alive — dropping the
+        # `entity_count > 0` filter, hardcoding the average to 0.0, and
+        # emitting 0 instead of the computed value.
+        assert parsed["summary"]["avg_entity_quality"] == 65.0
+
+    def test_zero_entity_source_is_excluded_from_avg(self) -> None:
+        """The branch this class is named for, actually constructed.
+
+        A source with no entities but some relationships survives report.py's
+        ``if not entities and not relationships: continue`` skip and reaches
+        the summary with ``entity_count == 0``, so it must be left out of both
+        the numerator and the divisor: the average is the good source's 65.0,
+        not the 32.5 an unfiltered mean would give.
+        """
+        runner = CliRunner()
+        summaries = [_make_source_summary("if_good"), _make_source_summary("if_bare")]
+        good_entities, good_rels = _make_full_source("if_good", entity_count=5)
+        # Relationships only — no entities — so the source is not skipped.
+        bare_rels = [
+            {
+                "id": "if_bare_rel_0",
+                "type": "KNOWS",
+                "source": "if_bare_ent_0",
+                "target": "if_bare_ent_1",
+                "justification": "Dangling refs: the entity rows were never written.",
+                "confidence": 0.5,
+            }
+        ]
+        ctx = _make_context_and_adapter(
+            summaries, {"if_good": (good_entities, good_rels), "if_bare": ([], bare_rels)}
+        )
+
+        good_score = _make_mock_score("if_good", entity_count=5)
+        good_score.avg_entity_quality = 65.0
+        bare_score = _make_mock_score("if_bare", entity_count=0, relationship_count=1)
+        bare_score.avg_entity_quality = 0.0
+
+        mock_scorer = MagicMock()
+        mock_scorer.score_source.side_effect = [good_score, bare_score]
+
+        with patch("chaoscypher_cli.context.get_context", return_value=ctx):
+            with patch(
+                "chaoscypher_cli.commands.quality.utils.get_quality_config", return_value={}
+            ):
+                with patch(
+                    "chaoscypher_core.services.quality.QualityScorer",
+                    return_value=mock_scorer,
+                ):
+                    result = runner.invoke(report, ["--format", "json"])
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["summary"]["total_sources"] == 2, "both sources must reach the summary"
+        assert parsed["summary"]["avg_entity_quality"] == 65.0
+
+    def test_avg_is_zero_when_no_source_has_entities(self) -> None:
+        """The ``else 0.0`` arm: every source excluded, so no division happens."""
+        runner = CliRunner()
+        summaries = [_make_source_summary("if_bare")]
+        bare_rels = [
+            {
+                "id": "if_bare_rel_0",
+                "type": "KNOWS",
+                "source": "if_bare_ent_0",
+                "target": "if_bare_ent_1",
+                "justification": "Dangling refs: the entity rows were never written.",
+                "confidence": 0.5,
+            }
+        ]
+        ctx = _make_context_and_adapter(summaries, {"if_bare": ([], bare_rels)})
+
+        bare_score = _make_mock_score("if_bare", entity_count=0, relationship_count=1)
+        bare_score.avg_entity_quality = 0.0
+        mock_scorer = MagicMock()
+        mock_scorer.score_source.return_value = bare_score
+
+        with patch("chaoscypher_cli.context.get_context", return_value=ctx):
+            with patch(
+                "chaoscypher_cli.commands.quality.utils.get_quality_config", return_value={}
+            ):
+                with patch(
+                    "chaoscypher_core.services.quality.QualityScorer",
+                    return_value=mock_scorer,
+                ):
+                    result = runner.invoke(report, ["--format", "json"])
+
+        assert result.exit_code == 0, result.output
+        parsed = json.loads(result.output)
+        assert parsed["summary"]["total_sources"] == 1
+        assert parsed["summary"]["avg_entity_quality"] == 0.0
 
 
 # ---------------------------------------------------------------------------

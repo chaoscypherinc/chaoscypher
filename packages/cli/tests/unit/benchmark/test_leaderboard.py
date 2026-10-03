@@ -122,6 +122,24 @@ def test_render_leaderboard_includes_run_metadata_header():
     assert "seed=42" in md
 
 
+def test_render_leaderboard_header_names_the_app_build():
+    """The builds the rows were measured on are in the header; unrecorded ones are left out."""
+    from dataclasses import replace
+
+    rows = [
+        replace(
+            _row(model_id="ollama/a", model_label="A", dataset_id="p1", headline_score=70),
+            app_version="0.5.0+gabc",
+        ),
+        replace(
+            _row(model_id="ollama/b", model_label="B", dataset_id="p1", headline_score=60),
+            app_version=None,
+        ),
+    ]
+    assert "ChaosCypher 0.5.0+gabc . " in render_leaderboard(rows)
+    assert "ChaosCypher" not in render_leaderboard([rows[1]]).splitlines()[2]
+
+
 def test_render_leaderboard_warns_on_dataset_version_mismatch():
     rows = [
         _row(

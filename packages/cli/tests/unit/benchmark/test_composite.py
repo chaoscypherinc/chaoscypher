@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from chaoscypher_cli.benchmark.composite import (
     CompositeWeights,
     DimensionScores,
@@ -27,6 +29,12 @@ def test_normalize_speed_anchors():
 def test_normalize_cost_anchors():
     assert normalize_cost(0.0) == 100.0  # free -> 100
     assert normalize_cost(999.0) == 0.0  # past MAX_USD -> clamped 0
+
+
+def test_normalize_cost_intermediate_value_pins_max_usd_anchor() -> None:
+    # Both clamped ends above survive any positive MAX_USD; an interior cost
+    # is what actually pins the anchor (MAX_USD = 1.0 -> $0.25 scores 75).
+    assert normalize_cost(0.25) == pytest.approx(75.0)
 
 
 def test_weighted_overall_renormalizes_missing_dims():
@@ -200,3 +208,43 @@ def test_weighted_overall_custom_weights_excludes_zero_weight_dims_from_basis():
     overall, basis = weighted_overall(dims, custom)
     assert overall == 85.0  # only retrieval contributes
     assert basis == ["retrieval"]  # extraction excluded despite having a score
+
+
+def test_compute_extractor_composites_aggregates_multiple_extraction_rows() -> None:
+    """Several datasets per extractor: quality/speed are means, cost is the run SUM.
+
+    With a single row per extractor mean == sum == first, so this fixture
+    gives one extractor two extraction rows with distinct scores, latencies
+    and non-zero costs to make each aggregation choice observable.
+    """
+    rows = [
+        _row(
+            model_id="ollama/ext",
+            model_label="Extractor",
+            dataset_kind="extraction",
+            headline_score=60.0,
+            latency_ms_per_chunk_p50=500,  # -> speed 100
+            cost_usd=0.1,
+        ),
+        _row(
+            model_id="ollama/ext",
+            model_label="Extractor",
+            dataset_kind="extraction",
+            headline_score=90.0,
+            latency_ms_per_chunk_p50=15_250,  # midpoint of FAST/SLOW -> speed 50
+            cost_usd=0.3,
+        ),
+    ]
+    comps = compute_extractor_composites(rows, default_embedder=None, default_chat=None)
+
+    assert len(comps) == 1
+    c = comps[0]
+    assert c.dims.extraction == pytest.approx(75.0)  # mean(60, 90)
+    assert c.dims.speed == pytest.approx(75.0)  # mean(100, 50)
+    # Total run cost $0.40 against MAX_USD $1.00 -> 60 (a mean of $0.20 would be 80).
+    assert c.dims.cost == pytest.approx(60.0)
+    assert c.dims.retrieval is None
+    assert c.dims.chat is None
+    # (0.40*75 + 0.10*75 + 0.10*60) / 0.60 = 72.5
+    assert c.overall == pytest.approx(72.5)
+    assert c.basis == ["extraction", "speed", "cost"]

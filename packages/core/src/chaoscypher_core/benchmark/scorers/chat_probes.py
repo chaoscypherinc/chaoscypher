@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from chaoscypher_core.benchmark.queries import LabeledQuery, LabeledQuerySet
     from chaoscypher_core.benchmark.types import RawOutput
 
-CHAT_PROBE_SCORER_VERSION = 2
+CHAT_PROBE_SCORER_VERSION = 3
 
 BAND_TIER: dict[str, str] = {
     "factual_single_hop": "easy",
@@ -79,6 +79,15 @@ DECLINE_PHRASES: tuple[str, ...] = (
     "cannot answer",
     "can't answer",
     "insufficient",
+    # "The context does not provide / specify / name ...", "the sources don't
+    # say / give ...": declines the list missed until scorer v3 (2026-10-01),
+    # which failed correct out-of-scope answers from a dozen models.
+    "not present",
+    *(
+        f"{neg} {verb}"
+        for neg in ("does not", "doesn't", "do not", "don't")
+        for verb in ("provide", "specify", "name", "say", "give", "state")
+    ),
 )
 
 # Words that start sentences or are capitalised for reasons other than being a name.
@@ -176,6 +185,28 @@ _NOT_A_NAME = {
     "given",
     "regarding",
     "per",
+    # sentence openers that read as names when capitalised (scorer v3)
+    "afterwards",
+    "afterward",
+    "meanwhile",
+    "beyond",
+    "despite",
+    "nevertheless",
+    "similarly",
+    "perhaps",
+    "maybe",
+    "actually",
+    "again",
+    "multiple",
+    "let",
+    "does",
+    "wait",
+    "speaking",
+    "saying",
+    "looking",
+    "checking",
+    "searching",
+    "scanning",
     # chatty labels and headings, not names
     "here's",
     "step-by-step explanation",
@@ -578,7 +609,8 @@ def leads_with_gold(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
 
 def declines_when_unsupported(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
     """Out-of-scope band: no decoy is asserted *and* the answer declines."""
-    text = _fold(rec.get("answer") or "")
+    # Curly apostrophes too, so "don\u2019t say" matches "don't say".
+    text = _fold(rec.get("answer") or "").replace("\u2019", "'")
     decoys = [d for d in q.decoy_entities if _fold(d) in text]
     declined = any(p in text for p in DECLINE_PHRASES)
     ok = not decoys and declined

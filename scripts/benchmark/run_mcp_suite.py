@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -58,11 +59,26 @@ ISOLATION = {
 VERSION_CMDS = {"claude-code": ["claude"], "codex": ["codex"]}
 
 
+_VERSION_RE = re.compile(r"\d+\.\d+[\w.+-]*")
+
+
+def _parse_version(text: str) -> str:
+    """The first version-looking token of a ``--version`` line.
+
+    Claude Code prints ``2.1.286 (Claude Code)`` and Codex ``codex-cli 0.48.0``:
+    neither the first nor the last word is right for both (the last-word rule
+    recorded ``Code)`` for every Claude Code run until 2026-10-01).
+    """
+    match = _VERSION_RE.search(text)
+    if match:
+        return match.group(0)
+    return text.rsplit(maxsplit=1)[-1] if text.strip() else "unknown"
+
+
 def _version(cmd: list[str]) -> str:
     """The client's version string, or 'unknown' when it cannot be read."""
     out = subprocess.run([*cmd, "--version"], capture_output=True, text=True, check=False)
-    text = (out.stdout or out.stderr).strip()
-    return text.split()[-1] if text else "unknown"
+    return _parse_version((out.stdout or out.stderr).strip())
 
 
 def _mcp_config(path: Path, server_cmd: list[str]) -> Path:

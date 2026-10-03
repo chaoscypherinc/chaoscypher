@@ -261,7 +261,7 @@ def _ref_sentences(item: dict[str, Any], rec: dict[str, Any]) -> list[str]:
 
     sentences = rec.get("sentences") or []
     idxs = parse_sent_ref(str(item.get("sent_ref") or "")) or []
-    return [str(sentences[i - 1]).lower() for i in idxs if 1 <= i <= len(sentences)]
+    return [_fold(str(sentences[i - 1])) for i in idxs if 1 <= i <= len(sentences)]
 
 
 def _entity_by_index(rec: dict[str, Any], idx: Any) -> dict[str, Any] | None:
@@ -278,7 +278,7 @@ def _name_in(text: str, entity: dict[str, Any]) -> bool:
     for n in _names(entity):
         if n and n in text:
             return True
-    words = [w for w in str(entity.get("name", "")).lower().split() if len(w) >= 4]
+    words = [w for w in _fold(str(entity.get("name", ""))).split() if len(w) >= 4]
     return any(w in text for w in words)
 
 

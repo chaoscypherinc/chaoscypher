@@ -4,10 +4,14 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from chaoscypher_core.app_config import RateLimitSettings
+from chaoscypher_cortex.shared.middleware import rate_limit
 from chaoscypher_cortex.shared.middleware.rate_limit import RateLimitMiddleware
 
 
@@ -46,3 +50,28 @@ def test_429_returns_html_for_browser() -> None:
     assert r.headers["content-type"].startswith("text/html")
     assert "Chaos Cypher" in r.text
     assert r.headers["retry-after"]
+
+
+def test_block_is_per_client_ip() -> None:
+    """One client exhausting its budget must not lock out another client."""
+    app = _app()
+    client_a = TestClient(app, client=("203.0.113.1", 50000))
+    client_b = TestClient(app, client=("203.0.113.2", 50000))
+
+    assert client_a.post("/api/v1/auth/login").status_code == 200
+    assert client_a.post("/api/v1/auth/login").status_code == 429
+
+    assert client_b.post("/api/v1/auth/login").status_code == 200
+
+
+def test_window_expiry_resets_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Requests older than the window stop counting, so a block lifts by itself."""
+    now = [1000.0]
+    monkeypatch.setattr(rate_limit, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    client = TestClient(_app())
+
+    assert client.post("/api/v1/auth/login").status_code == 200
+    now[0] += 30  # still inside the 60s window
+    assert client.post("/api/v1/auth/login").status_code == 429
+    now[0] += 31  # 61s after the only counted request
+    assert client.post("/api/v1/auth/login").status_code == 200
