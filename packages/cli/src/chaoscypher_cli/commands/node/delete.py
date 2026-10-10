@@ -20,12 +20,21 @@ console = Console()
 @click.command()
 @click.argument("node_id")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
-@click.option("--cascade", "-c", is_flag=True, help="Also delete connected links")
+@click.option(
+    "--cascade",
+    "-c",
+    is_flag=True,
+    help=(
+        "Delete connected links one by one before the node. Connected links "
+        "are always deleted with the node; this only changes how."
+    ),
+)
 @click.option("--database", "-d", default="default", help="Database name")
 def delete(node_id: str, force: bool, cascade: bool, database: str) -> None:
     """Remove a node from the knowledge graph.
 
-    NODE_ID is the unique identifier of the node to delete.
+    NODE_ID is the unique identifier of the node to delete. Every link
+    connected to the node is deleted with it, with or without --cascade.
 
     Example:
         chaoscypher graph node delete node-123
@@ -74,9 +83,7 @@ def delete(node_id: str, force: bool, cascade: bool, database: str) -> None:
             if cascade:
                 console.print("  [dim]Cascade mode: Links will also be deleted[/dim]")
             else:
-                console.print(
-                    "  [dim]Links will become orphaned. Use --cascade to delete them.[/dim]"
-                )
+                console.print("  [dim]These links will be deleted together with the node.[/dim]")
 
         # Confirm deletion
         if not force:

@@ -67,7 +67,7 @@ def export(
     database: str,
     title: str | None,
 ) -> None:
-    r"""Export knowledge graph to .ccx package file.
+    """Export knowledge graph to .ccx package file.
 
     Creates a CCX package containing the selected content types from the
     knowledge graph. The package uses JSON-LD format for graph data.
@@ -78,7 +78,7 @@ def export(
         chaoscypher graph package export --output my-backup.ccx --title "My Research"
         chaoscypher graph package export --no-workflows --lens-id lens_abc123
         chaoscypher graph package export -d my-project -o project.ccx -t "Project A"
-    """
+    """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
     if not any([templates, knowledge, lenses, workflows]):
         raise click.UsageError(
             "at least one content type required: enable --templates, --knowledge,"

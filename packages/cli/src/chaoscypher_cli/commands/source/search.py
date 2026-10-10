@@ -62,7 +62,7 @@ def search(
     output_format: str,
     database: str,
 ) -> None:
-    r"""Search across sources in the knowledge graph.
+    """Search across sources in the knowledge graph.
 
     Supports three search modes:
 
@@ -76,7 +76,7 @@ def search(
         chaoscypher source search "machine learning"
         chaoscypher source search "API" --mode keyword --limit 20
         chaoscypher source search "neural networks" --mode semantic
-    """
+    """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
     try:
         ctx = get_context(database_name=database)
 

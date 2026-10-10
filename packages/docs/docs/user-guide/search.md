@@ -268,7 +268,7 @@ Generate vector embeddings for nodes that don't have them:
 <TabItem value="web-ui" label="Web UI">
 
 
-Go to **Settings** → **Search** and click **Rebuild Search Indexes** — it auto-detects missing or mismatched embeddings and regenerates them in the background.
+The Web UI has no action that embeds nodes missing an embedding. **Settings** → **Search** → **Rebuild Search Indexes** re-indexes the embeddings already stored; it regenerates embeddings only after the embedding model or dimensions change. Use the call on the **API** tab instead.
 
 </TabItem>
 <TabItem value="cli" label="CLI">
@@ -288,7 +288,7 @@ curl -X POST http://localhost:8080/api/v1/search/embeddings
 </Tabs>
 
 
-This runs as a background job via the LLM queue.
+This call is synchronous: it embeds every node that lacks an embedding, in batches, and returns only when the run finishes, so on a large graph the request stays open for the whole run (allow for proxy timeouts). A batch the embedding provider rejects is counted as failed in the response message while the other batches are still written; call it again to retry the nodes that are still missing embeddings.
 
 ### Index Statistics
 

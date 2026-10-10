@@ -312,7 +312,7 @@ function GetStarted() {
             homepage one-liner is the quickest HTTP-only try.
           </p>
           <CodeBlock language="bash">
-            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -p 443:443 \\\n  -v chaoscypher-data:/data \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
+            {`docker run -d --name chaoscypher \\\n  -p 80:80 \\\n  -p 443:443 \\\n  -v chaoscypher-data:/data \\\n  --add-host=host.docker.internal:host-gateway \\\n  ghcr.io/chaoscypherinc/chaoscypher:latest`}
           </CodeBlock>
           <details className="pathway-compose">
             <summary>Prefer Docker Compose?</summary>
@@ -327,6 +327,10 @@ services:
       - "443:443"
     volumes:
       - chaoscypher-data:/data
+    extra_hosts:
+      # Lets the container reach an Ollama running on the host (Linux engines
+      # don't resolve host.docker.internal without this)
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 volumes:
   chaoscypher-data:`}</CodeBlock>

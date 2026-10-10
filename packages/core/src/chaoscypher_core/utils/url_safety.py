@@ -29,6 +29,13 @@ What IS blocked (default policy):
 What the strict policy additionally blocks (``strict=True``):
 - Any hostname that resolves to private/loopback/reserved/link-local/
   multicast/unspecified IPs (DNS rebinding defense, at check time)
+- Any other non-globally-routable address, e.g. shared/CGNAT
+  ``100.64.0.0/10`` (Tailscale tailnets)
+
+Addresses are classified by value, not spelling: IPv4-mapped IPv6
+(``::ffff:a.b.c.d``) is unwrapped to its IPv4 form, and integer /
+short-dotted hosts (``http://1684301000/``) are resolved to the address
+they denote before the checks run.
 """
 
 import ipaddress
@@ -57,7 +64,22 @@ _BLOCKED_HOSTS = {
 _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("169.254.0.0/16"),  # link-local (covers cloud metadata)
     ipaddress.ip_network("161.26.0.0/16"),  # IBM Cloud services
+    ipaddress.ip_network("100.100.100.200/32"),  # Alibaba Cloud metadata
+    ipaddress.ip_network("192.0.0.192/32"),  # Oracle Cloud metadata
 )
+
+
+def _normalise_ip(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Unwrap an IPv4-mapped IPv6 address (``::ffff:a.b.c.d``) to IPv4.
+
+    Without this, ``ip in <IPv4Network>`` is always False for the mapped
+    spelling, so ``[::ffff:161.26.0.1]`` would slip past the IPv4 ranges.
+    """
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return ip.ipv4_mapped
+    return ip
 
 
 def _ip_is_unsafe_public_or_metadata(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -66,6 +88,7 @@ def _ip_is_unsafe_public_or_metadata(ip: ipaddress.IPv4Address | ipaddress.IPv6A
     Covers cloud-metadata IPs (link-local ``169.254.0.0/16`` plus the
     vendor-specific ranges enumerated in ``_BLOCKED_NETWORKS``).
     """
+    ip = _normalise_ip(ip)
     if ip.is_link_local:
         return True
     return any(ip in net for net in _BLOCKED_NETWORKS)
@@ -75,10 +98,14 @@ def _ip_is_unsafe_strict(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> b
     """Return True if an IP is unsafe under the strict policy.
 
     Strict policy blocks loopback, private, reserved, multicast, and
-    unspecified addresses — the full set of non-public destinations.
+    unspecified addresses, plus anything else that is not globally
+    routable (e.g. shared/CGNAT ``100.64.0.0/10``) — the full set of
+    non-public destinations.
     """
+    ip = _normalise_ip(ip)
     return (
-        ip.is_loopback
+        not ip.is_global
+        or ip.is_loopback
         or ip.is_private
         or ip.is_reserved
         or ip.is_multicast

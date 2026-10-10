@@ -21,7 +21,7 @@ Chaos Cypher has transcribed audio and video locally for a while: Whisper on you
 - Chunks and citations that carry a time range into the recording
 - A question answered across episodes, with the moment to jump to
 
-You will need `ffmpeg` installed, and Chaos Cypher's media dependencies. In the Docker image that is the `INCLUDE_MEDIA=1` build; with the CLI it is a `pip install faster-whisper`. Nothing else.
+You will need `ffmpeg` installed, and Chaos Cypher's media dependencies. In the Docker image that is the `INCLUDE_MEDIA=1` build; the CLI already depends on faster-whisper, so ffmpeg is the only extra install. Nothing else.
 
 ## Step 1: Get some audio
 

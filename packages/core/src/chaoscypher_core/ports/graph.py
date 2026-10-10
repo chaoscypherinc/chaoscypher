@@ -105,8 +105,13 @@ class GraphRepositoryProtocol(Protocol):
         Returns:
             Created Node object with generated ID
 
-        Raises:
-            ValueError: If template_id invalid or required fields missing
+        Note:
+            This is a raw write: implementations do not validate that
+            ``template_id`` exists or that required properties are set.
+            Use ``NodeService.create_node`` for validated creation (it
+            raises ``NotFoundError``). On the SQLite adapter a dangling
+            ``template_id`` surfaces as the backend's
+            ``sqlalchemy.exc.IntegrityError``, not ``ValueError``.
 
         Example:
             from chaoscypher_core.models import NodeCreate
@@ -328,8 +333,13 @@ class GraphRepositoryProtocol(Protocol):
         Returns:
             Created Edge object with generated ID
 
-        Raises:
-            ValueError: If source or target node not found
+        Note:
+            This is a raw write: implementations do not check that the
+            source/target nodes or the template exist. Use
+            ``EdgeService.create_edge`` for validated creation (it raises
+            ``NotFoundError`` / ``ValidationError``). On the SQLite adapter
+            a dangling endpoint or template surfaces as the backend's
+            ``sqlalchemy.exc.IntegrityError``, not ``ValueError``.
 
         Example:
             from chaoscypher_core.models import EdgeCreate

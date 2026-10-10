@@ -254,7 +254,7 @@ curl -X DELETE http://localhost:8080/api/v1/databases/research-project
 Chaos Cypher includes built-in database backup and restore from the **Settings** > **Backup** tab:
 
 - **Create backups** — Snapshot the current database to a timestamped backup file
-- **Scheduled backups** — Configure automatic backups on a schedule
+- **Scheduled backups** — Configure automatic backups on a schedule (these cover the active database only; see [Backup & Restore](../getting-started/backup-restore.md#worked-example-cron-backup-with-retention))
 - **Restore** — Restore a database from a previous backup
 - **Download** — Download backup files for offline storage
 - **Manage** — View, download, or delete existing backups

@@ -27,6 +27,7 @@ from chaoscypher_core.constants import (
 )
 from chaoscypher_core.operations.extraction.extraction_finalizer import (
     finalize_extraction_handler,
+    trigger_next_waiting_extraction,
 )
 from chaoscypher_core.operations.extraction.extraction_metrics_service import (
     persist_chunk_metrics,
@@ -1585,6 +1586,30 @@ class ChunkExtractionOperationsService:
                         fail_exception_message=str(fail_exc),
                     )
                     raise
+
+                # Slot-lifetime invariant (Audit fix F41): ``fail_extraction``
+                # above set status=ERROR, which frees the single extraction
+                # slot, so this path must dispatch the next waiting source.
+                # A waiter parked by ``mark_extraction_waiting`` has no queue
+                # task at all — only a row breadcrumb that
+                # ``trigger_next_waiting_extraction`` reads — so without this
+                # call one fatal chunk error stalls the extraction queue with
+                # no recovery path. Mirrors import_service's failure-release.
+                #
+                # Suppressed and logged rather than raised: dispatch failure
+                # must not mask the original extraction error.
+                try:
+                    await trigger_next_waiting_extraction(adapter, database_name, settings)
+                except Exception as dispatch_exc:
+                    logger.warning(
+                        "trigger_next_waiting_extraction_failed",
+                        source_id=job["source_id"],
+                        job_id=job_id,
+                        original_exception_type=type(exc).__name__,
+                        original_exception_message=error_message,
+                        error_type=type(dispatch_exc).__name__,
+                        error_message=str(dispatch_exc),
+                    )
         else:
             # Route through the shared counter + auto-finalize helper
             # so a terminal-on-failure job still gets its finalization

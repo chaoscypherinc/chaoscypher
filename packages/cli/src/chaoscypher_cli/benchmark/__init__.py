@@ -13,7 +13,7 @@ Vocabulary:
     dataset - the test unit (corpus + metadata + how to evaluate it).
     corpus - the body of text inside a dataset.
     config - a runnable benchmark recipe (name, params, dataset ids,
-        models). Loaded by ``bench run [NAME]``.
+        models). Loaded by ``chaoscypher benchmark run [NAME]``.
 """
 
 from __future__ import annotations

@@ -163,7 +163,7 @@ The full CI pipeline (`make ci`) runs, in order:
 4. **Custom architectural rules** — `lint-claude` (import-linter + semgrep + AST checker, with self-tests)
 5. **Secret scan** — gitleaks
 6. **Public-export hygiene** — internal-reference check + SPDX license headers
-7. **Docstring coverage** — 100% required for public APIs
+7. **Docstring coverage** — 100% required, single-underscore names included
 8. **Dead code detection** — vulture scanning
 9. **Bundle-size budget** — frontend build + size-limit check
 10. **Docs build** — `npm ci` + Docusaurus build in `packages/docs`

@@ -34,7 +34,7 @@ Every source file (`.py`, `.ts`, `.tsx`) must start with an SPDX license header:
 
 ## Docstrings
 
-Google-style docstrings are required on all public classes and functions. The CI enforces 100% docstring coverage.
+Google-style docstrings are required on every module, class, function and method, including single-underscore (`_helper`) ones. CI enforces 100% docstring coverage with `interrogate`, which counts single-underscore names; only name-mangled `__private` methods, magic methods (`__repr__`, …), and functions nested inside another function are exempt. Ruff's docstring rules check public objects only, so `make lint` passing does not mean `make docstrings` will.
 
 ```python
 def process_source(source_id: str, depth: str = "full") -> dict:
@@ -54,7 +54,7 @@ def process_source(source_id: str, depth: str = "full") -> dict:
 
 ### Rules
 
-- Every public class and function needs a docstring
+- Every class, function and method needs a docstring, including single-underscore ones
 - Module docstrings are required
 - Comments explain **why**, not what
 - No `TODO` or `FIXME` in code. Track follow-up work in an issue or the project backlog.

@@ -35,7 +35,7 @@ pending (v1.5).
 
 For each `(model, dataset)` pair, one run produces:
 
-- **Quality** — the v7 quality grade (0–100) from
+- **Quality** — the v8 quality grade (0–100) from
   `chaoscypher_core.services.quality.QualityScorer`, the same scorer
   ChaosCypher uses in production. The headline number per model is the
   unweighted mean across the datasets the model succeeded on.
@@ -48,7 +48,7 @@ For each `(model, dataset)` pair, one run produces:
 
 `chaoscypher benchmark run full` runs three stages and scores each:
 
-- **Extraction** — the v7 quality grade described above.
+- **Extraction** — the v8 quality grade described above.
 - **Embedding retrieval** (scorer v1) — each `(extractor, embedder)` graph is
   queried with the dataset's labeled queries; the headline score is
   MRR × 100, with Recall@1 and Recall@3 reported alongside.
@@ -67,7 +67,7 @@ config's `weights:` key):
 
 | Dimension | Default weight | Source |
 |---|---|---|
-| Extraction | 0.40 | v7 quality grade (mean across datasets) |
+| Extraction | 0.40 | v8 quality grade (mean across datasets) |
 | Retrieval | 0.20 | embedding-retrieval headline for the pinned `defaults.embedder` |
 | Chat | 0.20 | chat headline for the pinned `defaults.embedder` + `defaults.chat` |
 | Speed | 0.10 | per-chunk latency normalized against fixed anchors (500 ms → 100, 30,000 ms → 0) |
@@ -100,7 +100,7 @@ says?**
   adds the phenomenon that trips models on real text (negation, reported
   speech, capitalised roles). The headline is the tier-weighted pass rate.
 - **Carrier tier (section H)**: the same instructions and checks, spliced
-  into a real ~3,000-character extraction group with 21 named people. This
+  into a real ~3,000-character extraction group with 21 named entities. This
   is the "does it transfer to production-sized chunks?" column. Two extra
   checks apply there: the carrier's own cast is still found, and nothing
   outside the input is invented.
@@ -311,7 +311,7 @@ client, not on your GPU.
 
 ## What's *not* measured (yet)
 
-- **Factual correctness against a ground truth.** The v7 score is
+- **Factual correctness against a ground truth.** The v8 score is
   *intrinsic* — it rewards rich descriptions, well-justified relationships,
   balanced graph topology, and absence of structural noise (hub skew,
   reciprocal duplicates, low-quality items). It does *not* compare extracted
@@ -319,7 +319,7 @@ client, not on your GPU.
   well-described, well-justified, but factually wrong entities can score
   well. This is a known limitation; adding gold sets per dataset is
   the v1.5 step.
-- **Raw model capability.** The v7 score is calculated on the **post-normalized,
+- **Raw model capability.** The v8 score is calculated on the **post-normalized,
   pre-commit** graph — after the import pipeline's deduplication, entity
   normalization, type rescue, evidence validation, and entity cleaning
   (`enable_normalization=True`), which is what a real import commits. This
@@ -365,7 +365,7 @@ Every result row pins:
 - `benchmark_version` — the harness version (currently `2.0`).
 - `dataset_version` — bumps when a dataset's corpus or domain template
   changes.
-- `scorer_version` — currently `7`.
+- `scorer_version` — currently `8`.
 - `seed` and `temperature` — deterministic decoding parameters.
 - `thinking` and `thinking_honoured` — whether thinking mode was requested,
   and (Ollama only, measured by a probe before the run) whether the model
@@ -401,7 +401,8 @@ so `pip install chaoscypher-cli` is enough to run the canonical leaderboard.
 | `extraction` | Canonical full corpus benchmark: 29 models × 3 datasets (see `chaoscypher benchmark list`). Default when no name is provided. |
 | `quick` | 3-model smoke on `war_and_peace_tiny` only; ~3 minutes locally. |
 | `full` | Three-stage pipeline benchmark (extraction + embedding retrieval + GraphRAG chat). The canonical example of the `embedders:`/`chats:`/`judge:` config shape used by the v2 chat-eval path. |
-| `probes` | Instruction probes through the real extraction pipeline, isolated and at production density; the source of the [leaderboard](/leaderboard). Same model list as `extraction`. |
+| `probes` | Instruction probes through the real extraction pipeline, isolated and at production density; the source of the [leaderboard](/leaderboard)'s extraction column. Same model list as `extraction`. |
+| `chat-probes` | Pass/fail grounded-chat probes (no judge model) over one reference graph per corpus, built once by the top extractor; the source of the leaderboard's chat column. Chat runs with thinking on. |
 | `workstation` | Large-iron local extraction benchmark (llama3.1:70b ~40 GB, gpt-oss:120b ~80 GB — not pulled by default; 48 GB+ VRAM recommended) plus Opus 4.8 as a quality-ceiling reference, 3 datasets. |
 
 ## Running the benchmark

@@ -331,6 +331,9 @@ def extract_routes_from_features(  # noqa: C901, PLR0912 - AST walker over many 
         "grounding_api.py",
         "execution_api.py",
         "ollama_models_api.py",
+        "chunk_attempts_api.py",
+        "chunk_rerun_api.py",
+        "vision_pages_api.py",
     ):
         source_files.extend(FEATURES_DIR.rglob(extra))
 

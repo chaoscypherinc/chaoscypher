@@ -115,6 +115,7 @@ See [Configuration](config.md) for details.
 |---------|-------------|
 | [`mcp`](mcp.md) | Start [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server for AI assistant integration |
 | [`serve`](#serve) | Start a local API server |
+| [`mount`](mount.md) | Pull a knowledge package and serve it over MCP |
 | [`compose`](#compose) | Multi-package orchestration using `axiomatize.yaml` |
 
 ### Utility Commands
@@ -272,10 +273,21 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  build  Build composition package
-  down   Stop composition services
-  run    Run a one-off command
-  up     Start composition services
+  build  Merge the packages into one database
+  down   Stop the HTTP server
+  init   Write a starter axiomatize.yaml
+  mcp    Serve the composition to an MCP host
+  run    Run a command against the composition
+  up     Serve the composition over HTTP
+```
+
+### compose init
+
+Write a starter `axiomatize.yaml` (optionally listing packages right away). See [`compose init`](compose.md#init).
+
+```bash
+chaoscypher compose init
+chaoscypher compose init --name research ./research.ccx acme/eu-ai-act
 ```
 
 ### compose build
@@ -336,6 +348,24 @@ chaoscypher compose down
 | Option | Description |
 |--------|-------------|
 | `--config, -c` | Path to composition config file (default: `axiomatize.yaml`) |
+
+### compose mcp
+
+Serve the composition to an MCP host over stdio, building the composed database first if it does not exist yet. Put the command in your MCP client's server config. See [`compose mcp`](compose.md#mcp).
+
+```bash
+chaoscypher compose mcp
+chaoscypher compose mcp -c research.yaml --mode write
+```
+
+### compose mcp
+
+Serve the composition to an MCP host over stdio, building the composed database first if it does not exist yet. Put the command in your MCP client's server config. See [`compose mcp`](compose.md#mcp).
+
+```bash
+chaoscypher compose mcp
+chaoscypher compose mcp -c research.yaml --mode write
+```
 
 ### compose run
 

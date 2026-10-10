@@ -427,10 +427,10 @@ def _create_fresh_extraction_job(
     entity_guidance = domain_result["entity_guidance"]
     relationship_guidance = domain_result["relationship_guidance"]
 
-    # Build extraction config from domain. Workstream 1 (2026-05-07):
-    # the row is the source of truth for filtering_mode / extraction_depth /
-    # content_filtering / enable_vision; the queue payload remains the
-    # fallback when the row hasn't been persisted yet (legacy / test paths).
+    # Build extraction config from domain. The source row supplies the
+    # persisted per-source settings; for ``filtering_mode`` an explicit queue
+    # payload value wins over the row (a run-only override, see the cascade
+    # in ``_build_extraction_config``).
     source_row: dict[str, Any] | None = None
     try:
         source_row = adapter.get_source(file_id, settings.current_database)
@@ -503,14 +503,15 @@ def _build_extraction_config(
         entity_guidance: Entity-specific extraction guidance.
         relationship_guidance: Relationship-specific extraction guidance.
         settings: Application settings.
-        file_info: File metadata dict (legacy fallback when ``source_row``
-            is missing). Every user upload setting now lives on the
-            source row; this dict is only used for
-            backwards-compatible recovery.
-        source_row: Authoritative source-row state. When present, drives
-            ``filtering_mode``, ``content_filtering``, ``enable_vision``,
-            and ``extraction_depth`` regardless of what the queue
-            payload says.
+        file_info: Queue payload dict. A non-empty ``filtering_mode`` here
+            is an explicit per-call override (e.g. from
+            ``POST /sources/{id}/extraction``) and takes precedence over
+            ``source_row`` for this run only; it is not persisted.
+        source_row: Persisted source-row state. Supplies
+            ``filtering_mode`` when the payload carries no override, and
+            ``enable_direction_correction``, ``protect_orphans`` and
+            ``max_entity_degree_override`` ahead of domain and engine
+            defaults.
 
     Returns:
         JSON string of the extraction configuration.
@@ -1730,6 +1731,24 @@ class ImportOperationsService:
                 )
                 adapter.fail_extraction_job(job_id, error_msg)
                 adapter.fail_extraction(file_id, error_msg)
+
+                # Slot-lifetime invariant (Audit fix F41), as stated at the
+                # top of this handler: the claim is released here
+                # (status=ERROR), so the next waiting source must be
+                # dispatched. Without this, one ERROR row stalls the entire
+                # extraction queue with no recovery path — the same pairing
+                # the handler's ``except`` block performs below.
+                try:
+                    await trigger_next_waiting_extraction(
+                        adapter, settings.current_database, settings
+                    )
+                except Exception as dispatch_exc:
+                    logger.warning(
+                        "trigger_next_waiting_extraction_failed",
+                        source_id=file_id,
+                        error_type=type(dispatch_exc).__name__,
+                        error_message=str(dispatch_exc),
+                    )
                 return {"status": "error", "error": error_msg, "file_id": file_id}
 
             # Apply depth strategy (shared Core logic)

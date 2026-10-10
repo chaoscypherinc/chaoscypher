@@ -28,7 +28,7 @@ from chaoscypher_cli.benchmark.discovery import user_benchmark_root
 from chaoscypher_cli.benchmark.models import ModelConfig
 
 
-# The name resolved when ``bench run`` is called with no positional argument.
+# The name resolved when ``chaoscypher benchmark run`` is called with no positional argument.
 DEFAULT_CONFIG_NAME = "extraction"
 
 # Decoding pins a config falls back to when it names neither. They are part of
@@ -52,7 +52,7 @@ class BenchmarkConfig:
 
     Attributes:
         name: Display name shown in the leaderboard header.
-        description: One-line description for ``bench list``.
+        description: One-line description for ``chaoscypher benchmark list``.
         seed: Pinned seed; overridable by ``--seed``.
         temperature: Pinned temperature; overridable by ``--temperature``.
         dataset_ids: Datasets to evaluate, by id.
@@ -315,7 +315,7 @@ def _yaml_files(root: Path) -> list[Path]:
 
 
 def _peek_description(path: Path) -> str:
-    """Read just the description field for `bench list`. Failures return ''."""
+    """Read just the description field for `chaoscypher benchmark list`. Failures return ''."""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(data, dict):

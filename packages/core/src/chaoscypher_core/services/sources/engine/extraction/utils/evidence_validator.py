@@ -356,7 +356,7 @@ async def filter_entities_by_evidence(
 ) -> tuple[list[dict[str, Any]], dict[int, int | None], dict[str, int]]:
     """Filter entities by sentence-level evidence.
 
-    Each entity that fails validation increments
+    Dropped entities increment (one write, ``n`` = drop count)
     ``QualityCounter.EVIDENCE_ENTITIES_DROPPED`` when *adapter* and
     *source_id* are provided. The increment is best-effort: a missing
     *adapter* or *source_id* silently skips the counter so callers that
@@ -417,13 +417,18 @@ async def filter_entities_by_evidence(
                         details={"sent_ref": entity.get("sent_ref"), "mode": mode},
                     )
                 )
-            if adapter is not None and source_id is not None:
-                await increment_quality_counter(
-                    adapter=adapter,
-                    source_id=source_id,
-                    database_name=database_name or "default",
-                    counter=QualityCounter.EVIDENCE_ENTITIES_DROPPED,
-                )
+
+    # One ``n=dropped`` write instead of one per dropped item: the
+    # increment is a blocking UPDATE+COMMIT with no suspension point, so
+    # per-item calls stalled the event loop for M sequential commits.
+    if dropped > 0 and adapter is not None and source_id is not None:
+        await increment_quality_counter(
+            adapter=adapter,
+            source_id=source_id,
+            database_name=database_name or "default",
+            counter=QualityCounter.EVIDENCE_ENTITIES_DROPPED,
+            n=dropped,
+        )
 
     stats = {"entities_checked": len(entities), "entities_dropped": dropped}
 
@@ -461,7 +466,7 @@ async def filter_relationships_by_evidence(
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     """Filter relationships by sentence-level evidence.
 
-    Each relationship that fails validation increments
+    Dropped relationships increment (one write, ``n`` = drop count)
     ``QualityCounter.EVIDENCE_RELATIONSHIPS_DROPPED`` when *adapter* and
     *source_id* are provided. The increment is best-effort: a missing
     *adapter* or *source_id* silently skips the counter so callers that
@@ -528,13 +533,18 @@ async def filter_relationships_by_evidence(
                         details={"sent_ref": rel.get("sent_ref"), "mode": mode},
                     )
                 )
-            if adapter is not None and source_id is not None:
-                await increment_quality_counter(
-                    adapter=adapter,
-                    source_id=source_id,
-                    database_name=database_name or "default",
-                    counter=QualityCounter.EVIDENCE_RELATIONSHIPS_DROPPED,
-                )
+
+    # One ``n=dropped`` write instead of one per dropped item: the
+    # increment is a blocking UPDATE+COMMIT with no suspension point, so
+    # per-item calls stalled the event loop for M sequential commits.
+    if dropped > 0 and adapter is not None and source_id is not None:
+        await increment_quality_counter(
+            adapter=adapter,
+            source_id=source_id,
+            database_name=database_name or "default",
+            counter=QualityCounter.EVIDENCE_RELATIONSHIPS_DROPPED,
+            n=dropped,
+        )
 
     stats = {"relationships_checked": len(relationships), "relationships_dropped": dropped}
 

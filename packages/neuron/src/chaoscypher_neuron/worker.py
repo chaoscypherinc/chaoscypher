@@ -94,6 +94,7 @@ async def _run_startup_recovery(ctx: WorkerContext) -> None:
         source_recovery = await recover_stuck_sources(
             adapter=adapter,
             database_name=current_database,
+            settings=settings,
         )
         logger.info(
             "extraction_source_recovery_completed",

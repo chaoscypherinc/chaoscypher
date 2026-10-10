@@ -154,6 +154,7 @@ llm:
   extraction_temperature: 0.1   # Extraction temperature (lower = more deterministic)
   ai_max_tokens: 65536          # Max output tokens
   ai_context_window: 8192       # Context window size
+  seed: null                    # Sampling seed; null = the provider picks one per request (Ollama only, hosted providers ignore it)
 ```
 
 ### Spend Caps

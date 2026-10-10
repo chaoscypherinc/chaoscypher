@@ -328,7 +328,7 @@ class TestIndexFileFailure:
                 service.index_file(file_id, skip_embeddings=True, enable_vision=False)
 
         record = mock_cli_context.storage_adapter.get_file(file_id, mock_cli_context.database_name)
-        assert record["status"] == "failed"
+        assert record["status"] == "error"
         assert "No content extracted" in record["error"]
 
     def test_no_content_with_vision_enabled_marks_failed(
@@ -351,7 +351,7 @@ class TestIndexFileFailure:
                 service.index_file(file_id, skip_embeddings=True, enable_vision=True)
 
         record = mock_cli_context.storage_adapter.get_file(file_id, mock_cli_context.database_name)
-        assert record["status"] == "failed"
+        assert record["status"] == "error"
 
     def test_wrong_status_raises_before_touching_loader(
         self, mock_cli_context: MagicMock, sample_text_file: Path
@@ -1292,6 +1292,129 @@ class TestExtractEntities:
         ctx.storage_adapter.create_llm_call_metrics_batch.assert_called_once()
         ctx.storage_adapter.fail_extraction.assert_called_once()
         assert ctx.storage_adapter.fail_extraction.call_args.args[0] == file_id
+
+
+# ===========================================================================
+# extract_entities / index_file retry against a real SqliteAdapter
+# ===========================================================================
+
+
+@pytest.fixture
+def real_adapter_ctx(tmp_path: Path, mock_cli_context_with_llm: MagicMock) -> Any:
+    """LLM-wired CLI context whose storage adapter is a real file-backed SqliteAdapter.
+
+    The status guards and failure writers must be exercised against the
+    real adapter: the dict-backed fake wrote a ``"failed"`` status no real
+    code writes, which hid the guard mismatch.
+    """
+    from sqlmodel import SQLModel
+
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+
+    db_path = tmp_path / "test.db"
+    SQLModel.metadata.create_all(get_engine(db_path), checkfirst=True)
+    adapter = SqliteAdapter(str(db_path), database_name="default")
+    adapter.connect()
+
+    ctx = _llm_ctx(mock_cli_context_with_llm)
+    ctx.storage_adapter = adapter
+    ctx.database_name = "default"
+    adapter.upload_source(
+        source_id="if_retry_test1",
+        database_name="default",
+        filename="doc.txt",
+        file_content=b"hello",
+        staging_dir=str(tmp_path / "staging"),
+    )
+    adapter.start_indexing("if_retry_test1")
+    adapter.complete_indexing("if_retry_test1", 1, "none", 0)
+    try:
+        yield ctx
+    finally:
+        adapter.disconnect()
+
+
+def _run_extract_with(service: CLISourceProcessingService, file_id: str, outcome: Any) -> Any:
+    """Run extract_entities with chunks present and _extract_and_finalize -> ``outcome``.
+
+    ``outcome`` is an exception instance to raise, or the finalized dict.
+    """
+    mock = (
+        AsyncMock(side_effect=outcome)
+        if isinstance(outcome, BaseException)
+        else AsyncMock(return_value=outcome)
+    )
+    patches = _patch_extract_orchestration(_domain_obj())
+    try:
+        for p in patches:
+            p.start()
+        with (
+            patch.object(
+                service.ctx.storage_adapter,
+                "get_chunks_for_extraction",
+                return_value=[{"content": "c"}],
+            ),
+            patch.object(service, "_extract_and_finalize", new=mock),
+        ):
+            return service.extract_entities(file_id)
+    finally:
+        for p in patches:
+            p.stop()
+
+
+class TestExtractRetryRealAdapter:
+    """A failed CLI extraction leaves a source the CLI itself can retry."""
+
+    FID = "if_retry_test1"
+    FINALIZED: dict[str, Any] = {"entities": [], "relationships": [], "metadata": {}}
+
+    def _status(self, ctx: Any) -> str:
+        return str(ctx.storage_adapter.get_file(self.FID, ctx.database_name)["status"])
+
+    def test_extraction_error_is_retryable_in_place(self, real_adapter_ctx: Any) -> None:
+        service = CLISourceProcessingService(real_adapter_ctx)
+        try:
+            with pytest.raises(TimeoutError):
+                _run_extract_with(service, self.FID, TimeoutError("LLM read timeout"))
+            assert self._status(real_adapter_ctx) == "error"
+
+            # Retry in place: the guard accepts the extraction-stage ERROR.
+            _run_extract_with(service, self.FID, self.FINALIZED)
+            assert self._status(real_adapter_ctx) == "extracted"
+        finally:
+            service.close()
+
+    def test_ctrl_c_mid_extraction_reverts_to_indexed(self, real_adapter_ctx: Any) -> None:
+        service = CLISourceProcessingService(real_adapter_ctx)
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                _run_extract_with(service, self.FID, KeyboardInterrupt())
+            # Not wedged at EXTRACTING: the resume path can extract again.
+            assert self._status(real_adapter_ctx) == "indexed"
+            _run_extract_with(service, self.FID, self.FINALIZED)
+            assert self._status(real_adapter_ctx) == "extracted"
+        finally:
+            service.close()
+
+    def test_indexing_error_not_extractable_but_reindexable(self, real_adapter_ctx: Any) -> None:
+        real_adapter_ctx.storage_adapter.fail_indexing(self.FID, "boom")
+        service = CLISourceProcessingService(real_adapter_ctx)
+        try:
+            # Partial chunks: extraction must not run on an indexing-stage ERROR.
+            with pytest.raises(ValueError, match="Cannot extract"):
+                _run_extract_with(service, self.FID, self.FINALIZED)
+            # ...but index_file accepts it (fails later, on the empty loader).
+            with (
+                patch(
+                    "chaoscypher_core.services.sources.loaders.factory.get_loader_registry",
+                    return_value=_mock_loader_registry(documents=[]),
+                ),
+                pytest.raises(ValueError, match="No content extracted"),
+            ):
+                service.index_file(self.FID, skip_embeddings=True, enable_vision=False)
+        finally:
+            service.close()
 
 
 # ===========================================================================

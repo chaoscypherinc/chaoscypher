@@ -297,5 +297,5 @@ could otherwise be captured by another router's `/{id}` pattern (for example
 - [ ] Factory function named `get_{feature}_service()` (CC001)
 - [ ] `__init__.py` with barrel exports and `__all__`
 - [ ] Router registered in `router.py`
-- [ ] Google-style docstrings on all public classes/functions
+- [ ] Google-style docstrings on all classes/functions/methods, including single-underscore ones
 - [ ] Tests for service and API layer

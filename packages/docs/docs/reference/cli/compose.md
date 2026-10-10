@@ -89,6 +89,7 @@ Building composition: my-knowledge-base
   Packages:  3
   Strategy:  merge
   Output:    ./output/my-knowledge-base
+  Clean build: Yes
 
 Resolving packages...
 

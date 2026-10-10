@@ -101,14 +101,28 @@ def _configure_graph_repo(
     Args:
         repo: The ``MagicMock`` graph repository to configure.
         nodes: Node list to return from both ``list_nodes`` variants.
-        edges: Edge list to return from both ``list_edges`` variants.
+        edges: Edge list backing ``list_edges_minimal`` and ``list_edges``
+            (the latter honours its ``source_node_id``/``target_node_id`` filters).
         batch_nodes: Optional node list for ``get_nodes_batch``; defaults to
             ``nodes`` when not provided.
 
     """
     repo.list_nodes.return_value = nodes
     repo.list_nodes_minimal.return_value = nodes
-    repo.list_edges.return_value = edges
+
+    def _list_edges(
+        source_node_id: str | None = None,
+        target_node_id: str | None = None,
+        **_kwargs: Any,
+    ) -> list[SimpleNamespace]:
+        return [
+            e
+            for e in edges
+            if (source_node_id is None or e.source_node_id == source_node_id)
+            and (target_node_id is None or e.target_node_id == target_node_id)
+        ]
+
+    repo.list_edges.side_effect = _list_edges
     repo.list_edges_minimal.return_value = edges
     repo.get_nodes_batch.return_value = batch_nodes if batch_nodes is not None else nodes
 
@@ -1402,6 +1416,37 @@ class TestTraversePath:
         assert result["success"] is True
         assert result["nodes_found"] == 0
         assert result["results"] == []
+
+    @pytest.mark.asyncio
+    async def test_uses_indexed_per_node_lookups_not_full_edge_scan(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+        analytics_service: MagicMock,
+        settings: EngineSettings,
+    ) -> None:
+        """Traversal queries edges per frontier node, never the whole edge table.
+
+        ``list_edges_minimal`` (the full-table analytics load) must not be
+        called, and every ``list_edges`` call must carry a node predicate.
+        Only nodes below ``max_depth`` are expanded (n1 at depth 0, n2 at 1).
+        """
+        nodes = [make_node(f"n{i}", f"N{i}") for i in range(1, 5)]
+        edges = [make_edge("e1", "n1", "n2"), make_edge("e2", "n2", "n3")]
+        edges.append(make_edge("e3", "n3", "n4"))
+        graph_repo.get_node.return_value = nodes[0]
+        _configure_graph_repo(graph_repo, nodes=nodes, edges=edges, batch_nodes=nodes[1:])
+
+        handler = _make_handler(graph_repo, search_repo, analytics_service, settings)
+        result = await handler.traverse_path("n1", max_depth=2)
+
+        assert [r["node"]["id"] for r in result["results"]] == ["n2", "n3"]
+        graph_repo.list_edges_minimal.assert_not_called()
+        queried = [
+            (c.kwargs.get("source_node_id"), c.kwargs.get("target_node_id"))
+            for c in graph_repo.list_edges.call_args_list
+        ]
+        assert queried == [("n1", None), (None, "n1"), ("n2", None), (None, "n2")]
 
 
 # ===========================================================================

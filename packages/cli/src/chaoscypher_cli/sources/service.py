@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import structlog
 
-from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.models import SourceErrorStage, SourceStatus
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
 from chaoscypher_core.utils.id import generate_id
 
@@ -526,10 +526,20 @@ class CLISourceProcessingService:
         # single-process, so a row still in INDEXING means a previous run
         # died mid-index (Ctrl+C, crash). Re-indexing is idempotent — chunks
         # are recreated — and this is what lets the resume picker actually
-        # resume such sources instead of erroring.
+        # resume such sources instead of erroring. ERROR (what
+        # fail_indexing / fail_extraction write) is allowed so a failed run
+        # can be retried in place instead of deleted and re-added.
         status = file_record.get("status", "")
-        if status not in (SourceStatus.PENDING, SourceStatus.INDEXING, "uploaded", "failed"):
-            msg = f"Cannot index file with status '{status}' - must be 'pending' or 'uploaded'"
+        if status not in (
+            SourceStatus.PENDING,
+            SourceStatus.INDEXING,
+            SourceStatus.ERROR,
+            "uploaded",
+        ):
+            msg = (
+                f"Cannot index file with status '{status}' - must be 'pending', "
+                "'uploaded' or 'error'"
+            )
             raise ValueError(msg)
 
         # Update status to indexing
@@ -1076,9 +1086,15 @@ class CLISourceProcessingService:
             msg = f"File not found: {file_id}"
             raise ValueError(msg)
 
-        # Check status
+        # Check status. ERROR is retryable only when extraction itself
+        # failed: an indexing-stage ERROR may have partial chunks, so it
+        # must go back through index_file first.
         status = file_record.get("status", "")
-        if status not in (SourceStatus.INDEXED, SourceStatus.EXTRACTED, "failed"):
+        retryable_error = (
+            status == SourceStatus.ERROR
+            and file_record.get("error_stage") == SourceErrorStage.EXTRACTION
+        )
+        if status not in (SourceStatus.INDEXED, SourceStatus.EXTRACTED) and not retryable_error:
             msg = f"Cannot extract from file with status '{status}' - must be 'indexed'"
             raise ValueError(msg)
 
@@ -1133,8 +1149,8 @@ class CLISourceProcessingService:
                 # Status was already flipped to EXTRACTING above — without an
                 # explicit terminal transition the row would wedge there
                 # forever (index/extract/commit all reject EXTRACTING).
-                # Failing keeps it recoverable: both index_file and
-                # extract_entities accept 'failed'.
+                # Failing keeps it recoverable: index_file and
+                # extract_entities both accept an extraction-stage ERROR.
                 logger.warning("extract_no_chunks", file_id=file_id)
                 self.ctx.storage_adapter.fail_extraction(
                     file_id, "No chunks available for extraction"
@@ -1342,7 +1358,10 @@ class CLISourceProcessingService:
 
             return extraction_results, collector_summary
 
-        except Exception as e:
+        except (Exception, KeyboardInterrupt) as e:
+            # KeyboardInterrupt is a BaseException: without catching it here
+            # a Ctrl+C left the row in EXTRACTING, which index_file,
+            # extract_entities and commit all reject.
             # Still persist any metrics we collected before failure. Same
             # compute_llm_summary route as the happy path so the row's
             # llm_* columns land correctly even on a failed run.
@@ -1362,7 +1381,13 @@ class CLISourceProcessingService:
                 except Exception as persist_error:
                     logger.warning("failed_to_persist_metrics_on_error", error=str(persist_error))
 
-            self.ctx.storage_adapter.fail_extraction(file_id, str(e))
+            if isinstance(e, KeyboardInterrupt):
+                # User cancellation, not a failure: chunks and embeddings
+                # are intact, so revert to INDEXED (resume re-runs extract).
+                logger.info("extraction_interrupted", file_id=file_id)
+                self.ctx.storage_adapter.cancel_extraction(file_id)
+            else:
+                self.ctx.storage_adapter.fail_extraction(file_id, str(e))
             raise
 
     async def _record_integrity_counters(

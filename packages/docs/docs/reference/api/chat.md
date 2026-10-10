@@ -586,10 +586,10 @@ curl -s -X POST http://localhost/api/v1/chats/abc123def456/regenerate
 ### Export a Conversation
 
 ```
-GET /api/v1/chats/{chat_id}/export?format=json|markdown
+GET /api/v1/chats/{chat_id}/export
 ```
 
-`format=json` (default) returns `{"data": <full chat object>}`. `format=markdown` returns a `text/markdown` attachment with role headings, entity markers reduced to bold labels, and citations rendered as numbered footnotes carrying the source filename and sentence text.
+Query parameter: `format=json|markdown`. `format=json` (default) returns `{"data": <full chat object>}`. `format=markdown` returns a `text/markdown` attachment with role headings, entity markers reduced to bold labels, and citations rendered as numbered footnotes carrying the source filename and sentence text.
 
 ```bash
 curl -s "http://localhost/api/v1/chats/abc123def456/export?format=markdown" -o chat.md

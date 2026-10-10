@@ -22,7 +22,7 @@ console = Console()
 @click.command("rebuild-search")
 @click.option("--database", "-d", default="default", help="Database name")
 def rebuild_search(database: str) -> None:
-    r"""Rebuild search indexes.
+    """Rebuild search indexes.
 
     Auto-detects whether embeddings need regeneration:
 
@@ -34,7 +34,7 @@ def rebuild_search(database: str) -> None:
     Example:
         chaoscypher source rebuild-search
         chaoscypher source rebuild-search --database my-project
-    """
+    """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
     ctx = get_context(database_name=database)
 
     needs_regeneration = ctx.search_repository.needs_full_reindex

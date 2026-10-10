@@ -122,7 +122,7 @@ Before requesting review:
 - [ ] `make coverage-diff` shows ≥90% coverage on changed lines (see "Coverage gates" below)
 - [ ] Alembic migration added if SQLModel metadata changed
 - [ ] Public docs (`CLAUDE.md`, `CONTRIBUTING.md`, package READMEs, or `packages/docs/`) updated if a rule shifted
-- [ ] Docstrings on new public classes/functions use Google style
+- [ ] Docstrings on new classes/functions/methods (including `_private` ones) use Google style
 - [ ] Commit message uses `type(scope): subject`
 - [ ] SPDX header on all new source files
 - [ ] No TODO/FIXME added in code; open or update a GitHub issue instead
@@ -199,7 +199,7 @@ Before adding a rule, inspect nearby existing rules and tests for path patterns,
 ## Code style
 
 - Follow the patterns documented in `CLAUDE.md`.
-- **Python:** `snake_case` functions, `PascalCase` classes. Google-style docstrings on all public APIs.
+- **Python:** `snake_case` functions, `PascalCase` classes. Google-style docstrings on every module, class, function and method — single-underscore ones included (`make docstrings` enforces 100%).
 - **TypeScript:** `camelCase` functions, `PascalCase` types. Props typed via `interface`.
 - **SPDX license headers** on all source files.
 

@@ -497,11 +497,12 @@ def _text_stems(text: str) -> set[str]:
 def _value_supported(value: str, stems: set[str], raw_text: str) -> bool:
     """Return True when ``value`` is traceable to the passage.
 
-    Verbatim match, or every significant token (number-normalised, crudely
-    stemmed) shares a 4-char prefix with a token in the text. So
-    'military commander' passes when 'commanded' is present and 'french'
-    fails when nothing French-ish appears. Known limit: irregular verb forms
-    (sang / singing) are not bridged; probe passages avoid relying on them.
+    Verbatim match, or at least 60% of the significant tokens
+    (number-normalised, crudely stemmed) share a 4-char prefix with a token
+    in the text. So 'french' fails when nothing French-ish appears, and
+    'military commander' fails when only 'commanded' is present (1 of 2
+    tokens). Known limit: irregular verb forms (sang / singing) are not
+    bridged; probe passages avoid relying on them.
     """
     import re as _re
 

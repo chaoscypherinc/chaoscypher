@@ -34,7 +34,9 @@ async def test_run_startup_recovery_calls_both_primitives_in_order(
         call_order.append("tasks")
         return {"recovered": 3, "skipped": 1, "failed": 0}
 
-    async def fake_source_recovery(adapter: object, database_name: str) -> dict[str, int]:
+    async def fake_source_recovery(
+        adapter: object, database_name: str, settings: object
+    ) -> dict[str, int]:
         call_order.append("sources")
         return {"reset": 2, "marked_failed": 0}
 
@@ -53,12 +55,15 @@ async def test_run_startup_recovery_calls_both_primitives_in_order(
     assert call_order == ["tasks", "sources"], f"Expected tasks-then-sources; got {call_order}"
     mock_tasks.assert_called_once()
     mock_sources.assert_called_once()
-    # Tasks recovery is passed (adapter, database_name, settings); sources is (adapter, database_name).
+    # Both primitives take (adapter, database_name, settings): source recovery
+    # needs settings so its failure-release can dispatch the next waiting
+    # source (Audit fix F41's slot-lifetime invariant).
     tasks_kwargs = mock_tasks.call_args.kwargs
     assert tasks_kwargs["database_name"] == "test_db"
     assert tasks_kwargs["settings"] is ctx["settings"]
     sources_kwargs = mock_sources.call_args.kwargs
     assert sources_kwargs["database_name"] == "test_db"
+    assert sources_kwargs["settings"] is ctx["settings"]
 
 
 @pytest.mark.asyncio

@@ -58,7 +58,7 @@ def load(
     sources: bool,
     database: str,
 ) -> None:
-    r"""Import a .ccx package file into the knowledge graph.
+    """Import a .ccx package file into the knowledge graph.
 
     Imports the selected content types from a CCX package. Each import is
     fully self-contained: every entity, including templates, is given a
@@ -71,7 +71,7 @@ def load(
         chaoscypher graph package load export.ccx --no-templates
         chaoscypher graph package load backup.ccx --merge
         chaoscypher graph package load data.ccx -d my-project
-    """
+    """  # noqa: D301  -- Click \x08 paragraph escape, intentional non-raw docstring.
     try:
         ctx = get_context(database_name=database)
 

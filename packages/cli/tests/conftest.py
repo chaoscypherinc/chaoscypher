@@ -185,7 +185,9 @@ def mock_storage_adapter() -> MagicMock:
 
     def fail_indexing(file_id: str, error: str) -> None:
         if file_id in adapter._files:
-            adapter._files[file_id]["status"] = "failed"
+            # Mirror the real adapter's _apply_failure: status ERROR + stage.
+            adapter._files[file_id]["status"] = "error"
+            adapter._files[file_id]["error_stage"] = "indexing"
             adapter._files[file_id]["error"] = error
 
     def create_chunks_batch(

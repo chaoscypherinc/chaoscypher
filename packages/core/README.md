@@ -316,14 +316,16 @@ Use `TemplateCreate`, `NodeCreate`, and `EdgeCreate` DTOs when you need full
 control over IDs, properties, and template configuration:
 
 ```python
-from chaoscypher_core import Engine, TemplateCreate, NodeCreate, EdgeCreate
+from chaoscypher_core import Engine, NodeCreate, PropertyDefinition, TemplateCreate
 
 with Engine(database="demo") as engine:
     # Create a template with property definitions
     t = engine.create_template(TemplateCreate(
         name="Person",
         template_type="node",
-        properties={"role": {"type": "string"}},
+        properties=[
+            PropertyDefinition(name="role", display_name="Role", property_type="string"),
+        ],
     ))
 
     # Create nodes with explicit template ID

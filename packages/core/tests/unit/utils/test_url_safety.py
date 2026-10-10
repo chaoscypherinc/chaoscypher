@@ -3,6 +3,8 @@
 
 """Tests for URL safety validation."""
 
+import pytest
+
 from chaoscypher_core.utils.url_safety import resolve_pinned_ip, validate_url_safety
 
 
@@ -155,3 +157,54 @@ class TestResolvePinnedIp:
         concrete address to dial.
         """
         assert resolve_pinned_ip("http://nonexistent.invalid./", strict=False) is None
+
+
+class TestAlternateAddressSpellings:
+    """Metadata / non-public targets must be blocked however the address is spelled.
+
+    The integer (``1684301000``) and short-dotted (``100.100.25800``) forms
+    are not valid ``ipaddress`` literals; ``getaddrinfo`` resolves them
+    numerically (no DNS), so they exercise the resolved-host path.
+    """
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://100.100.100.200/latest/meta-data/",  # Alibaba, dotted
+            "http://1684301000/latest/meta-data/",  # Alibaba, integer
+            "http://100.100.25800/latest/meta-data/",  # Alibaba, short-dotted
+            "http://[::ffff:100.100.100.200]/latest/meta-data/",  # Alibaba, v4-mapped
+            "http://3221225664/opc/v2/instance/",  # Oracle 192.0.0.192, integer
+            "http://[::ffff:161.26.0.1]/",  # IBM Cloud, v4-mapped
+            "http://[::ffff:169.254.169.254]/",  # AWS, v4-mapped (control)
+        ],
+    )
+    @pytest.mark.parametrize("strict", [False, True])
+    def test_metadata_blocked_every_policy(self, url: str, strict: bool) -> None:
+        """Cloud-metadata addresses are refused under both policies."""
+        assert validate_url_safety(url, strict=strict) is False
+        assert resolve_pinned_ip(url, strict=strict) is None
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://100.64.0.1/",  # CGNAT / Tailscale
+            "http://100.101.1.1:8080/",  # CGNAT / Tailscale
+            "http://[::ffff:100.64.0.1]/",  # CGNAT, v4-mapped
+            "http://[::ffff:127.0.0.1]/",  # loopback, v4-mapped
+            "http://[::ffff:10.0.0.5]/",  # private, v4-mapped
+            "http://2130706433/",  # loopback, integer
+        ],
+    )
+    def test_non_public_blocked_strict(self, url: str) -> None:
+        """Strict mode refuses every non-globally-routable destination."""
+        assert validate_url_safety(url, strict=True) is False
+        assert resolve_pinned_ip(url, strict=True) is None
+
+    def test_cgnat_allowed_default_policy(self) -> None:
+        """The permissive policy still reaches LAN/tailnet services."""
+        assert validate_url_safety("http://100.64.0.1/") is True
+
+    def test_public_v4_mapped_allowed_strict(self) -> None:
+        """A v4-mapped *public* address is still allowed under strict."""
+        assert validate_url_safety("http://[::ffff:93.184.216.34]/", strict=True) is True

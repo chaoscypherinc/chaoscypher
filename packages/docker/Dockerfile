@@ -43,7 +43,7 @@ RUN CHAOSCYPHER_SCHEMA_ONLY=1 \
     python -c "import json; from chaoscypher_cortex.main import app; open('/build/openapi.json', 'w').write(json.dumps(app.openapi()))"
 
 # Stage 2: Build React frontend
-FROM node:22.23.2-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS frontend-builder
+FROM node:22.23.3-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS frontend-builder
 
 WORKDIR /app
 # Bump npm to latest so `npm ci` below doesn't emit a "new major version"

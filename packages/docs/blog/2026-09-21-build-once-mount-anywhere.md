@@ -101,7 +101,7 @@ If the package came from the Hub, replace the path with the reference:
 "args": ["mount", "acme/research"]
 ```
 
-<!-- optional screenshot: Claude Desktop's MCP server list showing "research" connected with 16 tools -->
+<!-- optional screenshot: Claude Desktop's MCP server list showing "research" connected with 21 tools -->
 
 ## Step 4: Ask all three the same question
 

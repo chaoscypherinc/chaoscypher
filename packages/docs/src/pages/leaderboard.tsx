@@ -245,8 +245,8 @@ function Overall({ m }: { m: Model }) {
   const c = m.scores.chat!;
   const lines = [
     `Overall ${pct(value)} = ${share(WEIGHTS.overall.extraction)} of extraction + ${share(WEIGHTS.overall.chat)} of chat`,
-    `Extraction ${pct(e)}: ${WEIGHTS.overall.extraction} × ${pct(e)} = ${(WEIGHTS.overall.extraction * e).toFixed(1)} points`,
-    `Chat ${pct(c)}: ${WEIGHTS.overall.chat} × ${pct(c)} = ${(WEIGHTS.overall.chat * c).toFixed(1)} points${m.chat?.timed_out ? " (the run did not finish, so chat counts as 0)" : ""}`,
+    `Extraction ${pct(e)}: ${WEIGHTS.overall.extraction} × ${e.toFixed(1)}% = ${(WEIGHTS.overall.extraction * e).toFixed(1)} points`,
+    `Chat ${pct(c)}: ${WEIGHTS.overall.chat} × ${c.toFixed(1)}% = ${(WEIGHTS.overall.chat * c).toFixed(1)} points${m.chat?.timed_out ? " (the run did not finish, so chat counts as 0)" : ""}`,
     "Speed is not part of it: it depends on the GPU.",
   ];
   return (
@@ -271,7 +271,7 @@ function Extraction({ m }: { m: Model }) {
   }
   const lines = [
     `Extraction ${pct(value)}: does the model follow the extraction prompt, thinking off`,
-    `In chunks ${counts(m.carrier)}, ${pct(100 * rate(m.carrier))}: each instruction inside a real 3,000-character extraction group with 21 named people. Weighted ${share(WEIGHTS.extraction.carrier)}, because this is what transfers to real data.`,
+    `In chunks ${counts(m.carrier)}, ${pct(100 * rate(m.carrier))}: each instruction inside a real 3,000-character extraction group with 21 named entities. Weighted ${share(WEIGHTS.extraction.carrier)}, because this is what transfers to real data.`,
     `Isolated ${counts(m.native)}, ${pct(100 * rate(m.native))}: the same instructions alone in a short passage. Weighted ${share(WEIGHTS.extraction.native)}, as the diagnostic behind the chunk score.`,
     "The strips under the row show every probe: one cell each, orange = failed. Hover a cell for its instruction.",
   ];
@@ -478,7 +478,7 @@ const HEADERS: Record<string, string[]> = {
   model: [
     "Model",
     "Hover a name for the Ollama tag, the license and any completion problems (a flag marks those).",
-    "A row that ran through an MCP client says so there. VRAM, speed and chat do not apply to it.",
+    "A row that ran through an MCP client says so there. VRAM and speed do not apply to it.",
   ],
   overall: [
     "Overall: one number for the whole job",
@@ -488,7 +488,7 @@ const HEADERS: Record<string, string[]> = {
   ],
   extraction: [
     "Extraction: does the model follow the extraction prompt, thinking off",
-    `In chunks, weighted ${share(WEIGHTS.extraction.carrier)}: each instruction inside a real 3,000-character extraction group with 21 named people. This is what transfers to real data.`,
+    `In chunks, weighted ${share(WEIGHTS.extraction.carrier)}: each instruction inside a real 3,000-character extraction group with 21 named entities. This is what transfers to real data.`,
     `Isolated, weighted ${share(WEIGHTS.extraction.native)}: the same instructions alone in a short passage, the diagnostic behind the chunk score.`,
     "The strip under the score is the chunk run: one cell per probe, orange = failed. Hover a cell for its instruction.",
   ],
@@ -689,9 +689,9 @@ export default function Leaderboard() {
         )}
 
         <p className={styles.repro}>
-          Every number here comes from <code>chaoscypher benchmark run probes --local-only</code> on a
-          single RTX 5090 with the models pulled from Ollama; the scorer, the probes and the raw JSON are in
-          the repository. Hover a cell in the strip to read the instruction that failed.
+          The extraction columns come from <code>chaoscypher benchmark run probes --local-only</code> and the
+          chat column from <code>chaoscypher benchmark run chat-probes --local-only</code>, on a single RTX 5090
+          with the models pulled from Ollama; the scorer and the probes are in the repository. Hover a cell in the strip to read the instruction that failed.
         </p>
       </main>
     </Layout>

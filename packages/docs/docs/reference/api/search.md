@@ -83,6 +83,8 @@ curl "http://localhost/api/v1/search?q=deep+learning&search_type=hybrid&limit=10
         "content": "Machine learning is a subset of artificial intelligence...",
         "page_number": 3,
         "section": "Introduction",
+        "start_time": null,
+        "end_time": null,
         "filename": "paper.pdf"
       }
     },
@@ -141,6 +143,8 @@ A narrow projection of a graph node — only the fields the search engine actual
 | `content`     | string      | Chunk text content                     |
 | `page_number` | int or null | Page number (if available)             |
 | `section`     | string or null | Section heading (if available)       |
+| `start_time`  | float or null | Seconds into the recording where the chunk starts (audio/video sources) |
+| `end_time`    | float or null | Seconds into the recording where the chunk ends (audio/video sources) |
 | `filename`    | string      | Source filename                        |
 
 ---

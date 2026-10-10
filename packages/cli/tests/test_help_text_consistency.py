@@ -269,3 +269,80 @@ def test_no_retired_flat_command_paths_in_source() -> None:
         "workflow|package ..., chaoscypher source quality ..., "
         "chaoscypher lexicon login|search ...):\n" + "\n".join(offenders)
     )
+
+
+# ---------------------------------------------------------------------------
+# The Click paragraph escape, across the WHOLE tree.
+#
+# ``test_top_level_help_does_not_leak_click_paragraph_escape`` above applies
+# this assertion to the 20 hand-listed ``TOP_LEVEL_COMMANDS`` only, while this
+# module's docstring claims the tests "walk the entire Click command tree".
+# They did not: 29 of ~98 screens were visited at all and only 20 got the
+# ``\b`` check, so four real leaf commands shipped a literal ``\b`` to users
+# for as long as the suite had been green -- `source search`,
+# `source rebuild-search`, `graph package export` and `graph package load`,
+# each of which used a raw-string docstring, so Python left ``\b`` as two
+# characters and
+# Click's paragraph escape never fired. The visible damage is the Examples
+# block collapsing onto one run-on line.
+#
+# This test enumerates the tree itself rather than trusting a hand-list, so a
+# newly-added command is covered the day it lands.
+# ---------------------------------------------------------------------------
+
+
+def _all_command_paths(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """Every command path in the tree, root first, loading lazy groups.
+
+    Mirrors ``_help``'s ``sys.argv`` trick: LazyGroup decides whether to
+    import the real subcommands from ``sys.argv``, so the path being
+    inspected has to be spelled there before ``list_commands`` is
+    meaningful.
+    """
+    import click
+
+    from chaoscypher_cli.__main__ import main
+
+    def walk(path: tuple[str, ...]) -> list[tuple[str, ...]]:
+        found = [path]
+        monkeypatch.setattr(sys, "argv", ["chaoscypher", *path, "--help"])
+        cmd: Any = main
+        for token in path:
+            cmd = cmd.get_command(click.Context(cmd), token)
+            if cmd is None:
+                return found
+        names = (
+            sorted(cmd.list_commands(click.Context(cmd))) if isinstance(cmd, click.Group) else []
+        )
+        for name in names:
+            found.extend(walk((*path, name)))
+        return found
+
+    return walk(())
+
+
+def test_no_help_screen_leaks_click_paragraph_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r"""No ``--help`` screen anywhere may print a literal ``\b``.
+
+    A literal ``\b`` in rendered output means the docstring was malformed
+    -- almost always a raw-string (``r``-prefixed) docstring, which stops
+    Python turning ``\b`` into the backspace byte Click looks for. The user
+    then sees raw backslash-b AND loses the paragraph-reflow suppression the
+    token exists for, so the surrounding block renders as one run-on line.
+    """
+    paths = _all_command_paths(monkeypatch)
+    assert len(paths) > 50, f"tree walk collapsed to {len(paths)} screens — enumeration is broken"
+
+    offenders: list[str] = []
+    for path in paths:
+        result = _help(monkeypatch, *path)
+        if "\\b" in result.output:
+            offenders.append(" ".join(path) or "(root)")
+
+    assert not offenders, (
+        "These --help screens leak a literal '\\b' sequence. Fix the "
+        "command docstring: drop its raw-string (r) prefix so Python emits "
+        "the real backspace byte Click uses to suppress paragraph reflow.\n" + "\n".join(offenders)
+    )

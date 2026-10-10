@@ -31,7 +31,7 @@ Both were built the way any package is built: add the documents, let extraction 
 
 ## Step 1: Write the stack
 
-`chaoscypher compose init ./architecture.ccx ./decisions.ccx` writes it for you; this is the file:
+`chaoscypher compose init ./architecture.ccx ./decisions.ccx` writes it for you; this is the file, with the name changed:
 
 ```yaml
 name: chaoscypher-architecture
@@ -42,9 +42,8 @@ packages:
   - ./decisions.ccx
 
 settings:
-  merge_strategy: namespace
   output_dir: ./output
-  port: 8181
+  port: 8081
 ```
 
 A package entry can be a local `.ccx` file, an extracted package directory, or a Lexicon Hub reference like `acme/eu-ai-act:1.2.0`. Hub packages are downloaded into a cache the first time and read from disk after that, and a package's declared dependencies are pulled in with it.
@@ -98,11 +97,11 @@ chaoscypher compose up --detach
 ```
 Starting composition: chaoscypher-architecture
   Config:     axiomatize.yaml
-  API port:   8181
+  API port:   8081
   Detached mode: Yes
 
 Success: Composition started in background
-  Server: http://localhost:8181
+  Server: http://localhost:8081
 ```
 
 In this run the health endpoint answered after six seconds. The server is a Cortex API bound to loopback, its output goes to `output/server.log`, and its process id goes to `output/compose.pid`. That last file is what makes the next command work from any shell, hours later:

@@ -3,7 +3,7 @@
 
 """`chaoscypher benchmark list` - show available configs and datasets.
 
-Lists named benchmark configs first (these are what ``bench run`` accepts
+Lists named benchmark configs first (these are what ``chaoscypher benchmark run`` accepts
 as positional arguments), then datasets (what configs reference by id).
 Both sections show provenance: built-in (ships in the pip package) vs
 user (lives under ``<data_dir>/benchmark/``).

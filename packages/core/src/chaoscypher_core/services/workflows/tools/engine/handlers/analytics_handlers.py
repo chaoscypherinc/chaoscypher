@@ -9,7 +9,6 @@ and similarity search.
 Extracted from tool_executor.py for SRP compliance.
 """
 
-from collections import defaultdict
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -91,6 +90,30 @@ class AnalyticsToolHandlers:
         if hasattr(self.graph, "list_edges_minimal"):
             return list(self.graph.list_edges_minimal(limit=n))
         return list(self.graph.list_edges(limit=n))
+
+    def _incident_edges(
+        self, node_id: str, edge_types: list[str] | None
+    ) -> tuple[list[Any], list[Any]]:
+        """Fetch a node's outgoing and incoming edges via indexed lookups.
+
+        Args:
+            node_id: Node whose incident edges to fetch.
+            edge_types: Optional edge labels/template IDs to keep.
+
+        Returns:
+            ``(outgoing, incoming)`` edge lists, each filtered by ``edge_types``.
+
+        """
+        outgoing = self.graph.list_edges(
+            source_node_id=node_id, limit=self._edge_limit, minimal=True
+        )
+        incoming = self.graph.list_edges(
+            target_node_id=node_id, limit=self._edge_limit, minimal=True
+        )
+        if edge_types:
+            outgoing = [e for e in outgoing if e.label in edge_types or e.template_id in edge_types]
+            incoming = [e for e in incoming if e.label in edge_types or e.template_id in edge_types]
+        return list(outgoing), list(incoming)
 
     @tool_handler("graph_analysis_failed")
     async def analyze_graph_structure(
@@ -402,7 +425,7 @@ class AnalyticsToolHandlers:
         }
 
     @tool_handler("traverse_path_failed")
-    async def traverse_path(  # noqa: C901
+    async def traverse_path(
         self,
         start_node_id: str,
         edge_types: list[str] | None = None,
@@ -438,20 +461,6 @@ class AnalyticsToolHandlers:
             (start_node_id, [], 0)
         ]  # (node_id, path, depth)
 
-        # Get all edges once for efficiency (minimal - only needs source/target/label)
-        all_edges = self._load_edges()
-
-        # Build adjacency lists for both directions
-        outgoing: dict[str, list] = defaultdict(list)
-        incoming: dict[str, list] = defaultdict(list)
-        for edge in all_edges:
-            # Filter by edge type if specified
-            if edge_types and edge.label not in edge_types and edge.template_id not in edge_types:
-                continue
-
-            outgoing[edge.source_node_id].append(edge)
-            incoming[edge.target_node_id].append(edge)
-
         while current_level and len(results) < limit:
             next_level = []
 
@@ -459,8 +468,12 @@ class AnalyticsToolHandlers:
                 if depth >= max_depth:
                     continue
 
+                # Indexed per-node lookups: cost scales with the frontier, not
+                # with the whole edge table.
+                outgoing, incoming = self._incident_edges(current_id, edge_types)
+
                 # Check outgoing edges
-                for edge in outgoing.get(current_id, []):
+                for edge in outgoing:
                     target_id = edge.target_node_id
                     if target_id not in visited:
                         visited.add(target_id)
@@ -484,7 +497,7 @@ class AnalyticsToolHandlers:
                             next_level.append((target_id, new_path, depth + 1))
 
                 # Check incoming edges
-                for edge in incoming.get(current_id, []):
+                for edge in incoming:
                     source_id = edge.source_node_id
                     if source_id not in visited:
                         visited.add(source_id)

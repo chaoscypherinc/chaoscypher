@@ -307,6 +307,7 @@ class TestStartupRecovery:
         mock_source_recovery.assert_called_once_with(
             adapter=mock_adapter,
             database_name="test_db",
+            settings=mock_settings,
         )
 
     @pytest.mark.asyncio

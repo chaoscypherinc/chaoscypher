@@ -25,6 +25,14 @@ Built-in configs:
 - `quick` — 3-model smoke test on a single dataset.
 - `full` — three-stage pipeline benchmark (extraction + embedding retrieval +
   GraphRAG chat with an LLM judge).
+- `probes` — instruction probes through the real extraction pipeline; the
+  source of the [leaderboard](/leaderboard)'s extraction column.
+- `chat-probes` — pass/fail grounded-chat probes over a reference graph; the
+  source of the leaderboard's chat column.
+- `probes` — instruction probes through the real extraction pipeline; the
+  source of the [leaderboard](/leaderboard)'s extraction column.
+- `chat-probes` — pass/fail grounded-chat probes over a reference graph; the
+  source of the leaderboard's chat column.
 - `workstation` — large-iron local extraction benchmark (`llama3.1:70b` ~40 GB,
   `gpt-oss:120b` ~80 GB, `qwen3.6:35b-a3b`) plus Claude Opus 4.8 as a
   quality-ceiling reference. The large models are **not pulled automatically**;
@@ -57,6 +65,9 @@ chaoscypher benchmark run extraction --keep-db
 
 # Write outputs somewhere specific (default: <data_dir>/benchmark/results/)
 chaoscypher benchmark run extraction --out ./bench-out
+
+# Score an add-run against the cached reference graph instead of re-extracting it
+chaoscypher benchmark run chat-probes --reuse-graph
 ```
 
 **Arguments:**
@@ -115,10 +126,10 @@ the benchmark:
 
 ```bash
 # Print to stdout
-chaoscypher benchmark show ./bench-out/2026-04-29T1530Z.json
+chaoscypher benchmark show ./bench-out/2026-04-29T153000Z.json
 
 # Write to a file
-chaoscypher benchmark show ./bench-out/2026-04-29T1530Z.json --out leaderboard.md
+chaoscypher benchmark show ./bench-out/2026-04-29T153000Z.json --out leaderboard.md
 ```
 
 **Arguments:**
@@ -209,8 +220,10 @@ chaoscypher benchmark reference list
 
 Options for `export`: `--workspace` (the benchmark workspace holding
 `graph_cache/`, default `<data_dir>/benchmark/workspace`), `--name` (default:
-the dataset id), `--data-dir`, `--force` (replace an existing pack) and
-`--no-index` (skip re-embedding now; the first chat task does it).
+the dataset id), `--data-dir`, `--force` (replace an existing pack),
+`--no-index` (skip re-embedding now; the first chat task does it), and
+`--seed` / `--temperature` (the decoding pins the cached graph was extracted
+with — part of its cache key; defaults `42` / `0.0`).
 
 ---
 

@@ -811,7 +811,7 @@ chaoscypher graph package load PACKAGE [OPTIONS]
 
 | Option | Short | Default | Description |
 |--------|-------|---------|-------------|
-| `--merge/--replace` | | `--replace` | Default `--replace`: every import creates fresh, fully self-contained templates and IDs (existing data is never overwritten). Pass `--merge` to reuse local templates that share a name with a packaged template. |
+| `--merge/--replace` | | `--replace` | Default `--replace`: every import creates fresh, fully self-contained templates; entities and edges are upserted by IRI, so re-importing the same package updates rows in place instead of duplicating them (incoming wins). Pass `--merge` to reuse local templates that share a name with a packaged template. |
 | `--templates/--no-templates` | | `--templates` | Import templates |
 | `--knowledge/--no-knowledge` | | `--knowledge` | Import knowledge nodes and edges |
 | `--workflows/--no-workflows` | | `--workflows` | Import workflows |
@@ -821,7 +821,7 @@ chaoscypher graph package load PACKAGE [OPTIONS]
 **Examples:**
 
 ```bash
-# Import a package (replace mode — fresh self-contained templates and IDs)
+# Import a package (replace mode — fresh self-contained templates; entities upserted by IRI)
 chaoscypher graph package load my-knowledge.ccx
 
 # Merge mode (reuse local templates that share a name)
@@ -849,9 +849,13 @@ Mode: Replace (fresh templates, fully self-contained)
 │ Edges imported          │    83 │
 │ Workflows imported      │     2 │
 │ Workflow edges imported │     6 │
+│ Sources imported        │     3 │
+│ Chunks imported         │    41 │
+│ Citations imported      │   130 │
 └─────────────────────────┴───────┘
 ✓ Checksums verified
 ✓ Imported 148 items
+✓ Indexed 3 sources and 47 nodes for search
 ```
 
 ---

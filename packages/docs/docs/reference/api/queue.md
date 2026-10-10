@@ -28,7 +28,7 @@ Queues a new background task for processing.
 | `queue` | string | Yes | -- | Queue name (e.g., `"operations"`, `"llm"`) |
 | `operation` | string | Yes | -- | Operation name (e.g., `"import_ccx"`, `"chat_completion"`) |
 | `data` | object | Yes | -- | Operation-specific payload |
-| `priority` | integer | No | `50` | Task priority (0-100, higher = higher priority — ZPOPMAX) |
+| `priority` | integer | No | `settings.priorities.background` (50 by default) | Task priority (0-100, higher = higher priority — ZPOPMAX) |
 | `metadata` | object | No | `{}` | Arbitrary metadata for filtering and tracking |
 
 ```json
@@ -836,7 +836,7 @@ Request body for creating a new task.
 | `queue` | string | Yes | -- | Target queue name |
 | `operation` | string | Yes | -- | Operation to perform |
 | `data` | object | Yes | -- | Operation-specific payload |
-| `priority` | integer | No | `50` | Priority (0-100) |
+| `priority` | integer | No | `settings.priorities.background` (50 by default) | Priority (0-100) |
 | `metadata` | object | No | `{}` | Arbitrary metadata |
 
 ### QueueTaskResponse

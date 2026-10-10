@@ -163,7 +163,7 @@ See [Upgrading](./upgrading.md) for the full upgrade and rollback procedure.
 
 ## Worked example: cron backup with retention
 
-Scheduled backups are already on by default (daily, 7 retained per database — tune under **Settings → Backup → Scheduled Backups** or the `backup.*` keys in `settings.yaml`); reach for cron only when you need scheduling or retention beyond what those settings offer. This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days. The retention `find` runs inside the container (`docker exec`) because `/data` is a named Docker volume on the default install; if you bind-mount `/data` from the host, you can run `find /data/backups/default ...` directly instead.
+Scheduled backups are already on by default (daily, 7 retained — tune under **Settings → Backup → Scheduled Backups** or the `backup.*` keys in `settings.yaml`), but they cover **only the active database** (`current_database`). Other knowledge bases get no scheduled backup, and their existing backups are not pruned to the retention count until they are the active database again. Reach for cron when you need other databases covered, or scheduling or retention beyond what those settings offer. This cron job runs daily at 02:00, creates a backup via the API, and deletes backups older than 14 days. The retention `find` runs inside the container (`docker exec`) because `/data` is a named Docker volume on the default install; if you bind-mount `/data` from the host, you can run `find /data/backups/default ...` directly instead.
 
 ```bash
 # /etc/cron.d/chaoscypher-backup

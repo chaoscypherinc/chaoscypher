@@ -1270,8 +1270,6 @@ curl "http://localhost/api/v1/sources/src_abc123/chunks?page=1&page_size=20"
       "chunk_index": 0,
       "content": "This is the first chunk of the document...",
       "page_number": 1,
-  "start_time": null,
-  "end_time": null,
       "start_time": null,
       "end_time": null,
       "section": "Introduction",
@@ -2437,6 +2435,8 @@ Pagination wrapper for source list responses.
 | `chunk_index` | int | Position in the document (0-indexed) |
 | `content` | string | Chunk text content |
 | `page_number` | int? | PDF page number |
+| `start_time` | float? | Seconds into the recording where the chunk starts (audio/video sources; `null` otherwise) |
+| `end_time` | float? | Seconds into the recording where the chunk ends (audio/video sources; `null` otherwise) |
 | `section` | string? | Section heading |
 | `group_index` | int? | Hierarchical group index |
 | `char_start` | int? | Start offset into the original upload text (`null` when `citation_offset_method` is `none`) |
