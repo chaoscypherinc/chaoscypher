@@ -58,7 +58,8 @@ class XLSXLoader:
         """Initialize XLSX loader.
 
         Args:
-            settings: Settings instance (not currently used).
+            settings: Settings instance (``loader.max_disk_bytes`` and
+                ``loader.xlsx_max_content_chars``).
         """
         self.settings = settings
 
@@ -74,7 +75,9 @@ class XLSXLoader:
 
         Raises:
             ValidationError: If the file is not a valid XLSX/XLSM
-                workbook (corrupt zip container, invalid OOXML, etc.).
+                workbook (corrupt zip container, invalid OOXML, etc.), or
+                if its cells flatten to more than
+                ``settings.loader.xlsx_max_content_chars`` characters.
         """
         from chaoscypher_core.services.sources.loaders.base import check_loader_file_size
 
@@ -87,16 +90,32 @@ class XLSXLoader:
             msg = f"File '{path.name}' is not a valid XLSX: {exc}"
             raise ValidationError(msg, field="content") from exc
 
+        max_chars = self.settings.loader.xlsx_max_content_chars if self.settings else None
         parts: list[str] = []
         sheets: list[dict[str, Any]] = []
         rows_skipped = 0
+        char_count = 0
         try:
             for sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
                 parts.append(f"\n[Sheet: {sheet_name}]")
                 row_count = 0
                 for row in ws.iter_rows(values_only=True):
-                    values = [str(cell) if cell is not None else "" for cell in row]
+                    values: list[str] = []
+                    for cell in row:
+                        value = str(cell) if cell is not None else ""
+                        # Budget per cell, not per row: shared strings let one
+                        # ~25-byte cell materialise 32,000 characters, so a single
+                        # wide row can already exceed the cap.
+                        char_count += len(value)
+                        if max_chars is not None and char_count > max_chars:
+                            msg = (
+                                f"File '{path.name}' flattens to more than {max_chars} "
+                                "characters; raise settings.loader.xlsx_max_content_chars "
+                                "to load it."
+                            )
+                            raise ValidationError(msg, field="content")
+                        values.append(value)
                     if not any(v.strip() for v in values):
                         rows_skipped += 1
                         continue

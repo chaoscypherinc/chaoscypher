@@ -17,6 +17,11 @@
 # pull_request path calls the GitHub PR API (list commits / post comments),
 # which 403s under this workflow's read-only `contents` token. Scanning on
 # push keeps full coverage without that failure.
+#
+# Home runners (vars.CI_RUNS_ON set): the action uploads results.sarif relative
+# to $HOME, and their workspace (/_work) is not under it, so the upload throws
+# after a clean scan. Findings are in the step log either way (-v, redacted);
+# the artifact is kept on GitHub-hosted runners only.
 
 name: gitleaks
 
@@ -30,7 +35,7 @@ permissions:
 jobs:
   scan:
     name: Scan for committed secrets
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
@@ -44,3 +49,4 @@ jobs:
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # free org key — see header
           GITLEAKS_VERSION: 8.21.2
           GITLEAKS_CONFIG: .gitleaks.toml
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: ${{ !vars.CI_RUNS_ON }}

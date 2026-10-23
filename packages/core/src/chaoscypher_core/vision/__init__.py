@@ -9,7 +9,8 @@ package holds the lightweight, dependency-free shared types both
 surfaces need.
 """
 
+from chaoscypher_core.vision.render import clamp_render_scale
 from chaoscypher_core.vision.states import VisionPageKind, VisionPageStatus
 
 
-__all__ = ["VisionPageKind", "VisionPageStatus"]
+__all__ = ["VisionPageKind", "VisionPageStatus", "clamp_render_scale"]

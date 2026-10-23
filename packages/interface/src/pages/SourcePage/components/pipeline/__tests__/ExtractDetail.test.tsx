@@ -36,6 +36,21 @@ describe('ExtractionCounters', () => {
     expect(screen.getByText('RETRIED')).toBeInTheDocument();
     expect(screen.getByText('AVG TIME')).toBeInTheDocument();
     expect(screen.getByText('TOKENS')).toBeInTheDocument();
+    // The detailed row stays hidden while every one of its counters is zero.
+    expect(screen.queryByText('RESCUED ON RETRY')).toBeNull();
+  });
+
+  it('shows the zero-yield and rescued-on-retry counters beside the other failure counters', () => {
+    render(
+      <ExtractionCounters
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        source={{ quality_metrics: { llm_chunks_zero_yield: 2, llm_chunks_rescued_by_fallback: 5 } } as any}
+        stats={stats}
+      />,
+    );
+    expect(screen.getByText('ZERO YIELD').nextSibling).toHaveTextContent('2');
+    expect(screen.getByText('RESCUED ON RETRY').nextSibling).toHaveTextContent('5');
+    expect(screen.getByText('TIMED OUT')).toBeInTheDocument();
   });
 });
 

@@ -27,6 +27,8 @@ function toApiNode(n: CanvasNode) {
     label: n.label,
     position: n.position ?? undefined,
     source_id: n.source_id ?? undefined,
+    // Pipeline flags (orphan, descriptor_reference, ...) ride on properties
+    properties: n.properties ?? undefined,
     // Fields not included in canvas response — transformer handles undefined
     created_at: '',
     updated_at: '',
@@ -41,6 +43,8 @@ function toApiEdge(e: CanvasEdge) {
     source_node_id: e.source_node_id,
     target_node_id: e.target_node_id,
     label: e.label,
+    // Pipeline edge flags (capped, unevidenced) and the evidence reason ride on properties
+    properties: e.properties ?? undefined,
     created_at: '',
     updated_at: '',
   };

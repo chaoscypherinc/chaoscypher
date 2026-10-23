@@ -58,15 +58,20 @@ class _StageRecord:
     input_count: int
     removed_count: int
     items: list[FilteredItem]
+    counts: dict[str, int] | None = None
+    """Whole-stage counters the items (capped at ``MAX_ITEMS_PER_STAGE``) cannot give."""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialise to a JSON-safe dict."""
-        return {
+        out: dict[str, Any] = {
             "stage": self.stage,
             "input_count": self.input_count,
             "removed_count": self.removed_count,
             "items": [item.to_dict() for item in self.items],
         }
+        if self.counts:
+            out["counts"] = dict(self.counts)
+        return out
 
 
 class FilteringLog:
@@ -98,6 +103,7 @@ class FilteringLog:
         input_count: int,
         removed_count: int,
         items: list[FilteredItem] | None = None,
+        counts: dict[str, int] | None = None,
     ) -> None:
         """Record one filtering stage.
 
@@ -107,6 +113,9 @@ class FilteringLog:
             removed_count: Number of items removed by this stage.
             items: Individual removed items (truncated to
                 :pyattr:`MAX_ITEMS_PER_STAGE`).
+            counts: Whole-stage counters by name (the degree cap's
+                ``capped_degree``, a dedup step's ``groups``), kept whole
+                where the items are truncated.
         """
         capped = (items or [])[: self.MAX_ITEMS_PER_STAGE]
         self._stages.append(
@@ -115,6 +124,7 @@ class FilteringLog:
                 input_count=input_count,
                 removed_count=removed_count,
                 items=capped,
+                counts=dict(counts) if counts else None,
             )
         )
 

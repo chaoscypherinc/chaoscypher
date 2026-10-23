@@ -10,12 +10,13 @@
   "@type": "ExtractionDomain",
   "@id": "domain:reference",
   "name": "reference",
-  "version": "1.9.1",
+  "version": "2.0.0",
   "description": "Standards documents (RFC / ISO / IEEE / W3C / ANSI / ECMA), technical specifications, API references, user / administrator / operator manuals, configuration guides, and release notes",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.2,
-  "strict_entity_types": true,
   "type_aliases": {
     "Spec": "Specification",
     "User Guide": "Manual",
@@ -45,15 +46,6 @@
         "SHOULD",
         "MAY",
         "REQUIRED"
-      ]
-    },
-    {
-      "description": "Bare section markers without title",
-      "examples": [
-        "Section 4",
-        "§4.2",
-        "Appendix A",
-        "Annex B"
       ]
     },
     {
@@ -314,694 +306,505 @@
       "min_threshold": 0.4
     }
   },
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract named standards by their canonical identifier: 'RFC 7231', 'ISO/IEC 27001:2022', 'IEEE 802.11', 'W3C HTML 5.2'\n- Extract standards bodies by full name with abbreviation as alias: 'Internet Engineering Task Force' (IETF), 'International Organization for Standardization' (ISO)\n- Extract sections with their number and (when present) heading text: 'Section 4.2', 'Section 4.2: Cache-Control'\n- Extract normative requirements as Requirement entities with the imperative verb (MUST / SHALL / SHOULD) as a property; quote the requirement statement when possible\n- Extract procedures (install, configure, troubleshoot) and their ordered steps\n- Extract documented API entries (function/endpoint references) and their parameters with type, default, required/optional\n- Extract glossary terms by the defined term as the entity name; put the definition in a property\n- Extract configuration items by canonical key with default value as a property\n\nDO NOT EXTRACT:\n- Standalone normative words ('MUST', 'SHALL') as entities — they are properties of requirements\n- Bare section markers without heading text ('Section 4' alone)\n- Generic references: 'the document', 'this specification', 'this manual'\n- Page furniture: page numbers, footers, table-of-contents markers",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PUBLICATION: Use published_by for standard-to-body, references for standard-to-standard citations\n- LIFECYCLE: Use supersedes / superseded_by for replaced standards, obsoletes for deprecation chains\n- STRUCTURE: Use has_section for standard-to-section, part_of_section for subsection-to-section, defined_in for requirement/term-to-section\n- NORMATIVE: Use specifies for standard-to-requirement, requires for requirement-to-requirement dependency, conforms_to for product-to-standard\n- DOCUMENTATION: Use documents for manual-to-product, references_standard for manual-to-standard\n- PROCEDURE: Use contains_step for procedure-to-step, precedes / follows for step ordering\n- API: Use has_parameter for api/procedure-to-parameter, raises for procedure/api-to-error, defines_term for standard/manual-to-glossary-term\n- VERSIONING: Use introduced_in / deprecated_in / removed_in for api/parameter to version\n- TERMS: Use defines_term for source-to-glossary-term\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract named standards by their canonical identifier: 'RFC 7231', 'ISO/IEC 27001:2022', 'IEEE 802.11', 'W3C HTML 5.2'\n- Extract standards bodies by full name with abbreviation as alias: 'Internet Engineering Task Force' (IETF), 'International Organization for Standardization' (ISO)\n- Extract sections with their number and (when present) heading text: 'Section 4.2', 'Section 4.2: Cache-Control'\n- Extract normative requirements as Requirement entities with the imperative verb (MUST / SHALL / SHOULD) as a property; quote the requirement statement when possible\n- Extract procedures (install, configure, troubleshoot) and their ordered steps\n- Extract documented API entries (function/endpoint references) and their parameters with type, default, required/optional\n- Extract glossary terms by the defined term as the entity name; put the definition in a property\n- Extract configuration items by canonical key with default value as a property\n\nDO NOT EXTRACT:\n- Standalone normative words ('MUST', 'SHALL') as entities — they are properties of requirements\n- Generic references: 'the document', 'this specification', 'this manual'\n- Page furniture: page numbers, footers, table-of-contents markers",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PUBLICATION: Use published_by for standard-to-body, references for standard-to-standard citations\n- LIFECYCLE: Use supersedes / superseded_by for replaced standards, obsoletes for deprecation chains\n- STRUCTURE: Use has_section for standard-to-section, part_of_section for subsection-to-section, defined_in for requirement/term-to-section\n- NORMATIVE: Use specifies for standard-to-requirement, requires for requirement-to-requirement dependency, conforms_to for product-to-standard\n- DOCUMENTATION: Use documents for manual-to-product, references_standard for manual-to-standard\n- PROCEDURE: Use contains_step for procedure-to-step, precedes / follows for step ordering\n- API: Use has_parameter for api/procedure-to-parameter, raises for procedure/api-to-error, defines_term for standard/manual-to-glossary-term\n- VERSIONING: Use introduced_in / deprecated_in / removed_in for api/parameter to version\n- TERMS: Use defines_term for source-to-glossary-term\n",
+  "subtypes": [
+    {
+      "name": "Standard",
+      "of": "Work",
+      "description": "A named standards document (RFC, ISO, IEEE, W3C Recommendation, ANSI, ECMA, FIPS, JSR)",
+      "properties": [
+        {
+          "name": "identifier",
+          "display_name": "Standard Identifier",
+          "property_type": "text"
+        },
+        {
+          "name": "status",
+          "display_name": "Status",
+          "property_type": "text"
+        },
+        {
+          "name": "date_published",
+          "display_name": "Date Published",
+          "property_type": "date"
+        },
+        {
+          "name": "edition",
+          "display_name": "Edition",
+          "property_type": "text"
+        }
+      ],
+      "icon": "MenuBook",
+      "color": "#41d65d",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "RFC",
+        "ISO",
+        "IEEE",
+        "ANSI",
+        "ECMA",
+        "FIPS",
+        "JSR",
+        "W3C Recommendation",
+        "standard",
+        "international standard"
+      ]
+    },
+    {
+      "name": "Standards Body",
+      "of": "Organization",
+      "description": "An organization that publishes standards (IETF, ISO, IEEE, W3C, ANSI, ECMA, OASIS, Khronos)",
+      "properties": [
+        {
+          "name": "abbreviation",
+          "display_name": "Abbreviation",
+          "property_type": "text"
+        },
+        {
+          "name": "country",
+          "display_name": "Country",
+          "property_type": "text"
+        }
+      ],
+      "icon": "AccountBalance",
+      "color": "#41d6b3",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "standards body",
+        "standards organization",
+        "working group",
+        "consortium",
+        "committee",
+        "task force",
+        "alliance"
+      ]
+    },
+    {
+      "name": "Specification",
+      "of": "Work",
+      "description": "A formal technical specification (often an internal or vendor-published spec that is not yet or never an external standard)",
+      "properties": [
+        {
+          "name": "version",
+          "display_name": "Version",
+          "property_type": "text"
+        },
+        {
+          "name": "status",
+          "display_name": "Status",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Description",
+      "color": "#41a5d6",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "specification",
+        "spec",
+        "draft specification",
+        "technical specification",
+        "interface specification",
+        "schema"
+      ]
+    },
+    {
+      "name": "Section",
+      "of": "Work",
+      "description": "A numbered section, clause, annex, or appendix within a standard or manual",
+      "properties": [
+        {
+          "name": "number",
+          "display_name": "Section Number",
+          "property_type": "text"
+        },
+        {
+          "name": "heading",
+          "display_name": "Heading",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Article",
+      "color": "#4165d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "section",
+        "clause",
+        "subsection",
+        "appendix",
+        "annex",
+        "chapter",
+        "part"
+      ]
+    },
+    {
+      "name": "Requirement",
+      "of": "Concept",
+      "description": "A normative requirement statement (MUST / SHALL / SHOULD / MAY / OPTIONAL)",
+      "properties": [
+        {
+          "name": "imperative",
+          "display_name": "Imperative",
+          "property_type": "text"
+        },
+        {
+          "name": "statement",
+          "display_name": "Statement",
+          "property_type": "text"
+        },
+        {
+          "name": "identifier",
+          "display_name": "Requirement ID",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Rule",
+      "color": "#5d41d6",
+      "quality_score": 22,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "requirement",
+        "normative requirement",
+        "MUST",
+        "SHALL",
+        "SHOULD",
+        "MAY",
+        "conformance requirement"
+      ]
+    },
+    {
+      "name": "Manual",
+      "of": "Work",
+      "description": "A user, administrator, operator, configuration, installation, or troubleshooting manual",
+      "properties": [
+        {
+          "name": "manual_type",
+          "display_name": "Manual Type",
+          "property_type": "text"
+        },
+        {
+          "name": "audience",
+          "display_name": "Audience",
+          "property_type": "text"
+        },
+        {
+          "name": "version",
+          "display_name": "Version",
+          "property_type": "text"
+        }
+      ],
+      "icon": "MenuBook",
+      "color": "#9d41d6",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "user manual",
+        "user guide",
+        "operator manual",
+        "administrator guide",
+        "administration guide",
+        "configuration guide",
+        "installation guide",
+        "troubleshooting guide",
+        "reference manual"
+      ]
+    },
+    {
+      "name": "API Reference",
+      "of": "Work",
+      "description": "A documented API entry — a function, method, endpoint, command, or class reference page",
+      "properties": [
+        {
+          "name": "kind",
+          "display_name": "Kind",
+          "property_type": "text"
+        },
+        {
+          "name": "signature",
+          "display_name": "Signature",
+          "property_type": "text"
+        },
+        {
+          "name": "stability",
+          "display_name": "Stability",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Code",
+      "color": "#d641d0",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "API reference",
+        "method reference",
+        "function reference",
+        "endpoint reference",
+        "command reference",
+        "class reference",
+        "signature",
+        "syntax"
+      ]
+    },
+    {
+      "name": "Parameter",
+      "of": "Object",
+      "description": "A documented parameter, argument, option, or flag",
+      "properties": [
+        {
+          "name": "type",
+          "display_name": "Type",
+          "property_type": "text"
+        },
+        {
+          "name": "required",
+          "display_name": "Required",
+          "property_type": "text"
+        },
+        {
+          "name": "default_value",
+          "display_name": "Default Value",
+          "property_type": "text"
+        },
+        {
+          "name": "allowed_values",
+          "display_name": "Allowed Values",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Tune",
+      "color": "#d64190",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "parameter",
+        "argument",
+        "option",
+        "flag",
+        "switch",
+        "named argument",
+        "keyword argument"
+      ]
+    },
+    {
+      "name": "Configuration Item",
+      "of": "Object",
+      "description": "A documented configuration key, setting, or environment variable",
+      "properties": [
+        {
+          "name": "type",
+          "display_name": "Type",
+          "property_type": "text"
+        },
+        {
+          "name": "default_value",
+          "display_name": "Default Value",
+          "property_type": "text"
+        },
+        {
+          "name": "scope",
+          "display_name": "Scope",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Settings",
+      "color": "#d64150",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "configuration item",
+        "config key",
+        "setting",
+        "environment variable",
+        "config option",
+        "directive",
+        "feature flag"
+      ]
+    },
+    {
+      "name": "Procedure",
+      "of": "Concept",
+      "description": "A named multi-step procedure (install, configure, upgrade, troubleshoot, rollback)",
+      "properties": [
+        {
+          "name": "purpose",
+          "display_name": "Purpose",
+          "property_type": "text"
+        },
+        {
+          "name": "prerequisites",
+          "display_name": "Prerequisites",
+          "property_type": "text"
+        }
+      ],
+      "icon": "ListAlt",
+      "color": "#d67241",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "procedure",
+        "process",
+        "workflow",
+        "installation procedure",
+        "configuration procedure",
+        "upgrade procedure",
+        "rollback procedure"
+      ]
+    },
+    {
+      "name": "Step",
+      "of": "Concept",
+      "description": "A single step within a procedure",
+      "properties": [
+        {
+          "name": "order",
+          "display_name": "Order",
+          "property_type": "text"
+        },
+        {
+          "name": "expected_output",
+          "display_name": "Expected Output",
+          "property_type": "text"
+        }
+      ],
+      "icon": "ArrowForward",
+      "color": "#d6b241",
+      "quality_score": 12,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "step",
+        "action",
+        "instruction"
+      ]
+    },
+    {
+      "name": "Glossary Term",
+      "of": "Concept",
+      "description": "A term defined in a glossary or definitions section",
+      "properties": [
+        {
+          "name": "definition",
+          "display_name": "Definition",
+          "property_type": "text"
+        },
+        {
+          "name": "abbreviation",
+          "display_name": "Abbreviation",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Bookmark",
+      "color": "#bbd641",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "term",
+        "defined term",
+        "glossary term",
+        "definition",
+        "abbreviation",
+        "acronym"
+      ]
+    },
+    {
+      "name": "Error Code",
+      "of": "Concept",
+      "description": "A documented error code, return code, or status code (HTTP 404, errno EINVAL, exit code 1)",
+      "properties": [
+        {
+          "name": "code",
+          "display_name": "Code",
+          "property_type": "text"
+        },
+        {
+          "name": "meaning",
+          "display_name": "Meaning",
+          "property_type": "text"
+        },
+        {
+          "name": "severity",
+          "display_name": "Severity",
+          "property_type": "text"
+        }
+      ],
+      "icon": "ErrorOutline",
+      "color": "#7bd641",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "error code",
+        "return code",
+        "exit code",
+        "status code",
+        "errno",
+        "error number",
+        "fault code"
+      ]
+    },
+    {
+      "name": "Product",
+      "of": "Object",
+      "description": "A software or hardware product being documented or specified",
+      "properties": [
+        {
+          "name": "vendor",
+          "display_name": "Vendor",
+          "property_type": "text"
+        },
+        {
+          "name": "product_type",
+          "display_name": "Product Type",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Inventory2",
+      "color": "#41d648",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "product",
+        "software",
+        "hardware",
+        "platform",
+        "service",
+        "library",
+        "framework",
+        "appliance",
+        "device"
+      ]
+    },
+    {
+      "name": "Version",
+      "of": "Concept",
+      "description": "A version, release, or edition of a product, standard, or API",
+      "properties": [
+        {
+          "name": "released",
+          "display_name": "Released",
+          "property_type": "date"
+        },
+        {
+          "name": "support_status",
+          "display_name": "Support Status",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Numbers",
+      "color": "#41b8d6",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "version",
+        "release",
+        "edition",
+        "build"
+      ]
+    }
+  ],
   "templates": {
-    "node_templates": [
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_standard",
-        "name": "Standard",
-        "description": "A named standards document (RFC, ISO, IEEE, W3C Recommendation, ANSI, ECMA, FIPS, JSR)",
-        "icon": "MenuBook",
-        "color": "#41d65d",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "RFC",
-          "ISO",
-          "IEEE",
-          "ANSI",
-          "ECMA",
-          "FIPS",
-          "JSR",
-          "W3C Recommendation",
-          "standard",
-          "international standard"
-        ],
-        "properties": [
-          {
-            "name": "identifier",
-            "display_name": "Standard Identifier",
-            "property_type": "text",
-            "absorbs_types": [
-              "Standard Identifier",
-              "Standard Number",
-              "Document Number"
-            ]
-          },
-          {
-            "name": "status",
-            "display_name": "Status",
-            "property_type": "text",
-            "absorbs_types": [
-              "Status",
-              "Standard Status"
-            ]
-          },
-          {
-            "name": "date_published",
-            "display_name": "Date Published",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Published",
-              "Publication Date"
-            ]
-          },
-          {
-            "name": "edition",
-            "display_name": "Edition",
-            "property_type": "text",
-            "absorbs_types": [
-              "Edition",
-              "Revision"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_standards_body",
-        "name": "Standards Body",
-        "description": "An organization that publishes standards (IETF, ISO, IEEE, W3C, ANSI, ECMA, OASIS, Khronos)",
-        "icon": "AccountBalance",
-        "color": "#41d6b3",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "standards body",
-          "standards organization",
-          "working group",
-          "consortium",
-          "committee",
-          "task force",
-          "alliance"
-        ],
-        "properties": [
-          {
-            "name": "abbreviation",
-            "display_name": "Abbreviation",
-            "property_type": "text",
-            "absorbs_types": [
-              "Abbreviation",
-              "Acronym"
-            ]
-          },
-          {
-            "name": "country",
-            "display_name": "Country",
-            "property_type": "text",
-            "absorbs_types": [
-              "Country",
-              "Region"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_specification",
-        "name": "Specification",
-        "description": "A formal technical specification (often an internal or vendor-published spec that is not yet or never an external standard)",
-        "icon": "Description",
-        "color": "#41a5d6",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "specification",
-          "spec",
-          "draft specification",
-          "technical specification",
-          "interface specification",
-          "schema"
-        ],
-        "properties": [
-          {
-            "name": "version",
-            "display_name": "Version",
-            "property_type": "text",
-            "absorbs_types": [
-              "Spec Version"
-            ]
-          },
-          {
-            "name": "status",
-            "display_name": "Status",
-            "property_type": "text",
-            "absorbs_types": [
-              "Status",
-              "Spec Status"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_section",
-        "name": "Section",
-        "description": "A numbered section, clause, annex, or appendix within a standard or manual",
-        "icon": "Article",
-        "color": "#4165d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "section",
-          "clause",
-          "subsection",
-          "appendix",
-          "annex",
-          "chapter",
-          "part"
-        ],
-        "properties": [
-          {
-            "name": "number",
-            "display_name": "Section Number",
-            "property_type": "text",
-            "absorbs_types": [
-              "Section Number",
-              "Clause Number"
-            ]
-          },
-          {
-            "name": "heading",
-            "display_name": "Heading",
-            "property_type": "text",
-            "absorbs_types": [
-              "Heading",
-              "Title"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_requirement",
-        "name": "Requirement",
-        "description": "A normative requirement statement (MUST / SHALL / SHOULD / MAY / OPTIONAL)",
-        "icon": "Rule",
-        "color": "#5d41d6",
-        "requires_named_referent": false,
-        "quality_score": 22,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "requirement",
-          "normative requirement",
-          "MUST",
-          "SHALL",
-          "SHOULD",
-          "MAY",
-          "conformance requirement"
-        ],
-        "properties": [
-          {
-            "name": "imperative",
-            "display_name": "Imperative",
-            "property_type": "text",
-            "absorbs_types": [
-              "Imperative",
-              "Normative Verb",
-              "Modal"
-            ]
-          },
-          {
-            "name": "statement",
-            "display_name": "Statement",
-            "property_type": "text",
-            "absorbs_types": [
-              "Statement",
-              "Requirement Statement"
-            ]
-          },
-          {
-            "name": "identifier",
-            "display_name": "Requirement ID",
-            "property_type": "text",
-            "absorbs_types": [
-              "Requirement ID",
-              "REQ ID"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_manual",
-        "name": "Manual",
-        "description": "A user, administrator, operator, configuration, installation, or troubleshooting manual",
-        "icon": "MenuBook",
-        "color": "#9d41d6",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "user manual",
-          "user guide",
-          "operator manual",
-          "administrator guide",
-          "administration guide",
-          "configuration guide",
-          "installation guide",
-          "troubleshooting guide",
-          "reference manual"
-        ],
-        "properties": [
-          {
-            "name": "manual_type",
-            "display_name": "Manual Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Manual Type",
-              "Guide Type"
-            ]
-          },
-          {
-            "name": "audience",
-            "display_name": "Audience",
-            "property_type": "text",
-            "absorbs_types": [
-              "Audience",
-              "Target Audience"
-            ]
-          },
-          {
-            "name": "version",
-            "display_name": "Version",
-            "property_type": "text",
-            "absorbs_types": [
-              "Doc Version"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_api_reference",
-        "name": "API Reference",
-        "description": "A documented API entry — a function, method, endpoint, command, or class reference page",
-        "icon": "Code",
-        "color": "#d641d0",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "API reference",
-          "method reference",
-          "function reference",
-          "endpoint reference",
-          "command reference",
-          "class reference",
-          "signature",
-          "syntax"
-        ],
-        "properties": [
-          {
-            "name": "kind",
-            "display_name": "Kind",
-            "property_type": "text",
-            "absorbs_types": [
-              "Kind",
-              "API Kind",
-              "Reference Type"
-            ]
-          },
-          {
-            "name": "signature",
-            "display_name": "Signature",
-            "property_type": "text",
-            "absorbs_types": [
-              "Signature",
-              "Function Signature"
-            ]
-          },
-          {
-            "name": "stability",
-            "display_name": "Stability",
-            "property_type": "text",
-            "absorbs_types": [
-              "Stability",
-              "Stability Level"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_parameter",
-        "name": "Parameter",
-        "description": "A documented parameter, argument, option, or flag",
-        "icon": "Tune",
-        "color": "#d64190",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "parameter",
-          "argument",
-          "option",
-          "flag",
-          "switch",
-          "named argument",
-          "keyword argument"
-        ],
-        "properties": [
-          {
-            "name": "type",
-            "display_name": "Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Type",
-              "Parameter Type",
-              "Data Type"
-            ]
-          },
-          {
-            "name": "required",
-            "display_name": "Required",
-            "property_type": "text",
-            "absorbs_types": [
-              "Required",
-              "Requiredness"
-            ]
-          },
-          {
-            "name": "default_value",
-            "display_name": "Default Value",
-            "property_type": "text",
-            "absorbs_types": [
-              "Default",
-              "Default Value"
-            ]
-          },
-          {
-            "name": "allowed_values",
-            "display_name": "Allowed Values",
-            "property_type": "text",
-            "absorbs_types": [
-              "Allowed Values",
-              "Enum Values",
-              "Accepted Values"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_configuration_item",
-        "name": "Configuration Item",
-        "description": "A documented configuration key, setting, or environment variable",
-        "icon": "Settings",
-        "color": "#d64150",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "configuration item",
-          "config key",
-          "setting",
-          "environment variable",
-          "config option",
-          "directive",
-          "feature flag"
-        ],
-        "properties": [
-          {
-            "name": "type",
-            "display_name": "Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Type",
-              "Config Type"
-            ]
-          },
-          {
-            "name": "default_value",
-            "display_name": "Default Value",
-            "property_type": "text",
-            "absorbs_types": [
-              "Default",
-              "Default Value"
-            ]
-          },
-          {
-            "name": "scope",
-            "display_name": "Scope",
-            "property_type": "text",
-            "absorbs_types": [
-              "Scope",
-              "Config Scope"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_procedure",
-        "name": "Procedure",
-        "description": "A named multi-step procedure (install, configure, upgrade, troubleshoot, rollback)",
-        "icon": "ListAlt",
-        "color": "#d67241",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "events",
-        "normalization_keywords": [
-          "procedure",
-          "process",
-          "workflow",
-          "installation procedure",
-          "configuration procedure",
-          "upgrade procedure",
-          "rollback procedure"
-        ],
-        "properties": [
-          {
-            "name": "purpose",
-            "display_name": "Purpose",
-            "property_type": "text",
-            "absorbs_types": [
-              "Purpose",
-              "Procedure Purpose"
-            ]
-          },
-          {
-            "name": "prerequisites",
-            "display_name": "Prerequisites",
-            "property_type": "text",
-            "absorbs_types": [
-              "Prerequisites",
-              "Preconditions"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_step",
-        "name": "Step",
-        "description": "A single step within a procedure",
-        "icon": "ArrowForward",
-        "color": "#d6b241",
-        "requires_named_referent": false,
-        "quality_score": 12,
-        "compatibility_group": "events",
-        "normalization_keywords": [
-          "step",
-          "action",
-          "instruction"
-        ],
-        "properties": [
-          {
-            "name": "order",
-            "display_name": "Order",
-            "property_type": "text",
-            "absorbs_types": [
-              "Order",
-              "Step Number"
-            ]
-          },
-          {
-            "name": "expected_output",
-            "display_name": "Expected Output",
-            "property_type": "text",
-            "absorbs_types": [
-              "Expected Output",
-              "Result"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_glossary_term",
-        "name": "Glossary Term",
-        "description": "A term defined in a glossary or definitions section",
-        "icon": "Bookmark",
-        "color": "#bbd641",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "term",
-          "defined term",
-          "glossary term",
-          "definition",
-          "abbreviation",
-          "acronym"
-        ],
-        "properties": [
-          {
-            "name": "definition",
-            "display_name": "Definition",
-            "property_type": "text",
-            "absorbs_types": [
-              "Definition",
-              "Term Definition"
-            ]
-          },
-          {
-            "name": "abbreviation",
-            "display_name": "Abbreviation",
-            "property_type": "text",
-            "absorbs_types": [
-              "Abbreviation",
-              "Acronym"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_error_code",
-        "name": "Error Code",
-        "description": "A documented error code, return code, or status code (HTTP 404, errno EINVAL, exit code 1)",
-        "icon": "ErrorOutline",
-        "color": "#7bd641",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "error code",
-          "return code",
-          "exit code",
-          "status code",
-          "errno",
-          "error number",
-          "fault code"
-        ],
-        "properties": [
-          {
-            "name": "code",
-            "display_name": "Code",
-            "property_type": "text",
-            "absorbs_types": [
-              "Code",
-              "Numeric Code"
-            ]
-          },
-          {
-            "name": "meaning",
-            "display_name": "Meaning",
-            "property_type": "text",
-            "absorbs_types": [
-              "Meaning",
-              "Error Meaning"
-            ]
-          },
-          {
-            "name": "severity",
-            "display_name": "Severity",
-            "property_type": "text",
-            "absorbs_types": [
-              "Severity"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_product",
-        "name": "Product",
-        "description": "A software or hardware product being documented or specified",
-        "icon": "Inventory2",
-        "color": "#41d648",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "product",
-          "software",
-          "hardware",
-          "platform",
-          "service",
-          "library",
-          "framework",
-          "appliance",
-          "device"
-        ],
-        "properties": [
-          {
-            "name": "vendor",
-            "display_name": "Vendor",
-            "property_type": "text",
-            "absorbs_types": [
-              "Vendor",
-              "Manufacturer",
-              "Publisher"
-            ]
-          },
-          {
-            "name": "product_type",
-            "display_name": "Product Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Product Type",
-              "Category"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "ref_template_version",
-        "name": "Version",
-        "description": "A version, release, or edition of a product, standard, or API",
-        "icon": "Numbers",
-        "color": "#41b8d6",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "version",
-          "release",
-          "edition",
-          "build"
-        ],
-        "properties": [
-          {
-            "name": "released",
-            "display_name": "Released",
-            "property_type": "date",
-            "absorbs_types": [
-              "Release Date",
-              "Released"
-            ]
-          },
-          {
-            "name": "support_status",
-            "display_name": "Support Status",
-            "property_type": "text",
-            "absorbs_types": [
-              "Support Status",
-              "Lifecycle Status"
-            ]
-          }
-        ]
-      }
-    ],
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -1012,46 +815,12 @@
         "color": "#cc4e32",
         "quality_score": 25,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference"
+          "Work"
         ],
         "target_types": [
-          "Standards Body"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "ref_edge_references",
-        "name": "references",
-        "description": "Document or documented entry references another document, section, requirement, term, definition, procedure, or related reference",
-        "icon": "Link",
-        "color": "#cc7632",
-        "quality_score": 18,
-        "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Section",
-          "Requirement",
-          "Procedure",
-          "Glossary Term"
+          "Organization"
         ],
-        "target_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "Section",
-          "Requirement",
-          "Glossary Term",
-          "Procedure",
-          "API Reference",
-          "Error Code",
-          "Configuration Item",
-          "Parameter"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1063,19 +832,14 @@
         "inverse": "superseded_by",
         "quality_score": 25,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Version"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Version"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1087,19 +851,14 @@
         "inverse": "supersedes",
         "quality_score": 25,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Version"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Version"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1110,22 +869,15 @@
         "color": "#a9cc32",
         "quality_score": 22,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Version"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Requirement",
-          "Parameter",
-          "Configuration Item",
-          "Version"
-        ]
+          "Work",
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1136,16 +888,13 @@
         "color": "#81cc32",
         "quality_score": 18,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference",
-          "Procedure",
-          "Section"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Section"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1156,19 +905,15 @@
         "color": "#59cc32",
         "quality_score": 12,
         "source_types": [
-          "Section",
-          "Requirement",
-          "Glossary Term",
-          "Parameter",
-          "Configuration Item",
-          "Error Code",
-          "Procedure",
-          "Step",
-          "API Reference"
+          "Work",
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Section"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1179,20 +924,14 @@
         "color": "#32cc33",
         "quality_score": 25,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "Section",
-          "API Reference"
+          "Work"
         ],
         "target_types": [
-          "Requirement",
-          "Parameter",
-          "Configuration Item",
-          "Error Code",
-          "Procedure",
-          "API Reference"
-        ]
+          "Concept",
+          "Object",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1203,23 +942,14 @@
         "color": "#32cc5b",
         "quality_score": 18,
         "source_types": [
-          "Requirement",
-          "Glossary Term",
-          "Error Code",
-          "Configuration Item",
-          "Parameter",
-          "API Reference",
-          "Procedure",
-          "Step",
-          "Product"
+          "Concept",
+          "Object",
+          "Work"
         ],
         "target_types": [
-          "Section",
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1230,26 +960,16 @@
         "color": "#32cc83",
         "quality_score": 22,
         "source_types": [
-          "Requirement",
-          "Procedure",
-          "Step",
-          "API Reference",
-          "Product",
-          "Specification",
-          "Standard",
-          "Configuration Item"
+          "Concept",
+          "Work",
+          "Object"
         ],
         "target_types": [
-          "Requirement",
-          "Configuration Item",
-          "Parameter",
-          "Procedure",
-          "Step",
-          "Standard",
-          "Specification",
-          "Product",
-          "API Reference"
-        ]
+          "Concept",
+          "Object",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1260,19 +980,15 @@
         "color": "#32ccab",
         "quality_score": 25,
         "source_types": [
-          "Product",
-          "Specification",
-          "Standard",
-          "Manual",
-          "API Reference",
-          "Procedure",
-          "Configuration Item"
+          "Object",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Standard",
-          "Specification",
-          "Requirement"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1283,21 +999,15 @@
         "color": "#32c4cc",
         "quality_score": 25,
         "source_types": [
-          "Manual",
-          "API Reference",
-          "Specification",
-          "Standard",
-          "Section"
+          "Work"
         ],
         "target_types": [
-          "Product",
-          "API Reference",
-          "Configuration Item",
-          "Procedure",
-          "Parameter",
-          "Error Code",
-          "Version"
-        ]
+          "Object",
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -1308,19 +1018,14 @@
         "color": "#329ccc",
         "quality_score": 18,
         "source_types": [
-          "Manual",
-          "API Reference",
-          "Specification",
-          "Section",
-          "Requirement",
-          "Procedure",
-          "Configuration Item",
-          "Product"
+          "Work",
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Standard",
-          "Specification"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1331,14 +1036,13 @@
         "color": "#3274cc",
         "quality_score": 18,
         "source_types": [
-          "Procedure",
-          "Manual",
-          "Section",
-          "API Reference"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Step"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1350,17 +1054,14 @@
         "inverse": "follows",
         "quality_score": 12,
         "source_types": [
-          "Step",
-          "Procedure",
-          "Section",
-          "Version"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Step",
-          "Procedure",
-          "Section",
-          "Version"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1372,17 +1073,14 @@
         "inverse": "precedes",
         "quality_score": 12,
         "source_types": [
-          "Step",
-          "Procedure",
-          "Section",
-          "Version"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Step",
-          "Procedure",
-          "Section",
-          "Version"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1393,20 +1091,15 @@
         "color": "#6932cc",
         "quality_score": 22,
         "source_types": [
-          "API Reference",
-          "Procedure",
-          "Step",
-          "Configuration Item",
-          "Manual",
-          "Section",
-          "Standard",
-          "Specification",
-          "Product"
+          "Work",
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Parameter",
-          "Configuration Item"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1417,16 +1110,14 @@
         "color": "#9132cc",
         "quality_score": 18,
         "source_types": [
-          "API Reference",
-          "Procedure",
-          "Step",
-          "Parameter",
-          "Configuration Item",
-          "Product"
+          "Work",
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Error Code"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1437,16 +1128,13 @@
         "color": "#b932cc",
         "quality_score": 18,
         "source_types": [
-          "Standard",
-          "Specification",
-          "Manual",
-          "Section",
-          "API Reference",
-          "Procedure"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Glossary Term"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1457,23 +1145,15 @@
         "color": "#cc32b7",
         "quality_score": 18,
         "source_types": [
-          "API Reference",
-          "Parameter",
-          "Configuration Item",
-          "Error Code",
-          "Procedure",
-          "Step",
-          "Requirement",
-          "Glossary Term",
-          "Specification",
-          "Standard",
-          "Manual"
+          "Work",
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Version",
-          "Standard",
-          "Specification"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1484,23 +1164,15 @@
         "color": "#cc328f",
         "quality_score": 18,
         "source_types": [
-          "API Reference",
-          "Parameter",
-          "Configuration Item",
-          "Error Code",
-          "Procedure",
-          "Step",
-          "Requirement",
-          "Glossary Term",
-          "Specification",
-          "Standard",
-          "Manual"
+          "Work",
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Version",
-          "Standard",
-          "Specification"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1511,23 +1183,15 @@
         "color": "#cc3267",
         "quality_score": 18,
         "source_types": [
-          "API Reference",
-          "Parameter",
-          "Configuration Item",
-          "Error Code",
-          "Procedure",
-          "Step",
-          "Requirement",
-          "Glossary Term",
-          "Specification",
-          "Standard",
-          "Manual"
+          "Work",
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Version",
-          "Standard",
-          "Specification"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1538,15 +1202,14 @@
         "color": "#cc323f",
         "quality_score": 15,
         "source_types": [
-          "Version"
+          "Concept"
         ],
         "target_types": [
-          "Product",
-          "Standard",
-          "Specification",
-          "Manual",
-          "API Reference"
-        ]
+          "Object",
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       }
     ]
   },
@@ -1606,29 +1269,64 @@
     ],
     "entity_examples": [
       {
-        "type": "Standard",
-        "examples": [
-          "RFC 7231",
-          "RFC 2119",
-          "ISO/IEC 27001:2022",
-          "IEEE 802.11ax",
-          "W3C HTML 5.2",
-          "ECMA-262"
-        ]
+        "line": "E|RFC 7231|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
       },
       {
-        "type": "Standards Body",
-        "examples": [
-          "IETF",
-          "ISO",
-          "IEEE",
-          "W3C",
-          "ANSI",
-          "ECMA International",
-          "OASIS",
-          "Khronos Group",
-          "NIST"
-        ]
+        "line": "E|RFC 2119|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
+      },
+      {
+        "line": "E|ISO/IEC 27001:2022|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
+      },
+      {
+        "line": "E|IEEE 802.11ax|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
+      },
+      {
+        "line": "E|W3C HTML 5.2|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
+      },
+      {
+        "line": "E|ECMA-262|Work||1.0|S1|A Standard.",
+        "note": "subtype Standard"
+      },
+      {
+        "line": "E|IETF|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|ISO|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|IEEE|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|W3C|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|ANSI|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|ECMA International|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|OASIS|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|Khronos Group|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
+      },
+      {
+        "line": "E|NIST|Organization||1.0|S1|A Standards Body.",
+        "note": "subtype Standards Body"
       }
     ]
   },
@@ -1655,8 +1353,6 @@
     "part"
   ],
   "extraction_limits": {
-    "max_entity_degree": 25,
-    "max_same_source_type": 12,
     "max_relationship_ratio": 8.0,
     "loop_max_entity_count": 40
   },

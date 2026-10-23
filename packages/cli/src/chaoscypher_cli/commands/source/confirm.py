@@ -24,8 +24,14 @@ from typing import Any, get_args
 import click
 from rich.console import Console
 
-from chaoscypher_cli.sources.domains import DOMAIN_NAMES
+from chaoscypher_cli.sources.domains import DOMAIN_NAMES, chosen_packs, pack_option
+from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_core.ports.types import FilteringMode
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    packs_choice,
+    packs_of_name,
+    proposal_packs,
+)
 
 
 @click.command("confirm")
@@ -33,15 +39,14 @@ from chaoscypher_core.ports.types import FilteringMode
 @click.option(
     "--all", "confirm_all", is_flag=True, default=False, help="Confirm every parked source."
 )
-@click.option(
-    "--domain",
-    type=click.Choice(list(DOMAIN_NAMES)),
-    default=None,
-    help="Override the detected domain (default: accept the recommendation).",
+@pack_option(
+    DOMAIN_NAMES,
+    "Override the proposed packs (repeatable; --domain is an alias; generic is "
+    "the floor alone). Default: accept the proposal.",
 )
 @click.option(
     "--depth",
-    type=click.Choice(["quick", "full"]),
+    type=click.Choice(list(get_args(AnalysisDepth))),
     default=None,
     show_default="the source's stored depth",
     help="Extraction depth.",
@@ -64,7 +69,7 @@ from chaoscypher_core.ports.types import FilteringMode
 def confirm_cmd(
     source_id: str | None,
     confirm_all: bool,
-    domain: str | None,
+    packs: tuple[str, ...],
     depth: str | None,
     filtering_mode: FilteringMode | None,
     yes: bool,
@@ -81,6 +86,8 @@ def confirm_cmd(
     from chaoscypher_core.models import SourceStatus
 
     console = Console()
+    # One name: a pack, the packs' label or generic; None accepts the proposal.
+    domain = chosen_packs(packs)
 
     if not source_id and not confirm_all:
         console.print("[yellow]Usage:[/yellow] chaoscypher source confirm <id> | --all")
@@ -103,7 +110,7 @@ def confirm_cmd(
                     return
                 if domain is not None:
                     console.print(
-                        f"[yellow]--domain {domain} overrides every parked source's "
+                        f"[yellow]--pack {domain} overrides every parked source's "
                         "detected recommendation.[/yellow]"
                     )
                 failures = 0
@@ -170,7 +177,8 @@ def _confirm_one(
 
     proposal = source.get("detection_proposal") or {}
     ranking = proposal.get("ranking") or []
-    recommended = ranking[0]["domain"] if ranking else proposal.get("detected_domain", "generic")
+    # The proposed packs' label (one pack's is its name; none is generic).
+    recommended = packs_choice(proposal_packs(proposal) or ()) or "generic"
     low_confidence = proposal.get("low_confidence", False)
 
     # Resolve the domain: explicit --domain wins; else prompt (TTY) or accept (--yes).
@@ -182,7 +190,7 @@ def _confirm_one(
         elif not is_tty:
             console.print(
                 f"[red]{source_id} is awaiting confirmation but no TTY is available.[/red]\n"
-                "Re-run with --domain <name> or --yes to accept the recommendation."
+                "Re-run with --pack <name> or --yes to accept the recommendation."
             )
             return False
         else:
@@ -194,21 +202,23 @@ def _confirm_one(
                     f"[dim]Recommended:[/dim] [magenta]{recommended}[/magenta]"
                     + (f"  [dim]({ranked})[/dim]" if ranked else "")
                 )
+            # A two-pack proposal is offered as its label, first, so the default keeps both.
+            proposed = [recommended] if recommended not in DOMAIN_NAMES else []
             chosen = Prompt.ask(
                 "Confirm extraction domain",
-                choices=[*DOMAIN_NAMES, "cancel"],
-                default=recommended if recommended in DOMAIN_NAMES else "generic",
+                choices=[*proposed, *DOMAIN_NAMES, "cancel"],
+                default=recommended,
             )
             if chosen == "cancel":
                 console.print("[dim]Cancelled.[/dim]")
                 return False
 
-    # Persist forced domain + flip back to INDEXED in one update; write-once
+    # Persist the forced packs + flip back to INDEXED in one update; write-once
     # extraction_confirmed_at so a re-dispatch never re-parks.
     service.ctx.storage_adapter.update_file(
         source_id,
         database_name=service.ctx.database_name,
-        updates={"forced_domain": chosen, "status": SourceStatus.INDEXED},
+        updates={"forced_packs": list(packs_of_name(chosen) or ()), "status": SourceStatus.INDEXED},
     )
     if source.get("extraction_confirmed_at") is None:
         service.ctx.storage_adapter.update_file(

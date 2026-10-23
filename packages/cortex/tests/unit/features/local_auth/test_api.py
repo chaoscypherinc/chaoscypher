@@ -348,6 +348,46 @@ def test_cookie_secure_provider_resolved_per_request(tmp_path: Path) -> None:
     assert "secure" in r.headers["set-cookie"].lower()
 
 
+def _session_cookie_attrs(set_cookie: str) -> dict[str, str]:
+    """Parse a Set-Cookie header into lower-cased attribute -> value.
+
+    Parsed per attribute, not substring-matched: ``"strict"`` must be the
+    SameSite value, not text found anywhere in the header.
+    """
+    attrs: dict[str, str] = {}
+    for part in set_cookie.split(";")[1:]:
+        name, _, value = part.strip().partition("=")
+        attrs[name.lower()] = value.lower()
+    return attrs
+
+
+def test_session_cookie_is_httponly_and_samesite_strict(client: TestClient) -> None:
+    """Setup, login and logout all send HttpOnly + SameSite=Strict on path /.
+
+    SameSite=Strict is the app's only CSRF defence for cookie-authenticated
+    writes and HttpOnly keeps an XSS from reading the session; the logout
+    clear must mirror both or browsers ignore the deletion.
+    """
+    creds = {"username": "admin", "password": "PasswordPassword1"}
+    r = client.post("/api/v1/auth/setup", json=creds)
+    assert r.status_code == 201
+    headers = [r.headers["set-cookie"]]
+    client.cookies.clear()
+    r = client.post("/api/v1/auth/login", json=creds)
+    assert r.status_code == 200
+    headers.append(r.headers["set-cookie"])
+    r = client.post("/api/v1/auth/logout")
+    assert r.status_code < 300
+    headers.append(r.headers["set-cookie"])
+
+    for header in headers:
+        assert header.startswith("cc_session=")
+        attrs = _session_cookie_attrs(header)
+        assert "httponly" in attrs, header
+        assert attrs.get("samesite") == "strict", header
+        assert attrs.get("path") == "/", header
+
+
 def test_logout_invalidates_existing_session_cookie(app: FastAPI) -> None:
     """After /logout, the previously-issued cookie is no longer accepted.
 

@@ -24,7 +24,7 @@ def _customized(tmp_path) -> Settings:
         backoff={"max_seconds": 99, "sqlite_base_delay": 2.5},
         retries={"sqlite_max_attempts": 9},
         batching={"sqlite_cache_size_kb": 1234, "discovery_batch": 55},
-        extraction={"domain_detection_sample_count": 8},
+        extraction={"entity_desc_min_length": 8},
     )
 
 
@@ -37,7 +37,7 @@ def test_cross_group_mappings_apply(tmp_path):
     assert e.database.commit_max_retries == 9
     assert e.database.commit_base_delay_secs == 2.5
     assert e.extraction.llm_backoff_max_seconds == 99
-    assert e.extraction.domain_detection_sample_count == 8  # union flows through
+    assert e.extraction.entity_desc_min_length == 8  # union flows through
     assert Path(e.search.rerank_cache_dir) == Path(e.paths.data_dir) / "cache" / "rerankers"
     # moved groups ride along
     assert e.backoff.max_seconds == 99

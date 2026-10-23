@@ -54,6 +54,8 @@ from chaoscypher_core.services.compose.models import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from chaoscypher_core.settings import EngineSettings
+
 
 logger = structlog.get_logger(__name__)
 
@@ -104,15 +106,21 @@ class NamespaceMerger:
         self,
         output_dir: Path,
         strategy: MergeStrategy = MergeStrategy.NAMESPACE,
+        settings: EngineSettings | None = None,
     ) -> None:
         """Initialize namespace merger.
 
         Args:
             output_dir: Directory for the merged database.
             strategy: Merge strategy to use.
+            settings: The engine settings the build runs under (the configured embedding
+                provider among them); None builds with the engine's defaults. Until
+                2026-10-20 the build always ran on defaults, so the configured embedder was
+                ignored and every build embedded on the local CPU model.
         """
         self.output_dir = output_dir
         self.strategy = strategy
+        self.settings = settings
         # Import stats of the current merge, consumed by the indexing pass.
         self._import_stats: list[Any] = []
 
@@ -164,7 +172,7 @@ class NamespaceMerger:
             # what Cortex's own init_database would produce.
             from chaoscypher_core.bootstrap import Engine
 
-            engine = Engine(data_dir=self.database_dir)
+            engine = Engine(data_dir=self.database_dir, settings=self.settings)
             try:
                 for pkg in packages:
                     try:
@@ -275,6 +283,7 @@ class NamespaceMerger:
         importer = CcxImporter(
             graph_repository=engine.graph_repository,
             sources_repository=engine.storage_adapter,
+            settings=engine.settings,
         )
         options = ImportOptions(
             import_sources=True,

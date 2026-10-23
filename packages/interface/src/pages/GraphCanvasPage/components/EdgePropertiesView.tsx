@@ -4,8 +4,9 @@
 /**
  * EdgePropertiesView: Read-only display of edge (link) properties.
  *
- * Shows edge metadata (ID, type, direction), label, all properties,
- * and a delete button.
+ * Shows edge metadata (ID, type, direction), the pipeline flags it carries
+ * with their reason (``EdgeFlagNotice``: capped, unevidenced and why),
+ * label, all properties, and a delete button.
  */
 
 import React from 'react';
@@ -14,6 +15,7 @@ import DeleteIcon from '@mui/icons-material/DeleteOutlined';
 import type { GraphEdgeData } from '../types';
 import { ghostButtonSx } from '../../../theme/ghostStyles';
 import { ChaosCypherPalette } from '../../../theme/palette';
+import { EdgeFlagNotice } from '../../../components/EdgeFlagNotice';
 
 interface EdgePropertiesViewProps {
   /** The selected edge ID. */
@@ -67,6 +69,7 @@ const EdgePropertiesView: React.FC<EdgePropertiesViewProps> = ({
         }}>
         {edgeData.sourceId} &rarr; {edgeData.targetId}
       </Typography>
+      <EdgeFlagNotice properties={edgeData.properties} />
       {/* Label */}
       <TextField
         label="Label"

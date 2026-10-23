@@ -51,6 +51,24 @@ class TestSanitizeDocstring:
         assert "```" in result
         assert "async with adapter.session_scope():" in result
 
+    def test_google_example_section_becomes_fence(self):
+        source = textwrap.dedent("""\
+            Summary.
+
+            Example:
+                store = SqliteCacheStore(path, max_bytes=1)
+                answer = {"a": 1}
+
+            Trailing prose.
+        """)
+        result = sanitize_docstring(source)
+        assert "Example:\n\n```\nstore = SqliteCacheStore(path, max_bytes=1)" in result
+        assert 'answer = {"a": 1}\n```' in result
+        assert result.index("```", result.index("answer")) < result.index("Trailing prose.")
+
+    def test_google_example_header_without_block_is_left_alone(self):
+        assert sanitize_docstring("Example:\nNo block.") == "Example:\nNo block."
+
     def test_trailing_double_colon_without_block_collapses(self):
         assert (
             sanitize_docstring("lifecycle for text-only sources::")

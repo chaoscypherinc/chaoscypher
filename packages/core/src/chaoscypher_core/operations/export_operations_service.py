@@ -142,14 +142,14 @@ class ExportOperationsService:
         from chaoscypher_core.app_config import get_settings
         from chaoscypher_core.app_config.engine_factory import build_engine_settings
         from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
-        from chaoscypher_core.repo_factories import get_graph_repository
+        from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
         engine_settings = build_engine_settings(get_settings())
         database_name = (metadata or {}).get("database_name") or engine_settings.current_database
         if database_name != engine_settings.current_database:
             engine_settings = engine_settings.model_copy(update={"current_database": database_name})
         adapter = get_sqlite_adapter(database_name)
-        graph_repository = get_graph_repository(adapter.session, database_name)
+        graph_repository = get_transaction_graph_repository(adapter, database_name)
         return engine_settings, adapter, graph_repository, database_name
 
     # ------------------------------------------------------------------

@@ -21,7 +21,8 @@ Usage::
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import sys
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -149,13 +150,20 @@ def _build_stub_ctx() -> WorkerContext:
 
 
 @pytest.fixture
-def worker_harness(monkeypatch: pytest.MonkeyPatch) -> WorkerHarness:
+def worker_harness(monkeypatch: pytest.MonkeyPatch) -> Iterator[WorkerHarness]:
     """Yield a fresh WorkerHarness with the module-level queue_client patched.
 
     The patch covers ``chaoscypher_core.queue.queue_client`` — every site
     in setup_llm_handlers / setup_operations_handlers that calls
     ``queue_client.register_handlers(...)`` lands on the harness's
     RecordingQueueClient instead of the real Valkey client.
+
+    A module first imported while the patch is active binds the recording
+    client at import time (``from chaoscypher_core.queue import queue_client``)
+    and monkeypatch never restores it, so afterwards every module still holding
+    the recording client gets the real one back. Without that, a later test in
+    the same process found ``vision_finalizer.queue_client`` to be the recorder
+    and could not patch ``task_exists_for_source`` on it (2026-10-16).
     """
     import chaoscypher_neuron.worker  # noqa: F401 — import-for-side-effect: settle worker.py's import-time configure_logging() before fixture activates  # noqa: E501
 
@@ -167,6 +175,7 @@ def worker_harness(monkeypatch: pytest.MonkeyPatch) -> WorkerHarness:
     # correct target for those sites.
     import chaoscypher_core.queue as core_queue_module
 
+    real_queue_client = core_queue_module.queue_client
     monkeypatch.setattr(core_queue_module, "queue_client", queue)
 
     # Also patch the re-exported name in places that re-imported the singleton
@@ -244,4 +253,10 @@ def worker_harness(monkeypatch: pytest.MonkeyPatch) -> WorkerHarness:
         except ImportError, AttributeError:
             pass
 
-    return WorkerHarness(ctx=_build_stub_ctx(), queue=queue)
+    yield WorkerHarness(ctx=_build_stub_ctx(), queue=queue)
+
+    # vars(), not getattr(): a lazy module's __getattr__ (transformers') imports on access.
+    for module in list(sys.modules.values()):
+        namespace = getattr(module, "__dict__", None)
+        if isinstance(namespace, dict) and namespace.get("queue_client") is queue:
+            namespace["queue_client"] = real_queue_client

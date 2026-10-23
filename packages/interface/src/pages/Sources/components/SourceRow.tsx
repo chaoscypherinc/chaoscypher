@@ -6,7 +6,8 @@
  *
  * Renders a single row in the sources table, including the selection
  * checkbox, title cell with domain icon and tag chips, status cell,
- * and the 3-dot action button.
+ * and the 3-dot action button. A page of an imported site that the site no
+ * longer lists is marked "Gone from site", and one the site leaves out "Left out".
  */
 
 import { useState } from 'react';
@@ -23,7 +24,8 @@ import {
 import InfoIcon from '@mui/icons-material/InfoOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import type { UnifiedSource, SourceQualityScore } from '../../../types';
-import { getMuiIcon } from '../../../utils/icons';
+import { PackIcons } from '../../../components/sources/PacksChip';
+import { sourcePacks } from '../../../utils/packs';
 import { DomainColors } from '../../../theme/colors';
 import { SourceInfoTooltip, ActiveSourceTooltip } from './SourceInfoTooltip';
 import { SourceStatusCell } from './SourceStatusCell';
@@ -45,6 +47,8 @@ interface SourceRowProps {
   qualityScores?: Map<string, SourceQualityScore>;
   /** Open the confirm-domain dialog for a parked (awaiting_confirmation) source. */
   onConfirmExtraction?: (source: UnifiedSource) => void;
+  /** A page listed under its site's row: indented beneath it. */
+  nested?: boolean;
 }
 
 /**
@@ -61,6 +65,7 @@ export function SourceRow({
   onMenuOpen,
   qualityScores,
   onConfirmExtraction,
+  nested = false,
 }: SourceRowProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [tagsExpanded, setTagsExpanded] = useState(false);
@@ -93,7 +98,7 @@ export function SourceRow({
           }}
         />
       </TableCell>
-      <TableCell>
+      <TableCell sx={nested ? { pl: 5 } : undefined}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Tooltip
             title={
@@ -106,14 +111,34 @@ export function SourceRow({
           >
             <IconButton aria-label="Show source info" size="small" sx={{ p: 0.25, opacity: 0.6, '&:hover': { opacity: 1 } }}>
               {source.extraction_domain
-                ? (() => {
-                    const DomainIcon = getMuiIcon(source.extraction_domain_icon);
-                    return <DomainIcon sx={{ fontSize: 16, color: source.extraction_domain_auto === false ? DomainColors.manual : DomainColors.auto }} />;
-                  })()
+                ? (
+                    // one icon per pack the source was extracted with
+                    <PackIcons
+                      source={source}
+                      packs={sourcePacks(source) ?? []}
+                      color={source.extraction_domain_auto === false ? DomainColors.manual : DomainColors.auto}
+                    />
+                  )
                 : <InfoIcon sx={{ fontSize: 16 }} />}
             </IconButton>
           </Tooltip>
           <Typography variant="body2">{source.title}</Typography>
+          {source.site_gone_at && (
+            <Tooltip
+              title="The site no longer lists this page. It stays searchable until you delete it."
+              arrow
+            >
+              <Chip label="Gone from site" size="small" color="warning" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+            </Tooltip>
+          )}
+          {source.site_left_out && (
+            <Tooltip
+              title="The site leaves this page out: it keeps what it has and a check for updates does not check it."
+              arrow
+            >
+              <Chip label="Left out" size="small" variant="outlined" sx={{ height: 20, fontSize: '0.7rem' }} />
+            </Tooltip>
+          )}
           {tags.length > 0 && (
             <>
               {visibleTags.map((tag) => (

@@ -146,6 +146,8 @@ import Public from '@mui/icons-material/Public';
 import PublicOutlined from '@mui/icons-material/PublicOutlined';
 import Receipt from '@mui/icons-material/Receipt';
 import ReceiptOutlined from '@mui/icons-material/ReceiptOutlined';
+import RecordVoiceOver from '@mui/icons-material/RecordVoiceOver';
+import RecordVoiceOverOutlined from '@mui/icons-material/RecordVoiceOverOutlined';
 import School from '@mui/icons-material/School';
 import SchoolOutlined from '@mui/icons-material/SchoolOutlined';
 import Science from '@mui/icons-material/Science';
@@ -302,6 +304,8 @@ export const ICON_REGISTRY: Record<string, SvgIconComponent> = {
   PublicOutlined,
   Receipt,
   ReceiptOutlined,
+  RecordVoiceOver,
+  RecordVoiceOverOutlined,
   School,
   SchoolOutlined,
   Science,

@@ -116,7 +116,8 @@ class BuildGraphSnapshotService:
         active_source_ids = [s.id for s in source_rows]
 
         node_counts = self._query.count_nodes_per_source(database_name, active_source_ids)
-        total_nodes = sum(node_counts.get(sid, 0) for sid in active_source_ids)
+        # Not the sum of node_counts: a merged node counts under each member (#795, D7).
+        total_nodes = self._query.count_nodes(database_name, active_source_ids)
         total_edges = self._query.count_edges(database_name, active_source_ids)
         internal_link_counts = self._query.count_internal_links_per_source(
             database_name, active_source_ids

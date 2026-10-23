@@ -222,12 +222,13 @@ async def test_domain_present_drives_registry_lookup(
     storage.list_source_entities.return_value = [{"source_chunks": ["c1"]}]
     storage.list_source_relationships.return_value = []
 
-    domain_config = {"weight": 0.7}
-    analyzer = MagicMock(name="analyzer")
-    analyzer.get_quality_scoring.return_value = domain_config
-    registry = MagicMock(name="registry")
-    registry.get_domain.return_value = analyzer
-    get_registry = MagicMock(name="get_domain_registry", return_value=registry)
+    from chaoscypher_core.services.sources.engine.extraction.domains import get_domain_registry
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
+    real = get_domain_registry()
+    get_registry = MagicMock(name="get_domain_registry", return_value=real)
+    # The source's stack: the floor's core-type scores, medical's subtype scores (Task 7).
+    domain_config = DomainStack.from_domain_name(real, "medical").get_quality_scoring()
 
     scorer_cls = _patch_scorer()
 
@@ -244,8 +245,7 @@ async def test_domain_present_drives_registry_lookup(
         result = await handler({"source_ids": ["s1"], "database_name": "test_db"})
 
     assert result["recalculated_count"] == 1
-    get_registry.assert_called_once_with(database_name="test_db")
-    registry.get_domain.assert_called_once_with("medical")
+    get_registry.assert_called_once_with(settings=None, database_name="test_db")
     # The domain config flowed into the scorer constructor.
     scorer_cls.assert_called_once_with(domain_config)
 
@@ -281,7 +281,7 @@ async def test_domain_lookup_failure_is_swallowed_and_logged(
         result = await handler({"source_ids": ["s1"], "database_name": "test_db"})
 
     events = [c.get("event") for c in captured]
-    assert "domain_quality_scoring_lookup_failed" in events
+    assert "failed_to_load_domain_quality_config" in events
     # Scoring still happened — the source was not dropped.
     assert result["recalculated_count"] == 1
     # The failed lookup falls through to the default empty config.

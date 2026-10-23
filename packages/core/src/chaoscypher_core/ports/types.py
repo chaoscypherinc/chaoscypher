@@ -155,6 +155,8 @@ class SourceDict(TypedDict, total=False):
     extraction_depth: str
     extraction_domain: str | None
     forced_domain: str | None
+    extraction_packs: list[str] | None
+    forced_packs: list[str] | None
     commit_nodes_created: int
     commit_edges_created: int
     commit_templates_created: int

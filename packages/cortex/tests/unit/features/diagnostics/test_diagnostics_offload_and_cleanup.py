@@ -11,6 +11,7 @@ BackgroundTask only removes the dir after a *successful* FileResponse.
 
 import asyncio
 import tempfile
+import threading
 import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -67,6 +68,37 @@ class TestCreateBundleOffload:
         mock_collector.export_bundle.assert_called_once()
         assert result.exists()
         assert result.suffix == ".zip"
+
+    @pytest.mark.asyncio
+    async def test_service_status_collected_off_event_loop(self, tmp_path: Path) -> None:
+        """The supervisord XML-RPC status call never runs on the event-loop thread."""
+        loop_thread = threading.get_ident()
+        calling_threads: list[int] = []
+
+        def _get_service_status() -> MagicMock:
+            calling_threads.append(threading.get_ident())
+            return MagicMock(available=False)
+
+        log_service = MagicMock()
+        log_service.get_service_status.side_effect = _get_service_status
+        service = DiagnosticsService(
+            data_dir=str(tmp_path),
+            log_dir=str(tmp_path / "logs"),
+            database_name="default",
+            settings_dict=_SETTINGS_DICT,
+            log_service=log_service,
+        )
+        mock_collector = MagicMock()
+        mock_collector.export_bundle.side_effect = _write_stub_zip
+
+        with patch(
+            "chaoscypher_cortex.features.diagnostics.service.DiagnosticCollector",
+            return_value=mock_collector,
+        ):
+            await service.create_bundle()
+
+        assert len(calling_threads) == 1
+        assert calling_threads[0] != loop_thread
 
 
 @pytest.mark.unit

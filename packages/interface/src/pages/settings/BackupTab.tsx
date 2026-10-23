@@ -52,26 +52,21 @@ import {
   ghostInputSx,
 } from '../../theme/ghostStyles';
 import { ChaosCypherPalette } from '../../theme/palette';
+import { formatFileSize } from '../../utils/formatters';
 
 interface BackupTabProps {
   settings: Settings;
   setSettings: (settings: Settings) => void;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${Math.round((bytes / Math.pow(k, i)) * 100) / 100} ${sizes[i]}`;
-}
-
 function formatDate(dateStr: string): string {
-  // Backend returns "YYYYMMDD_HHMMSS"
+  // Backend returns "YYYYMMDD_HHMMSS" stamped in UTC (BackupService names
+  // files from datetime.now(UTC)); mark it as UTC so the viewer's local
+  // time is rendered rather than the raw UTC wall clock.
   const match = dateStr.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
   if (!match) return dateStr;
   const [, y, mo, d, h, mi, s] = match;
-  const date = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}`);
+  const date = new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
   return date.toLocaleString();
 }
 
@@ -111,7 +106,7 @@ export default function BackupTab({ settings, setSettings }: BackupTabProps) {
     setActionError(null);
     try {
       const result = await createBackup.mutateAsync();
-      setSuccess(`Backup created: ${result.filename} (${formatBytes(result.size)})`);
+      setSuccess(`Backup created: ${result.filename} (${formatFileSize(result.size)})`);
     } catch {
       setActionError('Failed to create backup');
     }
@@ -317,7 +312,7 @@ export default function BackupTab({ settings, setSettings }: BackupTabProps) {
             <Typography variant="caption" sx={{
               color: "text.secondary"
             }}>
-              ({backups.length} backup{backups.length !== 1 ? 's' : ''}, {formatBytes(totalSize)} total)
+              ({backups.length} backup{backups.length !== 1 ? 's' : ''}, {formatFileSize(totalSize)} total)
             </Typography>
           )}
         </Box>
@@ -360,7 +355,7 @@ export default function BackupTab({ settings, setSettings }: BackupTabProps) {
                       {backup.filename}
                     </TableCell>
                     <TableCell sx={{ color: 'text.secondary' }}>
-                      {formatBytes(backup.size)}
+                      {formatFileSize(backup.size)}
                     </TableCell>
                     <TableCell sx={{ color: 'text.secondary' }}>
                       {formatDate(backup.created_at)}

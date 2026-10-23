@@ -12,10 +12,11 @@ repository are mocked — no real DB access.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chaoscypher_core.models import ReleasedRows, SourceDeletion
 from chaoscypher_cortex.features.sources import service as service_module
 from chaoscypher_cortex.features.sources.service import SourceService
 
@@ -106,6 +107,8 @@ class TestSourceCrud:
             enabled=None,
             search=None,
             tag_id=None,
+            site_id=None,
+            in_site=None,
         )
 
     def test_list_sources_forwards_all_filters(self) -> None:
@@ -122,6 +125,8 @@ class TestSourceCrud:
             enabled="enabled",
             search="neural",
             tag_id="tag-1",
+            site_id="site-1",
+            in_site=True,
         )
 
         engine.list_sources.assert_called_once_with(
@@ -132,6 +137,8 @@ class TestSourceCrud:
             enabled="enabled",
             search="neural",
             tag_id="tag-1",
+            site_id="site-1",
+            in_site=True,
         )
 
     def test_update_source_forwards_all_fields(self) -> None:
@@ -160,7 +167,8 @@ class TestSourceCrud:
     def test_delete_source_returns_engine_result(self, tmp_path: Any) -> None:
         """delete_source returns whatever engine.delete_source returned."""
         engine = MagicMock()
-        engine.delete_source.return_value = True
+        released = ReleasedRows(stale_node_ids=frozenset({"kept"}))
+        engine.delete_source.return_value = SourceDeletion(deleted=True, released=released)
         settings = _settings()
         settings.data_dir = str(tmp_path)
         graph_repo = MagicMock()
@@ -172,17 +180,34 @@ class TestSourceCrud:
             search_repository=search_repo,
         )
 
-        result = service.delete_source("s1")
+        with patch(
+            "chaoscypher_core.services.graph.management.release.refresh_after_release_sync"
+        ) as refresh:
+            result = service.delete_source("s1")
 
         engine.delete_source.assert_called_once_with(
-            "s1", graph_repo=graph_repo, search_repo=search_repo
+            "s1", search_repo=search_repo, leave_out_of_site=True
         )
         assert result is True
+        # what the release rebuilt is re-embedded with the engine settings' provider
+        ((adapter, database, given), kwargs) = refresh.call_args
+        assert (given, kwargs["search"]) == (released, search_repo)
+
+    def test_the_release_embedder_is_built_on_demand_and_owned(self) -> None:
+        """Built from the engine settings only when the refresh needs it, then closed by it."""
+        engine = MagicMock()
+        service = _make_service(engine_service=engine)
+        with patch("chaoscypher_core.adapters.embedding.create_embedding_provider") as create:
+            lazy = service._release_embedder()
+            create.assert_not_called()
+            assert lazy.owned is True
+            assert lazy.build() is create.return_value
+        create.assert_called_once_with(engine.settings)
 
     def test_delete_source_returns_false_when_engine_returns_false(self) -> None:
         """delete_source returns False when the engine reports no-op."""
         engine = MagicMock()
-        engine.delete_source.return_value = False
+        engine.delete_source.return_value = SourceDeletion(deleted=False)
         service = _make_service(engine_service=engine)
         assert service.delete_source("missing") is False
 

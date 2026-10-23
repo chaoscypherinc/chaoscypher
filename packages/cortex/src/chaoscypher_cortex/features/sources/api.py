@@ -15,7 +15,7 @@ Sub-routers (registered in main.py):
 import asyncio
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import structlog
 from fastapi import (
@@ -32,6 +32,7 @@ from fastapi.responses import FileResponse
 
 from chaoscypher_core.app_config import Settings, get_config_manager, get_settings
 from chaoscypher_core.llm_queue import get_provider_factory
+from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_core.operations import queue_utils
 from chaoscypher_core.operations.sources.processing import SourceFileValidators
 from chaoscypher_core.services.sources import (
@@ -64,6 +65,11 @@ from chaoscypher_cortex.features.sources.models import (
     TagResponse,
     UrlImportRequest,
     UrlImportResponse,
+)
+from chaoscypher_cortex.features.sources.packs import (
+    DOMAIN_DESCRIPTION,
+    PACKS_DESCRIPTION,
+    forced_packs,
 )
 from chaoscypher_cortex.features.sources.service import SourceService
 from chaoscypher_cortex.features.sources.tags_api import get_tag_service
@@ -187,9 +193,16 @@ async def list_sources(
     pagination: PageParams,
     source_type: str | None = Query(default=None),
     status: str | None = Query(default=None),
-    enabled: str | None = Query(default=None),
+    enabled: Literal["enabled", "disabled"] | None = Query(default=None),
     search: str | None = Query(default=None),
     tag_id: str | None = Query(default=None),
+    in_site: bool | None = Query(
+        default=None,
+        description=(
+            "true: only the pages of imported sites; false: only sources outside "
+            "any site (the web UI lists a site as one row)."
+        ),
+    ),
 ) -> PaginatedSourcesResponse:
     """List all sources with filtering and pagination.
 
@@ -201,6 +214,8 @@ async def list_sources(
     - enabled: Filter by enabled status ('enabled' or 'disabled')
     - search: Search in title and origin_url
     - tag_id: Filter by tag ID
+    - in_site: Pages of imported sites only (true), or none of them (false).
+      One site's pages: ``GET /sources/sites/{site_id}/pages``.
     """
     page, page_size = pagination
     result = service.list_sources_enriched(
@@ -211,6 +226,7 @@ async def list_sources(
         enabled=enabled,
         search=search,
         tag_id=tag_id,
+        in_site=in_site,
     )
     sources = result["sources"]
     total = result["total"]
@@ -241,12 +257,14 @@ async def list_domains(
 ) -> DomainListResponse:
     """List available extraction domains for the current database.
 
-    Returns built-in domains and any per-database custom domains.
-    Use this for UI dropdown when selecting extraction domain.
+    Returns built-in domains and any per-database custom domains. Each
+    carries its ``role``: ``floor`` for the floor every source extracts with
+    (``generic``), ``pack`` for a pack a source may add. Requests name packs
+    only (``packs``); the floor is implied.
 
     **Returns:**
     - domains: List of available domains with name, description, builtin flag,
-               extraction_density, and prompt_tokens for capacity calculation
+               role, extraction_density, and prompt_tokens for capacity calculation
     """
     from chaoscypher_core.app_config.engine_factory import build_engine_settings
     from chaoscypher_core.services.sources.engine.extraction.domains import (
@@ -312,7 +330,8 @@ async def import_url(
     - `extract_entities`: Extract entities and relationships (default: True)
     - `analysis_depth`: Extraction depth - quick or full (default: full)
     - `enable_normalization`: Enable content normalization (default: True)
-    - `domain`: Force a specific extraction domain (optional)
+    - `packs`: Force the packs (optional; `[]` is the floor alone)
+    - `domain`: One pack, the single-element form of `packs` (optional)
     - `auto_confirm`: Bypass the domain-confirmation gate (default: False).
 
     **Returns 202 Accepted** with the queue task id. Poll the source
@@ -337,26 +356,9 @@ async def import_url(
             ).model_dump(),
         )
 
-    domain = request.domain if request.domain and request.domain != "__auto__" else None
-
     task_id = await queue_utils.queue_fetch_url(
         url=request.url,
-        options={
-            "auto_analyze": request.extract_entities,
-            "extraction_depth": request.analysis_depth,
-            "generate_embeddings": True,
-            "enable_normalization": request.enable_normalization,
-            "enable_vision": request.enable_vision,
-            "forced_domain": domain,
-            "skip_duplicates": request.skip_duplicates,
-            "content_filtering": request.content_filtering,
-            "filtering_mode": request.filtering_mode,
-            "enable_direction_correction": request.enable_direction_correction,
-            "protect_orphans": request.protect_orphans,
-            "enable_inverse_relationships": request.enable_inverse_relationships,
-            "max_entity_degree_override": request.max_entity_degree_override,
-            "auto_confirm": request.auto_confirm,
-        },
+        options=request.upload_options(),
         database_name=settings.current_database,
         priority=settings.priorities.background,
     )
@@ -388,6 +390,11 @@ def _validate_image_filename(filename: str) -> None:
         raise resource_not_found_error("image", filename)
 
 
+def _images_root(settings: Settings) -> Path:
+    """The current database's rendered-image root — fixed, never caller-derived."""
+    return Path(str(settings.data_dir)) / "databases" / settings.current_database / "images"
+
+
 @router.get(
     "/{source_id}/images",
     response_model=list[SourceImageInfo],
@@ -404,13 +411,7 @@ async def list_source_images(
 ) -> list[SourceImageInfo]:
     """List available rendered page images for a source document."""
     _validate_source_id(source_id)
-    images_dir = (
-        Path(str(settings.data_dir))
-        / "databases"
-        / settings.current_database
-        / "images"
-        / source_id
-    )
+    images_dir = _images_root(settings) / source_id
 
     def _scan_images() -> list[SourceImageInfo]:
         """Glob the source's image directory and project to SourceImageInfo entries."""
@@ -449,22 +450,18 @@ async def get_source_image(
 
     Defense-in-depth: although nginx ``auth_request`` gates this route
     in production, we also enforce ``CurrentUsername``, validate
-    ``source_id``/``filename`` against strict regexes, and use
-    ``Path.is_relative_to`` for the containment check.
+    ``source_id``/``filename`` against strict regexes, and check that the
+    resolved file sits exactly one source directory below the fixed images
+    root — anchored on that root, not on a directory built from
+    ``source_id``, so a traversal in either token cannot pass it.
     """
     _validate_source_id(source_id)
     _validate_image_filename(filename)
 
-    base_dir = (
-        Path(str(settings.data_dir))
-        / "databases"
-        / settings.current_database
-        / "images"
-        / source_id
-    ).resolve()
-    image_path = (base_dir / filename).resolve()
+    images_root = _images_root(settings).resolve()
+    image_path = (images_root / source_id / filename).resolve()
 
-    if not image_path.is_relative_to(base_dir):
+    if image_path.parent.parent != images_root:
         raise resource_not_found_error("image", filename)
 
     raise_if_not_found(await asyncio.to_thread(image_path.is_file), "Image not found")
@@ -518,7 +515,7 @@ async def upload_file(
     settings: Annotated[Settings, Depends(get_settings)],
     file: UploadFile = File(..., description="File to upload"),
     extract_entities: bool = Form(True, description="Extract entities and relationships"),
-    analysis_depth: str = Form("full", description="Extraction depth (quick/full)"),
+    analysis_depth: AnalysisDepth = Form("full", description="Extraction depth (quick/full)"),
     enable_normalization: bool | None = Form(
         None,
         description="Enable content normalization (encoding fixes, whitespace cleanup, "
@@ -526,10 +523,9 @@ async def upload_file(
         "defaults off for structured formats (CSV, JSON, TSV, JSONL, NDJSON, XML). "
         "Explicitly set to override.",
     ),
-    domain: str | None = Form(
-        None,
-        description="Force a specific extraction domain (e.g., 'technical', 'generic'). "
-        "If not specified, domain is auto-detected from content.",
+    domain: str | None = Form(None, description=DOMAIN_DESCRIPTION),
+    packs: list[str] | None = Form(
+        None, description=PACKS_DESCRIPTION + " Repeat the field for several packs."
     ),
     skip_duplicates: bool = Form(
         False,
@@ -581,6 +577,7 @@ async def upload_file(
     ),
     max_entity_degree_override: int | None = Form(
         None,
+        gt=0,
         description=(
             "Phase 6 (2026-05-08): hard cap on relationships per entity for this source. "
             "Overrides domain config and ExtractionSettings.max_entity_degree. "
@@ -611,17 +608,17 @@ async def upload_file(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     await require_extraction_ready(settings)
-    # Normalize the auto sentinel exactly like the URL-import path
-    # (api.py:~338): ``__auto__`` (and empty) means "no forced domain" so the
-    # confirmation gate engages instead of forcing a bogus domain + bypass.
-    domain = domain if domain and domain != "__auto__" else None
+    # ``packs`` (repeated field) or ``domain`` (one element); ``__auto__`` (and
+    # empty) means "no forced packs" so the confirmation gate engages instead
+    # of forcing a bogus domain + bypass. The one reading every route shares.
+    forced = forced_packs(packs, domain)
     return await upload_service.upload_single(
         file=file,
         safe_filename=sanitize_filename(file.filename),
         extract_entities=extract_entities,
         analysis_depth=analysis_depth,
         enable_normalization=enable_normalization,
-        forced_domain=domain,
+        forced_packs=forced,
         skip_duplicates=skip_duplicates,
         enable_vision=enable_vision,
         content_filtering=content_filtering,
@@ -649,16 +646,16 @@ async def upload_batch(
     settings: Annotated[Settings, Depends(get_settings)],
     files: list[UploadFile] = File(..., description="Files to upload"),
     extract_entities: bool = Form(True, description="Extract entities and relationships"),
-    analysis_depth: str = Form("full", description="Extraction depth (quick/full)"),
+    analysis_depth: AnalysisDepth = Form("full", description="Extraction depth (quick/full)"),
     enable_normalization: bool | None = Form(
         None,
         description="Enable content normalization (encoding fixes, whitespace cleanup, "
         "OCR cleaning). Defaults on for prose files; defaults off for structured formats "
         "(CSV, JSON, TSV, JSONL, NDJSON, XML). Explicitly set to override per-batch.",
     ),
-    domain: str | None = Form(
-        None,
-        description="Force a specific extraction domain. If not specified, auto-detected.",
+    domain: str | None = Form(None, description=DOMAIN_DESCRIPTION),
+    packs: list[str] | None = Form(
+        None, description=PACKS_DESCRIPTION + " Repeat the field for several packs."
     ),
     skip_duplicates: bool = Form(
         False,
@@ -710,6 +707,7 @@ async def upload_batch(
     ),
     max_entity_degree_override: int | None = Form(
         None,
+        gt=0,
         description=(
             "Phase 6 (2026-05-08): hard cap on relationships per entity for this source. "
             "Overrides domain config and ExtractionSettings.max_entity_degree. "
@@ -730,17 +728,17 @@ async def upload_batch(
     from chaoscypher_core.services.llm import require_extraction_ready
 
     await require_extraction_ready(settings)
-    # Normalize the auto sentinel exactly like the URL-import path
-    # (api.py:~338): ``__auto__`` (and empty) means "no forced domain" so the
-    # confirmation gate engages instead of forcing a bogus domain + bypass.
-    domain = domain if domain and domain != "__auto__" else None
+    # ``packs`` (repeated field) or ``domain`` (one element); ``__auto__`` (and
+    # empty) means "no forced packs" so the confirmation gate engages instead
+    # of forcing a bogus domain + bypass. The one reading every route shares.
+    forced = forced_packs(packs, domain)
     successes, errors = await upload_service.upload_batch(
         files=files,
         sanitize_filename=sanitize_filename,
         extract_entities=extract_entities,
         analysis_depth=analysis_depth,
         enable_normalization=enable_normalization,
-        forced_domain=domain,
+        forced_packs=forced,
         skip_duplicates=skip_duplicates,
         enable_vision=enable_vision,
         content_filtering=content_filtering,

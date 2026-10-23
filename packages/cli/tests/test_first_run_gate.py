@@ -105,15 +105,21 @@ def test_gate_blocks_source_when_first_run_signature_matches(
     assert "chaoscypher setup" in result.stderr
 
 
-def test_gate_fires_without_the_help_bypass(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_gate_fires_without_the_help_bypass(
+    monkeypatch: pytest.MonkeyPatch, isolated_settings: Path
+) -> None:
     """Control for the four bypass tests below: same call shape, gate fires.
 
     Without this, a bypass test that silently stopped reaching its branch
     would look identical to one that reached it and correctly stayed quiet.
     Here nothing is configured and ``source`` is not a safe subcommand, so
-    the gate must reach its non-interactive arm and exit 2.
+    the gate must reach its non-interactive arm and exit 2. The settings
+    must be isolated like the bypass tests' are: on a machine whose real
+    settings.yaml names an LLM provider the gate stays quiet and this
+    control fails (2026-10-01).
     """
     _stub_upgrade_guard(monkeypatch)
+    assert not (isolated_settings / "settings.yaml").exists()
 
     with pytest.raises(click.exceptions.Exit) as excinfo:
         _call_gate(monkeypatch, invoked="source")
@@ -226,3 +232,13 @@ def test_gate_non_interactive_mode_exits_with_actionable_message(
     assert result.exit_code == 2
     assert "chaoscypher setup" in result.stderr
     assert "chat" in result.stderr
+
+
+def test_mcp_serves_without_a_configured_llm() -> None:
+    """``chaoscypher mcp`` needs no configured LLM: the host's own model answers (gap 7, 2026-10-20).
+
+    Like ``mount`` it needs no chat or extraction LLM, so a fresh install must not be bounced
+    into the setup wizard (Tsukumo wrote a settings.yaml with ``setup_completed: true`` into
+    every brain folder to get past it).
+    """
+    assert "mcp" in _FIRST_RUN_SAFE_SUBCOMMANDS

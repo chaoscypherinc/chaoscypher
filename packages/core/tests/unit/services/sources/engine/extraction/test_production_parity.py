@@ -11,7 +11,7 @@ source uploaded through Cortex vs CLI produced different graphs.
 
 These tests assert the production finalizer has parity with the standalone
 helper: structural entities never reach the committed graph, and generic
-``Item``-typed entities with rule-matching descriptions get re-typed.
+``Thing``-typed (generic) entities with rule-matching descriptions get re-typed.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ def _fake_settings() -> SimpleNamespace:
             entity_max_description_length=4000,
             entity_deduplication_mode="exact",
             dedup_require_type_compatibility=False,
-            dedup_type_compatibility_map={},
         ),
         extraction=SimpleNamespace(
             semantic_dedup_threshold=0.95,
@@ -115,31 +114,40 @@ async def test_finalizer_filters_structural_entities() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_finalizer_normalizes_generic_entity_types() -> None:
-    """An entity typed 'Item' with description matching domain rules gets re-typed."""
+    """An entity typed 'Thing' (generic, no core type) with description matching domain rules gets re-typed."""
     service = _make_service()
     raw_entities = [
         {
             "name": "Mailbox",
-            "type": "Item",
-            "description": "A class in the inbox module that handles message routing.",
+            "type": "Thing",
+            "description": "A report on the inbox module that handles message routing.",
         },
     ]
     raw_relationships: list[dict[str, Any]] = []
 
     # Wire a fake domain that exposes normalization rules mapping the
-    # phrase "a class" -> target type "Class".
+    # phrase "a report" -> the core type "Work".
     fake_domain = MagicMock()
+    fake_domain.role = "pack"
+    fake_domain.name = "technical"
+    fake_domain.config = {}
     fake_domain.get_normalization_rules.return_value = {
-        "Class": ["a class", "class that"],
+        "Work": ["a report", "report that"],
     }
     fake_domain.get_title_words.return_value = []
-    fake_domain.get_type_compatibility.return_value = {}
     fake_domain.get_symmetric_relationships.return_value = []
     fake_domain.get_inverse_relationships.return_value = {}
     fake_domain.get_templates.return_value = {"node_templates": [], "edge_templates": []}
+    fake_domain.subtypes.return_value = []
+    fake_domain.get_type_aliases.return_value = {}
+    fake_domain.core_rescue_keywords.return_value = {}
 
+    # The finalize reads the source's stack (Task 7): the real floor plus the fake pack.
+    from chaoscypher_core.services.sources.engine.extraction.domains import get_domain_registry
+
+    floor = get_domain_registry().get_domain("generic")
     fake_registry = MagicMock()
-    fake_registry.get_domain.return_value = fake_domain
+    fake_registry.get_domain.side_effect = {"generic": floor, "technical": fake_domain}.get
 
     with (
         patch(
@@ -159,7 +167,7 @@ async def test_finalizer_normalizes_generic_entity_types() -> None:
         )
 
     mailbox = next(e for e in result["entities"] if e["name"] == "Mailbox")
-    assert mailbox["type"] == "Class", (
-        f"expected 'Class' after normalization, got {mailbox['type']!r}"
+    assert mailbox["type"] == "Work", (
+        f"expected 'Work' after normalization, got {mailbox['type']!r}"
     )
-    assert mailbox.get("type_normalized_from") == "Item"
+    assert mailbox.get("type_normalized_from") == "Thing"

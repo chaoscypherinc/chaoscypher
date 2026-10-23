@@ -117,7 +117,7 @@ def test_settings_property_lazy_loads_when_not_yet_set() -> None:
 
 
 def test_graph_repository_lazy_and_cached() -> None:
-    """graph_repository builds once via get_graph_repository, then caches."""
+    """graph_repository builds once via get_transaction_graph_repository, then caches."""
     adapter = _make_adapter()
     graph_repo = MagicMock(name="GraphRepository")
     with (
@@ -127,7 +127,7 @@ def test_graph_repository_lazy_and_cached() -> None:
         ),
         patch("chaoscypher_cortex.shared.service_factory.get_settings"),
         patch(
-            "chaoscypher_cortex.shared.service_factory.get_graph_repository",
+            "chaoscypher_cortex.shared.service_factory.get_transaction_graph_repository",
             return_value=graph_repo,
         ) as get_graph,
     ):
@@ -136,8 +136,8 @@ def test_graph_repository_lazy_and_cached() -> None:
             second = factory.graph_repository
         assert first is graph_repo
         assert second is graph_repo
-        # Built exactly once with the shared session + database name.
-        get_graph.assert_called_once_with(adapter.session, "db1")
+        # Built exactly once on the shared adapter + database name.
+        get_graph.assert_called_once_with(adapter, "db1")
 
 
 def test_search_repository_lazy_and_cached() -> None:
@@ -186,7 +186,7 @@ def test_search_service_wires_dependencies() -> None:
             return_value=settings,
         ),
         patch(
-            "chaoscypher_cortex.shared.service_factory.get_graph_repository",
+            "chaoscypher_cortex.shared.service_factory.get_transaction_graph_repository",
             return_value=graph_repo,
         ),
         patch(
@@ -238,7 +238,7 @@ def test_source_service_wires_engine_and_backend_service() -> None:
             return_value=settings,
         ),
         patch(
-            "chaoscypher_cortex.shared.service_factory.get_graph_repository",
+            "chaoscypher_cortex.shared.service_factory.get_transaction_graph_repository",
             return_value=graph_repo,
         ),
         patch(

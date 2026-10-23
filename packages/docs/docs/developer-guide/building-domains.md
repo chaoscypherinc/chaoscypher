@@ -1,28 +1,30 @@
 ---
 id: building-domains
 title: Building Extraction Domains
-description: Create custom extraction domains for Chaos Cypher using a JSON-LD config file — define entity types, relationship types, detection rules, and LLM guidance without Python code.
+description: Create a custom extraction pack for Chaos Cypher with a JSON-LD config file — add subtypes of the core entity types, relationship labels, detection rules and LLM guidance on top of the floor, without Python code.
 ---
 
 # Building Extraction Domains
 
-Extraction domains control how Chaos Cypher's AI extracts entities and relationships from documents. Each domain provides keyword-based content detection, LLM guidance, entity/relationship templates, and normalization rules -- all defined in a single JSON-LD configuration file. No Python code is required.
+Extraction domains control how Chaos Cypher's AI extracts entities and relationships from documents. Every source extracts with the **floor** (the built-in `generic` domain: the eight core entity types and the core relationship labels) plus the **packs** it chooses. A custom domain is always a pack: a single JSON-LD file that adds to the floor -- keyword-based content detection, LLM guidance, subtypes of the core types, relationship labels, and rescue keywords. No Python code is required.
 
-## What Domains Do
+For what the floor holds and how packs are chosen, see [Extraction Domains](../user-guide/domains.md).
 
-When a document is processed for entity extraction, Chaos Cypher selects the most appropriate domain by analyzing the document's content. The selected domain then:
+## What a Pack Does
 
-1. **Guides the LLM** -- Provides domain-specific instructions for what to extract and what to skip.
-2. **Defines entity types** -- Specifies the types of entities relevant to the domain (e.g., `Hypothesis`, `Experiment` for scientific papers).
-3. **Defines relationship types** -- Specifies how entities relate to each other (e.g., `supports`, `contradicts`).
-4. **Normalizes results** -- Maps variant type names back to canonical types after extraction.
-5. **Controls extraction behavior** -- Sets density, strictness, and validation parameters.
+When a source extracts with a pack, the pack:
 
-Chaos Cypher ships with 19 built-in domains including `generic`, `technical`, `scientific`, `legal`, `medical`, `news`, `literary`, `investigation`, and others.
+1. **Guides the LLM** -- its entity and relationship guidance follow the floor's in the prompt, under `Pack <name>:`.
+2. **Adds subtypes** -- kinds of the core types relevant to its documents (e.g. `Hypothesis` of Concept, `Experiment` of Event for scientific papers). A node is stored under its core type with the subtype in `properties.entity_subtype`.
+3. **Adds relationship labels** -- labels the core lacks (e.g. `supports`, `contradicts`), between core types.
+4. **Rescues types** -- type aliases and rescue keywords map what the model wrote onto its subtypes and the core types.
+5. **Tunes extraction** -- a filtering preset, extraction limits at or above the floor's, exclusions, name conventions and quality scores.
 
-## The JSON-LD Domain File Format
+Chaos Cypher ships the floor and 18 built-in packs, including `technical`, `scientific`, `legal`, `medical`, `news`, `literary` and `investigation`.
 
-Every domain is a single `.jsonld` file. Here is the minimal structure:
+## The JSON-LD Pack File Format
+
+Every pack is a single `.jsonld` file. Here is the minimal structure:
 
 ```json
 {
@@ -35,29 +37,32 @@ Every domain is a single `.jsonld` file. Here is the minimal structure:
     "version": "schema:version"
   },
   "@type": "ExtractionDomain",
-  "@id": "domain:my_domain",
+  "@id": "domain:my_pack",
 
-  "name": "my_domain",
+  "name": "my_pack",
   "version": "1.0.0",
-  "description": "Description of what this domain covers",
+  "description": "Description of what this pack covers",
+  "role": "pack",
+  "extends": "core",
   "author": "Your Name",
   "builtin": false,
 
   "detection": { ... },
-  "templates": { ... },
-  "guidance": "..."
+  "entity_guidance": "...",
+  "subtypes": [ ... ],
+  "templates": { "edge_templates": [ ... ] }
 }
 ```
 
-The `@context`, `@type`, and `@id` fields are standard JSON-LD metadata. The functional fields are described in the sections below.
+The `@context`, `@type`, and `@id` fields are standard JSON-LD metadata. `"role": "pack"` and `"extends": "core"` are required: a config without a `role` is refused, and only the built-in `generic` may be the floor. The functional fields are described in the sections below.
 
-## Step-by-Step Example: Creating a Culinary Domain
+## Step-by-Step Example: Creating a Culinary Pack
 
-This example creates a domain for extracting knowledge from cookbooks, recipe collections, and food science documents.
+This example creates a pack for extracting knowledge from cookbooks, recipe collections, and food science documents.
 
-### 1. Create the domain file
+### 1. Create the pack file
 
-Create `culinary.jsonld`. The key sections are metadata, detection keywords, guidance for the LLM, and entity/relationship templates:
+Create `culinary.jsonld`. The key sections are metadata, detection keywords, guidance for the LLM, subtypes of the core types, and relationship labels:
 
 ```json
 {
@@ -73,6 +78,8 @@ Create `culinary.jsonld`. The key sections are metadata, detection keywords, gui
   "name": "culinary",
   "version": "1.0.0",
   "description": "Recipes, cooking techniques, ingredients, and food science",
+  "role": "pack",
+  "extends": "core",
   "builtin": false,
 
   "detection": {
@@ -90,39 +97,40 @@ Create `culinary.jsonld`. The key sections are metadata, detection keywords, gui
 
   "entity_guidance": "Extract recipes, ingredients, techniques, and equipment.\nDO NOT extract bare measurements or generic actions.",
 
+  "subtypes": [
+    {
+      "name": "Recipe", "of": "Work",
+      "description": "A specific dish or preparation",
+      "requires_named_referent": true, "quality_score": 25,
+      "rescue_keywords": ["recipe", "dish", "preparation"]
+    },
+    {
+      "name": "Ingredient", "of": "Object",
+      "description": "A food ingredient used in recipes",
+      "quality_score": 18,
+      "rescue_keywords": ["ingredient", "spice"]
+    }
+  ],
+
   "templates": {
-    "node_templates": [
-      {
-        "id": "culinary_recipe", "name": "Recipe",
-        "description": "A specific dish or preparation",
-        "requires_named_referent": true, "quality_score": 25,
-        "normalization_keywords": ["recipe", "dish", "preparation"]
-      },
-      {
-        "id": "culinary_ingredient", "name": "Ingredient",
-        "description": "A food ingredient used in recipes",
-        "requires_named_referent": true, "quality_score": 18,
-        "normalization_keywords": ["ingredient", "food item", "spice"]
-      }
-    ],
     "edge_templates": [
       {
         "id": "culinary_edge_contains", "name": "contains_ingredient",
         "description": "Recipe contains an ingredient",
         "inverse": "ingredient_in",
-        "source_types": ["Recipe"], "target_types": ["Ingredient"]
+        "source_types": ["Work"], "target_types": ["Object"]
       }
     ]
   }
 }
 ```
 
-This is a minimal working domain. Real domains typically include more keyword groups, additional entity/relationship templates, and extraction examples.
+This is a minimal working pack. A `Recipe` is stored as a `Work` with `entity_subtype` `recipe`; an `Ingredient` as an `Object` with `entity_subtype` `ingredient`. Real packs typically include more keyword groups, more subtypes and labels, and extraction examples.
 
 <details>
-<summary>Full culinary domain with all features</summary>
+<summary>Full culinary pack with all features</summary>
 
-The complete version adds multiple keyword groups with weights, regex patterns for measurements, separate entity and relationship guidance, 6 entity templates (Recipe, Ingredient, Technique, Equipment, Cuisine, Chef), 8 relationship templates, property definitions with `absorbs_types`, LLM examples, entity exclusions, quality scoring, and extraction limits.
+The complete version adds multiple keyword groups with weights, regex patterns for measurements, separate entity and relationship guidance, six subtypes (Recipe, Ingredient, Technique, Equipment, Cuisine, Chef) with properties and rescue keywords, an extra property and rescue keywords for a core type, type aliases, seven relationship labels, LLM examples, entity exclusions, a filtering preset, quality scoring, and extraction limits.
 
 ```json
 {
@@ -140,10 +148,12 @@ The complete version adds multiple keyword groups with weights, regex patterns f
   "name": "culinary",
   "version": "1.0.0",
   "description": "Recipes, cooking techniques, ingredients, and food science",
+  "role": "pack",
+  "extends": "core",
   "author": "Your Name",
   "builtin": false,
-  "extraction_density": 1.1,
-  "strict_entity_types": false,
+  "icon": "Restaurant",
+  "extraction_filtering_mode": "balanced",
 
   "detection": {
     "@type": "DetectionConfig",
@@ -188,9 +198,9 @@ The complete version adds multiple keyword groups with weights, regex patterns f
     }
   },
 
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract recipes, ingredients, techniques, and equipment\n- Include quantities and measurements in properties\n- Capture cuisine styles and regional origins\n\nDO NOT EXTRACT:\n- Individual measurement values as entities (e.g., '2 cups')\n- Generic actions: 'mix', 'stir', 'serve' (unless a named technique)\n- Tableware: plates, forks, napkins",
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract recipes, ingredients, techniques, and equipment\n- Include quantities and measurements in properties\n- Capture cuisine styles and regional origins\n\nDO NOT EXTRACT:\n- Individual measurement values as entities (e.g., '2 cups')\n- Generic actions as entities: 'mix', 'stir', 'serve' (a named technique is a Technique)\n- Tableware: plates, forks, napkins",
 
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- COMPOSITION: Use contains_ingredient for recipe-ingredient links\n- TECHNIQUE: Use uses_technique for recipe-technique links\n- ORIGIN: Use originates_from for cuisine-region links\n- VARIATION: Use variation_of for recipe variants",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- COMPOSITION: Use contains_ingredient for recipe-ingredient links\n- TECHNIQUE: Use uses_technique for recipe-technique links\n- ORIGIN: Use originates_from for cuisine links\n- VARIATION: Use variation_of for recipe variants\n- AUTHORSHIP: Use the core created_by for a recipe's chef",
 
   "entity_exclusions": [
     {
@@ -207,89 +217,76 @@ The complete version adds multiple keyword groups with weights, regex patterns f
     }
   ],
 
+  "subtypes": [
+    {
+      "name": "Recipe",
+      "of": "Work",
+      "description": "A specific dish or preparation",
+      "requires_named_referent": true,
+      "quality_score": 25,
+      "icon": "MenuBook",
+      "properties": [
+        { "name": "cook_time", "display_name": "Cook Time", "property_type": "text" },
+        { "name": "servings", "display_name": "Servings", "property_type": "text" }
+      ],
+      "rescue_keywords": ["recipe", "dish", "preparation", "how to make"]
+    },
+    {
+      "name": "Ingredient",
+      "of": "Object",
+      "description": "A food ingredient used in recipes",
+      "requires_named_referent": true,
+      "quality_score": 18,
+      "rescue_keywords": ["ingredient", "food item", "produce", "spice"]
+    },
+    {
+      "name": "Technique",
+      "of": "Concept",
+      "description": "A cooking technique or method",
+      "quality_score": 18,
+      "rescue_keywords": ["technique", "cooking method", "procedure"]
+    },
+    {
+      "name": "Equipment",
+      "of": "Object",
+      "description": "A cooking tool or appliance",
+      "quality_score": 15,
+      "rescue_keywords": ["equipment", "tool", "appliance", "utensil"]
+    },
+    {
+      "name": "Cuisine",
+      "of": "Concept",
+      "description": "A culinary tradition or regional style",
+      "quality_score": 18,
+      "rescue_keywords": ["cuisine", "culinary tradition", "food culture"]
+    },
+    {
+      "name": "Chef",
+      "of": "Person",
+      "names_a_person": true,
+      "description": "A chef, cook, or culinary author",
+      "quality_score": 18,
+      "rescue_keywords": ["chef", "cook", "baker"]
+    }
+  ],
+
+  "core_properties": {
+    "Event": [
+      { "name": "venue", "display_name": "Venue", "property_type": "text" }
+    ]
+  },
+
+  "core_rescue_keywords": {
+    "Event": ["banquet", "tasting", "dinner service"]
+  },
+
+  "type_aliases": {
+    "Dish": "Recipe",
+    "Cooking Method": "Technique",
+    "Cook": "Chef"
+  },
+
   "templates": {
-    "node_templates": [
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_recipe",
-        "name": "Recipe",
-        "description": "A specific dish or preparation",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "dishes",
-        "normalization_keywords": ["recipe", "dish", "preparation", "how to make"],
-        "properties": [
-          {
-            "name": "cuisine",
-            "display_name": "Cuisine",
-            "property_type": "text",
-            "absorbs_types": ["Cuisine Style"]
-          },
-          {
-            "name": "cook_time",
-            "display_name": "Cook Time",
-            "property_type": "text",
-            "absorbs_types": ["Cook Time", "Cooking Time"]
-          },
-          {
-            "name": "servings",
-            "display_name": "Servings",
-            "property_type": "text",
-            "absorbs_types": ["Serving Size"]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_ingredient",
-        "name": "Ingredient",
-        "description": "A food ingredient used in recipes",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "ingredients",
-        "normalization_keywords": ["ingredient", "food item", "produce", "spice"]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_technique",
-        "name": "Technique",
-        "description": "A cooking technique or method",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "methods",
-        "normalization_keywords": ["technique", "method", "cooking method", "procedure"]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_equipment",
-        "name": "Equipment",
-        "description": "A cooking tool or appliance",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "methods",
-        "normalization_keywords": ["equipment", "tool", "appliance", "utensil"]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_cuisine",
-        "name": "Cuisine",
-        "description": "A culinary tradition or regional style",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "dishes",
-        "normalization_keywords": ["cuisine", "culinary tradition", "food culture"]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "culinary_chef",
-        "name": "Chef",
-        "description": "A chef, cook, or culinary author",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "people",
-        "normalization_keywords": ["chef", "cook", "author", "baker"]
-      }
-    ],
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -298,8 +295,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Recipe contains an ingredient",
         "inverse": "ingredient_in",
         "quality_score": 15,
-        "source_types": ["Recipe"],
-        "target_types": ["Ingredient"]
+        "source_types": ["Work"],
+        "target_types": ["Object"]
       },
       {
         "@type": "EdgeTemplate",
@@ -308,8 +305,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Recipe uses a cooking technique",
         "inverse": "technique_used_in",
         "quality_score": 25,
-        "source_types": ["Recipe"],
-        "target_types": ["Technique"]
+        "source_types": ["Work"],
+        "target_types": ["Concept"]
       },
       {
         "@type": "EdgeTemplate",
@@ -318,18 +315,18 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Recipe or technique requires equipment",
         "inverse": "equipment_for",
         "quality_score": 15,
-        "source_types": ["Recipe", "Technique"],
-        "target_types": ["Equipment"]
+        "source_types": ["Work", "Concept"],
+        "target_types": ["Object"]
       },
       {
         "@type": "EdgeTemplate",
         "id": "culinary_edge_origin",
         "name": "originates_from",
-        "description": "Recipe originates from a cuisine",
+        "description": "Recipe originates from a cuisine or a region",
         "inverse": "origin_of",
         "quality_score": 15,
-        "source_types": ["Recipe"],
-        "target_types": ["Cuisine"]
+        "source_types": ["Work"],
+        "target_types": ["Concept", "Location"]
       },
       {
         "@type": "EdgeTemplate",
@@ -338,18 +335,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Recipe is a variation of another recipe",
         "inverse": "has_variation",
         "quality_score": 25,
-        "source_types": ["Recipe"],
-        "target_types": ["Recipe"]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "culinary_edge_created_by",
-        "name": "created_by",
-        "description": "Recipe created by a chef",
-        "inverse": "created",
-        "quality_score": 15,
-        "source_types": ["Recipe"],
-        "target_types": ["Chef"]
+        "source_types": ["Work"],
+        "target_types": ["Work"]
       },
       {
         "@type": "EdgeTemplate",
@@ -358,8 +345,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Ingredient pairs well with another ingredient",
         "symmetric": true,
         "quality_score": 15,
-        "source_types": ["Ingredient"],
-        "target_types": ["Ingredient"]
+        "source_types": ["Object"],
+        "target_types": ["Object"]
       },
       {
         "@type": "EdgeTemplate",
@@ -368,8 +355,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
         "description": "Ingredient can substitute for another",
         "inverse": "substituted_by",
         "quality_score": 25,
-        "source_types": ["Ingredient"],
-        "target_types": ["Ingredient"]
+        "source_types": ["Object"],
+        "target_types": ["Object"]
       }
     ]
   },
@@ -408,10 +395,8 @@ The complete version adds multiple keyword groups with weights, regex patterns f
   },
 
   "extraction_limits": {
-    "max_relationship_ratio": 5.0,
-    "max_entity_degree": 15,
-    "max_same_source_type": 8,
-    "_comment": "Optional -- most domains can omit extraction_limits to use generous global defaults"
+    "max_relationship_ratio": 6.0,
+    "loop_max_entity_count": 35
   }
 }
 ```
@@ -433,19 +418,19 @@ The domain registry supports two discovery patterns:
 - **Single file** (preferred): `data/plugins/domains/culinary.jsonld`
 - **Folder with config** (legacy): `data/plugins/domains/culinary/domain.jsonld`
 
-The single-file pattern is simpler and recommended for new domains.
+The single-file pattern is simpler and recommended for new packs.
 
 :::
 
 ### 3. Restart the application
 
-The `DomainRegistry` discovers domains at startup. Restart the services to load your domain.
+The `DomainRegistry` discovers domains at startup. Restart the services to load your pack.
 
 ```bash
 make docker-dev   # Restart services
 ```
 
-Your domain will appear in the logs:
+Your pack will appear in the logs:
 
 ```
 domain_registered  domain=culinary  version=1.0.0  builtin=False  path_type=user
@@ -453,28 +438,29 @@ domain_registered  domain=culinary  version=1.0.0  builtin=False  path_type=user
 
 :::note
 
-`domain_registered` is emitted at DEBUG level -- set `LOG_LEVEL=DEBUG` to see it (unlike `loader_registered` and `tool_registered`, which are INFO).
+`domain_registered` is emitted at DEBUG level -- set `LOG_LEVEL=DEBUG` to see it (unlike `loader_registered` and `tool_registered`, which are INFO). A pack the schema refuses is logged at WARNING as `domain_schema_invalid`, with every problem in `error_message`, and is not registered.
 
 :::
 
-## Domain Fields Reference
+## Pack Fields Reference
 
 ### Core Metadata
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `name` | Yes | Unique domain identifier (lowercase, no spaces). Used as lookup key. |
+| `name` | Yes | Unique pack identifier (lowercase, no spaces). Used as lookup key; `generic` is the floor's and is refused. |
+| `role` | Yes | `"pack"` for every user domain (`"floor"` is the built-in `generic` alone). |
+| `extends` | Yes | `"core"` for every pack. |
 | `version` | No | Semantic version string (default: `"1.0.0"`). |
-| `description` | Yes | Human-readable description shown in the UI. |
+| `description` | Yes | Human-readable description shown in the pack chooser. |
 | `author` | No | Author or team name. |
-| `builtin` | No | Set to `false` for user domains (default: `true` for package-level). |
-| `extraction_density` | No | Float multiplier for expected entities per chunk (default: `1.0`). Higher values indicate denser content. |
-| `extraction_filtering_mode` | No | Filtering preset that controls which quality filters are active and how strict they are. One of: `maximum`, `strict`, `balanced` (default), `lenient`, `minimal`, `unfiltered`. See [Filtering Modes](#filtering-modes) below. |
-| `strict_entity_types` | No | When `true`, only entity types from `node_templates` are allowed; others are filtered out (default: `false`). |
+| `builtin` | No | Set to `false` for user packs. |
+| `icon` | No | Material icon name shown beside the pack in the interface (e.g. `"Restaurant"`). |
+| `extraction_filtering_mode` | No | Filtering preset that controls which quality filters are active and how strict they are. One of: `maximum`, `strict`, `balanced`, `lenient`, `minimal`, `unfiltered`. Without one, the floor's (`balanced`) applies. See [Filtering Modes](#filtering-modes) below. |
 
 ### Detection
 
-The `detection` object controls how Chaos Cypher determines whether this domain applies to a document.
+The `detection` object controls how Chaos Cypher decides whether to propose this pack for a document.
 
 ```json
 "detection": {
@@ -507,58 +493,62 @@ The `detection` object controls how Chaos Cypher determines whether this domain 
 | `doc_types` | Document type metadata values that boost confidence by `doc_type_boost`. |
 | `patterns` | Regex patterns with weights. Each match adds `pattern_boost * weight`. |
 | `confidence.base_score` | Starting confidence before any matches. |
-| `confidence.min_threshold` | Minimum confidence required for the domain to be considered a match. |
+| `confidence.min_threshold` | Minimum confidence for the pack to be a candidate at all. |
 
-The domain with the highest confidence score above `min_threshold` is selected for a document.
+Detection proposes every pack whose **evidence** -- its score minus its own `base_score` -- reaches 0.30, highest score first, at most two. A high `base_score` therefore does not get a pack proposed; its keyword and pattern hits do.
 
 ### Guidance
 
-Guidance strings are injected into LLM prompts during entity extraction. You can provide general guidance or separate entity/relationship guidance:
+Guidance strings are injected into LLM prompts during entity extraction, after the floor's, under `Pack <name>:`:
 
 | Field | Description |
 |-------|-------------|
-| `guidance` | General extraction guidance (fallback for both entity and relationship extraction). |
-| `entity_guidance` | Specific guidance for entity extraction. Takes priority over `guidance` for entity prompts. |
-| `relationship_guidance` | Specific guidance for relationship extraction. Takes priority over `guidance` for relationship prompts. |
+| `entity_guidance` | Guidance for entity extraction. |
+| `relationship_guidance` | Guidance for relationship extraction. |
 
-### Templates
+### Subtypes
 
-Templates define the entity types (nodes) and relationship types (edges) for the domain.
-
-#### Node Templates
+A subtype is a kind of one of the core types: Person, Organization, Location, Event, Work, Concept, Object, Group. It is stored on the node as `entity_subtype`, the name in snake case (`Military Unit` → `military_unit`).
 
 ```json
 {
-  "id": "unique_template_id",
-  "name": "Entity Type Name",
-  "description": "What this entity type represents",
+  "name": "Subtype Name",
+  "of": "Work",
+  "description": "What this subtype covers",
   "requires_named_referent": true,
   "quality_score": 25,
-  "compatibility_group": "group_name",
-  "normalization_keywords": ["keyword that triggers normalization to this type"],
+  "icon": "MenuBook",
+  "color": "#d641b0",
   "properties": [
-    {
-      "name": "property_name",
-      "display_name": "Display Name",
-      "property_type": "text",
-      "absorbs_types": ["Invalid Type That Becomes This Property"]
-    }
-  ]
+    { "name": "property_name", "display_name": "Display Name", "property_type": "text" }
+  ],
+  "rescue_keywords": ["word that rescues a written type to this subtype"]
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `id` | Yes | Unique template ID (e.g., `"culinary_recipe"`). |
-| `name` | Yes | Entity type name used in extraction (e.g., `"Recipe"`). |
-| `description` | Yes | Describes what this entity type represents. Included in LLM prompts. |
-| `requires_named_referent` | No | If `true`, entities of this type must have a proper name (filters out generic descriptions). |
-| `quality_score` | No | Score for graph quality ranking (higher = more valuable). |
-| `compatibility_group` | No | Group name for type compatibility during deduplication. Entities with types in the same group can be merged. |
-| `normalization_keywords` | No | Keywords in entity descriptions that trigger normalization to this type. |
-| `properties` | No | Entity properties with optional `absorbs_types` -- invalid entity types that should become properties on this entity instead. |
+| `name` | Yes | The subtype's name (e.g. `"Recipe"`). Must not be a core type's name. |
+| `of` | Yes | The core type it is a kind of. |
+| `description` | No | What the subtype covers. The prompt lists the subtype by its key under its core type (`(subtypes: recipe — write Work/recipe)`), and the model writes it as `Work/recipe`; the description is for readers of the pack and is checked by the same prompt guards as the rendered text. |
+| `names_a_person` | No | `true` for a Person subtype whose names are people's names: a possessive in such a name (`"Natásha's mother"`) describes someone through another person rather than being part of a name. Only a Person subtype may set it. |
+| `requires_named_referent` | No | If `true`, entities of this subtype must have a proper name. |
+| `quality_score` | No | Score for graph quality ranking, keyed by the stored `entity_subtype`. |
+| `icon`, `color` | No | The subtype's own icon and colour; the interface shows the icon on its entity chips (the node keeps its core type's colour). |
+| `properties` | No | Properties the subtype offers: `name`, `display_name`, `property_type`. |
+| `rescue_keywords` | No | Words that rescue a written type the mapping table does not know to this subtype, matched as whole words in the entity's description and then in the written type (e.g., literary's `Character` lists `prince` and `countess`). Read after the mapping table and before the floor's keywords. Pronouns (`he`, `she`, `a man`, ...) are ignored. |
 
-#### Edge Templates
+### Core Properties, Core Rescue Keywords and Type Aliases
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `core_properties` | `object` | Core type → extra properties the pack offers on it (e.g., literary's `Event` gains `host`, `date`, `place`). Listed on that core type's prompt line after the floor's. |
+| `core_rescue_keywords` | `object` | Core type → words that rescue a written type to that core type with no subtype (e.g., literary's `Event` lists `battle` and `duel`). Read with the subtypes' `rescue_keywords`. |
+| `type_aliases` | `object` | Maps a name the pack does not declare to one of its subtypes or to a core type (e.g., the literary pack maps `"Historical Figure"` to its `"Character"` subtype). The per-chunk type rescue reads an alias before the mapping table, so an entity written `Historical Figure` is stored as Person with the `entity_subtype` `character`. An alias to a core type keeps the table's subtype of the written name when that subtype belongs to the same core type. Matching is exact first, then case-insensitive. An alias may not shadow a core type or one of the pack's subtypes. |
+
+### Relationship Labels
+
+A pack's `templates` block holds `edge_templates` only: relationship labels the core lacks. It never declares `node_templates` (the core types are the floor's).
 
 ```json
 {
@@ -568,162 +558,176 @@ Templates define the entity types (nodes) and relationship types (edges) for the
   "inverse": "inverse_relationship_name",
   "symmetric": false,
   "quality_score": 15,
-  "source_types": ["ValidSourceType"],
-  "target_types": ["ValidTargetType"]
+  "source_types": ["Work"],
+  "target_types": ["Object"]
 }
 ```
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `id` | Yes | Unique template ID. |
-| `name` | Yes | Relationship type name (lowercase, snake_case by convention). |
-| `description` | Yes | Describes the relationship. Included in LLM prompts. |
-| `inverse` | No | Name of the inverse relationship (e.g., `"contains"` / `"contained_in"`). |
+| `name` | Yes | Relationship label (lowercase, snake_case by convention). Must not be one of the floor's core labels (`created_by`, `part_of`, `located_in`, ...): use the core label instead. |
+| `id` | No | Template ID. |
+| `description` | No | Describes the relationship. Included in LLM prompts. |
+| `inverse` | No | Name of the inverse relationship (e.g., `"contains_ingredient"` / `"ingredient_in"`). |
 | `symmetric` | No | If `true`, the relationship is bidirectional (e.g., `"pairs_with"`). Symmetric edges map to themselves as inverse. |
 | `quality_score` | No | Score for graph quality ranking. |
-| `source_types` | No | List of valid source entity types. Used for constraint validation after extraction. |
-| `target_types` | No | List of valid target entity types. |
+| `source_types` | No | Core types a source entity may have. Used for constraint validation after extraction. |
+| `target_types` | No | Core types a target entity may have. |
+| `two_endpoints_only` | No | `true` for a label whose evidence must name both endpoints (with `two_endpoints_only_reason`). |
+
+A relationship whose endpoints its label refuses is kept, flagged `type_mismatch`; one whose label no relationship type answers to is kept as `related_to`, flagged `unmatched_label` (every extraction plan runs the check strict).
 
 ### Additional Optional Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `entity_exclusions` | `list[object]` | Structured rules describing what the LLM should NOT extract. Each rule requires a `description` (injected as a "SKIP" rule in the extraction prompt) and a non-empty `examples` list (used by the post-extraction filter to drop matching entities). Unknown keys are rejected at config load. |
+| `entity_exclusions` | `list[object]` | Structured rules describing what the LLM should NOT extract. Each rule requires a `description` (injected as a "SKIP" rule in the extraction prompt) and a non-empty `examples` list (an entity named like an example is kept only when it carries evidence, flagged `excluded_name`). Unknown keys are rejected at config load. |
 | `title_words` | `list[str]` | Lowercase title/honorific words excluded during entity deduplication (e.g., `["chef", "the", "dr"]`). |
-| `examples` | `object` | Example extractions to include in LLM prompts. Contains `alias_examples` and `relationship_examples` lists. |
+| `feminine_titles` | `list[str]` | Titles that say a woman (e.g., `["queen", "countess"]`). The name rule never merges a name carrying one with a name carrying a masculine title. When omitted, the universal ones are used (`mrs`, `ms`, `miss`, `madam`, `dame`). Any gendered word in `title_words` should be listed here or in `masculine_titles`, or two people of opposite genders can merge. |
+| `masculine_titles` | `list[str]` | Titles that say a man (e.g., `["king", "count"]`). When omitted, the universal ones are used (`mr`, `mister`, `sir`). |
+| `generation_words` | `object` | Words that say which of two same-named people is meant, mapped to a generation label (e.g., `{"old": "elder", "young": "younger"}`). Names with different generations never merge. When omitted, the universal `elder`/`senior`/`sr` and `younger`/`junior`/`jr` are used. |
+| `name_forms` | `object` | Name-form endings by language code, each `{"ending", "stem", "gender"}` (e.g., `{"ru": [{"ending": "ova", "stem": "ov", "gender": "f"}]}`, so "Rostova" and "Rostov" are one family and the `-ova` form says a woman). `gender` is `"f"`, `"m"` or `null`. When omitted, no endings are folded. The literary pack declares the Russian surname and patronymic forms. |
+| `role_words` | `list[str]` | Words naming a role one person has to another (`"valet"`, `"steward"`): with the `relation_vocabulary` words they make "X's valet" a descriptor, never X's name. |
+| `relation_vocabulary` | `object` | The words prose uses to state each relation, by relation name: `{"sibling": {"labels": ["sibling_of"], "words": ["brother", "sister"]}}`. Evidence validation accepts a relationship whose cited sentences name only one endpoint when they contain one of its words. A word made only of function words ("with", "of the") is refused. When omitted, only words of the relationship label itself count. |
+| `examples` | `object` | Example extractions to include in LLM prompts, after the floor's. Contains `alias_examples` and `relationship_examples` lists. |
 | `quality_scoring` | `object` | Default quality scores: `default_entity_score` and `default_relationship_score`. |
-| `type_aliases` | `object` | Maps alias entity type names to a canonical type (e.g., the literary domain maps `"Historical Figure"` to `"Character"`). Applied after extraction, before deduplication; the original type is preserved on the entity as an `entity_subtype` property. Matching is case-sensitive. Used by 11 built-in domains to keep near-duplicate templates from fragmenting the graph. |
-| `extraction_limits` | `object` | Per-domain overrides applied on top of the filtering mode preset. Despite the name, **any `FilteringConfig` field name** is a valid key -- the most common are the relationship density limits `max_relationship_ratio`, `max_entity_degree`, `max_same_source_type`. Most domains do not need to set these -- the preset provides appropriate defaults. |
-| `strict_validation` | `bool` | When `true`, an unknown key in the domain's filtering-config overrides (`extraction_limits`) raises a validation error at resolution time instead of being logged and dropped. Enable while developing a domain to catch typos early (e.g., `enable_typeconstraints`); omit or set `false` in production configs (default: `false`). |
-| `evidence_validation_mode` | `string` | Per-domain override for evidence validation: `"strict"`, `"standard"`, `"narrative"`, or `"relaxed"`. Overrides the value set by `extraction_filtering_mode`. Prefer setting `extraction_filtering_mode` instead -- it configures evidence validation along with all other filters as a coherent preset. |
-| `strict_edge_type_constraints` | `bool` | Per-domain override for edge type constraint behavior. When `true`, unmatched relationship types and entity type mismatches are dropped. When `false`, they fall through. Overrides the value set by `extraction_filtering_mode`. |
+| `content_exclusions` | `object` | Content categories and custom patterns to strip before extraction (see [Extraction Domains](../user-guide/domains.md#entity-and-content-exclusions)); a source strips every member's. |
+| `extraction_limits` | `object` | Per-pack overrides applied on top of the filtering mode preset, except `loop_max_entity_count` and `minimum_alias_length`, which move with a mode the user chooses away from `balanced` ([Domain packs and the slider](../reference/filtering-modes.md#domain-packs-and-the-slider)). Despite the name, **any `FilteringConfig` field name** is a valid key -- the most common are the relationship density limits `max_relationship_ratio`, `max_entity_degree`, `max_same_source_type`. `max_entity_degree` and `max_same_source_type` may only be raised above the floor's (80 and 20); a lower value refuses the pack. Where two packs of a source set the same limit, the larger holds. |
+
+### What a Pack May Not Declare
+
+The schema refuses a pack that re-declares something of the floor's, and the keys the restructure removed:
+
+| Key or shape | Why / what instead |
+|--------------|--------------------|
+| `templates.node_templates` | The core types are the floor's; declare `subtypes`. |
+| A subtype named like a core type, or `of` a non-core type | A subtype is a kind of a core type. |
+| An edge label that is a core label | Use the core label. |
+| `source_types` / `target_types` that are not core types | Endpoints are core types. |
+| `max_entity_degree` / `max_same_source_type` below the floor's | A pack may raise a limit, never lower one. |
+| `strict_entity_types` | The floor's: the core types are always strict. |
+| `guidance` | Write `entity_guidance` and `relationship_guidance`. |
+| `entity_templates` | Relationship labels go under `templates`. |
+| `strict_validation` | The schema validates every domain strictly. |
+| `normalizer_overrides` | Set the normalizer in the settings. |
+| `allow_template_fallback` | The floor's templates always apply. |
+| `extraction_overrides` | Set the system prompt in the extraction settings. |
+| `vocabulary_exclusions` | Mark the edge template `"two_endpoints_only": true`. |
+| `evidence_validation_mode` | Set it in the extraction settings. |
+
+An older per-domain plugin (with its own node templates and no `role`) can be converted with `python -m chaoscypher_core.services.sources.engine.extraction.domains.convert_packs`, which maps every old template name onto its core type.
 
 ## Filtering Modes
 
-The `extraction_filtering_mode` field selects a preset that controls which quality filters are active and how strict they are. This dramatically simplifies domain configuration -- instead of individually tuning evidence validation, type constraints, plausibility thresholds, and relationship limits, a domain declares a single preset.
+The `extraction_filtering_mode` field selects a preset that controls which quality filters are active and how strict they are. Instead of individually tuning evidence validation, type constraints, plausibility thresholds, and relationship limits, a pack declares a single preset.
 
 ### Available Presets
 
 | Preset | Description |
 |--------|-------------|
 | `maximum` | All filters on, strict evidence, tighter plausibility threshold |
-| `strict` | Strict evidence + type constraints, drop on mismatches |
-| `balanced` | All filters active with fall-throughs (default) |
+| `strict` | Strict evidence + type constraints, flag mismatches |
+| `balanced` | All filters active with fall-throughs (the floor's) |
 | `lenient` | Narrative evidence for pronoun-heavy prose, lower plausibility thresholds |
 | `minimal` | Most filters disabled, elevated limits |
 | `unfiltered` | Data integrity only (dedup + index validation) |
 
-Orphan protection (keeping entities with no relationships and exempting endpoints with fewer than 2 edges from relationship caps) is enabled only by the `minimal` and `unfiltered` presets.
+Orphan protection (keeping even the entities with no relationships that carry no description or evidence, and exempting endpoints with fewer than 2 edges from relationship caps) is enabled only by the `minimal` and `unfiltered` presets. An orphan that carries a description or an evidence sentence is committed under every preset, flagged `properties.orphan`.
 
-Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are no longer accepted and raise `ValueError` -- migrate configs to one of the six canonical presets above. Some callers (e.g. MCP) silently fall back to the default preset when an invalid mode is found on a stored source row.
+Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are no longer accepted and raise `ValueError` -- use one of the six canonical presets above. Some callers (e.g. MCP) silently fall back to the default preset when an invalid mode is found on a stored source row.
 
 For detailed filter-by-filter behavior of each preset, see [Architecture > Entity Extraction > Filtering Modes](../architecture/extraction-pipeline/entity-extraction.md#filtering-modes).
 
-### Built-in Domain Mapping
+### Built-in Pack Mapping
 
-| Preset | Domains |
-|--------|---------|
-| `balanced` | generic, educational, financial, philosophical, political, technical, theological, design, reference |
-| `strict` | cybersecurity, legal, investigation, medical, scientific, intelligence |
-| `lenient` | literary, biographical, historical |
+| Preset | Packs |
+|--------|-------|
+| `balanced` | design, educational, financial, philosophical, political, reference, technical, theological |
+| `strict` | cybersecurity, intelligence, investigation, legal, medical, scientific |
+| `lenient` | biographical, historical |
 | `minimal` | news |
 
-Most of the 19 built-in domains need only their preset declaration, with no additional filter overrides.
+The floor's preset is `balanced`; the `literary` pack names none and takes the floor's. A source with two packs takes their preset when they name the same one (or only one names one), else the floor's.
 
-### Simplified Domain Configuration
+### A Preset With Optional Overrides
 
-With filtering modes, a domain config only needs to declare its preset. Individual filter fields (`evidence_validation_mode`, `strict_edge_type_constraints`, `extraction_limits`) are still available as per-domain overrides when the preset does not exactly match your needs.
-
-**Before** (manual tuning of individual fields):
+A pack config needs only its preset; `extraction_limits` overrides a value when the preset does not exactly match your needs:
 
 ```json
 {
-  "name": "my_domain",
-  "evidence_validation_mode": "strict",
-  "strict_edge_type_constraints": true,
-  "strict_entity_types": true,
-  "extraction_limits": {
-    "max_relationship_ratio": 6.0,
-    "max_entity_degree": 20,
-    "max_same_source_type": 10
-  }
-}
-```
-
-**After** (preset with optional overrides):
-
-```json
-{
-  "name": "my_domain",
+  "name": "my_pack",
+  "role": "pack",
+  "extends": "core",
   "extraction_filtering_mode": "strict",
   "extraction_limits": {
-    "max_entity_degree": 20
+    "max_relationship_ratio": 6.0
   }
 }
 ```
 
-The preset sets all filter parameters to coherent values. Only override specific fields when you need to deviate from the preset's defaults.
+The preset sets all filter parameters to coherent values. Only override specific fields when you need to deviate from the preset's defaults. An override of `loop_max_entity_count` or `minimum_alias_length` is your value at `balanced` and moves with a mode the user chooses ([Domain packs and the slider](../reference/filtering-modes.md#domain-packs-and-the-slider)); the others hold at every mode.
 
 ### Per-Source Override
 
-The filtering mode can also be overridden per-source when adding a document, without changing the domain configuration:
+The filtering mode can also be overridden per-source when adding a document, without changing the pack configuration:
 
 - **API** -- Include `filtering_mode` in the upload form or extraction request body (note: `extraction_filtering_mode` is the settings/domain-config key, not the API field -- an `extraction_filtering_mode` body field is silently ignored)
 - **CLI** -- Pass `--filtering-mode <preset>` when adding a document
 - **UI** -- Select a filtering mode from the dropdown in the upload dialog
 
-The per-source override takes precedence over the domain's preset, which in turn takes precedence over the global default (`balanced`).
+The per-source override takes precedence over the packs' preset, which in turn takes precedence over the floor's (`balanced`).
 
-## How Domains Are Loaded and Selected
+## How Packs Are Loaded and Chosen
 
 ### Discovery Process
 
 The `DomainRegistry` (defined in `packages/core/src/chaoscypher_core/services/sources/engine/extraction/domains/registry.py`) discovers domains at startup:
 
-1. **Scan built-in directory** -- `packages/core/src/chaoscypher_core/services/sources/engine/extraction/domains/plugins/` for `.jsonld` files.
+1. **Scan built-in directory** -- `packages/core/src/chaoscypher_core/services/sources/engine/extraction/domains/plugins/` for `.jsonld` files (the floor and the built-in packs).
 2. **Scan user plugin directory** -- `data/plugins/domains/` for `.jsonld` files and subfolders containing `domain.jsonld`.
-3. **Parse JSON-LD** -- Each config file is loaded and parsed.
+3. **Validate** -- each config is checked against the schema (`DomainConfigModel`): a pack that does not only add to the floor is refused and logged (`domain_schema_invalid`). A user config that names itself `generic` or declares `"role": "floor"` is refused: the built-in floor is the only one.
 4. **Create `ConfigurableDomain`** -- The `ConfigurableDomain` class wraps the parsed config, implementing the `DomainAnalyzer` protocol entirely from configuration.
 5. **Register by name** -- Each domain is registered under its `name` field.
 
-User domains with the same name as a built-in domain will override the built-in version.
+### Choosing Process
 
-### Selection Process
+When a document is indexed:
 
-When a document is processed for extraction:
+1. The registry scores every pack (`can_analyze(text, filename, metadata)`): keyword matches, file extension, doc type, and regex patterns.
+2. Every pack whose evidence reaches 0.30 is proposed, highest score first, at most two (`propose_packs`); none is the floor alone.
+3. The proposal waits for confirmation (or extraction runs at once when packs were chosen at upload); the source records the packs it was extracted with (`extraction_packs`).
 
-1. The registry calls `can_analyze(text, filename, metadata)` on every registered domain.
-2. Each domain calculates a confidence score based on keyword matches, file extension, doc type, and regex patterns.
-3. The domain with the highest confidence above `min_threshold` is selected.
-4. If no domain matches, the `generic` domain is used as fallback.
-
-You can also force a specific domain when adding a source file through the UI or API.
+You can also choose the packs when adding a source through the UI, API (`packs`) or CLI (`--pack`), and change them later with **Change packs…** (`POST /sources/{id}/reclassify`).
 
 ## Best Practices
 
-- **Start with detection tuning.** Before writing templates, ensure your keywords and patterns correctly identify documents in your domain. Test with a few real documents and check which domain gets selected.
+- **Start with detection tuning.** Before writing subtypes, ensure your keywords and patterns get the pack proposed for documents of its kind. Test with a few real documents and check which packs detection proposes.
 
 - **Use weighted keyword groups.** Group related terms together and assign higher weights to more distinctive terms. Terms that could appear in many domains (like "data" or "analysis") should have lower weights.
 
-- **Keep entity types focused.** Define 5-15 node templates that cover the core concepts of your domain. Too many types lead to inconsistent extraction; too few miss important distinctions.
+- **Pick the core type first.** Each subtype is a kind of exactly one core type. If a kind does not fit Person, Organization, Location, Event, Work, Concept, Object or Group, it is usually a property, not an entity.
 
-- **Write clear descriptions.** The `description` field on both node and edge templates is included in LLM prompts. Clear, specific descriptions produce better extraction results.
+- **Keep subtypes focused.** Define the 5-20 subtypes that matter for your documents. Too many lead to inconsistent extraction; the core types already cover the rest.
 
-- **Use `normalization_keywords`.** These help the post-processing pipeline map variant type names back to your canonical types. For example, if the LLM outputs "Cooking Method" but your type is "Technique", add "cooking method" to the normalization keywords.
+- **Write clear descriptions.** The `description` of relationship labels is included in LLM prompts (a subtype is listed by its key). Clear, specific descriptions produce better extraction results.
 
-- **Set `requires_named_referent` appropriately.** Set this to `true` for entity types that should always have a proper name (e.g., "Recipe", "Chef"). Set it to `false` for types that can be descriptive (e.g., "Technique", "Finding").
+- **Use `rescue_keywords` and `type_aliases`.** They map what the model writes back onto your subtypes. If the LLM outputs "Cooking Method" but your subtype is "Technique", add an alias `"Cooking Method": "Technique"` or the keyword `cooking method`.
 
-- **Define `source_types` and `target_types` on edges.** These constraints prevent nonsensical relationships. For example, `contains_ingredient` should only go from `Recipe` to `Ingredient`, not from `Chef` to `Equipment`.
+- **Reuse the core labels.** Add a relationship label only when no core label states it; `created_by`, `part_of`, `located_in` and the rest are already there and are refused if re-declared.
 
-- **Use `entity_exclusions`.** Explicitly tell the LLM what NOT to extract. This reduces noise significantly -- especially for measurement values, formatting artifacts, and generic labels.
+- **Set `requires_named_referent` appropriately.** Set this to `true` for subtypes that should always have a proper name (e.g., "Recipe", "Chef"). Leave it unset for subtypes that can be descriptive (e.g., "Technique", "Finding").
+
+- **Define `source_types` and `target_types` on labels.** These core-type constraints flag nonsensical relationships. For example, `contains_ingredient` goes from a `Work` (a recipe) to an `Object` (an ingredient).
+
+- **Use `entity_exclusions` for junk only.** Tell the LLM what NOT to extract when it carries no fact: measurement values that belong in a property, formatting artifacts, generic labels with no referent. Never exclude something the text states a fact about: a person called only by a title or a role ("the father", "the plaintiff"), a section the text cites, or "X unless Y". The model never writes what the prompt excludes, so nothing downstream can keep it.
 
 - **Provide examples.** The `examples` section helps the LLM understand domain-specific patterns like alias recognition and relationship typing. Even 2-3 examples make a noticeable difference.
 
-- **Set `builtin` to `false`.** User-created domains should always set `"builtin": false` to distinguish them from packaged domains.
+- **Set `builtin` to `false`.** User-created packs should always set `"builtin": false` to distinguish them from packaged ones.
 
-- **Test with real documents.** After creating your domain, upload a representative document and check the extraction results. Iterate on your guidance, templates, and detection keywords based on actual output.
+- **Test with real documents.** After creating your pack, upload a representative document and check the extraction results. Iterate on your guidance, subtypes, and detection keywords based on actual output.
 
 ## See also
 
 - [Architecture: Plugin System](../architecture/plugins.md) — registry pattern, plugin types, and auto-discovery mechanism overview
-- [User guide: Extraction Domains](../user-guide/domains.md) — built-in domains reference, detection scoring, and content exclusions
+- [User guide: Extraction Domains](../user-guide/domains.md) — the floor, the built-in packs, choosing packs, and content exclusions

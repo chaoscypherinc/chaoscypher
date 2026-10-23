@@ -264,3 +264,27 @@ class TestPromptFencing:
 
         assert user.count("</untrusted_document>") == 1
         assert "<\\/untrusted_document>" in user
+
+
+class TestSummarizeReplyShapes:
+    """The summary is read from any ``ChatCallback`` reply: a dict or a provider response."""
+
+    @pytest.mark.asyncio
+    async def test_a_provider_response_object_is_read_by_its_content(
+        self, mock_indexing, mock_search, mock_embedding
+    ):
+        """Neuron's direct callback returned an ``LLMChatResponse``; ``.get`` on it failed the tool."""
+        from chaoscypher_core.models import LLMChatResponse
+
+        handlers = SummarizeToolHandlers(
+            indexing_repository=mock_indexing,
+            search_repository=mock_search,
+            llm_chat_callback=AsyncMock(
+                return_value=LLMChatResponse(content="The model's summary.", provider="ollama")
+            ),
+            embedding_callback=mock_embedding,
+            settings=_make_settings(),
+        )
+        result = await handlers.summarize(query="full document", source_ids=["src1"])
+        assert result["success"] is True
+        assert result["summary"] == "The model's summary."

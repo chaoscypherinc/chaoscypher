@@ -264,25 +264,34 @@ def test_book1_corpus_is_far_larger_than_a_retrieval_window() -> None:
 
 
 def test_book1_fixture_is_labelled_for_the_chat_probes() -> None:
-    """80 contiguous queries in the planned band mix; every band has the fields its checks need."""
+    """80 contiguous board queries in the planned band mix, then the comparison band.
+
+    Every band has the fields its checks need.
+    """
     from collections import Counter
 
+    from chaoscypher_core.benchmark.queries import BOARD_BANDS
+
     qs = load_queries(_book1_dir() / "queries.yaml")
-    assert len(qs.queries) == 80
-    assert [q.id for q in qs.queries] == [f"q{i:03d}" for i in range(1, 81)]
-    assert Counter(q.band for q in qs.queries) == {
+    board = [q for q in qs.queries if q.band in BOARD_BANDS]
+    assert len(board) == 80
+    assert [q.id for q in board] == [f"q{i:03d}" for i in range(1, 81)]
+    assert Counter(q.band for q in board) == {
         "factual_single_hop": 15,
         "paraphrase": 10,
         "multi_hop": 20,
         "fine_grained_discrimination": 20,
         "out_of_scope": 15,
     }
+    assert all(q.band == "graph_advantage" for q in qs.queries[80:])
     assert all(q.answer_terms for q in qs.queries if q.band != "out_of_scope")
     assert all(q.decoy_entities for q in qs.queries if q.band == "out_of_scope")
     fine = [q for q in qs.queries if q.band == "fine_grained_discrimination"]
     assert all(q.wrong_entities for q in fine)
     traps = [q for q in qs.queries if q.band == "factual_single_hop" and q.must_not_contain]
-    assert len(traps) == 5
+    assert (
+        len(traps) == 13
+    )  # single-hop questions with a declared wrong fact (2026-10-03 verification added the rest)
     # a model echoing the question must not trip its own wrong-fact list
     echoed = [
         (q.id, t) for q in qs.queries for t in q.must_not_contain if t.lower() in q.question.lower()
@@ -292,16 +301,16 @@ def test_book1_fixture_is_labelled_for_the_chat_probes() -> None:
 
 def test_book1_decoys_are_not_in_the_corpus() -> None:
     """An out-of-scope question is only out of scope if its tempting answer is absent."""
-    from chaoscypher_core.benchmark.scorers.probes import _fold
+    from chaoscypher_core.benchmark.scorers.probes import fold
 
-    corpus = _fold(_book1_corpus())
+    corpus = fold(_book1_corpus())
     qs = load_queries(_book1_dir() / "queries.yaml")
     present = [
         (q.id, d)
         for q in qs.queries
         if q.band == "out_of_scope"
         for d in q.decoy_entities
-        if _fold(d) in corpus
+        if fold(d) in corpus
     ]
     assert not present, present
 

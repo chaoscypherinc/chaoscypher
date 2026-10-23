@@ -108,3 +108,16 @@ def test_missing_ids_are_silently_absent(adapter: SqliteAdapter) -> None:
 
 def test_empty_input_short_circuits(adapter: SqliteAdapter) -> None:
     assert adapter.get_chunks_by_ids_batch([]) == []
+
+
+def test_source_filenames_by_ids_matches_get_source(adapter: SqliteAdapter) -> None:
+    """The narrow filename map agrees with ``get_source`` and scopes by database."""
+    _seed_source(adapter)
+    source = adapter.get_source("src-1", "default")
+    assert source is not None
+
+    assert adapter.get_source_filenames_by_ids(["src-1", "missing"], "default") == {
+        "src-1": source["filename"]
+    }
+    assert adapter.get_source_filenames_by_ids(["src-1"], "other") == {}
+    assert adapter.get_source_filenames_by_ids([], "default") == {}

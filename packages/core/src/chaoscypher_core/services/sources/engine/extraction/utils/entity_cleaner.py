@@ -10,19 +10,27 @@ Functions:
 - apply_properties_to_entities: Attach parsed P| properties to their entities
 - validate_relationships: Check bounds, reject self-loops, optionally resolve names
 - parse_index: Parse a source/target value as an integer index
-- filter_excluded_entities: Remove entities matching domain exclusion rules
+- filter_excluded_entities: Keep, flag or drop entities matching domain exclusion rules
 - deduplicate_relationships: Chunk-aware dedup of (source, target, type) relationships
-- clean_descriptor_aliases: Remove aliases that are descriptors, not name variants
+- RelationshipOrientation / orient_relationships: the canonical form of a relationship fact
+  (symmetric endpoints ordered, inverse pairs on one label), shared with the commit
+- clean_descriptor_aliases: Move aliases that are descriptors, not name variants, to descriptors
+- move_relation_descriptors: Move aliases naming another person's relation to descriptors
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        NameConventions,
+    )
     from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
         ExclusionRule,
     )
@@ -353,6 +361,56 @@ def _resolve_rel_name(
     return f"{src} -> {tgt}"
 
 
+CAP_PASSES: tuple[str, ...] = ("source_type", "degree", "total")
+"""The relationship caps, in the order :func:`enforce_relationship_limits` applies them."""
+
+CAP_STAGE_COUNTS: tuple[str, ...] = tuple(f"capped_{p}" for p in CAP_PASSES)
+"""The ``relationship_limit_enforcement`` stage's counts: the edges each cap kept flagged.
+
+Until 2026-10-07 the same counts were the edges each cap dropped, named
+``dropped_source_type``, ``dropped_degree`` and ``dropped_total_cap``."""
+
+
+def capped_relationships(stages: Iterable[Mapping[str, Any]]) -> int:
+    """The relationships the caps kept flagged, over a filtering log's ``stages`` (serialized).
+
+    What the source row's ``relationships_dropped_capped`` counts since
+    2026-10-07 (the extraction finalizer reads it): the
+    ``relationship_limit_enforcement`` stages' :data:`CAP_STAGE_COUNTS`.
+    Until then the stage's ``removed_count``, the edges the caps dropped.
+    """
+    return sum(
+        int((stage.get("counts") or {}).get(name, 0) or 0)
+        for stage in stages
+        if stage.get("stage") == "relationship_limit_enforcement"
+        for name in CAP_STAGE_COUNTS
+    )
+
+
+def flag_capped(rel: Mapping[str, Any], cap_pass: str, cap: int) -> dict[str, Any]:
+    """``rel`` kept past a relationship cap: a copy flagged ``capped`` (``name_identity.CAPPED_KEY``).
+
+    The one writer of the edge flag. The commit stores ``properties`` on the
+    edge, so the walk weighs it at ``CAPPED_EDGE_WEIGHT``
+    (``name_identity.edge_walk_weight``) and the canvas draws it thin; which
+    cap and its value are kept beside it (``cap_pass``, ``cap``).
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        CAPPED_KEY,
+        with_pipeline_flag,
+    )
+
+    stored = rel.get("properties")
+    props = with_pipeline_flag(
+        stored if isinstance(stored, Mapping) else None,
+        CAPPED_KEY,
+        on=True,
+        cap_pass=cap_pass,
+        cap=cap,
+    )
+    return {**rel, "properties": props}
+
+
 def enforce_relationship_limits(
     relationships: list[dict[str, Any]],
     entity_count: int,
@@ -364,11 +422,16 @@ def enforce_relationship_limits(
     filtering_log: FilteringLog | None = None,
     protect_orphans: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Enforce hard caps on relationship counts that LLMs may ignore in prompts.
+    """Flag the relationships past the hard caps LLMs may ignore in prompts; drop none.
 
-    Keeps highest-confidence relationships when limits are exceeded.
+    Keep, flag, never delete (2026-10-07): a relationship past a cap is kept,
+    flagged ``capped`` (:func:`flag_capped`), so the walk ranks it last and the
+    canvas draws it thin. Until then the caps dropped it, justification and
+    all. The highest-confidence relationships are the ones within the caps;
+    a flagged one counts toward no later cap (a flagged edge does not make a
+    hub).
 
-    Caps enforced (in order):
+    Caps applied (in order):
     1. Same (source, type) pair: max ``max_same_source_type`` per pair
     2. Per-entity degree: max ``max_entity_degree`` per entity
     3. Total count: max ``max_relationship_ratio * entity_count``
@@ -382,29 +445,39 @@ def enforce_relationship_limits(
         entities: Entity list for resolving index→name in filtering log.
         filtering_log: Optional log collector for pipeline diagnostics.
         protect_orphans: When True, the < 2 edges exception applies at the
-            degree cap so minor entities keep at least one connection.  When
-            False the exception is gated off; orphan endpoints lose their
-            relationships at the cap like everyone else.  Mirrors the same
-            toggle at the commit-time ``drop_orphan_entities`` site — both
+            degree cap so minor entities keep at least one connection within
+            it.  When False the exception is gated off.  Mirrors the same
+            toggle at the commit-time ``flag_orphan_entities`` site — both
             sites honor the same flag.
 
     Returns:
-        Tuple of (capped_relationships, stats) where stats has keys
-        ``total_before``, ``dropped_source_type``, ``dropped_degree``,
-        ``dropped_total_cap``.
+        Tuple of (relationships, stats): every relationship, the ones within
+        the caps first (by confidence) and the flagged ones after, and stats
+        with keys ``total_before`` and :data:`CAP_STAGE_COUNTS`.
 
     """
-    from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
-        FilteredItem,
-    )
-
     if not relationships or entity_count == 0:
         return relationships, {"total_before": len(relationships)}
 
     total_before = len(relationships)
-    removed_items: list[FilteredItem] = []
+    flagged_items: list[FilteredItem] = []
+    capped_rels: list[dict[str, Any]] = []
+    counts = dict.fromkeys(CAP_PASSES, 0)
 
-    # Sort by confidence descending so we keep the best when dropping
+    def _cap(rel: dict[str, Any], cap_pass: str, cap: int, reason: str) -> None:
+        counts[cap_pass] += 1
+        capped_rels.append(flag_capped(rel, cap_pass, cap))
+        _log_filtered(
+            filtering_log,
+            flagged_items,
+            item_type="relationship",
+            name=_resolve_rel_name(rel, entities),
+            entity_type=rel.get("type", "?"),
+            reason=f"{reason}: kept flagged capped",
+            details={"pass": cap_pass, "cap": cap, "kept": True},
+        )
+
+    # Sort by confidence descending so the best are the ones within the caps
     sorted_rels = sorted(
         relationships,
         key=lambda r: r.get("confidence", 0.0),
@@ -414,21 +487,16 @@ def enforce_relationship_limits(
     # Pass 1: Cap same (source, type) pairs
     source_type_counts: dict[tuple[int, str], int] = {}
     after_source_type: list[dict[str, Any]] = []
-    dropped_source_type = 0
 
     for rel in sorted_rels:
         key = (rel.get("source", -1), rel.get("type", ""))
         count = source_type_counts.get(key, 0)
         if count >= max_same_source_type:
-            dropped_source_type += 1
-            _log_filtered(
-                filtering_log,
-                removed_items,
-                item_type="relationship",
-                name=_resolve_rel_name(rel, entities),
-                entity_type=rel.get("type", "?"),
-                reason=f"Same (source, type) cap exceeded ({max_same_source_type})",
-                details={"pass": "source_type", "cap": max_same_source_type},
+            _cap(
+                rel,
+                "source_type",
+                max_same_source_type,
+                f"Same (source, type) cap exceeded ({max_same_source_type})",
             )
             continue
         source_type_counts[key] = count + 1
@@ -437,7 +505,6 @@ def enforce_relationship_limits(
     # Pass 2: Cap per-entity degree
     entity_degrees: dict[int, int] = {}
     after_degree: list[dict[str, Any]] = []
-    dropped_degree = 0
 
     for rel in after_source_type:
         src = rel.get("source", -1)
@@ -445,7 +512,7 @@ def enforce_relationship_limits(
         src_deg = entity_degrees.get(src, 0)
         tgt_deg = entity_degrees.get(tgt, 0)
         if src_deg >= max_entity_degree or tgt_deg >= max_entity_degree:
-            # Orphan protection: keep if either endpoint has < 2 edges,
+            # Orphan protection: within the cap if either endpoint has < 2 edges,
             # ensuring minor entities get at least one connection.
             # Phase 7 audit-remediation (2026-05-09): now gated on the
             # protect_orphans toggle (was unconditional < 2 heuristic).
@@ -454,15 +521,11 @@ def enforce_relationship_limits(
                 entity_degrees[tgt] = tgt_deg + 1
                 after_degree.append(rel)
                 continue
-            dropped_degree += 1
-            _log_filtered(
-                filtering_log,
-                removed_items,
-                item_type="relationship",
-                name=_resolve_rel_name(rel, entities),
-                entity_type=rel.get("type", "?"),
-                reason=f"Entity degree cap exceeded ({max_entity_degree})",
-                details={"pass": "degree", "cap": max_entity_degree},
+            _cap(
+                rel,
+                "degree",
+                max_entity_degree,
+                f"Entity degree cap exceeded ({max_entity_degree})",
             )
             continue
         entity_degrees[src] = src_deg + 1
@@ -481,134 +544,257 @@ def enforce_relationship_limits(
             protected.append(rel)
         else:
             countable.append(rel)
-    dropped_total_cap = max(0, len(countable) - max_total)
-    if filtering_log is not None:
-        removed_items.extend(
-            FilteredItem(
-                item_type="relationship",
-                name=_resolve_rel_name(rel, entities),
-                entity_type=rel.get("type", "?"),
-                reason=f"Total cap exceeded ({max_total})",
-                details={"pass": "total_cap", "cap": max_total},
-            )
-            for rel in countable[max_total:]
-        )
-    capped = protected + countable[:max_total]
+    for rel in countable[max_total:]:
+        _cap(rel, "total", max_total, f"Total cap exceeded ({max_total})")
+    kept = protected + countable[:max_total] + capped_rels
 
     stats = {
         "total_before": total_before,
-        "dropped_source_type": dropped_source_type,
-        "dropped_degree": dropped_degree,
-        "dropped_total_cap": dropped_total_cap,
+        **{f"capped_{p}": n for p, n in counts.items()},
     }
 
-    total_dropped = dropped_source_type + dropped_degree + dropped_total_cap
-    if total_dropped > 0:
+    total_capped = len(capped_rels)
+    if total_capped > 0:
         logger.info(
             "relationship_limits_enforced",
             **stats,
-            total_after=len(capped),
+            total_after=len(kept),
         )
 
     if filtering_log is not None:
         filtering_log.add_stage(
             "relationship_limit_enforcement",
             input_count=total_before,
-            removed_count=total_dropped,
-            items=removed_items,
+            removed_count=0,
+            items=flagged_items,
+            counts={k: v for k, v in stats.items() if k != "total_before"},
         )
 
-    return capped, stats
+    return kept, stats
 
 
-def _parse_exclusion_examples(exclusion_rules: list[ExclusionRule]) -> set[str]:
-    """Flatten exclusion rule examples into a lowercase match-set.
+def carries_evidence(entity: Mapping[str, Any]) -> bool:
+    """Whether a record carries what the text says of it: a description or an evidence sentence.
 
-    Replaces the previous regex-from-natural-language parser. The new
-    schema (``ExclusionRule``) guarantees ``examples`` is non-empty and
-    ``description`` is non-blank at config load, so this function never
-    silently degrades on a malformed rule.
-
-    Args:
-        exclusion_rules: Typed exclusion rules from a domain config.
-
-    Returns:
-        Set of lowercase example names across all rules.
+    The one reading of "has evidence" behind keep, flag, never delete
+    (2026-10-07): a record that carries evidence is never dropped by the
+    pipeline, it is kept with a flag and its consumers decide; a record that
+    carries nothing may be dropped, counted. A description is any non-blank
+    ``description``; an evidence sentence is an ``evidence`` entry (a dict, as
+    ``orchestration.stamp_group_evidence`` stamps them) whose ``text`` is
+    not blank. A cited chunk id alone is no sentence. Read by the commit's
+    orphan rule (``commit.service.flag_orphan_entities``) and the name
+    filters' reference rule (:func:`kept_as_reference`).
     """
-    return {ex.strip().lower() for rule in exclusion_rules for ex in rule.examples}
+    if str(entity.get("description") or "").strip():
+        return True
+    evidence = entity.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    return any(isinstance(e, Mapping) and str(e.get("text") or "").strip() for e in evidence)
+
+
+def kept_as_reference(
+    entity: Mapping[str, Any], conventions: NameConventions | None = None
+) -> bool:
+    """A record written under a reference that says something of its own: never dropped by a name filter.
+
+    ``the count``, ``the vicomte``, ``Prince Andrew's wife``: a bare title, a
+    role or a descriptor names no one, and ``the army``, ``the government``,
+    ``the village`` name no group, place or event
+    (``name_identity.labelled_by_reference``, every type since 2026-10-07),
+    but the mention's evidence (:func:`carries_evidence`) or properties are
+    what the text says of it. The per-chunk name filters (the domain's
+    exclusion examples, the plausibility score) keep it, and the
+    deduplication folds it into the record its own names identify or keeps it
+    flagged (``name_identity.DESCRIPTOR_REFERENCE_KEY``). Until 2026-10-07
+    both filters dropped a person's: the v4 generic arm lost three of its four
+    ``the count`` mentions to the plausibility score (the one kept, the record
+    holding the Archives fact a benchmark question needs, survived only
+    because its type column was empty), and every literary ``the vicomte``,
+    ``the little princess`` and ``the countess`` mention but the few with a
+    high score; a group's (``the army``) went to the named-referent bar.
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        DEFAULT_NAME_CONVENTIONS,
+        PIPELINE_WRITTEN_KEYS,
+        labelled_by_reference,
+    )
+
+    name = str(entity.get("name") or entity.get("label") or "").strip()
+    conv = conventions or DEFAULT_NAME_CONVENTIONS
+    if not labelled_by_reference(name, conv, entity.get("type")):
+        return False
+    props = entity.get("properties")
+    # what the text says of it: a flag the pipeline wrote (unplaced_type, ...) is none
+    said = isinstance(props, Mapping) and any(k not in PIPELINE_WRITTEN_KEYS for k in props)
+    return carries_evidence(entity) or said
+
+
+def flag_low_plausibility(entity: Mapping[str, Any], score: float) -> dict[str, Any]:
+    """``entity`` kept below the plausibility bar: a copy flagged ``low_plausibility``, its score beside it.
+
+    The one writer of the plausibility flag (``name_identity.LOW_PLAUSIBILITY_KEY``,
+    the score under ``PLAUSIBILITY_SCORE_KEY``), for an entity that carries
+    evidence (:func:`carries_evidence`).
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        LOW_PLAUSIBILITY_KEY,
+        PLAUSIBILITY_SCORE_KEY,
+        with_pipeline_flag,
+    )
+
+    stored = entity.get("properties")
+    props = with_pipeline_flag(
+        stored if isinstance(stored, Mapping) else None,
+        LOW_PLAUSIBILITY_KEY,
+        on=True,
+        **{PLAUSIBILITY_SCORE_KEY: round(score, 3)},
+    )
+    return {**entity, "properties": props}
+
+
+def _exclusion_examples(exclusion_rules: list[ExclusionRule]) -> dict[str, ExclusionRule]:
+    """Every exclusion example, lowercased, with the first rule that lists it.
+
+    Replaces the previous regex-from-natural-language parser. The schema
+    (``ExclusionRule``) guarantees ``examples`` is non-empty and
+    ``description`` is non-blank at config load, so this never silently
+    degrades on a malformed rule.
+    """
+    found: dict[str, ExclusionRule] = {}
+    for rule in exclusion_rules:
+        for example in rule.examples:
+            found.setdefault(example.strip().lower(), rule)
+    return found
+
+
+def flag_excluded_name(entity: Mapping[str, Any], rule: ExclusionRule) -> dict[str, Any]:
+    """``entity`` kept although its name is an exclusion example: a copy flagged ``excluded_name``.
+
+    The one writer of the exclusion flag (``name_identity.EXCLUDED_NAME_KEY``,
+    the matching rule's description under ``EXCLUDED_BY_KEY``).
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        EXCLUDED_BY_KEY,
+        EXCLUDED_NAME_KEY,
+        with_pipeline_flag,
+    )
+
+    stored = entity.get("properties")
+    props = with_pipeline_flag(
+        stored if isinstance(stored, Mapping) else None,
+        EXCLUDED_NAME_KEY,
+        on=True,
+        **{EXCLUDED_BY_KEY: rule.description},
+    )
+    return {**entity, "properties": props}
+
+
+EXCLUDED_NAME_STAGE_COUNT = "excluded_name_kept"
+"""The ``entity_exclusion_filter`` stage's count of the entities kept flagged ``excluded_name``."""
 
 
 def filter_excluded_entities(
     entities: list[dict[str, Any]],
     exclusion_rules: list[ExclusionRule],
     filtering_log: FilteringLog | None = None,
+    conventions: NameConventions | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, int | None]]:
-    """Remove entities matching domain exclusion rules.
+    """Apply the domain's exclusion rules to one chunk's entities: keep, flag, never delete.
 
-    Acts as a code-level safety net for when LLMs ignore prompt-level
-    exclusion instructions. Walks the typed rule list, flattens the
-    example sets, and drops entities whose name (or each alias) matches.
+    A code-level safety net for when the model writes a name the prompt's
+    exclusions list (every shipped exclusion names a record that carries no
+    fact: pronouns, page furniture, footnote markers;
+    ``test_prompt_content_guards`` holds them to that). The one decision:
+
+    - a name no exclusion example matches is kept as written (an alias that
+      matches one is removed from its aliases);
+    - a matched name that carries evidence (:func:`carries_evidence`: a
+      description), or a reference that says something of its own
+      (:func:`kept_as_reference`: ``the king`` with a description), is kept,
+      flagged ``excluded_name`` with the matching rule beside it
+      (:func:`flag_excluded_name`); the deduplication still folds or flags a
+      reference (keep, flag, never delete, 2026-10-08: until then a
+      non-person excluded name was dropped, description and all);
+    - a matched name carrying nothing is dropped.
 
     Args:
         entities: List of entity dicts from extraction.
         exclusion_rules: Typed domain exclusion rules.
         filtering_log: Optional log collector for pipeline diagnostics.
+        conventions: The domain's naming conventions (what a reference is).
 
     Returns:
         Tuple of (filtered_entities, index_mapping) where index_mapping
-        maps old indices to new indices (or None if removed).
+        maps old indices to new indices (or None if removed). The stage's
+        ``removed_count`` counts the drops and its ``counts`` the flags
+        (:data:`EXCLUDED_NAME_STAGE_COUNT`).
 
     """
     if not exclusion_rules or not entities:
         return entities, {i: i for i in range(len(entities))}
 
-    excluded_names = _parse_exclusion_examples(exclusion_rules)
+    excluded_names = _exclusion_examples(exclusion_rules)
     if not excluded_names:
         return entities, {i: i for i in range(len(entities))}
 
     filtered: list[dict[str, Any]] = []
     index_mapping: dict[int, int | None] = {}
     removed_names: list[str] = []
-    removed_items: list[FilteredItem] = []
+    flagged_names: list[str] = []
+    items: list[FilteredItem] = []
 
     for old_idx, entity in enumerate(entities):
         name = (entity.get("name") or entity.get("label", "")).strip()
-        name_lower = name.lower()
-
-        if name_lower in excluded_names:
+        rule = excluded_names.get(name.lower())
+        if rule is not None and not (
+            carries_evidence(entity) or kept_as_reference(entity, conventions)
+        ):
             index_mapping[old_idx] = None
             removed_names.append(name)
             _log_filtered(
                 filtering_log,
-                removed_items,
+                items,
                 item_type="entity",
                 name=name,
                 entity_type=entity.get("type", "?"),
                 reason="Matched domain exclusion rule",
+                details={"rule": rule.description},
             )
             continue
 
+        kept = entity
+        if rule is not None:
+            kept = flag_excluded_name(entity, rule)
+            flagged_names.append(name)
+            _log_filtered(
+                filtering_log,
+                items,
+                item_type="entity",
+                name=name,
+                entity_type=entity.get("type", "?"),
+                reason="Matched domain exclusion rule: kept flagged (carries evidence)",
+                details={"rule": rule.description, "kept": True},
+            )
+
         # Clean aliases: remove any that match exclusion patterns
-        aliases = entity.get("aliases", [])
+        aliases = kept.get("aliases", [])
         if aliases:
             clean_aliases = [a for a in aliases if a.strip().lower() not in excluded_names]
             if len(clean_aliases) != len(aliases):
-                cleaned = entity.copy()
-                cleaned["aliases"] = clean_aliases
-                new_idx = len(filtered)
-                filtered.append(cleaned)
-                index_mapping[old_idx] = new_idx
-                continue
+                kept = {**kept, "aliases": clean_aliases}
 
-        new_idx = len(filtered)
-        filtered.append(entity)
-        index_mapping[old_idx] = new_idx
+        index_mapping[old_idx] = len(filtered)
+        filtered.append(kept)
 
-    if removed_names:
+    if removed_names or flagged_names:
         logger.info(
             "excluded_entities_filtered",
             removed_count=len(removed_names),
             removed_names=removed_names,
+            flagged_count=len(flagged_names),
+            flagged_names=flagged_names,
         )
 
     if filtering_log is not None:
@@ -616,7 +802,8 @@ def filter_excluded_entities(
             "entity_exclusion_filter",
             input_count=len(entities),
             removed_count=len(removed_names),
-            items=removed_items,
+            items=items,
+            counts={EXCLUDED_NAME_STAGE_COUNT: len(flagged_names)},
         )
 
     return filtered, index_mapping
@@ -635,10 +822,15 @@ def deduplicate_relationships(
     1. Exact-match with chunk awareness: Within the same chunk_index, collapse
        (source, target, type) duplicates keeping highest confidence. Entries from
        different chunk_index values all survive.
-    2. Symmetric with chunk awareness: For symmetric types, normalize direction
-       and apply same chunk-aware logic.
-    3. Inverse with chunk awareness: For inverse pairs, canonicalize direction
-       and apply chunk-aware logic.
+    2. Symmetric: every symmetric relationship, in every chunk, is rewritten
+       with its endpoints in canonical order; then the same chunk-aware collapse.
+    3. Inverse: every relationship of an inverse pair, in every chunk, is
+       rewritten to the pair's canonical label and direction; then the same
+       chunk-aware collapse.
+
+    Phases 2 and 3 orient across chunks (``RelationshipOrientation``), so the
+    same fact written both ways in two groups leaves with one (source, target,
+    type) and the commit stores it as one edge with a citation per group.
 
     Args:
         relationships: List of relationship dicts with source, target, type keys.
@@ -766,73 +958,225 @@ def _collapse_chunk_aware(
     return list(seen.values()), removed
 
 
+_ENDPOINT_KEY_PAIRS: tuple[tuple[str, str], ...] = (
+    ("source", "target"),
+    ("source_index", "target_index"),
+    ("from", "to"),
+)
+"""Endpoint key pairs a relationship dict may carry; orientation swaps every pair present."""
+
+
+def _default_endpoint_order(value: Any) -> tuple[int, Any]:
+    """Sort key for an endpoint: integers numerically, anything else as text."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return (0, value)
+    return (1, "" if value is None else str(value))
+
+
+@dataclass(frozen=True)
+class RelationshipOrientation:
+    """The one rule for the canonical form of a relationship fact.
+
+    A fact has one stored form. A symmetric label (``interacts_with``,
+    ``sibling_of``) says the same thing in both directions, so its endpoints
+    are put in a fixed order. An inverse pair (``parent_of`` / ``child_of``)
+    says the same thing with the endpoints swapped, so the fact takes the
+    alphabetically-first label of the pair and the endpoints follow it. The
+    relationship deduplication and the commit both orient with this, so a
+    fact the LLM wrote both ways in two groups lands on one edge.
+
+    Build it with :meth:`from_domain`; labels are compared lowercased.
+    """
+
+    symmetric: frozenset[str] = frozenset()
+    inverse: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_domain(
+        cls,
+        symmetric_types: Iterable[str] | None = None,
+        inverse_map: Mapping[str, str] | None = None,
+    ) -> RelationshipOrientation:
+        """Build the rule from a domain's symmetric labels and inverse map.
+
+        Args:
+            symmetric_types: Labels whose direction carries no meaning.
+            inverse_map: Label -> its inverse label (either direction given).
+                A label mapped to itself is symmetric.
+
+        Returns:
+            The orientation rule.
+
+        """
+        symmetric = {t.strip().lower() for t in symmetric_types or () if t}
+        inverse: dict[str, str] = {}
+        for a, b in (inverse_map or {}).items():
+            if not a or not b:
+                continue
+            la, lb = a.strip().lower(), b.strip().lower()
+            if la == lb:
+                symmetric.add(la)
+                continue
+            inverse[la] = lb
+            inverse[lb] = la
+        return cls(symmetric=frozenset(symmetric), inverse=inverse)
+
+    def __bool__(self) -> bool:
+        """True when the rule can change any relationship."""
+        return bool(self.symmetric or self.inverse)
+
+    def orient(
+        self,
+        rel: dict[str, Any],
+        endpoint_key: Callable[[Any], Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return ``rel`` in its canonical form: the same dict when already canonical, else a copy.
+
+        Args:
+            rel: Relationship dict (``source``/``target``, ``source_index``/
+                ``target_index`` or ``from``/``to`` endpoints, and ``type``).
+            endpoint_key: Sort key for a symmetric fact's endpoints; the
+                commit passes the endpoint's node id. Defaults to the
+                endpoint value (integers numerically).
+
+        Returns:
+            The canonical relationship.
+
+        """
+        rtype = (rel.get("type") or "").strip().lower()
+        other = self.inverse.get(rtype)
+        if other is not None:
+            return rel if rtype <= other else _swap_endpoints(rel, new_type=other)
+        if rtype in self.symmetric:
+            src, tgt = _relationship_endpoints(rel)
+            key = endpoint_key or _default_endpoint_order
+            if key(src) > key(tgt):
+                return _swap_endpoints(rel)
+        return rel
+
+
+def _relationship_endpoints(rel: dict[str, Any]) -> tuple[Any, Any]:
+    """The first endpoint pair ``rel`` carries, or ``(None, None)``."""
+    for src_key, tgt_key in _ENDPOINT_KEY_PAIRS:
+        if src_key in rel or tgt_key in rel:
+            return rel.get(src_key), rel.get(tgt_key)
+    return None, None
+
+
+def _swap_endpoints(rel: dict[str, Any], new_type: str | None = None) -> dict[str, Any]:
+    """A copy of ``rel`` with every endpoint pair swapped (and ``type`` set when given)."""
+    swapped = dict(rel)
+    for src_key, tgt_key in _ENDPOINT_KEY_PAIRS:
+        if src_key in rel or tgt_key in rel:
+            swapped[src_key], swapped[tgt_key] = rel.get(tgt_key), rel.get(src_key)
+    if new_type is not None:
+        swapped["type"] = new_type
+    return swapped
+
+
+def orient_relationships(
+    relationships: list[dict[str, Any]],
+    orientation: RelationshipOrientation,
+    endpoint_key: Callable[[Any], Any] | None = None,
+) -> tuple[list[dict[str, Any]], int]:
+    """Put every relationship in its canonical form (see :class:`RelationshipOrientation`).
+
+    Args:
+        relationships: Relationship dicts; not modified.
+        orientation: The orientation rule.
+        endpoint_key: Sort key for symmetric endpoints (see
+            :meth:`RelationshipOrientation.orient`).
+
+    Returns:
+        Tuple of (oriented list in input order, number of relationships rewritten).
+
+    """
+    if not orientation:
+        return list(relationships), 0
+    oriented: list[dict[str, Any]] = []
+    rewritten = 0
+    for rel in relationships:
+        canonical = orientation.orient(rel, endpoint_key)
+        if canonical is not rel:
+            rewritten += 1
+        oriented.append(canonical)
+    return oriented, rewritten
+
+
+def _collapse_oriented(
+    relationships: list[dict[str, Any]],
+    orientation: RelationshipOrientation,
+) -> tuple[list[dict[str, Any]], int]:
+    """Orient every relationship, then collapse same-chunk duplicates of one fact.
+
+    Orientation is applied across all chunks, so the same fact written both
+    ways in two groups leaves here with one (source, target, type) and the
+    commit stores one edge carrying a citation per group. Within one chunk,
+    duplicates of the fact keep the highest-confidence row.
+
+    Args:
+        relationships: Pre-deduplicated relationship list.
+        orientation: The orientation rule (only its symmetric or inverse part
+            may be set, to report the phases separately).
+
+    Returns:
+        Tuple of (oriented, collapsed list; number removed).
+
+    """
+    oriented, _ = orient_relationships(relationships, orientation)
+    final: dict[tuple[Any, Any, str, Any], dict[str, Any]] = {}
+    for rel in oriented:
+        src, tgt = _relationship_endpoints(rel)
+        key = (src, tgt, (rel.get("type") or "").strip().lower(), rel.get("chunk_index"))
+        existing = final.get(key)
+        if existing is None or rel.get("confidence", 0.0) > existing.get("confidence", 0.0):
+            final[key] = rel
+    return list(final.values()), len(relationships) - len(final)
+
+
 def _collapse_symmetric_pairs(
     relationships: list[dict[str, Any]],
     symmetric_types: frozenset[str],
 ) -> tuple[list[dict[str, Any]], int]:
-    """Collapse bidirectional duplicates for symmetric types (chunk-aware).
+    """Orient symmetric relationships and collapse same-chunk bidirectional duplicates.
 
     For symmetric types (e.g. interacts_with, spouse_of), (A, B) and (B, A)
-    within the same chunk are semantically identical. Normalizes the pair key
-    so both map to the same slot, keeping the highest-confidence one.
-    Entries from different chunks are preserved.
+    are one fact: every such relationship is rewritten with its endpoints in
+    canonical order, in every chunk; within one chunk the duplicates collapse
+    to the highest-confidence one. Entries from different chunks are
+    preserved (one citation each) but now share their direction.
 
     Args:
         relationships: Pre-deduplicated relationship list.
-        symmetric_types: Frozenset of symmetric type names (lowercased).
+        symmetric_types: Frozenset of symmetric type names.
 
     Returns:
         Tuple of (collapsed list, number removed).
 
     """
-    sym_lower = frozenset(t.lower() for t in symmetric_types)
-    final: dict[tuple[Any, Any, str, Any], dict[str, Any]] = {}
-
-    for rel in relationships:
-        # Coerce explicitly: ``X or ""`` would replace valid 0/false-y int IDs with "".
-        src_raw = rel.get("source", rel.get("source_index"))
-        tgt_raw = rel.get("target", rel.get("target_index"))
-        src: str = "" if src_raw is None else str(src_raw)
-        tgt: str = "" if tgt_raw is None else str(tgt_raw)
-        rtype = (rel.get("type") or "").strip().lower()
-        chunk = rel.get("chunk_index")
-
-        # For symmetric types, normalize the pair so (A,B) == (B,A)
-        if rtype in sym_lower:
-            norm_src, norm_tgt = min(src, tgt), max(src, tgt)
-        else:
-            norm_src, norm_tgt = src, tgt
-        key = (norm_src, norm_tgt, rtype, chunk)
-
-        if key in final:
-            existing = final[key]
-            if rel.get("confidence", 0.0) > existing.get("confidence", 0.0):
-                final[key] = rel
-        else:
-            final[key] = rel
-
-    sym_removed = len(relationships) - len(final)
+    result, sym_removed = _collapse_oriented(
+        relationships, RelationshipOrientation.from_domain(symmetric_types=symmetric_types)
+    )
     if sym_removed > 0:
         logger.info(
             "symmetric_relationships_collapsed",
             before=len(relationships),
-            after=len(final),
+            after=len(result),
             removed=sym_removed,
         )
-
-    return list(final.values()), sym_removed
+    return result, sym_removed
 
 
 def _collapse_inverse_pairs(
     relationships: list[dict[str, Any]],
     inverse_map: dict[str, str],
 ) -> tuple[list[dict[str, Any]], int]:
-    """Collapse inverse relationship pairs into canonical direction (chunk-aware).
+    """Rewrite inverse pairs into their canonical direction and collapse same-chunk duplicates.
 
-    For inverse pairs (e.g. parent_of/child_of), ``(A, parent_of, B)`` and
-    ``(B, child_of, A)`` within the same chunk express the same fact. This
-    function normalizes both to the canonical direction (alphabetically-first
-    type name) and keeps the highest-confidence one per chunk.
+    ``(A, parent_of, B)`` and ``(B, child_of, A)`` express the same fact:
+    every such relationship, in every chunk, is rewritten to the
+    alphabetically-first type of its pair with the endpoints following it;
+    within one chunk the duplicates collapse to the highest-confidence one.
 
     Args:
         relationships: Pre-deduplicated relationship list.
@@ -844,164 +1188,194 @@ def _collapse_inverse_pairs(
     """
     if not inverse_map:
         return relationships, 0
-
-    # Build bidirectional lookup (lowercased)
-    inv_lower: dict[str, str] = {}
-    for t1, t2 in inverse_map.items():
-        inv_lower[t1.lower()] = t2.lower()
-        inv_lower[t2.lower()] = t1.lower()
-
-    # Determine canonical type for each inverse pair:
-    # alphabetically-first type name is the canonical one
-    def _canonical_key(
-        src: Any,
-        tgt: Any,
-        rtype_lower: str,
-        chunk: Any,
-    ) -> tuple[Any, Any, str, Any]:
-        inverse = inv_lower.get(rtype_lower)
-        if inverse is None:
-            return (src, tgt, rtype_lower, chunk)
-        # Pick alphabetically-first type as canonical
-        if rtype_lower <= inverse:
-            return (src, tgt, rtype_lower, chunk)
-        # Swap direction: use inverse type with flipped entities
-        return (tgt, src, inverse, chunk)
-
-    canonical: dict[tuple[Any, Any, str, Any], dict[str, Any]] = {}
-
-    for rel in relationships:
-        src = rel.get("source", rel.get("source_index"))
-        tgt = rel.get("target", rel.get("target_index"))
-        rtype = (rel.get("type") or "").strip().lower()
-        chunk = rel.get("chunk_index")
-
-        key = _canonical_key(src, tgt, rtype, chunk)
-
-        if key in canonical:
-            existing = canonical[key]
-            if rel.get("confidence", 0.0) > existing.get("confidence", 0.0):
-                canonical[key] = rel
-        else:
-            canonical[key] = rel
-
-    inv_removed = len(relationships) - len(canonical)
+    orientation = RelationshipOrientation.from_domain(inverse_map=inverse_map)
+    # Self-inverse labels are symmetric; they are oriented by the symmetric phase.
+    orientation = RelationshipOrientation(inverse=orientation.inverse)
+    result, inv_removed = _collapse_oriented(relationships, orientation)
     if inv_removed > 0:
         logger.info(
             "inverse_pair_relationships_collapsed",
             before=len(relationships),
-            after=len(canonical),
+            after=len(result),
             removed=inv_removed,
         )
-
-    return list(canonical.values()), inv_removed
+    return result, inv_removed
 
 
 def _fuzzy_type_match(entity_type: str, allowed_types: list[str]) -> bool:
-    """Check if an entity type matches any allowed type with fuzzy matching.
+    """Whether an entity's type is one an edge template allows: compared as core types.
 
-    Three-tier matching:
-    1. Exact case-insensitive match
-    2. Substring containment (either direction)
-    3. Significant word overlap (ignoring stop words)
+    Edge templates name core types (``source_types``/``target_types``) and
+    every entity leaves the per-chunk filters core-typed, its subtype a
+    property (spec 2026-10-07 § 6). Two names match when they are the same
+    name (case-insensitive), or when the mapping table
+    (``type_rescue.FLOOR_TYPE_VOCABULARY``) gives both the same core type: a
+    record still typed ``Character`` is a Person. A name no table knows
+    matches only itself. Until 2026-10-07 a substring or a shared word was
+    enough (``Personality`` passed for ``Person``, ``Military Location`` for
+    ``Location``).
 
     Args:
-        entity_type: The entity type to check.
-        allowed_types: List of allowed type names.
+        entity_type: The entity's type.
+        allowed_types: The template's allowed types.
 
     Returns:
-        True if the entity type matches any allowed type.
+        True if the entity's type is one of the allowed types.
 
     """
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+        FLOOR_TYPE_VOCABULARY,
+    )
+
     if not entity_type or not allowed_types:
         return False
-
     type_lower = entity_type.strip().lower()
-
-    # Tier 1: Exact case-insensitive
-    for allowed in allowed_types:
-        if type_lower == allowed.strip().lower():
-            return True
-
-    # Tier 2: Substring containment (either direction)
-    for allowed in allowed_types:
-        allowed_lower = allowed.strip().lower()
-        if type_lower in allowed_lower or allowed_lower in type_lower:
-            return True
-
-    # Tier 3: Significant word overlap
-    _type_stop_words = frozenset({"the", "a", "an", "of", "in", "on", "for", "and", "or"})
-    type_words = {w for w in type_lower.split() if w not in _type_stop_words and len(w) > 1}
-    if not type_words:
+    if any(type_lower == allowed.strip().lower() for allowed in allowed_types):
+        return True
+    own = FLOOR_TYPE_VOCABULARY.resolve(entity_type)
+    if own is None:
         return False
-
-    for allowed in allowed_types:
-        allowed_words = {
-            w for w in allowed.strip().lower().split() if w not in _type_stop_words and len(w) > 1
-        }
-        if type_words & allowed_words:
-            return True
-
-    return False
+    return any(
+        (core := FLOOR_TYPE_VOCABULARY.resolve(allowed)) is not None and core[0] == own[0]
+        for allowed in allowed_types
+    )
 
 
-# Stop words for relationship type word splitting (underscore-separated types)
-_EDGE_TYPE_STOP_WORDS: frozenset[str] = frozenset(
-    {"the", "a", "an", "of", "in", "on", "for", "and", "or", "is", "has"}
-)
+def _label_words(label: str) -> frozenset[str]:
+    """The words of a canonical relationship label that say something (no function words)."""
+    from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+        FUNCTION_WORDS,
+    )
+
+    return frozenset(w for w in label.split("_") if len(w) > 1 and w not in FUNCTION_WORDS)
 
 
 def _fuzzy_edge_type_lookup(
     rel_type: str,
-    edge_type_constraints: dict[str, dict[str, list[str]]],
+    edge_type_constraints: Mapping[str, Any],
 ) -> str | None:
-    """Find the best fuzzy match for a relationship type in the constraint dict.
+    """The one template a near-miss relationship label means, or None.
 
-    Same three-tier matching as ``_fuzzy_type_match`` but returns the matched
-    key name instead of a bool, so the caller can look up constraints.
-
-    Note: splits on underscores (relationship types use ``spouse_of``) unlike
-    ``_fuzzy_type_match`` which splits on spaces (entity types use ``Literary Character``).
+    Both sides in canonical form (``relation_vocabulary.canonical_edge_label``).
+    A label matches a template when the words that say something (function
+    words left out) of one are the other's (``spouse`` is ``spouse_of``,
+    ``is_parent_of`` is ``parent_of``), and only one template matches. Until
+    audit wave 5 a substring or one shared word was enough, so ``of``
+    matched the first ``*_of`` template, ``with`` matched ``interacts_with``
+    and ``engaged_to`` matched ``betrothed_to`` on "to".
 
     Args:
-        rel_type: Lowercased relationship type to look up.
-        edge_type_constraints: Constraint dict keyed by canonical type names.
+        rel_type: Canonical relationship label to look up.
+        edge_type_constraints: Constraints keyed by canonical template label.
 
     Returns:
-        Matched constraint key, or None if no match found.
+        The matched template key, or None (no match, or more than one).
 
     """
     if not rel_type or not edge_type_constraints:
         return None
-
-    keys = list(edge_type_constraints.keys())
-
-    # Tier 1: Exact (already handled by caller via dict.get, but included for completeness)
-    for key in keys:
-        if rel_type == key.strip().lower():
-            return key
-
-    # Tier 2: Substring containment (either direction)
-    for key in keys:
-        key_lower = key.strip().lower()
-        if rel_type in key_lower or key_lower in rel_type:
-            return key
-
-    # Tier 3: Significant word overlap
-    rel_words = {w for w in rel_type.split("_") if w not in _EDGE_TYPE_STOP_WORDS and len(w) > 1}
-    if not rel_words:
+    if rel_type in edge_type_constraints:
+        return rel_type
+    words = _label_words(rel_type)
+    if not words:
         return None
+    matches = [
+        key
+        for key in edge_type_constraints
+        if (key_words := _label_words(key)) and (words <= key_words or key_words <= words)
+    ]
+    return matches[0] if len(matches) == 1 else None
 
-    for key in keys:
-        key_words = {
-            w
-            for w in key.strip().lower().split("_")
-            if w not in _EDGE_TYPE_STOP_WORDS and len(w) > 1
-        }
-        if rel_words & key_words:
-            return key
 
-    return None
+UNMATCHED_LABEL_STAGE_COUNT = "unmatched_label"
+"""The ``relationship_type_constraint`` stage's count of the edges kept as the fallback label."""
+
+TYPE_MISMATCH_STAGE_COUNT = "type_mismatch"
+"""The ``relationship_type_constraint`` stage's count of the edges kept with refused endpoint types."""
+
+TYPE_CONSTRAINT_STAGE_COUNTS: tuple[str, ...] = (
+    UNMATCHED_LABEL_STAGE_COUNT,
+    TYPE_MISMATCH_STAGE_COUNT,
+)
+"""The strict type-constraint check's flag counts, one per edge flag it writes (2026-10-08).
+
+Until then the check dropped these edges and the stage's ``removed_count``
+counted them; it drops nothing now."""
+
+
+def type_constraint_flags(stages: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """The relationships the type-constraint check kept flagged, by flag, over a filtering log's ``stages``.
+
+    What the source row's ``relationships_unmatched_label_kept`` and
+    ``relationships_type_mismatch_kept`` count, and, together,
+    ``relationships_dropped_type_unmatched`` (the extraction finalizer reads it),
+    since 2026-10-08: the ``relationship_type_constraint`` stages'
+    :data:`TYPE_CONSTRAINT_STAGE_COUNTS`. Until then the stage's
+    ``removed_count``, the edges the check dropped.
+    """
+    totals = dict.fromkeys(TYPE_CONSTRAINT_STAGE_COUNTS, 0)
+    for stage in stages:
+        if stage.get("stage") != "relationship_type_constraint":
+            continue
+        for name in TYPE_CONSTRAINT_STAGE_COUNTS:
+            totals[name] += int((stage.get("counts") or {}).get(name, 0) or 0)
+    return totals
+
+
+def flag_unmatched_label(rel: Mapping[str, Any], fallback: str) -> dict[str, Any]:
+    """``rel`` kept although no template answers to its label: a copy as ``fallback``, flagged.
+
+    The one writer of ``name_identity.UNMATCHED_LABEL_KEY``: the label becomes
+    the fallback (``core_types.FALLBACK_LABEL``, ``related_to``) and the one the
+    model wrote is kept beside the flag (``WRITTEN_LABEL_KEY``).
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        UNMATCHED_LABEL_KEY,
+        WRITTEN_LABEL_KEY,
+        with_pipeline_flag,
+    )
+
+    stored = rel.get("properties")
+    props = with_pipeline_flag(
+        stored if isinstance(stored, Mapping) else None,
+        UNMATCHED_LABEL_KEY,
+        on=True,
+        **{WRITTEN_LABEL_KEY: rel.get("type")},
+    )
+    return {**rel, "type": fallback, "properties": props}
+
+
+def flag_type_mismatch(rel: Mapping[str, Any], reason: str) -> dict[str, Any]:
+    """``rel`` kept although its template refuses its endpoints' types: a copy flagged, label unchanged.
+
+    The one writer of ``name_identity.TYPE_MISMATCH_KEY``, the reason beside
+    it (``TYPE_MISMATCH_REASON_KEY``).
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        TYPE_MISMATCH_KEY,
+        TYPE_MISMATCH_REASON_KEY,
+        with_pipeline_flag,
+    )
+
+    stored = rel.get("properties")
+    props = with_pipeline_flag(
+        stored if isinstance(stored, Mapping) else None,
+        TYPE_MISMATCH_KEY,
+        on=True,
+        **{TYPE_MISMATCH_REASON_KEY: reason},
+    )
+    return {**rel, "properties": props}
+
+
+def _type_mismatch_reason(
+    label: str, source_type: str, target_type: str, *, source_ok: bool, allowed: Mapping[str, Any]
+) -> str:
+    """Why ``label``'s template refuses a relationship's endpoints (one sentence)."""
+    if not source_ok:
+        end, written, types = "source", source_type, allowed.get("source_types", [])
+    else:
+        end, written, types = "target", target_type, allowed.get("target_types", [])
+    return f"{label} takes a {end} of type {', '.join(types)}, not {written or 'an untyped entity'}"
 
 
 def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
@@ -1013,75 +1387,113 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
     strict_edge_type_constraints: bool = False,
     enable_direction_correction: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """Validate relationships against edge template type constraints.
+    """Check relationships against edge template type constraints: keep, flag, never delete.
 
     For each relationship, checks that source and target entity types are
-    allowed by the edge template's ``source_types``/``target_types`` constraints.
-    Uses fuzzy matching to handle near-miss type names.
+    allowed by the edge template's ``source_types``/``target_types``
+    constraints, compared as core types (:func:`_fuzzy_type_match`); a
+    near-miss *label* is matched to its one template
+    (:func:`_fuzzy_edge_type_lookup`). Under strict constraints (every
+    extraction plan) the check keeps every relationship (2026-10-08; until
+    then it dropped these, justification and all):
+
+    - a label no template answers to, even by the near-miss match, is kept
+      as the fallback label (``core_types.FALLBACK_LABEL``), flagged
+      ``unmatched_label`` with the label as written
+      (:func:`flag_unmatched_label`);
+    - endpoints of types the template refuses either way round (or that fit
+      only reversed while direction correction is off) are kept, label and
+      direction unchanged, flagged ``type_mismatch`` with the reason
+      (:func:`flag_type_mismatch`).
 
     Args:
         relationships: Validated relationships (source/target are int indices).
         entities: Entity list for type lookup.
         edge_type_constraints: Mapping of edge_type -> {"source_types": [...], "target_types": [...]}.
         filtering_log: Optional log collector for pipeline diagnostics.
-        strict_edge_type_constraints: When True, drop relationships with types not
-            matching any domain template. When False (default), unmatched types
-            pass through without source/target constraint validation.
+        strict_edge_type_constraints: When True, flag relationships the
+            constraints refuse (above). When False, unmatched labels and
+            refused types pass through unchecked and unflagged (``fell_through``).
         enable_direction_correction: When True (default), swap source/target when
-            the swap would satisfy type constraints (existing behavior). When False,
-            drop the relationship instead of swapping. Counter increments either
-            way so the wrong-direction LLM emission rate is always visible.
+            the swap would satisfy type constraints. When False, keep the
+            relationship as written, flagged ``type_mismatch`` (in either
+            mode: until 2026-10-08 it was dropped). The counter increments
+            either way so the
+            wrong-direction LLM emission rate is always visible.
 
     Returns:
-        Tuple of (filtered_relationships, stats) where stats has keys
-        ``total_checked``, ``dropped_source_mismatch``, ``dropped_target_mismatch``,
+        Tuple of (relationships, stats) where stats has keys
+        ``total_checked``, ``unmatched_label``, ``type_mismatch``,
         ``fuzzy_matched``, ``fell_through``, ``direction_corrected``.
 
     """
     if not relationships or not edge_type_constraints:
         return relationships, {
             "total_checked": len(relationships),
-            "dropped_source_mismatch": 0,
-            "dropped_target_mismatch": 0,
+            UNMATCHED_LABEL_STAGE_COUNT: 0,
+            TYPE_MISMATCH_STAGE_COUNT: 0,
             "fuzzy_matched": 0,
             "fell_through": 0,
         }
 
+    from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+        FALLBACK_LABEL,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+        canonical_edge_label,
+    )
+
     filtered: list[dict[str, Any]] = []
-    dropped_source = 0
-    dropped_target = 0
+    unmatched_label = 0
+    type_mismatch = 0
     fuzzy_matched = 0
     fell_through = 0
     direction_corrected = 0
-    removed_items: list[FilteredItem] = []
+    flagged_items: list[FilteredItem] = []
 
+    # One label normaliser for the filter and the commit: a template is matched
+    # in the form the commit persists the label in.
+    by_label: dict[str, tuple[str, dict[str, list[str]]]] = {
+        canonical_edge_label(name): (name, entry) for name, entry in edge_type_constraints.items()
+    }
+    fallback_label = by_label.get(canonical_edge_label(FALLBACK_LABEL), (FALLBACK_LABEL, {}))[0]
     for rel in relationships:
-        rel_type = (rel.get("type") or "").strip().lower()
-        constraints = edge_type_constraints.get(rel_type)
+        rel_type = canonical_edge_label(rel.get("type"))
+        exact = by_label.get(rel_type)
+        constraints = exact[1] if exact else None
+        if exact and rel.get("type") != exact[0]:
+            rel["type"] = exact[0]
 
         # No exact match — try fuzzy matching, then fall-through
         if not constraints:
-            matched_key = _fuzzy_edge_type_lookup(rel_type, edge_type_constraints)
+            matched_key = _fuzzy_edge_type_lookup(rel_type, by_label)
             if matched_key:
-                constraints = edge_type_constraints[matched_key]
+                template_name, constraints = by_label[matched_key]
                 fuzzy_matched += 1
                 logger.info(
                     "relationship_type_fuzzy_matched",
                     original_type=rel_type,
-                    matched_type=matched_key,
+                    matched_type=template_name,
                 )
+                # The relationship takes the template's label: a near-miss is the
+                # template it was matched to, never an invented label kept.
+                rel["type"] = template_name
             elif strict_edge_type_constraints:
-                # Strict mode: drop unmatched types
-                dropped_source += 1
+                # Strict: kept as the fallback label, flagged, the written label beside it.
+                unmatched_label += 1
                 _log_filtered(
                     filtering_log,
-                    removed_items,
+                    flagged_items,
                     item_type="relationship",
                     name=_resolve_rel_name(rel, entities),
                     entity_type=rel_type,
-                    reason=f"Relationship type '{rel_type}' not in domain templates",
-                    details={"rel_type": rel_type},
+                    reason=(
+                        f"Relationship type '{rel_type}' not in domain templates: "
+                        f"kept as {fallback_label}, flagged"
+                    ),
+                    details={"rel_type": rel_type, "kept": True},
                 )
+                filtered.append(flag_unmatched_label(rel, fallback_label))
                 continue
             else:
                 # Fall-through: let unmatched types pass without constraint check
@@ -1111,7 +1523,7 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
         # Note: a missing entity type (source_type == "" or target_type == "")
         # used to short-circuit these checks to True, silently admitting any
         # relationship whose endpoint had no type. Now treated as a real
-        # constraint failure so it surfaces via strict-mode drops or the
+        # constraint failure so it surfaces as a strict-mode flag or the
         # fell_through counter, never invisibly.
         source_ok = not source_types or _fuzzy_type_match(source_type, source_types)
         target_ok = not target_types or _fuzzy_type_match(target_type, target_types)
@@ -1120,54 +1532,55 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
             # Try swapping direction — LLM often gets source/target backwards
             swapped_source_ok = not source_types or _fuzzy_type_match(target_type, source_types)
             swapped_target_ok = not target_types or _fuzzy_type_match(source_type, target_types)
+            swap_fits = swapped_source_ok and swapped_target_ok
 
-            if swapped_source_ok and swapped_target_ok:
+            if swap_fits:
                 # The swap would fix the direction — always increment the
                 # counter (measures wrong-direction LLM emission rate,
                 # independent of the toggle).
                 direction_corrected += 1
-                if enable_direction_correction:
-                    # Default (toggle on): swap and keep the relationship.
-                    rel["source"], rel["target"] = rel["target"], rel["source"]
-                    logger.info(
-                        "relationship_direction_corrected",
-                        rel_type=rel_type,
-                        original_source=source_type,
-                        original_target=target_type,
+            if swap_fits and enable_direction_correction:
+                # Default (toggle on): swap and keep the relationship.
+                rel["source"], rel["target"] = rel["target"], rel["source"]
+                logger.info(
+                    "relationship_direction_corrected",
+                    rel_type=rel_type,
+                    original_source=source_type,
+                    original_target=target_type,
+                )
+            elif strict_edge_type_constraints or swap_fits:
+                # Kept as written, flagged with the reason: under strict constraints,
+                # and a reversible one with the toggle off in any mode (until
+                # 2026-10-08 both were dropped).
+                type_mismatch += 1
+                reason = (
+                    f"the endpoints fit {rel['type']} only reversed, and direction "
+                    "correction is off"
+                    if swap_fits
+                    else _type_mismatch_reason(
+                        str(rel["type"]),
+                        source_type,
+                        target_type,
+                        source_ok=source_ok,
+                        allowed=constraints,
                     )
-                else:
-                    # Toggle off: drop instead of swapping.
-                    logger.info(
-                        "relationship_direction_correction_disabled_dropped",
-                        rel_type=rel_type,
-                        original_source=source_type,
-                        original_target=target_type,
-                    )
-                    continue
-            elif strict_edge_type_constraints:
-                # Strict mode: drop
-                if not source_ok:
-                    dropped_source += 1
-                    _log_filtered(
-                        filtering_log,
-                        removed_items,
-                        item_type="relationship",
-                        name=_resolve_rel_name(rel, entities),
-                        entity_type=rel_type,
-                        reason=f"Source type '{source_type}' not in allowed types",
-                        details={"source_type": source_type, "allowed": source_types},
-                    )
-                else:
-                    dropped_target += 1
-                    _log_filtered(
-                        filtering_log,
-                        removed_items,
-                        item_type="relationship",
-                        name=_resolve_rel_name(rel, entities),
-                        entity_type=rel_type,
-                        reason=f"Target type '{target_type}' not in allowed types",
-                        details={"target_type": target_type, "allowed": target_types},
-                    )
+                )
+                _log_filtered(
+                    filtering_log,
+                    flagged_items,
+                    item_type="relationship",
+                    name=_resolve_rel_name(rel, entities),
+                    entity_type=rel_type,
+                    reason=f"{reason}: kept flagged",
+                    details={
+                        "source_type": source_type,
+                        "target_type": target_type,
+                        "allowed_source": source_types,
+                        "allowed_target": target_types,
+                        "kept": True,
+                    },
+                )
+                filtered.append(flag_type_mismatch(rel, reason))
                 continue
             else:
                 # Fall-through: keep with original direction
@@ -1183,17 +1596,16 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
 
     stats = {
         "total_checked": len(relationships),
-        "dropped_source_mismatch": dropped_source,
-        "dropped_target_mismatch": dropped_target,
+        UNMATCHED_LABEL_STAGE_COUNT: unmatched_label,
+        TYPE_MISMATCH_STAGE_COUNT: type_mismatch,
         "fuzzy_matched": fuzzy_matched,
         "fell_through": fell_through,
         "direction_corrected": direction_corrected,
     }
 
-    total_dropped = dropped_source + dropped_target
-    if total_dropped > 0:
+    if unmatched_label or type_mismatch:
         logger.info(
-            "relationship_type_constraints_enforced",
+            "relationship_type_constraints_flagged",
             **stats,
             total_after=len(filtered),
         )
@@ -1202,8 +1614,12 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
         filtering_log.add_stage(
             "relationship_type_constraint",
             input_count=len(relationships),
-            removed_count=total_dropped,
-            items=removed_items,
+            removed_count=0,
+            items=flagged_items,
+            counts={
+                UNMATCHED_LABEL_STAGE_COUNT: unmatched_label,
+                TYPE_MISMATCH_STAGE_COUNT: type_mismatch,
+            },
         )
         if direction_corrected > 0:
             # ``removed_count`` carries the corrected count — not a removal, but
@@ -1237,36 +1653,141 @@ def validate_relationship_type_constraints(  # noqa: PLR0912, PLR0915
     return filtered, stats
 
 
-def clean_descriptor_aliases(
+def move_relation_descriptors(
+    entities: list[dict[str, Any]],
+    conventions: NameConventions,
+    filtering_log: FilteringLog | None = None,
+) -> int:
+    """Move aliases naming another person's relation into ``descriptors``: ``Natásha's mother``.
+
+    Such an alias says who the entity is to someone else, never who it is,
+    and read as a name it makes the entity that someone (the name rule's
+    descriptor: ``name_identity.descriptor_possessor``, under the domain's
+    relation, role and generation words). It is kept as a descriptor (the
+    commit stores ``descriptors``, the name rule reads one as evidence that
+    the entity is *not* the person it names). ``run_deduplication`` runs
+    this before the name rule, so neither the exact dedup's alias keys nor
+    the hierarchical pass read one as a name.
+
+    Modifies entities in-place.
+
+    Args:
+        entities: Entity list (modified in-place).
+        conventions: The source domain's naming conventions.
+        filtering_log: Optional log collector for pipeline diagnostics.
+
+    Returns:
+        Number of aliases moved.
+    """
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        is_relation_alias,
+    )
+
+    moved: list[tuple[str, str]] = []
+    for entity in entities:
+        # A person's only: "Caesar's Commentaries" on a work is a name, not someone's relation
+        etype = str(entity.get("type") or "")
+        aliases = entity.get("aliases") or []
+        out = [
+            a for a in aliases if isinstance(a, str) and is_relation_alias(a, conventions, etype)
+        ]
+        if not out:
+            continue
+        name = str(entity.get("name") or entity.get("label") or "")
+        entity["aliases"] = [a for a in aliases if a not in out]
+        descriptors = list(entity.get("descriptors") or [])
+        entity["descriptors"] = descriptors + [a for a in out if a not in descriptors]
+        moved.extend((name, a) for a in out)
+    for name, alias in moved:
+        logger.info("relation_descriptor_alias_moved", alias=alias, entity_name=name)
+    if filtering_log is not None and moved:
+        from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
+            FilteredItem,
+        )
+
+        filtering_log.add_stage(
+            "relation_descriptor_aliases",
+            input_count=sum(len(e.get("aliases") or []) for e in entities) + len(moved),
+            removed_count=len(moved),
+            items=[
+                FilteredItem(
+                    item_type="entity",
+                    name=alias,
+                    entity_type="(alias)",
+                    reason="Alias names another person's relation: kept as a descriptor",
+                    details={"entity": name},
+                )
+                for name, alias in moved
+            ],
+        )
+    return len(moved)
+
+
+def clean_descriptor_aliases(  # noqa: PLR0912 - one branch per kind of alias
     entities: list[dict[str, Any]],
     title_words: frozenset[str] | None = None,
     filtering_log: FilteringLog | None = None,
+    conventions: NameConventions | None = None,
 ) -> int:
-    """Remove aliases that are descriptors rather than name variants.
+    """Move aliases that describe rather than name to ``descriptors``; remove none.
 
     An alias should be an alternate form of the entity's name (e.g.,
-    "Annette" for "Anna Pávlovna Schérer"). Aliases that share no
-    significant word root with the entity name are likely descriptors
-    injected by the LLM (e.g., "Nieces" for "Empress Márya Fëdorovna").
+    "Annette" for "Anna Pávlovna Schérer"). An alias that shares no
+    significant word root with the entity's names and that its text does not
+    write (unattested: ``name_identity.record_attested_names``, the stamp
+    ``name_identity.evidence_aliases`` reads) is likely a descriptor injected
+    by the LLM (e.g., "Nieces" for "Empress Márya Fëdorovna"): it is moved to
+    ``descriptors``, where the name rule reads no name from it. With
+    ``conventions`` an alias naming another person's relation is a descriptor
+    whatever words it shares, moved first (:func:`move_relation_descriptors`:
+    ``Bezúkhov's son`` on Pierre; a merge may have brought one in).
+
+    Keep, flag, never delete (2026-10-07): an attested alias stays an alias,
+    whatever words it shares with the label ("Annette", "Lise", "Moskva": a
+    given name or a spelling the text writes for this entity), and no alias is
+    removed: until then every alias sharing no word was deleted, attested or
+    not. A name a merge folded into the entity
+    (``name_identity.MERGED_NAMES_KEY``) stays too: it was an entity's own
+    name, and its words count as the entity's for the second pass (until
+    2026-10-07 the v4 Pierre, folded into the one-mention ``Pétya``, lost
+    ``Pierre``, ``Monsieur Pierre`` and ``Pierre Bezúkhov`` here).
 
     Modifies entities in-place.
 
     Args:
         entities: Entity list (modified in-place).
         title_words: Title/honorific words to ignore when comparing.
-        filtering_log: Optional log collector for pipeline diagnostics.
+        filtering_log: Optional log collector for pipeline diagnostics
+            (the ``descriptor_alias_cleaning`` stage: ``removed_count`` the
+            aliases moved off ``aliases``, ``counts`` the moved and the
+            attested ones kept).
+        conventions: The source domain's naming conventions, for the
+            relation descriptors; None skips that check.
 
     Returns:
-        Total number of aliases removed.
+        Total number of aliases moved to ``descriptors``.
 
     """
+    relation_moved = (
+        move_relation_descriptors(entities, conventions, filtering_log)
+        if conventions is not None
+        else 0
+    )
     if not title_words:
         title_words = frozenset()
 
     # Also treat common articles as stop words for comparison
     stop_words = title_words | frozenset({"the", "a", "an", "of", "de", "von", "van", "le", "la"})
 
-    total_removed = 0
+    total_moved = 0
+    total_kept_attested = 0
+    import unicodedata
+
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        fold,
+        record_attested_names,
+        record_merged_names,
+    )
 
     for entity in entities:
         aliases = entity.get("aliases", [])
@@ -1277,6 +1798,11 @@ def clean_descriptor_aliases(
         name_words = _significant_words(name, stop_words)
         if not name_words:
             continue
+        merged_in = {fold(n) for n in record_merged_names(entity)}
+        attested = record_attested_names(entity)
+
+        def _attested(alias: str, attested: frozenset[str] = attested) -> bool:
+            return unicodedata.normalize("NFC", alias.strip()) in attested
 
         # Two-pass alias validation:
         # Pass 1: accept aliases that share a word root with the entity name
@@ -1286,18 +1812,17 @@ def clean_descriptor_aliases(
         accepted: list[str] = []
         accepted_words: set[str] = set(name_words)
         deferred: list[tuple[str, set[str]]] = []
+        unmatched: list[str] = []
 
         for alias in aliases:
             alias_words = _significant_words(alias, stop_words)
 
+            if fold(alias) in merged_in or _attested(alias):
+                accepted.append(alias)  # the entity's own name, or one its text writes: kept
+                accepted_words.update(alias_words)
+                continue
             if not alias_words:
-                total_removed += 1
-                logger.debug(
-                    "descriptor_alias_removed",
-                    alias=alias,
-                    entity_name=name,
-                    reason="no_significant_words",
-                )
+                unmatched.append(alias)
                 continue
 
             if _shares_word_root(alias_words, name_words):
@@ -1307,47 +1832,65 @@ def clean_descriptor_aliases(
                 deferred.append((alias, alias_words))
 
         # Pass 2: check deferred aliases against accepted word pool
-        rejected: list[str] = []
         for alias, alias_words in deferred:
             if _shares_word_root(alias_words, accepted_words):
                 accepted.append(alias)
                 accepted_words.update(alias_words)
             else:
-                rejected.append(alias)
-                total_removed += 1
+                unmatched.append(alias)
+
+        total_kept_attested += sum(
+            1
+            for a in accepted
+            if _attested(a)
+            and fold(a) not in merged_in
+            and not _shares_word_root(_significant_words(a, stop_words), name_words)
+        )
+        if unmatched:
+            for alias in unmatched:
                 logger.info(
-                    "descriptor_alias_removed",
+                    "descriptor_alias_moved",
                     alias=alias,
                     entity_name=name,
-                    reason="no_name_overlap",
+                    reason="unattested_no_name_overlap",
                 )
-
+            descriptors = list(entity.get("descriptors") or [])
+            entity["descriptors"] = descriptors + [a for a in unmatched if a not in descriptors]
+            total_moved += len(unmatched)
         if len(accepted) != len(aliases):
-            entity["aliases"] = accepted
+            entity["aliases"] = [a for a in aliases if a in accepted]
 
-    if filtering_log is not None and total_removed > 0:
+    if filtering_log is not None and (total_moved or total_kept_attested):
         from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
             FilteredItem,
         )
 
         # Summary item — individual aliases aren't distinct items
-        total_aliases = sum(len(e.get("aliases", [])) for e in entities) + total_removed
+        total_aliases = sum(len(e.get("aliases", [])) for e in entities) + total_moved
         filtering_log.add_stage(
             "descriptor_alias_cleaning",
             input_count=total_aliases,
-            removed_count=total_removed,
+            removed_count=total_moved,
             items=[
                 FilteredItem(
                     item_type="entity",
-                    name=f"{total_removed} descriptor aliases",
+                    name=f"{total_moved} descriptor aliases",
                     entity_type="(various)",
-                    reason="Alias has no word-root overlap with entity name",
-                    details={"total_removed": total_removed},
+                    reason=(
+                        "Alias shares no word root with the entity's names and its text "
+                        "does not write it: kept as a descriptor"
+                    ),
+                    details={"moved": total_moved, "kept_attested": total_kept_attested},
                 )
             ],
+            counts={"moved": total_moved, "kept_attested": total_kept_attested},
         )
 
-    return total_removed
+    return total_moved + relation_moved
+
+
+LOW_PLAUSIBILITY_STAGE_COUNT = "low_plausibility"
+"""The ``implausible_entity_filter`` stage's count of the entities kept flagged below the bar."""
 
 
 def filter_implausible_entities(
@@ -1357,6 +1900,7 @@ def filter_implausible_entities(
     threshold: float = 0.40,
     threshold_non_named: float = 0.15,
     filtering_log: FilteringLog | None = None,
+    conventions: NameConventions | None = None,
 ) -> tuple[list[dict[str, Any]], dict[int, int | None]]:
     """Remove entities with implausible names using a composite plausibility score.
 
@@ -1375,7 +1919,19 @@ def filter_implausible_entities(
     The filter is type-aware: ``named_referent_types`` specifies which entity
     types MUST have plausible proper names (e.g., Character, Author). Types
     not in this set are only filtered if their score falls below
-    ``threshold_non_named``.
+    ``threshold_non_named``. A record written under a reference that says
+    something of its own (:func:`kept_as_reference`: ``the count``, ``the
+    army``) is never scored: its name is a reference by design, not a
+    hallucination.
+
+    Keep, flag, never delete (2026-10-07): an entity below the bar that
+    carries evidence (:func:`carries_evidence`) is kept, flagged
+    ``low_plausibility`` with its score (:func:`flag_low_plausibility`); only
+    one carrying nothing (and an empty name) is dropped. Until then every
+    entity below the bar was dropped, description and all (the v4 literary
+    replay: ``Dining Room``, ``drawing room``, ``conservatory``, ``doll``).
+    The stage's ``removed_count`` counts the drops and its ``counts`` the
+    flags (``low_plausibility``).
 
     Args:
         entities: Entity list from extraction.
@@ -1386,6 +1942,7 @@ def filter_implausible_entities(
         threshold_non_named: Score below which non-named-type entities are
             rejected (default 0.15).
         filtering_log: Optional log collector for pipeline diagnostics.
+        conventions: The domain's naming conventions (what a reference is).
 
     Returns:
         Tuple of (filtered_entities, index_mapping).
@@ -1403,6 +1960,8 @@ def filter_implausible_entities(
     index_mapping: dict[int, int | None] = {}
     removed: list[tuple[str, str, float]] = []
     removed_items: list[FilteredItem] = []
+    flagged: list[tuple[str, str, float]] = []
+    flagged_items: list[FilteredItem] = []
 
     for old_idx, entity in enumerate(entities):
         name = (entity.get("name") or "").strip()
@@ -1422,6 +1981,12 @@ def filter_implausible_entities(
             )
             continue
 
+        if kept_as_reference(entity, conventions):
+            new_idx = len(filtered)
+            filtered.append(entity)
+            index_mapping[old_idx] = new_idx
+            continue
+
         # Type-aware thresholding
         is_named_type = named_lower is None or entity_type.lower() in named_lower
 
@@ -1431,7 +1996,23 @@ def filter_implausible_entities(
 
         effective_threshold = threshold if is_named_type else threshold_non_named
 
-        if score < effective_threshold:
+        if score < effective_threshold and carries_evidence(entity):
+            flagged.append((name, entity_type, score))
+            _log_filtered(
+                filtering_log,
+                flagged_items,
+                item_type="entity",
+                name=name,
+                entity_type=entity_type,
+                reason=(
+                    f"Plausibility score {score:.2f} < {effective_threshold:.2f}: "
+                    "kept flagged (carries evidence)"
+                ),
+                details={"score": round(score, 3), "threshold": effective_threshold, "kept": True},
+            )
+            index_mapping[old_idx] = len(filtered)
+            filtered.append(flag_low_plausibility(entity, score))
+        elif score < effective_threshold:
             index_mapping[old_idx] = None
             removed.append((name, entity_type, score))
             _log_filtered(
@@ -1448,11 +2029,13 @@ def filter_implausible_entities(
             filtered.append(entity)
             index_mapping[old_idx] = new_idx
 
-    if removed:
+    if removed or flagged:
         logger.info(
             "implausible_entities_filtered",
             removed_count=len(removed),
             removed=[{"name": n, "type": t, "score": round(s, 2)} for n, t, s in removed],
+            flagged_count=len(flagged),
+            flagged=[{"name": n, "type": t, "score": round(s, 2)} for n, t, s in flagged],
         )
 
     if filtering_log is not None:
@@ -1460,7 +2043,8 @@ def filter_implausible_entities(
             "implausible_entity_filter",
             input_count=len(entities),
             removed_count=len(removed),
-            items=removed_items,
+            items=removed_items + flagged_items,
+            counts={LOW_PLAUSIBILITY_STAGE_COUNT: len(flagged)},
         )
 
     return filtered, index_mapping

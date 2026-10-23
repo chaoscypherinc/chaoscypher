@@ -15,11 +15,13 @@
 import { useQuery } from '@tanstack/react-query';
 import { apiClient } from './client';
 import { qualityApi } from './quality';
+import { databaseApi } from './databases';
 import type { components } from '../../types/generated/api';
 
 const COUNTS_QUERY_KEY = ['dashboard', 'counts'] as const;
 const QUALITY_SUMMARY_QUERY_KEY = ['quality', 'summary'] as const;
 const LLM_STATS_QUERY_KEY = ['llm', 'stats'] as const;
+const CURRENT_DATABASE_QUERY_KEY = ['databases', 'current'] as const;
 
 type CountsResponse = components['schemas']['CountsResponse'];
 type QualitySummary = components['schemas']['QualitySummaryResponse'];
@@ -53,5 +55,20 @@ export function useLLMStats(opts: { refetchInterval?: number | false } = {}) {
       return response.data;
     },
     refetchInterval: opts.refetchInterval ?? false,
+  });
+}
+
+/**
+ * The active database's one-line notice, or null: set for a database made
+ * before the core entity types (export it with the previous version,
+ * update, import the export). Read once; a failed read shows nothing.
+ */
+export function useDatabaseNotice() {
+  return useQuery({
+    queryKey: CURRENT_DATABASE_QUERY_KEY,
+    queryFn: async (): Promise<string | null> => {
+      const current = await databaseApi.getCurrent();
+      return current?.notice ?? null;
+    },
   });
 }

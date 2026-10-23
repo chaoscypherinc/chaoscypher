@@ -652,7 +652,8 @@ class OCRCleaner:
             words = line.split()
             # Only flag if words don't look like normal mixed case
             weird_words = sum(1 for w in words if re.match(r"^[A-Z][a-z][A-Z]", w))
-            if weird_words > len(words) * 0.5:
+            # Share of words that must look scrambled (lower = stricter).
+            if weird_words > len(words) * self.settings.gibberish_threshold:
                 return True
 
         return False

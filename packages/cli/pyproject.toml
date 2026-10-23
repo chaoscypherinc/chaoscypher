@@ -36,7 +36,7 @@ dependencies = [
     "platformdirs>=4.9.0,<5",
     "pyyaml>=6.0.3,<7",
     "structlog>=25.5.0,<26",
-    "mcp>=1.28.1,<2",
+    "mcp>=1.30.0,<2",
     "httpx>=0.28.0,<1",
 ]
 
@@ -48,11 +48,18 @@ server = [
     "fastapi>=0.135.0,<0.137",
 ]
 dev = [
+    # The benchmark extra rides along so `make install` / CI's `--extra dev`
+    # can run the naive-retrieval tests (fake embedders, never Ollama).
+    "chaoscypher-cli[benchmark]",
     "pytest>=9.0.0,<10",
     "pytest-asyncio>=1.2.0,<2",
     "pytest-cov>=7.1.0,<8",
     "ruff>=0.15.0,<1",
     "mypy>=1.20.0,<2",
+]
+benchmark = [
+    "llama-index-core>=0.14.25",
+    "llama-index-embeddings-ollama>=0.10.0",
 ]
 
 [project.scripts]

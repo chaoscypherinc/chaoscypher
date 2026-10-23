@@ -18,14 +18,10 @@ import chaoscypher_core.adapters.sqlite.models  # noqa: F401 — register metada
 from chaoscypher_core.adapters.sqlite.engine import evict_engine
 from chaoscypher_core.database.migrations.runner import downgrade_to, upgrade_to
 
+from ._schema import table_columns
+
 
 _TABLES = ("graph_nodes", "graph_edges", "sources")
-
-
-def _columns(db_path: Path, table: str) -> set[str]:
-    """Return the column names of ``table`` via PRAGMA table_info."""
-    with sqlite3.connect(str(db_path)) as conn:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
 
 def test_0003_adds_ccx_iri_columns(tmp_path: Path) -> None:
@@ -35,7 +31,7 @@ def test_0003_adds_ccx_iri_columns(tmp_path: Path) -> None:
     try:
         upgrade_to(db, "0003")
         for table in _TABLES:
-            assert "ccx_iri" in _columns(db, table), (
+            assert "ccx_iri" in table_columns(db, table), (
                 f"ccx_iri missing from {table} after upgrade to 0003"
             )
     finally:
@@ -50,7 +46,7 @@ def test_0003_downgrade_removes_columns(tmp_path: Path) -> None:
         upgrade_to(db, "0003")
         downgrade_to(db, "0002")
         for table in _TABLES:
-            assert "ccx_iri" not in _columns(db, table), (
+            assert "ccx_iri" not in table_columns(db, table), (
                 f"ccx_iri still present in {table} after downgrade to 0002"
             )
     finally:

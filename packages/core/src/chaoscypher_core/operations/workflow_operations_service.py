@@ -24,6 +24,11 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+_CRASHED_ATTEMPT_ERROR = (
+    "Execution interrupted by a worker crash; not replayed because steps "
+    "that already ran may have had side effects"
+)
+
 
 class WorkflowOperationsService:
     """Service for queuing workflow execution operations.
@@ -64,8 +69,10 @@ class WorkflowOperationsService:
             "database_name": database_name,
         }
 
-        # Workflow handler: idempotent via execution-status short-circuit
-        # (completed/failed executions skip re-execution). Step handler:
+        # Workflow handler: crash-safe via execution-status short-circuit —
+        # terminal executions skip re-execution and a RUNNING row on pickup
+        # (a crashed attempt) is failed rather than replayed, because steps
+        # (graph writes, HTTP calls) are not idempotent. Step handler:
         # stateless — re-execution is safe (no persistent side effects).
         self.operation_handlers = {
             "execute_workflow": HandlerSpec(
@@ -114,8 +121,12 @@ class WorkflowOperationsService:
         execution_id = data.get("execution_id")
 
         # Idempotency guard: if a pre-created execution record already
-        # reached a terminal state (completed/failed), the previous
+        # reached a terminal state (completed/failed/cancelled), the previous
         # attempt finished before the worker crashed — skip re-execution.
+        # A RUNNING row means an earlier attempt died mid-run (a graceful
+        # drain or timeout finalizes FAILED itself): its completed steps
+        # already had their side effects, so fail it instead of replaying
+        # every step from the start.
         if execution_id:
             idempotency_adapter = get_sqlite_adapter(
                 database_name=str(self.services["database_name"]),
@@ -123,11 +134,27 @@ class WorkflowOperationsService:
             try:
                 exec_repo = WorkflowExecutionRepository(idempotency_adapter)
                 existing = exec_repo.get_execution(execution_id)
+                if existing and existing.get("status") == WorkflowExecutionStatus.RUNNING:
+                    logger.warning(
+                        "workflow_crashed_attempt_not_replayed",
+                        execution_id=execution_id,
+                        workflow_id=workflow_id,
+                    )
+                    exec_repo.finalize_execution(
+                        execution_id,
+                        status=WorkflowExecutionStatus.FAILED,
+                        outputs=None,
+                        error_message=_CRASHED_ATTEMPT_ERROR,
+                        failed_step_id=None,
+                        duration_ms=0,
+                    )
+                    existing = exec_repo.get_execution(execution_id)
             finally:
                 idempotency_adapter.disconnect()
             if existing and existing.get("status") in (
                 WorkflowExecutionStatus.COMPLETED,
                 WorkflowExecutionStatus.FAILED,
+                WorkflowExecutionStatus.CANCELLED,
             ):
                 logger.info(
                     "workflow_already_terminal",

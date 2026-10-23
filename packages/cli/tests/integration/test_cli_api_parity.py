@@ -30,6 +30,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
+
 
 # ---------------------------------------------------------------------
 # Shared infrastructure
@@ -77,6 +79,7 @@ class _ParityStorage:
         staging_dir: str | None = None,
         extraction_depth: str = "full",
         forced_domain: str | None = None,
+        forced_packs: Any = _NOT_FORWARDED,
         content_hash: str | None = None,
         origin_url: str | None = None,
         source_type_override: str | None = None,
@@ -122,7 +125,13 @@ class _ParityStorage:
             "file_size": resolved_size,
             "status": "uploaded",
             "extraction_depth": extraction_depth,
-            "forced_domain": forced_domain,
+            # The real adapter's write rule (``pack_columns``): the list and
+            # the old name in step, from whichever form the frontend passed.
+            **pack_columns(
+                {"forced_packs": None if forced_packs is None else list(forced_packs)}
+                if forced_packs is not _NOT_FORWARDED
+                else {"forced_domain": forced_domain}
+            ),
             "content_hash": content_hash,
             "origin_url": origin_url,
             "source_type": source_type_override or "file",
@@ -318,6 +327,7 @@ async def test_cli_and_api_produce_same_row_state(
         "auto_analyze",
         "extraction_depth",
         "forced_domain",
+        "forced_packs",
         "enable_normalization",
         "enable_vision",
         "content_filtering",
@@ -357,6 +367,7 @@ async def test_cli_and_api_default_options_match(
         "auto_analyze",
         "extraction_depth",
         "forced_domain",
+        "forced_packs",
         "enable_normalization",
         "enable_vision",
         "content_filtering",

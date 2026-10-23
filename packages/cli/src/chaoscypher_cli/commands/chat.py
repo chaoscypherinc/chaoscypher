@@ -35,6 +35,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from chaoscypher_cli.context import get_context
+from chaoscypher_cli.utils.event_loops import cancel_pending_tasks, run_to_completion
 
 
 logger = structlog.get_logger(__name__)
@@ -351,6 +352,9 @@ def _create_tool_infrastructure(
         Tuple of (chat_provider, tool_executor, tools)
     """
     from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.services.workflows.tools.engine.chat_callbacks import (
+        provider_chat_callback,
+    )
     from chaoscypher_core.streaming.chat import setup_chat_providers
 
     settings = get_settings()
@@ -358,20 +362,6 @@ def _create_tool_infrastructure(
     # Tool LLM callbacks (e.g. the summarize tool) call the provider
     # directly — the CLI has no queue to route through.
     llm_provider = ctx.llm_provider
-
-    async def llm_chat_callback(
-        messages: list[dict[str, Any]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> dict[str, Any]:
-        """Direct LLM chat via CLI provider."""
-        kwargs: dict[str, Any] = {"messages": messages, "stream": False}
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
-        response = await llm_provider.chat(**kwargs)
-        return {"content": response.content}
 
     chat_provider, tool_executor, tools = setup_chat_providers(
         settings,
@@ -381,7 +371,7 @@ def _create_tool_infrastructure(
         indexing_manager=ctx.storage_adapter,
         source_ids=source_ids,
         source_storage=ctx.storage_adapter,
-        llm_chat_callback_override=llm_chat_callback if llm_provider else None,
+        llm_chat_callback_override=provider_chat_callback(llm_provider) if llm_provider else None,
     )
     return chat_provider, tool_executor, tools
 
@@ -768,12 +758,8 @@ def _close_loop(loop: asyncio.AbstractEventLoop) -> None:
         loop: The chat session's event loop
     """
     try:
-        pending = asyncio.all_tasks(loop)
-        for task in pending:
-            task.cancel()
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(loop.shutdown_asyncgens())
+        cancel_pending_tasks(loop)
+        run_to_completion(loop, loop.shutdown_asyncgens())
     except Exception:
         logger.debug("chat_loop_close_failed", exc_info=True)
     finally:

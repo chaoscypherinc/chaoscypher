@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaoscypher_core.models import ReleasedRows
 from chaoscypher_cortex.features.sources.extraction_api import ReclassifyRequest
 from chaoscypher_cortex.features.sources.service import SourceService
 
@@ -109,11 +110,13 @@ async def test_reclassify_committed_source_resets_and_queues(
 
     storage_adapter = MagicMock()
     graph_repository = MagicMock()
-    graph_repository.delete_source_artifacts.return_value = {
-        "nodes_deleted": 5,
-        "edges_deleted": 3,
-        "templates_deleted": 1,
-    }
+    graph = MagicMock()
+    graph.release_source.return_value = ReleasedRows(deleted_node_ids=frozenset({"n1"}))
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.management.re_extraction."
+        "get_transaction_graph_repository",
+        lambda adapter, _database_name: graph,
+    )
     engine_service = MagicMock()
     engine_service.get_source.return_value = {
         "id": "src_rc2",
@@ -136,10 +139,8 @@ async def test_reclassify_committed_source_resets_and_queues(
         domain="legal",
     )
 
-    # Graph artifacts must be deleted before re-queuing
-    graph_repository.delete_source_artifacts.assert_called_once_with(
-        "src_rc2", session=storage_adapter.session
-    )
+    # The source must be released from the graph before re-queuing
+    graph.release_source.assert_called_once_with("src_rc2")
     storage_adapter.reset_for_re_extraction.assert_called_once_with(
         source_id="src_rc2",
         database_name="default",

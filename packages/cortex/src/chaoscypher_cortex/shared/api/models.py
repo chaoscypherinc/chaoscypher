@@ -10,7 +10,7 @@ imported by more than one feature, preventing cross-feature import violations.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel
 
@@ -24,6 +24,19 @@ class PaginationMetadata(BaseModel):
     total_pages: int
     has_next: bool
     has_prev: bool
+
+    @classmethod
+    def for_page(cls, *, total: int, page: int, page_size: int) -> Self:
+        """The metadata of 1-based page ``page`` of ``total`` items (one empty page when none)."""
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        return cls(
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
 
 
 class TriggerSummaryResponse(BaseModel):

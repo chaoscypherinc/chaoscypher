@@ -155,7 +155,9 @@ def render_leaderboard(
         )
 
     body = "\n\n".join(sections)
-    return preamble + body
+    # one trailing newline, as a text file ends: the sweep, `benchmark run` and `benchmark show`
+    # all write this string as is, and the repository's end-of-file hook rejected every one
+    return preamble + body.rstrip("\n") + "\n"
 
 
 def _is_probe_scored_chat(row: BenchmarkResult) -> bool:

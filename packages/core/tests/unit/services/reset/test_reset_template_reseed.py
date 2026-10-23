@@ -48,7 +48,7 @@ def _run(seed_mock: MagicMock) -> dict[str, object]:
             return_value=_fake_adapter(),
         ),
         patch(
-            "chaoscypher_core.repo_factories.get_graph_repository",
+            "chaoscypher_core.repo_factories.get_transaction_graph_repository",
             return_value=graph_repo,
         ),
         patch(

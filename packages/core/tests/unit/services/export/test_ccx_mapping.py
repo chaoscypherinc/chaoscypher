@@ -198,6 +198,40 @@ class TestEdgeToJsonld:
         _kind, resource = ccx_mapping.edge_to_jsonld(edge, nodes_iri, {})
         assert resource["ccx:relationshipTemplate"] == {"@id": "urn:ccx:chaoscypher:template/t-emp"}
 
+    def test_property_less_edge_on_differently_named_template_is_relationship(self):
+        """A bare triple cannot carry the template, so a mismatched one reifies."""
+        edge = {
+            "id": "e5",
+            "label": "knows",
+            "template_id": "t-mentor",
+            "source_node_id": "n1",
+            "target_node_id": "n2",
+            "properties": None,
+        }
+        nodes_iri = {"n1": "iri-1", "n2": "iri-2"}
+        templates = {"t-mentor": {"id": "t-mentor", "name": "Mentorship"}}
+        kind, resource = ccx_mapping.edge_to_jsonld(edge, nodes_iri, templates)
+        assert kind == "relationship"
+        assert resource["@id"] == "urn:ccx:chaoscypher:rel/e5"
+        assert resource["ccx:relationshipTemplate"] == {
+            "@id": "urn:ccx:chaoscypher:template/t-mentor"
+        }
+
+    def test_property_less_edge_on_predicate_named_template_stays_triple(self):
+        """A template named after the predicate is recovered by name on import."""
+        edge = {
+            "id": "e6",
+            "label": "knows",
+            "template_id": "t-knows",
+            "source_node_id": "n1",
+            "target_node_id": "n2",
+            "properties": None,
+        }
+        nodes_iri = {"n1": "iri-1", "n2": "iri-2"}
+        templates = {"t-knows": {"id": "t-knows", "name": "knows"}}
+        result = ccx_mapping.edge_to_jsonld(edge, nodes_iri, templates)
+        assert result[0] == "triple"
+
 
 # ---------------------------------------------------------------------------
 # Task 2.4 — build_knowledge_graph
@@ -400,6 +434,25 @@ class TestBuildKnowledgeGraph:
         rels = [m for m in graph["@graph"] if m.get("@type") == "ccx:Relationship"]
         assert rels == []
 
+    def test_parallel_simple_edge_is_reified(self):
+        """A repeated (subject, predicate, object) triple keeps its own edge."""
+        edges = [
+            {
+                "id": eid,
+                "label": "likes",
+                "template_id": "t",
+                "source_node_id": "n1",
+                "target_node_id": "n2",
+                "properties": None,
+            }
+            for eid in ("e1", "e2")
+        ]
+        graph = ccx_mapping.build_knowledge_graph(self._nodes(), edges, {})
+        subject = next(m for m in graph["@graph"] if m["@id"] == "urn:ccx:chaoscypher:node/n1")
+        assert subject["likes"] == {"@id": "urn:ccx:chaoscypher:node/n2"}
+        rels = [m for m in graph["@graph"] if m.get("@type") == "ccx:Relationship"]
+        assert [r["@id"] for r in rels] == ["urn:ccx:chaoscypher:rel/e2"]
+
     def test_dangling_edge_is_skipped(self):
         """An edge referencing a node not in the batch is silently omitted."""
         edges = [
@@ -461,6 +514,21 @@ class TestSourceRecords:
         assert src["title"] == "My Doc"
         assert src["chunking"] == {"strategy": "fixed"}
         assert src["text"] == ccx_mapping.TEXT_ASSET_PENDING
+
+    def test_source_carries_its_packs_in_stack_order(self):
+        """``extraction_packs`` (stack order) rides beside the sorted label; none, none written."""
+        source = {
+            "id": "s5",
+            "extraction_domain": "historical+literary",
+            "extraction_packs": ["literary", "historical"],
+        }
+        src = ccx_mapping.source_records(source, [], None)[0]
+        assert src["extractionDomain"] == "historical+literary"
+        assert src["extractionPacks"] == ["literary", "historical"]
+        floor = ccx_mapping.source_records({"id": "s6", "extraction_packs": []}, [], None)[0]
+        assert floor["extractionPacks"] == []
+        old = ccx_mapping.source_records({"id": "s7", "extraction_domain": "literary"}, [], None)
+        assert "extractionPacks" not in old[0]
 
     def test_source_omits_absent_optionals(self):
         """Absent title / extractedBy / chunking / text are omitted, not null."""

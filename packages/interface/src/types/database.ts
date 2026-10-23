@@ -11,6 +11,14 @@ export interface DatabaseInfo {
   last_modified: string | null;
 }
 
+/** `GET /databases/current`: the active database, and its one-line notice when it has one. */
+export interface CurrentDatabase {
+  current: string;
+  info: DatabaseInfo;
+  /** Set for a database made before the core entity types (export, update, import); else null. */
+  notice?: string | null;
+}
+
 export interface DatabaseCreate {
   name: string;
 }

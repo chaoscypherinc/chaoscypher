@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
 
-from chaoscypher_core.app_config import Settings, get_settings, mask_settings_dict
+from chaoscypher_core.app_config import Settings, get_settings
+from chaoscypher_core.services.diagnostics import bundle_settings
 from chaoscypher_cortex.features.diagnostics.service import DiagnosticsService
 from chaoscypher_cortex.features.logs.service import LogService
 from chaoscypher_cortex.shared.api import safe_create
@@ -61,7 +62,7 @@ async def get_diagnostics_service(
         data_dir=settings.paths.data_dir,
         log_dir=log_dir,
         database_name=settings.current_database,
-        settings_dict=mask_settings_dict(settings.model_dump()),
+        settings_dict=bundle_settings(settings),
         queue_client=safe_create(_get_queue_client),
         log_service=safe_create(
             LogService,

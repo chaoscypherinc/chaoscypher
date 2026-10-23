@@ -31,6 +31,7 @@ import { ChaosCypherPalette, ChaosCypherNeutrals } from '../theme/palette';
 import { logger } from '../utils/logger';
 import { LoadingState } from '../components/LoadingState';
 import { RELATIONSHIP_SYSTEM_KEYS } from '../utils/propertyKeys';
+import { EdgeFlagNotice } from '../components/EdgeFlagNotice';
 import { formatConfidencePct, confidenceChipColor } from '../utils/confidence';
 
 const CYAN = ChaosCypherPalette.primary;
@@ -182,6 +183,7 @@ export default function EdgeDetailPage() {
               sx={linkChipSx}
             />
           </Box>
+          <EdgeFlagNotice properties={relationship.properties} />
         </Box>
 
         <TextField

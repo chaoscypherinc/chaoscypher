@@ -9,6 +9,7 @@ metadata cleaning.  Shared by the node tool handlers and the GraphRAG
 handler so the formatting logic lives in exactly one place.
 """
 
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
@@ -101,6 +102,36 @@ def assign_chunk_aliases(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return chunks
 
 
+def chunk_source_filenames(
+    rows: Iterable[Mapping[str, Any]],
+    lookup: Callable[[list[str], str], Mapping[str, str]] | None,
+) -> dict[str, str]:
+    """Each source id the chunk ``rows`` name, mapped to its filename: one read per database.
+
+    ``lookup`` is a repository's ``get_source_filenames_by_ids(ids, database_name)``, or None
+    when the repository has none (every name is then ``""``). A source id is read under the
+    first database a row names it with (a retrieval's rows share one), and a source the
+    lookup does not find is ``""``. The graph and node handlers read a ~160-column source row
+    (and its stage progress) per source for this filename: 36% of a retrieval sample run once
+    its edge listings were batched (2026-10-16).
+    """
+    database_of: dict[str, str] = {}
+    for row in rows:
+        source_id = row.get("source_id") or ""
+        if source_id and source_id not in database_of:
+            database_of[source_id] = row.get("database_name", "")
+    if lookup is None:
+        return dict.fromkeys(database_of, "")
+    by_database: dict[str, list[str]] = {}
+    for source_id, database in database_of.items():
+        by_database.setdefault(database, []).append(source_id)
+    names: dict[str, str] = {}
+    for database, source_ids in by_database.items():
+        found = lookup(source_ids, database)
+        names.update({source_id: found.get(source_id, "") for source_id in source_ids})
+    return names
+
+
 def clean_chunk_metadata(chunk_metadata: dict[str, Any] | None) -> dict[str, Any] | None:
     """Strip ``combined_content`` from ``hierarchical_group`` in chunk metadata.
 
@@ -134,6 +165,7 @@ __all__: list[str] = [
     "UNTRUSTED_FENCE_CLOSE",
     "UNTRUSTED_FENCE_OPEN",
     "assign_chunk_aliases",
+    "chunk_source_filenames",
     "clean_chunk_metadata",
     "format_chunk_content",
     "neutralize_untrusted_fence",

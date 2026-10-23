@@ -357,7 +357,13 @@ security:
 	# this project use svnwc, so the affected code path is unreachable and
 	# the package has no upstream fix. Re-evaluate when interrogate drops
 	# its `py` dependency.
-	uv run pip-audit --ignore-vuln PYSEC-2022-42969
+	# PYSEC-2026-3740 (GHSA-8mgp-746c-j5xp): nltk's model save/load helpers
+	# (TransitionParser, AveragedPerceptron, PerceptronTagger, maxent) open
+	# caller-controlled paths outside its path sandbox. nltk is a transitive
+	# dep of llama-index-core, the CLI's benchmark extra (the naive rung only),
+	# which uses its tokenizer and stopwords, never those helpers; no patched
+	# nltk is published. Re-evaluate when a fix ships.
+	uv run pip-audit --ignore-vuln PYSEC-2022-42969 --ignore-vuln PYSEC-2026-3740
 	@echo ""
 	@echo "=== Frontend Dependency Audit ==="
 	# Mirrors the `security` step in scripts/run_ci.py (the authoritative
@@ -493,16 +499,18 @@ lint-claude-selftest:
 	@echo "CLAUDE.md rule self-tests passed"
 
 lint-secrets:
-	@echo "=== Secret Scan (gitleaks, detect-secrets fallback) ==="
+	@echo "=== Secret Scan (detect-secrets, plus gitleaks where installed) ==="
 	uv run python scripts/secrets_scan.py
 	@echo ""
 	@echo "Secret scan passed"
 
 lint-internal-refs:
-	@echo "=== Public-export hygiene (private-docs refs + SPDX headers) ==="
+	@echo "=== Public-export hygiene (private-docs refs + SPDX headers + metrics artifacts + media manifest + operations-tooling tests) ==="
 	uv run python scripts/check_no_internal_refs.py
 	uv run python scripts/check_spdx_headers.py
 	uv run python scripts/check_metrics_artifacts.py
+	uv run python scripts/check_media_manifest.py
+	uv run python scripts/run_internal_tool_tests.py
 
 check-api-docs:
 	cd packages/docs && uv run python scripts/check_api_docs.py
@@ -619,11 +627,13 @@ docker-dev: types ## Start multi-container dev environment (hot-reload)
 docker-prod: types ## Start multi-container prod environment
 	cd packages/docker/multi-container && docker compose -f docker-compose.prod.yml up -d
 
+# QUEUE_PASSWORD is only interpolated, never used, by `down`; the multi-container
+# compose files hard-require it, so supply a placeholder or `down` silently aborts.
 docker-down:
 	cd packages/docker/e2e && docker compose -f docker-compose.yml down -v 2>/dev/null || true
 	cd packages/docker/test && docker compose -f docker-compose.yml down 2>/dev/null || true
-	cd packages/docker/multi-container && docker compose -f docker-compose.dev.yml down 2>/dev/null || true
-	cd packages/docker/multi-container && docker compose -f docker-compose.prod.yml down 2>/dev/null || true
+	cd packages/docker/multi-container && QUEUE_PASSWORD="$${QUEUE_PASSWORD:-unused-by-down}" docker compose -f docker-compose.dev.yml down 2>/dev/null || true
+	cd packages/docker/multi-container && QUEUE_PASSWORD="$${QUEUE_PASSWORD:-unused-by-down}" docker compose -f docker-compose.prod.yml down 2>/dev/null || true
 	cd packages/docker && docker compose down 2>/dev/null || true
 
 # ==========================================================================

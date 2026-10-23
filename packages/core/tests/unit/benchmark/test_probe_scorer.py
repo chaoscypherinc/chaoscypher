@@ -517,3 +517,27 @@ def test_completion_counters_count_length_and_loop_records() -> None:
     ]
     assert completion_counters(records) == (2, 2)
     assert completion_counters([]) == (0, 0)
+
+
+def test_property_values_ignore_degree_words_and_scope_to_names() -> None:
+    """'very strong' for 'so strong' is paraphrase; ``names`` keeps the check on the probe's own entities.
+
+    2026-10-01: in chunks, every Claude row failed both B5 carrier probes
+    on the chunk's cast ('hostess', 'father', 'very strong') in one run after
+    passing in another, while the probe's own trap ('military commander'
+    for a passage that never mentions command) is what B5 is for.
+    """
+    rec = {
+        "sentences": [
+            "Pierre was so strong that everyone who touched him was sent flying.",
+            "Berthier stood behind him with the orders.",
+        ],
+        "entities": [
+            {"name": "Pierre", "properties": {"physical_description": "very strong"}},
+            {"name": "Berthier", "properties": {"occupation": "military commander"}},
+        ],
+    }
+    ok, why = probe_checks.property_values_from_text(rec, {"names": ["Pierre"]})
+    assert ok, why
+    ok, why = probe_checks.property_values_from_text(rec, {})
+    assert not ok and "Berthier.occupation=military commander" in why

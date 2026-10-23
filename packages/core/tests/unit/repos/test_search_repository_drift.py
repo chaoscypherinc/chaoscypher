@@ -9,13 +9,13 @@ side of the contract: a fresh DB and a content-seeded DB both pass
 integrity-check, and the constructor stays quiet (no false-positive
 warning at boot).
 
-Inducing drift that FTS5's integrity-check actually catches is
-non-trivial without manipulating FTS5's internal segment tables
-(``fulltext_index_data``, ``fulltext_index_idx``, ``fulltext_index_docsize``);
-that test coverage gap is filed under DEFERRED.md ("Pending FTS5 drift
-test coverage"). In production the integrity-check fires against real
-on-disk corruption (partial writes, disk failures), which is the
-operator-visible failure mode the F3 hook is meant to surface.
+The drift side lives in
+``tests/unit/adapters/sqlite/repos/test_search_fulltext_wave2.py``: since
+2026-10-06 the check runs with ``rank`` 1, which compares the index with its
+content table, so an orphan (the kind ``INSERT OR REPLACE`` left on every
+re-indexed node until then) is caught and a boot over it warns instead of
+passing. On-disk corruption (partial writes, disk failures) fails the same
+check.
 """
 
 from __future__ import annotations

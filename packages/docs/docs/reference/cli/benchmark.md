@@ -29,10 +29,6 @@ Built-in configs:
   source of the [leaderboard](/leaderboard)'s extraction column.
 - `chat-probes` — pass/fail grounded-chat probes over a reference graph; the
   source of the leaderboard's chat column.
-- `probes` — instruction probes through the real extraction pipeline; the
-  source of the [leaderboard](/leaderboard)'s extraction column.
-- `chat-probes` — pass/fail grounded-chat probes over a reference graph; the
-  source of the leaderboard's chat column.
 - `workstation` — large-iron local extraction benchmark (`llama3.1:70b` ~40 GB,
   `gpt-oss:120b` ~80 GB, `qwen3.6:35b-a3b`) plus Claude Opus 4.8 as a
   quality-ceiling reference. The large models are **not pulled automatically**;
@@ -82,12 +78,16 @@ chaoscypher benchmark run chat-probes --reuse-graph
 |------|------|---------|-------------|
 | `--dataset ID` | string | All datasets in config | Run only one dataset id from the config's `datasets` list. |
 | `--local-only` | flag | off | Drop commercial-provider models so the run is free / API-key-free. |
-| `--seed N` | int | Config value | Override the config's seed. |
+| `--seed N` | int | Config value | Override the extraction seed (the chat suite has its own, below). |
+| `--chat-seed N` | int | Config value | Override the chat suite's seed. |
 | `--temperature F` | float | Config value | Override the config's temperature. |
 | `--keep-db` | flag | off | Preserve per-run temp databases for inspection. |
 | `--out DIR` | path | `<data_dir>/benchmark/results/` | Output directory for JSON and Markdown. |
 | `--estimate` | flag | off | Print the LLM-call estimate and exit without running. |
 | `--rebuild-graphs` | flag | off | Clear the benchmark graph cache before running. |
+| `--reuse-graph` | flag | off | Skip re-extracting a reference graph the workspace cache already holds. |
+| `--replay` | flag | off | Rebuild the graph from a reference pack's completion store with no model calls (see `reference export --llm-store`). |
+| `--replay-pack NAME` | string, repeatable | none | The reference pack(s) to replay from. |
 | `--model-timeout` | seconds | none | Wall-clock cap per (model, dataset) run. A run over it is recorded as a failed row and the sweep continues; rows are also written to `partial.json` as they land. |
 
 **Output:**
@@ -212,7 +212,8 @@ questions from the same graph (see
 ```bash
 # Export the cached graph gemma4:31b built for Book One, indexed for retrieval
 chaoscypher benchmark reference export --dataset war_and_peace_book1 \
-  --extractor ollama/gemma4:31b --embedder ollama/qwen3-embedding:0.6b
+  --extractor ollama/gemma4:31b --embedder ollama/qwen3-embedding:4b \
+  --dedup-embedder ollama/qwen3-embedding:4b
 
 # List the packs under <data_dir>/benchmark/reference/
 chaoscypher benchmark reference list
@@ -223,7 +224,11 @@ Options for `export`: `--workspace` (the benchmark workspace holding
 the dataset id), `--data-dir`, `--force` (replace an existing pack),
 `--no-index` (skip re-embedding now; the first chat task does it), and
 `--seed` / `--temperature` (the decoding pins the cached graph was extracted
-with — part of its cache key; defaults `42` / `0.0`).
+with — part of its cache key; defaults `42` / `0.0`), `--llm-store/--no-llm-store`
+(default on: ship the extractor's completions from the run's completion store so
+`benchmark run --replay` rebuilds the graph with no model calls) and
+`--model-build` (the extractor's build id to export when the store holds more
+than one).
 
 ---
 

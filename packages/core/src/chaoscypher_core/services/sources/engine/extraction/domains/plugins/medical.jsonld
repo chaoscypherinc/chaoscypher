@@ -10,12 +10,13 @@
   "@type": "ExtractionDomain",
   "@id": "domain:medical",
   "name": "medical",
-  "version": "1.10.0",
+  "version": "2.0.0",
   "description": "Medical and clinical documents, healthcare literature, and pharmaceutical information",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.2,
-  "strict_entity_types": true,
   "entity_exclusions": [
     {
       "description": "Dosage numbers alone",
@@ -186,411 +187,356 @@
       "min_threshold": 0.4
     }
   },
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract conditions, symptoms, treatments, drugs, procedures, and anatomical locations\n- Include dosage information as properties on drug entities\n- Use standardized medical terminology when possible\n\nDO NOT EXTRACT:\n- Dosage numbers alone: '500mg', '2x daily' (attach to drug entity as property)\n- Generic measurements: 'normal range', 'elevated levels' (without specific values)\n- Study references: Figure 1, Table 2, Reference [15]\n- Administrative codes: ICD-10 codes, CPT codes (unless discussing the code itself)",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- CAUSATION: Link conditions to causes with causes relationship\n- TREATMENT: Connect drugs/procedures to conditions with treats\n- INTERACTIONS: Capture drug interactions with interacts_with, contraindicated_with\n- ANATOMY: Link conditions/symptoms to anatomical locations with affects\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract conditions, symptoms, treatments, drugs, procedures, and anatomical locations\n- Include dosage information as properties on drug entities\n- Use standardized medical terminology when possible\n\nDO NOT EXTRACT:\n- Dosage numbers alone: '500mg', '2x daily' (attach to drug entity as property)\n- Generic measurements: 'normal range', 'elevated levels' (without specific values)\n- Study references: Figure 1, Table 2, Reference [15]\n- Administrative codes as standalone entities: ICD-10, CPT codes (record them as a code property of their condition or procedure)",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- CAUSATION: Link conditions to causes with causes relationship\n- TREATMENT: Connect drugs/procedures to conditions with treats\n- INTERACTIONS: Capture drug interactions with interacts_with, contraindicated_with\n- ANATOMY: Link conditions/symptoms to anatomical locations with affects\n",
+  "subtypes": [
+    {
+      "name": "Condition",
+      "of": "Concept",
+      "description": "A disease, disorder, syndrome, or medical condition",
+      "properties": [
+        {
+          "name": "severity",
+          "display_name": "Severity",
+          "property_type": "text"
+        },
+        {
+          "name": "stage",
+          "display_name": "Stage",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Coronavirus",
+      "color": "#7041d6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "a disease",
+        "disorder",
+        "condition",
+        "syndrome",
+        "illness",
+        "diagnosed with",
+        "suffers from",
+        "presents with"
+      ]
+    },
+    {
+      "name": "Symptom",
+      "of": "Concept",
+      "description": "A clinical symptom, sign, or manifestation",
+      "icon": "MonitorHeart",
+      "color": "#a541d6",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "symptom",
+        "presents with",
+        "clinical sign",
+        "manifestation",
+        "complains of",
+        "experiences"
+      ]
+    },
+    {
+      "name": "Treatment",
+      "of": "Concept",
+      "description": "A therapeutic intervention or treatment approach",
+      "icon": "Healing",
+      "color": "#d641d3",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "treatment",
+        "therapy",
+        "intervention",
+        "management of",
+        "treated with",
+        "therapeutic approach"
+      ]
+    },
+    {
+      "name": "Drug",
+      "of": "Object",
+      "description": "A pharmaceutical compound or medication",
+      "properties": [
+        {
+          "name": "dosage_form",
+          "display_name": "Dosage Form",
+          "property_type": "text"
+        },
+        {
+          "name": "route",
+          "display_name": "Route of Administration",
+          "property_type": "text"
+        },
+        {
+          "name": "mechanism",
+          "display_name": "Mechanism of Action",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Medication",
+      "color": "#d6419f",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "drug",
+        "medication",
+        "pharmaceutical",
+        "administered",
+        "prescribed",
+        "compound"
+      ]
+    },
+    {
+      "name": "Procedure",
+      "of": "Concept",
+      "description": "A medical or surgical procedure",
+      "icon": "LocalHospital",
+      "color": "#d6416a",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "procedure",
+        "surgery",
+        "operation",
+        "intervention",
+        "performed"
+      ]
+    },
+    {
+      "name": "Diagnostic Test",
+      "of": "Concept",
+      "description": "A diagnostic test, imaging, or laboratory test",
+      "icon": "Biotech",
+      "color": "#d64d41",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "test",
+        "diagnostic",
+        "imaging",
+        "laboratory test",
+        "screening",
+        "biopsy"
+      ]
+    },
+    {
+      "name": "Anatomy",
+      "of": "Object",
+      "description": "A body part, organ, or anatomical structure",
+      "icon": "Accessibility",
+      "color": "#d68241",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "organ",
+        "tissue",
+        "body part",
+        "anatomical structure",
+        "system",
+        "gland"
+      ]
+    },
+    {
+      "name": "Pathogen",
+      "of": "Object",
+      "description": "A disease-causing organism (virus, bacteria, etc.)",
+      "icon": "BugReport",
+      "color": "#d6b641",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "pathogen",
+        "virus",
+        "bacteria",
+        "organism",
+        "infection caused by"
+      ]
+    },
+    {
+      "name": "Clinical Trial",
+      "of": "Event",
+      "description": "A clinical research study or trial",
+      "icon": "Science",
+      "color": "#c2d641",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "clinical trial",
+        "trial",
+        "study",
+        "randomized controlled trial",
+        "phase",
+        "RCT"
+      ]
+    },
+    {
+      "name": "Dosage",
+      "of": "Concept",
+      "description": "A drug dosage or administration regimen",
+      "icon": "Scale",
+      "color": "#8dd641",
+      "quality_score": 15,
+      "requires_named_referent": false
+    },
+    {
+      "name": "Side Effect",
+      "of": "Concept",
+      "description": "An adverse effect or side effect of treatment",
+      "icon": "Warning",
+      "color": "#59d641",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "side effect",
+        "adverse effect",
+        "adverse reaction",
+        "adverse event"
+      ]
+    },
+    {
+      "name": "Risk Factor",
+      "of": "Concept",
+      "description": "A risk factor for a condition",
+      "icon": "GppMaybe",
+      "color": "#41d65e",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "risk factor",
+        "risk",
+        "predisposition",
+        "susceptibility",
+        "predisposing factor"
+      ]
+    },
+    {
+      "name": "Gene",
+      "of": "Object",
+      "description": "A gene, allele, mutation, or genetic locus (e.g. BRCA1, TP53)",
+      "icon": "DataObject",
+      "color": "#41d693",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "gene",
+        "allele",
+        "mutation",
+        "polymorphism",
+        "locus"
+      ]
+    },
+    {
+      "name": "Biomarker",
+      "of": "Concept",
+      "description": "A measurable biological indicator used for diagnosis, prognosis, or treatment response (e.g. PSA, HbA1c)",
+      "icon": "Biotech",
+      "color": "#41d6b3",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "biomarker",
+        "genetic marker",
+        "indicator",
+        "marker"
+      ]
+    },
+    {
+      "name": "Patient Population",
+      "of": "Group",
+      "description": "A defined patient group or demographic",
+      "icon": "Groups",
+      "color": "#41d6c8",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "population",
+        "cohort",
+        "patient group",
+        "demographic",
+        "subjects"
+      ]
+    },
+    {
+      "name": "Guideline",
+      "of": "Work",
+      "description": "A clinical guideline or recommendation (e.g. ADA guideline, USPSTF recommendation)",
+      "icon": "Description",
+      "color": "#41b0d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "guideline",
+        "recommendation",
+        "best practice",
+        "standard of care"
+      ]
+    },
+    {
+      "name": "Protocol",
+      "of": "Concept",
+      "description": "A clinical protocol — a procedural sequence (e.g. CHOP, ATLS) used during treatment or research",
+      "icon": "ListAlt",
+      "color": "#418cd6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "protocol",
+        "regimen",
+        "procedure sequence"
+      ]
+    },
+    {
+      "name": "Outcome",
+      "of": "Concept",
+      "description": "A clinical outcome — what actually happened to a patient or population (mortality, remission, recovery)",
+      "icon": "Assessment",
+      "color": "#417cd6",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "outcome",
+        "result",
+        "survival",
+        "mortality"
+      ]
+    },
+    {
+      "name": "Endpoint",
+      "of": "Concept",
+      "description": "A pre-specified endpoint in a clinical trial (primary, secondary; surrogate or hard) used to measure efficacy",
+      "icon": "Flag",
+      "color": "#4163d6",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "endpoint",
+        "primary endpoint",
+        "secondary endpoint",
+        "efficacy",
+        "response rate"
+      ]
+    },
+    {
+      "name": "Mechanism of Action",
+      "of": "Concept",
+      "description": "A biological mechanism or pathway",
+      "icon": "AccountTree",
+      "color": "#4147d6",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "mechanism",
+        "pathway",
+        "action",
+        "receptor",
+        "cascade"
+      ]
+    }
+  ],
   "templates": {
-    "node_templates": [
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_condition",
-        "name": "Condition",
-        "description": "A disease, disorder, syndrome, or medical condition",
-        "icon": "Coronavirus",
-        "color": "#7041d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "clinical",
-        "normalization_keywords": [
-          "a disease",
-          "disorder",
-          "condition",
-          "syndrome",
-          "illness",
-          "diagnosed with",
-          "suffers from",
-          "presents with"
-        ],
-        "properties": [
-          {
-            "name": "severity",
-            "display_name": "Severity",
-            "property_type": "text",
-            "absorbs_types": [
-              "Severity"
-            ]
-          },
-          {
-            "name": "stage",
-            "display_name": "Stage",
-            "property_type": "text",
-            "absorbs_types": [
-              "Stage"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_symptom",
-        "name": "Symptom",
-        "description": "A clinical symptom, sign, or manifestation",
-        "icon": "MonitorHeart",
-        "color": "#a541d6",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "clinical",
-        "normalization_keywords": [
-          "symptom",
-          "presents with",
-          "clinical sign",
-          "manifestation",
-          "complains of",
-          "experiences"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_treatment",
-        "name": "Treatment",
-        "description": "A therapeutic intervention or treatment approach",
-        "icon": "Healing",
-        "color": "#d641d3",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "treatment",
-        "normalization_keywords": [
-          "treatment",
-          "therapy",
-          "intervention",
-          "management of",
-          "treated with",
-          "therapeutic approach"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_drug",
-        "name": "Drug",
-        "description": "A pharmaceutical compound or medication",
-        "icon": "Medication",
-        "color": "#d6419f",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "treatment",
-        "normalization_keywords": [
-          "drug",
-          "medication",
-          "pharmaceutical",
-          "administered",
-          "prescribed",
-          "compound"
-        ],
-        "properties": [
-          {
-            "name": "dosage_form",
-            "display_name": "Dosage Form",
-            "property_type": "text",
-            "absorbs_types": [
-              "Dosage Form"
-            ]
-          },
-          {
-            "name": "route",
-            "display_name": "Route of Administration",
-            "property_type": "text",
-            "absorbs_types": [
-              "Route"
-            ]
-          },
-          {
-            "name": "mechanism",
-            "display_name": "Mechanism of Action",
-            "property_type": "text",
-            "absorbs_types": [
-              "Mechanism"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_procedure",
-        "name": "Procedure",
-        "description": "A medical or surgical procedure",
-        "icon": "LocalHospital",
-        "color": "#d6416a",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "treatment",
-        "normalization_keywords": [
-          "procedure",
-          "surgery",
-          "operation",
-          "intervention",
-          "performed"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_diagnostic",
-        "name": "Diagnostic Test",
-        "description": "A diagnostic test, imaging, or laboratory test",
-        "icon": "Biotech",
-        "color": "#d64d41",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "diagnostic",
-        "normalization_keywords": [
-          "test",
-          "diagnostic",
-          "imaging",
-          "laboratory test",
-          "screening",
-          "biopsy"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_anatomy",
-        "name": "Anatomy",
-        "description": "A body part, organ, or anatomical structure",
-        "icon": "Accessibility",
-        "color": "#d68241",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "diagnostic",
-        "normalization_keywords": [
-          "organ",
-          "tissue",
-          "body part",
-          "anatomical structure",
-          "system",
-          "gland"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_pathogen",
-        "name": "Pathogen",
-        "description": "A disease-causing organism (virus, bacteria, etc.)",
-        "icon": "BugReport",
-        "color": "#d6b641",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "clinical",
-        "normalization_keywords": [
-          "pathogen",
-          "virus",
-          "bacteria",
-          "organism",
-          "infection caused by"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_trial",
-        "name": "Clinical Trial",
-        "description": "A clinical research study or trial",
-        "icon": "Science",
-        "color": "#c2d641",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "clinical trial",
-          "trial",
-          "study",
-          "randomized controlled trial",
-          "phase",
-          "RCT"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_dosage",
-        "name": "Dosage",
-        "description": "A drug dosage or administration regimen",
-        "icon": "Scale",
-        "color": "#8dd641",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "treatment"
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_side_effect",
-        "name": "Side Effect",
-        "description": "An adverse effect or side effect of treatment",
-        "icon": "Warning",
-        "color": "#59d641",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "clinical",
-        "normalization_keywords": [
-          "side effect",
-          "adverse effect",
-          "adverse reaction",
-          "adverse event"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_risk_factor",
-        "name": "Risk Factor",
-        "description": "A risk factor for a condition",
-        "icon": "GppMaybe",
-        "color": "#41d65e",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "risk factor",
-          "risk",
-          "predisposition",
-          "susceptibility",
-          "predisposing factor"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_gene",
-        "name": "Gene",
-        "description": "A gene, allele, mutation, or genetic locus (e.g. BRCA1, TP53)",
-        "icon": "DataObject",
-        "color": "#41d693",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "gene",
-          "allele",
-          "mutation",
-          "polymorphism",
-          "locus"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_biomarker",
-        "name": "Biomarker",
-        "description": "A measurable biological indicator used for diagnosis, prognosis, or treatment response (e.g. PSA, HbA1c)",
-        "icon": "Biotech",
-        "color": "#41d6b3",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "biomarker",
-          "genetic marker",
-          "indicator",
-          "marker"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_population",
-        "name": "Patient Population",
-        "description": "A defined patient group or demographic",
-        "icon": "Groups",
-        "color": "#41d6c8",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "population",
-          "cohort",
-          "patient group",
-          "demographic",
-          "subjects"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_guideline",
-        "name": "Guideline",
-        "description": "A clinical guideline or recommendation (e.g. ADA guideline, USPSTF recommendation)",
-        "icon": "Description",
-        "color": "#41b0d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "guideline",
-          "recommendation",
-          "best practice",
-          "standard of care"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_protocol",
-        "name": "Protocol",
-        "description": "A clinical protocol — a procedural sequence (e.g. CHOP, ATLS) used during treatment or research",
-        "icon": "ListAlt",
-        "color": "#418cd6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "protocol",
-          "regimen",
-          "procedure sequence"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_outcome",
-        "name": "Outcome",
-        "description": "A clinical outcome — what actually happened to a patient or population (mortality, remission, recovery)",
-        "icon": "Assessment",
-        "color": "#417cd6",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "outcome",
-          "result",
-          "survival",
-          "mortality"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_endpoint",
-        "name": "Endpoint",
-        "description": "A pre-specified endpoint in a clinical trial (primary, secondary; surrogate or hard) used to measure efficacy",
-        "icon": "Flag",
-        "color": "#4163d6",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "research",
-        "normalization_keywords": [
-          "endpoint",
-          "primary endpoint",
-          "secondary endpoint",
-          "efficacy",
-          "response rate"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "med_template_mechanism",
-        "name": "Mechanism of Action",
-        "description": "A biological mechanism or pathway",
-        "icon": "AccountTree",
-        "color": "#4147d6",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "clinical",
-        "normalization_keywords": [
-          "mechanism",
-          "pathway",
-          "action",
-          "receptor",
-          "cascade"
-        ]
-      }
-    ],
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -601,24 +547,13 @@
         "color": "#32cc36",
         "quality_score": 25,
         "source_types": [
-          "Pathogen",
-          "Risk Factor",
-          "Condition",
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Gene",
-          "Biomarker",
-          "Mechanism of Action",
-          "Symptom"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Outcome",
-          "Biomarker"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -629,19 +564,16 @@
         "color": "#32cc64",
         "quality_score": 25,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Guideline"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Pathogen",
-          "Patient Population"
-        ]
+          "Concept",
+          "Object",
+          "Group"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -652,17 +584,14 @@
         "color": "#32cc92",
         "quality_score": 25,
         "source_types": [
-          "Diagnostic Test",
-          "Biomarker",
-          "Gene",
-          "Procedure",
-          "Protocol"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Condition",
-          "Pathogen",
-          "Symptom"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -673,50 +602,15 @@
         "color": "#32ccc0",
         "quality_score": 25,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Drug",
-          "Condition",
-          "Symptom",
-          "Anatomy",
-          "Patient Population",
-          "Gene",
-          "Biomarker",
-          "Risk Factor",
-          "Treatment",
-          "Procedure"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "med_edge_interacts",
-        "name": "interacts_with",
-        "description": "A drug or treatment interacts pharmacologically or clinically with another drug, condition, anatomy, biomarker, gene, food/lifestyle factor (Treatment), or patient population",
-        "icon": "SyncAlt",
-        "color": "#32aacc",
-        "symmetric": true,
-        "quality_score": 25,
-        "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure"
+          "Object",
+          "Concept",
+          "Group"
         ],
-        "target_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Condition",
-          "Anatomy",
-          "Biomarker",
-          "Gene",
-          "Mechanism of Action",
-          "Patient Population",
-          "Risk Factor"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -727,27 +621,15 @@
         "color": "#327ccc",
         "quality_score": 15,
         "source_types": [
-          "Condition",
-          "Drug",
-          "Pathogen",
-          "Treatment",
-          "Procedure",
-          "Risk Factor",
-          "Gene",
-          "Mechanism of Action",
-          "Side Effect",
-          "Biomarker"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Anatomy",
-          "Biomarker",
-          "Patient Population",
-          "Outcome",
-          "Mechanism of Action",
-          "Gene",
-          "Condition",
-          "Symptom"
-        ]
+          "Object",
+          "Concept",
+          "Group"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -758,18 +640,14 @@
         "color": "#324ecc",
         "quality_score": 15,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Diagnostic Test",
-          "Biomarker",
-          "Gene"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Clinical Trial",
-          "Patient Population"
-        ]
+          "Event",
+          "Group"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -780,13 +658,13 @@
         "color": "#4532cc",
         "quality_score": 15,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Dosage"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -797,17 +675,13 @@
         "color": "#7332cc",
         "quality_score": 15,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Side Effect",
-          "Symptom",
-          "Outcome",
-          "Condition"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -818,14 +692,14 @@
         "color": "#a132cc",
         "quality_score": 15,
         "source_types": [
-          "Condition",
-          "Pathogen",
-          "Patient Population"
+          "Concept",
+          "Object",
+          "Group"
         ],
         "target_types": [
-          "Symptom",
-          "Biomarker"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -836,23 +710,13 @@
         "color": "#cc32c8",
         "quality_score": 15,
         "source_types": [
-          "Risk Factor",
-          "Condition",
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Pathogen",
-          "Gene",
-          "Biomarker",
-          "Symptom"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Condition",
-          "Side Effect",
-          "Outcome",
-          "Symptom",
-          "Risk Factor"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -863,19 +727,16 @@
         "color": "#cc329a",
         "quality_score": 25,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Guideline"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Pathogen",
-          "Outcome"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -886,16 +747,14 @@
         "color": "#cc326c",
         "quality_score": 15,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Biomarker"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Anatomy",
-          "Gene",
-          "Biomarker",
-          "Mechanism of Action"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -907,25 +766,17 @@
         "symmetric": true,
         "quality_score": 15,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Guideline",
-          "Diagnostic Test",
-          "Condition",
-          "Symptom"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Guideline",
-          "Diagnostic Test",
-          "Condition",
-          "Symptom"
-        ]
+          "Object",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -936,21 +787,13 @@
         "color": "#cc5432",
         "quality_score": 25,
         "source_types": [
-          "Condition",
-          "Risk Factor",
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Pathogen",
-          "Side Effect",
-          "Symptom"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Outcome"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -961,21 +804,14 @@
         "color": "#cc8232",
         "quality_score": 25,
         "source_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Drug",
-          "Risk Factor",
-          "Pathogen"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Condition",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Outcome",
-          "Drug"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -986,21 +822,16 @@
         "color": "#ccb032",
         "quality_score": 25,
         "source_types": [
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Protocol",
-          "Guideline",
-          "Diagnostic Test"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Condition",
-          "Patient Population",
-          "Symptom",
-          "Pathogen",
-          "Treatment",
-          "Procedure"
-        ]
+          "Concept",
+          "Group",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1011,22 +842,15 @@
         "color": "#b9cc32",
         "quality_score": 15,
         "source_types": [
-          "Condition",
-          "Drug",
-          "Treatment",
-          "Procedure",
-          "Side Effect",
-          "Outcome",
-          "Endpoint",
-          "Symptom",
-          "Patient Population"
+          "Concept",
+          "Object",
+          "Group"
         ],
         "target_types": [
-          "Diagnostic Test",
-          "Gene",
-          "Biomarker",
-          "Procedure"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1037,19 +861,15 @@
         "color": "#8bcc32",
         "quality_score": 15,
         "source_types": [
-          "Mechanism of Action",
-          "Gene",
-          "Biomarker"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Drug",
-          "Condition",
-          "Treatment",
-          "Symptom",
-          "Side Effect",
-          "Pathogen",
-          "Biomarker"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1061,21 +881,15 @@
         "symmetric": true,
         "quality_score": 15,
         "source_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Pathogen",
-          "Biomarker",
-          "Risk Factor"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Condition",
-          "Symptom",
-          "Side Effect",
-          "Pathogen",
-          "Biomarker",
-          "Risk Factor"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       }
     ]
   },
@@ -1137,8 +951,6 @@
     "nurse"
   ],
   "extraction_limits": {
-    "max_entity_degree": 20,
-    "max_same_source_type": 8,
     "max_relationship_ratio": 6.0,
     "loop_max_entity_count": 35
   },

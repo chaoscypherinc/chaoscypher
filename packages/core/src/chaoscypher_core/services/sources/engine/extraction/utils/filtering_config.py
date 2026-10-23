@@ -23,6 +23,7 @@ from typing import Any
 
 import structlog
 
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.ports.types import FilteringMode
 
@@ -57,13 +58,20 @@ class FilteringConfig:
         plausibility_threshold_non_named: Threshold for non-named types.
         visual_content_plausibility_factor: Multiplier for visual content thresholds.
         enable_relationship_limits: Run relationship limit enforcement.
-        max_entity_degree: Max relationships per entity.
+        max_entity_degree: Max relationships per entity: a safety valve against hub
+            explosion, not a quality filter. A long narrative's protagonists reach 30+
+            edges (Book One's hubs 29-32), so the literary and generic domains set 80 in
+            their ``extraction_limits``; the edges past it are kept flagged ``capped``
+            (since 2026-10-07; before, dropped) and recorded whole (``capped_degree``
+            in the source's filtering log, ``graph_scan.py``'s extraction section),
+            the number to compare per arm of a domain A/B.
         max_same_source_type: Max relationships per (source, type) pair.
         max_relationship_ratio: Max relationships as multiple of entity count.
         enable_structural_filter: Filter structural entities (chapters, sections).
         enable_entity_exclusions: Apply domain exclusion patterns.
-        protect_orphans: When True, keep orphan entities (no relationships). When
-            False (default), drop them before commit.
+        protect_orphans: When True, keep every orphan entity (no relationships),
+            flagged. When False (default), the commit drops only an orphan that
+            carries no evidence (``commit.service.flag_orphan_entities``).
         semantic_dedup_threshold: Cosine similarity threshold for semantic dedup.
         loop_max_entity_count: Max entities per chunk before aborting.
         minimum_alias_length: Minimum alias character length.
@@ -104,12 +112,13 @@ class FilteringConfig:
     # operators can see the wrong-direction LLM emission rate independent of
     # how the system handles it.
     enable_direction_correction: bool = True
-    # Phase 6 (2026-05-08): type-rescue gating.
-    # When True (default), entities with invalid types are passed through the
-    # three-tier rescue system (junk filter → property absorption → type
-    # remapping). When False, all invalid-typed entities are dropped without
-    # rescue, which is appropriate for unfiltered/minimal modes where the
-    # operator expects raw LLM output with no structural fixup.
+    # Type-rescue salvage tiers (Phase 6, 2026-05-08; narrowed 2026-10-07).
+    # The type rescue itself always runs: every entity leaves the per-chunk
+    # filters typed as a core type; one no core type answers to is kept as a
+    # ``Concept`` flagged ``unplaced_type`` and counted as ``unknown_type``
+    # (``type_rescue``; keep, flag, never delete, 2026-10-07). When True (default), its salvage tiers run too: obvious
+    # junk is dropped and property-like types are absorbed into their target.
+    # False (unfiltered/minimal) keeps the LLM's records otherwise as written.
     enable_type_rescue: bool = True
     # Phase 6 (2026-05-08): self-loop toggle.
     # When False (default), relationships whose source and target resolve to
@@ -133,8 +142,8 @@ _PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
         "enable_structural_filter": False,
         "enable_entity_exclusions": False,
         "protect_orphans": True,
-        # Phase 6 (2026-05-08): disable type rescue in unfiltered mode so the
-        # operator receives raw LLM output with no structural fixup.
+        # Phase 6 (2026-05-08): no rescue salvage (junk, absorption) in unfiltered
+        # mode; the core-type rescue always runs.
         "enable_type_rescue": False,
         # Wired dead fields:
         "loop_max_entity_count": 200,
@@ -152,8 +161,8 @@ _PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
         "enable_structural_filter": False,
         "enable_entity_exclusions": False,
         "protect_orphans": True,
-        # Phase 6 (2026-05-08): disable type rescue in minimal mode — operator
-        # expects minimally-filtered LLM output, not structural fixup passes.
+        # Phase 6 (2026-05-08): no rescue salvage (junk, absorption) in minimal
+        # mode; the core-type rescue always runs.
         "enable_type_rescue": False,
         "loop_max_entity_count": 100,
         "semantic_dedup_threshold": 0.97,
@@ -216,8 +225,101 @@ VALID_PRESETS: frozenset[str] = frozenset(_PRESET_OVERRIDES.keys())
 _VALID_FIELDS: frozenset[str] = frozenset(f for f in FilteringConfig.__dataclass_fields__)
 
 
+def _check_mode(mode: str) -> None:
+    """Refuse a mode that is not one of the six presets."""
+    if mode not in VALID_PRESETS:
+        raise ValueError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer-error guard for invalid public API input
+            f"Unknown filtering mode {mode!r}. Valid modes: {sorted(VALID_PRESETS)}."
+        )
+
+
+def _layered(mode: str, *overrides: dict[str, Any]) -> FilteringConfig:
+    """The one preset layering: the dataclass defaults, the preset, then each override in turn."""
+    _check_mode(mode)
+    config_dict: dict[str, Any] = dict(_PRESET_OVERRIDES[mode])
+    for layer in overrides:
+        config_dict.update(layer)
+    return FilteringConfig(**config_dict)
+
+
+def preset_value(mode: str, field: str) -> Any:
+    """The value preset ``mode`` gives ``field``, before any domain or source override.
+
+    Raises:
+        ValueError: If ``mode`` is not a preset or ``field`` not a ``FilteringConfig`` field.
+    """
+    if field not in _VALID_FIELDS:
+        raise ValueError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer-error guard for invalid public API input
+            f"{field!r} is not a FilteringConfig field."
+        )
+    return getattr(_layered(mode), field)
+
+
+DOMAIN_FIELDS_FOLLOWING_SLIDER: tuple[str, ...] = ("loop_max_entity_count", "minimum_alias_length")
+"""The domain-tunable fields the slider moves (:func:`follow_slider_limits`)."""
+
+
+def follow_slider[N: (int, float)](field: str, *, mode: str, domain_value: N) -> N:
+    """A domain's tuning of the numeric ``field``, moved the way the slider moved.
+
+    The slider's direction is read from the presets themselves: against the
+    default preset (``SOURCE_ROW_FILTERING_MODE``), ``mode`` raises
+    ``field``, lowers it, or leaves it. Raised, the result is at least the
+    mode's value; lowered, at most the mode's value; left (the default
+    itself), the domain's value as tuned. So at the default nothing changes,
+    the result never moves against the user's choice, and it is monotonic
+    along the slider for every domain value (as long as the presets step
+    monotonically, which a test pins). Example, ``loop_max_entity_count``
+    with a domain's 30: maximum 25, strict 30, balanced 30, lenient 75,
+    minimal 100, unfiltered 200.
+
+    Raises:
+        ValueError: If ``mode`` is not a preset or ``field`` not a ``FilteringConfig`` field.
+    """
+    mode_value = type(domain_value)(preset_value(mode, field))
+    default_value = type(domain_value)(preset_value(SOURCE_ROW_FILTERING_MODE, field))
+    if mode_value > default_value:
+        return max(domain_value, mode_value)
+    if mode_value < default_value:
+        return min(domain_value, mode_value)
+    return domain_value
+
+
+def follow_slider_limits(limits: dict[str, Any], mode: str) -> dict[str, Any]:
+    """A domain's ``extraction_limits`` with each slider-following field moved for ``mode``.
+
+    A fresh dict: the :data:`DOMAIN_FIELDS_FOLLOWING_SLIDER` present in
+    ``limits`` go through :func:`follow_slider`, every other key is kept as
+    is. Called once, by the extraction plan, and only when ``mode`` is the
+    user's choice (a preset the domain itself names leaves its tuning as
+    is), so the plan's limits and its FilteringConfig carry the effective
+    values for every reader. Logs at debug when the domain's and the
+    mode's values differ, naming which one the result took.
+    """
+    out = dict(limits)
+    for field in DOMAIN_FIELDS_FOLLOWING_SLIDER:
+        if field not in out:
+            continue
+        domain_value = out[field]
+        mode_value = preset_value(mode, field)
+        resolved = follow_slider(field, mode=mode, domain_value=domain_value)
+        if domain_value != mode_value:
+            logger.debug(
+                "filter_field_overridden_by_domain"
+                if resolved == domain_value
+                else "domain_limit_overridden_by_slider",
+                field=field,
+                filtering_mode=mode,
+                slider_value=mode_value,
+                domain_value=domain_value,
+                resolved=resolved,
+            )
+        out[field] = resolved
+    return out
+
+
 def resolve_filtering_config(
-    mode: str = "balanced",
+    mode: str = SOURCE_ROW_FILTERING_MODE,
     domain_overrides: dict[str, Any] | None = None,
     source_overrides: dict[str, Any] | None = None,
     *,
@@ -251,14 +353,7 @@ def resolve_filtering_config(
             ``FilteringConfig`` fields.
 
     """
-    if mode not in VALID_PRESETS:
-        raise ValueError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer-error guard for invalid public API input
-            f"Unknown filtering mode {mode!r}. Valid modes: {sorted(VALID_PRESETS)}."
-        )
-
-    # Start with preset overrides on top of dataclass defaults
-    config_dict: dict[str, Any] = {}
-    config_dict.update(_PRESET_OVERRIDES.get(mode, {}))
+    _check_mode(mode)
 
     # Layer 2: Domain overrides
     if domain_overrides:
@@ -286,13 +381,13 @@ def resolve_filtering_config(
                     f"to log + drop instead of raise."
                 )
         domain_overrides = {k: v for k, v in domain_overrides.items() if k in _VALID_FIELDS}
-        config_dict.update(domain_overrides)
 
-    # Layer 3: Source overrides (highest priority)
-    if source_overrides:
-        config_dict.update({k: v for k, v in source_overrides.items() if k in _VALID_FIELDS})
-
-    config = FilteringConfig(**config_dict)
+    # The preset, then the domain overrides, then the source overrides (highest priority).
+    config = _layered(
+        mode,
+        domain_overrides or {},
+        {k: v for k, v in (source_overrides or {}).items() if k in _VALID_FIELDS},
+    )
 
     logger.info(
         "filtering_config_resolved",
@@ -308,8 +403,12 @@ def resolve_filtering_config(
 
 
 __all__: list[str] = [
+    "DOMAIN_FIELDS_FOLLOWING_SLIDER",
     "VALID_PRESETS",
     "FilteringConfig",
     "FilteringMode",
+    "follow_slider",
+    "follow_slider_limits",
+    "preset_value",
     "resolve_filtering_config",
 ]

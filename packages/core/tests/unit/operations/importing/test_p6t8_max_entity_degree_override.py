@@ -9,38 +9,26 @@ as ``max_entity_degree``, giving per-source control over the degree cap without
 needing a domain config change.
 
 Cascade priority:
-  source_row.max_entity_degree_override (pos int) > domain extraction_limits
-  (already present) > FilteringConfig default.
+  source_row.max_entity_degree_override (pos int) > the stack's extraction_limits
+  (the floor's, raised by its packs) > FilteringConfig default.
 
-Zero / negative / None values on the row are treated as "not set" (use domain or
-global default).
+Zero / negative / None values on the row are treated as "not set" (use the
+stack's limit).
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
-from unittest.mock import MagicMock
 
 from chaoscypher_core.app_config import Settings
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import FLOOR_LIMITS
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import DomainRegistry
+from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
 
 
-def _make_domain(
-    *,
-    extraction_limits: dict[str, Any] | None = None,
-) -> Any:
-    domain = MagicMock()
-    domain.metadata = MagicMock(plugin_id="generic")
-    domain.get_extraction_limits = MagicMock(
-        return_value=extraction_limits if extraction_limits is not None else {}
-    )
-    domain.get_filtering_mode = MagicMock(return_value=None)
-    domain.get_entity_exclusions = MagicMock(return_value=[])
-    domain.get_evidence_validation_mode = MagicMock(return_value=None)
-    domain.get_strict_entity_types = MagicMock(return_value=False)
-    domain.get_edge_type_constraints = MagicMock(return_value={})
-    domain.get_templates = MagicMock(return_value={"node_templates": [], "edge_templates": []})
-    return domain
+def _stack(*packs: str) -> DomainStack:
+    """The floor plus ``packs`` (the floor's limits carry ``max_entity_degree``)."""
+    return DomainStack.resolve(DomainRegistry(), list(packs))
 
 
 def _patch_format(monkeypatch) -> None:
@@ -65,9 +53,7 @@ class TestMaxEntityDegreeOverrideCascade:
         _patch_format(monkeypatch)
 
         cfg_json = import_service._build_extraction_config(
-            domain=_make_domain(),
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack(),
             settings=Settings(),
             file_info={},
             source_row={"max_entity_degree_override": 7},
@@ -85,12 +71,8 @@ class TestMaxEntityDegreeOverrideCascade:
 
         _patch_format(monkeypatch)
 
-        domain = _make_domain(extraction_limits={"max_entity_degree": 30})
-
         cfg_json = import_service._build_extraction_config(
-            domain=domain,
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack("literary"),
             settings=Settings(),
             file_info={},
             source_row={"max_entity_degree_override": 5},
@@ -98,7 +80,7 @@ class TestMaxEntityDegreeOverrideCascade:
         cfg = json.loads(cfg_json)
         limits = cfg.get("extraction_limits") or {}
         assert limits.get("max_entity_degree") == 5, (
-            "Per-source override (5) must win over domain limit (30)"
+            "Per-source override (5) must win over the stack's limit (80)"
         )
 
     def test_none_does_not_inject_degree(self, monkeypatch) -> None:
@@ -108,9 +90,7 @@ class TestMaxEntityDegreeOverrideCascade:
         _patch_format(monkeypatch)
 
         cfg_json = import_service._build_extraction_config(
-            domain=_make_domain(),
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack(),
             settings=Settings(),
             file_info={},
             source_row={"max_entity_degree_override": None},
@@ -129,9 +109,7 @@ class TestMaxEntityDegreeOverrideCascade:
         _patch_format(monkeypatch)
 
         cfg_json = import_service._build_extraction_config(
-            domain=_make_domain(),
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack(),
             settings=Settings(),
             file_info={},
             source_row={"max_entity_degree_override": 0},
@@ -151,9 +129,7 @@ class TestMaxEntityDegreeOverrideCascade:
         _patch_format(monkeypatch)
 
         cfg_json = import_service._build_extraction_config(
-            domain=_make_domain(),
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack(),
             settings=Settings(),
             file_info={},
             source_row={"max_entity_degree_override": -1},
@@ -171,17 +147,14 @@ class TestMaxEntityDegreeOverrideCascade:
         _patch_format(monkeypatch)
 
         cfg_json = import_service._build_extraction_config(
-            domain=_make_domain(),
-            entity_guidance=None,
-            relationship_guidance=None,
+            stack=_stack(),
             settings=Settings(),
             file_info={},
             source_row=None,
         )
         cfg = json.loads(cfg_json)
         limits = cfg.get("extraction_limits") or {}
-        # Without source_row the key should not be present from the P6T8 block
-        # (domain limits might still inject it, but our test domain is empty)
-        assert "max_entity_degree" not in limits, (
+        # Without source_row the stack's own limit stands (the floor's)
+        assert limits.get("max_entity_degree") == FLOOR_LIMITS["max_entity_degree"], (
             "No source_row means no per-source degree override injection"
         )

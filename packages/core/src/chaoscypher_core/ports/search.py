@@ -17,13 +17,106 @@ Main implementation: chaoscypher_core.adapters.sqlite.repos.SearchRepository
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Container, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 
 if TYPE_CHECKING:
     from chaoscypher_core.models import Node
     from chaoscypher_core.ports.transactional import TransactionalSession
+
+
+def has_no_source(source_id: str | None) -> bool:
+    """Whether an item names no source: NULL and the empty string read alike.
+
+    An item with no source (a manual or legacy node) is in every source
+    scope, and no switched-off source hides it. Until 2026-10-06 the search's
+    node scope read ``''`` as no source while the graph listings read NULL
+    only (audit wave 6). The SQL form is
+    :func:`chaoscypher_core.adapters.sqlite.repos.source_visibility.no_source_sql`;
+    a test pins the two alike.
+    """
+    return not source_id
+
+
+def node_in_source_scope(source_id: str | None, scope: Container[str]) -> bool:
+    """Whether a node of ``source_id`` is in a source scope: it names no source, or one in it."""
+    return has_no_source(source_id) or source_id in scope
+
+
+def source_visible(source_id: str | None, disabled: Container[str]) -> bool:
+    """Whether an item of ``source_id`` may answer: it names no source, or one not switched off.
+
+    ``disabled`` holds the ids of the sources set ``enabled = 0``. The SQL
+    form, which every search arm, scope count and graph listing reads, is
+    :func:`chaoscypher_core.adapters.sqlite.repos.source_visibility.source_visible_sql`;
+    a test pins the two alike.
+    """
+    return has_no_source(source_id) or source_id not in disabled
+
+
+def attesting_sources(item: object) -> list[str]:
+    """The sources that attest a graph row: its members when it has any, else its home source.
+
+    A merged node is attested by every source it was merged from
+    (``member_source_ids``, which the repository's node loads fill), and its
+    ``source_id`` is only its home (#795, D7). A row with no members, or one
+    loaded without them, reads its ``source_id`` as before; a row naming no
+    source returns ``[]``. The SQL form is
+    :func:`chaoscypher_core.adapters.sqlite.repos.source_visibility.attested_by_sql`.
+    """
+    members = getattr(item, "member_source_ids", None)
+    if isinstance(members, list | tuple | set | frozenset) and members:
+        return [str(sid) for sid in members]
+    home = getattr(item, "source_id", None)
+    return [] if has_no_source(home) else [str(home)]
+
+
+def item_in_source_scope(item: object, scope: Container[str]) -> bool:
+    """Whether a graph row is in a source scope: it names no source, or a source in the scope attests it."""
+    sources: list[str | None] = [*attesting_sources(item)] or [None]
+    return any(node_in_source_scope(sid, scope) for sid in sources)
+
+
+def item_visible(item: object, disabled: Container[str]) -> bool:
+    """Whether a graph row may answer: it names no source, or a source not switched off attests it."""
+    sources: list[str | None] = [*attesting_sources(item)] or [None]
+    return any(source_visible(sid, disabled) for sid in sources)
+
+
+class SearchHits(list[tuple[str, float]]):
+    """A search's ``(item_id, score)`` hits, best first, and what it found before its ``k`` cut.
+
+    ``candidates_seen`` is how many distinct items the search's arms found
+    that it would rank (for the hybrid search: keyword hits and vector hits
+    at or above the similarity floor), counted before the cut to ``k``; None
+    when the search does not say. A search whose candidates did not reach
+    ``k`` read everything its scope holds that answers the query
+    (:attr:`scope_exhausted`): a shorter result is the scope running out,
+    not a fault. Until 2026-10-06 the GraphRAG handler compared its hybrid
+    arm with the number of chunks in the scope, which ignores the floor and
+    keyword misses, so ordinary low-relevance shortfalls were recorded as
+    ``hybrid_search:scope_short`` (audit wave 6).
+    """
+
+    def __init__(
+        self,
+        hits: Iterable[tuple[str, float]] = (),
+        *,
+        k: int = 0,
+        candidates_seen: int | None = None,
+    ) -> None:
+        """The hits, the ``k`` asked for and the candidates seen before the cut."""
+        super().__init__(hits)
+        self.k = k
+        self.candidates_seen = candidates_seen
+
+    @property
+    def scope_exhausted(self) -> bool | None:
+        """Whether the candidates fell short of ``k`` (everything that answers was read); None when unknown."""
+        if self.candidates_seen is None:
+            return None
+        return self.candidates_seen < self.k
 
 
 class SearchRepositoryProtocol(Protocol):
@@ -36,15 +129,24 @@ class SearchRepositoryProtocol(Protocol):
     - keyword_search: Fast full-text search (no LLM needed)
     - vector_search: Direct vector similarity (embedding provided)
     - semantic_search: Text-to-embedding-to-vector search (async, needs callback)
-    - hybrid_search: Semantic with keyword fallback (async, needs callback)
+    - hybrid_search: Keyword and vector rankings fused by reciprocal rank (async)
     """
 
-    def keyword_search(self, query: str, limit: int = 10) -> list[tuple[str, float]]:
-        """Perform full-text keyword search.
+    def keyword_search(
+        self,
+        query: str,
+        limit: int = 10,
+        item_type: str | None = "node",
+        source_ids: Iterable[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Perform full-text keyword search (any significant word or quoted phrase matches).
 
         Args:
             query: Search query string
             limit: Maximum number of results (default 10)
+            item_type: "node" (default), "chunk", or None for both.
+            source_ids: A source scope applied before the ``limit``; None for every source.
+                A switched-off source's items never match (:func:`source_visible`).
 
         Returns:
             List of (node_id, score) tuples, sorted by relevance descending.
@@ -57,6 +159,7 @@ class SearchRepositoryProtocol(Protocol):
         query_embedding: list[float],
         k: int = 10,
         item_type: str | None = None,
+        source_ids: Iterable[str] | None = None,
     ) -> list[tuple[str, float]]:
         """Find k nearest neighbors to query embedding.
 
@@ -64,7 +167,11 @@ class SearchRepositoryProtocol(Protocol):
             query_embedding: Query embedding vector (must match dimensionality
                             of indexed vectors, typically 1024)
             k: Number of results to return (default 10)
-            item_type: Optional filter by item type ("node", "chunk", "template")
+            item_type: Optional filter by item type ("node", "chunk", "template");
+                None searches nodes and chunks (templates only by name).
+            source_ids: A source scope applied before the ``k`` cut (chunks
+                and nodes; templates come from no source); None for every source.
+                A switched-off source's items never match (:func:`source_visible`).
 
         Returns:
             List of (node_id, similarity_score) tuples,
@@ -86,6 +193,7 @@ class SearchRepositoryProtocol(Protocol):
         query_text: str,
         k: int = 10,
         embedding_provider_callback: Callable[[str], Any] | None = None,
+        item_type: str | None = None,
     ) -> list[tuple[str, float]]:
         """Perform semantic search using query text.
 
@@ -97,6 +205,8 @@ class SearchRepositoryProtocol(Protocol):
             embedding_provider_callback: Async callback that takes query text
                 and returns dict with "embedding" key containing the vector.
                 Example: async def(text: str) -> {"embedding": [...]}
+            item_type: Optional filter ("node", "chunk", "template"); None
+                searches nodes and chunks.
 
         Returns:
             List of (node_id, similarity_score) tuples
@@ -110,21 +220,42 @@ class SearchRepositoryProtocol(Protocol):
         k: int = 10,
         embedding_provider_callback: Callable[[str], Any] | None = None,
         min_similarity: float = 0.55,
-    ) -> list[tuple[str, float]]:
-        """Perform hybrid search: semantic with keyword fallback.
+        item_type: str | None = None,
+        source_ids: Iterable[str] | None = None,
+    ) -> SearchHits:
+        """Perform hybrid search: keyword and vector rankings fused by reciprocal rank.
 
         Strategy:
         - Short queries (< 3 chars): keyword only
-        - Otherwise: semantic first, keyword fallback if no good results
+        - Otherwise: both arms search ``item_type`` and their rankings are fused
 
         Args:
             query_text: Text to search for
             k: Number of results to return (default 10)
             embedding_provider_callback: Async callback for generating embeddings
             min_similarity: Minimum similarity score (0-1) to accept semantic results
+            item_type: "node", "chunk", or None for both.
+            source_ids: A source scope applied inside both arms, before their cut;
+                None for every source.
 
         Returns:
-            List of (node_id, similarity_score) tuples
+            The (node_id, score) hits, best first, with how many candidates
+            both arms found before the cut (:class:`SearchHits`).
+
+        """
+        ...
+
+    def count_in_scope(self, item_type: str, source_ids: Iterable[str] | None = None) -> int:
+        """How many items of ``item_type`` (``"chunk"``, ``"node"``) a source scope holds that may answer.
+
+        A switched-off source's items are never counted (:func:`source_visible`).
+
+        Args:
+            item_type: ``"chunk"`` or ``"node"``.
+            source_ids: The scope; None counts every item.
+
+        Returns:
+            The number of items a search in that scope could return.
 
         """
         ...
@@ -195,6 +326,53 @@ class SearchRepositoryProtocol(Protocol):
         Args:
             nodes: List of all nodes to reindex
             session: Optional caller session to share a transaction with.
+
+        """
+        ...
+
+    def rebuild_node_fulltext(
+        self,
+        nodes: Iterable[Node | Mapping[str, Any]] | None = None,
+        *,
+        session: TransactionalSession | None = None,
+    ) -> int:
+        """Make the node full-text index hold exactly the graph's nodes (labels and current aliases).
+
+        Rows of nodes no longer in the graph are deleted; vectors are untouched.
+        Called by a full reindex; a caller that knows which nodes it changed
+        (the identity resolver) takes :meth:`refresh_node_fulltext`. The nodes are read from the graph inside
+        the rewrite's own transaction (a list read earlier can miss a node
+        committed since); ``nodes`` is checked against it, and used only by
+        an index with no graph behind it.
+
+        Args:
+            nodes: The nodes the caller expects the graph to hold (graph nodes,
+                or mappings with ``id``, ``label`` and ``properties``), or None.
+            session: Optional caller session to share a transaction with.
+
+        Returns:
+            The number of rows the index holds afterwards.
+
+        """
+        ...
+
+    def refresh_node_fulltext(
+        self, node_ids: Iterable[str], *, session: TransactionalSession | None = None
+    ) -> int:
+        """Rewrite the full-text rows of ``node_ids`` from the graph as it is now; nothing else.
+
+        The scoped form of :meth:`rebuild_node_fulltext` for a caller that
+        knows which nodes it changed (the identity resolver): each id still in
+        the graph gets its row rewritten from the node as stored, an id no
+        longer there loses its row, and no other row is read or written.
+        Vectors are untouched.
+
+        Args:
+            node_ids: The nodes whose rows follow the graph.
+            session: Optional caller session to share a transaction with.
+
+        Returns:
+            The number of rows written (ids still in the graph).
 
         """
         ...

@@ -171,6 +171,8 @@ Iterates over the document's body in order, preserving heading hierarchy as Mark
 
 Reads each worksheet in `read_only=True, data_only=True` mode (so cell values come through as their final computed form, not formula strings). Rows are joined with tabs and sheets are joined with double newlines. Sheet name is preserved in document metadata.
 
+Workbooks that flatten to more than `LoaderSettings.xlsx_max_content_chars` characters (default 50,000,000) are rejected with a validation error. Shared strings let a few-KB workbook point every cell at one long string, so the on-disk size check alone does not bound the output.
+
 ### PPTXLoader
 
 | Property | Value |
@@ -325,6 +327,11 @@ sections rather than just paths and components:
 `LoaderSettings.openapi_max_schema_depth` (default `4`) levels deep.
 This surfaces nested object shapes that previously produced only an
 opaque `$ref` string in the extracted text.
+Expansion is also bounded in breadth: each spec file gets a budget of
+`LoaderSettings.openapi_max_schema_chars` (default `10000000`)
+characters of expanded schema text, after which further schemas render as
+`<schema (expansion budget reached)>`. Without it, a self-referencing
+object with many properties expands exponentially within the depth cap.
 
 **`jsonref` is now hard-required.** The handler will raise at import
 time if `jsonref` is not installed. This replaces the previous

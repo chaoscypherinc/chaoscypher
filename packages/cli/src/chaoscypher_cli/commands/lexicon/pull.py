@@ -150,13 +150,11 @@ def pull(
             extract_archive(archive_path, extract_dir)
             print_success(f"Extracted to {extract_dir}")
 
-            # Show next steps
-            console.print("\n[dim]Next steps:[/dim]")
-            console.print(f"  chaoscypher graph package load {extract_dir}")
-        else:
-            console.print("\n[dim]Next steps:[/dim]")
-            console.print(f"  chaoscypher graph package load {archive_path}")
-            console.print(f"  chaoscypher mount {archive_path}")
+        # The importer reads the .ccx archive itself — never the extracted
+        # directory (extraction is for inspection only).
+        console.print("\n[dim]Next steps:[/dim]")
+        console.print(f"  chaoscypher graph package load {archive_path}")
+        console.print(f"  chaoscypher mount {archive_path}")
 
     except PackageExistsError as e:
         print_error(f"File already exists: {e}")

@@ -81,7 +81,11 @@ logger = structlog.get_logger(__name__)
 # relational per-source rows (string entity-ID relationship refs and
 # ``source_chunk_indices`` chunk mentions were silently ignored), so
 # every cache written from those rows needs recomputing.
-SCORING_VERSION = 8
+# v9 (2026-10-08, additive domains): the type value reads the floor's score
+# of the core type and a pack's score of the node's ``entity_subtype``
+# (``subtype_scores``); caches scored by the old per-template names
+# (a core-typed node fell to the default) need recomputing.
+SCORING_VERSION = 9
 
 
 # Default scores when domain/template doesn't specify
@@ -733,6 +737,9 @@ class QualityScorer:
         self.relationship_scores: dict[str, float] = {
             k: float(v) for k, v in self.quality_config.get("relationship_scores", {}).items()
         }
+        self.subtype_scores: dict[str, float] = {
+            k: float(v) for k, v in (self.quality_config.get("subtype_scores") or {}).items()
+        }
         self.default_entity_score = float(
             self.quality_config.get("default_entity_score", DEFAULT_ENTITY_SCORE)
         )
@@ -740,15 +747,19 @@ class QualityScorer:
             self.quality_config.get("default_relationship_score", DEFAULT_RELATIONSHIP_SCORE)
         )
 
-    def get_entity_type_score(self, entity_type: str) -> float:
-        """Get score for an entity type.
+    def get_entity_type_score(self, entity_type: str, subtype: str | None = None) -> float:
+        """Get score for an entity type, or for its subtype when a pack scores it.
 
         Args:
-            entity_type: The entity type name.
+            entity_type: The entity type name (a core type).
+            subtype: The entity's ``entity_subtype`` (``character``), when it has one.
 
         Returns:
-            Score for this entity type (typically 10-25).
+            Score for this entity type (typically 10-25): the pack's score of
+            the subtype, else the floor's of the core type, else the default.
         """
+        if subtype and (by_subtype := self.subtype_scores.get(subtype)) is not None:
+            return by_subtype
         score = self.entity_scores.get(entity_type)
         if score is not None:
             return score
@@ -822,7 +833,10 @@ class QualityScorer:
         aliases_score = _score_by_threshold(alias_count, _ALIASES_THRESHOLDS, default=0.0)
 
         # Type value score (0-25)
-        type_value_score = self.get_entity_type_score(entity_type)
+        subtype = properties.get("entity_subtype") if isinstance(properties, dict) else None
+        type_value_score = self.get_entity_type_score(
+            entity_type, subtype if isinstance(subtype, str) else None
+        )
 
         return EntityQualityScore(
             entity_name=name,

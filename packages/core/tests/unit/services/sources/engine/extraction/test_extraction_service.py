@@ -18,6 +18,7 @@ import pytest
 from chaoscypher_core.services.sources.engine.extraction.service import (
     ExtractionService,
 )
+from chaoscypher_core.settings import EngineSettings
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +33,6 @@ def _fake_settings() -> SimpleNamespace:
             entity_max_description_length=4000,
             entity_deduplication_mode="exact",
             dedup_require_type_compatibility=False,
-            dedup_type_compatibility_map={},
         ),
         extraction=SimpleNamespace(
             semantic_dedup_threshold=0.95,
@@ -186,33 +186,60 @@ class TestBuildExtractionResults:
 class TestDomainHelpers:
     """Smoke tests for the service's domain helper methods."""
 
-    def test_none_domain_name_yields_defaults(self) -> None:
-        """None domain name short-circuits to safe defaults."""
+    def test_none_domain_name_reads_the_floor(self) -> None:
+        """No domain name is the floor alone: its symmetric labels and inverse pairs."""
         service = _make_service()
+        floor = _real_stack()
         assert service.get_domain_title_words(None) is None
-        assert service.get_domain_type_compatibility(None) is None
-        assert service.get_domain_symmetric_relationships(None) == []
-        assert service.get_domain_inverse_relationships(None) == {}
+        assert service.get_domain_symmetric_relationships(None) == floor.symmetric_relationships()
+        assert service.get_domain_inverse_relationships(None) == floor.inverse_relationships()
 
     def test_domain_helpers_use_registry(self) -> None:
         """Domain helpers consult the domain registry when given a name."""
         service = _make_service()
         domain = MagicMock()
+        domain.role = "pack"
+        domain.name = "literary"
         domain.get_title_words.return_value = ["Mr", "Dr"]
-        domain.get_type_compatibility.return_value = {"people": ["Person"]}
-        domain.get_symmetric_relationships.return_value = ["spouse_of"]
-        domain.get_inverse_relationships.return_value = {"parent_of": "child_of"}
+        floor = MagicMock()
+        floor.role = "floor"
+        floor.name = "generic"
+        floor.get_title_words.return_value = []
         registry = MagicMock()
-        registry.get_domain.return_value = domain
+        # the service resolves the source's stack: the floor and the pack (Task 7)
+        registry.get_domain.side_effect = {"generic": floor, "literary": domain}.get
 
         with patch(
             "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
             return_value=registry,
         ):
             assert service.get_domain_title_words("literary") == frozenset({"mr", "dr"})
-            assert service.get_domain_type_compatibility("literary") == {"people": ["Person"]}
-            assert service.get_domain_symmetric_relationships("literary") == ["spouse_of"]
-            assert service.get_domain_inverse_relationships("literary") == {"parent_of": "child_of"}
+
+    def test_the_stack_helpers_read_the_floor_and_the_pack(self) -> None:
+        """The conventions, symmetric labels and inverse map are the stack's: the floor's with literary's.
+
+        Literary declares no ``parent_of``/``child_of`` (the floor does since
+        2026-10-07); the finalizer read literary's map alone, so a fact written
+        both ways committed as two edges.
+        """
+        service = _make_service()
+        stack = _real_stack("literary")
+        inverse = service.get_domain_inverse_relationships("literary")
+        assert inverse == stack.inverse_relationships()
+        assert inverse["parent_of"] == "child_of"
+        assert inverse["godparent_of"] == "godchild_of"
+        assert service.get_domain_symmetric_relationships("literary") == (
+            stack.symmetric_relationships()
+        )
+        assert service.get_domain_name_conventions("literary") == stack.conventions()
+
+
+def _real_stack(*packs: str) -> Any:
+    """The real floor plus ``packs``."""
+    from chaoscypher_core.services.sources.engine.extraction.domains import get_domain_registry
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
+    return DomainStack.resolve(get_domain_registry(EngineSettings()), list(packs))
 
 
 # ---------------------------------------------------------------------------
@@ -475,8 +502,8 @@ class TestResolveDomain:
             with pytest.raises(RuntimeError):
                 service._resolve_domain("legal_contracts", forced=True)
 
-        cache = getattr(service, "_domain_cache", {})
-        assert "legal_contracts" not in cache, (
+        cache = service._stack_resolver()._stacks
+        assert cache.get("legal_contracts") is None, (
             "_resolve_domain must not cache None when forced=True raises"
         )
 

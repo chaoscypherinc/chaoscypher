@@ -119,7 +119,7 @@ allow_indirect_imports = true
 # execute at runtime); the top-level `exclude_type_checking_imports = true`
 # applies to every contract.
 #
-# The 10 ignore_imports entries below mirror the per-file allowlist from
+# The ignore_imports entries below began as the per-file allowlist from
 # scripts/lint_claude_rules.py:check_port_compliance_in_services.
 # Each entry preserves the phase-tag comment from the original allowlist
 # so the cleanup work stays trackable.
@@ -137,13 +137,6 @@ ignore_imports = [
     # directly. No port abstraction would help; this is storage
     # infrastructure. Keep indefinitely.
     "chaoscypher_core.services.backup -> chaoscypher_core.adapters.sqlite.engine",
-    # ``GraphService.from_adapter(adapter)`` composes a concrete graph repo
-    # from the adapter. Could be eliminated by having Engine construct the
-    # repo and inject it (composition-root refactor — Phase 4+).
-    "chaoscypher_core.services.graph.management.node -> chaoscypher_core.adapters.sqlite.repos",
-    # Same ``from_adapter`` pattern as graph/management/node.py.
-    # Phase 4+ composition-root refactor to eliminate.
-    "chaoscypher_core.services.search.engine.search -> chaoscypher_core.adapters.sqlite.repos",
     # Lazy fallback: SourceCommitService accepts an embedding port via
     # constructor; when none is passed, it builds one from settings.
     # The fallback import stays until the Engine wires the port
@@ -152,6 +145,10 @@ ignore_imports = [
     # Lazy fallback: AIEntityExtractor constructs its LLM provider if
     # the port is not injected. Same pattern as commit/service.py.
     "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities -> chaoscypher_core.adapters.llm",
+    # Lazy fallback: fetch_page / discover_site take a WebFetcherPort; when
+    # none is injected, build_web_fetcher builds the WebScraper from the
+    # caller's settings. The one adapter import in services/sources/web/.
+    "chaoscypher_core.services.sources.web.fetch -> chaoscypher_core.adapters.web.search",
     # Phase 2 kept ``create_vision_provider`` as a factory with two
     # non-Engine callers. Vision adapter wiring lands in Phase 4+.
     "chaoscypher_core.services.vision.service -> chaoscypher_core.adapters.llm.provider",
@@ -219,8 +216,10 @@ target-version = "py314"
 # Scripts the cloud routines run with the sandbox's system `python3` (3.11,
 # before any `uv sync`) must parse on 3.11: no PEP 701 nested f-string quotes,
 # no PEP 758 unparenthesised `except A, B`. Found 2026-09-29 when a sandbox
-# smoke test hit SyntaxErrors in two tools that passed every 3.14 check.
-per-file-target-version = { "internal/scripts/**/*.py" = "py311", "scripts/check_media_manifest.py" = "py311", "scripts/check_metrics_artifacts.py" = "py311" }
+# smoke test hit SyntaxErrors in two tools that passed every 3.14 check. The
+# root conftest.py loads into every pytest run started at the repo root, the
+# routines' runs of internal/scripts/tests included (2026-10-16).
+per-file-target-version = { "internal/scripts/**/*.py" = "py311", "./conftest.py" = "py311", "scripts/check_media_manifest.py" = "py311", "scripts/check_metrics_artifacts.py" = "py311" }
 
 # Directories to exclude from linting
 exclude = [
@@ -389,6 +388,9 @@ exempt-modules = ["typing", "collections.abc"]
 runtime-evaluated-base-classes = [
     "pydantic.BaseModel",
     "sqlmodel.SQLModel",
+    # Request-model mixins: their subclasses are pydantic models, so a
+    # field annotation imported only under TYPE_CHECKING breaks model building.
+    "chaoscypher_cortex.features.sources.packs.PacksFields",
 ]
 
 # Pylint settings
@@ -441,13 +443,11 @@ max-statements = 60   # Maximum statements in function
     "SLF001",   # Private member access OK in tests
     "C901", "PLR0912", "PLR0915",      # Complexity OK in test fixtures
 ]
-# FastAPI api.py files: types inside Annotated[X, Depends(...)] are introspected
-# at runtime by FastAPI, so TC001/TC002/TC003 false-positive on every import used
-# purely for DI typing.
-"**/cortex/src/chaoscypher_cortex/features/**/api.py" = ["TC001", "TC002", "TC003"]
-"**/cortex/src/chaoscypher_cortex/features/**/grounding_api.py" = ["TC001", "TC002", "TC003"]
-"**/cortex/src/chaoscypher_cortex/features/**/tags_api.py" = ["TC001", "TC002", "TC003"]
-"**/cortex/src/chaoscypher_cortex/features/**/execution_api.py" = ["TC001", "TC002", "TC003"]
+# FastAPI router modules (api.py and every *_api.py): types inside
+# Annotated[X, Depends(...)] are introspected at runtime by FastAPI, so
+# TC001/TC002/TC003 false-positive on every import used purely for DI typing.
+# One glob for all of them (it was a list of four file names, one per router).
+"**/cortex/src/chaoscypher_cortex/features/**/*api.py" = ["TC001", "TC002", "TC003"]
 # Docs build scripts: print() is the intended output channel; test helpers
 # in the same directory don't need per-method docstrings.
 "**/packages/docs/scripts/**/*.py" = ["T201", "D102"]
@@ -712,6 +712,9 @@ module = [
     "langchain_google_genai.*",
     "langgraph.*",
 
+    # LlamaIndex (the CLI's benchmark extra): the Ollama embedding adapter ships no py.typed
+    "llama_index.*",
+
     # Google AI - has type hints but sometimes incomplete
     "google.generativeai.*",
 
@@ -891,6 +894,7 @@ markers = [
     "browser: browser end-to-end tests (Playwright, requires Docker)",
     "fresh: fresh-database phase tests",
     "resume: resume / warm-start phase tests",
+    "ollama: needs a live Ollama server (the autouse ollama_offline guard stands down)",
 ]
 
 # ============================================================================

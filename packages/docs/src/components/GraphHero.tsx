@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import Link from '@docusaurus/Link';
 import CodeBlock from '@theme/CodeBlock';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import HeroStats from './HeroStats';
 import '../css/hero.css';
 
 const RUN_CMD = `docker run -d -p 80:80 -v chaoscypher-data:/data \\\nghcr.io/chaoscypherinc/chaoscypher`;
@@ -60,6 +61,8 @@ export default function GraphHero(): JSX.Element {
               your documents, locally.
             </p>
           </div>
+
+          <HeroStats />
 
           <Link className="hero-btn-primary" to="/docs/getting-started/quickstart">
             Get Started &#8594;

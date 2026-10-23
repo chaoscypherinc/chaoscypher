@@ -16,6 +16,7 @@ import httpx
 import structlog
 
 from chaoscypher_core.adapters.embedding._retry import request_with_retry
+from chaoscypher_core.adapters.embedding.vectors import fit_provider_vector
 from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult, TokenUsage
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
@@ -51,6 +52,9 @@ class OpenAIEmbeddingProvider:
         print(len(result.embedding))  # 1024
 
     """
+
+    query_prefix: str = ""
+    """Text put before a query when it is embedded: none (the text is sent as given)."""
 
     def __init__(
         self,
@@ -134,9 +138,16 @@ class OpenAIEmbeddingProvider:
 
         data = response.json()
 
-        # Sort by index to preserve input order
+        # Sort by index to preserve input order; every vector leaves at
+        # vector_dimensions and unit length (an OpenAI-compatible server may
+        # ignore the dimensions parameter)
         sorted_data = sorted(data["data"], key=lambda d: d["index"])
-        embeddings = [item["embedding"] for item in sorted_data]
+        embeddings = [
+            fit_provider_vector(
+                item["embedding"], self.vector_dimensions, provider="openai", model=self.model_name
+            )
+            for item in sorted_data
+        ]
 
         usage: TokenUsage | None = None
         if "usage" in data:

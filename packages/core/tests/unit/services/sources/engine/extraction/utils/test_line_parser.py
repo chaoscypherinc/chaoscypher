@@ -3,6 +3,8 @@
 
 """Tests for line_parser alias parsing, descriptor separation, and entity parsing."""
 
+import pytest
+
 from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
     _is_proper_name_alias,
     _is_valid_alias,
@@ -464,6 +466,21 @@ class TestEntityLineAnchoring:
         assert entity["sent_ref"] == "S7"
         assert entity["description"] == "The author of the Contrat Social, argued over"
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "E|Pierre|Person/character|Pierre Bezukhov|0.9|S1|A count's son",
+            "E|Pierre|Person/character|0.9|S1|A count's son",
+            "E|**Pierre**|Person/character||0.9|S1|A count's son",
+        ],
+    )
+    def test_a_core_slash_subtype_type_is_kept_as_written(self, line: str) -> None:
+        """``Core/subtype`` (the form the node lines teach) is the type field, for the rescue to place."""
+        entity = parse_entity_line(line)
+        assert entity is not None
+        assert (entity["name"], entity["type"]) == ("Pierre", "Person/character")
+        assert entity["description"] == "A count's son"
+
     def test_extra_empty_field_after_aliases_parses(self) -> None:
         """A doubled ``||`` after the alias no longer shifts the sent_ref slot."""
         entity = parse_entity_line(
@@ -560,3 +577,82 @@ class TestEntityLineAnchoring:
         assert entity is not None
         assert entity["aliases"] == ["Kutuzov"]
         assert entity["sent_ref"] == "S1, S2"
+
+
+class TestPropertiesOfADroppedEntity:
+    """A dropped E| line takes its P| lines with it (audit 2026-10-06, E9).
+
+    The P| lines are annotated with the last parsed entity by proximity, so
+    when an E| line failed to parse its properties used to land on the entity
+    before it.
+    """
+
+    OUTPUT = (
+        "E|Orsolya Darnell|Character|Orsolya|1.0|S1|Harbour captain of Vellmarsh.\n"
+        "P|0|title|Captain\n"
+        "E|Bram Darnell|Character\n"  # malformed: too few fields
+        "P|1|occupation|Lamplighter\n"
+        "P|1|family_role|Father\n"
+        "E|Margrave Oswin Kell|Character|Oswin|1.0|S3|Ruler of the march of Kell.\n"
+        "P|2|title|Margrave\n"
+    )
+
+    def test_the_dropped_entitys_properties_are_dropped_and_counted(self) -> None:
+        from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
+            apply_properties_to_entities,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+            parse_extraction_output,
+        )
+
+        stats: dict[str, int] = {}
+        entities, _rels, properties = parse_extraction_output(self.OUTPUT, stats=stats)
+        assert [e["name"] for e in entities] == ["Orsolya Darnell", "Margrave Oswin Kell"]
+        assert [(p["key"], p["value"]) for p in properties] == [
+            ("title", "Captain"),
+            ("title", "Margrave"),
+        ]
+        # the malformed E| line and its two P| lines
+        assert stats["dropped_lines"] == 3
+
+        apply_properties_to_entities(entities, properties)
+        assert entities[0]["properties"] == {"title": "Captain"}
+        assert entities[1]["properties"] == {"title": "Margrave"}
+
+
+# -- audit wave 5 ---------------------------------------------------------------------------
+
+
+def test_a_relationship_line_with_no_type_is_dropped_not_guessed() -> None:
+    """An empty predicate states no relationship: no ``related_to`` is invented."""
+    from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+        parse_relationship_line,
+    )
+
+    assert parse_relationship_line("R|0|1||0.9|S1|They met") is None
+    assert parse_relationship_line("R|0|1|friend_of|0.9|S1|They met")["type"] == "friend_of"
+
+
+@pytest.mark.parametrize(
+    ("alias", "proper"),
+    [
+        ("Boris's mother", False),
+        ("Boris\u2019s mother", False),
+        ("the Kurágins' set", False),
+        ("O' Reilly", True),
+        ("Duc d\u2019Enghien", True),
+        ("Count Rostóv", True),
+    ],
+)
+def test_the_parsers_possessive_check_is_the_name_rules(alias: str, proper: bool) -> None:
+    """Either apostrophe and the plural possessive are descriptors; ``O' Reilly`` is a name."""
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        DEFAULT_NAME_CONVENTIONS,
+        descriptor_possessor,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+        _is_proper_name_alias,
+    )
+
+    assert _is_proper_name_alias(alias) is proper
+    assert (descriptor_possessor(alias, DEFAULT_NAME_CONVENTIONS) is None) is proper

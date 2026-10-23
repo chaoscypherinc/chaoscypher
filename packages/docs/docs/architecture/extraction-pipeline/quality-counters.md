@@ -8,8 +8,9 @@ description: Internal architecture of the quality-counter infrastructure — whe
 
 The quality counter system records, on every source row, what the
 extraction pipeline silently dropped, deduplicated, or merged.
-46 typed counters (the `QualityCounter` enum is the authoritative
-count) cover every silent-drop site from loader to commit
+Typed counters (the `QualityCounter` enum is the authoritative
+list and count) cover every silent-drop site, and every site that now
+keeps a record with a flag, from loader to commit
 and embedding — the original W2 set, the Phase 2 batch, Phase 5b
 (PDF per-page failures), Phase 6 (loader observability), the Phase 7
 audit-remediation pass on 2026-05-09 that closed the remaining drift
@@ -60,9 +61,12 @@ class QualityCounter(StrEnum):
     PARSER_LINES_DROPPED = "parser_lines_dropped"
     DEDUP_ENTITIES_MERGED = "dedup_entities_merged"
     STRUCTURAL_ENTITIES_FILTERED = "structural_entities_filtered"
-    ORPHAN_ENTITIES_FILTERED = "orphan_entities_filtered"
+    ORPHAN_ENTITIES_FILTERED = "orphan_entities_filtered"  # orphans kept, flagged (2026-10)
+    EVIDENCE_LESS_ENTITIES_DROPPED = "evidence_less_entities_dropped"
+    PLAUSIBILITY_ENTITIES_FLAGGED = "plausibility_entities_flagged"  # kept flagged (2026-10)
+    UNPLACED_TYPE_ENTITIES_FLAGGED = "unplaced_type_entities_flagged"  # kept as Concept (2026-10)
     RELATIONSHIPS_DROPPED_INVALID = "relationships_dropped_invalid"
-    RELATIONSHIPS_DROPPED_CAPPED = "relationships_dropped_capped"
+    RELATIONSHIPS_DROPPED_CAPPED = "relationships_dropped_capped"  # past a cap, kept flagged (2026-10)
     CITATIONS_SKIPPED_NO_CHUNK_INDEX = "citations_skipped_no_chunk_index"
     # ... see Phase 2 / 5b / 6 / 7 additions below for the full set ...
 ```
@@ -86,7 +90,10 @@ class QualityCounter(StrEnum):
     PARSER_LINES_DROPPED = "parser_lines_dropped"
     DEDUP_ENTITIES_MERGED = "dedup_entities_merged"
     STRUCTURAL_ENTITIES_FILTERED = "structural_entities_filtered"
-    ORPHAN_ENTITIES_FILTERED = "orphan_entities_filtered"
+    ORPHAN_ENTITIES_FILTERED = "orphan_entities_filtered"  # orphans kept, flagged (2026-10)
+    EVIDENCE_LESS_ENTITIES_DROPPED = "evidence_less_entities_dropped"
+    PLAUSIBILITY_ENTITIES_FLAGGED = "plausibility_entities_flagged"  # kept flagged (2026-10)
+    UNPLACED_TYPE_ENTITIES_FLAGGED = "unplaced_type_entities_flagged"  # kept as Concept (2026-10)
     RELATIONSHIPS_DROPPED_INVALID = "relationships_dropped_invalid"
     RELATIONSHIPS_DROPPED_CAPPED = "relationships_dropped_capped"
     CITATIONS_SKIPPED_NO_CHUNK_INDEX = "citations_skipped_no_chunk_index"
@@ -99,8 +106,11 @@ drop sites (the `QualityCounter` enum is the authoritative list):
 
 ```python
     # Evidence / aggregator drops
-    EVIDENCE_ENTITIES_DROPPED = "evidence_entities_dropped"
-    EVIDENCE_RELATIONSHIPS_DROPPED = "evidence_relationships_dropped"
+    EVIDENCE_ENTITIES_DROPPED = "evidence_entities_dropped"  # no description only (2026-10)
+    ENTITIES_UNEVIDENCED_KEPT = "entities_unevidenced_kept"  # kept flagged (2026-10)
+    EXCLUDED_ENTITIES_KEPT = "excluded_entities_kept"  # kept flagged (2026-10)
+    EVIDENCE_RELATIONSHIPS_DROPPED = "evidence_relationships_dropped"  # invalid endpoints only (2026-10)
+    RELATIONSHIPS_UNEVIDENCED_KEPT = "relationships_unevidenced_kept"
     AGGREGATOR_RELATIONSHIPS_DROPPED = "aggregator_relationships_dropped"
 
     # LLM operational failures
@@ -115,7 +125,9 @@ drop sites (the `QualityCounter` enum is the authoritative list):
 
     # Relationship quality
     RELATIONSHIPS_DIRECTION_CORRECTED = "relationships_direction_corrected"
-    RELATIONSHIPS_DROPPED_TYPE_UNMATCHED = "relationships_dropped_type_unmatched"
+    RELATIONSHIPS_DROPPED_TYPE_UNMATCHED = "relationships_dropped_type_unmatched"  # kept flagged (2026-10)
+    RELATIONSHIPS_UNMATCHED_LABEL_KEPT = "relationships_unmatched_label_kept"
+    RELATIONSHIPS_TYPE_MISMATCH_KEPT = "relationships_type_mismatch_kept"
 
     # User-regex
     USER_REGEX_TIMEOUT_HITS = "user_regex_timeout_hits"
@@ -174,24 +186,32 @@ visibility:
 | `parser_lines_dropped` | LLM extraction | `line_parser.parse_extraction_output` via the `stats` kwarg |
 | `dedup_entities_merged` | Post-extraction | `EntityProcessor.deduplicate_entities_with_mapping` |
 | `structural_entities_filtered` | Post-extraction | `apply_structural_and_normalization` (Cortex / Neuron / CLI / MCP) |
-| `orphan_entities_filtered` | Commit | `commit/service.drop_orphan_entities` |
+| `orphan_entities_filtered` | Commit | `commit/service.flag_orphan_entities` — the orphans **kept**, flagged `properties.orphan` because they carry a description or an evidence sentence (until October 2026: the orphans deleted) |
+| `evidence_less_entities_dropped` | Commit | `commit/service.flag_orphan_entities` — the orphans dropped for carrying neither, when orphan protection is off (migration 0013) |
 | `relationships_dropped_invalid` | Post-extraction / Commit | Index-validation passes in extractor + commit |
-| `relationships_dropped_capped` | Post-extraction | Per-entity / same-source-type / total-ratio cap enforcement |
+| `plausibility_entities_flagged` | Extraction (per chunk) | `entity_cleaner.filter_implausible_entities` — names below the plausibility bar **kept**, flagged `properties.low_plausibility`, because they carry evidence (migration 0014) |
+| `unplaced_type_entities_flagged` | Extraction (per chunk) | `type_rescue.rescue_invalid_entity_types` — entities whose written type no core type answers to, **kept** as a `Concept` flagged `properties.unplaced_type` (migration 0014; the chunk's `unknown_type` count) |
+| `relationships_dropped_capped` | Post-extraction | Per-entity / same-source-type / total-ratio cap enforcement — the relationships past a cap **kept**, flagged `properties.capped` (until October 2026: the ones dropped; the caps drop nothing now) |
 | `citations_skipped_no_chunk_index` | Commit | `_create_source_citations` and `_create_relationship_citations` when `chunk_index` is missing |
 
 ### Phase 2 counters (2026-05-08)
 
 | Counter | Stage | Increment site |
 |---------|-------|----------------|
-| `evidence_entities_dropped` | LLM / post-extraction | Entities dropped because their `sent_ref` evidence fails validation |
-| `evidence_relationships_dropped` | LLM / post-extraction | Relationships dropped because their `sent_ref` evidence fails validation |
+| `evidence_entities_dropped` | LLM / post-extraction | `evidence_validator.filter_entities_by_evidence` — the entities the evidence filter **drops**: no valid evidence sentence and no description. Until October 2026 it counted every entity whose `sent_ref` evidence failed validation, all of them dropped; the ones with a description are now kept and counted in `entities_unevidenced_kept` |
+| `entities_unevidenced_kept` | LLM / post-extraction | `evidence_validator.filter_entities_by_evidence` — the entities **kept** flagged `properties.unevidenced` (with `properties.evidence_reason`) because their cited sentence does not name them but they carry a description (migration 0016) |
+| `excluded_entities_kept` | Extraction (per chunk) | `entity_cleaner.filter_excluded_entities` — entities whose name is one of the domain's exclusion examples, **kept** flagged `properties.excluded_name` (the rule under `properties.excluded_by`) because they carry evidence (migration 0016) |
+| `evidence_relationships_dropped` | LLM / post-extraction | `evidence_validator.filter_relationships_by_evidence` — the relationships the evidence filter **drops**: an endpoint that is no entity of the chunk. Until October 2026 it counted every relationship whose `sent_ref` evidence failed validation, all of them dropped; those are now kept and counted in `relationships_unevidenced_kept` |
+| `relationships_unevidenced_kept` | LLM / post-extraction | `evidence_validator.filter_relationships_by_evidence` — the relationships **kept** flagged `properties.unevidenced` (with `properties.evidence_reason`) because no cited sentence states them, or folded into an evidenced copy of the same fact in their chunk (migration 0015) |
 | `aggregator_relationships_dropped` | Post-extraction aggregation | Relationships dropped during chunk-result aggregation (out-of-bounds or de-duplication at aggregation time) |
 | `llm_chunks_timed_out` | LLM extraction | LLM call raised a timeout/cancellation for a chunk |
 | `llm_chunks_failed_permanent` | LLM extraction | LLM call raised a non-timeout error for a chunk |
 | `standalone_chunk_failures` | Standalone path | `extract_entities_from_groups` catches an exception on a per-chunk call in the non-distributed path |
 | `semantic_dedup_fallbacks` | Deduplication | Embedding generation failed; semantic pass fell back to exact-string match |
 | `relationships_direction_corrected` | Post-extraction | Direction-correction swap applied (source/target swapped to satisfy edge-template constraints) |
-| `relationships_dropped_type_unmatched` | Post-extraction | Relationship type could not be matched to any edge template even with fuzzy matching |
+| `relationships_dropped_type_unmatched` | Post-extraction | The relationships the strict type-constraint check **kept** flagged: `relationships_unmatched_label_kept` plus `relationships_type_mismatch_kept`. Until October 2026 the ones it dropped (a label no template matched, even with fuzzy matching, or endpoints the template refused); the check drops nothing now |
+| `relationships_unmatched_label_kept` | Post-extraction | `entity_cleaner.validate_relationship_type_constraints` — relationships whose label no edge template answers to, **kept** as `related_to` flagged `properties.unmatched_label` (the label as written under `properties.written_label`; migration 0016) |
+| `relationships_type_mismatch_kept` | Post-extraction | `entity_cleaner.validate_relationship_type_constraints` — relationships whose endpoints are not core types their template allows (or fit only reversed with direction correction off), **kept** flagged `properties.type_mismatch` (the reason under `properties.type_mismatch_reason`; migration 0016) |
 | `user_regex_timeout_hits` | Normalization / post-extraction | User-supplied regex pattern timed out during matching |
 | `ocr_cleaner_skipped_by_predicate` | Normalization | OCRCleaner's `applies_to` predicate returned `False` for this document — OCR cleaning was skipped because the source is not OCR-derived |
 | `chunker_normalize_drops` | Chunking | Total regex substitutions performed across the normalization passes (page-header removals, broken-sentence joins, newline-to-space conversions, multi-space collapses) |
@@ -257,9 +277,11 @@ together in one internal migration. Adding them together kept the schema
 in sync with the design intent of the W1+W2 workstreams (what you set is
 what you get; nothing disappears silently). The public repository's
 migration history was squashed into `0001_baseline.py`, which defines
-45 counter columns on the `sources` table (the 46th,
-`loader_epub_chapters_skipped`, is added by the incremental revision
-`0006_loader_epub_chapters_skipped.py`), alongside:
+the first counter columns on the `sources` table; each counter added
+since ships its column in its own revision (`0006_loader_epub_chapters_skipped.py`,
+`0014_flagged_entity_counters.py`, `0016_kept_flagged_counters.py`). The
+current set is one column per `QualityCounter` member (the enum is the
+count). The baseline also defines:
 
 - 5 upload-settings columns: `auto_analyze`, `enable_normalization`,
   `enable_vision`, `content_filtering`, `filtering_mode`
@@ -274,7 +296,7 @@ migration history was squashed into `0001_baseline.py`, which defines
 issues one `update_source_columns` setting every counter back to its
 post-upload default:
 
-- Every counter column (46 as of today) → its post-upload default — `0`
+- Every counter column (every `QualityCounter` member) → its post-upload default — `0`
   for integer counters, `null` for the JSON-shaped
   `loader_html_dropped_tags` / `loader_pptx_shapes_skipped` breakdowns
 - The cumulative `llm_*` metrics → their zero/empty defaults

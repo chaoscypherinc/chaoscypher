@@ -9,7 +9,7 @@ Tests:
 - format_domain_edge_templates raises ValidationError similarly.
 - apply_depth_strategy raises ValidationError for invalid depth values.
 - Valid depths ("quick", "full") still work correctly.
-- DomainConfigModel accepts allow_template_fallback field.
+- DomainConfigModel refuses the removed allow_template_fallback key (spec 2026-10-07 § 3).
 """
 
 from __future__ import annotations
@@ -123,20 +123,26 @@ class TestDepthValidation:
 
 
 class TestDomainConfigSchema:
-    """DomainConfigModel exposes allow_template_fallback field."""
+    """``allow_template_fallback`` left the domain schema (spec 2026-10-07 § 3): the floor's templates always apply."""
 
-    def test_allow_template_fallback_defaults_false(self) -> None:
+    def test_allow_template_fallback_is_not_a_schema_field(self) -> None:
         from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
             DomainConfigModel,
         )
 
-        model = DomainConfigModel(name="test")
-        assert model.allow_template_fallback is False
+        model = DomainConfigModel(name="test", role="pack", extends="core")
+        assert "allow_template_fallback" not in DomainConfigModel.model_fields
+        assert model.role == "pack"
 
-    def test_allow_template_fallback_can_be_set_true(self) -> None:
+    def test_allow_template_fallback_is_refused_in_a_config(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
         from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
             DomainConfigModel,
         )
 
-        model = DomainConfigModel(name="test", allow_template_fallback=True)
-        assert model.allow_template_fallback is True
+        with pytest.raises(ValidationError, match="allow_template_fallback"):
+            DomainConfigModel.model_validate(
+                {"name": "test", "role": "pack", "extends": "core", "allow_template_fallback": True}
+            )

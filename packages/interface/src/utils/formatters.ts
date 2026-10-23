@@ -49,14 +49,16 @@ export function formatDate(dateString: string): string {
 /**
  * Format a duration in seconds to a human-readable string.
  * @param seconds - Duration in seconds
+ * @param options.withSeconds - Keep the seconds in the hour range too ("1h 30m 5s")
  * @returns Formatted string (e.g., "45s", "3m 12s", "1h 30m")
  */
-export function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number, { withSeconds = false } = {}): string {
   if (seconds < 60) return `${Math.floor(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${Math.floor(seconds % 60)}s`;
   const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
+  const hm = `${hours}h ${minutes % 60}m`;
+  return withSeconds ? `${hm} ${Math.floor(seconds % 60)}s` : hm;
 }
 
 /**
@@ -183,13 +185,15 @@ export function formatNumber(value: number): string {
 }
 
 /**
- * Format a date relative to now (e.g., "2 days ago").
+ * Format a date relative to now (e.g., "2d ago", or "in 2d" for a future date).
  * @param date - The Date object to format
  * @returns Relative time string
  */
 export function formatRelativeDate(date: Date): string {
   const now = new Date();
-  const diff = now.getTime() - date.getTime();
+  const signedDiff = now.getTime() - date.getTime();
+  const diff = Math.abs(signedDiff);
+  const label = (amount: string) => (signedDiff < 0 ? `in ${amount}` : `${amount} ago`);
 
   const seconds = Math.floor(diff / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -200,12 +204,12 @@ export function formatRelativeDate(date: Date): string {
   const years = Math.floor(days / 365);
 
   if (seconds < 60) return 'just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  if (weeks < 4) return `${weeks}w ago`;
-  if (months < 12) return `${months}mo ago`;
-  return `${years}y ago`;
+  if (minutes < 60) return label(`${minutes}m`);
+  if (hours < 24) return label(`${hours}h`);
+  if (days < 7) return label(`${days}d`);
+  if (weeks < 4) return label(`${weeks}w`);
+  if (months < 12) return label(`${months}mo`);
+  return label(`${years}y`);
 }
 
 /**

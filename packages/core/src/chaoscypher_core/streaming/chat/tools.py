@@ -28,6 +28,7 @@ from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     UNTRUSTED_FENCE_OPEN,
     neutralize_untrusted_fence,
 )
+from chaoscypher_core.utils.stream_errors import error_from_stream_chunk, stream_error_event
 
 
 if TYPE_CHECKING:
@@ -597,18 +598,17 @@ async def _process_iteration_stream(
             yield {"_internal_type": "thinking", "thinking": thinking}
 
         elif chunk_type == "error":
-            error_msg = chunk.get("error", "Unknown LLM error")
+            # the one stream classifier, as the first stream's consumer (audit wave 5)
+            error = error_from_stream_chunk(chunk)
             logger.error(
                 "chat_stream_iteration_provider_error",
                 chat_id=chat_id,
                 iteration=iteration,
-                error=error_msg,
+                error=error.message,
+                error_code=error.code,
+                is_retryable=error.is_retryable,
             )
-            yield {
-                "_internal_type": "error",
-                "error": error_msg,
-                "error_code": chunk.get("error_code", "LLM_ERROR"),
-            }
+            yield {"_internal_type": "error", **stream_error_event(error)}
             return
 
         elif chunk_type == "done":

@@ -20,18 +20,23 @@ def test_valid_minimal_config() -> None:
         {
             "name": "technical",
             "description": "Technical docs",
-            "entity_templates": [],
+            "role": "pack",
+            "extends": "core",
         }
     )
     assert model.name == "technical"
-    assert model.entity_templates == []
+    assert model.role == "pack"
+    assert model.templates.node_templates == []
+    assert model.subtypes == []
 
 
 def test_missing_name_rejected() -> None:
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
-        DomainConfigModel.model_validate({"description": "No name", "entity_templates": []})
+        DomainConfigModel.model_validate(
+            {"description": "No name", "role": "pack", "extends": "core"}
+        )
 
 
 def test_blank_name_rejected() -> None:
@@ -39,32 +44,66 @@ def test_blank_name_rejected() -> None:
 
     with pytest.raises(ValidationError):
         DomainConfigModel.model_validate(
-            {"name": "   ", "description": "blank", "entity_templates": []}
+            {"name": "   ", "description": "blank", "role": "pack", "extends": "core"}
         )
 
 
-def test_entity_templates_must_be_list() -> None:
+def test_templates_are_validated() -> None:
+    """``templates`` is the validated key (spec 2026-10-07 § 3); the unused ``entity_templates`` is refused."""
     from pydantic import ValidationError
 
+    pack = {"name": "x", "description": "", "role": "pack", "extends": "core"}
+    with pytest.raises(ValidationError):
+        DomainConfigModel.model_validate({**pack, "templates": "not-a-mapping"})
     with pytest.raises(ValidationError):
         DomainConfigModel.model_validate(
-            {
-                "name": "x",
-                "description": "",
-                "entity_templates": "not-a-list",
-            }
+            {**pack, "templates": {"edge_templates": [{"name": "x", "colour": "#fff"}]}}
         )
+    with pytest.raises(ValidationError, match="entity_templates"):
+        DomainConfigModel.model_validate({**pack, "entity_templates": []})
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "guidance",
+        "strict_validation",
+        "normalizer_overrides",
+        "allow_template_fallback",
+        "extraction_overrides",
+        "vocabulary_exclusions",
+        "evidence_validation_mode",
+    ],
+)
+def test_removed_keys_are_refused_by_name(key: str) -> None:
+    """A key the restructure removed fails loudly at load, naming itself (spec 2026-10-07 § 3)."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match=key):
+        DomainConfigModel.model_validate(
+            {"name": "x", "role": "pack", "extends": "core", key: None}
+        )
+
+
+def test_a_config_without_a_role_is_refused_with_the_converter_named() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="convert_packs"):
+        DomainConfigModel.model_validate({"name": "x", "description": ""})
 
 
 def test_content_exclusions_optional_and_validated() -> None:
     # Missing is fine.
-    DomainConfigModel.model_validate({"name": "x", "description": "", "entity_templates": []})
+    DomainConfigModel.model_validate(
+        {"name": "x", "description": "", "role": "pack", "extends": "core"}
+    )
     # Present but shaped right is fine.
     DomainConfigModel.model_validate(
         {
             "name": "x",
             "description": "",
-            "entity_templates": [],
+            "role": "pack",
+            "extends": "core",
             "content_exclusions": {"categories": ["toc"], "custom_patterns": []},
         }
     )
@@ -150,7 +189,8 @@ class TestDomainConfigEntityExclusions:
             {
                 "name": "literary",
                 "description": "",
-                "entity_templates": [],
+                "role": "pack",
+                "extends": "core",
                 "entity_exclusions": [
                     {
                         "description": "Bare titles without names",
@@ -180,7 +220,8 @@ class TestDomainConfigEntityExclusions:
                 {
                     "name": "literary",
                     "description": "",
-                    "entity_templates": [],
+                    "role": "pack",
+                    "extends": "core",
                     "entity_exclusions": [
                         'Bare titles: "Prince", "Princess"',  # legacy string form
                     ],
@@ -189,7 +230,7 @@ class TestDomainConfigEntityExclusions:
 
     def test_missing_field_defaults_to_empty(self) -> None:
         model = DomainConfigModel.model_validate(
-            {"name": "x", "description": "", "entity_templates": []}
+            {"name": "x", "description": "", "role": "pack", "extends": "core"}
         )
         assert model.entity_exclusions == []
 
@@ -243,7 +284,8 @@ def test_registry_kill_switch_skips_user_domain(
             {
                 "name": "usertestdomain",
                 "description": "User test domain",
-                "entity_templates": [],
+                "role": "pack",
+                "extends": "core",
             }
         ),
         encoding="utf-8",

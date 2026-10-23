@@ -42,20 +42,21 @@ def _get_vision_max_output_tokens(settings: Settings) -> int | None:
     return getattr(settings.llm, f"{provider}_vision_max_output_tokens", None)
 
 
-def _render_image_bytes(row: dict[str, Any], *, dpi: int) -> bytes:
+def _render_image_bytes(row: dict[str, Any], *, dpi: int, max_pixels: int) -> bytes:
     """Read image bytes for one row.
 
-    For STANDALONE_IMAGE, reads the file directly (``dpi`` ignored — the
-    source file is taken as-is).
+    For STANDALONE_IMAGE, reads the file directly (``dpi`` and
+    ``max_pixels`` ignored — the source file is taken as-is).
     For PDF_PAGE, opens the source PDF and renders this one page via
-    pypdfium2 at ``dpi`` resolution.
+    pypdfium2 at ``dpi`` resolution, downscaled when the page's MediaBox
+    would make the bitmap exceed ``max_pixels``.
 
     Raises RuntimeError on render/IO failure (caller catches and marks
     the row FAILED with the error message).
     """
     from pathlib import Path
 
-    from chaoscypher_core.vision.states import VisionPageKind
+    from chaoscypher_core.vision import VisionPageKind, clamp_render_scale
 
     image_path = Path(row["image_path"])
 
@@ -73,7 +74,17 @@ def _render_image_bytes(row: dict[str, Any], *, dpi: int) -> bytes:
         try:
             page = pdf[row["page_number"] - 1]  # 1-indexed → 0-indexed
             try:
-                bitmap = page.render(scale=dpi / 72)
+                width_pt, height_pt = page.get_size()
+                scale = clamp_render_scale(width_pt, height_pt, dpi=dpi, max_pixels=max_pixels)
+                if scale < dpi / 72:
+                    logger.info(
+                        "vision_page_render_downscaled",
+                        page_number=row["page_number"],
+                        width_pt=width_pt,
+                        height_pt=height_pt,
+                        scale=scale,
+                    )
+                bitmap = page.render(scale=scale)
                 pil = bitmap.to_pil()
                 buf = io.BytesIO()
                 pil.save(buf, format="PNG")

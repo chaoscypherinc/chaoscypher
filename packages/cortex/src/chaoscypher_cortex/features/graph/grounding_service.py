@@ -155,8 +155,9 @@ class GroundingService:
             - Full relationship graph for local context
 
         """
-        # Get the node
-        node = self.graph_repository.get_node(node_id)
+        # Get the node without its 1024-float embedding: no grounding consumer
+        # reads it, and this endpoint's payload lands in an LLM context window.
+        node = self.graph_repository.get_node(node_id, include_embedding=False)
         if not node:
             raise NotFoundError("Node", node_id)
 

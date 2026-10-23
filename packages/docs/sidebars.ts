@@ -10,6 +10,7 @@ const sidebars: SidebarsConfig = {
         "getting-started/installation",
         "getting-started/quickstart",
         "getting-started/configuration",
+        "getting-started/cache",
         "getting-started/first-login",
         "getting-started/upgrading",
         "getting-started/production",
@@ -22,6 +23,7 @@ const sidebars: SidebarsConfig = {
       label: "Data",
       items: [
         "user-guide/sources",
+        "user-guide/site-import",
         "user-guide/quality",
         "user-guide/data-quality",
         "user-guide/knowledge-graph",
@@ -37,6 +39,7 @@ const sidebars: SidebarsConfig = {
         "user-guide/search",
         "user-guide/search-status",
         "user-guide/mcp",
+        "user-guide/memory",
         "user-guide/automations",
       ],
     },
@@ -137,6 +140,7 @@ const sidebars: SidebarsConfig = {
           items: [
             "reference/cli/chat",
             "reference/cli/mcp",
+            "reference/cli/memory",
             "reference/cli/mount",
             "reference/cli/quality",
             "reference/cli/compose",
@@ -209,7 +213,11 @@ const sidebars: SidebarsConfig = {
         {
           type: "category",
           label: "Configuration",
-          items: ["reference/api/settings", "reference/api/backup"],
+          items: [
+            "reference/api/settings",
+            "reference/api/backup",
+            "reference/api/cache",
+          ],
         },
         {
           type: "category",
@@ -226,6 +234,7 @@ const sidebars: SidebarsConfig = {
         "reference/python/protocols",
         "reference/python/services",
         "reference/python/storage-adapters",
+        "reference/python/cache",
       ],
     },
   ],

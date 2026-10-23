@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from chaoscypher_core.testing.fake_web import fake_site  # noqa: F401 — the site tools' fake web
+
 
 if TYPE_CHECKING:
     from chaoscypher_core.mcp.extraction import ExtractionOrchestrator

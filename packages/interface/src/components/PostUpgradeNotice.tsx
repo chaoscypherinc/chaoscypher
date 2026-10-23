@@ -8,23 +8,17 @@ import CloseIcon from '@mui/icons-material/Close';
 import ConfirmDialog from './ConfirmDialog';
 import { useNotification } from '../contexts/useNotification';
 import { usePendingUpgrades, useRollbackUpgrade } from '../services/api/useMaintenance';
+import { readStoredString, writeStoredString } from '../utils/storage';
 
 const DISMISS_KEY = 'chaoscypher-upgrade-notice-dismissed';
 
 function readDismissed(): string | null {
-  try {
-    return localStorage.getItem(DISMISS_KEY);
-  } catch {
-    return null;
-  }
+  return readStoredString(DISMISS_KEY);
 }
 
 function writeDismissed(backup: string): void {
-  try {
-    localStorage.setItem(DISMISS_KEY, backup);
-  } catch {
-    /* private-mode / quota — non-fatal, mirrors the Omnibar hint pattern */
-  }
+  // private-mode / quota — non-fatal; the notice just re-shows next load
+  writeStoredString(DISMISS_KEY, backup);
 }
 
 /**

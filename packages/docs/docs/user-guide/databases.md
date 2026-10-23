@@ -101,6 +101,8 @@ curl http://localhost:8080/api/v1/databases/current
 </TabItem>
 </Tabs>
 
+The response carries `notice`: a one-line message for a database whose graph was extracted before the core entity types (export it with the previous version, update, import the export — see [Upgrading](../getting-started/upgrading.md#databases-from-before-the-core-entity-types)), else `null`. The dashboard shows it when it is set.
+
 
 ### Create a Database
 

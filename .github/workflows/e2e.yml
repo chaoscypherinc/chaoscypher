@@ -12,7 +12,7 @@ permissions:
 jobs:
   cli-e2e:
     name: CLI E2E Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -25,7 +25,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen, with dev extras)
@@ -61,7 +60,7 @@ jobs:
 
   docker-e2e:
     name: Docker E2E Tests (Fresh + Resume)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 30
     needs: cli-e2e
     steps:
@@ -98,7 +97,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen, with dev extras)

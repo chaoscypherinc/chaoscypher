@@ -37,9 +37,12 @@ jobs:
   publish:
     name: Publish server.json
     # After a PyPI publish: only a successful run on a release tag. By hand: always.
+    # Publishing runs on the public mirror only: the dev repo receives the same tags (2026-10-15).
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
+      github.repository == 'chaoscypherinc/chaoscypher' && (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -137,7 +137,7 @@ const FEATURE_GROUPS: { label: string; items: Feature[] }[] = [
       {
         title: "MCP Server",
         description:
-          "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 36 tools for search, traversal, and graph building.",
+          "Connect Claude Desktop, Cursor, ChatGPT, and other AI assistants directly to your knowledge graph via the Model Context Protocol. 44 tools for search, traversal, and graph building.",
         linkTo: "/docs/user-guide/mcp",
       },
       {

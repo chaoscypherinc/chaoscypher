@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { apiClient } from './client';
-import type { DatabaseCreate, DatabaseInfo } from '../../types';
+import type { CurrentDatabase, DatabaseCreate, DatabaseInfo } from '../../types';
 
 export const databaseApi = {
   list: async () => {
@@ -10,7 +10,7 @@ export const databaseApi = {
     return response.data.databases;
   },
   getCurrent: async () => {
-    const response = await apiClient.get<{ current: string; info: DatabaseInfo }>('/databases/current');
+    const response = await apiClient.get<CurrentDatabase>('/databases/current');
     return response.data;
   },
   get: async (name: string) => {

@@ -8,10 +8,11 @@ rules for entity extraction. Domains are configured via JSON-LD files.
 
 Domain Storage:
 - plugins/: Built-in domains (shared across all databases)
-- data/databases/{db_name}/domains/: Per-database custom domains
+- {data_dir}/plugins/domains/: User domains, one ``.jsonld`` file each
+  (one directory for every database; the registry scans no per-database
+  path)
 
-Each domain folder contains:
-- domain.jsonld (or domain.json): Configuration file with all domain settings
+A plugin file holds every domain setting:
 
 Usage:
     from chaoscypher_core.services.sources.engine.extraction.domains import (
@@ -22,8 +23,8 @@ Usage:
     # Get registry for a specific database
     registry = get_domain_registry(settings, database_name="research")
 
-    # Find best matching domain for content
-    domain, confidence = registry.get_best_domain(
+    # Propose the packs for content (every source also has the floor)
+    proposal = registry.propose_packs(
         text="Sample document text...",
         filename="document.pdf",
         metadata={"source": "upload"},
@@ -37,9 +38,9 @@ Usage:
     normalization_rules = domain.get_normalization_rules()
 
 Adding a New Domain:
-    1. Create folder: data/databases/{db_name}/domains/my_domain/
-    2. Add domain.jsonld with name, detection, guidance, templates
-    3. Restart application - domain auto-discovered for that database!
+    1. Drop my_domain.jsonld in {data_dir}/plugins/domains/ (role "pack",
+       extends "core": subtypes, detection, guidance, edge templates)
+    2. Restart the application - the pack is discovered for every database
 """
 
 from typing import Any
@@ -57,6 +58,8 @@ from chaoscypher_core.services.sources.engine.extraction.domains.factory import 
 )
 from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
     DomainRegistry,
+    PackProposal,
+    RankedDomain,
 )
 
 
@@ -77,7 +80,8 @@ def create_domain_sample_text(
     to (5 + 3, 12000) after the 38-fixture audit showed the actual
     pipeline samples were ~4000 chars (chunks are ~800 chars in practice)
     and correctly-detectable content was scoring 0.2-0.3 lower than dry-run
-    predictions, pushing it below the registry's 1.0 absolute floor.
+    predictions, pushing it below the registry's then 1.0 absolute floor (replaced
+    2026-10-06 by an evidence floor and a runner-up margin, registry.py).
 
     This is the single source of truth for domain detection sampling.
     Use this function instead of implementing sampling logic inline.
@@ -104,6 +108,7 @@ def create_domain_sample_text(
 
     # Helper to extract content from item (handles both str and dict)
     def get_content(item: str | dict[str, Any]) -> str:
+        """A chunk's text, whether the caller passed the text or the chunk dict."""
         from typing import cast
 
         if isinstance(item, str):
@@ -131,6 +136,28 @@ def create_domain_sample_text(
     return "\n".join(sample_parts)[:max_sample_length]
 
 
+def source_domain_sample(adapter: Any, source_id: str, database_name: str) -> str:
+    """The domain-detection sample of a stored source: :func:`create_domain_sample_text` over its chunks.
+
+    The one way every detecting caller samples a source (the import worker,
+    the eager indexing proposal, the MCP queue's gate and auto-detect), so a
+    source auto-detects the same domain whichever path imports it. A raw
+    first-N-characters slice reads only the opening, where a novel's front
+    matter and first scene can look like any domain (audit wave 3: Book
+    One's opening 8,000 characters fell to generic).
+
+    Args:
+        adapter: A storage adapter with ``get_chunks_for_extraction``.
+        source_id: The source whose chunks are sampled.
+        database_name: The database the source lives in.
+
+    Returns:
+        The sample text (empty when the source has no chunks).
+    """
+    chunks = adapter.get_chunks_for_extraction(source_id=source_id, database_name=database_name)
+    return create_domain_sample_text(chunks or [], content_key="content")
+
+
 __all__ = [
     # Configurable domain
     "ConfigurableDomain",
@@ -138,10 +165,13 @@ __all__ = [
     "DomainAnalyzer",
     # Registry
     "DomainRegistry",
+    "PackProposal",
+    "RankedDomain",
     "clear_domain_registry_cache",
     # Helper function
     "create_domain_sample_text",
     # Factory
     "get_domain_registry",
     "load_domain_config",
+    "source_domain_sample",
 ]

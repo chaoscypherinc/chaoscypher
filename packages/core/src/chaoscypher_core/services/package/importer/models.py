@@ -69,6 +69,13 @@ class ImportStats:
             validation report.
         package_version: The imported package's ``package_version`` (from
             the CCX manifest), for conflict-policy provenance.
+        core_types_mapped: What the import moved onto the core entity types
+            (a bundle from before them): old ``entity_type`` ->
+            ``{"core_type", "count"}``, plus ``"unplaced": True`` for a name
+            the mapping table does not hold (kept as ``Concept``, flagged
+            ``unplaced_type``). Empty for a bundle already on the core types.
+        templates_repointed: Old node template name -> the core type whose
+            template its nodes took (the old template is not created).
         embeddings_need_regeneration: Whether imported items need re-embedding.
         embedding_mismatch_reason: Reason embeddings need regeneration.
         warnings: List of warning messages.
@@ -88,6 +95,8 @@ class ImportStats:
     checksum_verified: bool = False
     conformance_classes: list[str] = field(default_factory=list)
     package_version: str | None = None
+    core_types_mapped: dict[str, dict[str, Any]] = field(default_factory=dict)
+    templates_repointed: dict[str, str] = field(default_factory=dict)
     embeddings_need_regeneration: bool = False
     embedding_mismatch_reason: str | None = None
     # Count of node + chunk vectors restored from the package's embedding sidecar
@@ -141,6 +150,8 @@ class ImportStats:
             "checksum_verified": self.checksum_verified,
             "conformance_classes": self.conformance_classes,
             "package_version": self.package_version,
+            "core_types_mapped": self.core_types_mapped,
+            "templates_repointed": self.templates_repointed,
             "embeddings_need_regeneration": self.embeddings_need_regeneration,
             "embedding_mismatch_reason": self.embedding_mismatch_reason,
             "embeddings_restored": self.embeddings_restored,

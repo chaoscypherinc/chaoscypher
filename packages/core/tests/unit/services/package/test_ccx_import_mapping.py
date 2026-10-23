@@ -7,7 +7,10 @@ These functions invert ``services.export.ccx_mapping``: they consume the
 JSON-LD objects / source records that a CCX 3.0 package carries and emit the
 plain kwargs/dicts the importer feeds into ``NodeCreate`` / ``EdgeCreate`` and
 the source/chunk repos. Everything here is pure (stdlib + ``ccx_identity``), so
-it is fully unit-testable with no adapter or package fixtures.
+it is fully unit-testable with no adapter or package fixtures. The last
+section pins ``importer.core_types``: a bundle from before the core entity
+types mapped onto them (its end-to-end import:
+``integration/services/package/test_ccx_importer_core_types.py``).
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import hashlib
 
 from chaoscypher_core.services.export import ccx_identity
 from chaoscypher_core.services.package.importer import ccx_import_mapping as m
+from chaoscypher_core.services.package.importer import core_types
 
 
 # ---------------------------------------------------------------------------
@@ -292,3 +296,101 @@ def test_chunk_carries_citations() -> None:
     chunk = m.ccx_chunk_to_chunk(rec, None)
 
     assert chunk["citations"] == [{"ccx:confidence": 0.9, "ccx:extractionMethod": "llm"}]
+
+
+# ---------------------------------------------------------------------------
+# core_types — a bundle from before the core types, mapped onto them
+# ---------------------------------------------------------------------------
+
+
+def test_bundle_packs_read_the_list_then_the_old_domain_in_source_order() -> None:
+    """A source's ``extractionPacks`` (stack order), else its ``extractionDomain``; each pack once."""
+    records = [
+        {"@type": "ccx:Source", "extractionDomain": "literary"},  # a v3-era source
+        {"@type": "ccx:Chunk", "extractionDomain": "ignored"},
+        {"@type": "ccx:Source", "extractionPacks": ["news", "literary"], "extractionDomain": "x"},
+        {"@type": "ccx:Source", "extractionDomain": "generic"},  # the floor alone
+        {"@type": "ccx:Source"},
+    ]
+    assert core_types.bundle_packs(records) == ("literary", "news")
+    assert core_types.bundle_packs([]) == ()
+
+
+def test_an_old_type_template_is_a_node_template_named_by_no_core_type() -> None:
+    """Character is re-pointed; a core type's, the product's own and edge templates are not."""
+
+    def member(name: str, local_id: str, template_type: str = "node") -> dict:
+        return {
+            "@id": f"urn:ccx:chaoscypher:template/{local_id}",
+            "name": name,
+            "template_type": template_type,
+        }
+
+    assert core_types.is_old_type_template(member("Character", "t1"))
+    assert core_types.is_old_type_template(member("Quux", "t2"))
+    assert not core_types.is_old_type_template(member("Person", "t3"))
+    assert not core_types.is_old_type_template(member("Note", "system_template_note"))
+    assert not core_types.is_old_type_template(member("Lens", "system_lens"))
+    # A Replace-mode import re-ids every template, so an app graph's template
+    # comes back from a loaded database under a template_* id: kept by name.
+    assert {"Lens", "Workflow", "Workflow Step"} == core_types.APP_GRAPH_TEMPLATE_NAMES
+    for name in core_types.APP_GRAPH_TEMPLATE_NAMES:
+        assert not core_types.is_old_type_template(member(name, "template_3f2a"))
+    assert not core_types.is_old_type_template(member("Imported Entity", "t4"))
+    assert not core_types.is_old_type_template(member("child_of", "t5", "edge"))
+
+
+def test_the_mapping_places_old_nodes_counts_them_and_repoints_their_template() -> None:
+    """Old names onto core types with the subtype; unknown ones unplaced; core ones untouched."""
+    mapping = core_types.CoreTypeMapping(packs=("literary",))
+    character_iri = "urn:ccx:chaoscypher:template/t-character"
+    assert mapping.skip_template({"@id": character_iri, "name": "Character"})
+    assert not mapping.skip_template({"@id": "urn:ccx:chaoscypher:template/p", "name": "Person"})
+
+    _iri, pierre = m.jsonld_entity_to_node(
+        {
+            "@id": "urn:ccx:chaoscypher:node/n1",
+            "@type": "Character",
+            "name": "Pierre",
+            "cc:template": {"@id": character_iri},
+        }
+    )
+    placed = mapping.place(pierre)
+    assert placed["entity_type"] == "Person"
+    assert placed["properties"] == {"entity_subtype": "character"}
+    assert placed["type_term"] == "Character"  # the raw term stays for the template lookup
+    assert mapping.core_template_type(placed, {}) == "Person"
+
+    quux = mapping.place({"entity_type": "Quux", "properties": {"a": 1}, "template_iri": None})
+    assert quux["entity_type"] == "Concept"
+    assert quux["properties"] == {"a": 1, "unplaced_type": True, "written_type": "Quux"}
+    assert mapping.core_template_type(quux, {}) is None  # no re-pointed template: its own stands
+
+    person = {"entity_type": "Person", "properties": {}, "template_iri": None}
+    assert mapping.place(person) == person
+    mapping.place(dict(pierre))
+
+    assert mapping.as_dict() == {
+        "Character": {"core_type": "Person", "count": 2},
+        "Quux": {"core_type": "Concept", "count": 1, "unplaced": True},
+    }
+    assert mapping.templates == {"Character": "Person"}
+
+
+# ---------------------------------------------------------------------------
+# extracted_by_text (gap 15, 2026-10-20)
+# ---------------------------------------------------------------------------
+
+
+def test_extracted_by_accepts_the_string_and_the_object_form() -> None:
+    """``extractedBy`` given as ``{name, version}`` failed the import with a database error:
+    the importer copied it straight into the text column. Tsukumo writes ``tsukumo@<version>``;
+    the object form is spelled the same way.
+    """
+    assert m.extracted_by_text("gemma4:31b") == "gemma4:31b"
+    assert m.extracted_by_text({"name": "tsukumo", "version": "0.3.1"}) == "tsukumo@0.3.1"
+    assert m.extracted_by_text({"name": "tsukumo"}) == "tsukumo"
+    assert m.extracted_by_text({"tool": "tsukumo", "version": "2"}) == "tsukumo@2"
+    assert m.extracted_by_text({"version": "2"}) == "2"
+    assert m.extracted_by_text(None) is None
+    assert m.extracted_by_text("") is None

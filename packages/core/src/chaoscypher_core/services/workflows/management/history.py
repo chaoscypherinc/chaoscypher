@@ -391,10 +391,12 @@ class WorkflowExecutionService:
             raise ValidationError(msg)
 
         # Cancel via operations service (queued task removed, running
-        # task gets a cancel flag the worker honours between batches).
-        # Always reflect the cancellation on the execution row regardless
-        # of whether the queue task was still live — the operator clicked
-        # cancel, the row should show cancelled.
+        # task gets the queue's cancel flag). Always reflect the
+        # cancellation on the execution row regardless of whether the queue
+        # task was still live — the operator clicked cancel, the row should
+        # show cancelled. The row is also what stops a running workflow:
+        # the orchestrator polls it and the worker's RUNNING/finalize
+        # writes refuse to overwrite ``cancelled``.
         try:
             await self.operations_service.abort_operation(execution_id)
         except Exception:

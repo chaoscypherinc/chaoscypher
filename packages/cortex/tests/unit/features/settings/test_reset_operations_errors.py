@@ -87,7 +87,7 @@ def test_reset_knowledge_graph_propagates_when_clear_all_fails() -> None:
             return_value=adapter,
         ),
         patch(
-            "chaoscypher_core.repo_factories.get_graph_repository",
+            "chaoscypher_core.repo_factories.get_transaction_graph_repository",
             return_value=graph_repo,
         ),
         patch("chaoscypher_core.database.seed.seed_default_templates", seed),

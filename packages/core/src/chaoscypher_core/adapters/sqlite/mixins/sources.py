@@ -32,9 +32,14 @@ from chaoscypher_core.adapters.sqlite.models import (
 )
 from chaoscypher_core.exceptions import NotFoundError
 from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
 
 
 logger = structlog.get_logger(__name__)
+
+# Per-database staging subdirectory that ``upload_source`` writes each
+# source's file into (``settings.database_dir / "sources" / <source_id>``).
+_STAGING_SUBDIR = "sources"
 
 
 # Columns excluded from get_source() because they can be large
@@ -140,6 +145,7 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
                 load_only(
                     SourceRow.id,
                     SourceRow.extraction_domain,
+                    SourceRow.extraction_packs,
                     SourceRow.chunk_count,
                     SourceRow.cross_chunk_filtering_log,
                 )
@@ -150,6 +156,7 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             return None
         return {
             "extraction_domain": source.extraction_domain,
+            "extraction_packs": source.extraction_packs,
             "chunk_count": source.chunk_count,
             "cross_chunk_filtering_log": source.cross_chunk_filtering_log,
         }
@@ -521,9 +528,9 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         self._maybe_commit()
 
     def create_source(self, source_data: dict[str, Any]) -> dict[str, Any]:
-        """Create source."""
+        """Create source (a pack choice writes its list and its old single-name column together)."""
         self._ensure_connected()
-        source = SourceRow(**source_data)
+        source = SourceRow(**pack_columns(source_data))
         self.session.add(source)
         self._maybe_commit()
         self.session.refresh(source)
@@ -587,6 +594,7 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         row = self.session.exec(statement).first()
 
         immutable = {"id", "database_name", "ccx_iri", "created_at"}
+        source_dict = pack_columns(source_dict)
 
         if row is not None:
             for key, value in source_dict.items():
@@ -650,7 +658,7 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             "commit_completed_at",
             "cached_scores_at",
         }
-        for key, value in updates.items():
+        for key, value in pack_columns(updates).items():
             if key not in skip_fields and hasattr(source, key):
                 setattr(source, key, value)
 
@@ -675,7 +683,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         Args:
             filepath: Absolute path to the source's staged file. The entire
                 parent directory is removed. No-op if ``filepath`` is None,
-                empty, NOT absolute, or the directory does not exist.
+                empty, NOT absolute, the directory does not exist, or the
+                directory is not a per-source child of the staging root.
 
         """
         if not filepath:
@@ -693,6 +702,21 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             return
         file_dir = path.parent
         if not file_dir.exists():
+            return
+        # Only ever remove a per-source directory INSIDE this database's
+        # staging root (``<database_dir>/sources/<source_id>/``). An absolute
+        # filepath can also point at a file the source merely references in
+        # place — e.g. MCP ``add_document`` stores the client's file inside the
+        # MCP sandbox — and rmtree'ing its parent would wipe the sandbox root
+        # and every sibling file the user put there.
+        staging_root = (Path(self.db_path).parent / _STAGING_SUBDIR).resolve()
+        resolved_dir = file_dir.resolve()
+        if resolved_dir == staging_root or not resolved_dir.is_relative_to(staging_root):
+            logger.warning(
+                "source_files_delete_skipped_outside_staging",
+                path=str(file_dir),
+                staging_root=str(staging_root),
+            )
             return
         try:
             shutil.rmtree(file_dir, ignore_errors=True)
@@ -746,6 +770,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         enabled: str | None = None,
         search: str | None = None,
         tag_id: str | None = None,
+        site_id: str | None = None,
+        in_site: bool | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List sources with filtering and pagination.
 
@@ -760,6 +786,9 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
             enabled: Filter by enabled status ('enabled' or 'disabled')
             search: Search in title/origin_url
             tag_id: Filter by tag assignment
+            site_id: Only the pages of this imported site
+            in_site: True: only pages of imported sites; False: only sources
+                outside any site (the web UI lists a site as one row)
 
         Returns:
             Tuple of (sources list, total count)
@@ -783,6 +812,14 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
                     SourceRow.source_type,
                     SourceRow.title,
                     SourceRow.origin_url,
+                    # Site import (migration 0021): the page's site, and when a
+                    # refresh first found it no longer listed
+                    SourceRow.site_id,
+                    SourceRow.site_gone_at,
+                    # Memory provenance (list_memories reads the list, not each row)
+                    SourceRow.memory_by,
+                    SourceRow.memory_scope,
+                    SourceRow.valid_from,
                     SourceRow.chunk_count,
                     SourceRow.total_content_length,
                     SourceRow.embedding_model,
@@ -823,6 +860,8 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
                     SourceRow.extraction_domain_auto,
                     SourceRow.extraction_depth,
                     SourceRow.forced_domain,
+                    SourceRow.forced_packs,
+                    SourceRow.extraction_packs,
                     # MCP extraction progress
                     SourceRow.extraction_mode,
                     # Resumability observability
@@ -867,6 +906,12 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         if tag_id is not None:
             # Join with tag assignments to filter by tag
             stmt = stmt.join(SourceTagAssignment).where(SourceTagAssignment.tag_id == tag_id)
+        if site_id is not None:
+            stmt = stmt.where(SourceRow.site_id == site_id)
+        if in_site is not None:
+            stmt = stmt.where(
+                SourceRow.site_id.is_not(None) if in_site else SourceRow.site_id.is_(None)  # type: ignore[union-attr]  # SQLModel column
+            )
 
         # Get total count before pagination
         count_stmt = select(func.count()).select_from(stmt.subquery())
@@ -978,6 +1023,27 @@ class SourcesMixin(SqliteMixinBase, SourceStorageProtocol):
         )
         rows = self.session.exec(stmt).all()
         return {row.id: (row.title or row.filename) for row in rows}
+
+    def get_source_filenames_by_ids(
+        self,
+        source_ids: list[str],
+        database_name: str,
+    ) -> dict[str, str]:
+        """Map source id -> ``filename`` for many sources in one narrow query.
+
+        Search hydration reads only the filename; ``get_source`` per source
+        would load ~160 columns plus a ``llm_stage_progress`` query each.
+        Sources not found are absent from the returned map.
+        """
+        if not source_ids:
+            return {}
+
+        self._ensure_connected()
+        stmt = select(SourceRow.id, SourceRow.filename).where(
+            SourceRow.id.in_(source_ids),  # type: ignore[union-attr]
+            SourceRow.database_name == database_name,
+        )
+        return dict(self.session.exec(stmt).all())
 
     # ------------------------------------------------------------------
     # Bulk / reset operations (PR2a Task 4).

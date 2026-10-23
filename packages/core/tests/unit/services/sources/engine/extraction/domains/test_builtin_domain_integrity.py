@@ -6,14 +6,17 @@
 ``DomainConfigModel`` validates shape, not semantics. Each invariant
 pinned here fails *silently at extraction time* when broken:
 
-- an edge template ``source_types``/``target_types`` entry that names a
-  non-existent node template is an unsatisfiable constraint — every
+- an edge template ``source_types``/``target_types`` entry that names
+  anything but a core type is an unsatisfiable constraint — every
   relationship of that type is dropped (found live in design 1.9.0 and
-  educational 1.11.0, fixed 2026-06-09);
-- a ``type_aliases`` target that isn't a node template re-types entities
-  to an invalid type, which strict-type domains then drop;
-- an ``absorbs_types`` entry that names a real template is dead config —
-  type rescue only processes invalid types (found live in reference 1.9.0);
+  educational 1.11.0, fixed 2026-06-09; since 2026-10-07 every constraint
+  is over the core types, ``core_types.CORE_TYPES``);
+- a ``type_aliases`` target that is neither a core type nor one of the
+  pack's subtypes re-types entities to an invalid type, which strict types
+  then drop;
+- ``absorbs_types``, ``compatibility_group`` and ``normalization_keywords``
+  on a pack were dropped by the additive restructure (spec 2026-10-07 § 3):
+  rescue reads subtypes and the core type is the compatibility group;
 - a detection regex that doesn't compile is skipped with only a runtime
   WARNING, silently weakening detection;
 - an unknown ``extraction_filtering_mode`` raises at extraction time, and
@@ -37,6 +40,10 @@ from chaoscypher_core.services.sources.engine.extraction.content_categories impo
     CONTENT_CATEGORIES,
     validate_custom_patterns,
 )
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+    CORE_TYPES,
+    is_core_type,
+)
 from chaoscypher_core.services.sources.engine.extraction.safe_user_regex import compile_safe
 from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
     VALID_PRESETS,
@@ -50,16 +57,13 @@ _PLUGINS_DIR = Path(__file__).resolve().parents[7] / (
 
 _PLUGIN_PATHS = sorted(_PLUGINS_DIR.glob("*.jsonld"))
 
-_VALID_EVIDENCE_MODES = {"off", "relaxed", "narrative", "standard", "strict"}
-
 
 def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
-def _node_names(cfg: dict[str, Any]) -> set[str]:
-    templates = cfg.get("templates", {})
-    return {t["name"] for t in templates.get("node_templates", []) if t.get("name")}
+def _subtype_names(cfg: dict[str, Any]) -> set[str]:
+    return {s["name"] for s in cfg.get("subtypes", []) if s.get("name")}
 
 
 def test_builtin_plugin_set_discovered() -> None:
@@ -68,9 +72,9 @@ def test_builtin_plugin_set_discovered() -> None:
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
-def test_edge_type_constraints_reference_real_node_templates(path: Path) -> None:
+def test_edge_type_constraints_reference_core_types(path: Path) -> None:
     cfg = _load(path)
-    nodes = _node_names(cfg)
+    nodes = set(CORE_TYPES)
     bad: list[str] = []
     for tmpl in cfg.get("templates", {}).get("edge_templates", []):
         for field in ("source_types", "target_types"):
@@ -78,36 +82,41 @@ def test_edge_type_constraints_reference_real_node_templates(path: Path) -> None
             if unknown:
                 bad.append(f"{tmpl.get('name')}.{field}: {unknown}")
     assert not bad, (
-        f"{path.stem}: edge type constraints referencing non-existent node "
-        f"templates (relationships of these types are silently dropped): {bad}"
+        f"{path.stem}: edge type constraints referencing non-core types "
+        f"(relationships of these types are silently dropped): {bad}"
     )
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
-def test_type_aliases_map_to_real_node_templates(path: Path) -> None:
+def test_type_aliases_map_to_core_types_or_the_packs_subtypes(path: Path) -> None:
     cfg = _load(path)
-    nodes = _node_names(cfg)
+    subtypes = _subtype_names(cfg)
     aliases = cfg.get("type_aliases") or {}
-    bad_targets = {a: c for a, c in aliases.items() if c not in nodes}
-    shadowing = [a for a in aliases if a in nodes]
-    assert not bad_targets, f"{path.stem}: alias targets are not node templates: {bad_targets}"
-    assert not shadowing, f"{path.stem}: alias keys shadow real node templates: {shadowing}"
+    bad_targets = {a: c for a, c in aliases.items() if not is_core_type(c) and c not in subtypes}
+    shadowing = [a for a in aliases if is_core_type(a) or a in subtypes]
+    assert not bad_targets, (
+        f"{path.stem}: alias targets are not core types or subtypes: {bad_targets}"
+    )
+    assert not shadowing, f"{path.stem}: alias keys shadow core types or subtypes: {shadowing}"
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
-def test_absorbs_types_do_not_collide_with_real_templates(path: Path) -> None:
+def test_no_dropped_template_metadata_remains(path: Path) -> None:
+    """absorbs_types, compatibility_group and a pack's normalization_keywords are gone (spec § 3)."""
     cfg = _load(path)
-    nodes = _node_names(cfg)
     bad: list[str] = []
-    for tmpl in cfg.get("templates", {}).get("node_templates", []):
-        for prop in tmpl.get("properties", []):
-            collisions = [a for a in prop.get("absorbs_types", []) if a in nodes]
-            if collisions:
-                bad.append(f"{tmpl.get('name')}.{prop.get('name')}: {collisions}")
-    assert not bad, (
-        f"{path.stem}: absorbs_types naming real node templates are dead "
-        f"config (rescue only sees invalid types): {bad}"
-    )
+    entries = [*cfg.get("templates", {}).get("node_templates", []), *cfg.get("subtypes", [])]
+    for tmpl in entries:
+        if "compatibility_group" in tmpl:
+            bad.append(f"{tmpl.get('name')}.compatibility_group")
+        if cfg.get("role") == "pack" and "normalization_keywords" in tmpl:
+            bad.append(f"{tmpl.get('name')}.normalization_keywords")
+        bad.extend(
+            f"{tmpl.get('name')}.{prop.get('name')}.absorbs_types"
+            for prop in tmpl.get("properties", [])
+            if "absorbs_types" in prop
+        )
+    assert not bad, f"{path.stem}: metadata the restructure dropped: {bad}"
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
@@ -119,6 +128,8 @@ def test_no_duplicate_template_names_or_ids(path: Path) -> None:
             values = [t.get(field) for t in templates.get(kind, []) if t.get(field)]
             dupes = {v for v in values if values.count(v) > 1}
             assert not dupes, f"{path.stem}: duplicate {kind} {field}(s): {sorted(dupes)}"
+    names = [s.get("name") for s in cfg.get("subtypes", [])]
+    assert len(names) == len(set(names)), f"{path.stem}: duplicate subtypes"
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)
@@ -164,11 +175,8 @@ def test_filtering_settings_are_valid(path: Path) -> None:
     valid_fields = set(FilteringConfig.__dataclass_fields__)
     bad_keys = [k for k in cfg.get("extraction_limits", {}) if k not in valid_fields]
     assert not bad_keys, f"{path.stem}: extraction_limits keys not on FilteringConfig: {bad_keys}"
-    ev_mode = cfg.get("evidence_validation_mode")
-    if ev_mode:
-        assert ev_mode in _VALID_EVIDENCE_MODES, (
-            f"{path.stem}: unknown evidence_validation_mode {ev_mode!r}"
-        )
+    # the top-level evidence_validation_mode key was removed (spec 2026-10-07 § 3)
+    assert "evidence_validation_mode" not in cfg
 
 
 @pytest.mark.parametrize("path", _PLUGIN_PATHS, ids=lambda p: p.stem)

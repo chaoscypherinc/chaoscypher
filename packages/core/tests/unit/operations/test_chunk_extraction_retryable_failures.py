@@ -87,11 +87,13 @@ async def test_retryable_llm_error_below_max_requeues_chunk():
         settings=settings,
     )
 
-    adapter.update_chunk_task.assert_called_once()
-    update_args = adapter.update_chunk_task.call_args
+    # Requeue write, then the repoint at the newly enqueued task.
+    assert adapter.update_chunk_task.call_count == 2
+    update_args = adapter.update_chunk_task.call_args_list[0]
     assert update_args[0][0] == "ct1"
     assert update_args[0][1]["status"] == "queued"
     assert update_args[0][1]["retry_count"] == 1
+    assert adapter.update_chunk_task.call_args_list[1][0][1]["queue_task_id"] == "task_2"
     service.queue_extract_chunk.assert_awaited_once()
     adapter.fail_chunk_task.assert_not_called()
     assert result["success"] is False

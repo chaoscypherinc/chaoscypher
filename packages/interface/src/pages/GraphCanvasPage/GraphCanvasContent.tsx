@@ -66,7 +66,11 @@ import { useMenuState } from '../../hooks';
 import type { NodeAttributes, EdgeAttributes, LayoutType, GraphNodeData, GraphEdgeData } from './types';
 import { isSourceGroupNode, SOURCE_GROUP_PREFIX } from './types';
 import { useSourceGroups } from './hooks/useSourceGroups';
+import { useUnresolvedRegion } from './hooks/useUnresolvedRegion';
+import { useUnresolvedRegionLayer } from './hooks/useUnresolvedRegionLayer';
+import { UnresolvedRegionToggle } from './components/UnresolvedRegionToggle';
 import { ChaosCypherBackground } from '../../theme/palette';
+import { canvasOverlaySx } from '../../theme/cardStyles';
 import ConfirmDialog from '../../components/ConfirmDialog';
 
 interface GraphCanvasContentProps {
@@ -260,13 +264,24 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
   // Zoom-adaptive icon visibility
   const iconVisibleBySizeRef = useZoomIcons();
 
+  // "Unresolved" region: every pipeline-flagged node, corralled together.
+  // Collapsing it is presentation only — members are hidden by the reducer
+  // and the summary node is drawn on a canvas layer, never added to the graph.
+  const { region: unresolvedRegion, toggle: toggleUnresolvedRegion } = useUnresolvedRegion(graph);
+  const expandUnresolvedRegion = useCallback(() => {
+    if (!unresolvedRegion.expanded) toggleUnresolvedRegion();
+  }, [unresolvedRegion.expanded, toggleUnresolvedRegion]);
+  useUnresolvedRegionLayer({ graph, region: unresolvedRegion, onExpand: expandUnresolvedRegion });
+
   // Merge template-filtered hidden nodes with collapsed source group members
+  // and the collapsed Unresolved region's members
   const allHiddenNodeIds = useMemo(() => {
-    if (collapsedMemberIds.size === 0) return hiddenNodeIds;
+    if (collapsedMemberIds.size === 0 && unresolvedRegion.hiddenIds.size === 0) return hiddenNodeIds;
     const merged = new Set(hiddenNodeIds);
     for (const id of collapsedMemberIds) merged.add(id);
+    for (const id of unresolvedRegion.hiddenIds) merged.add(id);
     return merged;
-  }, [hiddenNodeIds, collapsedMemberIds]);
+  }, [hiddenNodeIds, collapsedMemberIds, unresolvedRegion.hiddenIds]);
 
   // Node & edge reducers for visual effects
   useGraphReducers({
@@ -427,11 +442,7 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
             gap: 1,
             alignItems: 'center',
             flexDirection: 'row',
-            background: 'rgba(15, 20, 30, 0.15)',
-            backdropFilter: 'blur(12px)',
-            WebkitBackdropFilter: 'blur(12px)',
-            border: '1px solid rgba(255, 255, 255, 0.05)',
-            borderRadius: 1.5,
+            ...canvasOverlaySx,
             p: 1,
             '& .MuiOutlinedInput-root': {
               bgcolor: 'transparent',
@@ -457,6 +468,11 @@ export const GraphCanvasContent: React.FC<GraphCanvasContentProps> = ({ graph })
             </IconButton>
           </Tooltip>
         </Box>
+        <UnresolvedRegionToggle
+          count={unresolvedRegion.count}
+          expanded={unresolvedRegion.expanded}
+          onToggle={toggleUnresolvedRegion}
+        />
       </Box>
 
       {/* Layout Selector SpeedDial - Top Right */}

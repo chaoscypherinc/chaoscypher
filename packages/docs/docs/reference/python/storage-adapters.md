@@ -63,12 +63,15 @@ Source operations are split across 5 focused mixins:
     - SourceDeletionMixin: Cross-mixin delete-source cascade orchestrator
 
 Example:
-    adapter = SqliteAdapter(db_path="data/app.db")
-    adapter.connect()
-    workflow = adapter.create_workflow(\{...\})
-    adapter.disconnect()
 
-**Bases:** `WorkflowsMixin, WorkflowExecutionsMixin, ToolsMixin, SourceLifecycleMixin, SourceIndexingMixin, SourceExtractionJobsMixin, SourceChunkTasksMixin, SourceDeletionMixin, SourcesMixin, StageProgressMixin, SourceTagsMixin, SourceChunksMixin, SourceCitationsMixin, SourceRecoveryEventsMixin, VisionPagesMixin, ChatsMixin, TriggersMixin, LLMMetricsMixin, ExtractionSubmissionsMixin, SearchRetryQueueMixin, SystemStateMixin`
+```
+adapter = SqliteAdapter(db_path="data/app.db")
+adapter.connect()
+workflow = adapter.create_workflow({...})
+adapter.disconnect()
+```
+
+**Bases:** `WorkflowsMixin, WorkflowExecutionsMixin, ToolsMixin, SourceLifecycleMixin, SourceIndexingMixin, SourceExtractionJobsMixin, SourceChunkTasksMixin, SourceDeletionMixin, SourcesMixin, StageProgressMixin, SourceTagsMixin, SourceChunksMixin, SourceCitationsMixin, SourceRecoveryEventsMixin, SourceSitesMixin, VisionPagesMixin, ChatsMixin, TriggersMixin, LLMMetricsMixin, ExtractionSubmissionsMixin, SearchRetryQueueMixin, SystemStateMixin`
 
 **Methods:**
 
@@ -119,11 +122,14 @@ exception. Supports nesting — only the outermost context
 actually commits / rolls back.
 
 Example:
-    with adapter.transaction():
-        adapter.source_repository.start_commit(source_id)
-        adapter.graph_repository.delete_graph_data_by_source(source_id)
-        # ... more writes ...
-    # All committed atomically here
+
+```
+with adapter.transaction():
+    adapter.source_repository.start_commit(source_id)
+    adapter.graph_repository.release_source(source_id)
+    # ... more writes ...
+# All committed atomically here
+```
 
 **Attributes:**
 

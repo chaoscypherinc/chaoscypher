@@ -57,6 +57,9 @@ def _null_session_adapter() -> MagicMock:
 class TestGraphCleanupNullSessionGuard:
     """RuntimeError is raised when adapter.session is None inside transaction().
 
+    The guard is the factory's (``get_transaction_graph_repository``), the one
+    every repository on an adapter's session goes through.
+
     This is a programmer-error guard (internal invariant), not a user-visible
     failure.  The test pins the behaviour so refactoring cannot silently
     swallow the error.
@@ -70,7 +73,7 @@ class TestGraphCleanupNullSessionGuard:
             "chaoscypher_core.services.reset.graph_cleanup.get_sqlite_adapter",
             return_value=mock_adapter,
         ):
-            with pytest.raises(RuntimeError, match="Adapter session is None"):
+            with pytest.raises(RuntimeError, match="connected adapter"):
                 service.cleanup_orphaned_items()
 
     def test_runtime_error_message_is_descriptive(self) -> None:
@@ -84,4 +87,4 @@ class TestGraphCleanupNullSessionGuard:
             with pytest.raises(RuntimeError) as exc_info:
                 service.cleanup_orphaned_items()
 
-        assert "transaction" in str(exc_info.value).lower()
+        assert "adapter.connect()" in str(exc_info.value)

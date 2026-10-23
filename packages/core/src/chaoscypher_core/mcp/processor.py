@@ -89,10 +89,14 @@ class DocumentProcessor:
         """Initialize with a processing pipeline callback.
 
         Args:
-            pipeline_callback: Async function that processes a file.
-                Signature: (file_path: str, file_id: str, progress_cb) -> dict
-            completed_history_limit: Max completed files retained in memory.
-                Callers pass settings.mcp.completed_history_limit.
+            pipeline_callback: Async function that processes a file. Called
+                with keyword arguments: ``file_path``, ``file_id``,
+                ``progress_callback``, ``domain``, ``enable_normalization``,
+                ``skip_duplicates``, ``auto_confirm``, ``content`` and
+                ``enable_vision`` (see ``_worker_loop``).
+            completed_history_limit: Max completed files retained in memory;
+                the oldest are evicted on every append. Callers pass
+                settings.mcp.completed_history_limit.
 
         """
         self.pipeline_callback = pipeline_callback
@@ -315,7 +319,20 @@ class DocumentProcessor:
             if c.file_id == file_id:
                 return self._completed_to_dict(c)
 
-        return {"file_id": file_id, "status": "completed"}
+        # The event was set but no record was written: the worker was
+        # cancelled mid-file. Reporting "completed" here claimed a commit
+        # that never happened.
+        return {
+            "file_id": file_id,
+            "status": "unknown",
+            "error": "Processing ended without a result (worker cancelled)",
+        }
+
+    def _remember(self, completed: CompletedFile) -> None:
+        """Append to the completed history and evict beyond the configured limit."""
+        self._completed.append(completed)
+        if self._completed_history_limit > 0:
+            del self._completed[: -self._completed_history_limit]
 
     def _start_worker(self) -> None:
         """Start the background worker loop."""
@@ -359,7 +376,7 @@ class DocumentProcessor:
                 # ``awaiting_confirmation`` when parked). Treat falsy as the
                 # historical default so the full pipeline still reports
                 # committed when extraction ran.
-                self._completed.append(
+                self._remember(
                     CompletedFile(
                         file_id=queued.file_id,
                         filename=queued.filename,
@@ -375,7 +392,7 @@ class DocumentProcessor:
                     file_id=queued.file_id,
                     error=str(e),
                 )
-                self._completed.append(
+                self._remember(
                     CompletedFile(
                         file_id=queued.file_id,
                         filename=queued.filename,

@@ -771,7 +771,7 @@ class TestCommandRegistration:
             "index_only",
             "skip_extract",
             "quick",
-            "domain",
+            "packs",
             "filtering_mode",
             "quiet",
             "output_json",

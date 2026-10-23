@@ -11,11 +11,13 @@ Extracted from commit_service.py for SRP compliance.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from chaoscypher_core.models import PropertyDefinition, PropertyType, TemplateCreate
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import committed_type
 
 
 if TYPE_CHECKING:
@@ -52,8 +54,8 @@ class TemplateCommitHandler:
         ...     "create_templates": True,
         ...     "suggested_templates": [
         ...         {
-        ...             "name": "Research Paper",
-        ...             "reason": "Academic publications and research documents",
+        ...             "name": "Work",
+        ...             "reason": "Books, papers and other created works",
         ...             "properties": ["title", "authors", "publication_date"]
         ...         }
         ...     ]
@@ -62,10 +64,13 @@ class TemplateCommitHandler:
         >>> created_ids, name_mapping, all_used, inserted = await handler.create_suggested_templates(commit_data)
         >>> print(f"Created {len(created_ids)} templates, total used: {len(all_used)}")
         >>> print(f"Mapping: {name_mapping}")
-        {"research paper": "template_abc123"}
+        {"work": "template_abc123"}
 
     Note:
-        Template names are normalized to lowercase for duplicate checking.
+        Templates are one per core type: a suggestion named by an old
+        per-type name (``Character``) is created as its core type's
+        (``Person``), once. Template names are normalized to lowercase for
+        duplicate checking.
         Invalid template names (unknown, untitled, n/a, none) are skipped.
 
     """
@@ -120,50 +125,21 @@ class TemplateCommitHandler:
         # Per-template exceptions (malformed AI suggestions) are skippable here
         # because the session is NOT touched during the build loop.
         templates_to_create: list[TemplateCreate] = []
+        seen: set[str] = set()
 
         for template_data in commit_data["suggested_templates"]:
             try:
-                template_name = template_data["name"].strip()
-                template_description = template_data.get("description", "").strip()
-                if not template_description:
-                    template_description = template_data.get("reason", "").strip()
-
-                if not template_name or template_name.lower() in [
-                    "unknown",
-                    "untitled template",
-                    "untitled",
-                    "n/a",
-                    "none",
-                ]:
-                    logger.warning("template_invalid_name_skipped", template_name=template_name)
-                    continue
-
-                properties = []
-                if "properties" in template_data and isinstance(template_data["properties"], list):
-                    for prop in template_data["properties"]:
-                        if isinstance(prop, str):
-                            properties.append(
-                                PropertyDefinition(
-                                    name=prop.lower().replace(" ", "_"),
-                                    display_name=prop,
-                                    property_type=PropertyType.TEXT,
-                                    required=False,
-                                )
-                            )
-                        elif isinstance(prop, dict):
-                            properties.append(PropertyDefinition(**prop))
-
-                templates_to_create.append(
-                    TemplateCreate(
-                        name=template_name,
-                        description=template_description,
-                        template_type="node",
-                        properties=properties,
-                        icon=template_data.get("icon"),
-                        color=template_data.get("color"),
-                        source_id=source_id,
+                built = template_from_suggestion(template_data, source_id=source_id)
+                if built is None:
+                    logger.warning(
+                        "template_invalid_name_skipped",
+                        template_name=str(template_data.get("name") or ""),
                     )
-                )
+                    continue
+                if built.name.lower() in seen:
+                    continue
+                seen.add(built.name.lower())
+                templates_to_create.append(built)
             except Exception as e:
                 logger.exception(
                     "template_build_failed",
@@ -199,3 +175,62 @@ class TemplateCommitHandler:
         )
         # Return created_templates for both created and all_used (no reuse anymore)
         return created_templates, template_name_to_id, created_templates, inserted_count
+
+
+_INVALID_TEMPLATE_NAMES = frozenset({"unknown", "untitled template", "untitled", "n/a", "none"})
+"""Suggested template names that name no template (a model's placeholder): skipped."""
+
+
+def template_from_suggestion(
+    template_data: Mapping[str, Any], source_id: str | None = None
+) -> TemplateCreate | None:
+    """The node template a suggestion (``TemplateExtractor`` shape) is created as; None for a placeholder name.
+
+    The one builder of a core type's template, for the commit
+    (:meth:`TemplateCommitHandler.create_suggested_templates`) and the ccx
+    import of a bundle from before the core types (``CcxImporter``). One
+    template per core type (spec 2026-10-07 § 6): a suggestion named by an
+    old per-type name (a payload cached before the restructure:
+    ``Character``) is its core type's (``Person``, ``committed_type``). The
+    description falls back to the suggestion's ``reason``; ``properties``
+    may be names (a text property each) or ``PropertyDefinition`` dicts.
+
+    Raises:
+        KeyError: When the suggestion has no ``name``.
+        pydantic.ValidationError: When a property dict is malformed.
+    """
+    template_name = str(template_data["name"]).strip()
+    typed = committed_type({"type": template_name})
+    if typed is not None:
+        template_name = typed[0]
+    if not template_name or template_name.lower() in _INVALID_TEMPLATE_NAMES:
+        return None
+    description = str(template_data.get("description") or "").strip()
+    if not description:
+        description = str(template_data.get("reason") or "").strip()
+
+    properties: list[PropertyDefinition] = []
+    raw_properties = template_data.get("properties")
+    if isinstance(raw_properties, list):
+        for prop in raw_properties:
+            if isinstance(prop, str):
+                properties.append(
+                    PropertyDefinition(
+                        name=prop.lower().replace(" ", "_"),
+                        display_name=prop,
+                        property_type=PropertyType.TEXT,
+                        required=False,
+                    )
+                )
+            elif isinstance(prop, dict):
+                properties.append(PropertyDefinition(**prop))
+
+    return TemplateCreate(
+        name=template_name,
+        description=description,
+        template_type="node",
+        properties=properties,
+        icon=template_data.get("icon"),
+        color=template_data.get("color"),
+        source_id=source_id,
+    )

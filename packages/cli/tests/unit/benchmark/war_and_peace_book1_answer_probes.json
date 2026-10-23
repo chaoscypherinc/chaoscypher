@@ -1,0 +1,1565 @@
+{
+ "about": "Adversarial answers for every war_and_peace_book1 question, written 2026-10-03 by three reviewers who checked each against the corpus (chapters I-XIV): three correct answers (terse, cited, hedge-first) and three wrong ones a careless scorer could pass (the right names with the wrong relation, a decline that repeats the terms, a confusable substitute). Scored against the whole corpus, every correct answer must pass and every wrong one fail.",
+ "probes": [
+  {
+   "id": "q001",
+   "correct": [
+    "It takes place in July 1805.",
+    "Anna Pávlovna Schérer's reception is held in July, 1805; the narrator introduces her as the speaker 'in July, 1805' [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not give a precise date, but it places the reception in July, 1805."
+   ],
+   "wrong": [
+    "It takes place in 1805, some weeks after July, once the Guards had left Petersburg.",
+    "The sources do not state the month of the reception, though July and 1805 are both mentioned.",
+    "It takes place in August, 1805."
+   ]
+  },
+  {
+   "id": "q002",
+   "correct": [
+    "She was maid of honor and favorite of the Empress Márya Fëdorovna.",
+    "Anna Pávlovna Schérer is introduced as the well-known hostess who was maid of honor and favorite of the Empress Márya Fëdorovna [[cite:C0:S1|war_and_peace_book1.txt]]; the knowledge graph also calls her patroness the Dowager Empress.",
+    "The text does not spell out the court post beyond that phrase, but it says she was maid of honor and favorite of the Empress Márya Fëdorovna."
+   ],
+   "wrong": [
+    "Márya Fëdorovna was the maid of honor and favorite of Anna Pávlovna Schérer, who received guests at her soirée.",
+    "The sources do not say whose favorite she was; Márya Fëdorovna is only mentioned in connection with Baron Funke.",
+    "She was maid of honor to the Empress Elizabeth, wife of the Emperor Alexander."
+   ]
+  },
+  {
+   "id": "q003",
+   "correct": [
+    "The post of first secretary at Vienna.",
+    "Prince Vasíli wanted his son appointed first secretary at Vienna, the post for which the Dowager Empress was being urged to choose Baron Funke [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not say which of his sons it was, but the post was that of first secretary at Vienna."
+   ],
+   "wrong": [
+    "Prince Vasíli wanted to be appointed first secretary at Vienna himself, rather than see Baron Funke get it.",
+    "The sources do not say which post he wanted for his son, though Baron Funke is mentioned in connection with a secretary post at Vienna.",
+    "He wanted the post of ambassador at Vienna for his son, a higher place than the first secretary post given to Baron Funke."
+   ]
+  },
+  {
+   "id": "q004",
+   "correct": [
+    "Forty thousand rubles a year.",
+    "Prince Vasíli complains to Anna Pávlovna that Anatole is costing him forty thousand rubles a year and wonders what it will be in five years [[cite:C2:S2|war_and_peace_book1.txt]].",
+    "The text does not give an itemised figure, but Prince Vasíli says Anatole costs him 40,000 rubles a year."
+   ],
+   "wrong": [
+    "Prince Vasíli says Anatole costs him forty thousand serfs' worth of income, the size of Count Bezúkhov's estate.",
+    "The sources do not state the annual cost, though forty thousand is mentioned in connection with Anatole.",
+    "Forty thousand serfs a year."
+   ]
+  },
+  {
+   "id": "q005",
+   "correct": [
+    "Caesar's Commentaries.",
+    "Lying on the sofa in Prince Andrew's study, Pierre took the first book that came to hand from the shelf, Caesar's Commentaries, and began reading it in the middle [[cite:C0:S3|war_and_peace_book1.txt]].",
+    "The text does not say he chose it deliberately, but the book was Caesar's Commentaries, the first that came to his hand."
+   ],
+   "wrong": [
+    "Prince Andrew handed Pierre Caesar's Commentaries when he came into the study.",
+    "The sources do not name the book; Caesar is only mentioned in passing in that scene.",
+    "He took the Abbé Morio's pamphlet on perpetual peace."
+   ]
+  },
+  {
+   "id": "q006",
+   "correct": [
+    "The doll was called Mimi.",
+    "Natásha produced a doll from the folds of her frock and, laughing, said \"My doll... Mimi...\" [[cite:C3:S5|war_and_peace_book1.txt]]; Borís later joked that he had known Mimi before her nose was broken.",
+    "The text does not state it in a single sentence, but Natásha calls her doll Mimi."
+   ],
+   "wrong": [
+    "Mimi was the name of Natásha's younger sister, not the doll.",
+    "The context does not name the doll, though Mimi is mentioned in the scene.",
+    "The doll was called Sónya, after her cousin."
+   ]
+  },
+  {
+   "id": "q007",
+   "correct": [
+    "Dr. Lorrain.",
+    "Anna Mikháylovna tells the countess that Count Bezúkhov is so ill he may die at any moment and that Dr. Lorrain has come from Petersburg [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not describe the doctor further, but the one who came from Petersburg is Dr. Lorrain."
+   ],
+   "wrong": [
+    "Dr. Lorrain had been sent by Prince Vasíli from Moscow to attend Pierre.",
+    "The sources do not name the doctor attending Count Bezúkhov, beyond a mention of Lorrain.",
+    "It was Dr. Métivier, the court physician."
+   ]
+  },
+  {
+   "id": "q008",
+   "correct": [
+    "It was near the Horse Guards' barracks.",
+    "Pierre drove to Kurágin's that night [[cite:C4:S6|war_and_peace_book1.txt]]; the house where Anatole lived stood near the Horse Guards' barracks.",
+    "The retrieved text does not describe the house itself, but in the novel it is the large house near the Horse Guards' barracks."
+   ],
+   "wrong": [
+    "It was near the Semënov Guards' barracks, where Dólokhov served.",
+    "The sources do not say; they only mention the Guards and Kurágin's house in St. Petersburg.",
+    "It was on the Moyka Canal, near the Winter Palace."
+   ]
+  },
+  {
+   "id": "q009",
+   "correct": [
+    "On the Povarskáya.",
+    "The Countess Rostóva's big house, well known to all Moscow, stood on the Povarskáya [[cite:C0:S2|war_and_peace_book1.txt]].",
+    "The text does not call it a street in so many words, but the big house is on the Povarskáya."
+   ],
+   "wrong": [
+    "On the Arbat; the Povarskáya is where Count Bezúkhov lives.",
+    "The sources do not name the street, though the Povarskáya is mentioned.",
+    "On the Tverskáya, near the Povarskáya."
+   ]
+  },
+  {
+   "id": "q010",
+   "correct": [
+    "A whole bottle of rum, for fifty imperials.",
+    "Dólokhov bet Stevens fifty imperials that he would drink a whole bottle of rum without taking it from his mouth, sitting outside the window and without holding on [[cite:C3:S4|war_and_peace_book1.txt]].",
+    "The text does not call it a single draught in so many words, but the wager was a whole bottle of rum, drunk on the ledge without holding on, for fifty imperials."
+   ],
+   "wrong": [
+    "A bottle of rum, for a hundred imperials; fifty was only Stevens's counter-offer.",
+    "The sources do not specify the stake, though rum and fifty imperials are mentioned.",
+    "A bottle of vodka for fifty imperials."
+   ]
+  },
+  {
+   "id": "q011",
+   "correct": [
+    "Into the Moyka Canal.",
+    "According to the visitor talking with the count, the young men tied a policeman and the bear back to back and put the bear into the Moyka Canal, where it swam about with the policeman on its back [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not name a river as such, but the waterway was the Moyka Canal."
+   ],
+   "wrong": [
+    "Dólokhov himself was tied to the bear and thrown into the Moyka by the police.",
+    "The sources do not state which waterway; the Moyka is mentioned only as a canal in Petersburg.",
+    "Into the Neva, the main river of Petersburg."
+   ]
+  },
+  {
+   "id": "q012",
+   "correct": [
+    "Cyril Vladímirovich.",
+    "Pierre is the illegitimate son of Count Bezúkhov [[cite:C0:S1|war_and_peace_book1.txt]], whom the text names Count Cyril Vladímirovich Bezúkhov [[cite:C5:S1|war_and_peace_book1.txt]].",
+    "The text does not spell out the patronymic in Pierre's own scene, but his father is Count Cyril Vladímirovich Bezúkhov."
+   ],
+   "wrong": [
+    "Pierre's father is Count Ilyá, and Cyril Vladímirovich is Borís's godfather, a different man.",
+    "The text does not give his name, though Cyril Vladímirovich is mentioned as Borís's godfather.",
+    "Kirill Vladímirovich Bezúkhov."
+   ]
+  },
+  {
+   "id": "q013",
+   "correct": [
+    "She had borne twelve children.",
+    "The countess, a woman of about forty-five, was worn out with childbearing: she had had twelve [[cite:C0:S4|war_and_peace_book1.txt]].",
+    "The text does not say how many survived, but the countess had borne twelve children."
+   ],
+   "wrong": [
+    "She had twelve children, all of whom are present at the name-day party.",
+    "The sources do not give a number, although twelve is mentioned in the description of the countess.",
+    "She had four children: Véra, Nicholas, Natásha and Pétya."
+   ]
+  },
+  {
+   "id": "q014",
+   "correct": [
+    "Colonel Schubert.",
+    "The count says that Schubert, the colonel of the Pávlograd Hussars, is dining with them; he has been on leave and is taking Nicholas back with him [[cite:C0:S2|war_and_peace_book1.txt]].",
+    "The text gives only his surname, but the colonel is Schubert."
+   ],
+   "wrong": [
+    "Schubert is Nicholas's university friend who is joining the Pávlograd Hussars with him; the colonel is not named.",
+    "The sources do not name the colonel, though Schubert is mentioned as dining with the count.",
+    "Colonel Denísov of the Pávlograd Hussars."
+   ]
+  },
+  {
+   "id": "q015",
+   "correct": [
+    "He was nicknamed \"the King of Prussia\".",
+    "Princess Mary's father, the well-known Prince Bolkónski who had to retire from the army under the late Emperor, was nicknamed 'the King of Prussia' [[cite:C3:S1|war_and_peace_book1.txt]].",
+    "The text does not say who coined it, but he was known as 'the King of Prussia.'"
+   ],
+   "wrong": [
+    "He was called the King of Prussia because he served the King of Prussia after retiring; Prince Vasíli gave him the nickname.",
+    "The sources do not give a nickname, although the King of Prussia is mentioned.",
+    "He was nicknamed 'the bear'."
+   ]
+  },
+  {
+   "id": "q016",
+   "correct": [
+    "La grippe.",
+    "Anna Pávlovna said she was suffering from la grippe, then a new word in St. Petersburg used only by the elite [[cite:C1:S2|war_and_peace_book1.txt]].",
+    "The text does not name a medical diagnosis, but she called her illness 'la grippe'."
+   ],
+   "wrong": [
+    "Influenza, which the elite then called the grippe in Moscow.",
+    "The sources do not name her illness, though the word grippe is mentioned.",
+    "A cough - she had had a cough for some days."
+   ]
+  },
+  {
+   "id": "q017",
+   "correct": [
+    "The illness of the wealthy old Count Bezúkhov and the misconduct of his illegitimate son Pierre.",
+    "The chief topic of the day was Count Bezúkhov's illness and the scandal around his illegitimate son Pierre, who had behaved so improperly at Anna Pávlovna's reception [[cite:C5:S2|war_and_peace_book1.txt]].",
+    "The text does not call it gossip in so many words, but the chief topic among the callers was Count Bezúkhov's illness and his son Pierre's behavior."
+   ],
+   "wrong": [
+    "Pierre Bezúkhov's engagement to Prince Vasíli's daughter.",
+    "The sources do not record the callers' gossip, though Bezúkhov and Pierre are mentioned elsewhere.",
+    "The news that war had been declared against Bonaparte."
+   ]
+  },
+  {
+   "id": "q018",
+   "correct": [
+    "Madame de Genlis.",
+    "Nicholas had nicknamed Véra \"Madame de Genlis\", a name considered very stinging [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not show the shouting in this passage, but the nickname Nicholas gave Véra was Madame de Genlis."
+   ],
+   "wrong": [
+    "Véra gave Natásha the nickname Madame de Genlis.",
+    "The context does not state the nickname, though Madame de Genlis is mentioned.",
+    "They called her 'the countess', after her mother."
+   ]
+  },
+  {
+   "id": "q019",
+   "correct": [
+    "The Abbé Morio's.",
+    "Pierre told Anna Pávlovna he had heard of the Abbé Morio's scheme for perpetual peace and that it was very interesting but hardly feasible [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not use the phrase 'ending war forever', but the scheme was the Abbé Morio's plan for perpetual peace."
+   ],
+   "wrong": [
+    "Pierre's own scheme, which the Abbé Morio dismissed as hardly feasible.",
+    "The sources do not say whose scheme it was, though the Abbé Morio is mentioned.",
+    "Prince Andrew's scheme, which Pierre criticised at supper."
+   ]
+  },
+  {
+   "id": "q020",
+   "correct": [
+    "Mademoiselle George.",
+    "In the vicomte's anecdote the Duc d'Enghien went secretly to Paris to visit Mademoiselle George, the famous actress, and at her house came upon Bonaparte [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not give her full name, but the actress was Mademoiselle George."
+   ],
+   "wrong": [
+    "Mademoiselle George told the anecdote herself at Anna Pávlovna's.",
+    "The sources do not name the actress, though George is mentioned in the vicomte's tale.",
+    "Mademoiselle Mars, the actress of the Comédie-Française."
+   ]
+  },
+  {
+   "id": "q021",
+   "correct": [
+    "Because it was not a war for freedom: helping England and Austria against the greatest man in the world was not right.",
+    "Pierre told Prince Andrew that if it were a war for freedom he would be the first to enlist, but to help England and Austria against the greatest man in the world was not right [[cite:C0|war_and_peace_book1.txt]].",
+    "The text does not give a long reason, but Pierre said helping England and Austria against Napoleon was not right."
+   ],
+   "wrong": [
+    "Pierre said he would not join because England and Austria were too weak to win, and he did not want to die for a lost cause.",
+    "The sources do not state his reason, though England and Austria are mentioned.",
+    "Because his father, Count Bezúkhov, forbade him to fight on the side of England and Austria."
+   ]
+  },
+  {
+   "id": "q022",
+   "correct": [
+    "Prince Vasíli Kurágin.",
+    "Prince Vasíli, Anatole's father, asked Anna Pávlovna to arrange the match and promised to be her 'most devoted slave-slafe with an f' [[cite:C8:S1|war_and_peace_book1.txt]]; she answered that she would act on his family's behalf [[cite:C8:S2|war_and_peace_book1.txt]].",
+    "The text does not tag the speaker in that line, but it is Prince Vasíli, who wanted her to arrange a marriage for his son Anatole."
+   ],
+   "wrong": [
+    "Anatole, Prince Vasíli's son, promised to be her slafe if she found him a rich wife.",
+    "The sources do not say who made the promise, though Prince Vasíli and Anatole are both discussed.",
+    "Prince Hippolyte, who wanted Anna Pávlovna to find him a wife."
+   ]
+  },
+  {
+   "id": "q023",
+   "correct": [
+    "A place in the Archives Department.",
+    "The count complains that Nicholas is leaving the university to enter the army, though there was a place waiting for him in the Archives Department [[cite:C4:S1|war_and_peace_book1.txt]].",
+    "The text does not describe the post in detail, but a place was waiting for him in the Archives Department."
+   ],
+   "wrong": [
+    "Borís had a place waiting in the Archives Department before he became an officer.",
+    "The sources do not specify the position, beyond a passing mention of the Archives.",
+    "A post as first secretary at Vienna."
+   ]
+  },
+  {
+   "id": "q024",
+   "correct": [
+    "A second Salomoni.",
+    "The count says of Natásha that she will be a singer, \"a second Salomoni!\", and that they have engaged an Italian to teach her [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not say who Salomoni was, but the count calls her a second Salomoni."
+   ],
+   "wrong": [
+    "The countess says Véra will be a second Salomoni.",
+    "The context does not say, though Salomoni is mentioned.",
+    "A second Catalani."
+   ]
+  },
+  {
+   "id": "q025",
+   "correct": [
+    "She needed five hundred rubles and had only a twenty-five-ruble note.",
+    "Anna Mikháylovna told the countess she needed five hundred rubles to equip Borís but had only one twenty-five-ruble note [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The text does not itemise the uniform, but she said she needed 500 rubles and had only one 25-ruble note."
+   ],
+   "wrong": [
+    "She needed twenty-five rubles and had five hundred, all tied up in her lawsuit.",
+    "The sources do not give the sums, though five hundred and twenty-five rubles are mentioned.",
+    "She needed forty thousand rubles and had nothing at all."
+   ]
+  },
+  {
+   "id": "q026",
+   "correct": [
+    "Her son Borís was transferred into the Semënov Guards.",
+    "The elderly lady was Princess Drubetskáya (Anna Mikháylovna); Prince Vasíli promised her son would be transferred to the Guards [[cite:C7:S2|war_and_peace_book1.txt]], and Borís went into the Semënov Guards as a cornet [[cite:C8:S2|war_and_peace_book1.txt]].",
+    "The passages themselves only say 'the Guards', but the knowledge graph places Borís in the Semënov Guards, which he entered as a cornet."
+   ],
+   "wrong": [
+    "Prince Vasíli's own son Borís was transferred into the Semënov Guards at his mother's request.",
+    "The sources do not say which regiment; the Semënov Guards are mentioned only in the knowledge graph.",
+    "Borís was taken onto Kutúzov's staff as his adjutant."
+   ]
+  },
+  {
+   "id": "q027",
+   "correct": [
+    "Count Cyril Vladímirovich Bezúkhov.",
+    "Borís's godfather is Count Cyril Vladímirovich Bezúkhov; Anna Mikháylovna calls him \"Bóry's godfather\" [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The text does not use the word godfather in the petition scene, but Borís's godfather is Count Cyril Vladímirovich Bezúkhov."
+   ],
+   "wrong": [
+    "Prince Vasíli is Borís's godfather; Bezúkhov is only his mother's cousin.",
+    "The sources do not name the godfather, though Count Bezúkhov is mentioned.",
+    "Pierre Bezúkhov is Borís's godfather."
+   ]
+  },
+  {
+   "id": "q028",
+   "correct": [
+    "Prince Vasíli hushed it up, but Anatole was still ordered out of Petersburg.",
+    "Anatole Kurágin's father, Prince Vasíli, got his son's affair hushed up, but even Anatole was ordered out of Petersburg [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not name the father in that sentence, but Anatole Kurágin's father (Prince Vasíli) hushed up his son's part, and Anatole was ordered out of Petersburg all the same."
+   ],
+   "wrong": [
+    "Prince Vasíli hushed it up, but Anatole was sent back to Moscow like Pierre.",
+    "The sources do not say what happened to the son, though Prince Vasíli is said to have hushed things up and someone was ordered out of Petersburg.",
+    "Count Bezúkhov hushed up Pierre's part, but Pierre was expelled by the police and sent back to Moscow."
+   ]
+  },
+  {
+   "id": "q029",
+   "correct": [
+    "Her brother is Prince Andrew Bolkónski, who is to be Kutúzov's aide-de-camp.",
+    "Anna Pávlovna proposed Princess Mary Bolkónskaya for Anatole [[cite:C3:S2|war_and_peace_book1.txt]]; her brother, who married Lise Meinen, is an aide-de-camp of Kutúzov's [[cite:C2:S1|war_and_peace_book1.txt]], and the graph names him Prince Andrew.",
+    "The passage about the match does not name the brother, but he is young Bolkónski, Prince Andrew, General Kutúzov's aide-de-camp."
+   ],
+   "wrong": [
+    "The bride is Lise Meinen, and her brother Prince Andrew is going to be Kutúzov's aide-de-camp.",
+    "The sources do not name the brother, though Prince Andrew and Kutúzov are both mentioned.",
+    "Her brother is Prince Andrew, who is to become aide-de-camp to the Emperor."
+   ]
+  },
+  {
+   "id": "q030",
+   "correct": [
+    "He went to Anatole Kurágin's gathering, and was afterwards sent back to Moscow.",
+    "He broke his word and went to Anatole Kurágin's; after the affair with the bear he was sent back to Moscow.",
+    "The text does not say it in one place, but he went to Anatole's and was later sent back to Moscow."
+   ],
+   "wrong": [
+    "He went to Dólokhov's and was then sent to Petersburg.",
+    "The sources do not say, though Anatole and Moscow are mentioned.",
+    "He went to Anatole's and was exiled to the army in the Caucasus."
+   ]
+  },
+  {
+   "id": "q031",
+   "correct": [
+    "Márya Ivánovna Dólokhova.",
+    "Dólokhov, the officer of the Semënov regiment who drank the rum on the ledge, is the son of Márya Ivánovna Dólokhova, whom a visitor at the Rostóvs' calls 'such a worthy woman' (no context was retrieved, so no chunk can be cited).",
+    "The text does not name her in the window scene, but Dólokhov's mother is Márya Ivánovna Dólokhova."
+   ],
+   "wrong": [
+    "Márya Ivánovna is Dólokhov's sister.",
+    "The sources do not name his mother, though Márya Ivánovna is mentioned.",
+    "Márya Lvóvna Karágina."
+   ]
+  },
+  {
+   "id": "q032",
+   "correct": [
+    "Prince Vasíli is said to be a rival heir to Count Bezúkhov's fortune.",
+    "The man was Prince Vasíli, who brought Pierre and said 'Educate this bear for me!' [[cite:C2:S4|war_and_peace_book1.txt]]; in Moscow he is spoken of as Pierre's rival for the fortune of Count Cyril Vladímirovich Bezúkhov.",
+    "The retrieved text does not spell out the inheritance, but the man is Prince Vasíli and the fortune is that of the dying Bezúkhov, Pierre's father."
+   ],
+   "wrong": [
+    "Pierre, Count Bezúkhov's son, is the rival heir to Prince Vasíli's fortune.",
+    "The sources do not say; Prince Vasíli is only linked to Cyril Vladímirovich Bezúkhov through an interaction.",
+    "Prince Vasíli is a rival heir to the fortune of Prince Bolkónski, Princess Mary's rich and stingy father."
+   ]
+  },
+  {
+   "id": "q033",
+   "correct": [
+    "At Prince Vasíli Kurágin's; they meant to marry Anatole to Prince Andrew's sister.",
+    "Pierre was staying at Prince Vasíli Kurágin's and sharing the dissipated life of his son Anatole, whom the family planned to reform by marrying him to Prince Andrew's sister, Princess Mary Bolkónskaya [[cite:C0|war_and_peace_book1.txt]].",
+    "The text does not name her in that sentence, but Pierre stayed at Prince Vasíli Kurágin's, and Anatole was to marry Prince Andrew's sister Mary."
+   ],
+   "wrong": [
+    "Pierre was staying at Prince Andrew's, and the Kurágins planned to marry Anatole to Andrew's sister Mary.",
+    "The sources do not say where he stayed, though the Kurágin family and Princess Mary are mentioned.",
+    "At Prince Vasíli Kurágin's; they planned to marry Anatole to Hélène's friend, the little princess."
+   ]
+  },
+  {
+   "id": "q034",
+   "correct": [
+    "She agreed to help with the match between Anatole and her sister-in-law; her sister-in-law's father still had to agree.",
+    "In the hall the little princess told Anna Pávlovna 'It is settled' about the match between Anatole and her sister-in-law [[cite:C2:S3|war_and_peace_book1.txt]]; Anna Pávlovna asked her to write and say how her father looks at the matter [[cite:C2:S6|war_and_peace_book1.txt]].",
+    "The text does not spell out a promise, but 'It is settled' meant she would back the match of Anatole with her sister-in-law, whose father's view was still needed."
+   ],
+   "wrong": [
+    "She promised to marry Anatole herself, if her father agreed.",
+    "The sources do not say what was settled, though Anatole and a father are mentioned.",
+    "She promised to help with the match for Anatole, but Anatole's father, Prince Vasíli, still had to consent."
+   ]
+  },
+  {
+   "id": "q035",
+   "correct": [
+    "Her mother is Márya Lvóvna Karágina.",
+    "Julie Karágina turned to young Rostóv at the name day [[cite:C1:S3|war_and_peace_book1.txt]]; the knowledge graph records her mother, Márya Lvóvna Karágina, arriving at the Rostóv house with her daughter.",
+    "The passages do not state the relationship outright, but the visitor who came with her daughter, Márya Lvóvna Karágina, is Julie's mother."
+   ],
+   "wrong": [
+    "Márya Lvóvna Karágina is Julie's aunt; her mother is not named.",
+    "The sources do not name her mother, though a Márya Lvóvna Karágina visits the countess.",
+    "Her mother is the Countess Rostóva."
+   ]
+  },
+  {
+   "id": "q036",
+   "correct": [
+    "For his friend Borís, who was transferred to the Semënov Guards as a cornet.",
+    "The count says Nicholas is leaving the university for friendship's sake because his friend Borís has become an officer [[cite:C0:S1|war_and_peace_book1.txt]]; Borís got the rank of cornet in the Semënov Guards.",
+    "The text here does not give the rank, only that Borís became an officer; the rank was cornet."
+   ],
+   "wrong": [
+    "For his friend Borís, who received the rank of colonel in the Guards.",
+    "The context does not state the rank, though Borís is mentioned as a cornet.",
+    "For Prince Andrew, who became a cornet in the Horse Guards."
+   ]
+  },
+  {
+   "id": "q037",
+   "correct": [
+    "Prince Vasíli got him into the Guards; she hopes Count Cyril Vladímirovich Bezúkhov, his godfather, will pay for the equipment.",
+    "She applied to Prince Vasíli, who put the matter before the Emperor [[cite:C4:S2|war_and_peace_book1.txt]], and now pins her hope on Count Cyril Vladímirovich Bezúkhov, Borís's godfather, to equip him [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The text does not call either man a grandee, but the transfer came through Prince Vasíli and she hopes Count Bezúkhov, Bóry's godfather, will provide for his equipment."
+   ],
+   "wrong": [
+    "Prince Vasíli got the transfer, and she hopes the count - her host, Count Rostóv - will pay for the equipment.",
+    "The sources do not name the second patron, though Prince Vasíli and Count Bezúkhov are both mentioned.",
+    "Prince Golítsyn arranged the transfer through Rumyántsev; she hopes Prince Vasíli, Borís's father, will pay for the equipment."
+   ]
+  },
+  {
+   "id": "q038",
+   "correct": [
+    "At the Rostóvs'; the countess and her youngest daughter are both named Nataly.",
+    "Borís was brought up at his mother's rich relations, the Rostóvs [[cite:C4:S2|war_and_peace_book1.txt]], and the name day is St. Natalia's day for the mother and youngest daughter, both named Nataly [[cite:C4:S4|war_and_peace_book1.txt]].",
+    "The text does not say who paid for his schooling, but he was educated from childhood at the Rostóvs', where mother and daughter share the name Nataly."
+   ],
+   "wrong": [
+    "Borís was educated at Prince Vasíli's in Petersburg; the two Rostóv ladies are both named Nataly.",
+    "The sources do not say where he was educated, though the Rostóvs celebrate St. Natalia's day.",
+    "At the Rostóvs'; the countess and her daughter are both called Natásha."
+   ]
+  },
+  {
+   "id": "q039",
+   "correct": [
+    "In Russian; he had promised to take the vicomte home.",
+    "Hippolyte told his Moscow story in Russian, \"or the point will be lost\" [[cite:C0|war_and_peace_book1.txt]], and afterwards waited in the porch for the vicomte, Mortemart, whom he had promised to take home [[cite:C4:S1|war_and_peace_book1.txt]].",
+    "The text does not say why Russian was needed, but he told it in Russian and promised to take the vicomte home."
+   ],
+   "wrong": [
+    "In French, apologising to the vicomte that it was not in Russian; he promised to take Pierre home.",
+    "The sources do not say whom he promised to take home, though he told the story in Russian to the vicomte.",
+    "In Russian; he had promised to take the little princess home."
+   ]
+  },
+  {
+   "id": "q040",
+   "correct": [
+    "She calls him 'Uncle' and will live in the country with Andrew's father and sister.",
+    "Lise calls her husband 'Uncle's aide-de-camp', Kutúzov having taken Andrew as aide-de-camp; Andrew reminds her she will be in the country 'with my father and sister' (no context was retrieved, so no chunk can be cited).",
+    "The text does not say outright that 'Uncle' means Kutúzov, but she calls him Uncle, and she will stay with Andrew's father and sister."
+   ],
+   "wrong": [
+    "She calls Kutúzov 'the old fox' and will live with her own father and sister.",
+    "The sources do not say, though an uncle, a father and a sister are mentioned.",
+    "She calls him 'Uncle' and will live with Anna Pávlovna in Petersburg."
+   ]
+  },
+  {
+   "id": "q041",
+   "correct": [
+    "With Prince Vasíli, at the Rumyántsovs' theatricals.",
+    "The countess says she has not seen Prince Vasíli since they acted together at the Rumyántsovs' theatricals, and that he paid her attentions in those days.",
+    "The text does not describe the play, but she acted with Prince Vasíli at the Rumyántsovs'."
+   ],
+   "wrong": [
+    "With Count Rostóv, her husband, at the Rumyántsovs' theatricals.",
+    "The sources do not say, though Prince Vasíli and the Rumyántsovs are mentioned.",
+    "With Prince Vasíli, at Rumyántsev's, the minister Anna Mikháylovna was told to appeal to."
+   ]
+  },
+  {
+   "id": "q042",
+   "correct": [
+    "The count is Ilyá; Dmítri Vasílevich manages all his affairs.",
+    "The countess addresses her husband as Ilyá, and his affairs are run by Dmítri Vasílevich, a man of good family and the manager of all his affairs [[cite:C3:S1|war_and_peace_book1.txt]].",
+    "The text does not give his full name, but the countess calls him Ilyá, and Dmítri Vasílevich manages his affairs."
+   ],
+   "wrong": [
+    "The count is Dmítri, and his affairs are managed by Ilyá.",
+    "The context does not name the count, though Ilyá and Dmítri are mentioned.",
+    "The count is Nicholas, and Dmítri Vasílevich is his steward."
+   ]
+  },
+  {
+   "id": "q043",
+   "correct": [
+    "Sónya, the count's niece; Nicholas copied out verses for her.",
+    "The girl is Sónya, the count's fifteen-year-old niece [[cite:C6:S2|war_and_peace_book1.txt]]; Nicholas later copied out some verses for her, the first he had ever written (no retrieved chunk holds this second fact).",
+    "The text does not show the copying scene directly, but the girl is Sónya, and Nicholas copied out some verses for her."
+   ],
+   "wrong": [
+    "Natásha's sister Véra; Nicholas copied out verses for her.",
+    "The sources do not say who she is, though Sónya and some verses are mentioned.",
+    "Sónya; Nicholas copied out a letter to Borís for her."
+   ]
+  },
+  {
+   "id": "q044",
+   "correct": [
+    "On the march to Radzivílov.",
+    "Borís had stayed in Moscow for his equipment and was to join the Guards on their march to Radzivílov [[cite:C1:S3|war_and_peace_book1.txt]].",
+    "The text does not say where exactly he would catch up, only that he was to join them on the march to Radzivílov."
+   ],
+   "wrong": [
+    "He was to join them in Petersburg, before they marched from Radzivílov.",
+    "The sources do not specify the place, though Radzivílov is named as the Guards' destination.",
+    "He was to join them at Olmütz."
+   ]
+  },
+  {
+   "id": "q045",
+   "correct": [
+    "He asks her, if the old count is better, to invite Pierre to dine with them.",
+    "The count asks Anna Mikháylovna, if Count Cyril Vladímirovich is better, to ask Pierre to dine with the Rostóvs, since he has been to the house and danced with the children.",
+    "The text does not dwell on the disgrace, but the count asks her to invite Pierre to dine."
+   ],
+   "wrong": [
+    "He asks her to tell Pierre not to dine with them, because of the disgrace.",
+    "The sources do not say, though Pierre may dine with the Rostóvs.",
+    "He asks her to bring Pierre to the ball that evening."
+   ]
+  },
+  {
+   "id": "q046",
+   "correct": [
+    "Anna Pávlovna Schérer.",
+    "The hostess was Anna Pávlovna Schérer, maid of honor and favorite of the Empress Márya Fëdorovna [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not call the reception a soirée in that sentence, but the hostess was Anna Pávlovna Schérer, not Anna Mikháylovna."
+   ],
+   "wrong": [
+    "Anna Pávlovna Drubetskáya, the impoverished princess.",
+    "The sources do not say which Anna hosted it, though Anna Pávlovna and Anna Mikháylovna are both mentioned.",
+    "Anna Mikháylovna Drubetskáya hosted it, with Anna Pávlovna as a guest."
+   ]
+  },
+  {
+   "id": "q047",
+   "correct": [
+    "Anna Mikháylovna, Princess Drubetskáya.",
+    "It was Anna Mikháylovna Drubetskáya: Prince Vasíli told her 'your son shall be transferred to the Guards' [[cite:C5:S2|war_and_peace_book1.txt]], not the hostess Anna Pávlovna.",
+    "The text calls her at first only 'the elderly lady', but she is Princess Anna Mikháylovna Drubetskáya."
+   ],
+   "wrong": [
+    "Anna Mikháylovna Drubetskáya only listened; it was Anna Pávlovna who begged Prince Vasíli to move her own son into the Guards.",
+    "The sources do not say which Anna; Anna Mikháylovna and Anna Pávlovna both talk with Prince Vasíli that evening.",
+    "Anna Pávlovna Schérer, the hostess."
+   ]
+  },
+  {
+   "id": "q048",
+   "correct": [
+    "Anna Mikháylovna Drubetskáya.",
+    "The countess calls her childhood friend Princess Anna Mikháylovna \"Annette\" [[cite:C4:S3|war_and_peace_book1.txt]]; she is Borís's mother [[cite:C3:S5|war_and_peace_book1.txt]].",
+    "The text does not explain the pet name, but 'Annette' here is Anna Mikháylovna, the countess's childhood friend."
+   ],
+   "wrong": [
+    "It is not Anna Mikháylovna but Anna Pávlovna Schérer, who signs herself Annette.",
+    "The context does not say which Anna, though Anna Mikháylovna and Anna Pávlovna both appear.",
+    "Anna Pávlovna Schérer."
+   ]
+  },
+  {
+   "id": "q049",
+   "correct": [
+    "Anatole, his youngest.",
+    "Anna Pávlovna told Prince Vasíli she did not speak of Anatole, his youngest: 'I don't like him' [[cite:C4:S2|war_and_peace_book1.txt]].",
+    "The text does not give her reasons, but the son she said she did not like was Anatole, not Hippolyte."
+   ],
+   "wrong": [
+    "Anatole's elder brother, Hippolyte, whom she called a fool.",
+    "The sources do not state which son, though Anatole and Hippolyte are both named.",
+    "Hippolyte, the one who came with Mortemart."
+   ]
+  },
+  {
+   "id": "q050",
+   "correct": [
+    "Hippolyte.",
+    "Prince Vasíli's son Hippolyte came with the vicomte de Mortemart and introduced him.",
+    "The text does not say how they knew each other, but it was Hippolyte who came with Mortemart."
+   ],
+   "wrong": [
+    "Hippolyte's brother Anatole brought him; Hippolyte only escorted the little princess.",
+    "The sources do not say, though Hippolyte is mentioned.",
+    "Anatole."
+   ]
+  },
+  {
+   "id": "q051",
+   "correct": [
+    "Dólokhov.",
+    "Dólokhov, the Semënov officer, wagered Stevens that he would drink a bottle of rum sitting on the outer ledge of the third-floor window [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not say he won in plain words, but the man who sat on the ledge and drank the rum was Dólokhov."
+   ],
+   "wrong": [
+    "Pierre did it after Dólokhov dared him to drink the whole bottle on the ledge.",
+    "The sources do not say who drank it, though Dólokhov made the bet.",
+    "Anatole Kurágin, egged on by Dólokhov."
+   ]
+  },
+  {
+   "id": "q052",
+   "correct": [
+    "Anatole Kurágin.",
+    "It was Anatole Kurágin, with whom Dólokhov was living, who translated Dólokhov's terms into English for Stevens [[cite:C3:S2|war_and_peace_book1.txt]].",
+    "The text does not label him 'host' in the translating passage, but it was Anatole, not Dólokhov."
+   ],
+   "wrong": [
+    "Anatole's lodger Dólokhov was the host, and he translated his own terms.",
+    "Dólokhov repeated the terms to the Englishman in English.",
+    "Dólokhov, the Semënov officer, hosted and translated for Stevens."
+   ]
+  },
+  {
+   "id": "q053",
+   "correct": [
+    "Dólokhov.",
+    "Dólokhov was degraded to the ranks, Pierre was sent back to Moscow, and Anatole's affair was hushed up by his father [[cite:C4:S1|war_and_peace_book1.txt]].",
+    "The text does not give the formal sentence, but it says Dólokhov was the one degraded to the ranks."
+   ],
+   "wrong": [
+    "Dólokhov escaped punishment; it was his friend who was degraded to the ranks while Anatole was ordered out of Petersburg.",
+    "The sources do not say who was degraded, though Dólokhov and Anatole were both punished.",
+    "Pierre, who was degraded and sent back to Moscow."
+   ]
+  },
+  {
+   "id": "q054",
+   "correct": [
+    "Natásha.",
+    "Natásha, the youngest daughter, ran in hiding a doll in her frock: \"My doll... Mimi...\" [[cite:C1:S5|war_and_peace_book1.txt]].",
+    "The text does not repeat her age here, but the girl with the doll is Natásha."
+   ],
+   "wrong": [
+    "Sónya ran in with the doll, followed by Natásha.",
+    "The context does not name the girl, though Natásha is mentioned.",
+    "Véra, the eldest daughter."
+   ]
+  },
+  {
+   "id": "q055",
+   "correct": [
+    "Sónya.",
+    "Sónya is the count's fifteen-year-old niece, listed among the young people in the drawing room [[cite:C1:S2|war_and_peace_book1.txt]].",
+    "The text does not dwell on her parentage, but the count's fifteen-year-old niece is Sónya, not Natásha."
+   ],
+   "wrong": [
+    "Sónya is the count's fifteen-year-old daughter; Natásha is the niece.",
+    "The sources do not say which girl is the niece, though Sónya is mentioned.",
+    "Natásha, the girl of thirteen."
+   ]
+  },
+  {
+   "id": "q056",
+   "correct": [
+    "Natásha.",
+    "It was Natásha: she jumped up onto a tub to be higher than Borís and kissed him full on the lips [[cite:C0:S6|war_and_peace_book1.txt]], after which he said he loved her [[cite:C0:S8|war_and_peace_book1.txt]].",
+    "The sentence itself says only 'she', but the girl was Natásha, who had led Borís to the tubs where she had hidden."
+   ],
+   "wrong": [
+    "Natásha watched from among the tubs while Sónya jumped up and kissed Borís.",
+    "The sources do not say which girl; Natásha and Sónya were both in the conservatory.",
+    "Sónya, the count's niece."
+   ]
+  },
+  {
+   "id": "q057",
+   "correct": [
+    "Nicholas, the student; Borís, the officer, was tall and fair.",
+    "Nicholas was short with curly hair and an open expression [[cite:C1:S2|war_and_peace_book1.txt]], while Borís was tall and fair [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not call him 'the student' in that sentence, but the short, curly-haired one is Nicholas."
+   ],
+   "wrong": [
+    "Nicholas is tall and fair, while Borís is short with curly hair.",
+    "The sources do not say which, though Nicholas and Borís are both described.",
+    "Dólokhov, who has curly hair."
+   ]
+  },
+  {
+   "id": "q058",
+   "correct": [
+    "Véra, the elder daughter.",
+    "The countess says she spoils Natásha but was stricter with her elder sister, Véra, who remarks that she was brought up quite differently [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The text does not say 'Véra' in the countess's sentence, but the elder sister she was stricter with is Véra."
+   ],
+   "wrong": [
+    "Véra was brought up leniently; Natásha more strictly.",
+    "The sources do not say which daughter, though Véra and Natásha are both mentioned.",
+    "Natásha, the youngest, whom the countess keeps under watch."
+   ]
+  },
+  {
+   "id": "q059",
+   "correct": [
+    "Count Bezúkhov, Pierre's father.",
+    "The dying grandee of Catherine's time was Count Bezúkhov, father of the illegitimate Pierre [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not give the month, but the grandee lying dying in Moscow is Count Bezúkhov."
+   ],
+   "wrong": [
+    "Count Bezúkhov's kinsman Prince Vasíli was the grandee lying dying; Bezúkhov was nursing him.",
+    "The sources do not name the grandee, though Count Bezúkhov is mentioned as Pierre's father.",
+    "Prince Vasíli Kurágin."
+   ]
+  },
+  {
+   "id": "q060",
+   "correct": [
+    "Prince Vasíli.",
+    "Prince Vasíli seized Pierre's hand and told Anna Pávlovna, \"Educate this bear for me!\" since Pierre had been staying with him a month [[cite:C3:S4|war_and_peace_book1.txt]].",
+    "The text does not call him a nobleman there, but it was Prince Vasíli."
+   ],
+   "wrong": [
+    "Count Bezúkhov, Pierre's father, asked Prince Vasíli's hostess to educate him.",
+    "The context does not say who, though Prince Vasíli is present.",
+    "Prince Andrew, who called Pierre a bear."
+   ]
+  },
+  {
+   "id": "q061",
+   "correct": [
+    "Lise, the little princess.",
+    "It is the youthful little Princess Bolkónskaya, Lise, known as the most fascinating woman in Petersburg [[cite:C4:S2|war_and_peace_book1.txt]], who being pregnant went only to small receptions [[cite:C4:S3|war_and_peace_book1.txt]].",
+    "The text does not use her first name in that passage, but she is the little princess, Lise Meinen, Prince Andrew's wife - not Mary."
+   ],
+   "wrong": [
+    "Lise, Prince Andrew's sister.",
+    "The sources do not say which princess, though Lise and Mary are both mentioned.",
+    "Princess Mary Bolkónskaya, the youthful and attractive daughter of Prince Bolkónski."
+   ]
+  },
+  {
+   "id": "q062",
+   "correct": [
+    "Princess Mary Bolkónskaya.",
+    "Anna Pávlovna describes Princess Mary Bolkónskaya as very unhappy with her father and proposes her for Anatole [[cite:C0:S1|war_and_peace_book1.txt]]; Lise is her brother's wife.",
+    "The text does not give her age, but it is Princess Mary, sister of young Bolkónski."
+   ],
+   "wrong": [
+    "Mary's sister-in-law Lise is the one unhappy with her father and proposed for Anatole.",
+    "The sources do not give her first name; Mary and Lise are both called Princess Bolkónskaya.",
+    "Lise, the little princess."
+   ]
+  },
+  {
+   "id": "q063",
+   "correct": [
+    "Prince Andrew Bolkónski.",
+    "Prince Andrew says, \"General Kutúzov has been pleased to take me as an aide-de-camp\" [[cite:C0:S4|war_and_peace_book1.txt]].",
+    "The text does not say when he leaves, but the aide-de-camp is Prince Andrew."
+   ],
+   "wrong": [
+    "Old Prince Bolkónski, the King of Prussia, rejoins as Kutúzov's aide-de-camp.",
+    "The sources do not say, though Prince Andrew is mentioned near Kutúzov.",
+    "Borís, whom Anna Mikháylovna got onto Kutúzov's staff."
+   ]
+  },
+  {
+   "id": "q064",
+   "correct": [
+    "Nicholas Rostóv.",
+    "Nicholas, the count's eldest son, is leaving the university [[cite:C2:S1|war_and_peace_book1.txt]], and Schubert, colonel of the Pávlograd Hussars, is taking him back with him [[cite:C0:S2|war_and_peace_book1.txt]].",
+    "The text does not use the word 'join', but it is Nicholas, whom the Pávlograd colonel is taking back with him - not Borís."
+   ],
+   "wrong": [
+    "Nicholas's friend Borís, who is leaving the university for the Pávlograd Hussars.",
+    "The sources do not say who, though Nicholas and the Pávlograd Hussars are mentioned.",
+    "Borís Drubetskóy, who has just been made an officer."
+   ]
+  },
+  {
+   "id": "q065",
+   "correct": [
+    "Hélène, Prince Vasíli's daughter.",
+    "It was the beautiful Hélène: her white dress trimmed with moss and ivy rustled as she crossed to Anna Pávlovna [[cite:C2:S2|war_and_peace_book1.txt]] [[cite:C2:S3|war_and_peace_book1.txt]].",
+    "The sentence about the dress says only 'she', but the princess is Hélène."
+   ],
+   "wrong": [
+    "Hélène admired the dress of Lise, the little princess, who wore white trimmed with moss and ivy.",
+    "The sources do not say which princess; Hélène and Lise are both described.",
+    "Lise, the little princess, in her lace-trimmed dress."
+   ]
+  },
+  {
+   "id": "q066",
+   "correct": [
+    "The provided text does not mention any battle in which Prince Andrew is wounded.",
+    "I can't answer that from these passages: they cover only the run-up to the war, and no battle or wound is described.",
+    "No battle is described in the sources; Prince Andrew is only about to leave as Kutúzov's aide-de-camp."
+   ],
+   "wrong": [
+    "At the Battle of Austerlitz, on the Pratzen Heights.",
+    "The text does not say directly, but it was Austerlitz.",
+    "At Schön Grabern, carrying the regiment's standard."
+   ]
+  },
+  {
+   "id": "q067",
+   "correct": [
+    "The provided text does not mention any duel between Pierre and Dólokhov.",
+    "Nothing in the retrieved passages describes a duel between them; Dólokhov is only called a notorious gambler and duelist, so the location cannot be determined.",
+    "I can't answer that from these sources: they cover the party at Anatole's and the bear affair, but no duel."
+   ],
+   "wrong": [
+    "It was fought at Sokólniki, in the snow.",
+    "The text does not mention it, but it was fought at Sokólniki.",
+    "The context does not describe the duel itself; it presumably took place on the Moyka embankment where the bear affair happened."
+   ]
+  },
+  {
+   "id": "q068",
+   "correct": [
+    "The provided text does not cover any invasion of Russia, so I cannot answer from it.",
+    "These passages are set in 1805, at Anna Pávlovna's soirée and the Rostóvs' name day; the context contains no information about an invasion or a river crossing.",
+    "I don't know from the sources: the excerpts only talk about war being expected against Bonaparte, not about the Grande Armée invading Russia."
+   ],
+   "wrong": [
+    "It invaded in 1812, crossing the Niemen.",
+    "The text does not cover the invasion, which came in eighteen-twelve when the army crossed the Nemunas.",
+    "The context does not say, but Napoleon crossed the Vistula into Russia in 1811."
+   ]
+  },
+  {
+   "id": "q069",
+   "correct": [
+    "The context does not mention the Raévski redoubt or any battle Pierre watched.",
+    "These passages contain no such battle; Pierre is still a civilian in Petersburg and Moscow.",
+    "I cannot determine that from the sources provided."
+   ],
+   "wrong": [
+    "At Borodino.",
+    "The sources do not say, but historically it was Borodino.",
+    "At Austerlitz, where Pierre watched from the redoubt."
+   ]
+  },
+  {
+   "id": "q070",
+   "correct": [
+    "The provided text does not mention Vereshchágin or a governor of Moscow.",
+    "There is no information in these passages about a governor of Moscow handing anyone to a crowd; the excerpts cover 1805 society in Petersburg and Moscow.",
+    "I cannot answer this from the sources; that episode is not covered."
+   ],
+   "wrong": [
+    "Count Rostopchín, the governor of Moscow.",
+    "The context does not say, but historically it was Rostopchín.",
+    "The sources do not name him; it was presumably Prince Vasíli, who had just arrived in Moscow."
+   ]
+  },
+  {
+   "id": "q071",
+   "correct": [
+    "The sources do not say where the novel was written.",
+    "Nothing in the retrieved passages concerns the author or his estate; they only narrate the 1805 soirée and the Rostóvs' name day, so I cannot determine this.",
+    "I don't have that information in the provided text."
+   ],
+   "wrong": [
+    "He wrote it at Yasnaya Polyana, his family estate.",
+    "The text does not say; Tolstoy wrote it on his family estate near Tula.",
+    "The sources don't mention it, though it was written at Iasnaia Poliana."
+   ]
+  },
+  {
+   "id": "q072",
+   "correct": [
+    "The text does not say anything about the author's marriage.",
+    "That is not in the provided passages, which are the novel's opening chapters with no biographical material.",
+    "I cannot answer that from these sources."
+   ],
+   "wrong": [
+    "Sophia Behrs.",
+    "The context does not mention it, but it was Sofya Andreyevna.",
+    "He married Lise Meinen in 1862."
+   ]
+  },
+  {
+   "id": "q073",
+   "correct": [
+    "The text does not name Prince Bolkónski's estate; it only says Lise will go to the country.",
+    "The retrieved passages say the old prince lives in the country, but no estate name is given, so I cannot determine it.",
+    "That is not in the sources: the estate is never named in these chapters."
+   ],
+   "wrong": [
+    "Bald Hills.",
+    "The sources do not name it, though it is Bald Hills in the novel.",
+    "The context does not say directly; it is presumably the Apráksins' estate where Prince Andrew was seen."
+   ]
+  },
+  {
+   "id": "q074",
+   "correct": [
+    "The text does not give his first name or patronymic; it calls him only Prince Bolkónski, 'the King of Prussia'.",
+    "Anna Pávlovna describes him as the well-known Prince Bolkónski, rich, stingy and nicknamed 'the King of Prussia' [[cite:C1:S1|war_and_peace_book1.txt]], but no first name or patronymic is mentioned in the passages.",
+    "I cannot determine it from the sources; they never name him beyond Prince Bolkónski."
+   ],
+   "wrong": [
+    "He is Prince Nicholas Andréevich Bolkónski.",
+    "The text never gives it, but he is Prince Nikolay Andreyevich Bolkónski.",
+    "The context does not state his patronymic, though his first name is Nicholas, like Nicholas Rostóv's."
+   ]
+  },
+  {
+   "id": "q075",
+   "correct": [
+    "The text does not name the commander of Nicholas's squadron; it mentions only Schubert, the colonel of the Pávlograd Hussars.",
+    "No squadron commander is mentioned in the sources.",
+    "I can't determine that from the context."
+   ],
+   "wrong": [
+    "Denísov commanded his squadron.",
+    "The sources do not name him, but it was Captain Denísov.",
+    "Schubert, the colonel of the Pávlograd Hussars, commanded Nicholas's squadron."
+   ]
+  },
+  {
+   "id": "q076",
+   "correct": [
+    "The text does not mention a son; Lise is still pregnant in these passages.",
+    "No child of Lise and Prince Andrew is named in the retrieved context, so I cannot answer.",
+    "The sources do not say - the child has not been born in the chapters provided."
+   ],
+   "wrong": [
+    "They named him Nikolenka.",
+    "The text does not give his name, but he was called Nicholas after his grandfather.",
+    "They named him Nicholas Andréevich."
+   ]
+  },
+  {
+   "id": "q077",
+   "correct": [
+    "The sources do not mention Nicholas losing anything to Dólokhov at cards.",
+    "In these passages Nicholas is a student about to join the hussars; the text contains no card game between him and Dólokhov, so I cannot say how much he lost.",
+    "There is no information in the provided text about such a loss."
+   ],
+   "wrong": [
+    "He lost 43,000 rubles.",
+    "The sources do not cover it, though he later loses 43 thousand rubles.",
+    "The text doesn't say exactly; it was probably about 2,000 rubles."
+   ]
+  },
+  {
+   "id": "q078",
+   "correct": [
+    "The provided text does not describe any elopement attempt.",
+    "Nothing in these passages covers Natásha and Anatole; at this point she is thirteen.",
+    "I can't answer that from the sources given."
+   ],
+   "wrong": [
+    "Márya Dmítrievna Akhrosímova stopped it.",
+    "The context does not say, though it was Márya Dmítrievna.",
+    "Sónya stopped it by warning the household."
+   ]
+  },
+  {
+   "id": "q079",
+   "correct": [
+    "The text does not mention Nicholas being wounded in any battle.",
+    "Nothing in the provided passages describes a battle; Nicholas is only about to join the Pávlograd Hussars, so this cannot be determined.",
+    "I cannot answer from these sources; they end before Nicholas sees action."
+   ],
+   "wrong": [
+    "At Schön Grabern, in the arm.",
+    "The sources do not say, but it was at Schöngrabern.",
+    "The context does not describe a wound explicitly; it would have been on the march to Radzivílov with the Guards."
+   ]
+  },
+  {
+   "id": "q080",
+   "correct": [
+    "The text does not describe any struggle between them at the count's door.",
+    "The passages end with Anna Mikháylovna setting off to see Count Bezúkhov about Borís; nothing in the context describes a struggle with Prince Vasíli, so I can't answer.",
+    "That scene is not in the provided sources."
+   ],
+   "wrong": [
+    "They struggled over the inlaid portfolio containing the count's will.",
+    "The text does not describe the scene, but they fought over a briefcase holding the count's will.",
+    "The sources don't say; it was the mosaic letter case with the will in it."
+   ]
+  },
+  {
+   "id": "q082",
+   "correct": [
+    "General Kutúzov; no, Borís received no appointment to Kutúzov's staff.",
+    "The general is Kutúzov, whom Anna Mikháylovna begged Prince Vasíli to ask to take Borís as adjutant [[cite:C3:S1|war_and_peace_book1.txt]]; Vasíli would not promise, and Borís received no appointment to Kutúzov's staff [[cite:C0:S5|war_and_peace_book1.txt]].",
+    "The text does not say Kutúzov refused outright, but it was Kutúzov, and Borís got no place on his staff."
+   ],
+   "wrong": [
+    "Kutúzov; yes, Borís got a place on his staff thanks to Prince Vasíli.",
+    "The sources do not say whether Borís got a place on the staff, though Kutúzov is named.",
+    "General Schubert; Borís became his adjutant."
+   ]
+  },
+  {
+   "id": "q083",
+   "correct": [
+    "Prince Vasíli Kurágin's; Andrew told him to give up those Kurágins and their debauchery.",
+    "Pierre had been staying a whole month with Prince Vasíli [[cite:C5:S4|war_and_peace_book1.txt]]; at supper Prince Andrew told him to give up visiting those Kurágins and leading that sort of life, all that debauchery and dissipation [[cite:C4:S3|war_and_peace_book1.txt]].",
+    "The text does not repeat the one-month figure at supper, but the house was Prince Vasíli's, and Andrew told Pierre to give up the dissipated life he led with Anatole."
+   ],
+   "wrong": [
+    "Prince Vasíli's; Andrew told him to give up his word of honor and choose the army.",
+    "The sources do not say what Andrew told him to give up, though Prince Vasíli's house and Anatole's dissipated life are mentioned.",
+    "Anatole's own lodgings, where Dólokhov also lived; Andrew told him to give up cards."
+   ]
+  },
+  {
+   "id": "q084",
+   "correct": [
+    "Pierre; earlier he had left a lady, the old aunt, before she had finished speaking to him.",
+    "Pierre called it a political necessity [[cite:C0:S2|war_and_peace_book1.txt]]; his first impoliteness had been to leave a lady before she had finished speaking to him [[cite:C7:S3|war_and_peace_book1.txt]].",
+    "The text does not name the lady outright, but the guest was Pierre, whose first breach was leaving her before she had finished speaking."
+   ],
+   "wrong": [
+    "Pierre; his first breach was arguing with Anna Pávlovna's aunt about Napoleon.",
+    "The sources do not say what his first breach was, though Pierre is said to have left a lady before she had finished speaking.",
+    "Pierre; his first breach was continuing to talk to Anna Pávlovna when she wished to get away."
+   ]
+  },
+  {
+   "id": "q085",
+   "correct": [
+    "It was a Wednesday, and Hélène came to take him to the English ambassador's fete.",
+    "Prince Vasíli said, \"Today is Wednesday\" [[cite:C2|war_and_peace_book1.txt]], and his daughter Hélène came in a ball dress to take him to the ambassador's entertainment [[cite:C8:S1|war_and_peace_book1.txt]].",
+    "The text does not name the ambassador, but it was Wednesday and the fete was at the English ambassador's."
+   ],
+   "wrong": [
+    "It was a Wednesday, and Hélène was taking him to the Empress's fete, not the ambassador's.",
+    "The sources do not say the day, though Wednesday and the ambassador's fete are mentioned.",
+    "It was a Thursday, and the fete was at the French ambassador's."
+   ]
+  },
+  {
+   "id": "q086",
+   "correct": [
+    "She was Lise Meinen; she told Anna Pávlovna 'It is settled.'",
+    "Young Bolkónski's wife was Lise Meinen [[cite:C9:S4|war_and_peace_book1.txt]]; leaving, she told Anna Pávlovna to go in or she would catch cold and added in a low voice, 'It is settled' [[cite:C2:S3|war_and_peace_book1.txt]].",
+    "The text does not use the words 'maiden name', but she was Lise Meinen, and in the hall she whispered that it was settled."
+   ],
+   "wrong": [
+    "Her maiden name was Bolkónskaya; she said the match was settled for her sister Mary.",
+    "The sources do not give her maiden name, though Lise Meinen is mentioned and she says 'It is settled.'",
+    "She was born Princess Kurágina, and told Anna Pávlovna 'Go in, Annette, or you will catch cold.'"
+   ]
+  },
+  {
+   "id": "q087",
+   "correct": [
+    "Nicholas goes to the Pávlograd Hussars; Borís was transferred into the Semënov Guards.",
+    "The colonel is Schubert of the Pávlograd Hussars [[cite:C4:S2|war_and_peace_book1.txt]], and Borís was transferred into the Semënov Guards as a cornet [[cite:C0:S4|war_and_peace_book1.txt]].",
+    "The text does not call it Nicholas's regiment yet, but Schubert's regiment is the Pávlograd Hussars, and Borís went into the Semënov Guards."
+   ],
+   "wrong": [
+    "Nicholas is going to the Semënov Guards, while Borís was transferred into the Pávlograd Hussars.",
+    "The sources do not name Nicholas's regiment, though the Pávlograd Hussars and Semënov Guards are both mentioned.",
+    "Nicholas joins the Pávlograd Hussars; Borís stayed in his regiment of the line."
+   ]
+  },
+  {
+   "id": "q088",
+   "correct": [
+    "He was nicknamed \"the King of Prussia\", and Prince Andrew said his father was right that women are selfish, vain, stupid and trivial.",
+    "Prince Bolkónski was nicknamed 'the King of Prussia' [[cite:C9:S1|war_and_peace_book1.txt]]; at supper Prince Andrew told Pierre his father was right: women are selfish, vain, stupid, trivial in everything.",
+    "The text here does not quote the supper, but he was 'the King of Prussia', and Andrew said women are selfish, vain and trivial."
+   ],
+   "wrong": [
+    "He was called 'the King of Prussia', and Andrew said his father was right that Napoleon was selfish and vain.",
+    "The sources do not say what Andrew agreed with, though the King of Prussia nickname appears and women are called vain.",
+    "He was nicknamed 'the bear', and Andrew said his father was right that the war was trivial."
+   ]
+  },
+  {
+   "id": "q089",
+   "correct": [
+    "Pierre; he lifted the bear in his arms and danced round the room with it.",
+    "Prince Vasíli asked Anna Pávlovna to 'educate this bear' - Pierre [[cite:C1:S4|war_and_peace_book1.txt]]; at Anatole's, Pierre caught the real bear, lifted it and began dancing round the room with it [[cite:C3:S2|war_and_peace_book1.txt]].",
+    "The text does not call the second bear 'real', but the young man was Pierre, and at Anatole's he took the bear in his arms and danced with it."
+   ],
+   "wrong": [
+    "Pierre; he watched Anatole lift the bear in his arms and dance with it.",
+    "The sources do not say what he did with the bear, though Pierre is mentioned dancing at the party.",
+    "Pierre; he tied the bear to a policeman and threw them into the Moyka."
+   ]
+  },
+  {
+   "id": "q090",
+   "correct": [
+    "Natálya Ilyníchna; it is St. Natalia's day, shared by the countess and Natásha.",
+    "Borís calls her 'Natálya Ilyníchna' [[cite:C5:S6|war_and_peace_book1.txt]], and the name day is St. Natalia's day, kept by the mother and the youngest daughter, both named Nataly [[cite:C3:S4|war_and_peace_book1.txt]].",
+    "The text does not explain the patronymic, but Borís addresses her as Natálya Ilyníchna, and the feast is St. Natalia's day."
+   ],
+   "wrong": [
+    "Borís calls her Natálya Ilyníchna; the name day is St. Natalia's, shared by Sónya and Véra.",
+    "The sources do not explain how Borís addresses her, though Natálya Ilyníchna and St. Natalia's day are mentioned.",
+    "Natásha Rostóva; the name day is St. Natalia's day."
+   ]
+  },
+  {
+   "id": "q092",
+   "correct": [
+    "For eighty people; Count Orlóv never gave such a dinner.",
+    "Tables were being set out for eighty people in the marble dining hall [[cite:C3:S1|war_and_peace_book1.txt]], and the count said Tarás claims Count Orlóv never gave such a dinner as theirs [[cite:C0|war_and_peace_book1.txt]].",
+    "The text does not call Tarás a cook in so many words, but the tables were for eighty, and the comparison was with Count Orlóv."
+   ],
+   "wrong": [
+    "For eighty people; Count Orlóv said the Rostóvs never gave such a dinner as his.",
+    "The sources do not give the number, though eighty and Count Orlóv appear.",
+    "For eighteen people; Count Bezúkhov never gave such a dinner."
+   ]
+  },
+  {
+   "id": "q095",
+   "correct": [
+    "He is Borís's godfather.",
+    "Count Cyril Vladímirovich Bezúkhov is Bóry's godfather and a second cousin of Anna Mikháylovna's mother [[cite:C7:S1|war_and_peace_book1.txt]]; she hopes he will assist his godson [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The text does not describe a blood tie to Borís himself, but the count is his godfather."
+   ],
+   "wrong": [
+    "Borís is the count's godfather.",
+    "The sources do not state a connection, though the word godfather is used of the count.",
+    "Borís is one of the count's illegitimate sons, like Pierre."
+   ]
+  },
+  {
+   "id": "q096",
+   "correct": [
+    "Through Lise, young Bolkónski's wife and Mary's sister-in-law.",
+    "She said she would speak to Lise, young Bolkónski's wife, that very evening [[cite:C4:S2|war_and_peace_book1.txt]], and later did speak to Lise about the match with the little princess' sister-in-law [[cite:C3:S4|war_and_peace_book1.txt]].",
+    "The text does not describe a formal go-between, but Anna Pávlovna meant to work through Lise, the little princess."
+   ],
+   "wrong": [
+    "Through Prince Andrew, Mary's brother and the husband of Lise.",
+    "The sources do not say through whom, though Lise is mentioned as young Bolkónski's wife.",
+    "Through Prince Vasíli's daughter Hélène."
+   ]
+  },
+  {
+   "id": "q097",
+   "correct": [
+    "Pierre's father, Count Bezúkhov, is a connection of Prince Vasíli's, and Pierre has been staying in Vasíli's house.",
+    "Anna Pávlovna knew Pierre's father to be a connection of Prince Vasíli's [[cite:C2:S5|war_and_peace_book1.txt]]; Pierre had been staying with Vasíli a whole month [[cite:C2:S4|war_and_peace_book1.txt]], and Vasíli is next heir to Count Bezúkhov through his wife [[cite:C0:S1|war_and_peace_book1.txt]].",
+    "The text does not spell out the kinship, but Pierre's father is a connection of Prince Vasíli's and Pierre stays at his house."
+   ],
+   "wrong": [
+    "Prince Vasíli is Pierre's father, and Pierre is his heir.",
+    "The sources do not say what connects them, though Pierre's father Count Bezúkhov and his heir are mentioned.",
+    "Pierre is Prince Vasíli's nephew; Count Bezúkhov is Vasíli's brother, and Pierre stayed with him."
+   ]
+  },
+  {
+   "id": "q098",
+   "correct": [
+    "She is his cousin, the count's niece.",
+    "Sónya is the count's niece [[cite:C4:S2|war_and_peace_book1.txt]], which makes her Nicholas's cousin, as the graph also records.",
+    "The text does not use the word 'cousin' in the narrative, but as the count's niece Sónya is Nicholas's cousin."
+   ],
+   "wrong": [
+    "She is Natásha's cousin and Nicholas's niece.",
+    "The sources do not state the relation, though Sónya is called the count's niece.",
+    "She is his sister, the count's younger daughter."
+   ]
+  },
+  {
+   "id": "q099",
+   "correct": [
+    "Her husband, Prince Andrew, is General Kutúzov's aide-de-camp.",
+    "The little princess is the wife of young Bolkónski, Prince Andrew, who is an aide-de-camp of Kutúzov's [[cite:C2:S1|war_and_peace_book1.txt]].",
+    "The passages do not state a direct tie, but her husband Prince Andrew serves as Kutúzov's aide-de-camp."
+   ],
+   "wrong": [
+    "She is Prince Andrew's sister, and Andrew is Kutúzov's aide-de-camp.",
+    "The sources do not establish a connection, though Prince Andrew is Kutúzov's aide-de-camp.",
+    "Her brother Prince Hippolyte is on Kutúzov's staff."
+   ]
+  },
+  {
+   "id": "q100",
+   "correct": [
+    "They are brother and sister, both children of Prince Vasíli.",
+    "Hippolyte is Prince Vasíli's son [[cite:C1:S4|war_and_peace_book1.txt]], Hélène his daughter, and Hippolyte strikingly resembles his beautiful sister [[cite:C3:S4|war_and_peace_book1.txt]].",
+    "The text does not say it in one sentence, but Hélène is Hippolyte's sister: both are Prince Vasíli's children."
+   ],
+   "wrong": [
+    "Hélène is Hippolyte's sister-in-law.",
+    "They are not siblings; Hippolyte is the little princess's brother.",
+    "Hélène and Hippolyte are cousins; his sister is the little princess."
+   ]
+  },
+  {
+   "id": "q101",
+   "correct": [
+    "Through Prince Vasíli, at the request of Borís's mother, Anna Mikháylovna.",
+    "Prince Vasíli kept the promise he had given Princess Drubetskáya, who had spoken to him on behalf of her son; the matter was mentioned to the Emperor and an exception made [[cite:C0:S4|war_and_peace_book1.txt]].",
+    "The text does not say who spoke to the Emperor in so many words, but the transfer came through Prince Vasíli at the request of Anna Mikháylovna Drubetskáya."
+   ],
+   "wrong": [
+    "Through Princess Drubetskáya, who asked at Prince Vasíli's request.",
+    "The sources do not say through whom, though Prince Vasíli and Anna Mikháylovna are both mentioned.",
+    "Through Prince Golítsyn and Rumyántsev, asked for by Prince Vasíli for his son Borís."
+   ]
+  },
+  {
+   "id": "q102",
+   "correct": [
+    "He had been indebted to her father for the first steps in his career.",
+    "Anna Mikháylovna reminded him that he owed the first steps in his career to her father [[cite:C1:S6|war_and_peace_book1.txt]].",
+    "The text does not detail the favor, but he had been indebted to her father for the first steps in his career."
+   ],
+   "wrong": [
+    "Her father had been indebted to Prince Vasíli for the first steps in his career.",
+    "The sources do not explain it, though her father and his career are mentioned.",
+    "Because she was his wife's relation and godmother to his son Anatole."
+   ]
+  },
+  {
+   "id": "q104",
+   "correct": [
+    "The Rostóvs are his mother's rich relations, and Borís was educated in their house from childhood.",
+    "Anna Mikháylovna stayed with her rich relations the Rostóvs, in whose house her Bóry had been educated from childhood and lived for years at a time [[cite:C4:S2|war_and_peace_book1.txt]].",
+    "The text does not give the exact kinship, but they are his mother's relations and he was brought up in their house."
+   ],
+   "wrong": [
+    "Borís is the Rostóvs' eldest son, related to them by blood and brought up with Nicholas from childhood.",
+    "The sources do not say how they are related, though Borís was educated in their house from childhood.",
+    "Borís is engaged to Véra Rostóva and is related to them through Pierre."
+   ]
+  },
+  {
+   "id": "q105",
+   "correct": [
+    "Through Anatole Kurágin: Dólokhov lives with Anatole, and Pierre was at Anatole's party when Dólokhov made his rum bet.",
+    "Dólokhov was living with Anatole [[cite:C0:S4|war_and_peace_book1.txt]], and Pierre was at Anatole's that night while Anatole explained Dólokhov's bet to him [[cite:C4:S1|war_and_peace_book1.txt]].",
+    "The text does not call them friends, but they are linked through Anatole: Dólokhov lived with him and Pierre joined the party where Dólokhov drank on the window ledge."
+   ],
+   "wrong": [
+    "They are cousins, both friends of Anatole who made the bet together.",
+    "The sources do not state a direct connection, though Anatole, the bet and the window are mentioned.",
+    "Pierre is Dólokhov's second; Anatole introduced them at the bear party."
+   ]
+  },
+  {
+   "id": "q109",
+   "correct": [
+    "Hélène, Hippolyte and Anatole.",
+    "The text mentions his daughter Hélène [[cite:C5:S1|war_and_peace_book1.txt]], his son Hippolyte [[cite:C5:S4|war_and_peace_book1.txt]] and his 'prodigal son' Anatole [[cite:C6:S2|war_and_peace_book1.txt]].",
+    "The text does not give a full family list, but it names three children: Hélène, Hippolyte and Anatole."
+   ],
+   "wrong": [
+    "Hélène, Hippolyte, Anatole and Borís.",
+    "The sources do not list his children, though Hélène, Hippolyte and Anatole appear.",
+    "Hippolyte, Anatole and Lise, the little princess, Hippolyte's sister."
+   ]
+  },
+  {
+   "id": "q110",
+   "correct": [
+    "Véra, Nicholas, Natásha and Pétya.",
+    "The count's children named are Véra, the eldest daughter; Nicholas, the eldest son, and little Pétya, the youngest boy [[cite:C4:S2|war_and_peace_book1.txt]]; and Natásha, the youngest daughter [[cite:C0:S1|war_and_peace_book1.txt]]. Sónya is a niece.",
+    "The text does not list them in one place, but the named children are Véra, Nicholas, Natásha and Pétya."
+   ],
+   "wrong": [
+    "Véra, Nicholas, Natásha, Pétya and Sónya, the count's second daughter.",
+    "The sources do not name the children, though Véra, Nicholas, Natásha and Pétya appear.",
+    "Nicholas, Natásha, Sónya and Borís."
+   ]
+  },
+  {
+   "id": "q111",
+   "correct": [
+    "Only Anna Mikháylovna Drubetskáya.",
+    "Only Princess Anna Mikháylovna Drubetskáya: the careworn elderly lady beside the aunt at the soirée [[cite:C5:S7|war_and_peace_book1.txt]], and the member of the household helping the countess receive visitors in Moscow [[cite:C2:S6|war_and_peace_book1.txt]].",
+    "The text does not list the two guest lists side by side, but the one person at both is Anna Mikháylovna Drubetskáya."
+   ],
+   "wrong": [
+    "Anna Mikháylovna Drubetskáya, Prince Vasíli and Pierre all attend both.",
+    "The sources do not say who attended both, though Princess Drubetskáya is mentioned in Petersburg and Moscow.",
+    "Pierre and Prince Vasíli, who both went on to Moscow."
+   ]
+  },
+  {
+   "id": "q112",
+   "correct": [
+    "Borís, already an officer, and Nicholas, who is joining the hussars.",
+    "Borís is the officer and Nicholas the undergraduate [[cite:C1:S2|war_and_peace_book1.txt]]; Nicholas is leaving the university to enter the army and Colonel Schubert is taking him back to the Pávlograd Hussars [[cite:C2:S2|war_and_peace_book1.txt]].",
+    "The text does not list them as a group, but Borís is a Guards officer and Nicholas is about to join the hussars."
+   ],
+   "wrong": [
+    "Nicholas is already a Guards officer, and Borís is leaving the university to join the hussars.",
+    "The sources do not say which young people are officers, though Borís and Nicholas are mentioned.",
+    "Borís, Nicholas and little Pétya, who is going as a cadet."
+   ]
+  },
+  {
+   "id": "q113",
+   "correct": [
+    "Prince Andrew as Kutúzov's aide-de-camp, Nicholas with the Pávlograd Hussars, and Borís as an officer in the Guards.",
+    "Prince Andrew goes as Kutúzov's aide-de-camp [[cite:C3:S4|war_and_peace_book1.txt]]; Nicholas goes with Schubert's Pávlograd Hussars [[cite:C4:S2|war_and_peace_book1.txt]]; Borís has become an officer [[cite:C5:S1|war_and_peace_book1.txt]] in the Guards.",
+    "The text does not list them together, but Andrew goes as aide-de-camp, Nicholas to the Pávlograd Hussars, and Borís as a Guards officer."
+   ],
+   "wrong": [
+    "Prince Andrew as a hussar officer, Nicholas as Kutúzov's aide-de-camp, and Borís in the Guards.",
+    "The sources do not say in what capacity, though Andrew, Nicholas and Borís are mentioned with the hussars, the Guards and an aide-de-camp.",
+    "Prince Andrew as aide-de-camp, Nicholas as an officer of the Guards, Borís as a hussar, and Pierre in the Horse Guards."
+   ]
+  },
+  {
+   "id": "q114",
+   "correct": [
+    "Anatole Kurágin, Pierre and Dólokhov.",
+    "The gossip names Prince Vasíli's son Anatole, Bezúkhov's son Pierre and a certain Dólokhov [[cite:C1:S1|war_and_peace_book1.txt]]; 'those three' got hold of the bear [[cite:C6:S1|war_and_peace_book1.txt]].",
+    "The text does not list them in one sentence by first name, but the three are Anatole Kurágin, Pierre Bezúkhov's son and Dólokhov."
+   ],
+   "wrong": [
+    "Prince Vasíli's son Hippolyte, Pierre and Dólokhov.",
+    "The sources do not name the three, though Anatole, Pierre and Dólokhov are mentioned.",
+    "Anatole, Dólokhov and Count Bezúkhov."
+   ]
+  },
+  {
+   "id": "q115",
+   "correct": [
+    "Anna Pávlovna Schérer, called Annette by the little princess (and signing herself so), and Anna Mikháylovna, called Annette by the countess.",
+    "Anna Pávlovna signs her invitations 'Annette Schérer' [[cite:C1:S3|war_and_peace_book1.txt]] and the little princess calls her Annette [[cite:C8:S2|war_and_peace_book1.txt]]; the countess calls Anna Mikháylovna 'Annette' [[cite:C4:S3|war_and_peace_book1.txt]].",
+    "The text does not always name the speaker, but two women are called Annette: Anna Pávlovna (by the little princess) and Anna Mikháylovna (by the countess)."
+   ],
+   "wrong": [
+    "Anna Pávlovna is called Annette by Anna Mikháylovna.",
+    "The sources do not say who uses the name, though Anna Pávlovna and Anna Mikháylovna are both mentioned.",
+    "Only Anna Pávlovna Schérer, called Annette by Prince Vasíli and the little princess."
+   ]
+  },
+  {
+   "id": "q116",
+   "correct": [
+    "Anna Pávlovna Schérer and Hélène.",
+    "Anna Pávlovna Schérer is maid of honor and favorite of the Empress [[cite:C0|war_and_peace_book1.txt]], and Hélène wore her badge as maid of honor [[cite:C4:S1|war_and_peace_book1.txt]].",
+    "The text does not use the plural, but both Anna Pávlovna and Hélène are described as maids of honor."
+   ],
+   "wrong": [
+    "Hélène and the little princess, both maids of honor to Anna Pávlovna.",
+    "The sources do not say, though Anna Pávlovna and Hélène appear at the soirée.",
+    "Anna Mikháylovna and Hélène."
+   ]
+  },
+  {
+   "id": "q117",
+   "correct": [
+    "The vicomte de Mortemart and Prince Hippolyte.",
+    "The vicomte, a wonderful raconteur, told his story [[cite:C5:S3|war_and_peace_book1.txt]], and Prince Hippolyte told an anecdote in Russian that ended Pierre's outburst [[cite:C2:S3|war_and_peace_book1.txt]].",
+    "The text does not give the vicomte's story in these passages, but the storytellers were the vicomte and Prince Hippolyte."
+   ],
+   "wrong": [
+    "Prince Hippolyte told the vicomte's story about Buonaparte, and the vicomte translated it.",
+    "The sources do not say who told stories, though the vicomte and Hippolyte are mentioned.",
+    "The vicomte told the story of the Duc d'Enghien and Mademoiselle George, and Pierre told one about Napoleon."
+   ]
+  },
+  {
+   "id": "q118",
+   "correct": [
+    "Sónya with Nicholas, and Natásha with Borís.",
+    "At one window Sónya sat close to Nicholas, who was copying out verses for her [[cite:C0:S7|war_and_peace_book1.txt]]; Borís and Natásha were at the other [[cite:C0:S8|war_and_peace_book1.txt]].",
+    "The text does not say what the second pair was doing, but the couples were Sónya and Nicholas, and Borís and Natásha."
+   ],
+   "wrong": [
+    "Sónya with Borís, and Natásha with Nicholas.",
+    "The sources do not say who the couples were, though Sónya, Nicholas, Borís and Natásha are mentioned.",
+    "Nicholas with Sónya, and Pétya with Natásha."
+   ]
+  },
+  {
+   "id": "q124",
+   "correct": [
+    "Anna Pávlovna Schérer is the hostess; Anna Mikháylovna Drubetskáya is Borís's mother.",
+    "Anna Pávlovna Schérer, maid of honor to the Empress, holds the Petersburg soirée [[cite:C0|war_and_peace_book1.txt]]; Princess Anna Mikháylovna Drubetskáya is Borís's mother [[cite:C3:S5|war_and_peace_book1.txt]].",
+    "The text does not call either a 'hostess', but Anna Pávlovna gives the reception and Anna Mikháylovna is Borís's mother."
+   ],
+   "wrong": [
+    "Anna Mikháylovna is the Petersburg hostess, and Anna Pávlovna is Borís's mother.",
+    "The sources do not say which is which, though Anna Pávlovna and Anna Mikháylovna both appear.",
+    "Anna Pávlovna is both: the hostess and Borís's mother; Drubetskáya is her married name."
+   ]
+  },
+  {
+   "id": "q125",
+   "correct": [
+    "The countess and her youngest daughter, Natásha.",
+    "The mother, Countess Rostóva, and the youngest daughter, Natásha, both named Nataly, share the name day [[cite:C1:S4|war_and_peace_book1.txt]].",
+    "The text does not give the countess's full name there, but the two Natalys are the mother and the youngest daughter, Natásha."
+   ],
+   "wrong": [
+    "Countess Véra and Natásha.",
+    "The sources do not name them, though the mother and youngest daughter are said to share the name day.",
+    "Natásha and Sónya, whose mother was also a Nataly."
+   ]
+  },
+  {
+   "id": "q126",
+   "correct": [
+    "The old prince, the father, is 'the King of Prussia'; his son Prince Andrew is going to the war.",
+    "The father, who had to retire from the army under the late Emperor, was nicknamed 'the King of Prussia' [[cite:C1:S1|war_and_peace_book1.txt]]; his son Prince Andrew is off to the war as Kutúzov's aide-de-camp [[cite:C0:S4|war_and_peace_book1.txt]].",
+    "The text does not give the father a first name, but he is the 'King of Prussia', and the one going to the war is Prince Andrew."
+   ],
+   "wrong": [
+    "Prince Andrew is nicknamed 'the King of Prussia'; his father is going to the war.",
+    "The sources do not say which one is nicknamed, though the father and Prince Andrew are both mentioned.",
+    "Young Bolkónski, who retired under the late Emperor, is 'the King of Prussia', and Prince Andrew goes to the war."
+   ]
+  },
+  {
+   "id": "q127",
+   "correct": [
+    "Lise, the little princess, is his wife; Princess Mary is his sister.",
+    "Prince Andrew is the little princess's husband [[cite:C3:S4|war_and_peace_book1.txt]] and married Lise Meinen [[cite:C1:S1|war_and_peace_book1.txt]]; Princess Mary Bolkónskaya, daughter of Prince Bolkónski, is his sister.",
+    "The text does not call Mary his sister in one sentence, but his wife is Lise and his sister is Princess Mary."
+   ],
+   "wrong": [
+    "Princess Mary is his wife, and Lise is his sister.",
+    "The sources do not say which is which, though Lise and Mary both appear.",
+    "Lise is his wife, and his sister is Hélène."
+   ]
+  },
+  {
+   "id": "q128",
+   "correct": [
+    "Fëdorovna, Ivánovna and Lvóvna.",
+    "The Empress is Márya Fëdorovna [[cite:C1:S1|war_and_peace_book1.txt]]; Dólokhov's mother is Márya Ivánovna Dólokhova and the visitor Márya Lvóvna Karágina, per the graph entities [[cite:C9:S4|war_and_peace_book1.txt]].",
+    "The text does not use the word patronymic, but they are Márya Fëdorovna (the Empress), Márya Ivánovna (Dólokhov's mother) and Márya Lvóvna (the visitor)."
+   ],
+   "wrong": [
+    "The Empress is Márya Ivánovna, Dólokhov's mother Márya Lvóvna, and the visitor Márya Fëdorovna.",
+    "The sources do not give patronymics, though Fëdorovna, Ivánovna and Lvóvna appear.",
+    "Fyodorovna, Ivanovich and Lvovich."
+   ]
+  },
+  {
+   "id": "q129",
+   "correct": [
+    "Anatole hosted the bear party; Hippolyte traced the coat of arms.",
+    "The drinking party with the bear was at Anatole's, where Dólokhov lived with him [[cite:C2:S4|war_and_peace_book1.txt]]; the other brother, Hippolyte, who came with Mortemart [[cite:C9:S1|war_and_peace_book1.txt]], is the one at the soirée.",
+    "The text retrieved does not show the needle scene, but by elimination Hippolyte traced the coat of arms, while Anatole hosted the bear party."
+   ],
+   "wrong": [
+    "Hippolyte hosted the party with the bear; Anatole traced the coat of arms.",
+    "The sources do not say which brother traced the coat of arms, though Anatole and Hippolyte are both mentioned.",
+    "Dólokhov hosted the bear party; Hippolyte traced the coat of arms."
+   ]
+  },
+  {
+   "id": "q130",
+   "correct": [
+    "Count Bezúkhov is dying; Count Ilyá Rostóv gives the name-day dinner.",
+    "Count Bezúkhov lies dying in Moscow [[cite:C0:S1|war_and_peace_book1.txt]]; the dinner is given by Count Rostóv, whom the countess calls Ilyá [[cite:C9:S6|war_and_peace_book1.txt]].",
+    "The text does not give Rostóv's full name in one place, but Bezúkhov is dying and Count Rostóv is the host."
+   ],
+   "wrong": [
+    "Count Rostóv is dying, and Count Bezúkhov gives the dinner.",
+    "The sources do not say which count is dying, though Bezúkhov and Rostóv are both counts.",
+    "Count Orlóv is dying, and Count Rostóv gives the dinner."
+   ]
+  },
+  {
+   "id": "q131",
+   "correct": [
+    "He met the Abbé Morio; his tutor abbé was dismissed by his father.",
+    "At the soirée Pierre was introduced to the Abbé Morio [[cite:C0:S1|war_and_peace_book1.txt]]; the abbé who had been his tutor was dismissed by his father when Pierre returned to Moscow [[cite:C1:S1|war_and_peace_book1.txt]].",
+    "The text does not name the tutor, but the soirée abbé was Morio, and the tutor abbé was dismissed by Pierre's father on their return to Moscow."
+   ],
+   "wrong": [
+    "He met the Abbé Morio, who had been his tutor and whom his father dismissed.",
+    "The sources do not say what became of the tutor, though the Abbé Morio is mentioned and an abbé was dismissed.",
+    "He met the vicomte; his tutor was the Abbé Morio, who was sent away to Petersburg."
+   ]
+  },
+  {
+   "id": "q132",
+   "correct": [
+    "Borís is the officer; Nicholas is the student.",
+    "Borís is the officer, Anna Mikháylovna's son, and Nicholas the undergraduate, the count's eldest son [[cite:C1:S2|war_and_peace_book1.txt]].",
+    "The text calls Nicholas an undergraduate rather than a student at that point, but Borís is the officer and Nicholas the student."
+   ],
+   "wrong": [
+    "Nicholas, the officer; Borís, a student.",
+    "The sources do not say which is which, though Borís and Nicholas are both mentioned.",
+    "The officer is Nicholas and the student is Borís."
+   ]
+  },
+  {
+   "id": "q133",
+   "correct": [
+    "Prince Vasíli arrived first; Prince Andrew was the little princess's husband.",
+    "Prince Vasíli Kurágin was the first to arrive [[cite:C0:S2|war_and_peace_book1.txt]]; later Prince Andrew Bolkónski, the little princess's husband, entered [[cite:C7:S4|war_and_peace_book1.txt]].",
+    "The text does not number the arrivals, but Prince Vasíli was first, and Prince Andrew came later."
+   ],
+   "wrong": [
+    "Prince Andrew arrived first, and Prince Vasíli came later as the little princess's husband.",
+    "The sources do not say who arrived first, though Prince Vasíli and Prince Andrew both came.",
+    "Prince Hippolyte, Vasíli's son, arrived first; the husband was Prince Andrew."
+   ]
+  }
+ ]
+}

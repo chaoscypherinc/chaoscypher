@@ -180,6 +180,7 @@ async def test_eager_detection_written_for_gate_eligible_source(
     # write_detection_proposal is called with positional args: (adapter, file_id, proposal)
     written_proposal = write_spy.call_args[0][2]
     assert written_proposal["detected_domain"] == "technical"
+    assert written_proposal["packs"] == ["technical"]  # the proposed packs, a list
     assert "ranking" in written_proposal
     assert "confidence" in written_proposal
     assert "low_confidence" in written_proposal
@@ -190,17 +191,27 @@ async def test_eager_detection_written_for_gate_eligible_source(
 
 
 @pytest.mark.asyncio
-async def test_eager_detection_skipped_for_forced_domain(monkeypatch, tmp_path: Path) -> None:
-    """No eager proposal written when source has forced_domain set."""
+@pytest.mark.parametrize(
+    "forced",
+    [
+        {"forced_domain": "technical"},  # a row written before the list
+        {"forced_packs": ["historical", "literary"], "forced_domain": "historical"},
+        {"forced_packs": [], "forced_domain": "generic"},  # the floor alone, chosen
+    ],
+)
+async def test_eager_detection_skipped_for_forced_domain(
+    monkeypatch, tmp_path: Path, forced: dict[str, object]
+) -> None:
+    """No eager proposal written when source forces packs (the floor alone included)."""
     from chaoscypher_core.operations.importing import indexing_handler
 
     adapter = MagicMock()
-    # NOT gate-eligible: forced_domain is set.
+    # NOT gate-eligible: packs are forced.
     adapter.get_source.return_value = {
         "id": "src-2",
         "status": "indexing",
         "confirmation_required": True,
-        "forced_domain": "technical",
+        **forced,
     }
 
     monkeypatch.setattr(

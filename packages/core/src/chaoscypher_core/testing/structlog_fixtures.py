@@ -118,6 +118,27 @@ def _clear_bound_logger_lazy_proxy_caches() -> None:
                 del value.__dict__["bind"]
 
 
+def use_plain_tracebacks() -> None:
+    """Keep structlog's processor chain, but render a logged exception as a plain traceback.
+
+    Unconfigured, structlog's ``ConsoleRenderer`` formats exceptions with ``rich`` when it is
+    installed: every frame syntax-highlighted (pygments) with its local variables printed.
+    Tests run on that default (see the package docstring), and the code logs the exceptions it
+    handles, so a retrieval recipe test spent 106 of its 120 seconds drawing tracebacks nobody
+    read, with locals holding whole graphs (2026-10-16). Production logging already uses
+    ``plain_traceback`` (``utils.logging.config.configure_logging``). Only a
+    ``ConsoleRenderer`` is replaced; any other renderer is left as configured.
+    """
+    structlog.configure(
+        processors=[
+            structlog.dev.ConsoleRenderer(exception_formatter=structlog.dev.plain_traceback)
+            if isinstance(processor, structlog.dev.ConsoleRenderer)
+            else processor
+            for processor in structlog.get_config()["processors"]
+        ]
+    )
+
+
 @pytest.fixture
 def structlog_for_caplog() -> Generator[None]:
     """Route structlog events through stdlib for the duration of one test.

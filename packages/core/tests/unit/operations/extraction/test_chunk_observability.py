@@ -188,6 +188,8 @@ async def test_extract_chunk_handler_increments_truncated_counter(
                 "output_tokens": 20,
                 "entity_count": 0,
                 "relationship_count": 0,
+                # the answer parsed (its entities were filtered): no unparseable output
+                "parser_lines_parsed": 1,
                 "invalid_relationship_count": 0,
                 "evidence_stats": {},
                 "sentences": [],
@@ -229,17 +231,27 @@ async def test_extract_chunk_handler_increments_truncated_counter(
 async def test_extract_chunk_handler_increments_aborted_counter(
     sqlite_adapter: SqliteAdapter,
 ) -> None:
-    """``aborted_by_loop=True`` bumps ``llm_chunks_aborted_by_loop`` on the source row."""
+    """``aborted_by_loop=True`` bumps ``llm_chunks_aborted_by_loop`` on the source row.
+
+    Since audit wave 6 a loop abort is degenerate output: while a retry is
+    left the group is asked again on the decoding ladder, and only the last
+    attempt keeps the partial output (and counts it). The task is seeded at
+    its last attempt here.
+    """
     from unittest.mock import AsyncMock, patch
 
     from chaoscypher_core.operations.extraction.chunk_extraction_service import (
         ChunkExtractionOperationsService,
     )
+    from chaoscypher_core.settings import EngineSettings
 
     source_id = "src_aborted_counter"
     job_id = "job_aborted_counter"
     task_id = "task_aborted_counter"
     _seed(sqlite_adapter, source_id=source_id, job_id=job_id, task_id=task_id)
+    sqlite_adapter.update_chunk_task(
+        task_id, {"retry_count": EngineSettings().retries.extraction_chunk_max}
+    )
 
     sqlite_adapter.create_chunk(
         {
@@ -269,6 +281,8 @@ async def test_extract_chunk_handler_increments_aborted_counter(
                 "output_tokens": 20,
                 "entity_count": 0,
                 "relationship_count": 0,
+                # the answer parsed (its entities were filtered): no unparseable output
+                "parser_lines_parsed": 1,
                 "invalid_relationship_count": 0,
                 "evidence_stats": {},
                 "sentences": [],
@@ -358,6 +372,8 @@ async def test_post_commit_failure_keeps_chunk_completed(
                 "output_tokens": 20,
                 "entity_count": 0,
                 "relationship_count": 0,
+                # the answer parsed (its entities were filtered): no unparseable output
+                "parser_lines_parsed": 1,
                 "invalid_relationship_count": 0,
                 "evidence_stats": {},
                 "sentences": [],

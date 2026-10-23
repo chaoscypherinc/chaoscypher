@@ -202,13 +202,24 @@ class TestTransportAuthGate:
         assert start["type"] == "http.response.start"
         assert start["status"] == 401
         body = b"".join(m.get("body", b"") for m in send.messages[1:])
-        assert json.loads(body) == {"error": "authentication_required"}
+        # The shared envelope every other 401 uses (shared/auth/dependencies.py).
+        assert json.loads(body) == {"error": "AUTH_REQUIRED", "message": "Authentication required"}
         mock_manager.handle_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_auth_user_is_rejected(self) -> None:
         send, mock_manager, _ = await self._call([(b"x-auth-edge-token", b"edge-secret")])
         self._assert_rejected(send, mock_manager)
+
+    @pytest.mark.asyncio
+    async def test_rejection_is_recorded_in_the_auth_failure_tracker(self) -> None:
+        """A 401 here counts toward GET /api/v1/health/auth like every other 401."""
+        from chaoscypher_cortex.features.local_auth.auth_failure_tracker import tracker
+
+        with patch.object(tracker, "record_failure") as record:
+            send, mock_manager, _ = await self._call([(b"x-auth-user", b"admin")])
+        self._assert_rejected(send, mock_manager)
+        record.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_auth_user_without_edge_token_is_rejected(self) -> None:

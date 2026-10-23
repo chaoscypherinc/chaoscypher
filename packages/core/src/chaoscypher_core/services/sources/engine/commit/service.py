@@ -10,10 +10,11 @@ Extracted from commit_service.py for SRP compliance.
 """
 
 import base64
+import dataclasses
 import hashlib
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import structlog
@@ -77,7 +78,7 @@ def _stable_relationship_citation_id(
     return f"relcite_{digest}"
 
 
-from chaoscypher_core.models import TemplateUpdate
+from chaoscypher_core.models import ReleasedRows, TemplateUpdate
 from chaoscypher_core.services.sources.engine.commit.entity import (
     EntityCommitHandler,
 )
@@ -86,73 +87,172 @@ from chaoscypher_core.services.sources.engine.commit.matcher import (
 )
 from chaoscypher_core.services.sources.engine.commit.relation import (
     RelationshipCommitHandler,
+    relationship_edge_label,
 )
 from chaoscypher_core.services.sources.engine.commit.template import (
     TemplateCommitHandler,
 )
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    INVERSE_OF_KEY,
+    ORPHAN_KEY,
+    is_orphan_record,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
+    carries_evidence,
+)
 from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
     resolve_filtering_config,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+    evidence_snippet,
 )
 
 
 logger = structlog.get_logger(__name__)
 
 
-def drop_orphan_entities(
+def _citation_metadata(
+    sent_ref: str | None,
+    evidence: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Build the JSON citation metadata for an entity or relationship citation.
+
+    Args:
+        sent_ref: The model's sentence reference (numbers the group text).
+        evidence: Evidence resolved at aggregation (``resolve_evidence``).
+
+    Returns:
+        ``{"sent_ref", "sentences"}`` where ``sentences`` lists each cited
+        sentence's ``text``, ``chunk_id`` and chunk-local ``local_index``;
+        ``None`` when there is neither.
+    """
+    if not sent_ref and not evidence:
+        return None
+    return {
+        "sent_ref": sent_ref,
+        "sentences": [
+            {
+                "text": e.get("text"),
+                "chunk_id": e.get("chunk_id"),
+                "local_index": e.get("local_index"),
+            }
+            for e in evidence
+        ],
+    }
+
+
+def entity_citation_chunks(entity: dict[str, Any]) -> list[str]:
+    """Every distinct chunk ``entity`` is cited in: its ``cited_chunk_id``, then its evidence chunks.
+
+    Args:
+        entity: An extracted (possibly deduplicated) entity dict.
+
+    Returns:
+        Chunk ids in first-cited order, without repeats; empty when the
+        entity names no chunk.
+    """
+    out: list[str] = []
+    candidates = [entity.get("cited_chunk_id")]
+    candidates.extend(
+        e.get("chunk_id") for e in entity.get("evidence") or [] if isinstance(e, dict)
+    )
+    for cid in candidates:
+        if cid and str(cid) not in out:
+            out.append(str(cid))
+    return out
+
+
+class OrphanCommit(NamedTuple):
+    """What the commit's orphan rule (:func:`flag_orphan_entities`) leaves to commit."""
+
+    entities: list[dict]
+    """The entities to commit, in extraction order, every orphan kept flagged (``ORPHAN_KEY``)."""
+    relationships: list[dict]
+    """The relationships, remapped onto ``entities``' positions."""
+    flagged: int
+    """Orphans kept with the flag (the ``orphan_entities_filtered`` counter)."""
+    dropped: int
+    """Orphans dropped for carrying nothing (the ``evidence_less_entities_dropped`` counter)."""
+
+
+def _entity_record(entity: dict) -> dict:
+    """The record an entity's fields live on: its ``entity_data`` when nested, else itself."""
+    nested = entity.get("entity_data")
+    return nested if isinstance(nested, dict) else entity
+
+
+def _with_orphan_flag(entity: dict, *, orphan: bool) -> dict:
+    """``entity`` with the orphan flag set (``orphan``) or a stale ``True`` cleared; a copy when it changes.
+
+    Only the flag's own value is touched: an extracted ``orphan`` property of
+    any other value (``"yes"``) is what the text says and stays.
+    """
+    record = _entity_record(entity)
+    stored = record.get("properties")
+    props: dict[str, Any] = stored if isinstance(stored, dict) else {}
+    if orphan == is_orphan_record(props):
+        return entity
+    new_props = (
+        {**props, ORPHAN_KEY: True}
+        if orphan
+        else {k: v for k, v in props.items() if k != ORPHAN_KEY}
+    )
+    new_record = {**record, "properties": new_props}
+    return {**entity, "entity_data": new_record} if record is not entity else new_record
+
+
+def flag_orphan_entities(
     entities: list[dict],
     relationships: list[dict],
     *,
-    enabled: bool,
-) -> tuple[list[dict], list[dict], int]:
-    """Filter entities not referenced by any relationship, when enabled.
+    keep_evidence_less: bool,
+) -> OrphanCommit:
+    """Keep every orphan that carries evidence, flagged; drop only the ones carrying nothing.
 
-    Honors ``FilteringConfig.protect_orphans``. Returns
-    ``(kept_entities, remapped_relationships, dropped_count)``
-    preserving input order.
+    Keep, flag, never delete (2026-10-07): an orphan is an entity no
+    relationship references. Until then the commit deleted every orphan when
+    ``FilteringConfig.protect_orphans`` was off (every preset but
+    ``minimal``/``unfiltered``), description and all: 20 to 36 entities per
+    Book One run, among them "Márya Lvóvna Karágina" with the fact that she
+    is Julie's mother (benchmark q035, q128), because the relationship pass
+    happened not to write her edge. Now an orphan that carries evidence
+    (:func:`~chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner.carries_evidence`:
+    a description or an evidence sentence) is committed with
+    ``properties.orphan: true``
+    (:data:`~chaoscypher_core.services.sources.engine.deduplication.name_identity.ORPHAN_KEY`),
+    and only one carrying neither is dropped, unless ``keep_evidence_less``
+    (``protect_orphans``) keeps it too, flagged. The consumers decide:
+    retrieval ranks a flagged node after the connected ones
+    (``graphrag_handlers._by_standing``), the graph view groups it, the
+    resolver may connect it later. The flag is the commit's: a connected
+    entity loses a stale ``True``.
 
-    The upstream extraction pipeline emits relationships keyed by
-    integer indices into the ``entities`` list — each relationship
-    has ``source: int`` and ``target: int`` whose values position into
-    ``entities``. The downstream consumers in this commit pipeline
-    (``commit/relation.py:157`` and ``commit/service.py:1120``) resolve
-    endpoints via those indices, so this filter — which runs *before*
-    node creation, when no entity IDs exist yet — must use the same
-    contract.
-
-    When the filter drops entity at index ``k``, every entity after it
-    shifts down by one. Without remapping, relationships into kept-but-
-    shifted entities silently disappear at commit time (the index they
-    reference is now out of range, or — worse — points at the wrong
-    surviving entity). The fix borrows
-    ``EntityProcessor.remap_relationship_indices`` (the canonical remap
-    pattern already used by dedup and type-rescue).
-
-    Malformed endpoints (non-integer ``source``/``target``) are dropped
-    by ``remap_relationship_indices`` so a typo in one relationship
-    cannot poison the surviving edge set.
+    The extraction emits relationships keyed by integer indices into
+    ``entities`` (``source``/``target``), and the commit's consumers
+    (``commit/relation.py`` and the citation helpers) resolve endpoints by
+    those positions, so a dropped entity's successors shift down: the
+    relationships are remapped by the canonical
+    ``EntityProcessor.remap_relationship_indices`` (an edge into a kept but
+    shifted entity would otherwise vanish or hit the wrong one). Malformed
+    endpoints (non-integer ``source``/``target``) are dropped by that remap
+    when anything is dropped, and count as no reference.
 
     Args:
-        entities: Entities pending commit (in extraction order — index
-            position is the join key).
+        entities: Entities pending commit (in extraction order: the position
+            is the join key).
         relationships: Relationships pending commit, keyed by integer
             ``source``/``target`` indices into ``entities``.
-        enabled: When False, returns ``(entities, relationships, 0)``
-            unchanged.
+        keep_evidence_less: Keep (flagged) an orphan that carries nothing
+            too (``FilteringConfig.protect_orphans``).
 
     Returns:
-        Tuple of ``(kept_entities, remapped_relationships, dropped_count)``.
-        ``dropped_count`` is the number of orphan entities removed; it
-        feeds the ``ORPHAN_ENTITIES_FILTERED`` quality counter at the
-        caller. Relationships into removed entities are filtered out by
-        the canonical remap helper (so the returned list is always a
-        subset of the input list).
+        :class:`OrphanCommit`: the kept entities (input order), the remapped
+        relationships (always a subset of the input), and the flagged and
+        dropped orphan counts.
     """
     from chaoscypher_core.services.sources.engine.deduplication.service import (
         EntityProcessor,
     )
-
-    if not enabled:
-        return list(entities), list(relationships), 0
 
     referenced: set[int] = set()
     for rel in relationships:
@@ -161,25 +261,24 @@ def drop_orphan_entities(
             if isinstance(idx, int) and idx >= 0:
                 referenced.add(idx)
 
-    # Build mapping: old_index -> new_index (or None if dropped) and the
-    # surviving entity list at the same time, preserving extraction order.
-    new_idx = 0
+    # old_index -> new_index (None when dropped) and the kept list, in extraction order.
     index_mapping: dict[int, int | None] = {}
     kept: list[dict] = []
+    flagged = 0
     for old_idx, entity in enumerate(entities):
-        if old_idx in referenced:
-            index_mapping[old_idx] = new_idx
-            kept.append(entity)
-            new_idx += 1
-        else:
+        orphan = old_idx not in referenced
+        if orphan and not keep_evidence_less and not carries_evidence(_entity_record(entity)):
             index_mapping[old_idx] = None
+            continue
+        flagged += orphan
+        index_mapping[old_idx] = len(kept)
+        kept.append(_with_orphan_flag(entity, orphan=orphan))
 
-    dropped_count = len(entities) - len(kept)
-    if dropped_count == 0:
-        return kept, list(relationships), 0
-
+    dropped = len(entities) - len(kept)
+    if dropped == 0:
+        return OrphanCommit(kept, list(relationships), flagged, 0)
     remapped = EntityProcessor.remap_relationship_indices(relationships, index_mapping)
-    return kept, remapped, dropped_count
+    return OrphanCommit(kept, remapped, flagged, dropped)
 
 
 def normalize_relationship_endpoints(
@@ -188,16 +287,16 @@ def normalize_relationship_endpoints(
 ) -> list[dict]:
     """Convert string entity-id ``source``/``target`` endpoints to integer indices.
 
-    The commit contract (``drop_orphan_entities`` and ``relation.py``'s
+    The commit contract (``flag_orphan_entities`` and ``relation.py``'s
     ``_resolve_node_ids`` index path) expects each relationship's ``source`` /
     ``target`` to be an INTEGER index into ``entities``. The in-memory
     finalizer path honors that. But the relational-store reload path —
     ``list_source_relationships`` → ``_relationship_row_to_dict`` (migration
     0042) — projects ``source``/``target`` as STRING entity IDs
     (``source_entity_id`` / ``target_entity_id``). Feeding those straight to
-    commit made the integer check in ``drop_orphan_entities`` fail for every
-    relationship, so the referenced set was empty and 100% of entities were
-    dropped as false orphans (empty graph for every committed source via the
+    commit made the integer check in the orphan filter (now
+    ``flag_orphan_entities``) fail for every relationship, so the referenced
+    set was empty and 100% of entities were dropped as false orphans (empty graph for every committed source via the
     CLI ``source add`` and recovery re-commit paths).
 
     This maps id-keyed endpoints to the entity's position in ``entities``.
@@ -358,8 +457,14 @@ class SourceCommitService:
             SourceCommitService with all dependencies injected.
 
         """
+        from chaoscypher_core.repo_factories import get_transaction_graph_repository
+
         return cls(
-            graph_repository=engine.graph_repository,
+            # on the adapter's session, never the Engine's own graph session:
+            # the commit's graph and storage writes share one transaction
+            graph_repository=get_transaction_graph_repository(
+                engine.storage_adapter, engine.settings.current_database
+            ),
             source_repository=engine.storage_adapter,
             sources_repository=engine.storage_adapter,
             indexing_repository=engine.storage_adapter,
@@ -383,9 +488,15 @@ class SourceCommitService:
     def _cleanup_previous_commit(self, file_id: str, source_id: str) -> dict[str, Any]:
         """Clean up any previously committed graph data for idempotent re-commit.
 
-        Deletes graph nodes/edges/templates, search index entries, and citations
-        created by a prior commit for this source. Resets chunk status to 'indexed'
-        so they can be re-promoted during the fresh commit.
+        Releases the source from the graph (``release_source_graph``, #795):
+        its memberships go, and the nodes and edges no other source attests
+        are deleted, with their search index entries. Nodes and edges another
+        source still attests (merged across sources by identity resolution)
+        survive, rebuilt from the sources they still have, so the re-commit
+        writes this source's rows again beside them. ``stats["released"]``
+        carries the release for :meth:`_refresh_released` after the commit.
+        Also deletes the source's citations and resets chunk status to
+        'indexed' so they can be re-promoted during the fresh commit.
 
         Args:
             file_id: Import file ID.
@@ -400,9 +511,22 @@ class SourceCommitService:
         # search-index failure after the graph delete would leave orphan
         # FTS5/vec rows for nodes that no longer exist.
         with self.adapter.transaction():
-            # Step 1: Delete graph data (edges, nodes, templates) for this source
-            graph_stats = self.graph_repository.delete_graph_data_by_source(source_id)
-            deleted_node_ids: list[str] = graph_stats.get("deleted_node_ids", [])
+            # Step 1: Release this source's graph rows, on the adapter's own
+            # session whatever repository the service was given (#795)
+            from chaoscypher_core.repo_factories import get_transaction_graph_repository
+            from chaoscypher_core.services.graph.management.release import release_source_graph
+
+            released = release_source_graph(
+                get_transaction_graph_repository(
+                    self.adapter,  # type: ignore[arg-type]
+                    self.database_name,
+                ),
+                source_id,
+                sources=self.sources_repository,
+                database_name=self.database_name,
+                settings=self.settings,
+            )
+            deleted_node_ids = sorted(released.deleted_node_ids)
 
             # Step 2: Clean search indexes for deleted nodes.
             # Pass session= so the search delete joins the adapter's transaction
@@ -419,13 +543,22 @@ class SourceCommitService:
         # Step 4: Reset chunk status back to 'indexed' for re-promotion
         self.indexing_repository.update_chunk_status(file_id, "indexed")
 
+        graph_stats = {
+            "nodes_deleted": len(released.deleted_node_ids),
+            "edges_deleted": len(released.deleted_edge_ids),
+            "nodes_kept": len(released.touched_node_ids),
+            "edges_kept": len(released.touched_edge_ids),
+            "nodes_rebuilt": len(released.stale_node_ids),
+            "deleted_node_ids": deleted_node_ids,
+        }
         had_previous_data = (
-            graph_stats.get("nodes_deleted", 0) > 0
+            bool(released.deleted_node_ids or released.touched_node_ids)
             or citation_stats.get("entity_citations_deleted", 0) > 0
         )
 
         stats = {
             "had_previous_data": had_previous_data,
+            "released": released,
             "graph": graph_stats,
             "search_removed": search_removed,
             "citations": citation_stats,
@@ -435,9 +568,10 @@ class SourceCommitService:
             logger.info(
                 "idempotent_cleanup_completed",
                 source_id=source_id,
-                nodes_deleted=graph_stats.get("nodes_deleted", 0),
-                edges_deleted=graph_stats.get("edges_deleted", 0),
-                templates_deleted=graph_stats.get("templates_deleted", 0),
+                nodes_deleted=graph_stats["nodes_deleted"],
+                edges_deleted=graph_stats["edges_deleted"],
+                nodes_kept=graph_stats["nodes_kept"],
+                edges_kept=graph_stats["edges_kept"],
                 search_removed=search_removed,
                 entity_citations_deleted=citation_stats.get("entity_citations_deleted", 0),
                 relationship_citations_deleted=citation_stats.get(
@@ -607,17 +741,20 @@ class SourceCommitService:
 
         # Build shared mappings used by multiple sub-methods
         total_content_length = sum(len(c.get("content", "")) for c in all_chunks)
-        chunk_index_to_id: dict[int, str] = {}
-        for chunk in all_chunks:
-            idx = chunk.get("chunk_index")
-            if idx is not None:
-                chunk_index_to_id[idx] = chunk["id"]
+        # Citations name their chunk directly (``cited_chunk_id``, resolved at
+        # aggregation); the commit only checks it is one of this source's
+        # stored chunks. ``chunk_index`` on an extracted item is an
+        # extraction-group position and is never looked up as a chunk index.
+        stored_chunk_ids: set[str] = {c["id"] for c in all_chunks if c.get("id")}
 
         # === WRITE PHASE (inside transaction — no LLM calls) ===
         # Declare before the block so post-transaction code can access them.
         all_created_templates: list[str] = []
         created_nodes: list[Any] = []
         created_edges: list[Any] = []
+        released: ReleasedRows | None = None
+        reattested_nodes: set[str] = set()
+        reattested_edges: set[str] = set()
 
         # Only run idempotent cleanup when a prior commit attempt actually
         # wrote graph data. For first-attempt commits the three DELETE
@@ -644,6 +781,7 @@ class SourceCommitService:
             # contend with concurrent extraction writes.
             if had_prior_commit_data:
                 cleanup_stats = self._cleanup_previous_commit(file_id, source_id)
+                released = cleanup_stats["released"]
                 if cleanup_stats["had_previous_data"]:
                     logger.info("commit_retry_detected", file_id=file_id, source_id=source_id)
             else:
@@ -683,8 +821,9 @@ class SourceCommitService:
             )
 
             # Step 4: Prepare and batch create entity nodes.
-            # First apply orphan filter (entities with no relationships are dropped
-            # when FilteringConfig.protect_orphans is False for the active mode).
+            # First the orphan rule (``flag_orphan_entities``): an entity no relationship
+            # references is kept flagged ``orphan`` when it carries evidence, and dropped
+            # only when it carries nothing and FilteringConfig.protect_orphans is off.
             _raw_entities = commit_data.get("entities", [])
             # Reload paths (CLI ``source add``, recovery re-commit) rebuild
             # commit_data straight from ``list_source_relationships``, whose
@@ -721,32 +860,40 @@ class SourceCommitService:
             _filtering_config = resolve_filtering_config(
                 mode=_filtering_mode, source_overrides=_source_overrides
             )
-            (
-                _entities_for_commit,
-                _relationships_for_commit,
-                _dropped_orphan_count,
-            ) = drop_orphan_entities(
+            _orphans = flag_orphan_entities(
                 _raw_entities,
                 _raw_relationships,
-                enabled=not _filtering_config.protect_orphans,
+                keep_evidence_less=_filtering_config.protect_orphans,
             )
-            if _dropped_orphan_count:
+            _entities_for_commit = _orphans.entities
+            _relationships_for_commit = _orphans.relationships
+            if _orphans.flagged or _orphans.dropped:
                 from chaoscypher_core.services.quality.counters import (
                     QualityCounter,
                     increment_quality_counter,
                 )
 
-                await increment_quality_counter(
-                    adapter=self.source_repository,
-                    source_id=file_id,
-                    database_name=self.database_name,
-                    counter=QualityCounter.ORPHAN_ENTITIES_FILTERED,
-                    n=_dropped_orphan_count,
-                )
+                if _orphans.flagged:  # kept, flagged (until 2026-10-07: the ones deleted)
+                    await increment_quality_counter(
+                        adapter=self.source_repository,
+                        source_id=file_id,
+                        database_name=self.database_name,
+                        counter=QualityCounter.ORPHAN_ENTITIES_FILTERED,
+                        n=_orphans.flagged,
+                    )
+                if _orphans.dropped:  # carrying neither a description nor an evidence sentence
+                    await increment_quality_counter(
+                        adapter=self.source_repository,
+                        source_id=file_id,
+                        database_name=self.database_name,
+                        counter=QualityCounter.EVIDENCE_LESS_ENTITIES_DROPPED,
+                        n=_orphans.dropped,
+                    )
                 logger.info(
-                    "orphan_entities_dropped",
+                    "orphan_entities_committed",
                     file_id=file_id,
-                    count=_dropped_orphan_count,
+                    flagged=_orphans.flagged,
+                    dropped_evidence_less=_orphans.dropped,
                     kept=len(_entities_for_commit),
                     pre_filter=len(_raw_entities),
                     mode=_filtering_mode,
@@ -785,7 +932,9 @@ class SourceCommitService:
                 entity_name_to_node_id,
                 entity_index_to_node,  # Node objects for citation creation (avoids redundant lookups)
                 nodes_actually_inserted,
-            ) = await self.entity_handler.batch_create_nodes(nodes_to_create, entity_data_list)
+            ) = await self.entity_handler.batch_create_nodes(
+                nodes_to_create, entity_data_list, reattested=reattested_nodes
+            )
 
             # Collect nodes for post-transaction search indexing.
             # SearchRepository uses its own engine connections rather than the
@@ -806,7 +955,7 @@ class SourceCommitService:
                 entity_index_to_node_id=entity_index_to_node_id,
                 entity_index_to_node=entity_index_to_node,
                 commit_data=_commit_data_for_citations,
-                chunk_index_to_id=chunk_index_to_id,
+                stored_chunk_ids=stored_chunk_ids,
             )
 
             # Step 6: Create relationship edges (also returns any newly created edge templates)
@@ -825,6 +974,18 @@ class SourceCommitService:
 
             # Get inverse relationship map from extraction results (domain-specific)
             inverse_relationships: dict[str, str] = commit_data.get("inverse_relationships", {})
+
+            # One fact, one edge: orient symmetric and inverse-pair relationships
+            # by node id (the rule the relationship dedup applies), so a fact the
+            # LLM wrote both ways in two groups commits as one edge. Edge creation
+            # and the citation match below both read the oriented list.
+            _relationships_for_commit = RelationshipCommitHandler.orient_relationships_for_commit(
+                _relationships_for_commit,
+                symmetric_relationships=commit_data.get("symmetric_relationships"),
+                inverse_relationships=inverse_relationships,
+                entity_name_to_node_id=entity_name_to_node_id,
+                entity_index_to_node_id=entity_index_to_node_id,
+            )
 
             # Phase 6 (2026-05-08): resolve enable_inverse_relationships via 3-layer cascade.
             # Cascade: per-source (nullable bool on source row) → global ExtractionSettings.
@@ -861,7 +1022,16 @@ class SourceCommitService:
             (
                 created_edges,
                 edges_actually_inserted,
-            ) = await self.relationship_handler.batch_create_edges(edges_to_create)
+            ) = await self.relationship_handler.batch_create_edges(
+                edges_to_create, reattested=reattested_edges
+            )
+
+            # Step 7a: the reused rows this source attests again (the kept side of a
+            # cross-source merge that outlived this source's release) fold its reading
+            # back in, through the release's own rebuild (#795).
+            released = self._rebuild_reattested(
+                source_id, reattested_nodes, reattested_edges, released
+            )
 
             # Step 7b: Create relationship citations linking edges to source chunks
             await self._create_relationship_citations(
@@ -871,7 +1041,9 @@ class SourceCommitService:
                 edges_to_create=edges_to_create,
                 relationships=_relationships_for_commit,
                 entity_index_to_node=entity_index_to_node,
-                chunk_index_to_id=chunk_index_to_id,
+                stored_chunk_ids=stored_chunk_ids,
+                entity_index_to_node_id=entity_index_to_node_id,
+                entity_name_to_node_id=entity_name_to_node_id,
             )
 
             # Step 8: Update chunk status to 'committed'. Vector-search
@@ -1041,6 +1213,19 @@ class SourceCommitService:
                     file_id=file_id,
                 )
 
+        scope = {str(nid) for nid in entity_index_to_node_id.values() if nid}
+        if released is not None:
+            if self.settings.graph.resolve_identities:
+                # The release's scoped resolution joins this commit's own pass below,
+                # under conventions that read this source's packs again.
+                scope |= released.resolve_node_ids
+                released = dataclasses.replace(released, resolve_node_ids=frozenset())
+            await self._refresh_released(released)
+
+        if self.settings.graph.resolve_identities:
+            await self._resolve_identities(file_id, scope=scope)
+        self._supersede_memory(file_id)
+
         # Clear progress after completion
         self._update_progress(file_id, 0, 0, "")
 
@@ -1058,6 +1243,196 @@ class SourceCommitService:
             "created_edges": created_edges,
             "created_templates": all_created_templates,
         }
+
+    def _graph_packs(self, file_id: str) -> tuple[str, ...]:
+        """The union of the packs the graph's sources extracted with, ``file_id``'s included, sorted.
+
+        :func:`~chaoscypher_core.services.graph.management.release.graph_packs`,
+        the lookup the rebuild after a source release shares.
+        """
+        from chaoscypher_core.services.graph.management.release import graph_packs
+
+        return graph_packs(
+            self.graph_repository,
+            self.sources_repository,
+            self.database_name,
+            include=[file_id],
+        )
+
+    def _rebuild_reattested(
+        self,
+        source_id: str,
+        nodes: set[str],
+        edges: set[str],
+        released: ReleasedRows | None,
+    ) -> ReleasedRows | None:
+        """Rebuild the reused rows ``source_id`` attests again; fold the changed ones into ``released``.
+
+        ``release.rebuild_from_members`` under the graph's conventions (this
+        source's included), in the commit's transaction. The nodes whose text
+        changed join ``stale_node_ids`` for :meth:`_refresh_released`; the
+        post-commit identity pass already covers them (they are this commit's
+        nodes).
+        """
+        if not (nodes or edges):
+            return released
+        from chaoscypher_core.services.graph.management.release import (
+            graph_conventions,
+            rebuild_from_members,
+        )
+
+        conventions = graph_conventions(
+            self.graph_repository,
+            self.sources_repository,
+            self.database_name,
+            self.settings,
+            include=[source_id],
+        )
+        rebuilt = rebuild_from_members(self.graph_repository, nodes, edges, conventions)
+        logger.info(
+            "commit_reattested_rows_rebuilt",
+            source_id=source_id,
+            nodes=len(nodes),
+            edges=len(edges),
+            nodes_changed=len(rebuilt.changed_node_ids),
+        )
+        base = released or ReleasedRows()
+        return dataclasses.replace(
+            base, stale_node_ids=base.stale_node_ids | rebuilt.changed_node_ids
+        )
+
+    async def _refresh_released(self, released: ReleasedRows) -> None:
+        """After the commit: the re-commit's release resolved, re-embedded and re-indexed.
+
+        ``refresh_released_graph``: best-effort, logged; the commit stands.
+        """
+        from chaoscypher_core.services.graph.management.release import refresh_released_graph
+
+        if not (released.stale_node_ids or released.resolve_node_ids or released.deleted_node_ids):
+            return
+        try:
+            embedder = self._get_embedding_provider()
+        except Exception:
+            logger.exception("released_graph_embedder_unavailable_non_fatal")
+            embedder = None
+        await refresh_released_graph(
+            self.graph_repository,
+            released,
+            embedder=embedder,
+            search=self.search_repository,
+        )
+
+    def _supersede_memory(self, file_id: str) -> None:
+        """The supersession step of a memory source (spec 2026-10-20 decision 6), after the identity pass.
+
+        Read from the source row's ``source_type``: a document runs nothing. The
+        single-valued relations are the memory path's set plus the graph's
+        vocabulary flags. Non-fatal: the commit stands if the step fails.
+        """
+        from chaoscypher_core.services.graph.memory.supersession import (
+            single_valued_labels,
+            supersede_memory_edges,
+        )
+        from chaoscypher_core.services.workflows.tools.engine.memory_render import (
+            MEMORY_SOURCE_TYPE,
+        )
+
+        source = self.source_repository.get_source(file_id, self.database_name)
+        if not source or source.get("source_type") != MEMORY_SOURCE_TYPE:
+            return
+        try:
+            closures = supersede_memory_edges(
+                self.graph_repository,
+                file_id,
+                single_valued=single_valued_labels(self._relation_vocabulary()),
+            )
+        except Exception:
+            logger.exception("memory_supersession_failed", source_id=file_id)
+            return
+        if closures:
+            logger.info("memory_supersession_done", source_id=file_id, closures=len(closures))
+
+    def _relation_vocabulary(self) -> Any:
+        """The graph's relation vocabulary (its sources' packs), for the single-valued flags."""
+        from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+            EMPTY_RELATION_VOCABULARY,
+        )
+
+        return EMPTY_RELATION_VOCABULARY
+
+    async def _resolve_identities(self, file_id: str, scope: set[str] | None = None) -> None:
+        """The post-commit identity pass (``settings.graph.resolve_identities``).
+
+        Runs the resolver under the naming conventions of the graph's
+        sources (the floor's tables and those of :meth:`_graph_packs`, the
+        union of every source's packs: the ones a one-source graph's
+        deduplication used), over ``scope`` (the nodes the commit wrote) and
+        every node sharing a naming word, a label or an alias with them
+        (``plan_resolution(..., scope=)``; the plan reads the whole graph so
+        every guard counts every holder; None resolves the whole graph), then
+        re-embeds the nodes whose text changed (``release.reembed_nodes``, the
+        re-embed the rebuild after a source release shares) so the vector
+        index follows.
+
+        A graph whose sources chose different packs is resolved under the
+        union of their packs (spec 2026-10-07 § 6): a pack only adds titles,
+        forms and words to the floor's and cannot contradict it, so the union
+        is one coherent set of tables. Until
+        2026-10-07 such a graph was skipped
+        (``identity_resolution_skipped_mixed_domains``). Non-fatal: the commit
+        stands if the pass fails, and the next commit retries it.
+        """
+        from chaoscypher_core.services.graph.management.release import reembed_nodes
+        from chaoscypher_core.services.graph.resolution import resolve_graph
+        from chaoscypher_core.services.graph.resolution.apply import ResolutionReport
+        from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+            conventions_of_packs,
+        )
+
+        report = ResolutionReport()
+        reembedded = 0
+        packs: tuple[str, ...] = ()
+        failed = False
+        try:
+            packs = self._graph_packs(file_id)
+            resolve_graph(
+                self.graph_repository,
+                conventions=conventions_of_packs(packs, self.settings),
+                search=self.search_repository,
+                scope=scope,
+                report=report,
+            )
+        except Exception:
+            # the merge groups that committed before the failure are in the graph (and
+            # out of the index): their kept nodes are still re-embedded below
+            logger.exception("identity_resolution_failed_non_fatal", file_id=file_id)
+            failed = True
+        try:
+            if report.changed_node_ids:
+                reembedded = await reembed_nodes(
+                    self.graph_repository,
+                    sorted(report.changed_node_ids),
+                    self._get_embedding_provider(),
+                    search=self.search_repository,  # the vector rows follow too
+                )
+        except Exception:
+            logger.exception("identity_resolution_reembed_failed_non_fatal", file_id=file_id)
+            return
+        if failed:
+            return
+        logger.info(
+            "identity_resolution_applied",
+            file_id=file_id,
+            packs=list(packs),
+            scoped=scope is not None,
+            merged=len(report.merged),
+            edges_moved=report.edges_moved,
+            edges_dropped=report.edges_dropped,
+            edges_folded=report.edges_folded,
+            aliases_dropped=len(report.aliases_dropped),
+            flagged=report.flagged,
+            reembedded=reembedded,
+        )
 
     async def _commit_empty(
         self,
@@ -1098,10 +1473,11 @@ class SourceCommitService:
         all_chunks = _chunk_result[0] if isinstance(_chunk_result, tuple) else _chunk_result
         total_content_length = sum(len(c.get("content", "")) for c in all_chunks)
 
+        released: ReleasedRows | None = None
         with self.adapter.transaction():
             self.source_repository.start_commit(file_id)
             if had_prior_commit_data:
-                self._cleanup_previous_commit(file_id, source_id)
+                released = self._cleanup_previous_commit(file_id, source_id)["released"]
 
             await self._create_source_and_promote_chunks(
                 file_id=file_id,
@@ -1125,6 +1501,9 @@ class SourceCommitService:
             # outer transaction at ``import_service._run_commit`` can be
             # removed (2026-05-20 writer-lock-contention root fix).
             self.source_repository.clear_source_commit_payload(file_id, self.database_name)
+
+        if released is not None:
+            await self._refresh_released(released)
 
         # Vector-search indexing runs outside the transaction, but passes
         # the adapter's session so the write shares the connection
@@ -1258,105 +1637,98 @@ class SourceCommitService:
         entity_index_to_node_id: dict[int, str],
         entity_index_to_node: dict[int, Any],
         commit_data: dict,
-        chunk_index_to_id: dict[int, str],
+        stored_chunk_ids: set[str],
     ) -> None:
-        """Create source_citations linking entities to source chunks.
+        """Create source_citations linking entities to the chunks that cite them.
+
+        One row per distinct chunk an entity is cited in (:func:`entity_citation_chunks`):
+        a deduplicated entity carries the union of its mentions' evidence, so
+        an entity cited in three groups gets three rows and the provenance
+        arm reaches every chunk, not only the first. Each row's snippet and
+        metadata are that chunk's cited sentences; the model's ``sent_ref``
+        numbers one group's text and rides on the ``cited_chunk_id`` row only.
 
         Args:
             file_id: Import file ID
             source_id: Created source ID
             entity_index_to_node_id: Mapping from entity index to created node ID
             entity_index_to_node: Mapping from entity index to Node object (avoids lookups)
-            commit_data: Commit data containing chunk_ids and entity details
-            chunk_index_to_id: Pre-built mapping from chunk index to chunk ID
+            commit_data: Commit data containing the extracted entities
+            stored_chunk_ids: Ids of this source's stored chunks
 
         """
-        # Get entities from commit_data (they have chunk_index from extraction)
         entities = commit_data.get("entities", [])
 
-        if not chunk_index_to_id:
+        if not stored_chunk_ids:
             logger.warning("no_chunks_found_skipping_source_citations", file_id=file_id)
             return
 
         logger.info(
             "creating_source_citations",
             entity_count=len(entity_index_to_node_id),
-            chunk_count=len(chunk_index_to_id),
+            chunk_count=len(stored_chunk_ids),
         )
 
-        # Create citations: each entity is linked to the chunk it was extracted from
+        # Create citations: one per (entity, chunk its evidence is in)
         citations_to_create = []
         citations_skipped_no_chunk_index = 0
         citations_skipped_index_not_mapped = 0
 
         for entity_idx, node_id in entity_index_to_node_id.items():
-            # Get entity's chunk_index (set during extraction)
             if entity_idx >= len(entities):
                 continue
 
             entity = entities[entity_idx]
-            chunk_index = entity.get("chunk_index")
-            if chunk_index is None:
-                # Upstream merge collapsed the chunk_index — entity was never
-                # tagged during extraction.
+            chunk_ids = entity_citation_chunks(entity)
+            if not chunk_ids:
+                # No evidence chunk was resolved at aggregation (item never
+                # tagged with its group, or a payload from before evidence).
                 citations_skipped_no_chunk_index += 1
-                continue
-
-            # Look up the chunk_id from chunk_index
-            chunk_id = chunk_index_to_id.get(chunk_index)
-            if not chunk_id:
-                # chunk_index exists but doesn't map to a stored chunk —
-                # commit-pipeline drift (e.g. chunk pruned after extraction).
-                citations_skipped_index_not_mapped += 1
                 continue
 
             # Get entity details from already-created nodes (no lookup needed)
             node = entity_index_to_node.get(entity_idx)
             entity_label = node.label if node else "Unknown"
-
             # Store the type name (not template_id) for human-readable stats
             entity_type = entity.get("type")
-
             # Get entity confidence (default to 1.0 if not provided by LLM)
             entity_confidence = entity.get("confidence", 1.0)
+            evidence = entity.get("evidence") or []
+            primary = entity.get("cited_chunk_id")
 
-            # Populate context_snippet from sentence evidence when available
-            context_snippet = None
-            sent_ref = entity.get("sent_ref")
-            chunk_sentences = commit_data.get("chunk_sentences")
-            if sent_ref and chunk_sentences:
-                from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
-                    get_referenced_sentences,
+            for chunk_id in chunk_ids:
+                if chunk_id not in stored_chunk_ids:
+                    # The cited chunk is not one of this source's stored chunks —
+                    # commit-pipeline drift (e.g. chunk pruned after extraction).
+                    citations_skipped_index_not_mapped += 1
+                    continue
+                chunk_evidence = [
+                    e for e in evidence if isinstance(e, dict) and e.get("chunk_id") == chunk_id
+                ] or [e for e in evidence if isinstance(e, dict) and not e.get("chunk_id")]
+                citations_to_create.append(
+                    {
+                        "id": _stable_citation_id(
+                            database_name=self.database_name,
+                            source_id=source_id,
+                            chunk_id=chunk_id,
+                            entity_uri=node_id,
+                        ),
+                        "database_name": self.database_name,
+                        "entity_uri": node_id,
+                        "entity_label": entity_label,
+                        "entity_type": entity_type,
+                        "source_id": source_id,
+                        "chunk_id": chunk_id,
+                        "confidence": entity_confidence,
+                        "extraction_method": "ai_extraction",
+                        "context_snippet": evidence_snippet(evidence, chunk_id),
+                        "created_at": datetime.now(UTC),
+                        "citation_metadata": _citation_metadata(
+                            entity.get("sent_ref") if chunk_id == primary else None,
+                            chunk_evidence,
+                        ),
+                    }
                 )
-
-                # chunk_sentences is parallel to chunk indices
-                if chunk_index is not None and chunk_index < len(chunk_sentences):
-                    sentences_for_chunk = chunk_sentences[chunk_index]
-                    if sentences_for_chunk:
-                        ref_sentences = get_referenced_sentences(sent_ref, sentences_for_chunk)
-                        if ref_sentences:
-                            context_snippet = " ".join(ref_sentences)
-
-            citation = {
-                "id": _stable_citation_id(
-                    database_name=self.database_name,
-                    source_id=source_id,
-                    chunk_id=chunk_id,
-                    entity_uri=node_id,
-                ),
-                "database_name": self.database_name,
-                "entity_uri": node_id,
-                "entity_label": entity_label,
-                "entity_type": entity_type,
-                "source_id": source_id,
-                "chunk_id": chunk_id,
-                "confidence": entity_confidence,
-                "extraction_method": "ai_extraction",
-                "context_snippet": context_snippet,
-                "created_at": datetime.now(UTC),
-                "citation_metadata": {"sent_ref": sent_ref} if sent_ref else None,
-            }
-            citations_to_create.append(citation)
 
         # Batch create citations (single transaction)
         if citations_to_create:
@@ -1406,25 +1778,38 @@ class SourceCommitService:
         edges_to_create: list,
         relationships: list[dict],
         entity_index_to_node: dict[int, Any],
-        chunk_index_to_id: dict[int, str],
+        stored_chunk_ids: set[str],
+        entity_index_to_node_id: dict[int, str] | None = None,
+        entity_name_to_node_id: dict[str, str] | None = None,
     ) -> None:
-        """Create relationship_citations linking edges to source chunks.
+        """Create relationship_citations linking edges to the chunks that cite them.
+
+        Each forward edge is matched back to the relationship it was built
+        from by ``(source node, target node, edge label)``, resolving the
+        endpoints with the same resolver edge creation uses; relationships
+        sharing a key are consumed in order, so two edges on one node pair
+        keep their own evidence. The citation reads ``cited_chunk_id`` and
+        ``evidence`` resolved at aggregation.
 
         Args:
             file_id: Import file ID
             source_id: Created source ID
             created_edges: List of created edge IDs (in same order as edges_to_create)
             edges_to_create: List of EdgeCreate objects with source/target info
-            relationships: Original relationships from commit_data (have chunk_index)
+            relationships: Relationships from commit_data (carry the evidence)
             entity_index_to_node: Mapping from entity index to Node object
-            chunk_index_to_id: Pre-built mapping from chunk index to chunk ID
+            stored_chunk_ids: Ids of this source's stored chunks
+            entity_index_to_node_id: Mapping from entity index to node ID
+                (derived from ``entity_index_to_node`` when omitted)
+            entity_name_to_node_id: Mapping from entity name to node ID, for
+                name-keyed relationships
 
         """
         if not created_edges:
             logger.debug("no_edges_created_skipping_relationship_citations", file_id=file_id)
             return
 
-        if not chunk_index_to_id:
+        if not stored_chunk_ids:
             logger.warning("no_chunks_found_skipping_relationship_citations", file_id=file_id)
             return
 
@@ -1432,31 +1817,29 @@ class SourceCommitService:
             "creating_relationship_citations",
             edge_count=len(created_edges),
             relationship_count=len(relationships),
-            chunk_count=len(chunk_index_to_id),
+            chunk_count=len(stored_chunk_ids),
         )
 
-        # Build a lookup for relationships by source/target entity indices
-        # This helps match EdgeCreate objects back to original relationships
-        # Handle both formats: "source"/"target" and "source_index"/"target_index"
-        rel_by_entities: dict[tuple[int, int], dict] = {}
-        for rel in relationships:
-            # Check both key formats (extraction uses "source"/"target")
-            source_idx = rel.get("source_index")
-            if source_idx is None:
-                source_idx = rel.get("source")
-            target_idx = rel.get("target_index")
-            if target_idx is None:
-                target_idx = rel.get("target")
-            if source_idx is not None and target_idx is not None:
-                rel_by_entities[(source_idx, target_idx)] = rel
+        index_to_node_id = (
+            entity_index_to_node_id
+            if entity_index_to_node_id is not None
+            else {idx: node.id for idx, node in entity_index_to_node.items()}
+        )
+        name_to_node_id = entity_name_to_node_id or {}
 
-        # Build O(1) lookup: (source_node_id, target_node_id) -> relationship dict
-        node_pair_to_rel: dict[tuple[str, str], dict] = {}
-        for (src_idx, tgt_idx), rel in rel_by_entities.items():
-            src_node = entity_index_to_node.get(src_idx)
-            tgt_node = entity_index_to_node.get(tgt_idx)
-            if src_node and tgt_node:
-                node_pair_to_rel[(src_node.id, tgt_node.id)] = rel
+        # (source_node_id, target_node_id, edge label) -> relationships in
+        # order. Keyed by type as well as endpoints so edges sharing a node
+        # pair never borrow another relationship's evidence.
+        rels_by_edge_key: dict[tuple[str, str, str], list[dict]] = {}
+        for rel in relationships:
+            node_ids = RelationshipCommitHandler._resolve_node_ids(  # noqa: SLF001 - the citation match must resolve endpoints exactly as edge creation did
+                rel, name_to_node_id, index_to_node_id
+            )
+            if node_ids is None:
+                continue
+            key = (node_ids[0], node_ids[1], relationship_edge_label(rel))
+            rels_by_edge_key.setdefault(key, []).append(rel)
+        consumed: dict[tuple[str, str, str], int] = {}
 
         # Build O(1) lookup: node_id -> node (for label resolution)
         node_id_to_node = {node.id: node for node in entity_index_to_node.values()}
@@ -1473,28 +1856,27 @@ class SourceCommitService:
             edge = edges_to_create[edge_idx]
 
             # Synthetic inverse edges (created for bidirectional traversal and
-            # tagged with ``inverse_of``) mirror a forward relationship that
-            # already gets its own citation. Their (source, target) pair is the
-            # reversed key, never present in ``node_pair_to_rel``, so they would
-            # otherwise be miscounted as "skipped — no chunk index" and inflate
-            # that quality counter by one phantom skip per inverse edge. They
-            # carry no independent chunk provenance, so skip them outright.
-            if edge.properties.get("inverse_of"):
+            # tagged with ``INVERSE_OF_KEY``) mirror a forward relationship that
+            # already gets its own citation. They carry no independent chunk
+            # provenance and would otherwise be miscounted as skipped, so skip
+            # them outright.
+            if edge.properties.get(INVERSE_OF_KEY):
                 continue
 
-            # O(1) lookup for matching relationship by node pair
-            matching_rel = node_pair_to_rel.get((edge.source_node_id, edge.target_node_id))
-            chunk_index = matching_rel.get("chunk_index") if matching_rel else None
+            key = (edge.source_node_id, edge.target_node_id, edge.label)
+            candidates = rels_by_edge_key.get(key) or []
+            position = consumed.get(key, 0)
+            matching_rel = candidates[min(position, len(candidates) - 1)] if candidates else None
+            consumed[key] = position + 1
+            chunk_id = matching_rel.get("cited_chunk_id") if matching_rel else None
 
-            if chunk_index is None:
-                # Upstream merge collapsed the chunk_index — relationship was
-                # never tagged during extraction.
+            if not chunk_id:
+                # No evidence chunk was resolved at aggregation for this edge.
                 rel_citations_skipped_no_chunk_index += 1
                 continue
 
-            chunk_id = chunk_index_to_id.get(chunk_index)
-            if not chunk_id:
-                # chunk_index exists but doesn't map to a stored chunk —
+            if chunk_id not in stored_chunk_ids:
+                # The cited chunk is not one of this source's stored chunks —
                 # commit-pipeline drift (e.g. chunk pruned after extraction).
                 rel_citations_skipped_index_not_mapped += 1
                 continue
@@ -1505,10 +1887,7 @@ class SourceCommitService:
             source_label = source_node.label if source_node else "Unknown"
             target_label = target_node.label if target_node else "Unknown"
 
-            # Build citation metadata with sent_ref if available
-            rel_sent_ref = matching_rel.get("sent_ref") if matching_rel else None
-            citation_meta = {"sent_ref": rel_sent_ref} if rel_sent_ref else None
-
+            evidence = (matching_rel.get("evidence") if matching_rel else None) or []
             citation = {
                 "id": _stable_relationship_citation_id(
                     database_name=self.database_name,
@@ -1528,7 +1907,9 @@ class SourceCommitService:
                 "extraction_method": "ai_extraction",
                 "justification": matching_rel.get("justification") if matching_rel else None,
                 "created_at": datetime.now(UTC),
-                "citation_metadata": citation_meta,
+                "citation_metadata": _citation_metadata(
+                    matching_rel.get("sent_ref") if matching_rel else None, evidence
+                ),
             }
             citations_to_create.append(citation)
 

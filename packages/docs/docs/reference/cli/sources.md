@@ -30,11 +30,17 @@ chaoscypher source add ./research-papers/
 # URL
 chaoscypher source add https://example.com/article
 
+# Every page of a docs site, as one site (see Import a Docs Site below)
+chaoscypher source add https://docs.example.com --site
+
 # Fast extraction (~30 seconds)
 chaoscypher source add document.pdf --quick
 
-# Force a specific extraction domain
-chaoscypher source add document.pdf --domain technical
+# Force a specific extraction pack (--domain is an alias of --pack)
+chaoscypher source add document.pdf --pack technical
+
+# Extract with two packs on the floor every source has
+chaoscypher source add novel.txt --pack historical --pack literary
 
 # Index only (no LLM required)
 chaoscypher source add document.pdf --index-only
@@ -50,7 +56,7 @@ chaoscypher source add document.pdf --database research
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--quick` | | Fast extraction (3 groups max, ~30 seconds) |
+| `--quick` | | Fast extraction: samples `analysis.quick_sample_size` chunk groups (default 5) |
 | `--skip-extract` | | Skip LLM entity extraction |
 | `--skip-index` | | Skip indexing (use existing chunks) |
 | `--skip-commit` | | Extract but don't commit to graph |
@@ -61,7 +67,7 @@ chaoscypher source add document.pdf --database research
 | `--vision` / `--no-vision` | | Use the vision model on images and scanned PDFs (default: on). |
 | `--content-filtering` / `--no-content-filtering` | | Apply domain content-exclusion rules during extraction (default: on). |
 | `--filtering-mode MODE` | | Extraction filtering mode preset: `maximum`, `strict`, `balanced`, `lenient`, `minimal`, `unfiltered`. Overrides the domain default. See [Filtering Modes](../filtering-modes.md). |
-| `--domain DOMAIN` | | Domain for extraction (see [Extraction Domains](#extraction-domains)) |
+| `--pack PACK` | | Pack to extract with; repeat for several (`--domain` is an alias). See [Extraction Domains](#extraction-domains). |
 | `--no-confirm` | `-y` | Skip the domain confirmation gate and extract immediately with the auto-detected domain. |
 | `--skip-duplicates` | | Skip upload if identical content already exists (matched by SHA-256 hash). |
 | `--database DATABASE` | `-d` | Target database (default: the current database — see [Database selection](index.md#database-selection)) |
@@ -69,6 +75,8 @@ chaoscypher source add document.pdf --database research
 | `--quiet` | `-q` | Minimal output (just OK/FAILED) |
 | `--json` | | Output results as JSON |
 | `--resume` | `-r` | Interactive picker for resuming pending files |
+| `--site` | | Import every page of the docs site at the one URL given, as one site. See [Import a Docs Site](#import-a-docs-site). |
+| `--yes` | | With `--site`: import without asking, once it has shown what it found. |
 
 :::info[CLI flags match the API contract]
 
@@ -85,17 +93,22 @@ The choices you set here persist on the source row, so a later
 
 ### Extraction Domains
 
-Available domains: `auto` (default), `generic`, `technical`, `scientific`, `medical`, `legal`, `financial`, `news`, `educational`, `biographical`, `historical`, `literary`, `philosophical`, `political`, `theological`, `cybersecurity`, `design`, `intelligence`, `investigation`, `reference`. See [Extraction Domains](../../user-guide/domains.md) for what each domain extracts.
+Every source extracts with the floor (`generic`: the eight core types and the
+core relationship labels) plus the packs it chooses. `--pack` is repeatable;
+`auto` (default) detects, and detection proposes up to two packs; `generic`
+alone is the floor alone.
+
+Available packs: `technical`, `scientific`, `medical`, `legal`, `financial`, `news`, `educational`, `biographical`, `historical`, `literary`, `philosophical`, `political`, `theological`, `cybersecurity`, `design`, `intelligence`, `investigation`, `reference`. See [Extraction Domains](../../user-guide/domains.md) for what each domain extracts.
 
 :::info[Domain confirmation gate]
 
 By default, when the domain is auto-detected the source is parked in an
 `awaiting_confirmation` state instead of immediately running the (potentially
-long) extraction. Confirm the detected domain with
+long) extraction. Confirm the proposed packs with
 `chaoscypher source confirm <ID>` (or `--all` to confirm every parked source),
 or pass `--no-confirm`/`-y` to `source add` to skip the gate and extract with
-the auto-detected domain right away. Forcing a domain with `--domain` also
-bypasses the gate.
+the detected packs right away. Forcing packs with `--pack` (`generic` included)
+also bypasses the gate.
 
 :::
 
@@ -130,12 +143,9 @@ Resuming: research-paper.pdf (if_a1b2c3d4e5f6)
 
   Extracting entities ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
   Committing to graph ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
-
-  ✓ Done in 127.3s
-    Entities: 84 | Relationships: 112
-    Nodes created: 84 | Edges created: 112
-    Domain: scientific (auto-detected)
 ```
+
+The run ends with the same `✓ Complete` panel as a fresh add (below).
 
 ### Sample Output
 
@@ -151,12 +161,22 @@ chaoscypher source add research-paper.pdf
   Extracting ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
   Committing ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100%
 
-  ✓ Done in 142.8s
-    Chunks: 42 | Tokens: 18,340
-    Entities: 84 | Relationships: 112
-    Nodes created: 84 | Edges created: 112
-    Domain: scientific (auto-detected)
+╭─────────────── ✓ Complete ───────────────╮
+│                                          │
+│   File ID         if_a1b2c3d4e5f6        │
+│   Domain          scientific             │
+│   Chunks          42                     │
+│   Entities        84                     │
+│   Relationships   112                    │
+│   Quality         92/100 (Excellent)     │
+│   Nodes           84                     │
+│   Edges           112                    │
+│   Duration        142.8s                 │
+│                                          │
+╰──────────────────────────────────────────╯
 ```
+
+The panel lists only the rows the run produced (a run without extraction has no entity rows) and adds an LLM block (calls, tokens, cache hits) when the model was called.
 
 #### Quiet output
 
@@ -228,6 +248,58 @@ chaoscypher source add doc1.pdf doc2.pdf doc3.pdf
 ```
 
 ---
+
+## Import a Docs Site
+
+`source add URL --site` finds the site's pages (its `llms.txt`, its sitemap, or a crawl of its links), says how many it found and how, asks, then imports each page as its own source under one site, a line per page. The `source add` options apply to every page; a site's pages are never parked one by one for domain confirmation, and `--skip-duplicates` does not apply to them (a page already imported elsewhere is still imported as the site's own page; your earlier source is left alone). A site already imported (any spelling of its address) is refused with the `source site refresh` command that checks it. How pages are found, the politeness rules and the limits: [Import a Docs Site](../../user-guide/site-import.md).
+
+```bash
+chaoscypher source add https://docs.example.com --site
+chaoscypher source add https://docs.example.com/guide/ --site --yes --quick
+```
+
+```
+Example Docs (https://docs.example.com/): 71 pages found by llms.txt.
+Import every page as one site? [Y/n]: y
+Fetching pages…
+Fetched 71 pages: 71 new.
+[1/71] OK https://docs.example.com/introduction.md
+…
+Example Docs: 71 of 71 pages done
+```
+
+The `source site` commands manage imported sites. A site is named by its ID, its address or its title.
+
+```bash
+chaoscypher source site list                                  # every site and its progress
+chaoscypher source site show "Example Docs"                   # one site and its pages
+chaoscypher source site refresh https://docs.example.com      # check for updates
+chaoscypher source site refresh https://docs.example.com --exclude https://docs.example.com/blog  # leave a page out from now on
+chaoscypher source site refresh https://docs.example.com --include-all  # bring every left-out page back
+chaoscypher source site delete "Example Docs"                 # keeps its pages as sources
+chaoscypher source site delete "Example Docs" --delete-pages  # deletes its pages too
+```
+
+`source site refresh` fetches every page again: unchanged pages are left alone, changed pages are re-imported in place, new pages are added, and pages the site no longer lists are marked gone (never deleted). New and changed pages run with the choices the site was imported with; `--quick`/`--full` and `--skip-extract`/`--extract` override that one choice for this check when passed. A refresh resumes an import or check that was cut off part-way, from where it stopped. It refuses while an import or check of the site is still under way (one whose process was killed stops counting after the operations worker's timeout); so does `source site delete`.
+
+The site remembers the pages it leaves out (the ones unticked at import in the web UI, and the pages deleted from the site since, with `source delete` or elsewhere): every refresh keeps them out, and `source site show` lists them. `--exclude URL` (repeatable, each a page's full address on the site; anything else is refused) replaces that list from this refresh on; `--include-all` empties it, so every page comes back. A refresh that brings pages back names them ("Bringing back 2 pages: …"; deleted pages are imported again). A page the site gains later is still added. See [Pages left out](../../user-guide/site-import.md#pages-left-out).
+
+```
+Checking Example Docs for updates.
+Fetching pages…
+Checked 71 pages: 1 new, 2 changed, 68 unchanged, 1 gone from the site.
+[1/3] OK https://docs.example.com/changelog.md
+[2/3] OK https://docs.example.com/install.md
+[3/3] OK https://docs.example.com/new-feature.md
+Example Docs: 71 of 71 pages done (1 gone from the site)
+```
+
+| Command | Options |
+|---|---|
+| `site list` | `--format table\|json`, `--database` |
+| `site show SITE` | `--database` |
+| `site refresh SITE` | `--quick/--full`, `--skip-extract/--extract` (default: as imported), `--skip-embeddings`, `--exclude URL` (repeatable; replaces the pages left out), `--include-all` (no page left out), `--database` |
+| `site delete SITE` | `--delete-pages`, `--yes`, `--database` |
 
 ## List Sources
 
@@ -352,26 +424,14 @@ chaoscypher source get if_a1b2c3d4e5f6
  Extract Entities    Yes
 
 Quality Score:
- Grade               92/100 (A)
+ Grade               92/100 (Excellent)
  Entity Quality      88/100
  Relationship Quality 94/100
  Topology Score      91/100
 
-Extraction Results:
-  Entities: 84
-  Relationships: 112
-
-  Entities:
-    • Neural Network (Concept)
-    • Gradient Descent (Algorithm)
-    • Backpropagation (Algorithm)
-    • ImageNet (Dataset)
-    • ResNet (Model)
-    ... and 79 more
-
 Indexing Stats:
   Chunks: 42
-  Tokens: 18,340
+  Content: 184,320 chars
 ```
 
 ---
@@ -391,7 +451,7 @@ chaoscypher source extract SOURCE_ID
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--depth {quick,full}` | | Extraction depth: `quick` (fast sample) or `full` (all chunks). Default: the source's stored depth. |
-| `--domain DOMAIN` | | Force extraction domain (default: auto-detect from content). |
+| `--pack PACK` | | Force the packs to extract with; repeat for several (`--domain` is an alias). `auto` clears a forced choice; `generic` is the floor alone. Default: keep the source's choice. |
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--force` | | Re-extract a committed source. Deletes existing graph nodes and edges before re-running extraction. |
 | `--yes` | `-y` | Skip the destructive-action confirmation prompt (use with `--force`). |
@@ -416,8 +476,8 @@ it), flip the source back to `indexed`, and run extraction:
 # Accept the recommended domain
 chaoscypher source confirm if_abc123
 
-# Override the recommended domain
-chaoscypher source confirm if_abc123 --domain legal
+# Override the proposed packs
+chaoscypher source confirm if_abc123 --pack legal
 
 # Confirm every parked source non-interactively
 chaoscypher source confirm --all --yes
@@ -428,7 +488,7 @@ chaoscypher source confirm --all --yes
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--all` | | Confirm every parked source. |
-| `--domain DOMAIN` | | Override the detected domain (default: accept the recommendation). |
+| `--pack PACK` | | Override the proposed packs; repeat for several (`--domain` is an alias). Default: accept the proposal. |
 | `--depth {quick,full}` | | Extraction depth (default: the source's stored depth). |
 | `--filtering-mode MODE` | | Extraction filtering mode preset (overrides the domain default). |
 | `--yes` | `-y` | Accept the recommended domain without prompting (required when not a TTY). |

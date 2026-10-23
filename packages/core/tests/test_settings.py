@@ -138,12 +138,47 @@ def test_web_settings_defaults() -> None:
         WebSettings(fetch_timeout_seconds=0)
 
 
+def test_web_settings_politeness_defaults() -> None:
+    """The site-crawl politeness knobs (site import design, decision 2)."""
+    import pytest
+    from pydantic import ValidationError
+
+    from chaoscypher_core import __version__
+    from chaoscypher_core.app_config import Settings, WebSettings
+
+    web = Settings().web
+    assert web.user_agent == f"ChaosCypher/{__version__} (+https://chaoscypher.com)"
+    assert web.crawl_delay_seconds == 0.5
+    assert web.crawl_concurrency == 2
+    assert web.respect_robots_txt is True
+    assert web.site_max_pages == 500
+    assert web.site_crawl_max_depth == 3
+    assert web.site_max_sitemaps == 50
+    assert web.site_document_max_bytes == 50 * 1024 * 1024
+    assert web.site_preview_max_pages == 25
+    assert web.site_preview_seconds == 10.0
+    assert web.site_preview_max_sitemaps == 3
+    assert web.site_preview_document_max_bytes == 5 * 1024 * 1024
+    assert web.crawl_delay_max_seconds == 5.0
+
+    with pytest.raises(ValidationError):
+        WebSettings(crawl_delay_seconds=-0.1)
+    with pytest.raises(ValidationError):
+        WebSettings(crawl_concurrency=0)
+    with pytest.raises(ValidationError):
+        WebSettings(site_max_pages=0)
+    with pytest.raises(ValidationError):
+        WebSettings(user_agent="")
+    with pytest.raises(ValidationError):
+        WebSettings(site_preview_seconds=0)
+    with pytest.raises(ValidationError):
+        WebSettings(crawl_delay_max_seconds=-1)
+
+
 def test_extraction_settings_defaults() -> None:
     from chaoscypher_core.app_config import Settings
 
     s = Settings()
-    assert s.extraction.domain_detection_sample_count == 5
-    assert s.extraction.domain_detection_sample_chars == 2000
     assert s.extraction.entity_desc_min_length == 10
     assert s.extraction.entity_desc_incomplete_threshold == 20
     assert s.extraction.research_context_window_chars == 2000
@@ -224,7 +259,7 @@ def test_pr2b_extended_settings_defaults() -> None:
     assert s.search.min_similarity_threshold == 0.55
 
     # Embedding
-    assert s.embedding.default_ollama_model == "qwen3-embedding:0.6b"
+    assert s.embedding.default_ollama_model == "qwen3-embedding:4b"
 
     # Paths
     assert s.paths.max_filename_length == 80
@@ -336,3 +371,27 @@ def test_cors_credentials_without_wildcard_accepted() -> None:
     # Wildcard alone (no credentials) is also fine.
     s = Settings.model_validate({"cors": {"allowed_origins": ["*"]}})
     assert s.cors.allowed_origins == ["*"]
+
+
+def test_removed_detection_sample_keys_still_parse() -> None:
+    """A settings file that still carries the retired detection-sample knobs loads, minus them."""
+    from chaoscypher_core.settings import ExtractionSettings
+
+    s = ExtractionSettings.model_validate(
+        {"domain_detection_sample_count": 9, "domain_detection_sample_chars": 300}
+    )
+    assert not hasattr(s, "domain_detection_sample_count")
+    assert "domain_detection_sample_chars" not in s.model_dump()
+
+
+def test_chat_and_extraction_decode_pinned_by_default() -> None:
+    """Product decoding is pinned (2026-10-06): temperature 0 and seed 42 for chat and extraction.
+
+    The same document extracts to the same graph and the same question gets the
+    same grounded answer; the response and embedding caches key on it. A user
+    who wants variety raises ``ai_temperature``; extraction never samples.
+    """
+    from chaoscypher_core.settings import LLMSettings
+
+    llm = LLMSettings()
+    assert (llm.ai_temperature, llm.extraction_temperature, llm.seed) == (0.0, 0.0, 42)

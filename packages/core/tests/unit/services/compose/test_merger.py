@@ -404,3 +404,23 @@ class TestPackageBytes:
         with pytest.raises(MergerError) as exc_info:
             NamespaceMerger._package_bytes(ghost)
         assert exc_info.value.package == "ghost"
+
+
+@pytest.mark.asyncio
+async def test_the_build_opens_the_composed_database_with_the_given_settings(
+    tmp_path: Path,
+) -> None:
+    """Gap 9 (2026-10-20): ``compose build`` opened the database with ``Engine(data_dir=...)`` and
+    plain defaults, so the configured embedding provider was ignored and every build embedded on
+    the local CPU model; the runtime settings next to the database were never read either.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from chaoscypher_core.settings import EngineSettings
+
+    settings = EngineSettings()
+    merger = NamespaceMerger(output_dir=tmp_path / "out", settings=settings)
+    with patch("chaoscypher_core.bootstrap.Engine") as engine_cls:
+        engine_cls.return_value = MagicMock()
+        await merger.merge([], clean=False)
+    assert engine_cls.call_args.kwargs["settings"] is settings

@@ -17,8 +17,10 @@ console = Console()
 
 
 @click.command()
-@click.option("--template", "-t", required=True, help="Template ID to use for the node")
-@click.option("--label", "-l", required=True, help="Label/name of the node")
+@click.option(
+    "--template", "-t", help="Template ID to use for the node (required unless --interactive)"
+)
+@click.option("--label", "-l", help="Label/name of the node (required unless --interactive)")
 @click.option(
     "--property", "-p", multiple=True, help="Property in key=value format (can specify multiple)"
 )
@@ -26,8 +28,8 @@ console = Console()
 @click.option("--database", "-d", default="default", help="Database name")
 @click.option("--interactive", "-i", is_flag=True, help="Use interactive wizard")
 def create(
-    template: str,
-    label: str,
+    template: str | None,
+    label: str | None,
     property: tuple[str, ...],
     json_props: str | None,
     database: str,
@@ -63,11 +65,13 @@ def create(
             for t in templates:
                 console.print(f"  • {t['id']} - {t['name']}")
 
-            template = Prompt.ask("\nTemplate ID", default=templates[0]["id"] if templates else "")
-            label = Prompt.ask("Node label")
+            template_id = Prompt.ask(
+                "\nTemplate ID", default=templates[0]["id"] if templates else ""
+            )
+            node_label = Prompt.ask("Node label")
 
             # Get template properties
-            template_data = ctx.template_service.get_template(template)
+            template_data = ctx.template_service.get_template(template_id)
             if template_data:
                 props_def = template_data.get("properties", [])
                 if props_def:
@@ -98,6 +102,12 @@ def create(
                 return
 
         else:
+            if not template or not label:
+                console.print("[red]Error:[/red] --template and --label are required")
+                console.print("  Use: --template <id> --label <label> or --interactive")
+                sys.exit(1)
+            template_id, node_label = template, label
+
             # Parse properties from command line
             properties = {}
 
@@ -126,8 +136,8 @@ def create(
         console.print("\n[cyan]Creating node...[/cyan]")
 
         node_create = NodeCreate(
-            template_id=template,
-            label=label,
+            template_id=template_id,
+            label=node_label,
             properties=properties,
         )
         result = ctx.node_service.create_node(node_create)

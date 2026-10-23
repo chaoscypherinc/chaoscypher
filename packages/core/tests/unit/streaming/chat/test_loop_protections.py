@@ -88,7 +88,7 @@ def _deps(
         chat_service=chat_service,
         settings=settings,
         sink=sink,
-        tools=[],
+        tools=None,
     )
     return deps, sink
 
@@ -918,3 +918,30 @@ async def test_mocked_settings_fall_back_to_defaults() -> None:
     iterations, total = chat_loop._tool_limits(_mock_settings())
     assert iterations == MAX_TOOL_ITERATIONS
     assert total == MAX_TOTAL_TOOL_CALLS
+
+
+async def test_a_rendered_tool_result_reaches_the_model_as_text_and_the_ui_as_json() -> None:
+    """graphrag_search renders its result (``context_text``): the model reads that text, the
+    same text the benchmark prompts with; the emitted event keeps the structured result.
+    """
+    result = {
+        "success": True,
+        "graph_context": {},
+        "chunks": [],
+        "context_text": "- Kutuzov serves",
+    }
+    messages: list[Any] = []
+    _content, _thinking, _total, error, sink = await _run_loop(
+        tool_calls=[_TC1],
+        chat_provider=_provider(
+            _stream({"type": "done", "content": "The general.", "tool_calls": None})
+        ),
+        tool_executor=_executor(result),
+        settings=_mock_settings(),
+        messages_for_llm=messages,
+    )
+    assert error is False
+    tool_msgs = [m for m in messages if m.get("role") == "tool"]
+    assert tool_msgs and tool_msgs[0]["content"] == "- Kutuzov serves"
+    (emitted,) = sink.of_type("tool_result")
+    assert emitted["result"]["context_text"] == "- Kutuzov serves"

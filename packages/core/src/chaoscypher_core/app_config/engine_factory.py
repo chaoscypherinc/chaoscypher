@@ -51,6 +51,9 @@ def build_engine_settings(settings: Settings) -> EngineSettings:
         pagination=settings.pagination.model_copy(deep=True),
         database=settings.database.model_copy(deep=True),
         search=settings.search.model_copy(deep=True),
+        graphrag=settings.graphrag.model_copy(deep=True),
+        graph=settings.graph.model_copy(deep=True),
+        cache=settings.cache.model_copy(deep=True),
         embedding=settings.embedding.model_copy(deep=True),
         chat=settings.chat.model_copy(deep=True),
         mcp=settings.mcp.model_copy(deep=True),
@@ -59,7 +62,7 @@ def build_engine_settings(settings: Settings) -> EngineSettings:
         backoff=settings.backoff.model_copy(deep=True),
         retries=settings.retries.model_copy(deep=True),
         quality=settings.quality.model_copy(deep=True),
-        # normalizer/migrations/graphrag/graph/archive/loader/compose:
+        # normalizer/migrations/graph/archive/loader/compose:
         # engine-only or engine-default groups — cli is shared post-union:
         cli=settings.cli.model_copy(deep=True),
     )

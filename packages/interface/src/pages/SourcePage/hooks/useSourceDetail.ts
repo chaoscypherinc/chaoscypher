@@ -62,6 +62,13 @@ interface UseSourceDetailReturn {
    * extracting, committing, error) — not just indexed/committed.
    */
   reextractSource: () => Promise<void>;
+  /**
+   * Re-extract under other packs (source settings): ``POST
+   * /sources/{id}/reclassify`` resets a committed source's graph artifacts
+   * and queues extraction with the floor plus ``packs`` (``[]`` = floor only).
+   * Throws after setting ``actionError`` so the caller can keep its dialog open.
+   */
+  reclassifyPacks: (packs: string[]) => Promise<void>;
 }
 
 // Poll interval (ms) while the source is in a processing state. Matches the
@@ -240,6 +247,9 @@ export function useSourceDetail(
     }
   }, [source, navigate]);
 
+  // retrySource / reextractSource set the banner AND rethrow (as
+  // reclassifyPacks does): the page toasts success after the await, so a
+  // swallowed failure showed "queued" beside the error banner.
   const retrySource = useCallback(async () => {
     if (!id) return;
     try {
@@ -247,6 +257,7 @@ export function useSourceDetail(
       setSource(updated);
     } catch (err) {
       setActionError('Retry failed: ' + getApiErrorMessage(err));
+      throw err;
     }
   }, [id, setSource]);
 
@@ -267,8 +278,23 @@ export function useSourceDetail(
       await refetch();
     } catch (err) {
       setActionError('Re-extraction failed: ' + getApiErrorMessage(err));
+      throw err;
     }
   }, [id, refetch]);
+
+  const reclassifyPacks = useCallback(
+    async (packs: string[]) => {
+      if (!id) return;
+      try {
+        await sourcesApi.reclassify(id, packs);
+        await refetch();
+      } catch (err) {
+        setActionError('Changing the packs failed: ' + getApiErrorMessage(err));
+        throw err;
+      }
+    },
+    [id, refetch],
+  );
 
   const clearActionError = useCallback(() => setActionError(null), []);
 
@@ -291,5 +317,6 @@ export function useSourceDetail(
     retrySource,
     reExtract,
     reextractSource,
+    reclassifyPacks,
   };
 }

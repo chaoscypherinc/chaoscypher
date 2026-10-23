@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -163,7 +163,7 @@ class UploadService:
         extract_entities: bool,
         analysis_depth: str,
         enable_normalization: bool | None,
-        forced_domain: str | None,
+        forced_packs: Sequence[str] | None,
         skip_duplicates: bool,
         enable_vision: bool | None,
         content_filtering: bool,
@@ -202,7 +202,7 @@ class UploadService:
                 extraction_depth=analysis_depth,
                 generate_embeddings=True,  # Always enabled.
                 enable_normalization=enable_normalization,
-                forced_domain=forced_domain,
+                forced_packs=forced_packs,
                 skip_duplicates=skip_duplicates,
                 enable_vision=enable_vision,
                 content_filtering=content_filtering,
@@ -236,7 +236,7 @@ class UploadService:
         extract_entities: bool,
         analysis_depth: str,
         enable_normalization: bool | None,
-        forced_domain: str | None,
+        forced_packs: Sequence[str] | None,
         skip_duplicates: bool,
         enable_vision: bool | None = None,
         content_filtering: bool,
@@ -294,7 +294,7 @@ class UploadService:
                 extract_entities=extract_entities,
                 analysis_depth=analysis_depth,
                 enable_normalization=enable_normalization,
-                forced_domain=forced_domain,
+                forced_packs=forced_packs,
                 skip_duplicates=skip_duplicates,
                 enable_vision=enable_vision,
                 content_filtering=content_filtering,

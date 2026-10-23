@@ -47,8 +47,21 @@ if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository
     from chaoscypher_core.app_config import Settings
 
-from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
-    ExclusionRule,
+from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+    DECODE_FALLBACK_KEY,
+    completion_counters,
+    decode_fallback,
+    decoding_applied,
+    degenerate_kind,
+    degenerate_output_check,
+    is_retryable_chunk_failure,
+    ladder_step,
+    next_ladder_step,
+    provider_seed_honoured,
+    record_decode_fallback,
+)
+from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+    chunk_kwargs_from_config,
 )
 
 
@@ -68,6 +81,8 @@ _SNAPSHOT_TO_EXTRACTION_KEYS: tuple[str, ...] = (
     "loop_max_property_repeat",
     "loop_invalid_relationship_rate_warmup",
     "loop_invalid_relationship_rate_threshold",
+    # The KNOWN ENTITIES block's size: one limit for every chunk task of a job.
+    "known_entities_limit",
 )
 _SNAPSHOT_TO_LLM_KEYS: tuple[str, ...] = (
     "extraction_examples_enabled",
@@ -154,19 +169,6 @@ def _apply_snapshot_overrides(engine_settings: Any, snapshot: dict[str, Any]) ->
     if llm_updates:
         updates["llm"] = engine_settings.llm.model_copy(update=llm_updates)
     return engine_settings.model_copy(update=updates)
-
-
-def _load_exclusion_rules(raw: Any) -> list[ExclusionRule] | None:
-    """Reconstitute ``ExclusionRule`` objects from queue-payload dicts.
-
-    The import-side serializes rules via ``model_dump()`` so the
-    extraction_config dict round-trips through JSON safely. On the
-    consumer side we re-validate into typed objects before handing them
-    to the extractor.
-    """
-    if not raw:
-        return None
-    return [ExclusionRule.model_validate(r) for r in raw]
 
 
 class ChunkExtractionOperationsService:
@@ -369,11 +371,15 @@ class ChunkExtractionOperationsService:
         from chaoscypher_core.analytics.llm_metrics import LLMMetricsCollector
         from chaoscypher_core.app_config import get_settings
         from chaoscypher_core.app_config.engine_factory import build_engine_settings
+        from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+            build_group_text,
+        )
         from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
             AIEntityExtractor,
         )
-        from chaoscypher_core.services.sources.engine.extraction.utils.text_preparation import (
-            prepare_text_for_extraction,
+        from chaoscypher_core.services.sources.engine.extraction.utils.known_entities import (
+            KnownEntities,
+            known_entities_from_rows,
         )
 
         chunk_task_id = data["chunk_task_id"]
@@ -425,10 +431,6 @@ class ChunkExtractionOperationsService:
                     "reason": "chunks_not_found",
                     "chunk_task_id": chunk_task_id,
                 }
-        chunk_content = prepare_text_for_extraction(
-            "\n\n".join(c["content"] for c in fetched_chunks if c.get("content"))
-        )
-
         job = adapter.get_extraction_job(job_id)
         if job is None:
             return {
@@ -445,6 +447,14 @@ class ChunkExtractionOperationsService:
                 "chunk_task_id": chunk_task_id,
             }
         source_id = job.get("source_id")
+
+        # The group text the model numbers: the one shared builder, with the
+        # same content-exclusion stripping the group planner applied, so a
+        # ``sent_ref`` means the same sentence on the queue and CLI paths.
+        chunk_content = build_group_text(
+            fetched_chunks,
+            _job_content_matchers(adapter, job, database_name, engine_settings),
+        )
 
         # Pause guard: runs after the existing job-level short-circuits
         # but before the LLM call. A paused source returns cleanly
@@ -474,12 +484,10 @@ class ChunkExtractionOperationsService:
         _extraction_config: dict[str, Any] = (
             _json.loads(_extraction_config_raw) if _extraction_config_raw else {}
         )
-        entity_guidance = (
-            _extraction_config.get("entity_guidance", data.get("entity_guidance")) or ""
-        )
-        relationship_guidance = (
-            _extraction_config.get("relationship_guidance", data.get("relationship_guidance")) or ""
-        )
+        # The per-chunk extractor inputs the planner decided (the shared
+        # extraction plan, round-tripped through the job's JSON); the task
+        # payload is the legacy fallback for the template strings.
+        _chunk_kwargs = chunk_kwargs_from_config(_extraction_config, fallback=data)
 
         # Workstream 8 (2026-05-07) — read LLM tuning + loop thresholds
         # from the job's snapshot when present, falling back to live
@@ -488,6 +496,32 @@ class ChunkExtractionOperationsService:
         # to settings.yaml does not drift across in-flight chunks.
         _temperature_override: float | None = _extraction_config.get("extraction_temperature")
         _max_tokens_override: int | None = _extraction_config.get("extraction_max_tokens")
+        # A retry after DEGENERATE output asks with another decoding than the
+        # pinned one (``chunk_failures.decode_fallback``: the next seed, then a
+        # small temperature), recorded on its metrics rows and its stored
+        # result. The rung is the one the failure handler stored on the task
+        # (``ladder_step``), never the retry count: a transport error retries
+        # at the same decoding (audit wave 6).
+        _task_row = adapter.get_chunk_task(chunk_task_id)
+        _row_retries = _task_row.get("retry_count") if isinstance(_task_row, dict) else 0
+        _row_retries = _row_retries if isinstance(_row_retries, int) else 0
+        # The delivery token (``_superseded_delivery``): the retry count this
+        # delivery started at; a failure or a cancellation is recorded only if
+        # the row still says so (audit wave 7: two deliveries of one attempt
+        # requeued it twice and climbed two rungs).
+        _delivery_token = _row_retries if isinstance(_task_row, dict) else None
+        _decode_fallback = decode_fallback(
+            ladder_step(_task_row.get("decode_fallback") if isinstance(_task_row, dict) else None),
+            seed=getattr(settings.llm, "seed", None),
+            temperature=(
+                _temperature_override
+                if _temperature_override is not None
+                else getattr(settings.llm, "extraction_temperature", None)
+            ),
+            seed_honoured=provider_seed_honoured(settings.llm),
+        )
+        if _decode_fallback is not None:
+            _temperature_override = _decode_fallback.temperature
 
         logger.info(
             "extract_chunk_started",
@@ -555,6 +589,27 @@ class ChunkExtractionOperationsService:
             # the snapshot doesn't carry it (legacy job rows).
             engine_settings = _apply_snapshot_overrides(engine_settings, _extraction_config)
 
+            # The running list (spec 2026-10-11): what the job's completed lower
+            # chunks named, read now, right before the LLM call, so as many of
+            # them as have finished are in it. Never waits: a lower chunk still
+            # running is not listed, and the ``known_entities`` metric says how
+            # many groups the list saw (the CLI loop's list is complete; this one
+            # is best-effort).
+            # At limit 0 the list is off: no lower row's JSON is loaded.
+            known = KnownEntities.for_plan(_chunk_kwargs, engine_settings)
+            if known.enabled:
+                known_entities_from_rows(
+                    adapter.get_completed_chunk_entities(job_id, before_chunk_index=chunk_index),
+                    known=known,
+                )
+            logger.info(
+                "chunk_known_entities_built",
+                chunk_task_id=chunk_task_id,
+                job_id=job_id,
+                chunk_index=chunk_index,
+                **known.stats(),
+            )
+
             extractor = AIEntityExtractor(settings=engine_settings)
 
             # Rate-limited stream-activity heartbeat. Touches last_activity_at
@@ -569,12 +624,15 @@ class ChunkExtractionOperationsService:
             )
             last_beat_at = 0.0
 
-            def _on_stream_progress() -> None:
+            async def _on_stream_progress() -> None:
                 """Stamp ``last_activity_at`` at most once per heartbeat interval.
 
                 Silently no-ops when ``source_id`` is not a string (recovery
                 tracking is source-scoped). DB write failures are logged but
                 never raised — a heartbeat hiccup must not poison the chunk.
+                The UPDATE + COMMIT is offloaded like the post-commit
+                checkpoint below — a write that loses the writer lock must
+                not park the event loop the operations poller shares.
                 """
                 nonlocal last_beat_at
                 if not isinstance(source_id, str):
@@ -584,7 +642,8 @@ class ChunkExtractionOperationsService:
                     return
                 last_beat_at = now
                 try:
-                    adapter.update_source_last_activity(
+                    await asyncio.to_thread(
+                        adapter.update_source_last_activity,
                         source_id=source_id,
                         database_name=database_name,
                         at_time=datetime.now(UTC),
@@ -599,77 +658,64 @@ class ChunkExtractionOperationsService:
                     )
 
             llm_start = time.perf_counter()
-            (
-                chunk_entities,
-                chunk_relationships,
-                input_tokens,
-                output_tokens,
-                extraction_metrics,
-            ) = await extractor.extract_single_chunk(
-                chunk_content=chunk_content,
-                node_templates_formatted=_extraction_config.get(
-                    "node_templates_formatted", data.get("node_templates_formatted", "")
-                ),
-                edge_templates_formatted=_extraction_config.get(
-                    "edge_templates_formatted", data.get("edge_templates_formatted", "")
-                ),
-                entity_guidance=entity_guidance or None,
-                relationship_guidance=relationship_guidance or None,
-                entity_examples=_extraction_config.get(
-                    "entity_examples_formatted", data.get("entity_examples_formatted")
+            with decoding_applied(_decode_fallback):
+                (
+                    chunk_entities,
+                    chunk_relationships,
+                    input_tokens,
+                    output_tokens,
+                    extraction_metrics,
+                ) = await extractor.extract_single_chunk(
+                    chunk_content=chunk_content,
+                    **_chunk_kwargs,
+                    metrics_collector=metrics_collector,
+                    # ``edge_type_constraints`` is not a per-chunk input: type
+                    # constraints run cross-chunk after dedup in the finalizer
+                    # (``apply_cross_chunk_relationship_filters``).
+                    on_stream_progress=_on_stream_progress,
+                    temperature_override=_temperature_override,
+                    max_tokens_override=_max_tokens_override,
+                    adapter=adapter,
+                    source_id=source_id if isinstance(source_id, str) else None,
+                    database_name=database_name,
+                    known=known,
                 )
-                or None,
-                relationship_examples=_extraction_config.get(
-                    "relationship_examples_formatted",
-                    data.get("relationship_examples_formatted"),
-                )
-                or None,
-                metrics_collector=metrics_collector,
-                domain_extraction_limits=_extraction_config.get("extraction_limits"),
-                filtering_mode=_extraction_config.get("filtering_mode"),
-                entity_exclusions=_load_exclusion_rules(
-                    _extraction_config.get("entity_exclusions")
-                ),
-                strict_entity_types=bool(_extraction_config.get("strict_entity_types", False)),
-                valid_entity_type_names=set(_extraction_config.get("valid_entity_type_names") or [])
-                or None,
-                evidence_validation_mode=_extraction_config.get("evidence_validation_mode"),
-                # NOTE: ``edge_type_constraints`` from extraction_config is no
-                # longer threaded into ``extract_single_chunk`` -- type-constraint
-                # validation runs cross-chunk after dedup in the finalizer; see
-                # ``apply_cross_chunk_relationship_filters`` (extractor.py).
-                on_stream_progress=_on_stream_progress,
-                temperature_override=_temperature_override,
-                max_tokens_override=_max_tokens_override,
-                adapter=adapter,
-                source_id=source_id if isinstance(source_id, str) else None,
-                database_name=database_name,
-            )
+            extraction_metrics["known_entities"] = known.stats()
+            record_decode_fallback(_decode_fallback, metrics_collector, extraction_metrics)
             llm_duration_ms = int((time.perf_counter() - llm_start) * 1000)
 
-            # Empty-output guard. The LLM occasionally emits zero
-            # tokens despite consuming the full input budget — qwen3
-            # reasoning-mode timeouts, gemini RECITATION soft-stops,
-            # ollama transient stream resets — and the rest of the
-            # pipeline cannot distinguish that from "this chunk
-            # legitimately has nothing to extract". Treat empty output
-            # on a non-trivial chunk as a retryable transient so the
-            # existing retry path requeues; if max_retries is reached
-            # the chunk lands in 'failed' and surfaces in the UI.
-            if (
-                output_tokens == 0
-                and len(chunk_content) >= engine_settings.extraction.empty_output_retry_min_chars
-            ):
-                from chaoscypher_core.exceptions import LLMServiceError
-
-                raise LLMServiceError(
-                    provider=settings.llm.chat_provider,
-                    model=extraction_model or chat_model,
-                    reason=(
-                        f"LLM produced empty extraction output for "
-                        f"{len(chunk_content)}-char chunk after {llm_duration_ms}ms"
-                    ),
-                )
+            # Degenerate-output guard: an empty output on a non-trivial chunk
+            # (qwen3 reasoning-mode timeouts, gemini RECITATION soft-stops,
+            # ollama transient stream resets: the rest of the pipeline cannot
+            # tell that from "nothing to extract"), a loop abort, or output
+            # none of which parsed. Raised as a retryable degenerate error so
+            # the failure handler requeues on the next rung of the ladder; the
+            # one check the CLI path runs too (``degenerate_output_check``).
+            _degenerate = degenerate_output_check(
+                output_tokens=output_tokens,
+                entities=chunk_entities,
+                relationships=chunk_relationships,
+                chunk_metrics=extraction_metrics,
+                chunk_content=chunk_content,
+                engine_settings=engine_settings,
+                provider=settings.llm.chat_provider,
+                model=extraction_model or chat_model,
+                last_attempt=_row_retries >= settings.retries.extraction_chunk_max,
+                duration_ms=llm_duration_ms,
+            )
+            if _degenerate is not None:
+                raise _degenerate
+            # What the kept output still is (a last try keeps a loop abort or
+            # an unparseable answer): read now, before the persist consumes
+            # the metrics, for the rescued-by-fallback counter below.
+            _kept_degenerate = degenerate_kind(
+                output_tokens=output_tokens,
+                entities=chunk_entities,
+                relationships=chunk_relationships,
+                chunk_metrics=extraction_metrics,
+                chunk_content=chunk_content,
+                engine_settings=engine_settings,
+            )
 
             # Eager-embed raw entities BEFORE the persistence transaction so
             # the embedding HTTP call never runs while the SQLite writer lock
@@ -786,6 +832,7 @@ class ChunkExtractionOperationsService:
                         filtering_log=extraction_metrics.pop("filtering_log", None),
                         finish_reason=_finish_reason,
                         aborted_by_loop=_aborted_by_loop,
+                        decode_fallback=extraction_metrics.get(DECODE_FALLBACK_KEY),
                     )
                     return (
                         _finish_reason,
@@ -889,6 +936,22 @@ class ChunkExtractionOperationsService:
                             counter=QualityCounter.PARSER_LINES_DROPPED,
                             n=_chunk_parser_lines_dropped,
                         )
+                    # Zero yield and a rescue on the ladder: the rule the CLI
+                    # path shares (``chunk_failures.completion_counters``).
+                    for _completion_counter in completion_counters(
+                        output_tokens=output_tokens,
+                        entities=chunk_entities,
+                        relationships=chunk_relationships,
+                        chunk_metrics=extraction_metrics,
+                        degenerate=_kept_degenerate,
+                    ):
+                        await increment_quality_counter(
+                            adapter=adapter,
+                            source_id=source_id,
+                            database_name=database_name,
+                            counter=_completion_counter,
+                            n=1,
+                        )
 
                 # Update progress and maybe trigger finalization
                 await self._update_chunk_progress(
@@ -944,6 +1007,7 @@ class ChunkExtractionOperationsService:
                 chunk_index,
                 settings,
                 source_id=source_id,
+                expected_retries=_delivery_token,
             )
 
         except Exception as exc:
@@ -957,6 +1021,7 @@ class ChunkExtractionOperationsService:
                 settings,
                 data=data,
                 source_id=source_id,
+                expected_retries=_delivery_token,
             )
 
     async def _finalize_extraction_handler(
@@ -1158,6 +1223,7 @@ class ChunkExtractionOperationsService:
         chunk_index: int,
         settings: Settings,
         source_id: str | None = None,
+        expected_retries: int | None = None,
     ) -> dict[str, Any]:
         """Handle CancelledError for chunk extraction (retry or fail permanently).
 
@@ -1175,11 +1241,24 @@ class ChunkExtractionOperationsService:
                 Optional (default ``None``) only so direct unit tests of
                 this method don't all need updating; the real caller
                 (``_extract_chunk_handler``) always supplies it.
+            expected_retries: The row's ``retry_count`` when this delivery
+                started (the delivery token, :func:`_superseded_delivery`);
+                None checks nothing.
 
         Returns:
             Result dictionary.
         """
         current_task = adapter.get_chunk_task(chunk_task_id)
+        superseded = _superseded_delivery(
+            current_task,
+            expected_retries,
+            chunk_task_id=chunk_task_id,
+            job_id=job_id,
+            chunk_index=chunk_index,
+            outcome="cancellation",
+        )
+        if superseded is not None:
+            return superseded
         current_retries = current_task.get("retry_count", 0) if current_task else 0
 
         if current_retries < settings.retries.extraction_chunk_max:
@@ -1198,6 +1277,7 @@ class ChunkExtractionOperationsService:
                     chunk_task_id,
                     {
                         "status": "queued",
+                        "queue_task_id": None,
                         "retry_count": current_retries + 1,
                         "error_message": f"Retry {current_retries + 1}: timeout/cancellation",
                     },
@@ -1216,7 +1296,7 @@ class ChunkExtractionOperationsService:
                 )
                 raise
             try:
-                await self.queue_extract_chunk(
+                new_queue_task_id = await self.queue_extract_chunk(
                     chunk_task_id=chunk_task_id,
                     job_id=job_id,
                     source_id=source_id,
@@ -1226,6 +1306,7 @@ class ChunkExtractionOperationsService:
                     small_chunk_ids=data.get("small_chunk_ids"),
                     priority=settings.priorities.background,
                 )
+                _repoint_chunk_task_queue_id(adapter, chunk_task_id, new_queue_task_id)
             except asyncio.CancelledError:
                 # Graceful worker shutdown: the requeue call was itself
                 # cancelled before it could enqueue.  Log the moment so
@@ -1340,6 +1421,7 @@ class ChunkExtractionOperationsService:
         settings: Settings,
         data: dict[str, Any] | None = None,
         source_id: str | None = None,
+        expected_retries: int | None = None,
     ) -> dict[str, Any]:
         """Handle general exception during chunk extraction.
 
@@ -1360,11 +1442,27 @@ class ChunkExtractionOperationsService:
                 Optional (default ``None``) only so direct unit tests of
                 this method don't all need updating; the real caller
                 (``_extract_chunk_handler``) always supplies it.
+            expected_retries: The row's ``retry_count`` when this delivery
+                started (the delivery token, :func:`_superseded_delivery`):
+                when another delivery already handled this attempt, nothing
+                is written and nothing requeued. None checks nothing.
 
         Returns:
             Result dictionary.
         """
         from chaoscypher_core.exceptions import LLMModelError, ModelCapabilityError
+
+        if expected_retries is not None:
+            superseded = _superseded_delivery(
+                adapter.get_chunk_task(chunk_task_id),
+                expected_retries,
+                chunk_task_id=chunk_task_id,
+                job_id=job_id,
+                chunk_index=chunk_index,
+                outcome="failure",
+            )
+            if superseded is not None:
+                return superseded
 
         error_message = str(exc)
         is_fatal_error = isinstance(exc, (ModelCapabilityError, LLMModelError))
@@ -1395,7 +1493,7 @@ class ChunkExtractionOperationsService:
         # settings.retries.extraction_chunk_max before failing
         # permanently. Fatal LLM errors and generic exceptions keep
         # the original fail-once behavior.
-        is_retryable = not is_fatal_error and getattr(exc, "is_retryable", False)
+        is_retryable = is_retryable_chunk_failure(exc)
         if is_retryable:
             current_task = adapter.get_chunk_task(chunk_task_id)
             current_retries = current_task.get("retry_count", 0) if current_task else 0
@@ -1411,11 +1509,19 @@ class ChunkExtractionOperationsService:
                     error_message=error_message,
                 )
                 try:
+                    _next_rung = next_ladder_step(
+                        ladder_step(current_task.get("decode_fallback") if current_task else None),
+                        exc,
+                    )
                     adapter.update_chunk_task(
                         chunk_task_id,
                         {
                             "status": "queued",
+                            "queue_task_id": None,
                             "retry_count": current_retries + 1,
+                            # the rung the next delivery asks at (it computes the decoding
+                            # from its own settings): up on degenerate output only
+                            "decode_fallback": {"step": _next_rung} if _next_rung else None,
                             "error_message": (
                                 f"Retry {current_retries + 1}: "
                                 f"{type(exc).__name__}: {error_message}"
@@ -1437,7 +1543,7 @@ class ChunkExtractionOperationsService:
                     raise
                 _data = data or {}
                 try:
-                    await self.queue_extract_chunk(
+                    new_queue_task_id = await self.queue_extract_chunk(
                         chunk_task_id=chunk_task_id,
                         job_id=job_id,
                         source_id=source_id,
@@ -1447,6 +1553,7 @@ class ChunkExtractionOperationsService:
                         small_chunk_ids=_data.get("small_chunk_ids"),
                         priority=settings.priorities.background,
                     )
+                    _repoint_chunk_task_queue_id(adapter, chunk_task_id, new_queue_task_id)
                 except Exception:
                     # Workstream 8 (2026-05-07) — surface re-enqueue
                     # failures on the retryable-error path. SourceRecovery
@@ -1685,6 +1792,165 @@ async def _compute_chunk_entity_embeddings(
             error_message=str(exc),
         )
         return None
+
+
+def _repoint_chunk_task_queue_id(
+    adapter: SqliteAdapter,
+    chunk_task_id: str,
+    new_queue_task_id: str,
+) -> None:
+    """Point the chunk row at the queue task an in-handler retry just enqueued.
+
+    Without this the row keeps the PREVIOUS (now completed) delivery's
+    ``queue_task_id``/``queued_at``, so neuron extraction recovery and
+    rehydrate judge liveness against the wrong task. Only the pointer
+    columns are written — not ``status`` — so a retry delivery that has
+    already claimed the row (``running``) is not flipped back to
+    ``queued``. Best-effort: the new task is already live, so a failed
+    write is logged rather than raised.
+    """
+    try:
+        adapter.update_chunk_task(
+            chunk_task_id,
+            {"queue_task_id": new_queue_task_id, "queued_at": datetime.now(UTC)},
+        )
+    except Exception as exc:
+        logger.warning(
+            "chunk_retry_queue_task_id_update_failed",
+            chunk_task_id=chunk_task_id,
+            queue_task_id=new_queue_task_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+
+
+def _job_content_matchers(
+    adapter: Any,
+    job: dict[str, Any],
+    database_name: str,
+    engine_settings: Any,
+) -> list[Any]:
+    """Resolve the content-exclusion matchers the job's groups were built with.
+
+    The group planner strips chunks with the stack pinned on the job (the
+    floor plus its packs) under the source row's
+    ``content_filtering`` toggle; the chunk handler re-fetches raw rows, so it
+    must strip them the same way. Best-effort: a lookup failure logs and
+    returns no matchers rather than failing the chunk.
+
+    Args:
+        adapter: Source repository adapter (``get_source``).
+        job: The extraction job row.
+        database_name: Active database.
+        engine_settings: Engine settings for the domain registry.
+
+    Returns:
+        Compiled matchers, or an empty list.
+    """
+    # The job's stack (the floor plus its packs): the group planner strips
+    # with the stack the job was created with, so the chunk handler must read
+    # the same one (every member's exclusions).
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+        job_packs,
+        packs_label,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
+    if not (job.get("forced_domain") or job.get("detected_domain") or job.get("detected_packs")):
+        return []
+    packs = job_packs(job)
+    domain_name = packs_label(packs)
+    try:
+        from chaoscypher_core.operations.importing.import_service import (
+            resolve_source_content_matchers,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.domains import (
+            get_domain_registry,
+        )
+
+        domain = DomainStack.from_stored(
+            get_domain_registry(engine_settings, database_name=database_name), packs
+        )
+        source_id = job.get("source_id")
+        source_row = (
+            adapter.get_source(source_id, database_name) if isinstance(source_id, str) else None
+        )
+        return resolve_source_content_matchers(
+            domain=domain,
+            file_info=None,
+            source_row=source_row if isinstance(source_row, dict) else None,
+        )
+    except Exception as exc:
+        logger.warning(
+            "extract_chunk_content_matchers_unavailable",
+            job_id=job.get("id"),
+            domain=domain_name,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        return []
+
+
+def _superseded_delivery(
+    current_task: dict[str, Any] | None,
+    expected_retries: int | None,
+    *,
+    chunk_task_id: str,
+    job_id: str,
+    chunk_index: int,
+    outcome: str,
+) -> dict[str, Any] | None:
+    """The skip result when another delivery of this chunk task already handled this attempt.
+
+    The delivery token: a delivery remembers the ``retry_count`` its row had
+    when it started (``expected_retries``); its failure or cancellation
+    handler re-reads the row and, when the count moved on (another delivery
+    of the same attempt already requeued it, failed it or a recovery
+    requeued it) or the row is completed, does nothing: no requeue, no
+    retry-count bump, no failed row. Until audit wave 7 two concurrent
+    deliveries at rung 0 that both failed each read the row and wrote the
+    next rung, so the second wrote rung 2 and the chunk was queued twice.
+
+    A residual window remains across processes: the read here and the
+    handler's write are two statements (the adapters offer no
+    compare-and-set update), so two workers failing within the same few
+    milliseconds can both pass. In process, the read and the write run with
+    no ``await`` between them, so interleaved deliveries cannot.
+
+    Args:
+        current_task: The row as read now.
+        expected_retries: The row's ``retry_count`` when this delivery
+            started; None checks nothing (direct callers of the handlers).
+        chunk_task_id: Chunk task ID, for the log.
+        job_id: Extraction job ID, for the log.
+        chunk_index: Chunk index, for the log.
+        outcome: What this delivery was about to record (``failure`` or
+            ``cancellation``), for the log.
+
+    Returns:
+        The skip result, or None when this delivery still owns the attempt.
+    """
+    if expected_retries is None or not isinstance(current_task, dict):
+        return None
+    current = current_task.get("retry_count", 0)
+    if current == expected_retries and current_task.get("status") != "completed":
+        return None
+    logger.info(
+        "extract_chunk_delivery_superseded",
+        chunk_task_id=chunk_task_id,
+        job_id=job_id,
+        chunk_index=chunk_index,
+        outcome=outcome,
+        expected_retry_count=expected_retries,
+        retry_count=current,
+        status=current_task.get("status"),
+    )
+    return {
+        "success": False,
+        "skipped": True,
+        "reason": "attempt_handled_by_other_delivery",
+        "chunk_task_id": chunk_task_id,
+    }
 
 
 def _check_stale_chunk_task(

@@ -25,6 +25,15 @@
   color: var(--cc-accent-cyan);
 }
 
+/* the exporter's override flags (provenance.overrides): the board is provisional */
+.provenance {
+  border: 1px solid var(--cc-border-card);
+  border-radius: var(--cc-radius-lg);
+  padding: 0.75rem 1rem;
+  margin: -1rem 0 2rem;
+  color: var(--cc-text-secondary);
+}
+
 /* ---- controls ---------------------------------------------------- */
 
 .controls {
@@ -287,6 +296,37 @@
   background: var(--cc-accent-orange);
 }
 
+/* failed in some runs but not all: the top half orange */
+.cell.mixed {
+  background: linear-gradient(
+    180deg,
+    var(--cc-accent-orange) 50%,
+    color-mix(in srgb, var(--cc-text-muted) 18%, transparent) 50%
+  );
+}
+
+/* excluded by the fixture audit: never a verdict, so an outline rather than a fill */
+.cell.excluded {
+  background: transparent;
+  outline: 1px dashed color-mix(in srgb, var(--cc-text-muted) 45%, transparent);
+  outline-offset: -1px;
+}
+
+/* the interval's half-width beside a score, and the tie mark before it */
+.ci {
+  margin-left: 0.3rem;
+  font-family: var(--cc-font-mono);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--cc-text-muted);
+}
+
+.tie {
+  margin-right: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--cc-text-muted);
+}
+
 /* the grounded-chat percent, in the accent of the score bar */
 .chip {
   display: inline-block;
@@ -492,6 +532,197 @@
 
 /* ---- footer ------------------------------------------------------- */
 
+/* ---- "Where the graph matters" ------------------------------------ */
+
+.graphSection {
+  margin-top: 3rem;
+}
+
+.graphSection h2 {
+  font-size: 1.6rem;
+  letter-spacing: -0.01em;
+  margin-bottom: 0.5rem;
+}
+
+/* the corpus switch: one button per corpus, each reported on its own */
+.corpusSwitch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.25rem 0 1rem;
+  font-weight: 600;
+}
+
+.corpusSwitch .vramOptions button {
+  font-family: inherit;
+}
+
+.corpusNote {
+  font-weight: 400;
+  font-size: 0.85rem;
+  color: var(--cc-text-muted);
+}
+
+.cmpTable {
+  table-layout: auto;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+}
+
+.cmpTable td,
+.cmpTable th {
+  vertical-align: top;
+}
+
+/* a model's block starts with a heavier rule */
+.cmpFirst td {
+  border-top: 2px solid var(--cc-border-card);
+}
+
+.cmpModel {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cmpCite {
+  display: block;
+  margin-top: 0.2rem;
+  font-family: var(--cc-font-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  color: var(--cc-text-muted);
+}
+
+.cmpGroup {
+  color: var(--cc-text-secondary);
+  white-space: nowrap;
+}
+
+.cmpGroupTotal {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.liftUp {
+  color: var(--cc-accent-cyan);
+  font-weight: 600;
+}
+
+.liftDown {
+  color: var(--cc-accent-orange);
+  font-weight: 600;
+}
+
+.exampleCard {
+  margin-top: 1.5rem;
+  padding: 1rem 1.1rem 0.6rem;
+  border: 1px solid var(--cc-border-card);
+  border-radius: var(--cc-radius-lg);
+  background: var(--cc-bg-card);
+}
+
+.exampleTitle {
+  font-size: 1.05rem;
+  line-height: 1.4;
+  margin-bottom: 0.4rem;
+}
+
+.exampleKind {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0 0.4rem;
+  border-radius: 0.6rem;
+  font-family: var(--cc-font-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.5;
+  vertical-align: middle;
+  color: var(--cc-accent-cyan);
+  background: color-mix(in srgb, var(--cc-accent-cyan) 16%, transparent);
+}
+
+.exampleGold {
+  color: var(--cc-text-secondary);
+  font-size: 0.92rem;
+}
+
+.exampleModel {
+  margin-top: 0.6rem;
+}
+
+.exampleModelName {
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+}
+
+/* three rungs side by side; stacked on phones */
+.rungGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.rung {
+  min-width: 0;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--cc-border-card);
+  border-radius: 8px;
+  background: var(--cc-bg-surface);
+}
+
+.rungHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cc-text-secondary);
+}
+
+.rungPass,
+.rungFail {
+  padding: 0 0.4rem;
+  border-radius: 0.6rem;
+  font-family: var(--cc-font-mono);
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.rungPass {
+  color: var(--cc-accent-cyan);
+  background: color-mix(in srgb, var(--cc-accent-cyan) 16%, transparent);
+}
+
+.rungFail {
+  color: var(--cc-accent-orange);
+  background: color-mix(in srgb, var(--cc-accent-orange) 16%, transparent);
+}
+
+.rungCite {
+  font-weight: 400;
+  color: var(--cc-text-muted);
+}
+
+.rungContext {
+  max-height: 14rem;
+  overflow: auto;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--cc-bg-code-header);
+}
+
+.rungAnswer {
+  margin: 0.5rem 0 0.2rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
 .repro {
   margin-top: 2.5rem;
   color: var(--cc-text-secondary);
@@ -582,6 +813,10 @@
     padding-right: 0.6rem;
   }
 
+  .rungGrid {
+    grid-template-columns: 1fr;
+  }
+
   .tipBox,
   .tipRight {
     position: fixed;
@@ -600,4 +835,53 @@
   .gauge i {
     transition: width 200ms ease-out;
   }
+}
+
+
+/* The value block above the comparison table: headlines that hold, then the four measures. */
+.valueBlock {
+  margin: 1rem 0 0.5rem;
+}
+
+.headlines {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.headlines li {
+  font-size: 1.15rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  padding: 0.6rem 0.9rem;
+  border-left: 3px solid var(--ifm-color-primary);
+  background: var(--ifm-color-emphasis-100);
+}
+
+.valueGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.valueGrid dt {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.valueGrid dd {
+  margin: 0.2rem 0 0;
+  font-weight: 600;
+}
+
+.valueGrid dd small {
+  display: block;
+  font-weight: 400;
+  color: var(--ifm-color-emphasis-700);
+  margin-top: 0.15rem;
 }

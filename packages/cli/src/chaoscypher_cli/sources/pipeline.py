@@ -24,9 +24,17 @@ from rich.table import Table
 
 from chaoscypher_cli.utils.display import get_quality_color
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    forced_packs_of,
+    packs_choice,
+    packs_of_name,
+    proposal_packs,
+    requested_packs,
+)
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from chaoscypher_cli.sources.service import CLISourceProcessingService
@@ -239,6 +247,7 @@ class SourcePipeline:
         verbose: bool = False,
         skip_duplicates: bool = False,
         no_confirm: bool = False,
+        packs: Sequence[str] | None = None,
     ) -> PipelineResult:
         """Run the source processing pipeline.
 
@@ -260,7 +269,8 @@ class SourcePipeline:
             index_only: Stop after indexing
             extract_only: Stop after extraction
             extraction_depth: Extraction depth (quick, full)
-            domain: Domain for extraction (None or 'auto' = auto-detect)
+            domain: One pack for extraction, the one-name form of ``packs``
+                (None or 'auto' = auto-detect, 'generic' = the floor alone).
             filtering_mode: Filtering mode preset override (overrides domain default)
             quiet: Minimal output
             verbose: Show real-time structlog output during execution
@@ -269,11 +279,27 @@ class SourcePipeline:
                 a successful result without running indexing / extraction / commit.
             no_confirm: Bypass the domain-confirmation gate: run extraction with the
                 auto-detected domain without prompting or parking.
+            packs: The packs to extract with, on the floor every source has
+                (``[]`` the floor alone). Every name must be a registered pack
+                (``DomainStack.resolve``); refused with ``domain`` set too.
 
         Returns:
             PipelineResult with stats and status
         """
         start_time = time.time()
+
+        if packs is not None:
+            refused = self._refused_packs(packs, domain)
+            if refused is not None:
+                return PipelineResult(
+                    file_id=file_id or "",
+                    filename=file_path.name if file_path else (url or ""),
+                    success=False,
+                    status="failed",
+                    error=refused,
+                )
+            # Carried down the one-name upload path as the packs' label.
+            domain = packs_choice(requested_packs(packs))
 
         # Determine what stages to run
         # URL imports also need the upload stage (url acts like file_path for staging)
@@ -359,6 +385,30 @@ class SourcePipeline:
             self._show_summary(result)
 
         return result
+
+    def _refused_packs(self, packs: Sequence[str], domain: str | None) -> str | None:
+        """Why ``packs`` cannot be extracted with, or None: each must be a registered pack.
+
+        ``DomainStack.resolve`` is the check (the floor's name and an unknown
+        name are refused), so a dataset naming a pack the registry lacks fails
+        before anything is uploaded, never extracted under the floor alone.
+        """
+        from chaoscypher_core.services.sources.engine.extraction.domains import (
+            get_domain_registry,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.domains.stack import (
+            DomainStack,
+        )
+
+        try:
+            chosen = requested_packs(packs, domain)
+            registry = get_domain_registry(
+                settings=self.service.ctx.settings, database_name=self.service.ctx.database_name
+            )
+            DomainStack.resolve(registry, chosen or ())
+        except ValueError as exc:
+            return f"ValueError: {exc}"
+        return None
 
     def _determine_stages(
         self,
@@ -650,8 +700,8 @@ class SourcePipeline:
         file_record = self.service.ctx.storage_adapter.get_file(
             file_id, self.service.ctx.database_name
         )
-        # Forced domain (set by --domain or a prior confirm) bypasses the gate.
-        if file_record and file_record.get("forced_domain"):
+        # Forced packs (set by --pack/--domain or a prior confirm) bypass the gate.
+        if forced_packs_of(file_record) is not None:
             return True
         if no_confirm:
             # Bypass: detect for the recommendation, proceed with the auto pick.
@@ -685,11 +735,15 @@ class SourcePipeline:
             result.error = "Cancelled at domain confirmation"
             result.status = "cancelled"
             return False
-        # Persist the human-chosen domain as the forced domain, then proceed.
+        # Persist the human's choice (one pack, or the proposal's label) as the
+        # forced packs, then proceed.
         self.service.ctx.storage_adapter.update_file(
             file_id,
             database_name=self.service.ctx.database_name,
-            updates={"forced_domain": chosen, "confirmation_required": False},
+            updates={
+                "forced_packs": list(packs_of_name(chosen) or ()),
+                "confirmation_required": False,
+            },
         )
         result.detected_domain = chosen
         return True
@@ -702,13 +756,8 @@ class SourcePipeline:
             park_for_confirmation,
         )
 
-        proposal = {
-            "ranking": rec["ranking"],
-            "confidence": rec["confidence"],
-            "detected_domain": rec["detected_domain"],
-            "low_confidence": rec["low_confidence"],
-        }
-        park_for_confirmation(self.service.ctx.storage_adapter, file_id, proposal)
+        # ``rec`` is the proposal blob itself (``detect_domain_for_source``).
+        park_for_confirmation(self.service.ctx.storage_adapter, file_id, rec)
         result.parked_for_confirmation = True
         result.status = "awaiting_confirmation"
         result.error = (
@@ -726,12 +775,17 @@ class SourcePipeline:
             )
 
     def _prompt_for_domain(self, rec: dict[str, Any]) -> str | None:
-        """Interactive TTY prompt; default is ranking[0]. None => cancelled."""
+        """Interactive TTY prompt; the default is the proposed packs' label. None => cancelled.
+
+        The answer is one pack, ``generic`` (the floor alone) or, when
+        detection proposed two packs, their label (``historical+literary``),
+        offered first so accepting the default keeps both.
+        """
         from rich.prompt import Prompt
 
         from chaoscypher_cli.sources.domains import DOMAIN_NAMES
 
-        recommended = rec["detected_domain"]
+        recommended = packs_choice(proposal_packs(rec) or ()) or "generic"
         if rec["low_confidence"]:
             self.console.print(
                 "[yellow]Detection wasn't confident — please pick a domain.[/yellow]"
@@ -742,11 +796,12 @@ class SourcePipeline:
                 f"[dim]Recommended domain:[/dim] [magenta]{recommended}[/magenta]"
                 + (f"  [dim]({ranked})[/dim]" if ranked else "")
             )
-        choices = [*DOMAIN_NAMES, "cancel"]
+        proposed = [recommended] if recommended not in DOMAIN_NAMES else []
+        choices = [*proposed, *DOMAIN_NAMES, "cancel"]
         answer = Prompt.ask(
             "Confirm extraction domain",
             choices=choices,
-            default=recommended if recommended in DOMAIN_NAMES else "generic",
+            default=recommended if recommended in choices else "generic",
         )
         if answer == "cancel":
             return None

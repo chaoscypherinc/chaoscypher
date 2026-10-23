@@ -26,6 +26,7 @@ import pytest
 from click.testing import CliRunner
 
 from chaoscypher_cli.commands.source.extract import extract_cmd
+from chaoscypher_core.models import ReleasedRows
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +352,7 @@ class TestIndexedExtraction:
         mock_service.ctx.storage_adapter.update_file.assert_any_call(
             "if_testsrc12345",
             database_name=mock_service.ctx.database_name,
-            updates={"forced_domain": None},
+            updates={"forced_packs": None},
         )
 
 
@@ -371,11 +372,10 @@ class TestForceReExtract:
         mock_service.__exit__ = MagicMock(return_value=False)
         mock_service.get_file_status.return_value = _make_source("committed")
         mock_service.has_llm = True
-        mock_service.reset_for_re_extraction.return_value = {
-            "nodes_deleted": 10,
-            "edges_deleted": 5,
-            "templates_deleted": 2,
-        }
+        mock_service.reset_for_re_extraction.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(f"n{i}" for i in range(10)),
+            deleted_edge_ids=frozenset(f"e{i}" for i in range(5)),
+        )
         mock_service.extract_entities.return_value = (
             _make_extract_result(),
             _make_llm_summary(),
@@ -465,11 +465,10 @@ class TestForceReExtract:
         mock_service.__exit__ = MagicMock(return_value=False)
         mock_service.get_file_status.return_value = _make_source("committed")
         mock_service.has_llm = True
-        mock_service.reset_for_re_extraction.return_value = {
-            "nodes_deleted": 2,
-            "edges_deleted": 1,
-            "templates_deleted": 0,
-        }
+        mock_service.reset_for_re_extraction.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(f"n{i}" for i in range(2)),
+            deleted_edge_ids=frozenset(f"e{i}" for i in range(1)),
+        )
         mock_service.extract_entities.return_value = (
             _make_extract_result(),
             _make_llm_summary(),
@@ -516,8 +515,10 @@ class TestCommandRegistration:
         assert "depth" in params
 
     def test_extract_cmd_has_domain_option(self) -> None:
-        params = {p.name for p in extract_cmd.params}
-        assert "domain" in params
+        """``--pack`` (repeatable) with ``--domain`` kept as its alias."""
+        option = next(p for p in extract_cmd.params if p.name == "packs")
+        assert set(option.opts) == {"--pack", "--domain"}
+        assert option.multiple
 
     def test_help_exits_0(self) -> None:
         runner = CliRunner()
@@ -534,31 +535,32 @@ class TestCommandRegistration:
 class TestServiceResetMethod:
     """CLISourceProcessingService.reset_for_re_extraction calls the right adapters."""
 
-    def test_reset_calls_delete_artifacts_and_storage_reset(self) -> None:
+    def test_reset_releases_the_graph_and_resets_storage(self) -> None:
         from chaoscypher_cli.sources.service import CLISourceProcessingService
 
         mock_ctx = MagicMock()
         mock_ctx.database_name = "test"
         mock_ctx.storage_adapter.get_file.return_value = _make_source("committed")
-        mock_ctx.graph_repository.delete_source_artifacts.return_value = {
-            "nodes_deleted": 4,
-            "edges_deleted": 2,
-            "templates_deleted": 1,
-        }
+        graph = MagicMock()
+        graph.release_source.return_value = ReleasedRows(deleted_node_ids=frozenset({"n1"}))
 
         service = CLISourceProcessingService(mock_ctx)
-        removed = service.reset_for_re_extraction("if_testsrc12345")
+        with patch(
+            "chaoscypher_core.services.sources.management.re_extraction."
+            "get_transaction_graph_repository",
+            return_value=graph,
+        ) as build:
+            removed = service.reset_for_re_extraction("if_testsrc12345")
 
-        # delete_source_artifacts must receive the adapter's session so all
-        # three SQL deletes share the adapter's transaction (real atomicity).
-        mock_ctx.graph_repository.delete_source_artifacts.assert_called_once_with(
-            "if_testsrc12345", session=mock_ctx.storage_adapter.session
-        )
+        # The release runs on a repository over the adapter's own session, so it
+        # shares the adapter's transaction (real atomicity).
+        build.assert_called_once_with(mock_ctx.storage_adapter, "test")
+        graph.release_source.assert_called_once_with("if_testsrc12345")
         mock_ctx.storage_adapter.reset_for_re_extraction.assert_called_once_with(
             source_id="if_testsrc12345",
             database_name="test",
         )
-        assert removed["nodes_deleted"] == 4
+        assert removed.deleted_node_ids == {"n1"}
 
     def test_reset_raises_if_source_not_found(self) -> None:
         from chaoscypher_cli.sources.service import CLISourceProcessingService

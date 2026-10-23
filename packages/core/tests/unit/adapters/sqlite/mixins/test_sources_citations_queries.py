@@ -450,33 +450,8 @@ def test_delete_citations_for_source(adapter: SqliteAdapter) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Orphan detection + entity-uri lookups
+# Entity-uri lookups
 # ---------------------------------------------------------------------------
-
-
-def test_get_orphaned_entity_uris(adapter: SqliteAdapter) -> None:
-    _seed_source(adapter, "src-1")
-    _seed_source(adapter, "src-2")
-    _add_chunk(adapter, "chunk-1", "src-1")
-    _add_chunk(adapter, "chunk-2", "src-2")
-    # uri:shared cited by both sources -> not orphaned.
-    adapter.create_citation(
-        _citation_dict("c1", source_id="src-1", chunk_id="chunk-1", entity_uri="uri:shared")
-    )
-    adapter.create_citation(
-        _citation_dict("c2", source_id="src-2", chunk_id="chunk-2", entity_uri="uri:shared")
-    )
-    # uri:only1 cited only by src-1 -> orphaned when src-1 deleted.
-    adapter.create_citation(
-        _citation_dict("c3", source_id="src-1", chunk_id="chunk-1", entity_uri="uri:only1")
-    )
-    orphans = adapter.get_orphaned_entity_uris("src-1")
-    assert orphans == ["uri:only1"]
-
-
-def test_get_orphaned_entity_uris_none(adapter: SqliteAdapter) -> None:
-    _seed_source(adapter)
-    assert adapter.get_orphaned_entity_uris("src-1") == []
 
 
 def test_get_entity_uris_for_sources(adapter: SqliteAdapter) -> None:

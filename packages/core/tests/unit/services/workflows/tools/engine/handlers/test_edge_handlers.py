@@ -325,6 +325,25 @@ class TestListEdges:
         assert result["edges"][0]["id"] == "e1"
 
     @pytest.mark.asyncio
+    async def test_source_ids_scope_reads_a_merged_nodes_members(
+        self,
+        handler: EdgeToolHandlers,
+        graph_repo: MagicMock,
+    ) -> None:
+        """A node homed elsewhere that a scoped source also attests is in scope (#795, D7)."""
+        graph_repo.list_edges.return_value = [make_edge("e1", "n1", "n2")]
+        merged = make_node("n2", "Bob", source_id="src_b")
+        merged.member_source_ids = ["src_a", "src_b"]
+        graph_repo.get_nodes_batch.return_value = [
+            make_node("n1", "Alice", source_id="src_a"),
+            merged,
+        ]
+
+        result = await handler.list_edges(source_ids=["src_a"])
+
+        assert [e["id"] for e in result["edges"]] == ["e1"]
+
+    @pytest.mark.asyncio
     async def test_source_ids_nodes_without_source_id_pass_filter(
         self,
         handler: EdgeToolHandlers,

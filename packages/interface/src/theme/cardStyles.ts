@@ -115,6 +115,19 @@ export const glassPanelSx = {
 } as const;
 
 /**
+ * Faint frosted backing for controls floating over the graph canvas (the
+ * search bar, the Unresolved-region toggle): lighter than `glassPanelSx` so
+ * the graph stays visible behind it.
+ */
+export const canvasOverlaySx = {
+  background: 'rgba(15, 20, 30, 0.15)',
+  backdropFilter: 'blur(12px)',
+  WebkitBackdropFilter: 'blur(12px)',
+  border: '1px solid rgba(255, 255, 255, 0.05)',
+  borderRadius: 1.5,
+} as const;
+
+/**
  * Predefined color palette for common card types.
  *
  * All values derive from ChaosCypherPalette — the single source of truth.

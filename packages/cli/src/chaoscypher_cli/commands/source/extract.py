@@ -11,6 +11,7 @@ Usage:
     chaoscypher source extract if_abc123
     chaoscypher source extract if_abc123 --depth quick
     chaoscypher source extract if_abc123 --domain technical
+    chaoscypher source extract if_abc123 --pack historical --pack literary
     chaoscypher source extract if_abc123 --force          # re-extract committed
     chaoscypher source extract if_abc123 --force --yes    # skip confirmation
 """
@@ -22,24 +23,26 @@ from typing import Any, get_args
 import click
 from rich.console import Console
 
-from chaoscypher_cli.sources.domains import EXTRACT_DOMAIN_CHOICES
+from chaoscypher_cli.sources.domains import EXTRACT_DOMAIN_CHOICES, chosen_packs, pack_option
+from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_core.ports.types import FilteringMode
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import packs_of_name
 
 
 @click.command("extract")
 @click.argument("source_id")
 @click.option(
     "--depth",
-    type=click.Choice(["quick", "full"]),
+    type=click.Choice(list(get_args(AnalysisDepth))),
     default=None,
     show_default="the source's stored depth",
     help="Extraction depth: quick (fast sample) or full (all chunks).",
 )
-@click.option(
-    "--domain",
-    type=click.Choice(list(EXTRACT_DOMAIN_CHOICES)),
-    default=None,
-    help="Force extraction domain (default: auto-detect from content).",
+@pack_option(
+    EXTRACT_DOMAIN_CHOICES,
+    "Force a pack to extract with, on the floor every source has (repeatable; "
+    "--domain is an alias). auto clears a forced choice; generic is the floor "
+    "alone. Default: keep the source's choice (auto-detect when none).",
 )
 @click.option(
     "--filtering-mode",
@@ -68,7 +71,7 @@ from chaoscypher_core.ports.types import FilteringMode
 def extract_cmd(
     source_id: str,
     depth: str | None,
-    domain: str | None,
+    packs: tuple[str, ...],
     filtering_mode: FilteringMode | None,
     force: bool,
     yes: bool,
@@ -98,6 +101,8 @@ def extract_cmd(
     from chaoscypher_core.models import SourceStatus
 
     console = Console()
+    # One name: a pack, the packs' label, generic, auto (clear), or None (keep).
+    domain = chosen_packs(packs)
 
     try:
         ctx = get_context(database_name=database)
@@ -151,8 +156,8 @@ def extract_cmd(
 
                 removed = service.reset_for_re_extraction(source_id)
                 if not quiet:
-                    nodes = removed.get("nodes_deleted", 0)
-                    edges = removed.get("edges_deleted", 0)
+                    nodes = len(removed.deleted_node_ids)
+                    edges = len(removed.deleted_edge_ids)
                     console.print(
                         f"  [dim]Removed {nodes} node(s) and {edges} edge(s) from graph.[/dim]"
                     )
@@ -164,7 +169,7 @@ def extract_cmd(
                     console.print(
                         "[red]No LLM provider configured.[/red] "
                         "Entity extraction requires an LLM. "
-                        "Run [bold]chaoscypher config set llm.provider <provider>[/bold] first."
+                        "Run [bold]chaoscypher config set llm.chat_provider <provider>[/bold] first."
                     )
                     sys.exit(1)
 
@@ -212,7 +217,9 @@ def _run_extraction(
         source_id: Source file ID.
         depth: Extraction depth ('quick' or 'full'), or None to keep the
             depth already persisted on the source row.
-        domain: Forced domain override (None = auto-detect).
+        domain: The forced packs in the one-name form (a pack, the packs'
+            label, ``generic`` for the floor alone); ``auto`` clears a forced
+            choice; None keeps the source's.
         filtering_mode: Filtering mode preset override.
         quiet: Suppress progress output.
         console: Rich console.
@@ -231,20 +238,21 @@ def _run_extraction(
             source_id, database_name=service.ctx.database_name, updates={"extraction_depth": depth}
         )
 
-    # Resolve domain. An explicit ``--domain auto`` clears any prior forced
-    # domain (revert to auto-detection); ``--domain X`` forces X; omitting
-    # ``--domain`` (None) leaves whatever was previously set untouched.
+    # Resolve the packs. An explicit ``--pack auto`` clears any prior forced
+    # choice (revert to auto-detection); ``--pack X [--pack Y]`` forces them;
+    # omitting ``--pack`` (None) leaves whatever was previously set untouched.
+    # The row write keeps ``forced_packs`` and ``forced_domain`` in step.
     if domain == "auto":
         service.ctx.storage_adapter.update_file(
             source_id,
             database_name=service.ctx.database_name,
-            updates={"forced_domain": None},
+            updates={"forced_packs": None},
         )
     elif domain:
         service.ctx.storage_adapter.update_file(
             source_id,
             database_name=service.ctx.database_name,
-            updates={"forced_domain": domain},
+            updates={"forced_packs": list(packs_of_name(domain) or ())},
         )
 
     start_time = time.time()

@@ -46,6 +46,7 @@ from chaoscypher_core.streaming.chat import (
     ChatSSEEnvelope,
     format_sse_event,
 )
+from chaoscypher_core.streaming.chat.finalize import next_regeneration_attempt
 from chaoscypher_cortex.features.chats.models import (
     ChatCountResponse,
     ChatCreate,
@@ -600,15 +601,25 @@ async def regenerate_chat_turn(
             status_code=status.HTTP_409_CONFLICT,
             detail="A turn is already in progress",
         )
+    # Under pinned decoding the same history gives the same answer: the n-th
+    # regenerate asks with the seed for attempt n (audit wave 5), one past the
+    # attempt the dropped answer recorded.
+    attempt = next_regeneration_attempt(chat.get("messages") or [], last_user["id"])
     chat_service.truncate_from_message(chat_id, last_user["id"], inclusive=False)
     task_id = await queue_client.enqueue_task(
         queue=QUEUE_LLM,
         operation=OP_CHAT_BACKGROUND,
-        data={"chat_id": chat_id, "database_name": settings.current_database},
+        data={
+            "chat_id": chat_id,
+            "database_name": settings.current_database,
+            "decoding_attempt": attempt,
+        },
         priority=settings.priorities.interactive,
         metadata={"chat_id": chat_id},
     )
-    logger.info("chat_regenerate_enqueued", chat_id=chat_id, task_id=task_id)
+    logger.info(
+        "chat_regenerate_enqueued", chat_id=chat_id, task_id=task_id, decoding_attempt=attempt
+    )
     return ChatSendResponse(task_id=task_id, status="processing")
 
 

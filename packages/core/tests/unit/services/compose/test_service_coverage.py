@@ -741,3 +741,28 @@ def test_compose_config_to_yaml_round_trips_through_from_yaml(tmp_path: Path) ->
     assert loaded.name == config.name
     assert loaded.settings.merge_strategy == config.settings.merge_strategy
     assert loaded.packages == config.packages
+
+
+@pytest.mark.unit
+class TestBuildSettings:
+    """Gap 9 (2026-10-20): the build's engine settings are the application's, or the ones given."""
+
+    @pytest.mark.asyncio
+    async def test_the_merger_gets_the_services_settings(self, tmp_path: Path) -> None:
+        from chaoscypher_core.settings import EngineSettings
+
+        given = EngineSettings()
+        config = _config(tmp_path)
+        (tmp_path / "out").mkdir()
+        merge_result = CompositionResult(success=True, output_dir=tmp_path / "out")
+        with (
+            patch.object(
+                service_mod, "PackageResolver", _patch_resolver([SimpleNamespace(name="alpha")])
+            ),
+            patch.object(service_mod, "NamespaceMerger", _patch_merger(merge_result)) as merger,
+        ):
+            await ComposeService(settings=given).build(config, tmp_path / "out")
+            assert merger.call_args.kwargs["settings"] is given
+            merger.reset_mock()
+            await ComposeService().build(config, tmp_path / "out")
+            assert isinstance(merger.call_args.kwargs["settings"], EngineSettings)

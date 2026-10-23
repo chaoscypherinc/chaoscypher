@@ -203,6 +203,11 @@ export interface Chat {
  * decision via `POST /chats/{id}/tool_decision`.
  */
 export interface PendingToolApproval {
+  /**
+   * Chat whose stream raised the request. The decision must be posted for
+   * this chat, which may differ from the chat currently on screen.
+   */
+  chat_id: string;
   /** Tool-call ID the backend is waiting on. Unique per chat turn. */
   tool_call_id: string;
   /** Human-readable tool name (e.g. `create_node`). */

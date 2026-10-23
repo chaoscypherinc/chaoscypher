@@ -1,7 +1,8 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   useSourcesList,
   useExtractionDomains,
@@ -12,8 +13,10 @@ import {
   type ExtractionCapacitySettings,
   type QueueStats,
 } from '../../../services/api/useSources';
+import { SITES_QUERY_KEY } from '../../../services/api/sites';
+import { useSites } from '../../../services/api/useSites';
 import type { ExtractionDomain } from '../../../services/api/sources';
-import type { UnifiedSource, SourceQualityScore } from '../../../types';
+import type { Site, UnifiedSource, SourceQualityScore } from '../../../types';
 import { getApiErrorMessage } from '../../../utils/errors';
 
 interface UseSourcesDataOptions {
@@ -23,6 +26,8 @@ interface UseSourcesDataOptions {
 
 interface UseSourcesDataReturn {
   sources: UnifiedSource[];
+  /** The imported sites, one row each (empty while the list is filtered). */
+  sites: Site[];
   loading: boolean;
   error: string | null;
   domains: ExtractionDomain[];
@@ -40,7 +45,20 @@ interface Filters {
   search: string;
 }
 
+/** How often the sources list (and an expanded site's pages) polls while work is in flight. */
+export const SOURCES_POLL_INTERVAL_MS = 3000;
+
 const EMPTY_SOURCES: UnifiedSource[] = [];
+const EMPTY_SITES: Site[] = [];
+
+/**
+ * Whether the list is unfiltered, so each imported site shows as one row with
+ * its pages beneath it. A filtered list (search, status, type, stage) searches
+ * every source, a site's pages included, and sets the site rows aside.
+ */
+function groupsSites(filters: Filters): boolean {
+  return filters.stage === 'all' && !filters.status && !filters.source_type && !filters.search;
+}
 const EMPTY_DOMAINS: ExtractionDomain[] = [];
 const EMPTY_QUALITY_SCORES = new Map<string, SourceQualityScore>();
 
@@ -68,23 +86,32 @@ export function hasProcessingSources(sources: UnifiedSource[] | undefined): bool
  * isn't errored) the list and queue queries poll on `pollInterval`; once
  * everything settles, polling stops. TanStack already pauses background
  * refetches for a hidden tab and refetches on window focus, which replaces
- * the old manual `usePolling` + visibilitychange wiring.
+ * the old manual `usePolling` + visibilitychange wiring. The imported sites
+ * poll the same way while any of them is being imported or checked.
  */
 export function useSourcesData(
   filters: Filters,
   options: UseSourcesDataOptions = {}
 ): UseSourcesDataReturn {
-  const { pollInterval = 3000 } = options;
+  const { pollInterval = SOURCES_POLL_INTERVAL_MS } = options;
 
   // Dismissible error: the page can clear the inline alert without forcing a
   // refetch. A successful refetch resets the query error and re-shows nothing.
   const [errorDismissed, setErrorDismissed] = useState(false);
 
-  const sourcesQuery = useSourcesList(filters, {
+  const queryClient = useQueryClient();
+  const grouped = groupsSites(filters);
+  const listFilters = useMemo(
+    () => ({ ...filters, in_site: grouped ? false : undefined }),
+    [filters, grouped],
+  );
+  const sourcesQuery = useSourcesList(listFilters, {
     pollInterval,
     shouldPoll: hasProcessingSources,
   });
   const sources = sourcesQuery.data ?? EMPTY_SOURCES;
+  const sitesQuery = useSites({ pollInterval, enabled: grouped });
+  const sites = grouped ? (sitesQuery.data ?? EMPTY_SITES) : EMPTY_SITES;
 
   const queueRefetchInterval = hasProcessingSources(sourcesQuery.data)
     ? pollInterval
@@ -98,9 +125,13 @@ export function useSourcesData(
   const refresh = useCallback(
     async (_silent = false) => {
       setErrorDismissed(false);
-      await Promise.all([sourcesQuery.refetch(), queueStatsQuery.refetch()]);
+      await Promise.all([
+        sourcesQuery.refetch(),
+        queueStatsQuery.refetch(),
+        queryClient.invalidateQueries({ queryKey: SITES_QUERY_KEY }),
+      ]);
     },
-    [sourcesQuery, queueStatsQuery],
+    [sourcesQuery, queueStatsQuery, queryClient],
   );
 
   const clearError = useCallback(() => {
@@ -115,6 +146,7 @@ export function useSourcesData(
 
   return {
     sources,
+    sites,
     loading: sourcesQuery.isLoading,
     error,
     domains: domainsQuery.data ?? EMPTY_DOMAINS,

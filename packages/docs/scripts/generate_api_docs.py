@@ -77,6 +77,18 @@ PAGES = {
         "description": "Concrete storage implementations that fulfill the protocol contracts defined in the ports layer.",
         "modules": ["chaoscypher_core.adapters.sqlite.adapter"],
     },
+    "cache": {
+        "title": "Cache API",
+        "description": "The LLM response and embedding caches: a SQLite store and the wrappers that serve pinned completions and embeddings from it.",
+        "modules": [
+            "chaoscypher_core.cache",
+            "chaoscypher_core.cache.store",
+            "chaoscypher_core.cache.sqlite_store",
+            "chaoscypher_core.cache.chat",
+            "chaoscypher_core.cache.embedding",
+            "chaoscypher_core.cache.call_site",
+        ],
+    },
 }
 
 
@@ -111,12 +123,19 @@ def _convert_rst_inline(text: str) -> str:
     return "\n".join(out)
 
 
+GOOGLE_EXAMPLE_HEADERS = frozenset({"Example:", "Examples:"})
+"""Google-style section headers whose indented body is code, fenced like an RST ``::`` block."""
+
+
 def _convert_literal_blocks(text: str) -> str:
-    """Convert RST ``::`` literal blocks into fenced code blocks.
+    """Convert RST ``::`` literal blocks and Google ``Example:`` sections into fenced code blocks.
 
     A line ending in ``::`` followed by a more-indented block becomes the
     line with a single ``:`` plus a fenced block; a bare trailing ``::``
-    with no block just collapses to ``:``.
+    with no block just collapses to ``:``. A line that is only ``Example:``
+    or ``Examples:`` followed by a more-indented block keeps its header and
+    gets the block fenced (Markdown would otherwise fold the indented code
+    into the header's paragraph).
     """
     lines = text.split("\n")
     out: list[str] = []
@@ -124,7 +143,8 @@ def _convert_literal_blocks(text: str) -> str:
     while i < len(lines):
         line = lines[i]
         stripped = line.rstrip()
-        if not stripped.endswith("::") or stripped.endswith(":::"):
+        example_header = stripped.strip() in GOOGLE_EXAMPLE_HEADERS
+        if not example_header and (not stripped.endswith("::") or stripped.endswith(":::")):
             out.append(line)
             i += 1
             continue
@@ -135,10 +155,10 @@ def _convert_literal_blocks(text: str) -> str:
         base_indent = len(line) - len(line.lstrip())
         block_indent = (len(lines[j]) - len(lines[j].lstrip())) if j < len(lines) else 0
         if j >= len(lines) or block_indent <= base_indent:
-            out.append(stripped[:-2].rstrip() + ":")
+            out.append(stripped if example_header else stripped[:-2].rstrip() + ":")
             i += 1
             continue
-        head = stripped[:-2].rstrip()
+        head = stripped[:-1] if example_header else stripped[:-2].rstrip()
         if head:
             out.append(head + ":")
         out.append("")

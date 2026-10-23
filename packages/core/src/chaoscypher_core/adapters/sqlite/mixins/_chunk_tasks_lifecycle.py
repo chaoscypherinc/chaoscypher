@@ -33,6 +33,29 @@ from chaoscypher_core.utils.id import generate_id
 logger = structlog.get_logger(__name__)
 
 
+_ATTEMPT_BOOKKEEPING: frozenset[str] = frozenset(
+    {"id", "chunk_task_id", "attempt_number", "snapshotted_at"}
+)
+"""Columns of an attempt row that describe the snapshot itself, not the try it keeps."""
+
+ATTEMPT_SNAPSHOT_FIELDS: tuple[str, ...] = tuple(
+    name for name in ChunkExtractionAttempt.model_fields if name not in _ATTEMPT_BOOKKEEPING
+)
+"""The chunk-task columns a rerun copies into the attempt history, then resets on the task.
+
+Derived from :class:`ChunkExtractionAttempt`, so a column added to the
+attempt row is snapshotted and wiped without a second list to keep in step
+(until audit wave 6 both were hand-written, and ``decode_fallback`` was in
+neither: the history dropped it and a rerun started on the old rung).
+"""
+
+_ATTEMPT_SNAPSHOT_RESET: dict[str, Any] = {
+    name: ChunkExtractionTask.model_fields[name].get_default(call_default_factory=True)
+    for name in ATTEMPT_SNAPSHOT_FIELDS
+}
+"""What a rerun resets each snapshotted task column to: the column's default (None or 0)."""
+
+
 class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
     """Mixin providing lifecycle and status transition operations for chunk tasks.
 
@@ -301,7 +324,8 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
         """
         self._ensure_connected()
         # load_only the columns the finalizer actually consumes. Unlike
-        # get_chunk_tasks_by_job, aggregation NEEDS input_text/chunk_sentences;
+        # get_chunk_tasks_by_job, aggregation NEEDS input_text/chunk_sentences/
+        # small_chunk_ids;
         # only llm_response_json and other debug columns are skipped.
         statement = (
             select(ChunkExtractionTask)
@@ -317,6 +341,9 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
                     ChunkExtractionTask.raw_entity_embeddings,
                     ChunkExtractionTask.input_text,
                     ChunkExtractionTask.chunk_sentences,
+                    # Aggregation places each cited sentence in one of the
+                    # group's small chunks (citation evidence).
+                    ChunkExtractionTask.small_chunk_ids,
                     # EXCLUDE: llm_response_json (multi-MB on book-sized sources)
                 )
             )
@@ -327,6 +354,48 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
 
         results = self.session.exec(statement)
         return self._entities_to_dicts(results.all())
+
+    def get_completed_chunk_entities(
+        self, job_id: str, *, before_chunk_index: int
+    ) -> list[dict[str, Any]]:
+        """The completed chunk tasks of a job below ``before_chunk_index``, for the known-entities list.
+
+        The queue path rebuilds a chunk task's KNOWN ENTITIES list at its start
+        from the groups before it (spec 2026-10-11): only the ``completed``
+        rows, ordered by ``chunk_index``, and only the three columns
+        ``KnownEntities.add_group`` reads. A lower task still running is not
+        waited for; it is simply not in the list.
+
+        Args:
+            job_id: Parent job identifier.
+            before_chunk_index: The asking task's ``chunk_index``; rows below it are read.
+
+        Returns:
+            One ``{"chunk_index", "raw_entities", "raw_relationships"}`` dict per row.
+        """
+        self._ensure_connected()
+        statement = (
+            select(ChunkExtractionTask)
+            .options(
+                load_only(
+                    ChunkExtractionTask.chunk_index,
+                    ChunkExtractionTask.raw_entities,
+                    ChunkExtractionTask.raw_relationships,
+                )
+            )
+            .where(ChunkExtractionTask.job_id == job_id)
+            .where(ChunkExtractionTask.status == "completed")
+            .where(ChunkExtractionTask.chunk_index < before_chunk_index)
+            .order_by(ChunkExtractionTask.chunk_index)
+        )
+        return [
+            {
+                "chunk_index": row.chunk_index,
+                "raw_entities": row.raw_entities,
+                "raw_relationships": row.raw_relationships,
+            }
+            for row in self.session.exec(statement).all()
+        ]
 
     def get_chunk_tasks_by_job(self, job_id: str) -> list[dict[str, Any]]:
         """Return all chunk tasks for a job, regardless of status.
@@ -439,6 +508,7 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
         filtering_log: dict | None = None,
         finish_reason: str | None = None,
         aborted_by_loop: bool | None = None,
+        decode_fallback: dict | None = None,
     ) -> int:
         """Guarded completion: store LLM output + mark completed. Returns rows affected.
 
@@ -482,6 +552,9 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             aborted_by_loop: True when the streaming loop detector cut
                 the LLM stream short on a degenerate pattern.
                 Persisted for per-chunk degenerate-stream visibility.
+            decode_fallback: The decoding a retry asked with instead of the
+                pinned one (``chunk_failures.DecodeFallback.record``); None
+                for a first try.
 
         Returns:
             Number of rows updated: 1 on a successful completion, 0 when the
@@ -520,6 +593,8 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             values["finish_reason"] = finish_reason
         if aborted_by_loop is not None:
             values["aborted_by_loop"] = aborted_by_loop
+        if decode_fallback is not None:
+            values["decode_fallback"] = decode_fallback
 
         result = self.session.execute(
             sqla_update(ChunkExtractionTask)
@@ -697,6 +772,8 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
         if task.status in ("pending", "queued", "running"):
             msg = f"chunk {task.chunk_index} is already being processed"
             raise ConflictError(msg)
+        # Captured before the wipe below rewrites the identity-mapped row.
+        prior_status = task.status
 
         # 2. Determine next attempt_number
         max_attempt_row = self.session.exec(
@@ -713,27 +790,7 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             chunk_task_id=task_id,
             attempt_number=attempt_number,
             snapshotted_at=datetime.now(UTC),
-            started_at=task.started_at,
-            completed_at=task.completed_at,
-            input_text=task.input_text,
-            input_text_length=task.input_text_length,
-            input_tokens=task.input_tokens,
-            output_tokens=task.output_tokens,
-            context_window_available=task.context_window_available,
-            llm_response_json=task.llm_response_json,
-            llm_response_length=task.llm_response_length,
-            llm_duration_ms=task.llm_duration_ms,
-            raw_entities=task.raw_entities,
-            raw_relationships=task.raw_relationships,
-            entity_count=task.entity_count,
-            relationship_count=task.relationship_count,
-            invalid_relationship_count=task.invalid_relationship_count,
-            filtering_log=task.filtering_log,
-            finish_reason=task.finish_reason,
-            aborted_by_loop=task.aborted_by_loop,
-            chunk_sentences=task.chunk_sentences,
-            error_message=task.error_message,
-            error_type=task.error_type,
+            **{name: getattr(task, name) for name in ATTEMPT_SNAPSHOT_FIELDS},
         )
         self.session.add(snapshot)
         self.session.flush()
@@ -745,29 +802,9 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             .where(ChunkExtractionTask.status.notin_(("pending", "queued", "running")))
             .values(
                 status="pending",
-                started_at=None,
-                completed_at=None,
                 queued_at=None,
-                input_text=None,
-                input_text_length=None,
-                input_tokens=None,
-                output_tokens=None,
-                context_window_available=None,
-                llm_response_json=None,
-                llm_response_length=None,
-                llm_duration_ms=None,
-                raw_entities=None,
-                raw_relationships=None,
                 raw_entity_embeddings=None,
-                entity_count=0,
-                relationship_count=0,
-                invalid_relationship_count=0,
-                filtering_log=None,
-                finish_reason=None,
-                aborted_by_loop=None,
-                chunk_sentences=None,
-                error_message=None,
-                error_type=None,
+                **_ATTEMPT_SNAPSHOT_RESET,
                 retry_count=ChunkExtractionTask.retry_count + 1,
             )
         )
@@ -812,6 +849,22 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             .where(ChunkExtractionJob.status.in_(("completed", "failed")))
             .values(status="in_progress")
         )
+        # 7. Un-count the prior outcome and release the one-shot finalize
+        # claim. Otherwise the rerun's completion pushes completed+failed
+        # past total, ``increment_job_completed_and_check``'s claim (spent
+        # by the first finalize) matches no row, and no finalize is ever
+        # enqueued — the source sits at ``extracting`` indefinitely.
+        if prior_status in ("completed", "failed"):
+            counter = (
+                ChunkExtractionJob.completed_chunks
+                if prior_status == "completed"
+                else ChunkExtractionJob.failed_chunks
+            )
+            self.session.execute(
+                sqla_update(ChunkExtractionJob)
+                .where(ChunkExtractionJob.id == task.job_id)
+                .values({counter.key: func.max(counter - 1, 0), "finalize_claimed": False})
+            )
 
         self._maybe_commit()
         return attempt_number
@@ -858,6 +911,7 @@ class ChunkTasksLifecycleMixin(ExtractionJobQueryBase):
             ChunkExtractionAttempt.llm_response_length,
             ChunkExtractionAttempt.error_message,
             ChunkExtractionAttempt.error_type,
+            ChunkExtractionAttempt.decode_fallback,
         )
         statement = (
             select(ChunkExtractionAttempt)

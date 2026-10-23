@@ -72,7 +72,7 @@ Extraction domains configure how entities and relationships are extracted from d
 
 **Built-in domains:** biographical, cybersecurity, design, educational, financial, generic, historical, intelligence, investigation, legal, literary, medical, news, philosophical, political, reference, scientific, technical, theological.
 
-Each domain defines: entity types, relationship types, detection rules, LLM guidance, quality scoring, extraction limits, and deduplication behavior.
+The floor (`generic`) defines the core entity types and relationship labels; each pack adds subtypes of the core types, extra relationship labels, detection rules, LLM guidance, quality scoring, extraction limits at or above the floor's, and name conventions for deduplication. A pack never declares node templates (see [Building Domains](../developer-guide/building-domains.md)).
 
 ### User Plugins
 

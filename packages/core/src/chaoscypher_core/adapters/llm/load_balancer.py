@@ -30,6 +30,7 @@ from chaoscypher_core.adapters.llm.limit import (
     PrioritySemaphore,
     update_llm_semaphore_config,
 )
+from chaoscypher_core.adapters.llm.providers.ollama_provider import ollama_runtime_config
 from chaoscypher_core.exceptions import LLMError
 
 
@@ -41,6 +42,78 @@ logger = structlog.get_logger(__name__)
 # semaphore round-trip, so the ceiling keeps a reconfiguring pool from
 # retrying forever.
 _ACQUIRE_MAX_ATTEMPTS = 3
+
+
+_POOL_SIZING_KEYS: frozenset[str] = frozenset(
+    {"llm_max_concurrent", "llm_reserved_interactive", "llm_enable_priority"}
+)
+"""Provider config keys that size the pool, not the request: the global semaphore owns them,
+so a change in the instance count does not rebuild every provider."""
+
+
+def balancer_provider_config(llm_settings: LLMSettings, instance_count: int) -> dict[str, Any]:
+    """The config every instance's provider is built from (beside its own ``base_url``).
+
+    Args:
+        llm_settings: The settings the balancer is (re)loaded with.
+        instance_count: How many enabled instances share the global semaphore.
+
+    """
+    return {
+        # BaseLLMProvider reads config["chat_provider"] in its priority-disabled
+        # warning branch; omitting it made reload_config crash with KeyError
+        # when llm_enable_priority is False.
+        "chat_provider": "ollama",
+        "ollama_chat_model": llm_settings.ollama_chat_model,
+        **ollama_runtime_config(llm_settings),
+        "ai_temperature": llm_settings.ai_temperature,
+        "ai_max_tokens": llm_settings.ai_max_tokens,
+        "stream_chunk_timeout": llm_settings.stream_chunk_timeout,
+        "ollama_health_check_timeout": llm_settings.ollama_health_check_timeout,
+        "ollama_recovery_delay": llm_settings.ollama_recovery_delay,
+        # Per-instance providers read these two like the single-instance
+        # factory path does; omitting them silently dropped the determinism pin
+        # and the request timeout on multi-instance setups.
+        "seed": llm_settings.seed,
+        "llm_request_timeout": llm_settings.llm_request_timeout,
+        "llm_max_concurrent": instance_count,  # Match instance count
+        "llm_reserved_interactive": llm_settings.llm_reserved_interactive,
+        "llm_enable_priority": llm_settings.llm_enable_priority,
+    }
+
+
+def provider_config_fingerprint(config: dict[str, Any]) -> str:
+    """What a built provider answers with: its config without :data:`_POOL_SIZING_KEYS`.
+
+    Model, decoding (temperature, seed, output cap), runtime options, timeouts
+    and the URL. Until audit wave 5 ``reload_config`` rebuilt a provider only
+    when its URL changed, so a second factory asking for another model, seed
+    or temperature on the same URL got the first factory's providers.
+    """
+    import hashlib
+    import json
+
+    kept = {k: v for k, v in config.items() if k not in _POOL_SIZING_KEYS}
+    return hashlib.sha256(json.dumps(kept, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def pool_signature(llm_settings: LLMSettings) -> str:
+    """What names the instance pool settings ask for: the enabled instances' ids and URLs, the strategy.
+
+    Not the model or the decoding: those are served per caller
+    (:meth:`OllamaLoadBalancer.acquire_instance` with ``llm_settings``), so a
+    second config in the process does not drain and rebuild the pool.
+    """
+    import json
+
+    enabled = sorted(
+        (str(d.get("id")), str(d.get("base_url")))
+        for d in (inst.model_dump() for inst in (llm_settings.ollama_instances or []))
+        if d.get("enabled", True)
+    )
+    return json.dumps(
+        {"instances": enabled, "strategy": llm_settings.ollama_load_balancing}, sort_keys=True
+    )
 
 
 class OllamaLoadBalancer:
@@ -92,6 +165,7 @@ class OllamaLoadBalancer:
         self._lock = asyncio.Lock()
         self._config_version: int = 0
         self._global_config: dict[str, Any] = {}  # Shared model config
+        self._pool_signature: str | None = None  # pool_signature() of the last load
         self._drain_max_wait: int = resolved_drain
         self._drain_check_interval: float = 1.0
 
@@ -122,118 +196,158 @@ class OllamaLoadBalancer:
             llm_settings: LLMSettings object with ollama_instances list
         """
         async with self._lock:
-            # ollama_instances is non-empty by default (LLMSettings seeds a
-            # single "default" instance), so this should always have entries.
-            instances_config = llm_settings.ollama_instances or []
+            await self._reload_locked(llm_settings)
 
-            # Build new instance map (only enabled instances).
-            # ``ollama_instances`` is typed ``list[OllamaInstance]``; settings
-            # validation rejects bare dicts before they reach the load balancer.
-            new_instances: dict[str, dict[str, Any]] = {}
-            for inst in instances_config:
-                inst_dict = inst.model_dump()
-                if inst_dict.get("enabled", True):
-                    new_instances[inst_dict["id"]] = inst_dict
+    async def ensure_loaded(self, llm_settings: LLMSettings) -> None:
+        """Load the pool these settings ask for, unless it is the pool already loaded.
 
-            if not new_instances:
-                logger.warning(
-                    "load_balancer_no_enabled_instances",
-                    configured=len(instances_config),
-                )
+        One check and reload under the balancer's lock (audit wave 6: the
+        factory read the fingerprint, reloaded and acquired as three steps, so
+        two configs in one process could get each other's provider). Only the
+        pool is compared (:func:`pool_signature`): the model and decoding are
+        served per caller by :meth:`acquire_instance`.
+        """
+        async with self._lock:
+            wanted = pool_signature(llm_settings)
+            if self._config_version and getattr(self, "_pool_signature", None) == wanted:
+                return
+            await self._reload_locked(llm_settings)
 
-            # Store shared config for provider creation
-            # llm_max_concurrent is set to instance count to match available capacity
-            instance_count = len(new_instances)
-            self._global_config = {
-                # BaseLLMProvider reads config["chat_provider"] in its
-                # priority-disabled warning branch; omitting it made
-                # reload_config crash with KeyError when llm_enable_priority
-                # is False.
-                "chat_provider": "ollama",
-                "ollama_chat_model": llm_settings.ollama_chat_model,
-                "ollama_num_batch": llm_settings.ollama_num_batch,
-                "ollama_num_ctx": llm_settings.ollama_num_ctx,
-                "ollama_num_parallel": llm_settings.ollama_num_parallel,
-                "ollama_num_thread": llm_settings.ollama_num_thread,
-                "ai_temperature": llm_settings.ai_temperature,
-                "ai_max_tokens": llm_settings.ai_max_tokens,
-                "stream_chunk_timeout": llm_settings.stream_chunk_timeout,
-                "ollama_health_check_timeout": llm_settings.ollama_health_check_timeout,
-                "ollama_recovery_delay": llm_settings.ollama_recovery_delay,
-                # Per-instance providers read these two like the single-
-                # instance factory path does; omitting them silently dropped
-                # the determinism pin and the request timeout on multi-
-                # instance setups.
-                "seed": llm_settings.seed,
-                "llm_request_timeout": llm_settings.llm_request_timeout,
-                "llm_max_concurrent": instance_count,  # Match instance count
-                "llm_reserved_interactive": llm_settings.llm_reserved_interactive,
-                "llm_enable_priority": llm_settings.llm_enable_priority,
-            }
+    async def _reload_locked(self, llm_settings: LLMSettings) -> None:
+        """The body of :meth:`reload_config`; the caller holds ``self._lock``."""
+        # ollama_instances is non-empty by default (LLMSettings seeds a
+        # single "default" instance), so this should always have entries.
+        instances_config = llm_settings.ollama_instances or []
 
-            # Remove instances that are no longer in config
-            removed_ids = set(self._providers.keys()) - set(new_instances.keys())
-            for instance_id in removed_ids:
-                await self._drain_and_remove_instance(instance_id)
+        # Build new instance map (only enabled instances).
+        # ``ollama_instances`` is typed ``list[OllamaInstance]``; settings
+        # validation rejects bare dicts before they reach the load balancer.
+        new_instances: dict[str, dict[str, Any]] = {}
+        for inst in instances_config:
+            inst_dict = inst.model_dump()
+            if inst_dict.get("enabled", True):
+                new_instances[inst_dict["id"]] = inst_dict
 
-            # Add new instances
-            added_ids = set(new_instances.keys()) - set(self._providers.keys())
-            for instance_id in added_ids:
-                inst_config = new_instances[instance_id]
-                self._add_instance(instance_id, inst_config)
-
-            # Update instance configs (URL changes, etc.)
-            for instance_id, inst_config in new_instances.items():
-                if instance_id in self._instances:
-                    old_url = self._instances[instance_id].get("base_url")
-                    new_url = inst_config.get("base_url")
-                    if old_url != new_url:
-                        # URL changed - recreate provider
-                        await self._drain_and_remove_instance(instance_id)
-                        self._add_instance(instance_id, inst_config)
-                    else:
-                        # Just update config (name, etc.)
-                        self._instances[instance_id] = inst_config
-
-            self._instances = new_instances
-            self._strategy = llm_settings.ollama_load_balancing
-            self._config_version += 1
-
-            # Update global semaphore to match instance count
-            # This ensures concurrent requests match available instances
-            if instance_count > 0:
-                reserved = llm_settings.llm_reserved_interactive
-                await update_llm_semaphore_config(
-                    max_concurrent=instance_count,
-                    reserved_high_priority=reserved,
-                )
-                logger.info(
-                    "global_semaphore_updated_from_instances",
-                    max_concurrent=instance_count,
-                    reserved_high_priority=reserved,
-                )
-
-            logger.info(
-                "load_balancer_config_reloaded",
-                instances=len(new_instances),
-                strategy=self._strategy,
-                version=self._config_version,
-                instance_ids=list(new_instances.keys()),
+        if not new_instances:
+            logger.warning(
+                "load_balancer_no_enabled_instances",
+                configured=len(instances_config),
             )
+
+        # Store shared config for provider creation
+        # llm_max_concurrent is set to instance count to match available capacity
+        instance_count = len(new_instances)
+        self._global_config = balancer_provider_config(llm_settings, instance_count)
+
+        # Remove instances that are no longer in config
+        removed_ids = set(self._providers.keys()) - set(new_instances.keys())
+        for instance_id in removed_ids:
+            await self._drain_and_remove_instance(instance_id)
+
+        # Add new instances
+        added_ids = set(new_instances.keys()) - set(self._providers.keys())
+        for instance_id in added_ids:
+            inst_config = new_instances[instance_id]
+            self._add_instance(instance_id, inst_config)
+
+        # Rebuild a provider whose config moved (URL, model, decoding, options):
+        # a provider answers with the config it was built from.
+        for instance_id, inst_config in new_instances.items():
+            if instance_id in self._instances and instance_id not in added_ids:
+                built = self._built_fingerprints.get(instance_id)
+                wanted = provider_config_fingerprint(self._provider_config(inst_config))
+                if built != wanted:
+                    await self._drain_and_remove_instance(instance_id)
+                    self._add_instance(instance_id, inst_config)
+                else:
+                    # Just update config (name, etc.)
+                    self._instances[instance_id] = inst_config
+
+        self._instances = new_instances
+        self._strategy = llm_settings.ollama_load_balancing
+        self._config_version += 1
+        self._pool_signature = pool_signature(llm_settings)
+
+        # Update global semaphore to match instance count
+        # This ensures concurrent requests match available instances
+        if instance_count > 0:
+            reserved = llm_settings.llm_reserved_interactive
+            await update_llm_semaphore_config(
+                max_concurrent=instance_count,
+                reserved_high_priority=reserved,
+            )
+            logger.info(
+                "global_semaphore_updated_from_instances",
+                max_concurrent=instance_count,
+                reserved_high_priority=reserved,
+            )
+
+        logger.info(
+            "load_balancer_config_reloaded",
+            instances=len(new_instances),
+            strategy=self._strategy,
+            version=self._config_version,
+            instance_ids=list(new_instances.keys()),
+        )
+
+    @property
+    def _built_fingerprints(self) -> dict[str, str]:
+        """Each live provider's :func:`provider_config_fingerprint` at build time."""
+        built: dict[str, str] = self.__dict__.setdefault("_provider_fingerprints", {})
+        return built
+
+    @property
+    def _keyed_providers(self) -> dict[tuple[str, str], Any]:
+        """Providers built for a caller's config: ``(instance_id, fingerprint) -> provider``."""
+        keyed: dict[tuple[str, str], Any] = self.__dict__.setdefault("_providers_by_config", {})
+        return keyed
+
+    def _provider_for(self, instance_id: str, llm_settings: LLMSettings) -> Any:
+        """The provider of ``instance_id`` built from ``llm_settings``: keyed by its fingerprint.
+
+        The pool's own provider when the loaded config is the caller's; else
+        one built (once) for that config on the instance's URL. The instance's
+        semaphore still governs it: one GPU, one slot, whatever the config.
+        """
+        config = {
+            **balancer_provider_config(llm_settings, len(self._instances)),
+            "base_url": self._instances[instance_id]["base_url"],
+        }
+        fingerprint = provider_config_fingerprint(config)
+        if self._built_fingerprints.get(instance_id) == fingerprint:
+            return self._providers[instance_id]
+        key = (instance_id, fingerprint)
+        if key not in self._keyed_providers:
+            from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
+
+            self._keyed_providers[key] = OllamaProvider(config)
+            logger.info(
+                "load_balancer_provider_built_for_config",
+                instance_id=instance_id,
+                model=config.get("ollama_chat_model"),
+            )
+        return self._keyed_providers[key]
+
+    @property
+    def config_fingerprint(self) -> str:
+        """The fingerprint of the shared provider config the pool was last loaded with."""
+        return provider_config_fingerprint(self._global_config)
+
+    def _provider_config(self, inst_config: dict[str, Any]) -> dict[str, Any]:
+        """An instance's provider config: the shared config with its own ``base_url``."""
+        return {**self._global_config, "base_url": inst_config["base_url"]}
 
     def _add_instance(self, instance_id: str, inst_config: dict[str, Any]) -> None:
         """Add a new instance with provider and semaphore."""
         # Build provider config — `base_url` is the per-instance URL the
         # OllamaProvider reads at __init__ time.
-        provider_config = {
-            **self._global_config,
-            "base_url": inst_config["base_url"],
-        }
+        provider_config = self._provider_config(inst_config)
 
         # Create provider and semaphore (lazy import to avoid loading SDK at startup)
         from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
 
         self._providers[instance_id] = OllamaProvider(provider_config)
+        self._built_fingerprints[instance_id] = provider_config_fingerprint(provider_config)
         self._semaphores[instance_id] = PrioritySemaphore(
             max_concurrent=1,  # One slot per instance
             reserved_high_priority=0,
@@ -302,6 +416,9 @@ class OllamaLoadBalancer:
         self._providers.pop(instance_id, None)
         self._semaphores.pop(instance_id, None)
         self._instances.pop(instance_id, None)
+        self._built_fingerprints.pop(instance_id, None)
+        for key in [k for k in self._keyed_providers if k[0] == instance_id]:
+            self._keyed_providers.pop(key, None)
 
         logger.info("load_balancer_instance_removed", instance_id=instance_id)
 
@@ -323,7 +440,9 @@ class OllamaLoadBalancer:
         )
 
     @asynccontextmanager
-    async def acquire_instance(self, high_priority: bool = False) -> Any:
+    async def acquire_instance(
+        self, high_priority: bool = False, *, llm_settings: LLMSettings | None = None
+    ) -> Any:
         """Get an available instance based on load balancing strategy.
 
         Blocks until an instance slot is available. Use as async context manager.
@@ -338,6 +457,10 @@ class OllamaLoadBalancer:
 
         Args:
             high_priority: If True, jumps ahead in queue
+            llm_settings: The caller's settings: the provider yielded is one
+                built from them (:meth:`_provider_for`, keyed by config
+                fingerprint), whatever config the pool was last loaded with
+                (audit wave 6). None: the pool's own provider.
 
         Yields:
             Tuple of (instance_id, provider)
@@ -387,6 +510,9 @@ class OllamaLoadBalancer:
                     # Exiting the block releases the slot on the retired
                     # semaphore before we re-select.
                     continue
+
+                if llm_settings is not None:
+                    provider = self._provider_for(instance_id, llm_settings)
 
                 logger.debug(
                     "load_balancer_instance_acquired",

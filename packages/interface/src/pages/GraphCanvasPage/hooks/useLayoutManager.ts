@@ -5,6 +5,8 @@
  * useLayoutManager: Applies layout algorithms to the graphology graph.
  *
  * Reads nodes/edges from graph, computes positions, writes them back.
+ * Pipeline-flagged nodes sit out the chosen layout and are placed together
+ * in the "Unresolved" region beside it (`utils/unresolvedRegion.ts`).
  */
 
 import { useCallback } from 'react';
@@ -22,6 +24,7 @@ import {
   type LayoutNode,
   type LayoutEdge,
 } from '../utils/layoutUtils';
+import { layoutUnresolvedRegion, unresolvedMemberIds } from '../utils/unresolvedRegion';
 import { logger } from '../../../utils/logger';
 
 interface UseLayoutManagerProps {
@@ -94,8 +97,13 @@ export function useLayoutManager({
   const applyLayout = useCallback(
     async (type: LayoutType) => {
       try {
-        const nodes = extractNodes(graph);
-        const edges = extractEdges(graph);
+        // The Unresolved region's members are laid out apart from the rest.
+        const regionIds = unresolvedMemberIds(graph);
+        const inRegion = new Set(regionIds);
+        const nodes = extractNodes(graph).filter((n) => !inRegion.has(n.id));
+        const edges = extractEdges(graph).filter(
+          (e) => !inRegion.has(e.source) && !inRegion.has(e.target),
+        );
 
         let positions;
 
@@ -122,6 +130,7 @@ export function useLayoutManager({
         }
 
         applyPositionsToGraph(graph, positions);
+        applyPositionsToGraph(graph, layoutUnresolvedRegion(regionIds, positions.values()));
         repositionSourceGroupNodes(graph);
         setLayoutType(type);
 

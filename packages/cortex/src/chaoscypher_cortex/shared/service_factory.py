@@ -17,11 +17,11 @@ Usage:
 
 Compare to the old pattern (5+ lines per service):
     from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
-    from chaoscypher_core.repo_factories import get_graph_repository
+    from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
     adapter = get_sqlite_adapter(database_name=database_name)
     try:
-        graph_repo = get_graph_repository(adapter.session, database_name)
+        graph_repo = get_transaction_graph_repository(adapter, database_name)
         search_repo = get_search_repository(database_name=database_name)
         service = NodeService(graph_repo, ...)
     finally:
@@ -37,8 +37,8 @@ import structlog
 from chaoscypher_core.app_config import Settings, get_settings
 from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
 from chaoscypher_core.repo_factories import (
-    get_graph_repository,
     get_search_repository,
+    get_transaction_graph_repository,
 )
 
 
@@ -122,7 +122,7 @@ class ServiceFactory:
     def graph_repository(self) -> GraphRepository:
         """Graph repository (lazy, cached per factory instance)."""
         if self._graph_repo is None:
-            self._graph_repo = get_graph_repository(self.session, self._database_name)
+            self._graph_repo = get_transaction_graph_repository(self.adapter, self._database_name)
         return self._graph_repo
 
     @property

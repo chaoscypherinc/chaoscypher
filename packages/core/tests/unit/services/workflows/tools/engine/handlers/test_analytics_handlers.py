@@ -906,6 +906,30 @@ class TestFindSimilarNodes:
         assert "not accessible" in result["error"].lower()
 
     @pytest.mark.asyncio
+    async def test_source_scope_admits_a_merged_seed_node(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+        analytics_service: MagicMock,
+        settings: EngineSettings,
+    ) -> None:
+        """A seed homed elsewhere that the scoped source also attests is in scope (#795, D7)."""
+        embedding = [0.1, 0.2, 0.3]
+        seed = make_node("n1", "Alice", source_id="src_b", embedding=embedding)
+        seed.member_source_ids = ["src_a", "src_b"]
+        merged = make_node("n2", "Bob", template_id="person", source_id="src_b")
+        merged.member_source_ids = ["src_a", "src_b"]
+        graph_repo.get_node.return_value = seed
+        search_repo.vector_search.return_value = [("n2", 0.9)]
+        graph_repo.get_nodes_batch.return_value = [merged]
+
+        handler = _make_handler(graph_repo, search_repo, analytics_service, settings)
+        result = await handler.find_similar_nodes("n1", source_ids=["src_a"])
+
+        assert result["success"] is True
+        assert [n["id"] for n in result["similar_nodes"]] == ["n2"]
+
+    @pytest.mark.asyncio
     async def test_source_scope_filters_vector_results(
         self,
         graph_repo: MagicMock,

@@ -37,6 +37,9 @@ def _stub_run_context(monkeypatch, ds):
     from chaoscypher_cli.benchmark import extraction_dataset as ed_mod
     from chaoscypher_core.services.sources.engine.extraction import orchestration as orch_mod
     from chaoscypher_core.services.sources.engine.extraction.domains import factory as factory_mod
+    from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+        DomainRegistry,
+    )
     from chaoscypher_core.services.sources.engine.extraction.utils import ai_entities as ai_mod
 
     settings = SimpleNamespace(
@@ -47,11 +50,8 @@ def _stub_run_context(monkeypatch, ds):
     monkeypatch.setattr(
         ed_mod.ExtractionDataset, "_build_temp_context", lambda self, model: ctx, raising=True
     )
-    monkeypatch.setattr(
-        factory_mod,
-        "get_domain_registry",
-        lambda s, d: SimpleNamespace(get_domain=lambda name: SimpleNamespace(name=name)),
-    )
+    # The shipped floor and packs: the probe's stack is resolved from them.
+    monkeypatch.setattr(factory_mod, "get_domain_registry", lambda s, d: DomainRegistry())
     monkeypatch.setattr(
         orch_mod,
         "format_extraction_templates",
@@ -76,7 +76,7 @@ def _probe_dataset(only):
     return ProbeDataset(
         id="p",
         version="1",
-        domain="literary",
+        packs=("literary",),
         probes=[
             _probe("A-easy", "easy", [{"type": "finish_stop"}]),
             _probe("B-easy", "easy", [{"type": "finish_stop"}]),
@@ -124,6 +124,31 @@ async def test_only_unset_runs_every_probe(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_the_probe_templates_are_rendered_from_the_floor_and_every_pack(monkeypatch) -> None:
+    """``packs`` builds the stack with ``DomainStack.resolve``: the floor and each pack, sorted."""
+    from types import SimpleNamespace
+
+    from chaoscypher_core.services.sources.engine.extraction import orchestration as orch_mod
+
+    ds = _probe_dataset(None)
+    ds.packs = ("historical", "literary")
+    _stub_run_context(monkeypatch, ds)
+    stacks = []
+
+    def record(stack, **kw):
+        stacks.append(stack)
+        return {"node_templates": "", "edge_templates": ""}
+
+    monkeypatch.setattr(orch_mod, "format_extraction_templates", record)
+    model = SimpleNamespace(provider="openai", model="m", model_id="openai/m", label="m")
+    out = await ds.run(model)
+    assert out.error is None, out.error
+    (stack,) = stacks
+    assert stack.names == ("historical", "literary")
+    assert stack.floor.name == "generic"
+
+
+@pytest.mark.asyncio
 async def test_run_probe_sends_the_transformed_passage_to_the_extractor(tmp_path) -> None:
     """Regression: the extractor must receive the padded/spliced text.
 
@@ -155,7 +180,12 @@ async def test_run_probe_sends_the_transformed_passage_to_the_extractor(tmp_path
         carrier="carrier.txt",
     )
     ds = ProbeDataset(
-        id="p", version="1", domain="literary", probes=[probe], pack_dir=tmp_path, pad_to_chars=800
+        id="p",
+        version="1",
+        packs=("literary",),
+        probes=[probe],
+        pack_dir=tmp_path,
+        pad_to_chars=800,
     )
     model = SimpleNamespace(provider="ollama", model="m", model_id="ollama/m", label="m")
     rec = await ds._run_probe(

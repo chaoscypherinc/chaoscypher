@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import FLOOR_NAME
 from chaoscypher_core.services.sources.engine.extraction.extractor import (
     apply_cross_chunk_relationship_filters,
     generate_embeddings,
@@ -36,6 +38,12 @@ from chaoscypher_core.services.sources.engine.extraction.utils.template_extracto
 
 if TYPE_CHECKING:
     from chaoscypher_core.ports.graph import GraphRepositoryProtocol
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        NameConventions,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+        DomainResolver,
+    )
     from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
         FilteringConfig,
     )
@@ -189,7 +197,7 @@ class ExtractionService:
                 _default_mode = getattr(
                     getattr(self.settings, "extraction", None),
                     "extraction_filtering_mode",
-                    "balanced",
+                    SOURCE_ROW_FILTERING_MODE,
                 )
                 try:
                     resolved_filtering_config = resolve_filtering_config(mode=str(_default_mode))
@@ -381,17 +389,19 @@ class ExtractionService:
         """
         return self._get_domain_title_words(domain_name)
 
-    def get_domain_type_compatibility(self, domain_name: str | None) -> dict[str, list[str]] | None:
-        """Public entry point for getting domain type compatibility groups.
+    def get_domain_name_conventions(self, domain_name: str | None) -> NameConventions | None:
+        """Public entry point for the name rule's conventions of a domain.
 
         Args:
-            domain_name: Name of the domain (e.g., 'literary', 'technical')
+            domain_name: Name of the domain (e.g., 'literary', 'historical')
 
         Returns:
-            Dictionary of compatibility groups, or None if unavailable.
+            The conventions of the domain's stack, the floor's tables with the
+            pack's (``domain_resolver.name_conventions_of_packs``), or None
+            when the registry cannot be read.
 
         """
-        return self._get_domain_type_compatibility(domain_name)
+        return self._stack_resolver().get_domain_name_conventions(domain_name)
 
     def get_domain_inverse_relationships(self, domain_name: str | None) -> dict[str, str]:
         """Public entry point for getting domain inverse relationship mappings.
@@ -425,23 +435,35 @@ class ExtractionService:
         """Public entry point for getting domain symmetric relationship types.
 
         Symmetric relationships are bidirectional — (A, B) and (B, A) are
-        semantically identical and collapsed during deduplication.
+        semantically identical and collapsed during deduplication. The
+        floor's and the pack's (``DomainStack.symmetric_relationships``).
 
         Args:
-            domain_name: Name of the domain (e.g., 'literary', 'historical')
+            domain_name: Name of the domain (e.g., 'literary', 'historical');
+                None is the floor alone.
 
         Returns:
             List of symmetric relationship type names, or empty list.
 
         """
-        domain = self._resolve_domain(domain_name)
-        if not domain:
-            return []
-        try:
-            return cast("list[str]", domain.get_symmetric_relationships())
-        except Exception:
-            logger.debug("domain_symmetric_relationships_unavailable", domain=domain_name)
-        return []
+        return self._stack_resolver().get_domain_symmetric_relationships(domain_name)
+
+    def _stack_resolver(self) -> DomainResolver:
+        """The resolver the stack-wide lookups go through (the floor's tables with the pack's).
+
+        The conventions, symmetric labels and inverse map of a domain name are
+        its ``DomainStack``'s (``domain_resolver.domain_stack``): one
+        reading for this service and the standalone ``DomainResolver``.
+        """
+        resolver = getattr(self, "_domain_stack_resolver", None)
+        if resolver is None:
+            from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+                DomainResolver,
+            )
+
+            resolver = DomainResolver(self.settings)
+            self._domain_stack_resolver = resolver
+        return cast("DomainResolver", resolver)
 
     # ------------------------------------------------------------------ #
     #  Shared finalization pipeline
@@ -482,9 +504,13 @@ class ExtractionService:
 
         # Steps 2-4: Run template suggestions (sync) concurrently with embeddings (async)
         effective_domain = forced_domain or detected_domain
-        domain_node_templates = None
-        if effective_domain:
-            domain_node_templates = self._get_domain_node_templates(effective_domain)
+        # The floor's core-type templates (one suggestion per core type present:
+        # its description, icon and colour) and the packs' subtype icons, from
+        # the source's stack; no domain is the floor alone.
+        stack_name = effective_domain or FLOOR_NAME
+        domain_node_templates = self._get_domain_node_templates(stack_name)
+        visuals = getattr(self._resolve_domain(stack_name), "subtype_visuals", None)
+        subtype_visuals = visuals() if callable(visuals) else None
 
         loop = asyncio.get_event_loop()
 
@@ -496,6 +522,7 @@ class ExtractionService:
                 lambda: TemplateExtractor.generate_suggestions_from_entities(
                     entities=normalized,
                     domain_templates=domain_node_templates,
+                    subtype_visuals=subtype_visuals,
                 ),
             )
             edge_suggestions = await loop.run_in_executor(
@@ -559,6 +586,8 @@ class ExtractionService:
             "suggested_templates": node_suggestions,
             "suggested_edge_templates": edge_suggestions,
             "inverse_relationships": inverse_relationships,
+            # The commit orients symmetric facts with these (one fact, one edge).
+            "symmetric_relationships": self.get_domain_symmetric_relationships(effective_domain),
             "metadata": metadata,
         }
         if embeddings_result:
@@ -571,58 +600,45 @@ class ExtractionService:
     # ------------------------------------------------------------------ #
 
     def _resolve_domain(self, domain_name: str | None, *, forced: bool = False) -> Any | None:
-        """Resolve a domain name to a domain object.
+        """Resolve a domain name or the packs' label to the source's ``DomainStack``.
+
+        The floor plus the packs ``domain_name`` names (one pack's name, or
+        the label ``historical+literary``; ``generic`` is the floor alone):
+        every finalize lookup made through it (type aliases, normalization
+        rules, structural filters, node and edge templates) reads the stack
+        the source extracted with, not one pack's object (Task 7, 2026-10-08).
 
         Args:
-            domain_name: Name of the domain (may be None for "no specific domain").
+            domain_name: Name of the domain or the packs' label (may be None
+                for "no specific domain").
             forced: When True, the caller is honoring an explicit user choice
-                (e.g., the source row's ``forced_domain`` column). Registry
-                failures must propagate so the user sees a clear error
-                rather than silently running as a generic extraction.
-                When False (auto-detection), failures are swallowed and
-                cached as None for best-effort progress.
+                (e.g., the source row's ``forced_domain`` column). A pack the
+                registry does not hold, or a registry failure, propagates so
+                the user sees a clear error rather than silently running as a
+                generic extraction. When False (auto-detection), an unknown
+                pack is left out (the floor applies) and a registry failure is
+                swallowed and cached as None for best-effort progress.
 
         Returns:
-            Domain object or None when domain_name is None or auto-detect
-            failed.
+            The ``DomainStack``, or None when domain_name is None or the
+            registry could not be read.
 
         Raises:
-            Anything ``registry.get_domain`` raises, when ``forced=True``.
+            ValueError, or anything ``get_domain_registry`` raises, when
+            ``forced=True``.
 
         """
         if not domain_name:
             return None
-
-        # Use instance-level cache (lives for the duration of one extraction call)
-        cache = getattr(self, "_domain_cache", None)
-        if cache is None:
-            cache = {}
-            self._domain_cache = cache
-
-        if domain_name in cache:
-            return cache[domain_name]
-
         try:
-            from chaoscypher_core.services.sources.engine.extraction.domains import (
-                get_domain_registry,
-            )
-
-            registry = get_domain_registry(self.settings)
-            domain = registry.get_domain(domain_name)
-            cache[domain_name] = domain
-            return domain
+            # The one stack lookup (domain_resolver.domain_stack), cached on the
+            # resolver the conventions and relation maps already go through.
+            return self._stack_resolver()._resolve_stack(domain_name, strict=forced)
         except Exception:
-            if forced:
-                # User explicitly forced this domain — don't silently
-                # downgrade. Phase 1 (2026-05-08).
-                logger.exception(
-                    "forced_domain_resolution_failed",
-                    domain=domain_name,
-                )
-                raise
-            logger.debug("domain_resolution_failed", domain=domain_name)
-            cache[domain_name] = None
-            return None
+            # User explicitly forced this domain — don't silently
+            # downgrade. Phase 1 (2026-05-08).
+            logger.exception("forced_domain_resolution_failed", domain=domain_name)
+            raise
 
     def _get_domain_title_words(self, domain_name: str | None) -> frozenset[str] | None:
         """Get title words from domain config, if available.
@@ -642,28 +658,6 @@ class ExtractionService:
             return frozenset(w.lower() for w in words) if words else None
         except Exception:
             logger.debug("domain_title_words_unavailable", domain=domain_name)
-        return None
-
-    def _get_domain_type_compatibility(
-        self, domain_name: str | None
-    ) -> dict[str, list[str]] | None:
-        """Get type compatibility groups from domain config, if available.
-
-        Args:
-            domain_name: Name of the domain (e.g., 'literary', 'technical')
-
-        Returns:
-            Dictionary of compatibility groups, or None if unavailable.
-
-        """
-        domain = self._resolve_domain(domain_name)
-        if not domain:
-            return None
-        try:
-            compat = domain.get_type_compatibility()
-            return compat if compat else None
-        except Exception:
-            logger.debug("domain_type_compatibility_unavailable", domain=domain_name)
         return None
 
     def _get_domain_node_templates(self, domain_name: str) -> list[dict[str, Any]] | None:
@@ -724,24 +718,20 @@ class ExtractionService:
             return {}
 
     def _get_domain_inverse_relationships(self, domain_name: str | None) -> dict[str, str]:
-        """Get inverse relationship map from domain config.
+        """Get the inverse relationship map of the domain's stack (the floor's and the pack's).
+
+        ``DomainStack.inverse_relationships``: the floor's pairs
+        (``parent_of``/``child_of``) hold whatever pack is chosen.
 
         Args:
-            domain_name: Name of the domain (e.g., 'literary', 'historical')
+            domain_name: Name of the domain (e.g., 'literary', 'historical');
+                None is the floor alone.
 
         Returns:
             Mapping of edge type to inverse edge type, or empty dict.
 
         """
-        domain = self._resolve_domain(domain_name)
-        if not domain:
-            return {}
-        try:
-            result: dict[str, str] = domain.get_inverse_relationships()
-            return result
-        except Exception:
-            logger.debug("domain_inverse_relationships_unavailable", domain=domain_name)
-        return {}
+        return self._stack_resolver().get_domain_inverse_relationships(domain_name)
 
     def _get_domain_edge_templates(self, domain_name: str) -> list[dict[str, Any]] | None:
         """Get edge templates from a domain by name.

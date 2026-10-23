@@ -113,6 +113,8 @@ def register_chat_completion_handler(
                 config_manager=config_manager,
                 graph_repository=graph_repository,
                 search_repository=search_repository,
+                # a regenerate's n-th re-ask (cortex /regenerate, audit wave 5)
+                decoding_attempt=int(data.get("decoding_attempt") or 0),
             )
 
         except Exception:
@@ -276,6 +278,7 @@ async def _run_chat_completion(
     config_manager: ConfigManager,
     graph_repository: GraphRepository,
     search_repository: SearchRepository,
+    decoding_attempt: int = 0,
 ) -> dict[str, Any]:
     """Execute the full chat completion pipeline.
 
@@ -291,6 +294,8 @@ async def _run_chat_completion(
         config_manager: Configuration manager.
         graph_repository: Graph repository for tool execution.
         search_repository: Search repository for tool execution.
+        decoding_attempt: Which regenerate of the turn this is (0 the first
+            answer); the turn asks with the resampled seed for it.
 
     Returns:
         Result dictionary with success flag and response summary.
@@ -343,22 +348,12 @@ async def _run_chat_completion(
     # The worker runs ON the LLM queue (concurrency=1), so tool LLM callbacks
     # must call the provider directly — not enqueue on the same queue (deadlock).
     from chaoscypher_core.llm_queue.factory import get_provider_factory
+    from chaoscypher_core.services.workflows.tools.engine.chat_callbacks import (
+        provider_chat_callback,
+    )
 
     _factory = get_provider_factory()
     _direct_provider = _factory.get_chat_provider()
-
-    async def _direct_llm_callback(
-        messages: list[dict[str, Any]],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> dict[str, Any]:
-        """Direct LLM call bypassing the queue (worker-safe)."""
-        return await _direct_provider.chat(
-            messages=messages,
-            stream=False,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
 
     chat_provider, tool_executor, available_tools = setup_chat_providers(
         settings,
@@ -368,7 +363,7 @@ async def _run_chat_completion(
         indexing_manager=storage_adapter,
         source_ids=source_ids,
         source_storage=storage_adapter,
-        llm_chat_callback_override=_direct_llm_callback,
+        llm_chat_callback_override=provider_chat_callback(_direct_provider),
     )
 
     # Warm the tool discovery singleton (ensures plugins are discovered)
@@ -440,6 +435,7 @@ async def _run_chat_completion(
         # Valkey flag this check polls at step boundaries.
         cancel_check=functools.partial(is_cancel_requested, chat_id),
         tools=available_tools,
+        decoding_attempt=decoding_attempt,
     )
 
     stream_start = time.monotonic()
@@ -480,6 +476,7 @@ async def _run_chat_completion(
         warnings=loop_result.warnings,
         settings=settings,
         done_status="cancelled" if loop_result.cancelled else "completed",
+        decoding=loop_result.decoding,
     )
 
 
@@ -496,6 +493,7 @@ async def _finalize_and_publish(
     warnings: list[dict[str, str]] | None = None,
     settings: Any = None,
     done_status: str = "completed",
+    decoding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Finalize the answer, persist the buffered messages, publish done.
 
@@ -518,7 +516,8 @@ async def _finalize_and_publish(
         stream_start: Monotonic timestamp of stream start for timing.
         total_tool_calls: Number of tool calls executed.
         pending_messages: Buffered, not-yet-persisted messages from this run
-            (tool results); the assistant message is appended and the buffer
+            (tool results, as their JSON: the citation and entity enrichers
+            read them); the assistant message is appended and the buffer
             is flushed before the done event is published.
         warnings: Truncation warnings collected across the turn (persisted so
             the "this answer was cut off" context survives a reload).
@@ -527,6 +526,8 @@ async def _finalize_and_publish(
         done_status: Status carried by the ``done`` event — ``"completed"``
             normally, ``"cancelled"`` when the user stopped the turn (the
             partial answer is persisted either way).
+        decoding: The seed and attempt the turn asked with, recorded on the
+            answer so the next regenerate counts from it.
 
     Returns:
         Result dictionary with success flag and response summary.
@@ -538,12 +539,18 @@ async def _finalize_and_publish(
         validate_finalized_answer,
     )
 
-    answer = finalize_chat_content(content, thinking, messages_for_llm)
+    # This turn's tool results as their JSON: the model's history holds a
+    # rendered result (graphrag_search's context_text) as text, which the
+    # citation and entity enrichers cannot read.
+    tool_results = [m for m in pending_messages if m.get("role") == "tool"]
+    answer = finalize_chat_content(content, thinking, messages_for_llm, tool_results=tool_results)
 
     # Post-response validation (citation verdicts) — None when disabled or
     # settings are absent. Web chat never got verdicts before the loop
     # unification (2026-06-10 audit P2).
-    validation = await validate_finalized_answer(answer, messages_for_llm, settings, chat_id)
+    validation = await validate_finalized_answer(
+        answer, messages_for_llm, settings, chat_id, tool_results=tool_results
+    )
 
     # Finalize LLM debug info with timing
     total_ms = round((time.monotonic() - stream_start) * 1000)
@@ -557,7 +564,7 @@ async def _finalize_and_publish(
     # Persisting citations / entity references / warnings means the source-text
     # blockquotes, entity pills, and truncation context survive a page refresh
     # (the chat history endpoint otherwise returns only raw [[cite:...]] markers).
-    optional_payload = build_optional_payload(answer, warnings)
+    optional_payload = build_optional_payload(answer, warnings, decoding)
     if validation:
         optional_payload["validation"] = validation
 
@@ -573,6 +580,7 @@ async def _finalize_and_publish(
     # turn in one transaction, and both calls run blocking SQLite that must
     # not stall the LLM worker's event loop.
     def _persist_and_activate() -> None:
+        """Persist the pending messages and mark the chat active (run in a worker thread)."""
         chat_service.persist_messages(pending_messages)
         chat_service.update_chat_status(chat_id, "active")
 

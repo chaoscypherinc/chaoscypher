@@ -168,6 +168,45 @@ class TestCollectEntitiesFromData:
         _collect_entities_from_data(data, out)
         assert out == {}
 
+    def test_recurses_into_the_graph_blocks(self) -> None:
+        """Aggregates → groups → rows and walks → hops are walked like any container."""
+        data = {
+            "graph_context": {
+                "aggregates": [{"groups": [{"rows": [{"id": "r1", "label": "Row node"}]}]}],
+                "walks": [{"hops": [{"id": "h1", "label": "Hop node"}]}],
+            }
+        }
+        out: dict = {}
+        _collect_entities_from_data(data, out)
+        assert set(out) == {"r1", "h1"}
+
+    def test_a_graph_blocks_rows_name_no_entity_its_seed_does(self) -> None:
+        """Rows and hops carry an edge id and the endpoints' labels, never a node id.
+
+        The chip for an aggregate's entity comes from its seed record (the
+        block's ``entity_id`` is one of the seeds), not from the block.
+        """
+        row = {"edge_id": "e1", "source": "the old prince", "target": "Mira", "sentence": None}
+        data = {
+            "graph_context": {
+                "seed_entities": [
+                    {"id": "n3", "label": "the old prince", "description": "a prince"}
+                ],
+                "aggregates": [
+                    {
+                        "entity_id": "n3",
+                        "entity": "the old prince",
+                        "groups": [{"label": "parent_of", "count": 1, "rows": [row]}],
+                    }
+                ],
+                "walks": [{"from": "a", "to": "b", "hops": [{**row, "label": "parent_of"}]}],
+            }
+        }
+        out: dict = {}
+        _collect_entities_from_data(data, out)
+        assert set(out) == {"n3"}
+        assert out["n3"]["description"] == "a prince"
+
     def test_primitive_input_noop(self):
         out: dict = {}
         _collect_entities_from_data("just a string", out)

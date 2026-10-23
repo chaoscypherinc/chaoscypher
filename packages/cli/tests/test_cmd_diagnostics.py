@@ -277,3 +277,57 @@ class TestDiagnosticsCommand:
             result = runner.invoke(diagnostics, ["-o", str(out_file)], env=_NO_DB_ENV)
 
         assert result.exit_code == 0, result.output
+
+
+class TestDiagnosticsBundleSettings:
+    """The CLI bundle carries the same masked settings as the web export."""
+
+    def test_bundle_settings_json_holds_masked_settings(self, tmp_path: Path) -> None:
+        import json
+        import zipfile
+
+        from pydantic import SecretStr
+
+        from chaoscypher_core.app_config import Settings, set_settings
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        out_file = tmp_path / "bundle.zip"
+        canary = "never-in-a-bundle"
+        settings = Settings()
+        settings.llm.openai_api_key = SecretStr(canary)
+        settings.lexicon.timeout = 77
+        set_settings(settings)
+        try:
+            with patch("chaoscypher_cli.engine_config.data_dir", return_value=data_dir):
+                result = CliRunner().invoke(
+                    diagnostics, ["--output", str(out_file)], env=_NO_DB_ENV
+                )
+        finally:
+            set_settings(Settings())
+
+        assert result.exit_code == 0, result.output
+        with zipfile.ZipFile(out_file) as zf:
+            raw = zf.read("settings.json").decode()
+        bundled = json.loads(raw)
+        assert bundled["lexicon"]["timeout"] == 77
+        masked = "configured"  # mask_secret_value's placeholder for a set secret
+        assert bundled["llm"]["openai_api_key"] == masked
+        assert canary not in raw
+
+    def test_settings_failure_still_writes_the_bundle(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        mock_collector = _make_collector(tmp_path)
+
+        with (
+            _patch_diag(data_dir, mock_collector),
+            patch("chaoscypher_core.app_config.get_settings", side_effect=ValueError("bad yaml")),
+        ):
+            result = CliRunner().invoke(
+                diagnostics, ["--output", str(tmp_path / "b.zip")], env=_NO_DB_ENV
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "Could not load settings" in result.output
+        assert mock_collector.export_bundle.call_args.kwargs["settings"] is None

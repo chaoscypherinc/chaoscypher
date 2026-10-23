@@ -18,7 +18,7 @@ flowchart TD
     subgraph Indexing Stage
         Indexing["Load Document\n(LoaderRegistry)"] --> Normalize["Normalize Content\n(ContentNormalizerService)"]
         Normalize --> Chunk["Create Chunks\n(ChunkingService)"]
-        Chunk --> Embed["Generate Embeddings\n(IndexingService)"]
+        Chunk -->|Queue: LLM| Embed["Generate Embeddings\n(embed_chunks handler)"]
     end
 
     Embed -->|status: indexed| Decision{auto_analyze?}
@@ -85,7 +85,7 @@ Sources progress through these 11 internal statuses as the pipeline executes. Ea
 | `indexing` | `indexing` | `handle_index_document()` via `adapter.start_indexing()` |
 | `vision_pending` | `indexing` | `handle_index_document()` after enqueuing per-page vision tasks (atomic CAS `INDEXING → VISION_PENDING`); the vision finalizer CAS-reverts it to `indexing` |
 | `indexed` | `extracting` | `adapter.complete_indexing()` |
-| `awaiting_confirmation` | `awaiting_input` | `park_for_confirmation()` (domain-confirmation gate; `bootstrap.py`). `confirm_extraction()` CASes it back to `indexed` and re-queues |
+| `awaiting_confirmation` | `awaiting_input` | `park_for_confirmation()` (domain-confirmation gate; `operations/importing/confirmation_gate.py`). `confirm_extraction()` CASes it back to `indexed` and re-queues |
 | `extracting` | `extracting` | `adapter.try_claim_extraction()` |
 | `mcp_extracting` | `extracting` | `adapter.try_claim_extraction()` (MCP path) |
 | `extracted` | `extracting` | Extraction finalizer |
@@ -138,17 +138,19 @@ The pipeline distributes work across two queues based on whether the stage requi
 ```mermaid
 flowchart LR
     subgraph "Operations Queue (8 concurrent)"
-        A["index_document"]
+        A["index_document\n(load + chunk)"]
         B["import_analysis\n(preparation only)"]
         C["import_commit"]
     end
 
     subgraph "LLM Queue (1 concurrent*)"
+        F["embed_chunks\n(chunk embeddings)"]
         D["extract_chunk\n(per-chunk LLM call)"]
         E["finalize_extraction\n(dedup + embeddings)"]
     end
 
-    A -->|"auto_analyze=true"| B
+    A -->|"queue embeddings"| F
+    F -->|"auto_analyze=true"| B
     B -->|"enqueue N chunks"| D
     D -->|"last chunk triggers"| E
     E -->|"auto_commit"| C
@@ -165,7 +167,7 @@ The LLM queue defaults to 1 concurrent task but scales dynamically when multi-in
 Handlers are registered at worker startup in the Neuron package:
 
 - **Operations handlers** (`chaoscypher_neuron.setup.ops_handlers`): `index_document`, `import_analysis`, `import_commit`
-- **LLM handlers** (`chaoscypher_neuron.setup.llm_handlers`): `extract_chunk`, `finalize_extraction` (via `ChunkExtractionOperationsService`)
+- **LLM handlers**: `embed_chunks` (registered with the import handlers, routed to the LLM queue by `OPERATION_QUEUE_ROUTING` because it consumes embedding capacity), `extract_chunk`, `finalize_extraction` (`chaoscypher_neuron.setup.llm_handlers`, via `ChunkExtractionOperationsService`)
 
 ## Extraction Gating
 
@@ -185,11 +187,11 @@ There is no `waiting` value in `SourceStatus`. When the extraction queue is paus
 
 ## Domain-Confirmation Gate
 
-When the domain-confirmation gate is active (the default — uploads with `auto_confirm` bypass it), a source parks at `awaiting_confirmation` (public phase `awaiting_input`) after indexing instead of proceeding straight to extraction. A human confirms the auto-detected extraction domain before the expensive LLM extraction runs. The shared primitives live in `operations/importing/confirmation_gate.py` so the worker, CLI, MCP, and API all evaluate the gate identically:
+When the domain-confirmation gate is active (the default — uploads with `auto_confirm` bypass it), a source parks at `awaiting_confirmation` (public phase `awaiting_input`) after indexing instead of proceeding straight to extraction. A human confirms the detected packs (detection proposes every pack whose evidence clears the floor, at most two, by score; none is the floor alone) before the expensive LLM extraction runs. The shared primitives live in `operations/importing/confirmation_gate.py` so the worker, CLI, MCP, and API all evaluate the gate identically:
 
-- **`gate_decision()`** — pure read over persisted `SourceRow` fields returning `proceed` or `park`. Already-confirmed sources (`extraction_confirmed_at` set), sources past the gate, and explicit `forced_domain` choices always proceed.
-- **`park_for_confirmation()`** — one atomic row update: `status=awaiting_confirmation` plus the `detection_proposal` blob (`ranking`, `confidence`, `detected_domain`, `low_confidence`).
-- **`confirm_extraction()`** — state-aware confirm. For a parked source it CASes `awaiting_confirmation → indexed`, persists `forced_domain` + any extraction-option overrides, stamps `extraction_confirmed_at` (write-once), and re-queues extraction with the confirmed domain. A confirm that lands *before* the gate runs (status `pending` / `indexing` / `vision_pending` / `indexed`) records the decision without a status change — the gate then proceeds on its own. Confirms past the gate, on errored sources, or repeated confirms are rejected with a 409 conflict.
+- **`gate_decision()`** — pure read over persisted `SourceRow` fields returning `proceed` or `park`. Already-confirmed sources (`extraction_confirmed_at` set), sources past the gate, and explicit forced packs (`forced_packs`, the floor alone `[]` included) always proceed.
+- **`park_for_confirmation()`** — one atomic row update: `status=awaiting_confirmation` plus the `detection_proposal` blob (`ranking`, `confidence`, `packs`, `detected_domain` — the first pack or `generic` — `low_confidence`, `reason`).
+- **`confirm_extraction()`** — state-aware confirm. For a parked source it CASes `awaiting_confirmation → indexed`, persists the forced packs (`forced_packs`, with `forced_domain` written as the first for one release) + any extraction-option overrides, stamps `extraction_confirmed_at` (write-once), and re-queues extraction with the confirmed packs. A confirm that lands *before* the gate runs (status `pending` / `indexing` / `vision_pending` / `indexed`) records the decision without a status change — the gate then proceeds on its own. Confirms past the gate, on errored sources, or repeated confirms are rejected with a 409 conflict.
 
 Two supporting behaviours make the confirmation UI responsive:
 
@@ -212,7 +214,7 @@ The source status is set to `error` with an `error_message` describing what went
 
 ### Chunk-Level Retry
 
-Individual chunk extraction tasks have built-in retry (max 5 attempts via the queue system). If a chunk fails all retries, it is marked as `failed` in the `ChunkExtractionTask` table. The finalization step proceeds with whatever chunks succeeded -- partial extraction is better than none.
+Individual chunk extraction tasks are requeued on retryable errors (a transport failure, a loop abort) up to `retries.extraction_chunk_max` times (default 2, so three attempts); any other error fails the chunk once. If a chunk fails all retries, it is marked as `failed` in the `ChunkExtractionTask` table. The finalization step proceeds with whatever chunks succeeded -- partial extraction is better than none.
 
 ### Stale Task Detection
 
@@ -230,12 +232,12 @@ Users can cancel an in-progress extraction via `DELETE /sources/{id}/extraction`
 
 The pipeline provides fine-grained progress via `adapter.update_step_progress(file_id, current_step, total_steps, message)`:
 
-**`status=indexing` phase — covers 4 pipeline stages (Loading → Normalization → Chunking → Indexing):**
+**`status=indexing` phase — two 2-step handlers (Loading → Normalization → Chunking on the Operations queue, then embedding on the LLM queue):**
 
-1. Loading document
-2. Creating chunks
-3. Generating embeddings
-4. Completing indexing
+1. Loading document (`index_document`, step 1 of 2)
+2. Creating chunks, then queuing embeddings (`index_document`, step 2 of 2)
+3. Generating embeddings (`embed_chunks`, step 1 of 2)
+4. Completing indexing (`embed_chunks`, step 2 of 2)
 
 **Extraction phase (3 preparation steps, then N chunk steps):**
 
@@ -283,8 +285,8 @@ Before chunks are sent to the LLM for entity extraction, a content filtering sta
 | `acknowledgments` | Dedications, prefaces, author bios |
 | `boilerplate` | Formatting artifacts, stubs |
 | `metadata` | Front matter, revision history |
-| `code_blocks` | Source code, config snippets |
-| `data_tables` | Tabular data, statistical output |
+| `code_blocks` | Source code, config snippets: a line is code only in a run of three or more lines carrying a code signal (a brace, a statement's semicolon, an assignment, a definition, an import, a call, a config `key: value`); indentation alone (verse, block quotes, letters) and a line opening with `for`, `if` or `while` are prose |
+| `data_tables` | Tabular data, statistical output (no shipped domain uses it since October 2026: table rows carry dates and figures) |
 | `math` | Equations, formulas, LaTeX |
 | `api_tables` | Auto-generated parameter tables |
 | `procedural` | Installation steps, setup instructions |

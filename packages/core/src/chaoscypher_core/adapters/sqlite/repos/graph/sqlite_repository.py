@@ -15,15 +15,24 @@ Composed from focused mixins:
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlmodel import col, delete, func, select
 
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate, SourceRow
+from chaoscypher_core.adapters.sqlite.models import (
+    GraphEdge,
+    GraphNode,
+    GraphNodeSource,
+    GraphTemplate,
+    SourceRow,
+)
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_edge_ops import EdgeOperationsMixin
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_node_ops import NodeOperationsMixin
 from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_template_ops import TemplateOperationsMixin
+from chaoscypher_core.adapters.sqlite.repos.source_visibility import attested_by, visible
 from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
 from chaoscypher_core.utils import generate_id
 
@@ -113,6 +122,40 @@ class GraphRepository(
         """Backward-compatible setter; assigns to the fallback session."""
         self._fallback_session = value
 
+    @contextmanager
+    def write_locked(self) -> Iterator[None]:
+        """A unit of work holding SQLite's writer lock from its first statement (``BEGIN IMMEDIATE``).
+
+        The driver opens a transaction only at the first write, so the reads
+        before it run outside any transaction and another writer may commit
+        between a read and the write built on it: the post-commit identity
+        pass folded a node read before a source release rebuilt it, then wrote
+        the stale fold over the rebuild (#795). Inside this block the lock
+        is taken before the first read.
+
+        On this repository's session, sharing ``adapter.transaction()``'s
+        depth: the outermost block commits on a clean exit and rolls back on
+        an exception. Inside a caller's transaction it only takes the lock
+        (when the transaction has not written yet, so holds no lock) and
+        leaves the commit to the caller.
+        """
+        session = self.session
+        session._transaction_depth += 1  # noqa: SLF001 — coordinated transaction depth with SafeSession
+        outermost = session._transaction_depth == 1  # noqa: SLF001 — coordinated transaction depth with SafeSession
+        try:
+            connection = session.connection()
+            if not connection.connection.driver_connection.in_transaction:  # type: ignore[union-attr]
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+            yield
+            if outermost:
+                session.commit()  # noqa: CC011 — this block is the transaction boundary
+        except BaseException:
+            if outermost:
+                session.rollback()
+            raise
+        finally:
+            session._transaction_depth -= 1  # noqa: SLF001 — coordinated transaction depth with SafeSession
+
     def _generate_id(self, prefix: str = "node") -> str:
         """Generate a unique ID with prefix."""
         return generate_id(prefix)
@@ -128,17 +171,16 @@ class GraphRepository(
     # ========================================================================
 
     def _exclude_disabled_node_sources(self, statement: Any, include_disabled_sources: bool) -> Any:
-        """Restrict a node count statement to enabled (or NULL) sources.
+        """Restrict a node count statement to nodes a listing may return.
 
-        Mirrors the enabled-source filter in ``list_nodes`` so a count and its
-        paired list agree: nodes with no source (legacy/manual) stay counted,
-        nodes from disabled sources drop out. No-op when including disabled.
+        The predicate ``list_nodes`` reads (:func:`.source_visibility.visible`), so
+        a count and its paired list agree: nodes with no source (legacy/manual)
+        stay counted, nodes no enabled source attests drop out. No-op when
+        including disabled.
         """
         if include_disabled_sources:
             return statement
-        return statement.outerjoin(SourceRow, GraphNode.source_id == SourceRow.id).where(
-            (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-        )
+        return statement.where(visible(GraphNode))
 
     def count_nodes(self, include_disabled_sources: bool = True) -> int:
         """Count total nodes.
@@ -160,7 +202,7 @@ class GraphRepository(
     def count_nodes_by_source(
         self, source_ids: list[str], include_disabled_sources: bool = True
     ) -> int:
-        """Count nodes from specific source documents.
+        """Count the nodes the given source documents attest (a merged node once).
 
         Args:
             source_ids: Source document IDs to count nodes for.
@@ -171,7 +213,7 @@ class GraphRepository(
         """
         statement = select(func.count(GraphNode.id)).where(
             GraphNode.database_name == self.database_name,
-            col(GraphNode.source_id).in_(source_ids),
+            attested_by(GraphNode, source_ids),
         )
         statement = self._exclude_disabled_node_sources(statement, include_disabled_sources)
         return self.session.exec(statement).one()
@@ -212,7 +254,7 @@ class GraphRepository(
         Args:
             source_node_id: Restrict to edges leaving this node.
             target_node_id: Restrict to edges entering this node.
-            source_ids: Restrict to edges from these source documents.
+            source_ids: Restrict to edges these source documents attest.
             include_disabled_sources: When False, also drops edges from disabled
                 sources (mirrors ``list_edges``) so listing pagination totals
                 match the rows rendered.
@@ -227,18 +269,12 @@ class GraphRepository(
         if target_node_id is not None:
             statement = statement.where(GraphEdge.target_node_id == target_node_id)
         if source_ids is not None:
-            statement = statement.where(col(GraphEdge.source_id).in_(source_ids))
+            statement = statement.where(attested_by(GraphEdge, source_ids))
 
         if not include_disabled_sources:
-            # Mirror list_edges: keep NULL-source edges, drop disabled-source
-            # edges. The join carries database_name to bind the right Source.
-            statement = statement.outerjoin(
-                SourceRow,
-                (GraphEdge.source_id == SourceRow.id)
-                & (SourceRow.database_name == self.database_name),
-            ).where(
-                (GraphEdge.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            # Mirror list_edges: keep NULL-source edges, drop edges no enabled
+            # source attests.
+            statement = statement.where(visible(GraphEdge))
 
         return self.session.exec(statement).one()
 
@@ -361,166 +397,6 @@ class GraphRepository(
             "templates_removed": template_count,
         }
 
-    # ------------------------------------------------------------------
-    # Private per-source deletion helpers shared by delete_graph_data_by_source
-    # and delete_source_artifacts.  Both maintain the same deletion order and
-    # FK-respecting sequence without duplicating SQL.
-    # ------------------------------------------------------------------
-
-    def _delete_edges_for_source(self, source_id: str, session: SafeSession | None = None) -> int:
-        """Delete all edges whose source_id matches.  Returns rowcount."""
-        _session = session if session is not None else self.session
-        result = _session.exec(
-            delete(GraphEdge).where(
-                GraphEdge.database_name == self.database_name,
-                GraphEdge.source_id == source_id,
-            )
-        )
-        return int(result.rowcount or 0)  # type: ignore[union-attr]
-
-    def _delete_nodes_for_source(self, source_id: str, session: SafeSession | None = None) -> int:
-        """Delete all nodes whose source_id matches.  Returns rowcount."""
-        _session = session if session is not None else self.session
-        result = _session.exec(
-            delete(GraphNode).where(
-                GraphNode.database_name == self.database_name,
-                GraphNode.source_id == source_id,
-            )
-        )
-        return int(result.rowcount or 0)  # type: ignore[union-attr]
-
-    def _delete_templates_for_source(
-        self, source_id: str, session: SafeSession | None = None
-    ) -> int:
-        """Delete all templates whose source_id matches.
-
-        GraphTemplate.source_id is populated for extraction-derived templates.
-        Templates whose source_id is NULL (global / manually created) are
-        unaffected because the WHERE clause only matches non-NULL equality.
-        Returns rowcount.
-        """
-        _session = session if session is not None else self.session
-        result = _session.exec(
-            delete(GraphTemplate).where(
-                GraphTemplate.database_name == self.database_name,
-                GraphTemplate.source_id == source_id,
-            )
-        )
-        return int(result.rowcount or 0)  # type: ignore[union-attr]
-
-    def _collect_node_ids_for_source(self, source_id: str) -> list[str]:
-        """Return IDs of all nodes for *source_id* (needed by search-index cleanup)."""
-        return list(
-            self.session.exec(
-                select(GraphNode.id).where(
-                    GraphNode.database_name == self.database_name,
-                    GraphNode.source_id == source_id,
-                )
-            ).all()
-        )
-
-    def delete_graph_data_by_source(self, source_id: str) -> dict[str, Any]:
-        """Delete all graph data (edges, nodes, templates) for a given source.
-
-        Used for idempotent commit: cleans up previously committed graph objects
-        before re-committing. Deletion order respects FK constraints:
-        edges first, then nodes, then templates.
-
-        Args:
-            source_id: Source ID whose graph data should be deleted.
-
-        Returns:
-            Dict with keys:
-                - edges_deleted: Number of edges removed
-                - nodes_deleted: Number of nodes removed
-                - templates_deleted: Number of templates removed
-                - deleted_node_ids: List of deleted node IDs (for search index cleanup)
-
-        """
-        # Collect node IDs before deletion (needed for search index cleanup)
-        deleted_node_ids = self._collect_node_ids_for_source(source_id)
-
-        edges_deleted = self._delete_edges_for_source(source_id)
-        nodes_deleted = self._delete_nodes_for_source(source_id)
-        templates_deleted = self._delete_templates_for_source(source_id)
-
-        self.session.maybe_commit()
-
-        logger.info(
-            "graph_data_deleted_by_source",
-            source_id=source_id,
-            edges_deleted=edges_deleted,
-            nodes_deleted=nodes_deleted,
-            templates_deleted=templates_deleted,
-        )
-
-        return {
-            "edges_deleted": edges_deleted,
-            "nodes_deleted": nodes_deleted,
-            "templates_deleted": templates_deleted,
-            "deleted_node_ids": deleted_node_ids,
-        }
-
-    def delete_source_artifacts(
-        self,
-        source_id: str,
-        session: SafeSession | None = None,
-    ) -> dict[str, int]:
-        """Delete graph nodes, edges, and templates created by a source's commit.
-
-        Used by ``trigger_extraction(force=True)`` before
-        ``reset_for_re_extraction`` so the new extraction lands in a clean
-        graph rather than overlapping with the prior commit.
-
-        Unlike ``delete_source`` (the full cascade), this method leaves the
-        source row, its chunks, and its embeddings intact — indexing is still
-        valid; only the extraction-derived graph artifacts are removed.
-
-        Template handling: ``GraphTemplate.source_id`` is set for templates
-        that were inferred or created during an extraction commit.  Templates
-        whose ``source_id`` is ``NULL`` (global / manually created) are
-        unaffected.  This is the correct behaviour — global templates do not
-        belong to any single source and must not be deleted on re-extract.
-
-        Deletion order respects FK constraints: edges first (FK to nodes),
-        then nodes, then templates.
-
-        Args:
-            source_id: Source ID whose graph artifacts should be removed.
-            session: Optional SafeSession to use for all writes. When provided
-                (e.g. ``storage_adapter.session``), all three deletes and the
-                ``maybe_commit`` run on that session so they participate in the
-                caller's transaction instead of auto-committing on the
-                repository's own session.
-
-        Returns:
-            Dict with keys:
-                - nodes_deleted: Number of ``GraphNode`` rows removed.
-                - edges_deleted: Number of ``GraphEdge`` rows removed.
-                - templates_deleted: Number of ``GraphTemplate`` rows removed.
-
-        """
-        _session = session if session is not None else self.session
-        edges_deleted = self._delete_edges_for_source(source_id, _session)
-        nodes_deleted = self._delete_nodes_for_source(source_id, _session)
-        templates_deleted = self._delete_templates_for_source(source_id, _session)
-
-        _session.maybe_commit()
-
-        logger.info(
-            "source_artifacts_deleted",
-            source_id=source_id,
-            nodes_deleted=nodes_deleted,
-            edges_deleted=edges_deleted,
-            templates_deleted=templates_deleted,
-        )
-
-        return {
-            "nodes_deleted": nodes_deleted,
-            "edges_deleted": edges_deleted,
-            "templates_deleted": templates_deleted,
-        }
-
     def export_graph(self, max_items: int = 100000) -> dict[str, Any]:
         """Export all graph data for CCX package creation.
 
@@ -566,8 +442,8 @@ class GraphRepository(
         and therefore preserves ``ccx_iri`` (and every other column).
 
         Args:
-            source_ids: When given, restrict nodes/edges to those whose
-                ``source_id`` is in the set (source-scoped à-la-carte export).
+            source_ids: When given, restrict nodes/edges to those a source in
+                the set attests (source-scoped à-la-carte export).
                 Edges are kept only when BOTH endpoints survive the node
                 filter, so the knowledge graph stays internally consistent.
             max_items: Safety cap on rows fetched per entity type.
@@ -578,7 +454,7 @@ class GraphRepository(
         """
         node_stmt = select(GraphNode).where(GraphNode.database_name == self.database_name)
         if source_ids is not None:
-            node_stmt = node_stmt.where(col(GraphNode.source_id).in_(source_ids))
+            node_stmt = node_stmt.where(attested_by(GraphNode, source_ids))
         node_stmt = node_stmt.order_by(GraphNode.id).limit(max_items)
         node_rows = self.session.exec(node_stmt).all()
         nodes = [entity_to_dict(row) for row in node_rows]
@@ -595,7 +471,7 @@ class GraphRepository(
             in_scope_node_ids = (
                 select(GraphNode.id)
                 .where(GraphNode.database_name == self.database_name)
-                .where(col(GraphNode.source_id).in_(source_ids))
+                .where(attested_by(GraphNode, source_ids))
             )
             edge_stmt = edge_stmt.where(
                 col(GraphEdge.source_node_id).in_(in_scope_node_ids)
@@ -657,16 +533,21 @@ class GraphRepository(
         return int(result.rowcount or 0)
 
     def find_orphaned_nodes_by_source(self, *, database_name: str) -> list[str]:
-        """Return IDs of nodes whose source_id references a missing SourceRow."""
-        from sqlmodel import exists
+        """Return IDs of nodes whose source_id references a missing SourceRow and no source attests.
 
-        from chaoscypher_core.adapters.sqlite.models import SourceRow
+        The home naming no source row is the orphan sign; a membership is the
+        attestation (#795, D1). A merged node another source still attests is
+        that source's, whatever its home says, so it is never swept: only a
+        release may take a source's share of it.
+        """
+        from sqlmodel import exists
 
         stmt = (
             select(GraphNode.id)
             .where(GraphNode.database_name == database_name)
             .where(GraphNode.source_id.is_not(None))
             .where(~exists().where(SourceRow.id == GraphNode.source_id))
+            .where(~exists().where(GraphNodeSource.node_id == GraphNode.id))
         )
         return list(self.session.exec(stmt).all())
 
@@ -680,10 +561,12 @@ class GraphRepository(
         return int(result.rowcount or 0)
 
     def find_orphaned_templates_by_source(self, *, database_name: str) -> list[str]:
-        """Return IDs of non-system templates whose source_id references a missing SourceRow."""
-        from sqlmodel import exists
+        """Return IDs of unused non-system templates whose source_id references a missing SourceRow.
 
-        from chaoscypher_core.adapters.sqlite.models import SourceRow
+        A template a node or edge still uses is kept (D6, #795), as a release
+        keeps it; deleting it would also fail on the users' ``RESTRICT`` key.
+        """
+        from sqlmodel import exists
 
         stmt = (
             select(GraphTemplate.id)
@@ -691,6 +574,8 @@ class GraphRepository(
             .where(GraphTemplate.is_system.is_(False))
             .where(GraphTemplate.source_id.is_not(None))
             .where(~exists().where(SourceRow.id == GraphTemplate.source_id))
+            .where(~exists().where(GraphNode.template_id == GraphTemplate.id))
+            .where(~exists().where(GraphEdge.template_id == GraphTemplate.id))
         )
         return list(self.session.exec(stmt).all())
 
@@ -736,9 +621,7 @@ class GraphRepository(
         if source_id is not None:
             stmt = stmt.where(GraphTemplate.source_id == source_id)
         elif not include_disabled_sources:
-            # Mirror list_templates: NULL-source templates always count; otherwise
-            # the source must be enabled. Skipped when filtering by a specific source.
-            stmt = stmt.outerjoin(SourceRow, GraphTemplate.source_id == SourceRow.id).where(
-                (GraphTemplate.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            # Mirror list_templates (the shared template reading). Skipped when
+            # filtering by a specific source.
+            stmt = stmt.where(visible(GraphTemplate))
         return int(self.session.exec(stmt).one())

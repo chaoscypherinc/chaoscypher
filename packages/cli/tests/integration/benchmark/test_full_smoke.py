@@ -66,7 +66,7 @@ async def test_full_pipeline_smoke(tmp_path):
     )
 
     bundles = [load_dataset_bundle(d) for d in smoke_cfg.dataset_ids]
-    wiring = default_wiring(workspace=tmp_path)
+    wiring = default_wiring(workspace=tmp_path, dedup_embedder="exact")
     rows = await run_full_benchmark(smoke_cfg, bundles, wiring=wiring)
 
     kinds = {r.dataset_kind for r in rows}

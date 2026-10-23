@@ -245,6 +245,10 @@ export function useChatMessages(): UseChatMessagesReturn {
     streamingChatId === null || streamingChatId === (currentChat?.id ?? streamingChatId);
   const loadingForThisChat = loading && ownsStream;
   const isStreamingForThisChat = isStreamingActive && ownsStream;
+  // A background chat's approval prompt stays pending (it reappears on
+  // return) but must never open over — or be decided from — another chat.
+  const pendingApprovalForThisChat =
+    pendingApproval && pendingApproval.chat_id === currentChat?.id ? pendingApproval : null;
 
   // ---------------------------------------------------------------------------
   // Send Message (SSE Streaming)
@@ -518,11 +522,12 @@ export function useChatMessages(): UseChatMessagesReturn {
    */
   const decideToolApproval = useCallback(
     async (decision: 'approve' | 'reject') => {
-      const approval = pendingApproval;
-      const chatId = currentChat?.id;
-      if (!approval || !chatId) return;
+      // Only the on-screen chat's prompt is ever shown, so only it is decided;
+      // post for the chat whose stream raised it (the backend keys by chat).
+      const approval = pendingApprovalForThisChat;
+      if (!approval) return;
       try {
-        await chatApi.decideTool(chatId, approval.tool_call_id, decision);
+        await chatApi.decideTool(approval.chat_id, approval.tool_call_id, decision);
         // Clear only if the pending approval hasn't changed (race guard:
         // a subsequent approval_required event could land before we finish).
         setPendingApproval((prev) =>
@@ -542,7 +547,7 @@ export function useChatMessages(): UseChatMessagesReturn {
         throw err;
       }
     },
-    [pendingApproval, currentChat],
+    [pendingApprovalForThisChat],
   );
 
   const clearPendingApproval = useCallback(() => {
@@ -572,7 +577,7 @@ export function useChatMessages(): UseChatMessagesReturn {
     handleClearScope,
     pendingScope,
     setPendingScope,
-    pendingApproval,
+    pendingApproval: pendingApprovalForThisChat,
     decideToolApproval,
     clearPendingApproval,
   };

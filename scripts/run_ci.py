@@ -23,8 +23,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -41,7 +44,8 @@ ADVISORY_DIFF = "advisory-diff-cover"
 # A command is (shell_command, subdir_relative_to_repo_root_or_None). A step
 # payload is either a list of such commands or the ADVISORY_DIFF sentinel.
 # Step command lists below mirror the matching Makefile targets verbatim so the
-# two stay equivalent — update both together.
+# two stay equivalent — update both together. Steps with no Makefile target of
+# their own (docs-build, docs-generated, docker-image-build) run only here.
 Command = tuple[str, str | None]
 _STEPS: dict[str, list[Command] | str] = {
     "lint": [
@@ -72,8 +76,8 @@ _STEPS: dict[str, list[Command] | str] = {
         ),
         ("uv run python scripts/lint_claude_rules.py packages/", None),
     ],
-    # Prefers the gitleaks binary; falls back to detect-secrets where the
-    # binary cannot exist (the cloud routine sandbox). See the script header.
+    # detect-secrets everywhere, plus the gitleaks binary where it is installed
+    # (never in the cloud routine sandbox). See the script header.
     "lint-secrets": [
         ("uv run python scripts/secrets_scan.py", None),
     ],
@@ -82,6 +86,7 @@ _STEPS: dict[str, list[Command] | str] = {
         ("uv run python scripts/check_spdx_headers.py", None),
         ("uv run python scripts/check_metrics_artifacts.py", None),
         ("uv run python scripts/check_media_manifest.py", None),
+        ("uv run python scripts/run_internal_tool_tests.py", None),
     ],
     "docstrings": [
         (
@@ -181,7 +186,14 @@ _STEPS: dict[str, list[Command] | str] = {
         ),
     ],
     "security": [
-        ("uv run pip-audit --ignore-vuln PYSEC-2022-42969", None),
+        # PYSEC-2022-42969 (py.path.svnwc) and PYSEC-2026-3740 (nltk model
+        # save/load path sandbox bypass, via llama-index-core in the CLI's
+        # benchmark extra, never called): unreachable, no upstream fix. The
+        # rationale for each lives beside the Makefile `security` target.
+        (
+            "uv run pip-audit --ignore-vuln PYSEC-2022-42969 --ignore-vuln PYSEC-2026-3740",
+            None,
+        ),
         # interface compiles into the shipped bundle, so its production deps
         # stay strict via --omit=dev. The full tree (incl. devDependencies-only
         # tooling) runs through the actionability gate instead of the plain
@@ -224,6 +236,12 @@ _COMMON = [
 ]
 # `make ci`: tests run in Docker + advisory diff-cover. `make ci-local`: tests
 # run on the host (used inside the Docker container, which has make).
+# The pre-push hook's tier (2026-10-15): the checks that catch most breakage in about three
+# minutes. Everything else in the full plan runs in GitHub CI on every pull request (the home
+# runners), which the merge train requires green; test_run_ci_plan pins that every step of the
+# full local plan is in this tier or in a GitHub CI job, so the fast hook never drops a check.
+_PUSH = ["lint", "types", "typecheck", "lint-claude", "lint-secrets", "docstrings", "deadcode"]
+
 _MODE_SUFFIX = {
     "docker": ["docker-test", "coverage-diff-advisory", "e2e-cli", "security"],
     "local": ["test-cov-internal", "e2e-cli", "security"],
@@ -231,11 +249,57 @@ _MODE_SUFFIX = {
 
 
 def build_plan(mode: str) -> list[str]:
-    """Return the ordered step names for ``mode`` ("docker" or "local")."""
+    """Return the ordered step names for ``mode`` ("push", "docker" or "local")."""
+    if mode == "push":
+        return list(_PUSH)
     if mode not in _MODE_SUFFIX:
-        msg = f"unknown mode {mode!r} (expected 'docker' or 'local')"
+        msg = f"unknown mode {mode!r} (expected 'push', 'docker' or 'local')"
         raise ValueError(msg)
     return [*_COMMON, *_MODE_SUFFIX[mode]]
+
+
+# Git exports GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE and friends to every hook,
+# and this runner IS the pre-push hook. A step whose tests build throwaway repos
+# then runs `git init --bare`, `git config` and `git checkout -b` against the
+# REAL repository: on 2026-10-15 that set core.bare=true, overwrote user.name/
+# user.email and switched a worktree onto a stray branch. Steps get the
+# environment with every GIT_* variable removed except these transport and
+# config ones, which never point at a repository (pre-commit keeps the same set).
+_GIT_ENV_KEEP = frozenset(
+    {
+        "GIT_EXEC_PATH",
+        "GIT_SSH",
+        "GIT_SSH_COMMAND",
+        "GIT_SSL_CAINFO",
+        "GIT_SSL_NO_VERIFY",
+        "GIT_CONFIG_COUNT",
+        "GIT_HTTP_PROXY_AUTHMETHOD",
+        "GIT_ALLOW_PROTOCOL",
+        "GIT_ASKPASS",
+    }
+)
+
+
+# One private temp directory per CI run (set by main). pytest keeps its sessions under
+# <tempdir>/pytest-of-<user>, shared with every other pytest the user runs: on 2026-10-15 another
+# session's pytest (or a cleanup of that directory) deleted this run's worker directories mid-step,
+# 404 tests erroring at setup. Steps get TMPDIR pointing here, so nothing outside the run sees it.
+_RUN_TMP: str | None = None
+
+
+def step_env(environ: dict[str, str] | None = None, tmpdir: str | None = None) -> dict[str, str]:
+    """The environment a step runs with: no inherited GIT_* repository pointers, its own TMPDIR."""
+    source = dict(os.environ if environ is None else environ)
+    env = {
+        k: v
+        for k, v in source.items()
+        if not k.startswith("GIT_")
+        or k in _GIT_ENV_KEEP
+        or k.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_"))
+    }
+    if tmpdir is not None:
+        env["TMPDIR"] = tmpdir
+    return env
 
 
 def _run_shell(command: str, subdir: str | None) -> int:
@@ -244,7 +308,8 @@ def _run_shell(command: str, subdir: str | None) -> int:
     if subdir:
         label += f"   (cwd: {subdir})"
     print(label, flush=True)
-    return subprocess.run(command, shell=True, cwd=str(cwd)).returncode  # noqa: S602 - trusted, repo-internal command strings
+    env = step_env(tmpdir=_RUN_TMP)
+    return subprocess.run(command, shell=True, cwd=str(cwd), env=env).returncode  # noqa: S602 - trusted, repo-internal command strings
 
 
 def _run_advisory_diff_cover() -> int:
@@ -303,7 +368,7 @@ def _run_step(name: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     """Run the CI sweep; return a process exit code."""
     parser = argparse.ArgumentParser(description="Portable CI runner (make-free).")
-    parser.add_argument("--mode", choices=["docker", "local"], default="docker")
+    parser.add_argument("--mode", choices=["push", "docker", "local"], default="docker")
     parser.add_argument("--steps", help="comma-separated subset of steps to run, in plan order")
     parser.add_argument("--list", action="store_true", help="print the step plan and exit")
     args = parser.parse_args(argv)
@@ -326,6 +391,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     print(f"==== Portable CI ({args.mode} mode) - {len(plan)} steps ====", flush=True)
+    global _RUN_TMP
+    _RUN_TMP = tempfile.mkdtemp(prefix="chaoscypher-ci-")
+    try:
+        return _run_plan(plan)
+    finally:
+        shutil.rmtree(_RUN_TMP, ignore_errors=True)
+        _RUN_TMP = None
+
+
+def _run_plan(plan: list[str]) -> int:
+    """Run each step in order; stop at the first failure."""
     for i, name in enumerate(plan, 1):
         print(f"\n[{i}/{len(plan)}] {name}", flush=True)
         start = time.monotonic()

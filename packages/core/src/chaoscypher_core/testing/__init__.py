@@ -52,9 +52,29 @@ import logging as _stdlib_logging
 _stdlib_logging._chaoscypher_logging_configured = True  # type: ignore[attr-defined]  # noqa: SLF001 - intentional test-time pre-empt of configure_logging() guard
 
 
+from chaoscypher_core.testing.cache_fixtures import data_dir_in_tmp, llm_cache_in_tmp
+from chaoscypher_core.testing.network_fixtures import (
+    OLLAMA_PORT,
+    TestReachedOllamaError,
+    ollama_offline,
+)
 from chaoscypher_core.testing.structlog_fixtures import (
     structlog_for_caplog,
+    use_plain_tracebacks,
 )
 
 
-__all__ = ["structlog_for_caplog"]
+# Every package's test conftest imports this module, so the plain-traceback renderer is in place
+# before the first test of any run, whole-repo or single-package (use_plain_tracebacks).
+use_plain_tracebacks()
+
+
+__all__ = [
+    "OLLAMA_PORT",
+    "TestReachedOllamaError",
+    "data_dir_in_tmp",
+    "llm_cache_in_tmp",
+    "ollama_offline",
+    "structlog_for_caplog",
+    "use_plain_tracebacks",
+]

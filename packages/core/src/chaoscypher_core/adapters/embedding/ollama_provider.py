@@ -4,7 +4,11 @@
 """OllamaEmbeddingProvider — GPU-accelerated embedding via Ollama HTTP API.
 
 Generates embeddings through Ollama's /api/embed endpoint, supporting both
-single and batch embedding with automatic MRL truncation. Implements
+single and batch embedding. Every vector leaves the provider at
+``vector_dimensions`` and unit length (:func:`~chaoscypher_core.adapters.
+embedding.vectors.fit_dimensions`): a model whose native size is larger is cut
+(MRL) and re-normalised, and the cut is logged once with both sizes and kept on
+:attr:`OllamaEmbeddingProvider.native_dimensions`. Implements
 EmbeddingProviderProtocol for use with the embedding abstraction layer.
 """
 
@@ -16,6 +20,7 @@ import httpx
 import structlog
 
 from chaoscypher_core.adapters.embedding._retry import request_with_retry
+from chaoscypher_core.adapters.embedding.vectors import fit_provider_vector
 from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
@@ -41,7 +46,7 @@ class OllamaEmbeddingProvider:
         vector_dimensions: Target output dimensions (MRL truncation).
         base_url: Ollama server base URL. Required — pass explicitly
             from ``settings.embedding`` (the factory already does this
-            via ``_resolve_ollama_base_url``).
+            via ``resolve_ollama_base_url``).
 
     Example:
         provider = OllamaEmbeddingProvider(
@@ -53,6 +58,9 @@ class OllamaEmbeddingProvider:
         print(len(result.embedding))  # 1024
 
     """
+
+    query_prefix: str = ""
+    """Text put before a query when it is embedded: none (the text is sent as given)."""
 
     def __init__(
         self,
@@ -80,6 +88,8 @@ class OllamaEmbeddingProvider:
         self.vector_dimensions = vector_dimensions
         self.base_url = base_url.rstrip("/")
         self._client: httpx.AsyncClient | None = None
+        self.native_dimensions: int | None = None
+        """The model's own vector size, recorded from the first vector Ollama returns."""
 
     @property
     def provider_type(self) -> str:
@@ -137,22 +147,41 @@ class OllamaEmbeddingProvider:
         return data["embeddings"]  # type: ignore[no-any-return]
 
     def _truncate(self, vector: list[float]) -> list[float]:
-        """Truncate a vector to the configured dimensions (MRL).
+        """The vector at ``vector_dimensions`` and unit length (MRL cut, re-normalised).
+
+        The first vector seen records :attr:`native_dimensions`; when it is
+        larger than ``vector_dimensions`` the cut is logged once
+        (``embedding_mrl_truncation``), so a run that indexes below the
+        model's native size says so instead of doing it silently.
 
         Args:
             vector: Raw embedding vector from Ollama.
 
         Returns:
-            Vector truncated to ``vector_dimensions``.
+            The unit-length vector of ``vector_dimensions`` values.
+
+        Raises:
+            LLMError: When the model returns fewer dimensions than configured.
 
         """
-        return vector[: self.vector_dimensions]
+        if self.native_dimensions is None:
+            self.native_dimensions = len(vector)
+            if len(vector) > self.vector_dimensions:
+                logger.warning(
+                    "embedding_mrl_truncation",
+                    model=self.model_name,
+                    native_dimensions=len(vector),
+                    vector_dimensions=self.vector_dimensions,
+                )
+        return fit_provider_vector(
+            vector, self.vector_dimensions, provider="ollama", model=self.model_name
+        )
 
     async def embed(self, text: str) -> EmbedResult:
         """Embed a single text string.
 
         Generates an embedding vector via Ollama's /api/embed endpoint,
-        truncated to ``vector_dimensions`` via MRL.
+        at ``vector_dimensions`` and unit length (:meth:`_truncate`).
 
         Args:
             text: Text to embed.
@@ -176,7 +205,8 @@ class OllamaEmbeddingProvider:
         """Embed multiple texts with automatic chunking.
 
         Sends texts to Ollama's /api/embed endpoint in chunks of
-        ``batch_size``. All vectors are truncated to ``vector_dimensions``.
+        ``batch_size``. All vectors come back at ``vector_dimensions`` and
+        unit length (:meth:`_truncate`).
 
         Args:
             texts: List of text strings to embed.

@@ -79,6 +79,18 @@ data is never cleared.
 
 Import runs asynchronously — poll `GET /api/v1/queue/tasks/{task_id}` and fetch the outcome from `GET /api/v1/queue/tasks/{task_id}/result` when complete. The result includes counts of imported templates, nodes, edges, and workflows, plus any errors or warnings.
 
+**A package from before the core entity types** (exported from a database whose nodes carry old type names such as `Character`) is imported onto the core types: each node is stored under its core type with the old name as its `entity_subtype` (read with the packs the package's sources were extracted with), a name the mapping table does not hold is kept as a `Concept` flagged `unplaced_type` with `written_type`, and the package's old per-type node templates are not created: their nodes take their core type's template. Relationships are imported as they are. The result's `core_types_mapped` lists what moved, by old type:
+
+```json
+"core_types_mapped": {
+  "Character": {"core_type": "Person", "count": 212},
+  "Military Unit": {"core_type": "Organization", "count": 18},
+  "Zorblat": {"core_type": "Concept", "count": 1, "unplaced": true}
+}
+```
+
+A package already on the core types maps nothing (`{}`). This is how a database from before the core types is brought onto them: see [Upgrading](../getting-started/upgrading.md#databases-from-before-the-core-entity-types).
+
 In the web UI, import a `.ccx` from **Settings** → **General** → **Import & Export** — click **Import** and select the file.
 
 ## Lexicon Hub

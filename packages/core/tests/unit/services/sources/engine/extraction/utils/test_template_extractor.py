@@ -32,10 +32,11 @@ class TestGenerateSuggestionsFromEntities:
         suggestions = TemplateExtractor.generate_suggestions_from_entities(entities)
         assert len(suggestions) == 0
 
-    def test_skips_item_type(self) -> None:
+    def test_an_item_is_the_object_core_type(self) -> None:
+        # one template per core type (2026-10-08): "Item" is the core type Object itself
         entities = [{"type": "Item", "name": "X"}]
         suggestions = TemplateExtractor.generate_suggestions_from_entities(entities)
-        assert len(suggestions) == 0
+        assert [(s["name"], s["subtypes"]) for s in suggestions] == [("Object", {})]
 
     def test_counts_entities_per_type(self) -> None:
         entities = [
@@ -68,10 +69,13 @@ class TestGenerateSuggestionsFromEntities:
         assert "color" in suggestions[0]
 
     def test_uses_domain_descriptions(self) -> None:
+        # an old per-type name (Module) is its core type's (Work), described by the floor's template
         entities = [{"type": "Module", "name": "os"}]
-        domain = [{"name": "Module", "description": "A Python module"}]
+        domain = [{"name": "Work", "description": "A created work"}]
         suggestions = TemplateExtractor.generate_suggestions_from_entities(entities, domain)
-        assert suggestions[0]["description"] == "A Python module"
+        assert suggestions[0]["name"] == "Work"
+        assert suggestions[0]["subtypes"] == {"module": 1}
+        assert suggestions[0]["description"] == "A created work"
 
 
 # ============================================================================

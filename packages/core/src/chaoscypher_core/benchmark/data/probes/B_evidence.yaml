@@ -149,6 +149,7 @@ probes:
   - id: B5-easy
     probe: B5
     tier: hard  # CALIBRATION 2026-09-24 (16-model sweep): was easy; 12% pass
+    expected_entities: ["Napoleon", "Berthier"]   # for carrier variants: scope traceability to these (2026-10-01)
     instruction: "No world-knowledge injection — only what the passage states"
     # Napoleon is named but the passage says nothing about France, Emperor,
     # Corsica, or any battle. Pass = no such property or relationship.
@@ -164,6 +165,7 @@ probes:
   - id: B5-hard
     probe: B5
     tier: hard
+    expected_entities: ["Kutuzov", "Bagration", "Barclay", "Toll", "Napoleon", "Alexander"]   # for carrier variants: scope traceability to these (2026-10-01)
     instruction: "No world-knowledge injection — only what the passage states"
     # Famous people and places with well-known facts deliberately absent, in
     # a passage that mentions dates and titles for OTHER things — so the

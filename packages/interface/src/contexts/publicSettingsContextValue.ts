@@ -43,6 +43,10 @@ export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
   batch_export_max_attempts: 120,
   batch_import_max_attempts: 180,
   batch_graph_source_page_size: 200,
+  // Site import
+  web_site_max_pages: 500,
+  web_site_preview_debounce_ms: 800,
+  web_site_pages_named_max: 5,
   // Recovery
   recovery_warn_threshold: 5,
   recovery_max_attempts: 10,

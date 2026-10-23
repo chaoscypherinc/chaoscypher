@@ -12,7 +12,7 @@ from chaoscypher_cli.benchmark.orchestrator import default_wiring
 
 def test_default_wiring_constructs(tmp_path: Path) -> None:
     """default_wiring returns an OrchestratorWiring with all callables present."""
-    wiring = default_wiring(workspace=tmp_path)
+    wiring = default_wiring(workspace=tmp_path, dedup_embedder="exact")
     assert wiring.cache is not None
     assert callable(wiring.graph_provider_factory)
     assert callable(wiring.embed_query)
@@ -20,3 +20,7 @@ def test_default_wiring_constructs(tmp_path: Path) -> None:
     assert callable(wiring.graphrag_search)
     assert callable(wiring.chat)
     assert callable(wiring.judge_call)
+    # the retrieval comparison's baselines: the hybrid arm and the naive index factory
+    assert callable(wiring.hybrid_search)
+    assert callable(wiring.naive_retriever)
+    assert wiring.naive_index_root == tmp_path / "naive_index"

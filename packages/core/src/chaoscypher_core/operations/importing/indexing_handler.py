@@ -48,6 +48,7 @@ from chaoscypher_core.operations.queue_utils import (
 from chaoscypher_core.queue import queue_client
 from chaoscypher_core.services.events import event_bus
 from chaoscypher_core.services.sources import source_heartbeat
+from chaoscypher_core.utils.safe_paths import PathOutsideSandboxError
 from chaoscypher_core.vision.states import VisionPageKind, VisionPageStatus
 
 
@@ -120,8 +121,10 @@ def _no_text_proposal() -> dict[str, Any]:
     synthesized = {
         "ranking": [{"domain": "generic", "score": 0.0}],
         "confidence": None,
+        "packs": [],
         "detected_domain": "generic",
         "low_confidence": True,
+        "reason": "no_text",
     }
     proposal = proposal_from_detection(synthesized)
     proposal["no_text"] = True
@@ -135,8 +138,23 @@ def vision_images_dir(data_dir: Any, database_name: str, source_id: str) -> Path
     ``{data_dir}/databases/{database_name}/images/{source_id}/`` so the
     indexing handler (writer) and the source-delete cleanup path (reader)
     cannot drift apart on the path. Audit fix F32.
+
+    Raises:
+        PathOutsideSandboxError: If ``database_name`` or ``source_id`` is not
+            a single plain path segment. Both can arrive from a queue payload,
+            and pathlib discards the base when joining an absolute segment, so
+            an unchecked id would point the failure-path ``rmtree`` anywhere.
     """
-    return Path(str(data_dir)) / "databases" / database_name / "images" / source_id
+    base = Path(str(data_dir)) / "databases"
+    for segment in (database_name, source_id):
+        if (
+            not isinstance(segment, str)
+            or segment in ("", ".", "..")
+            or Path(segment).name != segment
+            or "\\" in segment
+        ):
+            raise PathOutsideSandboxError(str(segment), str(base))
+    return base / database_name / "images" / source_id
 
 
 def cleanup_vision_images(
@@ -153,7 +171,15 @@ def cleanup_vision_images(
     never re-raised — vision PNGs are derived data and a leftover
     directory is harmless beyond disk usage. Audit fix F32.
     """
-    target = vision_images_dir(data_dir, database_name, source_id)
+    try:
+        target = vision_images_dir(data_dir, database_name, source_id)
+    except PathOutsideSandboxError:
+        logger.warning(
+            "vision_images_cleanup_refused_unsafe_id",
+            source_id=source_id,
+            database_name=database_name,
+        )
+        return
     if not target.exists():
         return
     try:
@@ -464,9 +490,16 @@ async def handle_index_document(
     # error all fall through to ``None`` so the normalizer uses global defaults
     # and indexing never stalls.
     domain_normalizer_overrides: Any = None
-    forced_domain_name: str | None = row_settings.get("forced_domain") or file_info.get(
-        "forced_domain"
-    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import forced_packs_of
+
+    # The first forced pack's overrides: a normalizer has one set, and a
+    # forced list keeps its request order (only ``packs_label`` sorts), so
+    # the first pack the request named wins; a second pack's overrides are
+    # not merged (filed 2026-10-12). None for the floor alone.
+    _forced = forced_packs_of(row_settings)
+    if _forced is None:
+        _forced = forced_packs_of(file_info)
+    forced_domain_name: str | None = _forced[0] if _forced else None
     if forced_domain_name and enable_normalization:
         try:
             from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
@@ -764,22 +797,19 @@ async def _run_indexing(
                 # routed down the empty-content ValidationError raise path,
                 # because the early-return below takes it to VISION_PENDING.
                 #
-                # Gate-eligible = confirmation_required True AND no forced_domain
-                # (same test the eager-detection step uses). Best-effort: a
-                # failure here must never block the vision hand-off.
+                # Gate-eligible = confirmation_required True AND no forced packs
+                # (``awaits_detection``, the test the eager-detection step uses).
+                # Best-effort: a failure here must never block the vision hand-off.
                 first_meta = documents[0].get("metadata", {}) if documents else {}
                 if _is_image_bearing_no_text(first_meta):
                     try:
                         _no_text_source = adapter.get_source(file_id, database_name)
-                        if (
-                            _no_text_source is not None
-                            and _no_text_source.get("confirmation_required")
-                            and not _no_text_source.get("forced_domain")
-                        ):
-                            from chaoscypher_core.operations.importing.confirmation_gate import (
-                                write_detection_proposal,
-                            )
+                        from chaoscypher_core.operations.importing.confirmation_gate import (
+                            awaits_detection,
+                            write_detection_proposal,
+                        )
 
+                        if awaits_detection(_no_text_source):
                             write_detection_proposal(adapter, file_id, _no_text_proposal())
                             logger.info(
                                 "indexing_no_text_proposal_written",
@@ -844,7 +874,11 @@ async def _run_indexing(
                 data_dir=engine_settings.paths.data_dir,
             )
 
-        full_text, cleaner_counts = _extract_text(
+        # Offloaded like ``load_document`` above: normalization is seconds of
+        # pure-Python CPU on a large PDF (OCR cleaner dedup simhash) and must
+        # not stall the other handlers sharing the operations event loop.
+        full_text, cleaner_counts = await asyncio.to_thread(
+            _extract_text,
             documents=documents,
             enable_normalization=enable_normalization,
             filepath=filepath,
@@ -1044,36 +1078,31 @@ async def _run_indexing(
         # predicate sees a populated detection_proposal within seconds of
         # upload, while embedding proceeds in the background.
         #
-        # Gate-eligible = confirmation_required True AND no forced_domain.
+        # Gate-eligible = confirmation_required True AND no forced packs
+        # (``awaits_detection``).
         # Non-eligible paths (forced domain, no confirmation, vision-only)
         # skip this block entirely and get NO eager proposal.
         #
         # Best-effort: a failure here must never block the embedding step.
         # Status stays INDEXING — write_detection_proposal does NOT flip it.
         try:
+            from chaoscypher_core.operations.importing.confirmation_gate import (
+                awaits_detection,
+                proposal_from_detection,
+                write_detection_proposal,
+            )
+
             _gate_source = adapter.get_source(file_id, database_name)
-            if (
-                _gate_source is not None
-                and _gate_source.get("confirmation_required")
-                and not _gate_source.get("forced_domain")
-            ):
-                from chaoscypher_core.operations.importing.confirmation_gate import (
-                    proposal_from_detection,
-                    write_detection_proposal,
-                )
+            if awaits_detection(_gate_source):
                 from chaoscypher_core.services.sources.engine.extraction.domains import (
-                    create_domain_sample_text,
                     get_domain_registry,
+                    source_domain_sample,
                 )
                 from chaoscypher_core.services.sources.engine.extraction.orchestration import (
                     detect_extraction_domain,
                 )
 
-                _eager_chunks = adapter.get_chunks_for_extraction(
-                    source_id=file_id,
-                    database_name=database_name,
-                )
-                _eager_sample = create_domain_sample_text(_eager_chunks, content_key="content")
+                _eager_sample = source_domain_sample(adapter, file_id, database_name)
                 _eager_registry = get_domain_registry(engine_settings, database_name=database_name)
                 _eager_result = detect_extraction_domain(
                     registry=_eager_registry,
@@ -1087,6 +1116,7 @@ async def _run_indexing(
                 logger.info(
                     "indexing_eager_detection_proposal_written",
                     file_id=file_id,
+                    packs=_eager_proposal.get("packs"),
                     detected_domain=_eager_proposal.get("detected_domain"),
                 )
         except Exception as _eager_exc:

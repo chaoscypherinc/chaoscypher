@@ -6,7 +6,7 @@
 Regression for the orphan-filter index-shift mis-join: stored entity
 embeddings are keyed by ``entity_index`` = the entity's position in the
 *pre*-orphan-filter extraction list. The default ``balanced`` mode runs
-``drop_orphan_entities`` before ``prepare_entity_nodes``, which compacts
+``flag_orphan_entities`` before ``prepare_entity_nodes``, which compacts
 the entity list and re-indexes survivors. Joining embeddings by the
 *post*-filter positional index therefore assigns every entity after a
 dropped orphan a DIFFERENT entity's embedding vector — silent corruption

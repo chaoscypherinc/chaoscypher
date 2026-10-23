@@ -1,5 +1,5 @@
 # Chaos Cypher Cortex - Development with hot-reload
-FROM python:3.14.3-slim
+FROM python:3.14.8-slim
 
 WORKDIR /app
 

@@ -13,11 +13,13 @@ progress, LLM metrics, error/indexing-stats footers, the not-found path
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chaoscypher_cli.commands.source import get as get_module
 from chaoscypher_cli.commands.source.get import (
     _format_duration,
     _format_duration_seconds,
@@ -53,10 +55,10 @@ def _base_record(**overrides: Any) -> dict[str, Any]:
 def test_base_record_keys_are_real_source_row_columns() -> None:
     """Every fixture key must be a real ``SourceRow`` column.
 
-    ``get_file`` is a ``model_dump`` of the row, so a fixture key that is not
-    a column (the old ``extract_entities`` / ``detected_domain`` / ``error`` /
-    ``indexing_stats`` phantoms) would make these tests pass against data the
-    command can never receive in production.
+    ``get_source`` is a ``model_dump`` of the row, so a fixture key that is
+    not a column (the old ``extract_entities`` / ``detected_domain`` /
+    ``error`` / ``indexing_stats`` phantoms) would make these tests pass
+    against data the command can never receive in production.
     """
     from sqlalchemy import inspect
 
@@ -67,11 +69,56 @@ def test_base_record_keys_are_real_source_row_columns() -> None:
     assert not phantom, f"fixture keys not on SourceRow: {sorted(phantom)}"
 
 
+def test_every_key_the_command_reads_is_loaded_by_the_real_adapter(tmp_path: Path) -> None:
+    """The command reads only keys the adapter method it calls actually loads.
+
+    Regression (section-audit 2026-10-12): ``get`` read ``get_file``, whose
+    narrow projection carries none of ``updated_at``, the ``llm_*`` metrics,
+    ``domain_version`` / ``domain_content_hash`` or ``stage_progress``, so
+    five blocks of its output could never render. This drives the real
+    SQLite adapter, not a hand-built dict, and parses the command for the
+    keys it reads.
+    """
+    import re
+
+    from sqlmodel import SQLModel
+
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.engine import get_engine
+
+    source = Path(get_module.__file__).read_text(encoding="utf-8")
+    read_keys = set(re.findall(r'file_record(?:\.get\("|\[")([a-z_]+)', source))
+    assert "llm_total_calls" in read_keys  # the parse found the command's reads
+    method = re.search(r"ctx\.storage_adapter\.(\w+)\(source_id, ctx\.database_name\)", source)
+    assert method is not None
+
+    db = tmp_path / "test.db"
+    SQLModel.metadata.create_all(get_engine(str(db)), checkfirst=True)
+    adapter = SqliteAdapter(str(db), database_name="t")
+    adapter.connect()
+    adapter.create_source(
+        {
+            "id": "s1",
+            "database_name": "t",
+            "filename": "s1.pdf",
+            "filepath": str(tmp_path / "s1.pdf"),
+            "file_type": "pdf",
+            "file_size": 100,
+            "content_hash": "h",
+            "status": "committed",
+        }
+    )
+    loaded = getattr(adapter, method.group(1))("s1", "t")
+    assert loaded is not None
+    missing = sorted(read_keys - set(loaded))
+    assert not missing, f"{method.group(1)} does not load: {missing}"
+
+
 def _make_ctx(file_record: dict[str, Any] | None) -> MagicMock:
     """Build a mock CLI context whose adapter returns ``file_record``."""
     ctx = MagicMock()
     ctx.database_name = "default"
-    ctx.storage_adapter.get_file.return_value = file_record
+    ctx.storage_adapter.get_source.return_value = file_record
     # Default: no per-chunk extraction task stats and no filtering logs.
     ctx.storage_adapter.get_extraction_task_stats.return_value = {}
     ctx.storage_adapter.get_extraction_tasks_filtering_logs.return_value = []
@@ -103,7 +150,7 @@ class TestNotFoundAndErrors:
 
     def test_top_level_exception_exits_1(self) -> None:
         ctx = _make_ctx(None)
-        ctx.storage_adapter.get_file.side_effect = RuntimeError("boom-db")
+        ctx.storage_adapter.get_source.side_effect = RuntimeError("boom-db")
         result = _invoke(ctx)
         assert result.exit_code == 1
         assert "Error:" in result.output

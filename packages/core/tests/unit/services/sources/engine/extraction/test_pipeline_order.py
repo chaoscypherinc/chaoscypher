@@ -171,6 +171,9 @@ async def test_long_name_variant_merges_with_short_form_before_filters(
 
     edge_type_constraints = {
         "parent_of": {"source_types": ["Person"], "target_types": ["Person"]},
+        # the generic domain declares parent_of/child_of an inverse pair (wave 4): the
+        # relationship dedup keeps one canonical direction of the two
+        "child_of": {"source_types": ["Person"], "target_types": ["Person"]},
         "confides_in": {"source_types": ["Person"], "target_types": ["Person"]},
         # 'weakly_typed_relationship' deliberately absent.
     }
@@ -209,8 +212,8 @@ async def test_long_name_variant_merges_with_short_form_before_filters(
     # may or may not survive — what matters is the canonical entity isn't
     # left orphaned, and the two strong edges still anchor on it.
     surviving_types = {r["type"] for r in drubetskaya_rels}
-    assert "parent_of" in surviving_types, (
-        f"merged entity should keep parent_of, got types {surviving_types}"
+    assert surviving_types & {"parent_of", "child_of"}, (
+        f"merged entity should keep the parent edge, got types {surviving_types}"
     )
     assert "confides_in" in surviving_types, (
         f"merged entity should keep confides_in, got types {surviving_types}"

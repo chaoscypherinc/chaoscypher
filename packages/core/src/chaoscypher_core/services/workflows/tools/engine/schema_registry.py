@@ -11,18 +11,37 @@ from typing import Any
 
 import structlog
 
-from chaoscypher_core.settings import GraphSettings
+from chaoscypher_core.settings import GraphRAGSettings, GraphSettings
 
 
 logger = structlog.get_logger(__name__)
 
 # Load graph settings for default template IDs and relationship type
 _GRAPH = GraphSettings()
+_GRAPHRAG_CHUNK_LIMIT = GraphRAGSettings().chunk_limit  # graphrag_search's chunk budget, one field
 _DEFAULT_EDGE_TEMPLATE = _GRAPH.default_edge_template
 _DEFAULT_RELATIONSHIP_TYPE = _GRAPH.default_relationship_type
 
 
 # Tool schema definitions in OpenAI function calling format
+TEMPLATE_PROPERTY_ITEM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "display_name": {"type": "string"},
+        "property_type": {
+            "type": "string",
+            "enum": ["string", "text", "number", "boolean", "date", "enum"],
+        },
+        "required": {"type": "boolean", "default": False},
+    },
+}
+"""One property of ``create_template``, as ``PropertyDefinition`` accepts it.
+
+The engine's tool schema and the MCP tool list both use this object (2026-10-20: the MCP copy
+advertised ``data_type`` and no ``display_name``, so every client that followed it was refused).
+"""
+
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     # ========================================================================
     # GraphRAG Search (Primary)
@@ -48,7 +67,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "limit": {
                         "type": "integer",
                         "description": "Maximum number of document chunks to return",
-                        "default": 10,
+                        "default": _GRAPHRAG_CHUNK_LIMIT,
                     },
                     "seed_limit": {
                         "type": "integer",
@@ -255,7 +274,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "function",
         "function": {
             "name": "resolve_node",
-            "description": "Resolve an alias, nickname, title, or descriptive phrase to a canonical node. Use this when the user refers to an entity by a nickname (e.g., 'The Little Princess'), title (e.g., 'Prince Vasili'), or description (e.g., 'Natasha's suitor'). Returns the best matching node with confidence score and alternatives.",
+            "description": "Resolve an alias, nickname, title, or descriptive phrase to a canonical node. Use this when the user refers to an entity by a nickname (e.g., 'The Old Captain'), title (e.g., 'Margrave Oswin'), or description (e.g., 'Tamsin's suitor'). Returns the best matching node with confidence score and alternatives.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -443,18 +462,7 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
                     "properties": {
                         "type": "array",
                         "description": "Property definitions for the template",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "name": {"type": "string"},
-                                "display_name": {"type": "string"},
-                                "property_type": {
-                                    "type": "string",
-                                    "enum": ["string", "text", "number", "boolean", "date", "enum"],
-                                },
-                                "required": {"type": "boolean", "default": False},
-                            },
-                        },
+                        "items": TEMPLATE_PROPERTY_ITEM_SCHEMA,
                     },
                 },
                 "required": ["name", "template_type"],

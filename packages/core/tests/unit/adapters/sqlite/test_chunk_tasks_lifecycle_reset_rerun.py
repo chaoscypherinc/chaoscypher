@@ -11,7 +11,7 @@ guards, source-status idempotency, and clearing of commit_complete.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from sqlmodel import select
@@ -25,6 +25,7 @@ from chaoscypher_core.exceptions import ConflictError, NotFoundError
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
@@ -213,6 +214,46 @@ def test_reset_blocked_for_non_terminal_status(
         )
 
 
+def test_reset_loses_race_to_concurrent_rerun(
+    sqlite_adapter: SqliteAdapter, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second caller's full reset lands between our status read and our UPDATE.
+
+    Both callers pass the step-1 status pre-read; only the guarded UPDATE
+    (compare-and-swap on the status) stops the second from snapshotting,
+    wiping and enqueueing a duplicate paid extraction for the same chunk.
+    """
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+
+    seed = _seed_committed_source(sqlite_adapter, tmp_path)
+    rival = SqliteAdapter(str(sqlite_adapter.db_path), database_name="default")
+    rival.connect()
+    session = sqlite_adapter.session
+    assert session is not None
+    real_flush = session.flush
+    raced = False
+
+    def flush_after_rival_reset(objects: Sequence[Any] | None = None) -> None:
+        nonlocal raced
+        # Fire on the snapshot flush (step 3), i.e. after our step-1 read;
+        # autoflushes before that read carry no pending attempt row.
+        pending_snapshot = any(isinstance(obj, ChunkExtractionAttempt) for obj in session.new)
+        if pending_snapshot and not raced:
+            raced = True
+            rival.reset_chunk_task_for_rerun(task_id=seed["task_id"], source_id=seed["source_id"])
+        real_flush(objects)
+
+    monkeypatch.setattr(session, "flush", flush_after_rival_reset)
+    try:
+        with pytest.raises(ConflictError, match="lost race"):
+            sqlite_adapter.reset_chunk_task_for_rerun(
+                task_id=seed["task_id"], source_id=seed["source_id"]
+            )
+    finally:
+        rival.disconnect()
+    assert raced
+
+
 def test_reset_raises_not_found_for_missing_task(
     sqlite_adapter: SqliteAdapter, tmp_path: Path
 ) -> None:
@@ -239,3 +280,144 @@ def test_reset_updates_last_activity_at(sqlite_adapter: SqliteAdapter, tmp_path:
     assert original is not None
     assert source_after.last_activity_at is not None
     assert source_after.last_activity_at >= original
+
+
+def test_rerun_completion_reclaims_finalize(sqlite_adapter: SqliteAdapter, tmp_path: Path) -> None:
+    """After a finalized job, the rerun chunk's completion must claim finalize again.
+
+    The first cycle spent the one-shot ``finalize_claimed`` claim and left the
+    counters at total; without un-counting the prior outcome and releasing the
+    claim, the rerun's increment is never terminal and no finalize is enqueued.
+    """
+    seed = _seed_committed_source(sqlite_adapter, tmp_path)
+    job_id = seed["job_id"]
+    sqlite_adapter.update_extraction_job_total(
+        job_id=job_id, total_chunks=1, database_name="default"
+    )
+    first = sqlite_adapter.increment_job_completed_and_check(
+        job_id=job_id, database_name="default", outcome="completed"
+    )
+    assert first["is_terminal"] is True
+
+    sqlite_adapter.reset_chunk_task_for_rerun(task_id=seed["task_id"], source_id=seed["source_id"])
+
+    rerun = sqlite_adapter.increment_job_completed_and_check(
+        job_id=job_id, database_name="default", outcome="completed"
+    )
+    assert rerun["is_terminal"] is True
+    assert rerun["completed"] == 1
+
+
+# --- The snapshot keeps every column of the try; the wipe resets every one (audit wave 6) ---
+
+# Task columns a rerun deliberately does not copy into the history: the
+# task's identity, its queue bookkeeping and the embeddings cache (large,
+# re-derivable from raw_entities). A new task column fails the guard below
+# until it is snapshotted (a column on ChunkExtractionAttempt) or listed here.
+_TASK_COLUMNS_NOT_SNAPSHOTTED = frozenset(
+    {
+        "id",
+        "job_id",
+        "database_name",
+        "chunk_index",
+        "hierarchical_group_id",
+        "small_chunk_ids",
+        "queue_task_id",
+        "status",
+        "retry_count",
+        "max_retries",
+        "created_at",
+        "queued_at",
+        "cancelled_at",
+        "raw_entity_embeddings",
+    }
+)
+
+
+def test_every_task_column_is_snapshotted_or_deliberately_not() -> None:
+    """The snapshot list is derived from the attempt row and covers every task column.
+
+    Until wave 6 the snapshot and the wipe were two hand-written lists and
+    ``decode_fallback`` (added to the task in 0010) was in neither.
+    """
+    from chaoscypher_core.adapters.sqlite.mixins._chunk_tasks_lifecycle import (
+        ATTEMPT_SNAPSHOT_FIELDS,
+    )
+
+    task_columns = set(ChunkExtractionTask.model_fields)
+    snapshotted = set(ATTEMPT_SNAPSHOT_FIELDS)
+    assert snapshotted <= task_columns, sorted(snapshotted - task_columns)
+    unclassified = task_columns - snapshotted - _TASK_COLUMNS_NOT_SNAPSHOTTED
+    assert not unclassified, (
+        "chunk task columns neither snapshotted into chunk_extraction_attempts "
+        f"nor listed as deliberately not: {sorted(unclassified)}"
+    )
+    assert "decode_fallback" in snapshotted
+
+
+def test_reset_keeps_decode_fallback_in_history_and_starts_the_rerun_pinned(
+    sqlite_adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """A rung-2 try's fallback lands on the attempt row; the live task goes back to rung 0."""
+    from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+        decode_fallback,
+        ladder_step,
+    )
+
+    seed = _seed_committed_source(sqlite_adapter, tmp_path)
+    fallback = decode_fallback(2, seed=42, temperature=0.0)
+    assert fallback is not None
+    record = fallback.record()
+    sqlite_adapter.update_chunk_task(seed["task_id"], {"decode_fallback": record})
+
+    sqlite_adapter.reset_chunk_task_for_rerun(task_id=seed["task_id"], source_id=seed["source_id"])
+
+    summaries = sqlite_adapter.list_chunk_attempts(chunk_task_id=seed["task_id"])
+    assert [s["decode_fallback"] for s in summaries] == [record]
+    detail = sqlite_adapter.get_chunk_attempt(summaries[0]["id"])
+    assert detail is not None
+    assert detail["decode_fallback"] == record
+    assert detail["decode_fallback"]["repeat_penalty"] == fallback.repeat_penalty
+
+    sqlite_adapter.session.expire_all()
+    live = sqlite_adapter.get_chunk_task(seed["task_id"])
+    assert live is not None
+    assert live["decode_fallback"] is None
+    assert ladder_step(live["decode_fallback"]) == 0
+
+
+def test_reset_resets_every_snapshotted_column_to_its_default(
+    sqlite_adapter: SqliteAdapter, tmp_path: Path
+) -> None:
+    """Every column the history keeps is wiped on the task (None, or 0 for the counts)."""
+    from chaoscypher_core.adapters.sqlite.mixins._chunk_tasks_lifecycle import (
+        ATTEMPT_SNAPSHOT_FIELDS,
+    )
+
+    seed = _seed_committed_source(sqlite_adapter, tmp_path)
+    sqlite_adapter.update_chunk_task(
+        seed["task_id"],
+        {
+            "started_at": datetime.now(UTC),
+            "context_window_available": 8192,
+            "invalid_relationship_count": 2,
+            "aborted_by_loop": True,
+            "chunk_sentences": ["hello"],
+            "error_message": "boom",
+            "error_type": "llm_error",
+            "decode_fallback": {"seed": 43, "temperature": 0.0, "step": 1},
+            "raw_entity_embeddings": [[0.1]],
+            "queued_at": datetime.now(UTC),
+        },
+    )
+
+    sqlite_adapter.reset_chunk_task_for_rerun(task_id=seed["task_id"], source_id=seed["source_id"])
+
+    sqlite_adapter.session.expire_all()
+    task = sqlite_adapter.session.get(ChunkExtractionTask, seed["task_id"])
+    assert task is not None
+    for name in ATTEMPT_SNAPSHOT_FIELDS:
+        expected = 0 if name.endswith("_count") else None
+        assert getattr(task, name) == expected, name
+    assert task.raw_entity_embeddings is None
+    assert task.queued_at is None

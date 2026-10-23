@@ -15,6 +15,7 @@ import { HelpMode } from './modes/HelpMode';
 import { StateZero } from './StateZero';
 import type { OmnibarMode, ModeResultsProps } from './types';
 import { ChaosCypherPalette, ChaosCypherBackground, ChaosCypherNeutrals } from '../../theme/palette';
+import { readStoredString, writeStoredString } from '../../utils/storage';
 
 const MODES: OmnibarMode[] = [
   { prefix: '>', label: 'COMMAND', color: ChaosCypherPalette.warning, placeholder: 'Type a command...' },
@@ -35,31 +36,19 @@ interface OmnibarProps {
 }
 
 function getHintCount(): number {
-  try {
-    return parseInt(localStorage.getItem(HINT_STORAGE_KEY) ?? '0', 10);
-  } catch {
-    return 0;
-  }
+  return parseInt(readStoredString(HINT_STORAGE_KEY) ?? '0', 10);
 }
 
 function incrementHintCount(): void {
-  try {
-    localStorage.setItem(HINT_STORAGE_KEY, String(getHintCount() + 1));
-  } catch { /* ignore */ }
+  writeStoredString(HINT_STORAGE_KEY, String(getHintCount() + 1));
 }
 
 function isHintDismissed(): boolean {
-  try {
-    return localStorage.getItem(HINT_STORAGE_KEY) === 'dismissed';
-  } catch {
-    return false;
-  }
+  return readStoredString(HINT_STORAGE_KEY) === 'dismissed';
 }
 
 function dismissHint(): void {
-  try {
-    localStorage.setItem(HINT_STORAGE_KEY, 'dismissed');
-  } catch { /* ignore */ }
+  writeStoredString(HINT_STORAGE_KEY, 'dismissed');
 }
 
 const MODE_COMPONENTS: Record<string, React.ComponentType<ModeResultsProps>> = {

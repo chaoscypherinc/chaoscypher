@@ -66,6 +66,19 @@ class SomeService:
         return source.get("title")
 """
 
+_OK_LIST_METHOD_SOURCE = """
+class SomeService:
+    def __init__(self, storage):
+        self.storage = storage
+
+    def ordered(self):
+        triggers = self.storage.list_triggers()
+        # a list_* call returns a list of dicts: list methods are container access, not entity access
+        triggers.sort(key=lambda t: t.get("priority") or 0)
+        triggers.append({"id": "x"})
+        return triggers
+"""
+
 _BAD_AFTER_NESTED_DEF = """
 class SomeService:
     def __init__(self, storage):
@@ -143,6 +156,19 @@ def test_cc002_silent_on_dict_methods(tmp_path: Path) -> None:
     target.write_text(_OK_DICT_METHOD_SOURCE)
     violations = _check(_OK_DICT_METHOD_SOURCE, target)
     assert violations == [], f"Dict method access should not fire CC002; got {violations}"
+
+
+def test_cc002_silent_on_list_methods(tmp_path: Path) -> None:
+    """``rows.sort(...)`` / ``.append(...)`` on a ``list_*`` result are list methods — allowed.
+
+    2026-10-11: ``triggers.sort`` on ``self.storage.list_triggers()`` warned; the allowed
+    names are one set (``_CONTAINER_METHODS``) covering the dict and the list methods.
+    """
+    target = tmp_path / "packages" / "cortex" / "src" / "feature" / "service.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(_OK_LIST_METHOD_SOURCE)
+    violations = _check(_OK_LIST_METHOD_SOURCE, target)
+    assert violations == [], f"List method access should not fire CC002; got {violations}"
 
 
 def test_cc002_silent_on_non_storage_call(tmp_path: Path) -> None:

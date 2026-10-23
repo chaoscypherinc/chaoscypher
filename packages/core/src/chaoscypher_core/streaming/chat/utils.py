@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -23,6 +23,7 @@ from chaoscypher_core.services.chat.engine.constants import (
     ESSENTIAL_TOOL_NAMES,
     MAX_TOOLS,
 )
+from chaoscypher_core.services.workflows.tools.engine.chat_callbacks import queued_chat_callback
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
 from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
     get_essential_tool_schemas,
@@ -31,6 +32,9 @@ from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
 
 if TYPE_CHECKING:
     from chaoscypher_core.app_config import Settings
+    from chaoscypher_core.services.workflows.tools.engine.handlers.question_shape import (
+        ChatCallback,
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -121,7 +125,7 @@ def setup_chat_providers(
     indexing_manager: Any | None = None,
     source_ids: list[str] | None = None,
     source_storage: Any | None = None,
-    llm_chat_callback_override: Any | None = None,
+    llm_chat_callback_override: ChatCallback | None = None,
 ) -> tuple[Any, ToolExecutorService, list[dict[str, Any]]]:
     """Initialize LLM provider and tool executor.
 
@@ -181,27 +185,9 @@ def setup_chat_providers(
         """Local embedding via EmbeddingService."""
         return await _embedding_service.embed(text)
 
-    if llm_chat_callback_override is not None:
-        _llm_chat_callback = llm_chat_callback_override
-    else:
-
-        async def _llm_chat_callback(
-            messages: list[dict[str, Any]],
-            temperature: float | None = None,
-            max_tokens: int | None = None,
-        ) -> dict[str, Any]:
-            """Queue-based LLM chat with interactive priority."""
-            from chaoscypher_core.ports.llm import TaskType
-
-            task_id = await llm_queue.queue_operation(
-                task_type=TaskType.CHAT,
-                operation_name="chat_completion",
-                messages=messages,
-                priority=interactive_priority,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return cast("dict[str, Any]", await llm_queue.wait_for_result(task_id))
+    _llm_chat_callback = llm_chat_callback_override or queued_chat_callback(
+        llm_queue, priority=interactive_priority
+    )
 
     # Initialize tool executor with optional source scope
     scope = {"source_ids": source_ids} if source_ids else None

@@ -38,6 +38,7 @@ services:
       - NGINX_ACCESS_LOG=${NGINX_ACCESS_LOG:-off}
       # Rate limiting is now controlled by RateLimitSettings.enabled in settings.yaml
       - VALKEY_LOGLEVEL=${VALKEY_LOGLEVEL:-warning}
+      - SUPERVISOR_LOGLEVEL=${SUPERVISOR_LOGLEVEL:-warn}
       # Host header allow-list — required when CHAOSCYPHER_BIND=0.0.0.0 so
       # LAN clients reaching the app via hostname/IP aren't rejected with 421.
       - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-}

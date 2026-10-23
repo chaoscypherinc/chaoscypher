@@ -54,6 +54,8 @@ concurrency:
 jobs:
   build:
     name: Build sdists and wheels
+    # Publishing runs on the public mirror only: the dev repo receives the same tags (2026-10-15).
+    if: github.repository == 'chaoscypherinc/chaoscypher'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -87,6 +89,8 @@ jobs:
   publish:
     name: Publish ${{ matrix.package }} to ${{ inputs.target || 'pypi' }}
     needs: build
+    # Publishing runs on the public mirror only: the dev repo receives the same tags (2026-10-15).
+    if: github.repository == 'chaoscypherinc/chaoscypher'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:

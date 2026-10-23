@@ -96,7 +96,8 @@ QUEUE_HOST=localhost QUEUE_PORT=6379 cc-cortex start
 ### Docker
 
 ```bash
-# Development
+# Development (the dev stack requires QUEUE_PASSWORD)
+export QUEUE_PASSWORD="$(openssl rand -base64 32)"
 docker compose -f packages/docker/multi-container/docker-compose.dev.yml up cortex
 
 # Production
@@ -247,7 +248,8 @@ pytest --cov=chaoscypher_cortex --cov-report=html
 # it is preinstalled only in the dev Docker image)
 uv run --with watchdog watchmedo auto-restart -d src -p "*.py" -- cc-cortex start
 
-# Using Docker
+# Using Docker (the dev stack requires QUEUE_PASSWORD)
+export QUEUE_PASSWORD="$(openssl rand -base64 32)"
 docker compose -f packages/docker/multi-container/docker-compose.dev.yml up cortex
 ```
 

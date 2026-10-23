@@ -10,8 +10,8 @@ suggestions, and other entities.
 
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -28,6 +28,52 @@ class UserPrincipal:
 
     id: int | None
     is_admin: bool
+
+
+@dataclass(frozen=True)
+class ReleasedRows:
+    """What releasing one source took from the graph (#795, D5).
+
+    ``deleted_*`` are the rows no source attests any more, gone with the
+    release; ``deleted_edge_ids`` includes the edges that went with a deleted
+    endpoint. ``touched_*`` are the surviving candidates: rows the source was a
+    member of, or was the home of without a membership row, that another
+    source still attests. What a rebuild from the remaining members has to redo.
+
+    The rebuild (``management.release.release_source_graph``) fills the rest,
+    for the post-release refresh after the commit (``refresh_released_graph``):
+    ``stale_node_ids`` are the surviving nodes whose text changed, whose
+    embedding and full-text row must follow; ``resolve_node_ids`` the nodes the
+    scoped identity resolution runs over (the rebuilt nodes and both ends of
+    every surviving edge), under ``conventions``, the naming conventions the
+    rebuild ranked by. The resolution runs after the commit, so the writer
+    lock is never held across its whole-graph load and plan (#795).
+    """
+
+    deleted_node_ids: frozenset[str] = frozenset()
+    deleted_edge_ids: frozenset[str] = frozenset()
+    touched_node_ids: frozenset[str] = frozenset()
+    touched_edge_ids: frozenset[str] = frozenset()
+    stale_node_ids: frozenset[str] = frozenset()
+    resolve_node_ids: frozenset[str] = frozenset()
+    conventions: Any = field(default=None, compare=False, repr=False)
+    """A ``NameConventions`` (``deduplication.name_identity``); typed loosely so models stay leaf."""
+
+
+@dataclass(frozen=True)
+class SourceDeletion:
+    """What deleting one source did: whether it was there, and what its graph release did.
+
+    Truthy exactly when the source was deleted, so a caller that only asks
+    "was it deleted?" reads it as the bool it used to be. ``released`` is for
+    the post-release refresh (``release.refresh_after_release``).
+    """
+
+    deleted: bool
+    released: ReleasedRows = ReleasedRows()
+
+    def __bool__(self) -> bool:
+        return self.deleted
 
 
 # ============================================================================
@@ -104,6 +150,29 @@ class SourceErrorStage(StrEnum):
     COMMIT = "commit"
     URL_FETCH = "url_fetch"
     RECOVERY_EXHAUSTED = "recovery_exhausted"
+
+
+class SiteStatus(StrEnum):
+    """Where a site import (``source_sites.status``, migration 0021) stands.
+
+    The pages' own progress is computed from their source rows; this is the
+    import job's state: ``queued`` until the worker picks it up, ``importing``
+    (first run) or ``refreshing`` (a later check) while it discovers and
+    fetches, ``imported`` once every page was handed to the upload pipeline,
+    ``failed`` when the run itself stopped (discovery refused the address, an
+    unexpected error, a cancelled task). A failed page never fails the site.
+    """
+
+    QUEUED = "queued"
+    IMPORTING = "importing"
+    REFRESHING = "refreshing"
+    IMPORTED = "imported"
+    FAILED = "failed"
+
+    @property
+    def in_progress(self) -> bool:
+        """True while a run is queued or under way (a second run would race it)."""
+        return self in {SiteStatus.QUEUED, SiteStatus.IMPORTING, SiteStatus.REFRESHING}
 
 
 class StepToolType(StrEnum):
@@ -185,7 +254,17 @@ class Node(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict, description="Property values")
     position: NodePosition | None = Field(default=None, description="Position in graph canvas")
     source_id: str | None = Field(
-        default=None, description="Source document this node was extracted from"
+        default=None,
+        description="Home source: one of the sources that attest this node (#795)",
+    )
+    member_source_ids: list[str] = Field(
+        default_factory=list,
+        exclude=True,
+        description=(
+            "Every source that attests this node (its graph_node_sources rows), as the "
+            "repository's node loads fill it; empty when not loaded. Internal: the "
+            "in-memory scope filters read it (ports.search.attesting_sources), the API does not."
+        ),
     )
     embedding: list[float] | None = Field(
         default=None, description="Vector embedding for similarity search"
@@ -255,6 +334,19 @@ class Edge(BaseModel):
     target_node_id: str = Field(..., description="Target node ID (to)")
     label: str = Field(..., description="Human-readable relationship label")
     properties: dict[str, Any] = Field(default_factory=dict, description="Relationship properties")
+    source_id: str | None = Field(
+        default=None, description="Home source: the source document this edge was extracted from"
+    )
+    valid_from: date | None = Field(
+        default=None, description="From when the fact holds (a memory's valid_from); None: timeless"
+    )
+    valid_to: date | None = Field(
+        default=None,
+        description="When a later memory on a single-valued relation closed it; None: open",
+    )
+    closed_by_source_id: str | None = Field(
+        default=None, description="The memory source that closed it (no foreign key)"
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC), description="Creation timestamp"
     )
@@ -878,6 +970,7 @@ __all__ = [
     "PropertyType",
     "RebuildResult",
     "SearchMode",
+    "SiteStatus",
     "Source",
     "SourceErrorStage",
     "SourceStatus",

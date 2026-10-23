@@ -11,6 +11,7 @@ SRP REFACTORED: Now focuses on core settings CRUD.
 - Reset operations → ResetService (already delegated)
 """
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -291,9 +292,19 @@ class SettingsService:
 
     async def notify_workers_llm_settings_changed(self) -> None:
         """Publish a settings-change notification to Valkey for worker hot-reload."""
-        from chaoscypher_cortex.shared.worker_notify import publish_settings_change
+        from chaoscypher_cortex.shared.worker_notify import notify_workers_of
 
-        await publish_settings_change("v1:llm_settings_updated")
+        await notify_workers_of({"llm"}, "v1:llm_settings_updated")
+
+    async def notify_workers_of_sections(self, sections: Iterable[str]) -> bool:
+        """Notify the workers when a written section is one they must reload (``WORKER_SETTINGS_SECTIONS``).
+
+        Returns:
+            Whether a change was published.
+        """
+        from chaoscypher_cortex.shared.worker_notify import notify_workers_of
+
+        return await notify_workers_of(sections)
 
     async def verify_ollama_url(self, url: str, timeout: int) -> dict[str, Any]:  # noqa: PLR0911
         """Verify that an Ollama instance is running at the given URL.

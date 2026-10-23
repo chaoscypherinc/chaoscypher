@@ -47,7 +47,7 @@ exist for visibility, never for control flow.
 
 ## The counters
 
-The table below shows the most frequently-consulted counters. The complete field set (46 as of this writing — the `QualityCounter` enum, `chaoscypher_core.services.quality.counters`, is the source of truth) spans every silent-drop site in the pipeline and is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics. The Pipeline flow board in the UI does not render the complete field set — it surfaces a curated subset of these counters, grouped by stage and shown only when non-zero for the current source.
+The table below shows the most frequently-consulted counters. The complete field set (the `QualityCounter` enum, `chaoscypher_core.services.quality.counters`, is the source of truth and the only place the count lives) spans every silent-drop site in the pipeline and is documented in the [Quality Metrics API reference](../reference/api/quality-metrics.md) with per-field semantics. The Pipeline flow board in the UI does not render the complete field set — it surfaces a curated subset of these counters, grouped by stage and shown only when non-zero for the current source.
 
 | Counter | What it measures | Stage |
 |---------|------------------|-------|
@@ -62,9 +62,17 @@ The table below shows the most frequently-consulted counters. The complete field
 | `parser_lines_dropped` | Malformed `E\|`/`R\|`/`P\|` lines the parser couldn't make sense of (missing fields, out-of-bounds indices, bad numeric values). | LLM extraction |
 | `dedup_entities_merged` | Entities collapsed into another entity by exact-name or semantic deduplication. The merge keeps the highest-confidence record and combines aliases / properties. | Post-extraction |
 | `structural_entities_filtered` | Entities representing document structure (chapters, sections, page headers) removed by the structural filter. Configured per-domain. | Post-extraction |
-| `orphan_entities_filtered` | Entities that survived deduplication but had zero relationships, dropped at commit time when orphan filtering is enabled. | Commit |
+| `orphan_entities_filtered` | Entities that survived deduplication with zero relationships and were **kept**, flagged as unconnected, because they carry a description or an evidence sentence. They appear in the graph canvas's "Unresolved" region. Before October 2026 this counted the ones deleted. | Commit |
+| `evidence_less_entities_dropped` | Entities with zero relationships and neither a description nor an evidence sentence, dropped at commit when orphan protection is off. | Commit |
+| `relationships_unevidenced_kept` | Relationships whose cited sentence does not state them, **kept** with their justification and flagged unevidenced (the reason is on the edge). They are drawn dashed on the graph canvas and left out of chat answers unless `graphrag.include_unevidenced_edges` is on. Before October 2026 these were deleted and counted in `evidence_relationships_dropped`, which now counts only relationships with an endpoint that is no entity. | Extraction |
 | `relationships_dropped_invalid` | Relationships pointing at non-existent entity indices (catches LLM index-skew). These would crash the graph if committed. | Post-extraction / Commit |
-| `relationships_dropped_capped` | Relationships dropped because they exceeded the per-entity degree cap, the same-source-type cap, or the total-ratio cap from the active filtering mode. | Post-extraction |
+| `relationships_dropped_capped` | Relationships past the per-entity degree cap, the same-source-type cap, or the total-ratio cap from the active filtering mode, **kept** and flagged as capped (ranked last, drawn thin on the canvas). Before October 2026 this counted the ones dropped. | Post-extraction |
+| `plausibility_entities_flagged` | Entities whose name scored below the plausibility bar, **kept** and flagged as low plausibility because they carry a description or evidence. They appear in the canvas's "Unresolved" region. | Extraction |
+| `unplaced_type_entities_flagged` | Entities whose written type no core type answers to, **kept** as a Concept and flagged as an unplaced type. They appear in the canvas's "Unresolved" region. | Extraction |
+| `entities_unevidenced_kept` | Entities whose cited sentence does not name them, **kept** because they carry a description and flagged unevidenced (the reason is on the entity). They appear in the canvas's "Unresolved" region. Before October 2026 these were deleted and counted in `evidence_entities_dropped`, which now counts only entities with no description. | Extraction |
+| `excluded_entities_kept` | Entities whose name is one of the domain's exclusion examples, **kept** because they carry a description or evidence and flagged as an excluded name (the rule is on the entity). They appear in the canvas's "Unresolved" region. | Extraction |
+| `relationships_unmatched_label_kept` | Relationships whose label no relationship type of the domain answers to, **kept** as `related_to` with the label as written, flagged as an unmatched label and drawn thin on the canvas. | Post-extraction |
+| `relationships_type_mismatch_kept` | Relationships whose endpoints are not the types their relationship type allows, **kept** with their label, flagged as a type mismatch and drawn thin on the canvas. Before October 2026 these and the unmatched labels were deleted and counted in `relationships_dropped_type_unmatched`, which now counts the two kept together. | Post-extraction |
 | `citations_skipped_no_chunk_index` | Citations skipped at commit because the underlying entity / relationship had no chunk index to point at. | Commit |
 
 In addition to the counters, the section surfaces three companion

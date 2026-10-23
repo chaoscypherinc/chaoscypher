@@ -19,7 +19,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from chaoscypher_core.app_config import Settings
+from chaoscypher_core.app_config import LocalAuthSettings, Settings
 from chaoscypher_cortex.features.settings.models import SettingsUpdateRequest
 
 
@@ -104,6 +104,37 @@ def test_local_auth_secret_fields_are_stripped() -> None:
                 "credentials_path": "/evil/creds",
             }
         }
+    )
+    dumped = req.model_dump(exclude_none=True, exclude_unset=True)
+    assert dumped == {"local_auth": {"cookie_secure": True}}
+
+
+def _local_auth_plumbing_fields() -> list[str]:
+    """Every ``local_auth`` field the generic PATCH must never set.
+
+    Derived from the settings model, not hand-listed: any secret
+    (``SecretStr``) or file location (``Path``) belongs to the auth setup
+    flow, plus the trust-header name. A new secret or path field joins this
+    list automatically and fails the test below until it is protected.
+    """
+    fields = ["edge_auth_header"]
+    for name, info in LocalAuthSettings.model_fields.items():
+        annotation = str(info.annotation)
+        if "Path" in annotation or "SecretStr" in annotation:
+            fields.append(name)
+    return sorted(fields)
+
+
+def test_local_auth_plumbing_fields_cover_edge_auth_token_path() -> None:
+    """Guard the derivation itself: the nginx->Cortex token path is in it."""
+    assert "edge_auth_token_path" in _local_auth_plumbing_fields()
+
+
+@pytest.mark.parametrize("field", _local_auth_plumbing_fields())
+def test_every_local_auth_plumbing_field_is_stripped(field: str) -> None:
+    """A PATCH cannot re-point auth plumbing (e.g. the edge-token file)."""
+    req = SettingsUpdateRequest.model_validate(
+        {"local_auth": {"cookie_secure": True, field: "/evil/value"}}
     )
     dumped = req.model_dump(exclude_none=True, exclude_unset=True)
     assert dumped == {"local_auth": {"cookie_secure": True}}

@@ -1,0 +1,128 @@
+{
+  "description": "One graphrag_search result's graph blocks and the lines they render as. Pinned on both sides so the two renderings cannot drift: the Python renderer (context_render.render_retrieved_context, test_context_render.py) and the interface's mirror (graphBlocks.ts, graphBlocks.test.ts). lines are what the tool item shows; prompt_lines what the model reads: the same lines inside the untrusted-document fence with its [GRAPH EVIDENCE] header (the quoted sentences are document text). quote_chars is the longest evidence sentence a block quotes (graphrag_blocks.EVIDENCE_QUOTE_CHARS).",
+  "quote_chars": 140,
+  "result": {
+    "success": true,
+    "shape": "aggregate",
+    "retrieval_stats": {
+      "shape": "aggregate",
+      "shape_reason": "a named entity and how many",
+      "shape_source": "rules"
+    },
+    "graph_context": {
+      "aggregates": [
+        {
+          "entity_id": "n3",
+          "entity": "the old prince",
+          "groups": [
+            {
+              "label": "parent_of",
+              "count": 4,
+              "count_capped": false,
+              "rows": [
+                {
+                  "edge_id": "e1",
+                  "source": "the old prince",
+                  "target": "Prince Corvin",
+                  "sentence": "The old prince, who had never once in all the long years at Greyhollow forgiven a weakness in anyone, shouted at his son until the windows of the drawing room shook.",
+                  "marker": "C0:S3",
+                  "flags": []
+                },
+                {
+                  "edge_id": "e2",
+                  "source": "the old prince",
+                  "target": "Mira",
+                  "sentence": "  Mira   was his\n youngest daughter. ",
+                  "flags": []
+                },
+                {
+                  "edge_id": "e3",
+                  "source": "the old prince",
+                  "target": "Lucan",
+                  "sentence": null,
+                  "flags": [
+                    "inferred"
+                  ]
+                }
+              ]
+            },
+            {
+              "label": "located_in",
+              "count": 7,
+              "count_capped": true,
+              "rows": [
+                {
+                  "edge_id": "e4",
+                  "source": "the old prince",
+                  "target": "Greyhollow",
+                  "sentence": "He lived at Greyhollow.",
+                  "flags": []
+                }
+              ]
+            }
+          ],
+          "skipped": {
+            "inverse": 1
+          }
+        }
+      ],
+      "walks": [
+        {
+          "from": "Prince Teodór",
+          "to": "Lucan",
+          "hops": [
+            {
+              "edge_id": "e5",
+              "source": "Prince Teodór",
+              "label": "parent_of",
+              "target": "Séverine",
+              "sentence": "His daughter Séverine was the beauty of the evening.",
+              "marker": "C1:S2",
+              "flags": []
+            },
+            {
+              "edge_id": "e6",
+              "source": "Lucan",
+              "label": "spouse_of",
+              "target": "Séverine",
+              "sentence": null,
+              "flags": []
+            }
+          ]
+        }
+      ],
+      "walk_gaps": [
+        {
+          "from": "Prince Corvin",
+          "to": "Wren",
+          "max_hops": 3,
+          "left_out": false
+        },
+        {
+          "from": "Lucan",
+          "to": "Wren",
+          "max_hops": 3,
+          "left_out": true
+        }
+      ]
+    }
+  },
+  "caption": "Shape: aggregate (a named entity and how many)",
+  "lines": [
+    "- the old prince, parent_of (4): the old prince parent_of Prince Corvin \"The old prince, who had never once in all the long years at Greyhollow forgiven a weakness in anyone, shouted at his son until the windows…\" [C0:S3]; the old prince parent_of Mira \"Mira was his youngest daughter.\"; the old prince parent_of Lucan; and 1 more",
+    "- the old prince, located_in (7+): the old prince located_in Greyhollow \"He lived at Greyhollow.\"; and 6 more",
+    "- walk: Prince Teodór parent_of Séverine \"His daughter Séverine was the beauty of the evening.\" [C1:S2]; Lucan spouse_of Séverine",
+    "- no chain of up to 3 relations connects Prince Corvin and Wren in the graph",
+    "- no evidenced chain of up to 3 relations connects Lucan and Wren among the relations the walk read"
+  ],
+  "prompt_lines": [
+    "<untrusted_document>",
+    "[GRAPH EVIDENCE]",
+    "- the old prince, parent_of (4): the old prince parent_of Prince Corvin \"The old prince, who had never once in all the long years at Greyhollow forgiven a weakness in anyone, shouted at his son until the windows…\" [C0:S3]; the old prince parent_of Mira \"Mira was his youngest daughter.\"; the old prince parent_of Lucan; and 1 more",
+    "- the old prince, located_in (7+): the old prince located_in Greyhollow \"He lived at Greyhollow.\"; and 6 more",
+    "- walk: Prince Teodór parent_of Séverine \"His daughter Séverine was the beauty of the evening.\" [C1:S2]; Lucan spouse_of Séverine",
+    "- no chain of up to 3 relations connects Prince Corvin and Wren in the graph",
+    "- no evidenced chain of up to 3 relations connects Lucan and Wren among the relations the walk read",
+    "</untrusted_document>"
+  ]
+}

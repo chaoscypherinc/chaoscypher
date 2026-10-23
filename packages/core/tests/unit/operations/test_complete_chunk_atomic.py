@@ -26,6 +26,7 @@ import pytest
 from chaoscypher_core.operations.extraction.chunk_extraction_service import (
     ChunkExtractionOperationsService,
 )
+from chaoscypher_core.settings import EngineSettings
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +184,10 @@ def _common_patches(settings):
     so we patch at the source module, not at chunk_extraction_service.
     """
     fake_engine_settings = MagicMock()
+    # The known-entities list's limit is compared numerically: the real default.
+    fake_engine_settings.extraction.known_entities_limit = (
+        EngineSettings().extraction.known_entities_limit
+    )
 
     fake_extractor = MagicMock()
     fake_extractor.extract_single_chunk = AsyncMock(return_value=_fake_extractor_result())

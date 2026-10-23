@@ -1,6 +1,7 @@
 id: war_and_peace_book1
 kind: extraction
 version: "1.0"
+label: "War and Peace, Book One"
 domain: literary
 corpus_path: war_and_peace_book1.txt
 queries_path: queries.yaml

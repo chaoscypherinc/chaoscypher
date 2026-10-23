@@ -126,31 +126,30 @@ class TestFilterStructuralEntities:
 
 
 class TestApplyTypeAliases:
-    """Tests for apply_type_aliases() — domain-driven type canonicalization.
+    """Tests for apply_type_aliases(): a pack's aliases and the mapping table to core types.
 
-    Some plugins declare two NodeTemplates that name effectively the same
-    concept (e.g. literary's ``Historical Figure`` vs ``Character``). The
-    LLM picks one or the other inconsistently, fragmenting the graph and
-    leaking real-world-grounding signal into entity_type when it belongs in
-    a property. ``apply_type_aliases`` rewrites the entity type to the
-    canonical value while preserving the original under a property
-    (default ``entity_subtype``) so the signal isn't lost.
+    A pack may alias a name it does not declare to one of its subtypes
+    (literary's ``Historical Figure`` -> ``Character``) or to a core type
+    (``Suspect`` -> ``Person``). ``apply_type_aliases`` rewrites the entity
+    type to the core type and keeps the subtype the mapping table gives under
+    a property (default ``entity_subtype``), never overwriting one the record
+    carries (spec 2026-10-07 § 6).
     """
 
     def test_rewrites_aliased_type(self) -> None:
-        """Entity whose type is in the alias map gets the canonical type."""
+        """An aliased type takes the core type of the alias's target."""
         entities = [{"name": "Napoleon", "type": "Historical Figure"}]
         count = apply_type_aliases(entities, {"Historical Figure": "Character"})
 
         assert count == 1
-        assert entities[0]["type"] == "Character"
+        assert entities[0]["type"] == "Person"
 
-    def test_preserves_original_as_subtype(self) -> None:
-        """The original type is preserved under ``entity_subtype`` on properties."""
+    def test_keeps_the_targets_subtype(self) -> None:
+        """The subtype is the alias target's, from the mapping table."""
         entities = [{"name": "Napoleon", "type": "Historical Figure"}]
         apply_type_aliases(entities, {"Historical Figure": "Character"})
 
-        assert entities[0]["properties"]["entity_subtype"] == "Historical Figure"
+        assert entities[0]["properties"]["entity_subtype"] == "character"
 
     def test_preserves_existing_properties(self) -> None:
         """Pre-existing properties are not clobbered when subtype is added."""
@@ -164,23 +163,50 @@ class TestApplyTypeAliases:
         apply_type_aliases(entities, {"Historical Figure": "Character"})
 
         assert entities[0]["properties"]["birth_year"] == "1769"
-        assert entities[0]["properties"]["entity_subtype"] == "Historical Figure"
+        assert entities[0]["properties"]["entity_subtype"] == "character"
 
-    def test_untouched_when_type_not_in_aliases(self) -> None:
-        """An entity whose type isn't in the alias map is left exactly as-is."""
-        entities = [{"name": "Anna", "type": "Character"}]
+    def test_never_overwrites_a_carried_subtype(self) -> None:
+        entities = [
+            {"name": "Napoleon", "type": "Historical Figure", "properties": {"entity_subtype": "x"}}
+        ]
+        apply_type_aliases(entities, {"Historical Figure": "Character"})
+
+        assert entities[0]["type"] == "Person"
+        assert entities[0]["properties"]["entity_subtype"] == "x"
+
+    def test_a_core_type_is_left_as_is(self) -> None:
+        """An entity already typed as a core type is left exactly as-is."""
+        entities = [{"name": "Anna", "type": "Person"}]
         count = apply_type_aliases(entities, {"Historical Figure": "Character"})
 
         assert count == 0
-        assert entities[0] == {"name": "Anna", "type": "Character"}
+        assert entities[0] == {"name": "Anna", "type": "Person"}
 
-    def test_empty_aliases_is_noop(self) -> None:
-        """Empty alias map: nothing is rewritten."""
-        entities = [{"name": "Napoleon", "type": "Historical Figure"}]
+    def test_the_mapping_table_applies_without_aliases(self) -> None:
+        """An old template name is a core type and subtype with no alias map at all."""
+        entities = [
+            {"name": "Napoleon", "type": "Historical Figure"},
+            {"name": "Sword", "type": "Item"},
+            {"name": "Glorp", "type": "Quux"},
+        ]
         count = apply_type_aliases(entities, {})
 
-        assert count == 0
-        assert entities[0] == {"name": "Napoleon", "type": "Historical Figure"}
+        assert count == 2
+        assert entities[0] == {
+            "name": "Napoleon",
+            "type": "Person",
+            "properties": {"entity_subtype": "historical_figure"},
+        }
+        # Item is the core type's synonym: no subtype. A name no table knows is left for the rescue.
+        assert entities[1] == {"name": "Sword", "type": "Object"}
+        assert entities[2] == {"name": "Glorp", "type": "Quux"}
+
+    def test_the_packs_qualified_rows_win(self) -> None:
+        entities = [{"name": "The Times", "type": "Publication"}]
+        apply_type_aliases(entities, {}, packs=("news",))
+
+        assert entities[0]["type"] == "Organization"
+        assert entities[0]["properties"]["entity_subtype"] == "publication"
 
     def test_empty_entities_is_noop(self) -> None:
         """Empty entity list: nothing happens."""
@@ -191,19 +217,14 @@ class TestApplyTypeAliases:
         assert entities == []
 
     def test_idempotent(self) -> None:
-        """Running twice doesn't double-rewrite or clobber the preserved subtype.
-
-        After the first pass the entity's type is no longer in the alias map,
-        so the second pass is a no-op — but importantly, the preserved
-        ``entity_subtype`` from pass 1 survives.
-        """
+        """Running twice doesn't double-rewrite or clobber the subtype."""
         entities = [{"name": "Napoleon", "type": "Historical Figure"}]
         apply_type_aliases(entities, {"Historical Figure": "Character"})
         count = apply_type_aliases(entities, {"Historical Figure": "Character"})
 
         assert count == 0
-        assert entities[0]["type"] == "Character"
-        assert entities[0]["properties"]["entity_subtype"] == "Historical Figure"
+        assert entities[0]["type"] == "Person"
+        assert entities[0]["properties"]["entity_subtype"] == "character"
 
     def test_multiple_aliases_one_pass(self) -> None:
         """Multiple alias mappings apply correctly in a single call."""
@@ -215,18 +236,15 @@ class TestApplyTypeAliases:
         aliases = {"Historical Figure": "Character", "Suspect": "Person"}
         count = apply_type_aliases(entities, aliases)
 
-        assert count == 2
-        assert entities[0]["type"] == "Character"
-        assert entities[0]["properties"]["entity_subtype"] == "Historical Figure"
-        assert entities[1]["type"] == "Character"
-        assert "properties" not in entities[1] or "entity_subtype" not in entities[1].get(
-            "properties", {}
-        )
-        assert entities[2]["type"] == "Person"
-        assert entities[2]["properties"]["entity_subtype"] == "Suspect"
+        assert count == 3
+        assert [e["type"] for e in entities] == ["Person", "Person", "Person"]
+        assert entities[0]["properties"]["entity_subtype"] == "character"
+        assert entities[1]["properties"]["entity_subtype"] == "character"
+        # An alias to a core type with no table row for the written name: no subtype (no free text).
+        assert "properties" not in entities[2]
 
     def test_custom_subtype_property_name(self) -> None:
-        """Caller can choose which property key holds the preserved subtype."""
+        """Caller can choose which property key holds the subtype."""
         entities = [{"name": "Napoleon", "type": "Historical Figure"}]
         apply_type_aliases(
             entities,
@@ -234,5 +252,5 @@ class TestApplyTypeAliases:
             subtype_property="original_type",
         )
 
-        assert entities[0]["properties"]["original_type"] == "Historical Figure"
+        assert entities[0]["properties"]["original_type"] == "character"
         assert "entity_subtype" not in entities[0]["properties"]

@@ -1,9 +1,10 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tests for the three-tier type rescue system."""
+"""Tests for the type rescue tiers (the core-type rescue itself: ``test_type_rescue_core``)."""
 
 from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+    TypeVocabulary,
     _apply_property,
     _is_junk_entity,
     _try_absorb_as_property,
@@ -273,7 +274,7 @@ class TestApplyProperty:
 
 
 class TestRescueInvalidEntityTypes:
-    """Integration tests for the full rescue pipeline."""
+    """Integration tests for the full rescue pipeline over the core types."""
 
     def _make_entity(self, name, entity_type, description="", chunk_index=0):
         """Create a minimal entity dict."""
@@ -285,92 +286,76 @@ class TestRescueInvalidEntityTypes:
         }
 
     def test_all_valid_entities_pass_through(self):
-        """When all entities have valid types, nothing changes."""
+        """When all entities have core types, nothing changes."""
         entities = [
-            self._make_entity("Pierre", "Character"),
-            self._make_entity("Moscow", "Setting"),
+            self._make_entity("Pierre", "Person"),
+            self._make_entity("Moscow", "Location"),
         ]
         rels = [{"source": 0, "target": 1, "type": "located_in"}]
-        valid = {"Character", "Setting"}
 
-        rescued, rescued_rels, mapping, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            {},
-            {},
-        )
-        assert len(rescued) == 2
+        rescued, rescued_rels, mapping, stats = rescue_invalid_entity_types(entities, rels)
+        assert rescued == entities
         assert len(rescued_rels) == 1
         assert mapping == {0: 0, 1: 1}
         assert stats["total_invalid"] == 0
 
     def test_empty_entities_pass_through(self):
         """Empty entity list returns immediately."""
-        rescued, rescued_rels, _mapping, stats = rescue_invalid_entity_types(
-            [],
-            [],
-            {"Character"},
-            {},
-            {},
-        )
+        rescued, rescued_rels, _mapping, stats = rescue_invalid_entity_types([], [])
         assert rescued == []
         assert rescued_rels == []
         assert stats["total_invalid"] == 0
 
-    def test_empty_valid_types_pass_through(self):
-        """Empty valid_types set returns all entities unchanged."""
-        entities = [self._make_entity("Pierre", "Whatever")]
-        rescued, _rescued_rels, _mapping, stats = rescue_invalid_entity_types(
-            entities,
-            [],
-            set(),
-            {},
-            {},
-        )
-        assert len(rescued) == 1
-        assert stats["total_invalid"] == 0
+    def test_a_mapped_name_takes_its_core_type_and_subtype(self):
+        """An old template name the mapping table knows is its core type, the subtype a property."""
+        entities = [
+            self._make_entity("Pierre", "Character"),
+            self._make_entity("Moscow", "Setting"),
+        ]
+        rescued, _rels, mapping, stats = rescue_invalid_entity_types(entities, [])
+        assert [(e["type"], e["properties"]["entity_subtype"]) for e in rescued] == [
+            ("Person", "character"),
+            ("Location", "setting"),
+        ]
+        assert rescued[0]["type_rescued_from"] == "Character"
+        assert mapping == {0: 0, 1: 1}
+        assert stats["subtype_mapped"] == 2
+        # The input records are not mutated.
+        assert entities[0]["type"] == "Character"
+        assert "properties" not in entities[0]
 
     def test_tier1_drops_junk(self):
         """Tier 1 drops entities with empty names or name==type."""
         entities = [
-            self._make_entity("Pierre", "Character"),
+            self._make_entity("Pierre", "Person"),
             self._make_entity("", "InvalidType"),  # empty name → junk
-            self._make_entity("Event", "Event"),  # name == type → junk (invalid type)
+            self._make_entity("Event", "Battle"),
+            self._make_entity("Theme", "Theme"),  # name == type → junk (a non-core type)
         ]
-        valid = {"Character"}
 
-        rescued, _, mapping, stats = rescue_invalid_entity_types(
-            entities,
-            [],
-            valid,
-            {},
-            {},
-        )
-        assert len(rescued) == 1
-        assert rescued[0]["name"] == "Pierre"
+        rescued, _, mapping, stats = rescue_invalid_entity_types(entities, [])
+        # "Event" (written Battle, which no core type answers to without keywords) is no junk:
+        # kept as a Concept flagged unplaced_type (keep, flag, never delete, 2026-10-07)
+        assert [e["name"] for e in rescued] == ["Pierre", "Event"]
+        assert rescued[1]["type"] == "Concept"
+        assert rescued[1]["properties"] == {"unplaced_type": True, "written_type": "Battle"}
         assert mapping[1] is None
-        assert mapping[2] is None
+        assert mapping[3] is None
         assert stats["tier1_junk"] == 2
 
     def test_tier2_absorbs_property(self):
         """Tier 2 absorbs property-like entity into target."""
         entities = [
-            self._make_entity("Pierre", "Character", chunk_index=0),
+            self._make_entity("Pierre", "Person", chunk_index=0),
             self._make_entity("Brave", "Personality Trait", chunk_index=0),
         ]
         rels = [{"source": 1, "target": 0, "type": "has_trait"}]
-        valid = {"Character"}
         prop_map = {
-            "Personality Trait": {"target_type": "Character", "property": "personality_traits"},
+            "Personality Trait": {"target_type": "Person", "property": "personality_traits"},
         }
 
         rescued, _rescued_rels, mapping, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            {},
-            prop_map,
+            entities, rels, property_type_mapping=prop_map
         )
         assert len(rescued) == 1
         assert rescued[0]["name"] == "Pierre"
@@ -379,83 +364,69 @@ class TestRescueInvalidEntityTypes:
         assert stats["tier2_absorbed"] == 1
 
     def test_tier3_remaps_type(self):
-        """Tier 3 remaps invalid type to valid type, preserving relationships."""
+        """Tier 3 remaps an unmapped type by keyword, preserving relationships."""
         entities = [
-            self._make_entity("Pierre", "Character"),
+            self._make_entity("Pierre", "Person"),
             self._make_entity(
                 "Battle of Austerlitz", "Battle", description="A major military conflict"
             ),
         ]
         rels = [{"source": 0, "target": 1, "type": "participates_in"}]
-        valid = {"Character", "Event"}
-        norm_rules = {"Event": ["battle", "conflict", "war"]}
+        vocabulary = TypeVocabulary(keywords={"Event": ("battle", "conflict", "war")})
 
         rescued, rescued_rels, mapping, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            norm_rules,
-            {},
+            entities, rels, vocabulary
         )
         assert len(rescued) == 2
         assert rescued[1]["type"] == "Event"
         assert rescued[1]["type_rescued_from"] == "Battle"
-        assert mapping[0] == 0
-        assert mapping[1] == 1
+        assert "properties" not in rescued[1]
+        assert mapping == {0: 0, 1: 1}
         assert stats["tier3_remapped"] == 1
-        # Relationship preserved
         assert len(rescued_rels) == 1
 
-    def test_unrescued_dropped(self):
-        """Entities that fail all tiers are dropped."""
+    def test_unrescued_kept_as_a_flagged_concept(self):
+        """Entities no tier types are kept as Concept, flagged, and counted as unknown_type.
+
+        Keep, flag, never delete (2026-10-07): until then they were dropped, with their edges.
+        """
         entities = [
-            self._make_entity("Pierre", "Character"),
+            self._make_entity("Pierre", "Person"),
             self._make_entity(
                 "Weird Entity", "CompletelyUnknownType", description="nothing useful"
             ),
         ]
         rels = [{"source": 0, "target": 1, "type": "related_to"}]
-        valid = {"Character"}
 
-        rescued, rescued_rels, mapping, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            {},
-            {},
-        )
-        assert len(rescued) == 1
-        assert mapping[1] is None
-        assert stats["unrescued_dropped"] == 1
-        # Relationship dropped because target entity was removed
-        assert len(rescued_rels) == 0
+        rescued, rescued_rels, mapping, stats = rescue_invalid_entity_types(entities, rels)
+        assert len(rescued) == 2
+        assert mapping[1] == 1
+        assert rescued[1]["type"] == "Concept"
+        assert rescued[1]["type_rescued_from"] == "CompletelyUnknownType"
+        assert rescued[1]["properties"]["unplaced_type"] is True
+        assert rescued[1]["properties"]["written_type"] == "CompletelyUnknownType"
+        assert stats["unknown_type"] == 1
+        # The relationship is kept: its target is kept
+        assert len(rescued_rels) == 1
 
     def test_index_mapping_correctness(self):
         """Index mapping correctly remaps when middle entities are removed."""
         entities = [
-            self._make_entity("Pierre", "Character"),  # 0 → 0 (valid)
+            self._make_entity("Pierre", "Person"),  # 0 → 0 (valid)
             self._make_entity("", "Junk"),  # 1 → None (junk)
-            self._make_entity("Natasha", "Character"),  # 2 → 1 (valid)
+            self._make_entity("Natasha", "Character"),  # 2 → 1 (mapped)
             self._make_entity("the", "Misc"),  # 3 → None (junk)
-            self._make_entity("Moscow", "Setting"),  # 4 → 2 (valid)
+            self._make_entity("Moscow", "Location"),  # 4 → 2 (valid)
         ]
         rels = [
             {"source": 0, "target": 2, "type": "knows"},
             {"source": 2, "target": 4, "type": "lives_in"},
             {"source": 0, "target": 1, "type": "bad_rel"},  # drops
         ]
-        valid = {"Character", "Setting"}
 
-        rescued, rescued_rels, mapping, _stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            {},
-            {},
-        )
+        rescued, rescued_rels, mapping, _stats = rescue_invalid_entity_types(entities, rels)
         assert len(rescued) == 3
         assert mapping == {0: 0, 1: None, 2: 1, 3: None, 4: 2}
-        # Two valid relationships survive with remapped indices
         assert len(rescued_rels) == 2
         assert rescued_rels[0]["source"] == 0
         assert rescued_rels[0]["target"] == 1  # was 2 → now 1
@@ -463,42 +434,64 @@ class TestRescueInvalidEntityTypes:
         assert rescued_rels[1]["target"] == 2  # was 4 → now 2
 
     def test_rescue_stats_accurate(self):
-        """Rescue stats accurately reflect tier outcomes."""
+        """Rescue stats and the filtering log's counts reflect every tier outcome."""
+        from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
+            FilteringLog,
+        )
+
         entities = [
-            self._make_entity("Pierre", "Character"),  # valid
+            self._make_entity("Pierre", "Person"),  # valid
             self._make_entity("", "BadType"),  # tier 1 junk
             self._make_entity("Brave", "Personality Trait", chunk_index=0),  # tier 2 absorb
             self._make_entity("Big Battle", "Battle", description="A conflict"),  # tier 3 remap
             self._make_entity("Xyz", "CompletelyUnknown"),  # unrescued
+            self._make_entity("Lise", "Character"),  # mapped
+            self._make_entity("Andrei", "Person/character"),  # subtyped
+            self._make_entity("Mavra", "Person/wizard"),  # unplaced subtype, kept flagged
         ]
-        # Relationship: entity 2 → entity 0 (for tier 2 absorption)
         rels = [{"source": 2, "target": 0, "type": "has_trait"}]
-        valid = {"Character", "Event"}
-        norm_rules = {"Event": ["battle", "conflict"]}
+        vocabulary = TypeVocabulary(
+            keywords={"Event": ("battle", "conflict")},
+            subtypes={"character": ("Person", "character")},
+        )
         prop_map = {
-            "Personality Trait": {"target_type": "Character", "property": "personality_traits"},
+            "Personality Trait": {"target_type": "Person", "property": "personality_traits"},
         }
+        log = FilteringLog()
 
         _, _, _, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            norm_rules,
-            prop_map,
+            entities, rels, vocabulary, prop_map, filtering_log=log
         )
-        assert stats["total_invalid"] == 4
+        assert stats["total_invalid"] == 7
         assert stats["tier1_junk"] == 1
         assert stats["tier2_absorbed"] == 1
         assert stats["tier3_remapped"] == 1
-        assert stats["unrescued_dropped"] == 1
+        assert stats["subtype_mapped"] == 1
+        assert stats["subtyped"] == 1
+        assert stats["unplaced_subtype"] == 1
+        assert stats["unknown_type"] == 1
+        (stage,) = log.to_dict()["stages"]
+        assert stage["stage"] == "type_rescue"
+        assert stage["removed_count"] == 2  # junk and absorbed; the unrescued one is kept flagged
+        assert stage["counts"] == {
+            "junk": 1,
+            "absorbed": 1,
+            "unknown_type": 1,
+            "mapped": 1,
+            "pack_keyword": 0,
+            "keyword": 1,
+            "reference_person": 0,
+            "subtyped": 1,
+            "unplaced_subtype": 1,
+        }
 
     def test_tier3_preserves_all_relationships(self):
         """Tier 3 remapped entities keep all their relationships intact."""
         entities = [
-            self._make_entity("Pierre", "Character"),
-            self._make_entity("Natasha", "Character"),
+            self._make_entity("Pierre", "Person"),
+            self._make_entity("Natasha", "Person"),
             self._make_entity(
-                "Battle of Borodino", "Military Event", description="A massive battle"
+                "Battle of Borodino", "Military Engagement", description="A massive battle"
             ),
         ]
         rels = [
@@ -506,18 +499,42 @@ class TestRescueInvalidEntityTypes:
             {"source": 1, "target": 2, "type": "participates_in"},
             {"source": 0, "target": 1, "type": "knows"},
         ]
-        valid = {"Character", "Event"}
-        norm_rules = {"Event": ["battle", "military"]}
+        vocabulary = TypeVocabulary(keywords={"Event": ("battle", "military")})
 
         rescued, rescued_rels, _mapping, stats = rescue_invalid_entity_types(
-            entities,
-            rels,
-            valid,
-            norm_rules,
-            {},
+            entities, rels, vocabulary
         )
         assert len(rescued) == 3
         assert rescued[2]["type"] == "Event"
-        # All 3 relationships preserved
         assert len(rescued_rels) == 3
         assert stats["tier3_remapped"] == 1
+
+
+class TestJunkTierKeepsEvidence:
+    """Keep, flag, never delete at the junk tier (section-audit 2026-10-12)."""
+
+    @staticmethod
+    def _vocabulary():
+        from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+            TypeVocabulary,
+        )
+
+        return TypeVocabulary(types=("Person", "Location", "Concept"))
+
+    def test_junk_name_with_a_description_is_not_dropped(self):
+        vocabulary = self._vocabulary()
+        record = {"name": "Moscow", "type": "Moscow", "description": "The old capital of Russia."}
+        decision = vocabulary.decide("Moscow", record=record, salvage=True)
+        assert decision is None or decision.tier != "junk"
+
+    def test_junk_name_without_evidence_is_dropped(self):
+        vocabulary = self._vocabulary()
+        record = {"name": "Moscow", "type": "Moscow", "description": ""}
+        decision = vocabulary.decide("Moscow", record=record, salvage=True)
+        assert decision is not None and decision.tier == "junk"
+
+    def test_empty_name_stays_junk_even_with_a_description(self):
+        vocabulary = self._vocabulary()
+        record = {"name": "", "type": "Thing", "description": "someone"}
+        decision = vocabulary.decide("Thing", record=record, salvage=True)
+        assert decision is not None and decision.tier == "junk"

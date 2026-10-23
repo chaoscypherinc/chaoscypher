@@ -4,20 +4,47 @@
 """Node operations mixin for GraphRepository."""
 
 import hashlib
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import structlog
+from sqlalchemy import or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select
 
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
-from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
-from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
+from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode
+from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_membership_ops import (
+    MembershipOperationsMixin,
+)
+from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
+    attested_by,
+    in_source_scope,
+    member_ids_column,
+    split_member_ids,
+    visible,
+)
+from chaoscypher_core.adapters.sqlite.utils import (
+    entity_to_dict,
+    id_batches,
+    json_property_is_true,
+)
 from chaoscypher_core.models import Node, NodeCreate, NodePosition, NodeUpdate
 
 
 logger = structlog.get_logger(__name__)
+
+_NODE_VISIBLE = visible(GraphNode)
+"""A node a listing may return: a member source not switched off, or none (:mod:`.source_visibility`).
+
+Until 2026-10-06 the listings read NULL as no source and ``''`` as a source
+with no row (hidden), while the search's node scope read both as none
+(audit wave 6). Until #795 they read the home ``source_id`` only, so a merged
+node homed at a switched-off source was hidden while another member was on.
+"""
+_NODE_MEMBERS = member_ids_column(GraphNode)
+"""The node's member source ids, loaded beside it so in-memory scope filters read membership."""
 
 
 def _stable_node_id(
@@ -62,7 +89,7 @@ def _stable_node_id(
     return f"node_{digest}"
 
 
-class NodeOperationsMixin(GraphMixinBase):
+class NodeOperationsMixin(MembershipOperationsMixin):
     """Mixin providing node CRUD operations for GraphRepository."""
 
     # ========================================================================
@@ -90,6 +117,7 @@ class NodeOperationsMixin(GraphMixinBase):
         )
 
         self.session.add(db_node)
+        self.attest_nodes([db_node])
         self.session.maybe_commit()
         self.session.refresh(db_node)
 
@@ -142,6 +170,15 @@ class NodeOperationsMixin(GraphMixinBase):
         ``node_create.source_id`` when given (the importer resolves the
         source row separately from the node payload).
 
+        Memberships: a write that names its source (``source_id`` or
+        ``node_create.source_id``) records the payload as that source's
+        reading. One that names none leaves every membership alone, whoever
+        the members are: the incoming content may be another package's
+        reading of the same IRI, and until the #795 follow-up the home's
+        snapshot was overwritten with it, so a later release rebuilt the node
+        with another source's names under the home's. The importer records
+        the reading for its writer once citations name it.
+
         Args:
             ccx_iri: Stable CCX IRI used as the merge key.
             node_create: Node payload (template_id, label, entity_type,
@@ -163,9 +200,15 @@ class NodeOperationsMixin(GraphMixinBase):
             db_node.label = node_create.label
             db_node.properties = node_create.properties or {}
             db_node.entity_type = node_create.entity_type
+            db_node.updated_at = datetime.now(UTC)
             if resolved_source_id is not None:
                 db_node.source_id = resolved_source_id
-            db_node.updated_at = datetime.now(UTC)
+                self.attest_nodes([db_node])
+            # With no writer named, no membership is touched: the row's home may be
+            # another source (another package citing the same IRI, or a merged
+            # node), whose own reading this content is not (#795 follow-up M5). The
+            # importer records the writer's reading once it knows the writer
+            # (``assign_source_to_nodes(readings=)``).
             self.session.add(db_node)
             self.session.maybe_commit()
             self.session.refresh(db_node)
@@ -188,6 +231,7 @@ class NodeOperationsMixin(GraphMixinBase):
             ccx_iri=ccx_iri,
         )
         self.session.add(db_node)
+        self.attest_nodes([db_node])
         self.session.maybe_commit()
         self.session.refresh(db_node)
         created = entity_to_dict(db_node)
@@ -199,16 +243,19 @@ class NodeOperationsMixin(GraphMixinBase):
         node_ids: list[str],
         source_id: str,
         database_name: str,
+        readings: Mapping[str, dict[str, Any]] | None = None,
     ) -> int:
-        """Back-fill ``source_id`` on a batch of nodes that lack one.
+        """Link a batch of nodes to ``source_id``, back-filling the home source where missing.
 
         The CCX importer creates nodes before it knows which source cites
         them (the node->source link lives in the citation records, which are
         imported last), so it stamps ``graph_nodes.source_id`` here once
         citations resolve. Restoring the link keeps source-scoped node
-        queries correct and lets ``ON DELETE CASCADE`` remove an imported
-        source's nodes on re-import. Nodes that already carry a source id are
-        left untouched (first link wins), so this is safe to call per source.
+        queries correct and lets a release remove an imported source's nodes
+        on re-import. Nodes that already carry a source id
+        keep that home ``source_id`` (first link wins), so this is safe to call per
+        source; every linking source is still recorded as a member of the node
+        (``graph_node_sources``), which is what a source delete releases.
 
         It also re-points each node's denormalized ``source_document_id``
         property to ``source_id``. An imported node's bundle property holds the
@@ -216,25 +263,76 @@ class NodeOperationsMixin(GraphMixinBase):
         so syncing it to the local source id makes imported nodes consistent
         with extracted ones for any consumer that reads the property.
 
-        Returns the number of node rows updated.
+        Each membership's snapshot is what ``source_id`` wrote for the node:
+        ``readings[node_id]`` (for the importer, the package's own entity,
+        ``node_create_snapshot`` of the ``NodeCreate`` it upserted). A node
+        with no reading falls back to its own pre-merge reading (its home
+        source's snapshot, else the row when it has no membership yet), never
+        the row of a merged node: that carries every member's names, and
+        until the #795 follow-up a release rebuilt the node from it with a
+        deleted source's names back in.
+
+        Returns the number of node rows whose home ``source_id`` was stamped.
         """
         if not node_ids:
             return 0
         statement = select(GraphNode).where(
             col(GraphNode.id).in_(node_ids),
             GraphNode.database_name == database_name,
-            col(GraphNode.source_id).is_(None),
         )
         changed = 0
         now = datetime.now(UTC)
-        for node in self.session.exec(statement).all():
-            node.source_id = source_id
-            props = dict(node.properties) if node.properties else {}
-            props["source_document_id"] = source_id
-            node.properties = props
-            node.updated_at = now
-            self.session.add(node)
-            changed += 1
+        linked = self.session.exec(statement).all()
+        memberships = []
+        for node in linked:
+            if node.source_id is None:
+                node.source_id = source_id
+                props = dict(node.properties) if node.properties else {}
+                props["source_document_id"] = source_id
+                node.properties = props
+                node.updated_at = now
+                self.session.add(node)
+                changed += 1
+            reading = (readings or {}).get(node.id)
+            if reading is None:
+                snapshot = self.own_reading(node)  # the home's reading, as it is
+            else:
+                # what this source's package wrote, from this source: its provenance,
+                # as the commit stamps it on what a source writes (a rebuild homed
+                # here keeps it)
+                snapshot = dict(reading)
+                snapshot["properties"] = {
+                    **dict(snapshot.get("properties") or {}),
+                    "source_document_id": source_id,
+                }
+            memberships.append((node.id, source_id, snapshot))
+        self.record_node_sources(memberships)
+        if linked:
+            self.session.maybe_commit()
+        return changed
+
+    def clear_node_embeddings(self, node_ids: list[str]) -> int:
+        """Clear the stored embedding of each node in one transaction; rows changed.
+
+        The CCX import calls it for a shared node its rebuild changed: the
+        import's indexing re-embeds only nodes with no vector of the right
+        dimension, so a cleared node is re-embedded from its new text there.
+        """
+        if not node_ids:
+            return 0
+        changed = 0
+        now = datetime.now(UTC)
+        for batch in id_batches(sorted(set(node_ids))):
+            for node in self.session.exec(
+                select(GraphNode).where(
+                    col(GraphNode.id).in_(batch or []),
+                    GraphNode.database_name == self.database_name,
+                )
+            ).all():
+                node.embedding = None
+                node.updated_at = now
+                self.session.add(node)
+                changed += 1
         if changed:
             self.session.maybe_commit()
         return changed
@@ -297,12 +395,13 @@ class NodeOperationsMixin(GraphMixinBase):
                     GraphNode.updated_at,
                 )
             )
-        db_node = self.session.exec(statement).first()
+        row = self.session.execute(statement.add_columns(_NODE_MEMBERS)).first()
 
-        if db_node is None:
+        if row is None:
             return None
 
-        return self._db_node_to_model(db_node, include_embedding=include_embedding)
+        db_node, members = row
+        return self._db_node_to_model(db_node, include_embedding=include_embedding, members=members)
 
     def list_nodes(
         self,
@@ -378,21 +477,46 @@ class NodeOperationsMixin(GraphMixinBase):
             statement = statement.where(GraphNode.template_id == template_id)
 
         if source_ids is not None:
-            statement = statement.where(col(GraphNode.source_id).in_(source_ids))
+            statement = statement.where(attested_by(GraphNode, source_ids))
 
-        # Filter by source enabled status
+        # Filter by source enabled status (the shared predicate: a node of no
+        # source, or attested by a source not switched off)
         if not include_disabled_sources:
-            # Include nodes with NULL source_id (legacy/manual nodes) OR enabled sources
-            statement = statement.outerjoin(SourceRow, GraphNode.source_id == SourceRow.id).where(
-                (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            statement = statement.where(_NODE_VISIBLE)
 
         statement = statement.order_by(GraphNode.id).offset(skip).limit(limit)
-        db_nodes = self.session.exec(statement).all()
+        rows = self.session.execute(statement.add_columns(_NODE_MEMBERS)).all()
 
         if minimal:
-            return [self._db_node_to_model_minimal(n) for n in db_nodes]
-        return [self._db_node_to_model(n, include_embedding=include_embedding) for n in db_nodes]
+            return [self._db_node_to_model_minimal(n, members=m) for n, m in rows]
+        return [
+            self._db_node_to_model(n, include_embedding=include_embedding, members=m)
+            for n, m in rows
+        ]
+
+    def nodes_with_true_properties(
+        self, keys: Sequence[str], ids: Sequence[str] | None = None
+    ) -> dict[str, list[str]]:
+        """The nodes whose properties hold JSON ``true`` under any of ``keys`` (the port's contract).
+
+        One query per ``ids`` batch (or one scan of this database's nodes
+        when ``ids`` is None) reading every key as a ``json_type(...) =
+        'true'`` column, no property into Python: ``true`` exactly, never the
+        string ``"true"`` or the number 1.
+        """
+        if not keys:
+            return {}
+        flags = [json_property_is_true(GraphNode.properties, key) for key in keys]
+        out: dict[str, list[str]] = {}
+        for batch in id_batches(ids):
+            statement = select(GraphNode.id, *flags).where(
+                GraphNode.database_name == self.database_name, or_(*flags)
+            )
+            if batch is not None:
+                statement = statement.where(col(GraphNode.id).in_(batch))
+            for node_id, *on in self.session.execute(statement).all():
+                out[str(node_id)] = [key for key, hit in zip(keys, on, strict=True) if hit]
+        return out
 
     def list_nodes_minimal(
         self,
@@ -408,47 +532,48 @@ class NodeOperationsMixin(GraphMixinBase):
         Args:
             limit: Maximum number of results
             include_disabled_sources: If False (default), excludes nodes from disabled sources
-            source_ids: When set, restricts to nodes whose ``source_id`` is in
-                the list (nodes with no ``source_id`` are kept, matching the
-                scope semantics of the GraphRAG handlers). Applied in SQL so
+            source_ids: When set, restricts to nodes a listed source attests
+                (nodes with no source, NULL or ``''``, are kept, matching the
+                search's node scope and
+                :func:`~chaoscypher_core.ports.search.item_in_source_scope`). Applied in SQL so
                 the WHERE runs BEFORE ``limit`` — a Python post-filter on an
                 already-limited slice silently drops in-scope rows once the
                 graph exceeds the cap.
 
         Returns:
-            List of SimpleNamespace objects with minimal node data (id, label, template_id)
+            List of SimpleNamespace objects with minimal node data (id, label,
+            template_id, source_id and member_source_ids)
 
         """
-        statement = (
-            select(GraphNode)
-            .options(
-                load_only(
-                    GraphNode.id,
-                    GraphNode.label,
-                    GraphNode.template_id,
-                    GraphNode.source_id,  # Needed for join
-                )
-            )
-            .where(GraphNode.database_name == self.database_name)
-        )
+        # Plain column select: rows, not ORM entities (no per-row entity
+        # construction or identity-map registration on whole-graph loads).
+        statement = select(
+            GraphNode.id,
+            GraphNode.label,
+            GraphNode.template_id,
+            GraphNode.source_id,
+            _NODE_MEMBERS,
+        ).where(GraphNode.database_name == self.database_name)
 
-        # Filter by source enabled status
+        # Filter by source enabled status: the predicate every search arm reads
         if not include_disabled_sources:
-            statement = statement.outerjoin(SourceRow, GraphNode.source_id == SourceRow.id).where(
-                (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            statement = statement.where(_NODE_VISIBLE)
 
         if source_ids is not None:
-            statement = statement.where(
-                (GraphNode.source_id.is_(None)) | (col(GraphNode.source_id).in_(source_ids))
-            )
+            statement = statement.where(in_source_scope(GraphNode, source_ids))
 
-        statement = statement.limit(limit)
+        # Ordered by id like list_nodes: a LIMIT with no ORDER BY hands the query
+        # planner the choice of which rows to keep (audit wave 4).
+        statement = statement.order_by(GraphNode.id).limit(limit)
         db_nodes = self.session.exec(statement).all()
 
         return [
             SimpleNamespace(
-                id=n.id, label=n.label, template_id=n.template_id, source_id=n.source_id
+                id=n.id,
+                label=n.label,
+                template_id=n.template_id,
+                source_id=n.source_id,
+                member_source_ids=split_member_ids(n.member_ids),
             )
             for n in db_nodes
         ]
@@ -633,9 +758,12 @@ class NodeOperationsMixin(GraphMixinBase):
                     GraphNode.updated_at,
                 )
             )
-        db_nodes = self.session.exec(statement).all()
+        rows = self.session.execute(statement.add_columns(_NODE_MEMBERS)).all()
 
-        return [self._db_node_to_model(n, include_embedding=include_embedding) for n in db_nodes]
+        return [
+            self._db_node_to_model(n, include_embedding=include_embedding, members=m)
+            for n, m in rows
+        ]
 
     def update_node_position(self, node_id: str, x: float, y: float) -> Node | None:
         """Update only the node's position (optimized for layout saving)."""
@@ -685,6 +813,8 @@ class NodeOperationsMixin(GraphMixinBase):
             self.session.add(db_node)
             created_nodes.append(db_node)
 
+        self.attest_nodes(created_nodes)
+
         # Convert to models BEFORE commit — all fields are set from
         # constructor values and accessible without refresh. This avoids
         # N individual SELECT queries from session.refresh() per node.
@@ -695,7 +825,9 @@ class NodeOperationsMixin(GraphMixinBase):
         logger.info("nodes_batch_created", count=len(result))
         return result
 
-    async def upsert_nodes_batch(self, node_creates: list[NodeCreate]) -> tuple[list[Node], int]:
+    async def upsert_nodes_batch(
+        self, node_creates: list[NodeCreate], *, reattested: set[str] | None = None
+    ) -> tuple[list[Node], int]:
         """Idempotently create graph nodes keyed by content hash.
 
         Every node gets a deterministic primary key derived from
@@ -717,9 +849,21 @@ class NodeOperationsMixin(GraphMixinBase):
         properties, and preserving the first write prevents a partial
         re-run from silently clobbering already-committed state.
 
+        A reused row the incoming source does not attest is not a resume:
+        it outlived this source's release under another member (the kept
+        side of a cross-source merge, re-homed). The source gets its
+        membership back, with the reading it writes now
+        (``reattest_nodes``), and the row's id joins ``reattested`` for
+        the caller to rebuild from its members
+        (``release.rebuild_from_members``, #795). Without it a later
+        release of the other member deletes the row with this source's
+        edges.
+
         Args:
             node_creates: List of NodeCreate objects, each carrying
                 at least template_id, label, and source_id.
+            reattested: Filled with the ids of reused rows that gained the
+                incoming source's membership.
 
         Returns:
             Tuple of:
@@ -757,9 +901,11 @@ class NodeOperationsMixin(GraphMixinBase):
         new_entities: list[GraphNode] = []
         result_entities: list[GraphNode] = []
         batch_seen: dict[str, GraphNode] = {}
+        reused: list[tuple[str, NodeCreate]] = []
         for stable_id, nc in zip(stable_ids, node_creates, strict=True):
             if stable_id in existing_rows:
                 result_entities.append(existing_rows[stable_id])
+                reused.append((stable_id, nc))
                 continue
             if stable_id in batch_seen:
                 result_entities.append(batch_seen[stable_id])
@@ -785,7 +931,12 @@ class NodeOperationsMixin(GraphMixinBase):
 
         inserted_count = len(new_entities)
 
+        gained = self.reattest_nodes(reused)
+        if reattested is not None:
+            reattested.update(gained)
         if new_entities:
+            self.attest_nodes(new_entities)
+        if new_entities or gained:
             self.session.maybe_commit()
 
         logger.info(
@@ -796,12 +947,15 @@ class NodeOperationsMixin(GraphMixinBase):
         )
         return [self._db_node_to_model(e) for e in result_entities], inserted_count
 
-    def _db_node_to_model(self, db_node: GraphNode, *, include_embedding: bool = True) -> Node:
+    def _db_node_to_model(
+        self, db_node: GraphNode, *, include_embedding: bool = True, members: str | None = None
+    ) -> Node:
         """Convert database node to Pydantic model.
 
         ``include_embedding=False`` skips reading ``db_node.embedding`` entirely.
         When the list query left that column deferred, merely touching it would
         trigger a lazy per-row SELECT, so the caller must opt out here too.
+        ``members`` is the row's ``_NODE_MEMBERS`` value, when the load selected it.
         """
         position = None
         if db_node.position_x is not None and db_node.position_y is not None:
@@ -818,9 +972,10 @@ class NodeOperationsMixin(GraphMixinBase):
             created_at=db_node.created_at,
             updated_at=db_node.updated_at,
             source_id=db_node.source_id,
+            member_source_ids=split_member_ids(members),
         )
 
-    def _db_node_to_model_minimal(self, db_node: GraphNode) -> Node:
+    def _db_node_to_model_minimal(self, db_node: GraphNode, *, members: str | None = None) -> Node:
         """Convert database node to Pydantic model with minimal fields.
 
         Used for graph canvas rendering where properties/embedding aren't needed.
@@ -839,5 +994,6 @@ class NodeOperationsMixin(GraphMixinBase):
             position=position,
             embedding=None,  # Not loaded
             source_id=db_node.source_id,
+            member_source_ids=split_member_ids(members),
             # created_at and updated_at will use default_factory (datetime.now(UTC))
         )

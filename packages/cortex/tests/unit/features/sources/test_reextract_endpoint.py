@@ -103,7 +103,7 @@ class TestReextractSource:
 
     @pytest.mark.asyncio
     async def test_committed_source_uses_force_re_extract(self) -> None:
-        """COMMITTED → calls force_re_extract (atomic graph-delete + reset)."""
+        """COMMITTED → calls force_re_extract (atomic graph release + reset)."""
         adapter = MagicMock()
         graph_repo = MagicMock()
         engine = MagicMock()
@@ -117,6 +117,7 @@ class TestReextractSource:
             patch("chaoscypher_cortex.features.sources.service.force_re_extract") as mock_fre,
             patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
             patch("chaoscypher_cortex.features.sources.service.event_bus"),
+            patch.object(service, "_refresh_released", new_callable=AsyncMock) as refresh,
             _patched_provider(),
         ):
             mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
@@ -126,8 +127,10 @@ class TestReextractSource:
             source_id="src-1",
             database_name="default",
             storage_adapter=adapter,
-            graph_repository=graph_repo,
+            settings=engine.settings,
         )
+        # refreshed now: the reset commit counters make the next commit skip its cleanup
+        refresh.assert_awaited_once_with(mock_fre.return_value)
         # reset_for_retry must NOT be called for COMMITTED — force_re_extract
         # owns the atomic reset.
         adapter.reset_for_retry.assert_not_called()
@@ -325,18 +328,30 @@ class TestReextractSource:
             await service.reextract_source("src-1")
 
     @pytest.mark.asyncio
-    async def test_committed_without_graph_repo_raises(self) -> None:
-        """COMMITTED + missing graph_repository → OperationError."""
-        from chaoscypher_core.exceptions import OperationError
+    async def test_committed_without_graph_repo_still_releases(self) -> None:
+        """COMMITTED needs no injected graph repository: force_re_extract builds its own.
 
+        It releases on a repository over the adapter's session (#795), so the
+        request no longer fails with OperationError when none was injected.
+        """
         adapter = MagicMock()
         engine = MagicMock()
-        engine.get_source.return_value = _source_dict(status="committed")
-        # Note: graph_repository=None
+        engine.get_source.side_effect = [
+            _source_dict(status="committed"),
+            _source_dict(status="indexed"),
+        ]
         service = _make_service(adapter=adapter, engine_service=engine, graph_repository=None)
 
-        with _patched_provider(), pytest.raises(OperationError):
+        with (
+            patch("chaoscypher_cortex.features.sources.service.force_re_extract") as mock_fre,
+            patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
+            patch("chaoscypher_cortex.features.sources.service.event_bus"),
+            _patched_provider(),
+        ):
+            mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
             await service.reextract_source("src-1")
+
+        mock_fre.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_event_emitted_with_correct_payload(self) -> None:

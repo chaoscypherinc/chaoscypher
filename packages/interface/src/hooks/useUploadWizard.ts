@@ -16,11 +16,12 @@
  *                   source; confirm hits the state-aware confirm endpoint.
  *
  * Branching happens in `start`:
- *   - Auto domain   → POST /sources with NO forced domain (engages detection)
+ *   - Auto (packs null) → POST /sources with NO packs (engages detection)
  *                     → phase 'analyzing' → poll → 'review'.
- *   - Specific domain → POST with forced_domain + auto_confirm=true (override
- *                     fast-path): the gate is bypassed, no poll/review, the
- *                     wizard reports 'fast-path' so the caller closes normally.
+ *   - Chosen packs ([] = floor only) → POST with the packs + auto_confirm=true
+ *                     (override fast-path): the gate is bypassed, no
+ *                     poll/review, the wizard reports 'fast-path' so the
+ *                     caller closes normally.
  *   - Skipped duplicate → the upload short-circuits server-side; no wizard.
  *
  * The poll predicate is intentionally NOT `isSourceProcessing` /
@@ -89,8 +90,8 @@ export interface WizardUploadParams {
   filteringMode: string;
   contentFiltering: boolean;
   skipDuplicates: boolean;
-  /** '__auto__' (or undefined) → auto-detect; anything else → forced domain. */
-  domain: string;
+  /** `null` → detection proposes the packs; a list (`[]` = floor only) → forced packs. */
+  packs: string[] | null;
   /** Abort signal for the upload POST (the caller's Cancel-Upload affordance). */
   signal?: AbortSignal;
 }
@@ -112,8 +113,6 @@ export interface UseUploadWizardReturn {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-const AUTO_SENTINEL = '__auto__';
 
 /**
  * Whether the polled source carries the eager detection proposal yet. The
@@ -243,8 +242,7 @@ export function useUploadWizard(): UseUploadWizardReturn {
   const start = useCallback(
     async (params: WizardUploadParams): Promise<WizardStartResult> => {
       setError(null);
-      const isAuto = !params.domain || params.domain === AUTO_SENTINEL;
-      const domainToUse = isAuto ? undefined : params.domain;
+      const isAuto = params.packs === null;
 
       let result: Source;
       try {
@@ -253,14 +251,14 @@ export function useUploadWizard(): UseUploadWizardReturn {
           params.extractEntities,
           params.analysisDepth,
           params.enableNormalization,
-          domainToUse,
+          params.packs,
           undefined, // progress handled by the caller's own upload path
           params.enableVision,
           params.filteringMode || undefined,
           params.signal,
           params.contentFiltering,
           params.skipDuplicates,
-          // Override fast-path: a specific domain bypasses the gate entirely.
+          // Override fast-path: a pack choice bypasses the gate entirely.
           !isAuto,
         );
       } catch (err) {
@@ -281,13 +279,13 @@ export function useUploadWizard(): UseUploadWizardReturn {
         return { outcome: 'skipped', source: result };
       }
 
-      // Specific domain → gate bypassed; nothing to review.
+      // Chosen packs → gate bypassed; nothing to review.
       if (!isAuto) {
         reset();
         return { outcome: 'fast-path', source: result };
       }
 
-      // Auto domain → take over: begin the targeted Analyzing poll.
+      // Auto → take over: begin the targeted Analyzing poll.
       analyzeStartedAt.current = Date.now();
       setSourceId(result.id);
       setPhase('analyzing');

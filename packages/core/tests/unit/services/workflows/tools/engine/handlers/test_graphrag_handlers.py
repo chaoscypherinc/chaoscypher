@@ -19,6 +19,8 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.graphrag_handlers
     GraphRAGToolHandlers,
 )
 from chaoscypher_core.settings import EngineSettings
+from tests.fakes.graph_edges import edges_by_node_via
+from tests.fakes.graphrag_world import batch_lookup, make_chunk
 
 
 # ---------------------------------------------------------------------------
@@ -76,48 +78,6 @@ def make_edge(
     )
 
 
-def make_chunk(
-    chunk_id: str,
-    content: str = "Test content.",
-    source_id: str = "src1",
-) -> dict[str, Any]:
-    """Create a minimal chunk dict matching the storage protocol output.
-
-    Args:
-        chunk_id: Chunk identifier.
-        content: Text content of the chunk.
-        source_id: Owning source identifier.
-
-    Returns:
-        A dict matching the shape returned by indexing storage protocols.
-
-    """
-    return {
-        "id": chunk_id,
-        "content": content,
-        "source_id": source_id,
-        "database_name": "default",
-        "chunk_index": 0,
-        "page_number": 1,
-        "section": None,
-        "chunk_metadata": None,
-    }
-
-
-def batch_lookup(*chunks: dict[str, Any]) -> Any:
-    """side_effect emulating get_chunks_by_ids_batch over the given chunks.
-
-    Mirrors the adapter contract: results follow input order and missing
-    ids are silently absent.
-    """
-    by_id = {c["id"]: c for c in chunks}
-
-    def _fetch(chunk_ids: list[str], **_kwargs: Any) -> list[dict[str, Any]]:
-        return [by_id[cid] for cid in chunk_ids if cid in by_id]
-
-    return _fetch
-
-
 def _configure_graph_repo(
     repo: MagicMock,
     nodes: list[SimpleNamespace],
@@ -142,6 +102,7 @@ def _configure_graph_repo(
     repo.list_nodes.return_value = nodes
     repo.list_nodes_minimal.return_value = nodes
     repo.list_edges.return_value = edges
+    repo.list_edges_by_node.side_effect = edges_by_node_via(repo.list_edges)
     repo.list_edges_minimal.return_value = edges
     repo.get_nodes_batch.return_value = batch_nodes if batch_nodes is not None else nodes
 
@@ -185,7 +146,7 @@ def indexing_repo() -> MagicMock:
     """Mock indexing repository."""
     repo = MagicMock()
     repo.get_chunks_by_ids_batch.return_value = []
-    repo.get_source.return_value = None
+    repo.get_source_filenames_by_ids.return_value = {}
     return repo
 
 
@@ -741,3 +702,329 @@ def test_type_label_prefers_entity_type_over_generic_template(
     labels = handler._resolve_template_names([valkey, alice, loose])
 
     assert labels == {"n1": "Package", "n2": "Person", "n3": ""}
+
+
+# ===========================================================================
+# The hybrid reserve in the merge, and the public hybrid arm
+# ===========================================================================
+
+
+def _hydrated(chunk_id: str, origin: str, score: float = 1.0) -> dict[str, Any]:
+    """A chunk as the retrieval steps hand it to the merge (header line included)."""
+    return {
+        "chunk_id": chunk_id,
+        "chunk_alias": "C0",
+        "content": f"[CHUNK C0 | book.txt]\n[S1] Text of {chunk_id}.",
+        "original_content": f"Text of {chunk_id}.",
+        "source_id": "src1",
+        "score": score,
+        "retrieval_origin": origin,
+    }
+
+
+class TestMergeReserve:
+    """``graphrag.vector_reserve`` keeps the hybrid arm's best hits in the budget."""
+
+    @staticmethod
+    def _handler(reserve: int) -> GraphRAGToolHandlers:
+        settings = EngineSettings()
+        settings.graphrag.vector_reserve = reserve
+        return _make_handler(MagicMock(), MagicMock(), settings)
+
+    def test_reserve_swaps_the_lowest_provenance_chunks_for_the_next_hybrid_hits(self) -> None:
+        """Twelve provenance and eight hybrid chunks, budget 10, reserve 6.
+
+        Rank fusion keeps five hybrid hits; the sixth replaces the lowest
+        provenance-only chunk, the kept order is untouched, nothing repeats,
+        and the aliases run C0..C9 in the final order.
+        """
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(12)]
+        vector = [_hydrated(f"v{i}", "vector", 0.9 - i / 100) for i in range(8)]
+
+        merged = self._handler(6)._merge_and_rank([], provenance, vector, limit=10)
+
+        ids = [c["chunk_id"] for c in merged]
+        assert ids == ["p0", "v0", "p1", "v1", "p2", "v2", "p3", "v3", "v4", "v5"]
+        assert len(set(ids)) == 10
+        assert sum(c["retrieval_origin"] == "vector" for c in merged) == 6
+        assert [c["chunk_alias"] for c in merged] == [f"C{i}" for i in range(10)]
+        assert all(c["content"].startswith(f"[CHUNK {c['chunk_alias']} |") for c in merged)
+        assert all("rrf_score" in c for c in merged)
+
+    def test_zero_reserve_is_the_old_merge(self) -> None:
+        """With no reserve the result is the fused top ten, hybrid hits or not."""
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(12)]
+        vector = [_hydrated(f"v{i}", "vector") for i in range(8)]
+
+        merged = self._handler(0)._merge_and_rank([], provenance, vector, limit=10)
+
+        assert [c["chunk_id"] for c in merged] == [
+            "p0", "v0", "p1", "v1", "p2", "v2", "p3", "v3", "p4", "v4"
+        ]  # fmt: skip
+
+    def test_reserve_is_capped_by_the_hits_available(self) -> None:
+        """One hybrid hit and a reserve of four: nothing is swapped for a hit that does not exist."""
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(12)]
+        vector = [_hydrated("v0", "vector")]
+
+        merged = self._handler(4)._merge_and_rank([], provenance, vector, limit=10)
+
+        assert [c["chunk_id"] for c in merged] == ["p0", "v0", *(f"p{i}" for i in range(1, 9))]
+
+    def test_a_chunk_in_both_arms_counts_toward_the_reserve(self) -> None:
+        """A provenance chunk the hybrid arm also found is a hybrid hit; no swap is forced."""
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(10)]
+        vector = [_hydrated("p0", "vector"), _hydrated("v0", "vector")]
+
+        merged = self._handler(2)._merge_and_rank([], provenance, vector, limit=5)
+
+        assert [c["chunk_id"] for c in merged] == ["p0", "p1", "v0", "p2", "p3"]
+        assert merged[0]["retrieval_origin"] == "both"
+
+    def test_reserve_is_by_hybrid_rank_not_by_count(self) -> None:
+        """Reserve 8: the hybrid arm's fifth to eighth hits come in, replacing the lowest provenance.
+
+        Fusion already keeps five hybrid-origin chunks, so a count-based
+        reserve of eight would add three arbitrary hits; the guarantee is
+        that v0..v7 are all present (the facts plain search found sat at
+        those ranks on Book One, 2026-10-01).
+        """
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(12)]
+        vector = [_hydrated(f"v{i}", "vector", 0.9 - i / 100) for i in range(8)]
+
+        merged = self._handler(8)._merge_and_rank([], provenance, vector, limit=10)
+
+        ids = [c["chunk_id"] for c in merged]
+        assert ids == ["p0", "v0", "p1", "v1", "v2", "v3", "v4", "v5", "v6", "v7"]
+        assert len(set(ids)) == 10
+
+    def test_a_chunk_both_arms_found_is_never_dropped(self) -> None:
+        """Only provenance-only chunks give way; a chunk the hybrid arm also found stays."""
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(6)]
+        vector = [_hydrated("p5", "vector"), *(_hydrated(f"v{i}", "vector") for i in range(4))]
+
+        merged = self._handler(5)._merge_and_rank([], provenance, vector, limit=5)
+
+        ids = [c["chunk_id"] for c in merged]
+        assert "p5" in ids and set(ids) >= {"v0", "v1", "v2", "v3"}
+        assert len(set(ids)) == 5
+
+    def test_the_default_reserve_is_the_whole_hybrid_top_ten(self) -> None:
+        """The shipped default: the hybrid arm's top ten of ten (Phase 2 panel and holdout, 2026-10-05; eight before)."""
+        assert EngineSettings().graphrag.vector_reserve == 10  # the Phase 2 union shape, 2026-10-05
+
+
+class TestEvidenceArm:
+    """The evidence arm: the chunks the graph block cites enter the budget by right, never the reserve's victim."""
+
+    @staticmethod
+    def _handler(
+        evidence: int, reserve: int = 0, indexing: MagicMock | None = None
+    ) -> GraphRAGToolHandlers:
+        settings = EngineSettings()
+        settings.graphrag.evidence_chunks = evidence
+        settings.graphrag.vector_reserve = reserve
+        settings.graphrag.rank_chunks_by_seeds = False
+        return _make_handler(MagicMock(), MagicMock(), settings, indexing_repo=indexing)
+
+    @staticmethod
+    def _indexing(*ids: str) -> MagicMock:
+        indexing = MagicMock()
+        indexing.get_chunks_by_ids_batch.side_effect = batch_lookup(
+            *(make_chunk(i, content=f"Text of {i}.") for i in ids)
+        )
+        indexing.get_source_filenames_by_ids.side_effect = lambda ids, _db: dict.fromkeys(
+            ids, "book.txt"
+        )
+        return indexing
+
+    def test_an_evidence_chunk_enters_by_right_and_is_never_the_victim(self) -> None:
+        """The missing reserved hybrid hit evicts the provenance chunk, not the evidence one."""
+        kept = [
+            _hydrated("p1", "provenance"),
+            _hydrated("v1", "vector"),
+            _hydrated("e1", "evidence"),
+        ]
+        rest = [_hydrated("v2", "vector")]
+        out = GraphRAGToolHandlers._reserve_hybrid_hits(
+            kept, rest, ["v1", "v2"], 2, evidence_ids=("e1",)
+        )
+        assert [c["chunk_id"] for c in out] == ["v1", "e1", "v2"]  # p1 evicted, e1 kept
+
+    def test_with_no_victim_the_evidence_keeps_the_slot(self) -> None:
+        """Every kept chunk protected: the reserved hybrid hit stays out (the pipeline counts it)."""
+        kept = [_hydrated("e1", "evidence"), _hydrated("v1", "vector")]
+        out = GraphRAGToolHandlers._reserve_hybrid_hits(
+            kept, [_hydrated("v2", "vector")], ["v1", "v2"], 2, evidence_ids=("e1",)
+        )
+        assert [c["chunk_id"] for c in out] == ["e1", "v1"]
+
+    def test_without_evidence_ids_the_evidence_chunk_would_be_the_victim(self) -> None:
+        """The same case under the two-arm rule: the unprotected evidence chunk gives way."""
+        kept = [_hydrated("e1", "evidence"), _hydrated("v1", "vector")]
+        out = GraphRAGToolHandlers._reserve_hybrid_hits(
+            kept, [_hydrated("v2", "vector")], ["v1", "v2"], 2
+        )
+        assert [c["chunk_id"] for c in out] == ["v1", "v2"]
+
+    @pytest.mark.asyncio
+    async def test_the_evidence_arm_is_empty_at_lever_zero_and_capped_at_the_lever(self) -> None:
+        """Lever 0: nothing retrieved, storage not asked; lever 1: the first cited chunk only."""
+        off = self._handler(0, indexing=self._indexing("c2", "c5"))
+        assert await off._retrieve_evidence_chunks(["c2", "c5"], None) == []
+        off.indexing.get_chunks_by_ids_batch.assert_not_called()  # type: ignore[union-attr]
+
+        on = self._handler(1, indexing=self._indexing("c2", "c5"))
+        [chunk] = await on._retrieve_evidence_chunks(["c2", "c5"], None)
+        assert (chunk["chunk_id"], chunk["retrieval_origin"], chunk["score"]) == (
+            "c2",
+            "evidence",
+            1.0,
+        )
+        assert "[CHUNK C0 | book.txt]\n[S1] Text of c2." in chunk["content"]
+        on.indexing.get_chunks_by_ids_batch.assert_called_once_with(["c2"])  # type: ignore[union-attr]
+
+    @pytest.mark.asyncio
+    async def test_an_out_of_scope_evidence_chunk_is_left_out(self) -> None:
+        """A cited chunk of another source does not enter a scoped retrieval."""
+        indexing = MagicMock()
+        indexing.get_chunks_by_ids_batch.side_effect = batch_lookup(
+            make_chunk("c2", source_id="s1"), make_chunk("c5", source_id="s2")
+        )
+        indexing.get_source_filenames_by_ids.return_value = {}
+        h = self._handler(2, indexing=indexing)
+        out = await h._retrieve_evidence_chunks(["c2", "c5"], ["s1"])
+        assert [c["chunk_id"] for c in out] == ["c2"]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_evidence_arm_is_a_fault(self) -> None:
+        """Storage failing on the cited chunks records ``evidence_chunks`` and the arm is empty."""
+        from chaoscypher_core.utils.retrieval_faults import collect_retrieval_faults
+
+        indexing = MagicMock()
+        indexing.get_chunks_by_ids_batch.side_effect = RuntimeError("gone")
+        h = self._handler(3, indexing=indexing)
+        with collect_retrieval_faults() as faults:
+            assert await h._retrieve_evidence_chunks(["c2"], None) == []
+        assert list(faults) == ["evidence_chunks"]
+
+    @pytest.mark.asyncio
+    async def test_a_cited_chunk_in_the_hybrid_reserve_costs_no_slot_and_is_both(self) -> None:
+        """Review focus 3: the hybrid arm's own copy joins the arm, unhydrated; the slot goes to the next.
+
+        Lever 1, cited ``v0`` (the hybrid arm's best hit) then ``e1`` then
+        ``e2``: ``v0`` is in the reserve, so it costs no slot and ``e1``
+        takes the one slot; ``v0`` is not duplicated and is ``both``.
+        """
+        h = self._handler(1, reserve=2, indexing=self._indexing("e1", "e2"))
+        vector = [_hydrated("v0", "vector", 0.9), _hydrated("v1", "vector", 0.8)]
+        context: dict[str, Any] = {
+            "aggregates": [{"groups": [{"rows": [{"chunk_id": "v0"}, {"chunk_id": "e1"}]}]}],
+            "walks": [{"hops": [{"chunk_id": "e2"}]}],
+        }
+
+        arm = await h._evidence_arm(context, vector, limit=4, source_ids=None)
+
+        assert [c["chunk_id"] for c in arm] == ["v0", "e1"]
+        assert arm[0] is vector[0]  # the hybrid arm's chunk, not a second hydration
+        h.indexing.get_chunks_by_ids_batch.assert_called_once_with(["e1"])  # type: ignore[union-attr]
+        merged = h._merge_and_rank(arm, [], vector, limit=4)
+        assert [c["chunk_id"] for c in merged] == ["v0", "e1", "v1"]
+        assert [c["retrieval_origin"] for c in merged] == ["both", "evidence", "vector"]
+
+    @pytest.mark.asyncio
+    async def test_the_evidence_arm_reads_aggregate_rows_then_walk_hops(self) -> None:
+        """Block order: the aggregate rows' chunks first, then the walk hops', each once."""
+        h = self._handler(3, indexing=self._indexing("a1", "w1", "w2"))
+        context = {
+            "aggregates": [{"groups": [{"rows": [{"chunk_id": "a1"}, {"chunk_id": None}]}]}],
+            "walks": [
+                {"hops": [{"chunk_id": "w1"}, {"chunk_id": "a1"}]},
+                {"hops": [{"chunk_id": "w2"}]},
+            ],
+        }
+        arm = await h._evidence_arm(context, [], limit=10, source_ids=None)
+        assert [c["chunk_id"] for c in arm] == ["a1", "w1", "w2"]
+
+    def test_evidence_past_the_fused_cut_enters_by_right(self) -> None:
+        """Four evidence chunks, budget 4: all of them, though fusion interleaves the provenance arm."""
+        evidence = [_hydrated(f"e{i}", "evidence") for i in range(4)]
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(6)]
+
+        merged = self._handler(4)._merge_and_rank(evidence, provenance, [], limit=4)
+
+        assert [c["chunk_id"] for c in merged] == ["e0", "e1", "e2", "e3"]
+        assert [c["chunk_alias"] for c in merged] == ["C0", "C1", "C2", "C3"]
+
+    def test_evidence_ranks_ahead_and_keeps_the_fused_order_otherwise(self) -> None:
+        """One evidence chunk: first in the fused order (its arm comes first), the rest unchanged."""
+        evidence = [_hydrated("e0", "evidence")]
+        provenance = [_hydrated(f"p{i}", "provenance") for i in range(3)]
+        vector = [_hydrated(f"v{i}", "vector") for i in range(3)]
+
+        merged = self._handler(1)._merge_and_rank(evidence, provenance, vector, limit=4)
+
+        assert [c["chunk_id"] for c in merged] == ["e0", "p0", "v0", "p1"]
+
+    def test_an_evidence_chunk_another_arm_found_is_both_and_once(self) -> None:
+        """An evidence chunk the provenance arm also cites appears once, ``both``, the evidence copy kept."""
+        evidence = [_hydrated("p1", "evidence", 1.0)]
+        provenance = [_hydrated("p0", "provenance"), _hydrated("p1", "provenance", 0.5)]
+
+        merged = self._handler(1)._merge_and_rank(evidence, provenance, [], limit=3)
+
+        assert [c["chunk_id"] for c in merged] == ["p1", "p0"]
+        assert merged[0]["retrieval_origin"] == "both"
+        assert merged[0]["score"] == 1.0  # first wins: the evidence arm's copy
+
+    def test_the_reserve_evicts_around_the_evidence_and_counts_the_shortfall(self) -> None:
+        """Budget 3, reserve 3, one evidence chunk: two hybrid hits and the evidence, one hit short.
+
+        The provenance chunk is the only victim; the third reserved hit has
+        none (both other kept chunks are protected) and stays out.
+        """
+        evidence = [_hydrated("e0", "evidence")]
+        provenance = [_hydrated("p0", "provenance")]
+        vector = [_hydrated(f"v{i}", "vector") for i in range(3)]
+
+        merged = self._handler(1, reserve=3)._merge_and_rank(evidence, provenance, vector, limit=3)
+
+        assert [c["chunk_id"] for c in merged] == ["e0", "v0", "v1"]
+        assert GraphRAGToolHandlers._reserve_shortfall(merged, vector, 3) == 1
+
+
+class TestHybridChunkSearch:
+    """``hybrid_chunk_search``: the hybrid arm alone, as a public method."""
+
+    @pytest.mark.asyncio
+    async def test_returns_the_arms_top_chunks_with_aliases(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+        indexing_repo: MagicMock,
+        embedding_callback: AsyncMock,
+        settings: EngineSettings,
+    ) -> None:
+        """Entity hits are dropped, the list is cut to the limit, aliases run from C0."""
+        chunks = [make_chunk(f"c{i}", content=f"Chunk {i}.") for i in range(3)]
+        indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(*chunks)
+        search_repo.hybrid_search = AsyncMock(
+            return_value=[("n1", 0.95), ("chunk:c0", 0.9), ("chunk:c1", 0.8), ("chunk:c2", 0.7)]
+        )
+        handler = _make_handler(
+            graph_repo,
+            search_repo,
+            settings,
+            indexing_repo=indexing_repo,
+            embedding_callback=embedding_callback,
+        )
+
+        result = await handler.hybrid_chunk_search("test query", limit=2)
+
+        assert [c["chunk_id"] for c in result] == ["c0", "c1"]
+        assert [c["chunk_alias"] for c in result] == ["C0", "C1"]
+        assert [c["retrieval_origin"] for c in result] == ["vector", "vector"]
+        assert [c["score"] for c in result] == [0.9, 0.8]
+        assert "[CHUNK C1 |" in result[1]["content"]
+        search_repo.hybrid_search.assert_awaited_once()
+        assert search_repo.hybrid_search.await_args.kwargs["k"] == 4

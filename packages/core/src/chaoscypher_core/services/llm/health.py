@@ -29,6 +29,7 @@ this predicate.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -107,38 +108,38 @@ async def _ollama_pulled_models(settings: Settings) -> set[str] | None:
     block the event loop for up to ``ollama_verify_timeout`` seconds.
     """
     instances = settings.llm.ollama_instances or []
+    base_urls = [inst.base_url for inst in instances if inst.enabled and inst.base_url]
     # Reuse the existing verify timeout — list_models is the same
     # /api/tags call verify_ollama_url makes, so the timeout budget is
     # the same. Avoids inventing a new settings field.
     timeout = settings.timeouts.ollama_verify_timeout
-    pulled: set[str] = set()
-    any_reachable = False
 
+    async def _probe(client: httpx.AsyncClient, base_url: str) -> list[str] | None:
+        """Return the model names one instance lists, or None if unreachable."""
+        try:
+            resp = await client.get(f"{base_url}/api/tags")
+            if resp.status_code != 200:
+                return None
+            return [name for m in resp.json().get("models", []) if (name := m.get("name"))]
+        except httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError:
+            return None
+        except Exception:
+            logger.warning(
+                "ollama_health_list_models_unexpected",
+                base_url=base_url,
+                exc_info=True,
+            )
+            return None
+
+    # Probe every instance concurrently: this runs on every gated chat /
+    # import request, so one timing-out instance must cost one timeout,
+    # not one timeout per instance stacked serially.
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for inst in instances:
-            if not inst.enabled:
-                continue
-            base_url = inst.base_url
-            if not base_url:
-                continue
-            try:
-                resp = await client.get(f"{base_url}/api/tags")
-                if resp.status_code != 200:
-                    continue
-                any_reachable = True
-                for m in resp.json().get("models", []):
-                    name = m.get("name")
-                    if name:
-                        pulled.add(name)
-            except httpx.ConnectError, httpx.TimeoutException, httpx.HTTPError:
-                continue
-            except Exception:
-                logger.warning(
-                    "ollama_health_list_models_unexpected",
-                    base_url=base_url,
-                    exc_info=True,
-                )
-                continue
+        results = await asyncio.gather(*(_probe(client, url) for url in base_urls))
+
+    reachable = [names for names in results if names is not None]
+    pulled: set[str] = {name for names in reachable for name in names}
+    any_reachable = bool(reachable)
 
     return pulled if any_reachable else _OllamaTagsUnreachable
 

@@ -62,9 +62,14 @@ async def test_fatal_step_error_raises_workflow_execution_error(
 
         def create_execution(self, data: dict) -> None: ...
 
-        def update_status(self, eid: str, status: str) -> None: ...
+        def update_status(self, eid: str, status: str) -> bool:
+            return True
 
-        def finalize_execution(self, *args: Any, **kw: Any) -> None: ...
+        def get_status(self, eid: str) -> str | None:
+            return "running"
+
+        def finalize_execution(self, *args: Any, **kw: Any) -> bool:
+            return True
 
     monkeypatch.setattr(orch, "WorkflowExecutionRepository", lambda db: FakeRepo())
 

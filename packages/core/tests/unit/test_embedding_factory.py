@@ -7,6 +7,7 @@ import pytest
 
 from chaoscypher_core.adapters.embedding import create_embedding_provider
 from chaoscypher_core.adapters.embedding.local_provider import LocalEmbeddingProvider
+from chaoscypher_core.cache.embedding import CachedEmbeddingProvider
 from chaoscypher_core.settings import EngineSettings
 
 
@@ -37,5 +38,6 @@ class TestEmbeddingServiceFactory:
         """create_embedding_provider() should return LocalEmbeddingProvider with default settings."""
         settings = EngineSettings()
         provider = create_embedding_provider(settings)
-        assert isinstance(provider, LocalEmbeddingProvider)
+        assert isinstance(provider, CachedEmbeddingProvider)  # the cache is on by default
+        assert isinstance(provider.inner, LocalEmbeddingProvider)
         assert provider.model_name == settings.embedding.model

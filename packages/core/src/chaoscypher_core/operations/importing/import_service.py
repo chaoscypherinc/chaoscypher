@@ -49,6 +49,7 @@ from chaoscypher_core.operations.importing.format_handler import (
 from chaoscypher_core.operations.importing.imported_source_handler import (
     handle_index_imported_nodes,
     handle_index_imported_source,
+    node_ids_outside_sources,
 )
 from chaoscypher_core.operations.importing.indexing_handler import (
     handle_index_document,
@@ -73,9 +74,12 @@ from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository
     from chaoscypher_core.app_config import Settings
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
     from chaoscypher_core.settings import EngineSettings
 
 logger = structlog.get_logger(__name__)
@@ -301,20 +305,24 @@ def _resume_extraction_job(
         database_name: Active database name.
 
     Returns:
-        Tuple of (job_id, domain_object_or_None, chunks_list).
+        Tuple of (job_id, the job's ``DomainStack``, chunks_list).
 
     Raises:
         OperationError: If no chunks are found for the source (file may not be indexed).
     """
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import job_packs
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
     job_id = existing_job["id"]
-    detected_domain = existing_job.get("detected_domain")
-    effective_domain_name = existing_job.get("forced_domain") or detected_domain
-    domain = registry.get_domain(effective_domain_name) if effective_domain_name else None
+    packs = job_packs(existing_job)
+    # The floor plus the job's packs, as a fresh job builds its stack: the
+    # content exclusions are every member's.
+    domain = DomainStack.from_stored(registry, packs)
     logger.info(
         "chunk_extraction_job_resumed",
         job_id=job_id,
         file_id=file_id,
-        detected_domain=detected_domain,
+        packs=list(packs),
         completed_chunks=existing_job.get("completed_chunks", 0),
         total_chunks=existing_job.get("total_chunks", 0),
     )
@@ -349,7 +357,7 @@ def _create_fresh_extraction_job(
     adapter: SqliteAdapter,
     file_id: str,
     file_info: dict[str, Any],
-    forced_domain: str | None,
+    forced_packs: Sequence[str] | None,
     registry: Any,
     settings: Settings,
     analysis_depth: str,
@@ -357,7 +365,7 @@ def _create_fresh_extraction_job(
     task_id: str | None,
     domain_result: dict[str, Any] | None = None,
 ) -> tuple[str, Any, list[dict[str, Any]]]:
-    """Detect domain, build extraction config, and create a new job.
+    """Detect the packs, build extraction config, and create a new job.
 
     Runs the full domain-detection + template-formatting pipeline and
     persists the extraction config on the job so individual chunk
@@ -367,7 +375,8 @@ def _create_fresh_extraction_job(
         adapter: SqliteAdapter implementing storage protocols.
         file_id: Source file ID.
         file_info: File metadata dict.
-        forced_domain: User-forced domain name, if any.
+        forced_packs: The packs the user forced (``()`` the floor alone), or
+            None to detect.
         registry: Domain registry for domain detection.
         settings: Application settings.
         analysis_depth: Extraction depth (quick/full).
@@ -379,7 +388,7 @@ def _create_fresh_extraction_job(
             don't pre-detect) detection happens inline as before.
 
     Returns:
-        Tuple of (job_id, domain_object, chunks_list).
+        Tuple of (job_id, the ``DomainStack`` (floor plus packs), chunks_list).
 
     Raises:
         OperationError: If no chunks are found for the source (file may not be indexed).
@@ -396,7 +405,7 @@ def _create_fresh_extraction_job(
         "chunk_extraction_job_creating",
         job_id=job_id,
         file_id=file_id,
-        forced_domain=forced_domain,
+        forced_packs=list(forced_packs) if forced_packs is not None else None,
     )
 
     all_chunks = adapter.get_chunks_for_extraction(
@@ -416,16 +425,23 @@ def _create_fresh_extraction_job(
         sample_text = create_domain_sample_text(all_chunks, content_key="content")
         domain_result = detect_extraction_domain(
             registry=registry,
-            forced_domain=forced_domain,
+            forced_domain=None,
             sample_text=sample_text,
             filename=file_info.get("filename", ""),
             metadata=file_info.get("metadata", {}),
+            forced_packs=forced_packs,
         )
 
-    domain = domain_result["domain"]
     detected_domain = domain_result["detected_domain"]
-    entity_guidance = domain_result["entity_guidance"]
-    relationship_guidance = domain_result["relationship_guidance"]
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+        detected_packs_of,
+    )
+
+    packs = detected_packs_of(domain_result)
+    # The floor plus the detected (or forced) packs: what the prompt is built from.
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
+    stack = DomainStack.from_stored(registry, packs)
 
     # Build extraction config from domain. The source row supplies the
     # persisted per-source settings; for ``filtering_mode`` an explicit queue
@@ -442,22 +458,14 @@ def _create_fresh_extraction_job(
         )
         source_row = None
     extraction_config = _build_extraction_config(
-        domain=domain,
-        entity_guidance=entity_guidance,
-        relationship_guidance=relationship_guidance,
+        stack=stack,
         settings=settings,
         file_info=file_info,
         source_row=source_row,
     )
 
-    # Combine guidance for job-level storage
-    combined_guidance = entity_guidance
-    if relationship_guidance:
-        combined_guidance = (
-            f"{combined_guidance}\n\n{relationship_guidance}"
-            if combined_guidance
-            else relationship_guidance
-        )
+    # The guidance the prompts carry, combined for job-level storage.
+    combined_guidance = "\n\n".join(g for g in stack.guidance() if g)
 
     _load_or_create_extraction_job(
         source_id=file_id,
@@ -467,8 +475,8 @@ def _create_fresh_extraction_job(
         extraction_depth=analysis_depth,
         generate_embeddings=generate_embeddings,
         parent_task_id=task_id,
-        forced_domain=forced_domain,
-        detected_domain=detected_domain,
+        forced_packs=list(forced_packs) if forced_packs is not None else None,
+        detected_packs=list(packs),
         domain_guidance=combined_guidance,
         extraction_config=extraction_config,
     )
@@ -478,30 +486,27 @@ def _create_fresh_extraction_job(
         job_id=job_id,
         file_id=file_id,
         detected_domain=detected_domain,
+        packs=list(packs),
     )
 
-    return job_id, domain, all_chunks
+    return job_id, stack, all_chunks
 
 
 def _build_extraction_config(
     *,
-    domain: Any,
-    entity_guidance: str | None,
-    relationship_guidance: str | None,
+    stack: DomainStack,
     settings: Settings,
     file_info: dict[str, Any],
     source_row: dict[str, Any] | None = None,
 ) -> str:
     """Build the JSON extraction config stored once per job.
 
-    Collects domain templates, guidance, extraction limits, entity
+    Collects the stack's templates, guidance, extraction limits, entity
     exclusions, and type constraints into a single JSON blob that
     each chunk handler reads instead of recomputing.
 
     Args:
-        domain: Resolved domain object.
-        entity_guidance: Entity-specific extraction guidance.
-        relationship_guidance: Relationship-specific extraction guidance.
+        stack: The floor and the source's packs.
         settings: Application settings.
         file_info: Queue payload dict. A non-empty ``filtering_mode`` here
             is an explicit per-call override (e.g. from
@@ -517,180 +522,37 @@ def _build_extraction_config(
         JSON string of the extraction configuration.
     """
     from chaoscypher_core.app_config.engine_factory import build_engine_settings
-    from chaoscypher_core.services.sources.engine.extraction.orchestration import (
-        format_extraction_templates,
+    from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+        build_extraction_plan,
+        chunk_kwargs_to_config,
     )
 
     # `settings` is the backend `app_config.Settings` (no `.extraction`
     # field). The snapshot below pulls retry-loop thresholds from
     # `EngineSettings.extraction`, so convert once here — same pattern
     # as `_extract_chunk_handler` and `_finalize_extraction_handler`.
-    # Reading `settings.extraction.*` directly raises AttributeError on
-    # the real backend Settings; the prior version only worked under
-    # tests that monkeypatched `settings.extraction = MagicMock(...)`.
     engine_settings = build_engine_settings(settings)
 
-    template_result = format_extraction_templates(
-        domain,
-        examples_enabled=engine_settings.llm.extraction_examples_enabled,
-        examples_max_chars=engine_settings.llm.extraction_examples_max_chars,
+    # The one extraction plan (shared with the CLI and the standalone
+    # extractor): templates, guidance, examples, the FilteringConfig
+    # overrides (direction correction, orphan protection, the per-source
+    # degree cap, strict edge-type constraints) and the preset selector,
+    # whose cascade is per-call override (``file_info["filtering_mode"]``,
+    # applies to this run only and is not persisted) > source row > domain
+    # jsonld > engine default. The selector is serialised under its own
+    # ``filtering_mode`` key, sibling to ``extraction_limits``.
+    _payload_mode = file_info.get("filtering_mode")
+    plan = build_extraction_plan(
+        stack,
+        engine_settings,
+        filtering_mode_override=_payload_mode if isinstance(_payload_mode, str) else None,
+        source_row=source_row,
     )
-
-    domain_extraction_limits = domain.get_extraction_limits()
-    domain_entity_exclusions = domain.get_entity_exclusions()
-
-    domain_evidence_mode = (
-        domain.get_evidence_validation_mode()
-        if hasattr(domain, "get_evidence_validation_mode")
-        else None
-    )
-
-    domain_strict_types = (
-        domain.get_strict_entity_types() if hasattr(domain, "get_strict_entity_types") else False
-    )
-    valid_type_names: list[str] = []
-    if domain_strict_types:
-        domain_templates = domain.get_templates()
-        valid_type_names = [
-            t["name"] for t in domain_templates.get("node_templates", []) if t.get("name")
-        ]
-
-    domain_edge_type_constraints: dict[str, dict[str, list[str]]] = (
-        domain.get_edge_type_constraints() if hasattr(domain, "get_edge_type_constraints") else {}
-    )
-
-    # Resolve the effective preset selector. Cascade (highest first):
-    # file_info.filtering_mode (explicit per-call override) >
-    # source_row.filtering_mode (persisted upload-time value) > domain jsonld
-    # > engine default. Kept as its own variable and serialised under a
-    # top-level ``filtering_mode`` key on the extraction_config JSON —
-    # sibling to ``extraction_limits``, never inlined into it. The earlier
-    # inlining was the source of ``domain_config_unknown_keys_dropped``
-    # noise: ``resolve_filtering_config(domain_overrides=…)`` only accepts
-    # ``FilteringConfig`` field names, and the preset selector isn't one.
-    #
-    # Payload-before-row, corrected 2026-08-04. The order used to be
-    # row-before-payload, which made the payload branch **dead code**: the
-    # ``sources.filtering_mode`` column is non-nullable with
-    # ``default="balanced"``, so the row value is never empty and the fallback
-    # was unreachable for every real source. A caller passing
-    # ``filtering_mode`` to ``POST /sources/{id}/extraction`` paid for a full
-    # LLM re-extraction and silently got the persisted mode instead.
-    #
-    # Only an explicit, non-empty string counts as an override -- the enqueue
-    # site writes ``file_info["filtering_mode"] = filtering_mode`` verbatim and
-    # that parameter defaults to ``None``, so an absent override falls straight
-    # through to the row and preserves the previous behaviour exactly. The
-    # override is deliberately NOT persisted: it applies to this run only,
-    # which is what the API documents.
-    _filtering_mode_override: str | None = None
-    _payload_value = file_info.get("filtering_mode")
-    if isinstance(_payload_value, str) and _payload_value:
-        _filtering_mode_override = _payload_value
-    if _filtering_mode_override is None and source_row is not None:
-        _row_value = source_row.get("filtering_mode")
-        if isinstance(_row_value, str) and _row_value:
-            _filtering_mode_override = _row_value
-    _domain_default_mode: str | None = (
-        domain.get_filtering_mode() if hasattr(domain, "get_filtering_mode") else None
-    )
-    extraction_filtering_mode: str = (
-        _filtering_mode_override
-        or _domain_default_mode
-        or engine_settings.extraction.extraction_filtering_mode
-    )
-
-    # Phase 4 (2026-05-08): thread per-source enable_direction_correction override
-    # into extraction limits (which become domain_overrides for resolve_filtering_config).
-    # Cascade: source_row > domain_extraction_limits (already present) > engine default.
-    # When source_row has an explicit non-None value, write it into the limits dict so
-    # it overrides any domain-level setting when the finalizer resolves FilteringConfig.
-    if source_row is not None:
-        _row_direction = source_row.get("enable_direction_correction")
-        if isinstance(_row_direction, bool):
-            if domain_extraction_limits is not None:
-                domain_extraction_limits["enable_direction_correction"] = _row_direction
-            else:
-                domain_extraction_limits = {"enable_direction_correction": _row_direction}
-    # When neither the row nor the domain dict specifies it, thread the engine-level
-    # default so the finalizer always sees an explicit value (avoids relying on
-    # FilteringConfig's own field default, which would ignore the settings.yaml knob).
-    if (
-        domain_extraction_limits is not None
-        and "enable_direction_correction" not in domain_extraction_limits
-    ):
-        domain_extraction_limits["enable_direction_correction"] = (
-            engine_settings.extraction.enable_direction_correction
-        )
-    elif domain_extraction_limits is None:
-        domain_extraction_limits = {
-            "enable_direction_correction": engine_settings.extraction.enable_direction_correction
-        }
-
-    # Phase 4 (2026-05-08): thread per-source protect_orphans override into extraction
-    # limits (which become domain_overrides for resolve_filtering_config).
-    # Cascade: source_row > domain_extraction_limits (already present) > engine default.
-    if source_row is not None:
-        _row_protect_orphans = source_row.get("protect_orphans")
-        if isinstance(_row_protect_orphans, bool):
-            if domain_extraction_limits is not None:
-                domain_extraction_limits["protect_orphans"] = _row_protect_orphans
-            else:
-                domain_extraction_limits = {"protect_orphans": _row_protect_orphans}
-    # When neither the row nor the domain dict specifies it, thread the engine-level
-    # default so the finalizer always sees an explicit value.
-    if domain_extraction_limits is not None and "protect_orphans" not in domain_extraction_limits:
-        domain_extraction_limits["protect_orphans"] = engine_settings.extraction.protect_orphans
-    elif domain_extraction_limits is None:
-        domain_extraction_limits = {"protect_orphans": engine_settings.extraction.protect_orphans}
-
-    # Phase 6 (2026-05-08): thread per-source max_entity_degree_override into
-    # extraction limits so resolve_filtering_config picks it up as max_entity_degree.
-    # Cascade: source_row.max_entity_degree_override (nullable int) > domain limit
-    # already present > engine default (ExtractionSettings.max_entity_degree).
-    # Only override when the row carries a positive integer; zero or negative would
-    # turn off the cap unintentionally so treat those as "use domain/global default".
-    if source_row is not None:
-        _row_degree_override = source_row.get("max_entity_degree_override")
-        if isinstance(_row_degree_override, int) and _row_degree_override > 0:
-            if domain_extraction_limits is not None:
-                domain_extraction_limits["max_entity_degree"] = _row_degree_override
-            else:
-                domain_extraction_limits = {"max_entity_degree": _row_degree_override}
-
-    # Phase 5 (2026-05-18): a domain that declares ``strict_entity_types: true``
-    # is asserting its node-template list is exhaustive. The same contract must
-    # carry through to edge validation, otherwise ``Vienna -[interacts_with]->
-    # Empress`` (Location source on a Character-only edge template) passes
-    # silently on every non-strict preset. When the domain's extraction_limits
-    # already pins ``strict_edge_type_constraints`` (e.g. a domain in transition)
-    # the explicit value wins.
-    if domain_extraction_limits is not None:
-        if "strict_edge_type_constraints" not in domain_extraction_limits:
-            domain_extraction_limits["strict_edge_type_constraints"] = domain_strict_types
-    elif domain_strict_types:
-        domain_extraction_limits = {"strict_edge_type_constraints": True}
 
     return json.dumps(
         {
-            "node_templates_formatted": template_result["node_templates"],
-            "edge_templates_formatted": template_result["edge_templates"],
-            "entity_guidance": entity_guidance,
-            "relationship_guidance": relationship_guidance,
-            "entity_examples_formatted": template_result["entity_examples"],
-            "relationship_examples_formatted": template_result["relationship_examples"],
-            "extraction_limits": domain_extraction_limits,
-            # Preset selector — sibling to extraction_limits, never inlined.
-            "filtering_mode": extraction_filtering_mode,
-            # Pydantic ExclusionRule round-trips through JSON as a dict
-            # so the queue payload stays JSON-safe; the chunk-extraction
-            # handler reconstitutes ExclusionRule objects on the consumer
-            # side.
-            "entity_exclusions": [r.model_dump() for r in (domain_entity_exclusions or [])],
-            "strict_entity_types": domain_strict_types,
-            "valid_entity_type_names": valid_type_names,
-            "evidence_validation_mode": domain_evidence_mode,
-            "edge_type_constraints": domain_edge_type_constraints,
+            **chunk_kwargs_to_config(plan.chunk_kwargs),
+            "edge_type_constraints": plan.edge_type_constraints or {},
             # Workstream 8 (2026-05-07) — snapshot the extraction-time
             # settings so a mid-job edit to ``settings.yaml`` does not
             # drift across in-flight chunks. The chunk handler reads
@@ -710,9 +572,47 @@ def _build_extraction_config(
             "loop_invalid_relationship_rate_threshold": (
                 engine_settings.extraction.loop_invalid_relationship_rate_threshold
             ),
+            "known_entities_limit": engine_settings.extraction.known_entities_limit,
             "snapshot_version": 2,
         }
     )
+
+
+def resolve_source_content_matchers(
+    *,
+    domain: Any,
+    file_info: dict[str, Any] | None,
+    source_row: dict[str, Any] | None,
+) -> list[Any]:
+    """Resolve the content-exclusion matchers that apply to one source.
+
+    The one decision of whether (and how) a source's chunks are stripped
+    before extraction: the source row's ``content_filtering`` toggle wins,
+    then the legacy ``file_info`` flag (default on), then the domain's
+    exclusions. Used by the group planner (``_apply_content_filtering``) and
+    by the queue's chunk handler, which re-strips the rows it re-fetches so
+    it numbers the same group text.
+
+    Args:
+        domain: The source's ``DomainStack`` (every member's exclusions), or
+            any object with ``get_content_exclusions``; may be None.
+        file_info: File metadata dict (legacy toggle fallback).
+        source_row: Authoritative source-row state, when available.
+
+    Returns:
+        Compiled matchers; empty when filtering is off or the domain has none.
+    """
+    from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+        resolve_content_exclusions,
+    )
+
+    if source_row is not None and "content_filtering" in source_row:
+        enabled = bool(source_row.get("content_filtering"))
+    else:
+        enabled = bool((file_info or {}).get("content_filtering", True))
+    if not enabled or not domain:
+        return []
+    return resolve_content_exclusions(domain)
 
 
 def _apply_content_filtering(
@@ -743,27 +643,23 @@ def _apply_content_filtering(
     """
     from chaoscypher_core.services.sources.engine.extraction.orchestration import (
         filter_and_strip_chunks,
-        resolve_content_exclusions,
     )
 
-    if source_row is not None and "content_filtering" in source_row:
-        content_filtering_enabled = bool(source_row.get("content_filtering"))
-    else:
-        content_filtering_enabled = file_info.get("content_filtering", True)
     filter_stats = None
 
-    if content_filtering_enabled and domain:
-        content_matchers = resolve_content_exclusions(domain)
-        if content_matchers:
-            all_chunks, filter_stats = filter_and_strip_chunks(all_chunks, content_matchers)
-            logger.info(
-                "content_exclusion_applied",
-                source_id=file_id,
-                total_chunks=filter_stats.total_chunks,
-                excluded_chunks=filter_stats.excluded_chunks,
-                categories=filter_stats.categories_matched,
-                avg_stripped_ratio=filter_stats.avg_content_stripped_ratio,
-            )
+    content_matchers = resolve_source_content_matchers(
+        domain=domain, file_info=file_info, source_row=source_row
+    )
+    if content_matchers:
+        all_chunks, filter_stats = filter_and_strip_chunks(all_chunks, content_matchers)
+        logger.info(
+            "content_exclusion_applied",
+            source_id=file_id,
+            total_chunks=filter_stats.total_chunks,
+            excluded_chunks=filter_stats.excluded_chunks,
+            categories=filter_stats.categories_matched,
+            avg_stripped_ratio=filter_stats.avg_content_stripped_ratio,
+        )
 
     return all_chunks, filter_stats
 
@@ -1035,9 +931,19 @@ class ImportOperationsService:
         # node/chunk vectors — on the LLM queue, without blocking this import.
         database_name = (metadata or {}).get("database_name", "default")
         priority = get_settings().priorities.background
-        for source_id in result.get("imported_source_ids", []):
+        source_ids = result.get("imported_source_ids", [])
+        for source_id in source_ids:
             await _queue_index_imported_source(
                 source_id, database_name=database_name, priority=priority
+            )
+        # Nodes belonging to none of those sources (a knowledge-only package,
+        # or uncited nodes of a multi-source one) are indexed off their ids.
+        unsourced_node_ids = node_ids_outside_sources(
+            self.graph_repository, result.get("imported_node_ids", []), source_ids
+        )
+        if unsourced_node_ids:
+            await _queue_index_imported_nodes(
+                unsourced_node_ids, database_name=database_name, priority=priority
             )
         return result
 
@@ -1303,6 +1209,9 @@ class ImportOperationsService:
                 search_repository=search_repository,
                 settings=engine_settings,
                 reload_callback=None,  # No reload needed
+                # Reuse the worker-cached provider: a per-task provider reloads
+                # the local embedding model on every commit that creates templates.
+                embedding_provider=self.indexing_service.embedding_service,
             )
 
             # Payload-clear atomicity is owned by ``SourceCommitService``:
@@ -1512,7 +1421,13 @@ class ImportOperationsService:
         # forever (F41 invariant below). gate_decision reads ONLY persisted
         # SourceRow state so recovery re-dispatch (_classify_indexed) and
         # trigger_next_waiting evaluate it identically.
-        forced_domain = _file_info.get("forced_domain")
+        from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+            forced_packs_of,
+        )
+
+        # The payload's forced packs (``forced_packs``, else the old ``forced_domain``)
+        # are only a fallback: the row below is the source of truth.
+        forced_packs = forced_packs_of(_file_info)
         domain_result: dict[str, Any] | None = None
         if adapter is not None:
             from chaoscypher_core.operations.importing.confirmation_gate import (
@@ -1521,8 +1436,8 @@ class ImportOperationsService:
                 proposal_from_detection,
             )
             from chaoscypher_core.services.sources.engine.extraction.domains import (
-                create_domain_sample_text,
                 get_domain_registry,
+                source_domain_sample,
             )
             from chaoscypher_core.services.sources.engine.extraction.orchestration import (
                 detect_extraction_domain,
@@ -1530,16 +1445,23 @@ class ImportOperationsService:
 
             gate_source = adapter.get_source(file_id, settings.current_database)
             if gate_source is not None:
-                # Row is the source of truth for the confirmed/forced domain.
-                # On a recovery re-dispatch the rebuilt ``_file_info`` carries no
-                # ``forced_domain`` (recovery._build_file_info_from_source omits
-                # it), so without this fallback a CONFIRMED source would re-run
-                # auto-detection and extract under a possibly-different domain,
+                # Row is the source of truth for the confirmed/forced packs,
+                # read first: the queue payload is the upload-time snapshot,
+                # and a confirm that lands while the source is still indexing
+                # rewrites the row's packs but not the payload travelling
+                # through indexing -> embedding -> analysis (the indexing
+                # handler reads the row first for the same reason). The
+                # payload is the fallback for a row that forces nothing: on a
+                # recovery re-dispatch the rebuilt ``_file_info`` carries no
+                # forced packs (recovery._build_file_info_from_source omits
+                # them), and without the row a CONFIRMED source would re-run
+                # auto-detection and extract under possibly-different packs,
                 # defeating the confirmation guarantee in the crash window.
-                # Mirrors how filtering_mode / extraction_depth are read from the
-                # row rather than the queue payload.
-                if not forced_domain:
-                    forced_domain = gate_source.get("forced_domain")
+                # Mirrors how filtering_mode / extraction_depth are read from
+                # the row rather than the queue payload.
+                row_packs = forced_packs_of(gate_source)
+                if row_packs is not None:
+                    forced_packs = row_packs
 
                 # Wizard §3.1 dedupe (2026-05-29): if the indexing handler
                 # already wrote a detection_proposal (eager-detection step),
@@ -1563,20 +1485,17 @@ class ImportOperationsService:
                         "detected_domain": _prewritten_proposal.get("detected_domain"),
                     }
 
-                _gate_chunks = adapter.get_chunks_for_extraction(
-                    source_id=file_id,
-                    database_name=settings.current_database,
-                )
-                _sample = create_domain_sample_text(_gate_chunks, content_key="content")
+                _sample = source_domain_sample(adapter, file_id, settings.current_database)
                 _registry = get_domain_registry(
                     engine_settings, database_name=settings.current_database
                 )
                 domain_result = detect_extraction_domain(
                     registry=_registry,
-                    forced_domain=forced_domain,
+                    forced_domain=None,
                     sample_text=_sample,
                     filename=_file_info.get("filename", ""),
                     metadata=_file_info.get("metadata", {}),
+                    forced_packs=forced_packs,
                 )
 
                 if gate_decision(gate_source) == "park":
@@ -1636,7 +1555,7 @@ class ImportOperationsService:
                 build_extraction_groups,
             )
 
-            # ``forced_domain`` is resolved once in the hoisted confirmation
+            # ``forced_packs`` is resolved once in the hoisted confirmation
             # gate above (before the slot claim); reuse it here.
             registry = get_domain_registry(engine_settings, database_name=settings.current_database)
 
@@ -1659,7 +1578,7 @@ class ImportOperationsService:
                         adapter=adapter,
                         file_id=file_id,
                         file_info=_file_info,
-                        forced_domain=forced_domain,
+                        forced_packs=forced_packs,
                         registry=registry,
                         settings=settings,
                         analysis_depth=analysis_depth,

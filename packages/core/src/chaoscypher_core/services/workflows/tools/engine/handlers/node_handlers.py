@@ -13,9 +13,12 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.models import NodeCreate, NodeUpdate
+from chaoscypher_core.models import Node, NodeCreate, NodeUpdate
+from chaoscypher_core.ports.search import item_in_source_scope
+from chaoscypher_core.services.graph.management.release import reembed_nodes
 from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     assign_chunk_aliases,
+    chunk_source_filenames,
     clean_chunk_metadata,
     format_chunk_content,
 )
@@ -23,6 +26,7 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.ports.graph import GraphRepositoryProtocol
     from chaoscypher_core.ports.index import IndexingProtocol
     from chaoscypher_core.ports.search import SearchRepositoryProtocol
@@ -41,6 +45,7 @@ class NodeToolHandlers:
         indexing_repository: IndexingProtocol | None = None,
         embedding_callback: Callable | None = None,
         search_settings: SearchSettings | None = None,
+        embedding_provider: EmbeddingProviderProtocol | None = None,
     ) -> None:
         """Initialize the instance.
 
@@ -50,6 +55,8 @@ class NodeToolHandlers:
             indexing_repository: Optional repository for chunk operations.
             embedding_callback: Async callback for generating embeddings.
             search_settings: Optional search settings for reranking configuration.
+            embedding_provider: The provider that embeds a node written through the tools
+                (``create_node``, ``update_node``); None indexes keywords alone.
 
         """
         self.graph = graph_repository
@@ -57,25 +64,26 @@ class NodeToolHandlers:
         self.indexing = indexing_repository
         self.embedding_callback = embedding_callback
         self.search_settings = search_settings
+        self.embedding_provider = embedding_provider
         self._ranker: Any | None = None
 
     def _check_source_scope(self, node: Any, source_ids: list[str] | None) -> str | None:
         """Check if a node is within source scope.
 
+        A node merged from several sources is in the scope of each
+        (:func:`~chaoscypher_core.ports.search.item_in_source_scope`, #795).
+
         Args:
-            node: Node object with source_id attribute
+            node: Node object (its ``member_source_ids``, else its ``source_id``)
             source_ids: Allowed source IDs (None = no restriction)
 
         Returns:
             Error message if out of scope, None if allowed
 
         """
-        if not source_ids:
+        if not source_ids or item_in_source_scope(node, source_ids):
             return None
-        node_source_id = getattr(node, "source_id", None)
-        if node_source_id and node_source_id not in source_ids:
-            return f"Node '{node.label}' is not accessible in the current source scope"
-        return None
+        return f"Node '{node.label}' is not accessible in the current source scope"
 
     def _make_embedding_callback(
         self,
@@ -242,17 +250,16 @@ class NodeToolHandlers:
                         continue
 
                 # Filter by source scope
-                if source_ids:
-                    node_source_id = getattr(node, "source_id", None)
-                    if node_source_id and node_source_id not in source_ids:
-                        filtered_count += 1
-                        continue
+                if source_ids and not item_in_source_scope(node, source_ids):
+                    filtered_count += 1
+                    continue
 
                 node_results.append(
                     {
                         "id": node.id,
                         "label": node.label,
                         "template_id": node.template_id,
+                        "entity_type": getattr(node, "entity_type", None),
                         "properties": node.properties,
                         "score": score,
                     }
@@ -269,21 +276,22 @@ class NodeToolHandlers:
                 template_name = "unknown"
             result_types[template_name] = result_types.get(template_name, 0) + 1
 
-        # Check if results might not match expected entity type
-        person_indicators = {"person", "character", "author", "figure", "protagonist"}
+        # Check if results might not match expected entity type: a person is a node
+        # of the core type Person (spec 2026-10-07 § 6), whatever its pack subtype
+        # (character, author: ``properties.entity_subtype``); the template is the
+        # core type's.
         has_person_results = any(
-            indicator in template_id.lower()
-            for template_id in result_types
-            for indicator in person_indicators
+            r.get("entity_type") == "Person" or "person" in str(r.get("template_id", "")).lower()
+            for r in node_results
         )
 
         # Generate hint if results seem like abstract concepts (only when not filtering)
         hint = None
         if node_results and not has_person_results and not template_ids:
             hint = (
-                "Results appear to be abstract concepts. If searching for a person/character, "
-                "try search_nodes with template_ids=['person', 'character'], "
-                "or use resolve_node(query) to find the canonical entity."
+                "Results appear to be abstract concepts. If searching for a person (a character, "
+                "an author: a Person with that subtype), try search_nodes with "
+                "template_ids=['person'], or use resolve_node(query) to find the canonical entity."
             )
 
         return {
@@ -373,7 +381,18 @@ class NodeToolHandlers:
         }
 
         chunks: list[dict] = []
-        source_filenames: dict[str, str] = {}
+        # The source filenames for the citation labels, one read per database for the hits
+        # in scope (chunk_hydration.chunk_source_filenames).
+        source_filenames = chunk_source_filenames(
+            (
+                row
+                for row in (chunks_by_id.get(chunk_uuid) for chunk_uuid, _ in chunk_hits)
+                if row
+                and not (source_ids and row.get("source_id") not in source_ids)
+                and not (source_id and row.get("source_id") != source_id)
+            ),
+            getattr(self.indexing, "get_source_filenames_by_ids", None),
+        )
         for chunk_uuid, score in chunk_hits:
             chunk_data = chunks_by_id.get(chunk_uuid)
             if chunk_data:
@@ -383,15 +402,8 @@ class NodeToolHandlers:
                     continue
                 if source_id and chunk_source != source_id:
                     continue
-                # Resolve source filename for citation labels
                 original_content = chunk_data["content"]
                 chunk_source_id = chunk_data.get("source_id", "")
-                if chunk_source_id and chunk_source_id not in source_filenames:
-                    get_source = getattr(self.indexing, "get_source", None)
-                    if get_source:
-                        db = chunk_data.get("database_name", "")
-                        src = get_source(chunk_source_id, db)
-                        source_filenames[chunk_source_id] = src.get("filename", "") if src else ""
 
                 # Use short alias (C0, C1, ...) instead of UUID
                 # for LLM readability — mapped back during enrichment
@@ -520,6 +532,66 @@ class NodeToolHandlers:
             "search_query": query if query else None,
         }
 
+    def _resolve_template_id(self, template_id: str) -> str | None:
+        """The template's id, given its id or its exact name; None when there is neither."""
+        if self.graph.get_template(template_id) is not None:
+            return template_id
+        for template in self.graph.list_templates():
+            if template.name == template_id:
+                return template.id
+        return None
+
+    async def _index_written(self, node: Node) -> None:
+        """Index a node the tools wrote, the way the commit path indexes an extracted one.
+
+        Keywords always; the vector too when a provider is wired (``reembed_nodes``, the one
+        re-embed path, which also refreshes the search index's node row).
+        """
+        self.search.index_node(node)
+        if self.embedding_provider is not None:
+            await reembed_nodes(self.graph, [node.id], self.embedding_provider, search=self.search)
+
+    @tool_handler("list_nodes_failed")
+    async def list_nodes(
+        self,
+        template_id: str | None = None,
+        skip: int = 0,
+        limit: int = 50,
+        source_ids: list[str] | None = None,
+    ) -> dict:
+        """Page the graph's nodes, every template's or one template's (by id or name)."""
+        resolved: str | None = None
+        if template_id is not None:
+            resolved = self._resolve_template_id(template_id)
+            if resolved is None:
+                return {
+                    "success": False,
+                    "error": f"Unknown template: {template_id}",
+                    "code": "UNKNOWN_TEMPLATE",
+                }
+        nodes = self.graph.list_nodes(
+            template_id=resolved,
+            source_ids=source_ids,
+            skip=skip,
+            limit=limit,
+            include_embedding=False,
+        )
+        return {
+            "success": True,
+            "count": len(nodes),
+            "skip": skip,
+            "limit": limit,
+            "nodes": [
+                {
+                    "id": n.id,
+                    "label": n.label,
+                    "template_id": n.template_id,
+                    "properties": n.properties,
+                }
+                for n in nodes
+            ],
+        }
+
     @tool_handler("create_node_failed")
     async def create_node(
         self,
@@ -528,10 +600,18 @@ class NodeToolHandlers:
         properties: dict[str, Any],
         source_ids: list[str] | None = None,
     ) -> dict:
-        """Create a new node."""
+        """Create a new node; ``template_id`` may be the template's name."""
+        resolved = self._resolve_template_id(template_id)
+        if resolved is None:
+            return {
+                "success": False,
+                "error": f"Unknown template: {template_id}",
+                "code": "UNKNOWN_TEMPLATE",
+            }
         node = self.graph.create_node(
-            NodeCreate(template_id=template_id, label=label, properties=properties)
+            NodeCreate(template_id=resolved, label=label, properties=properties)
         )
+        await self._index_written(node)
 
         return {
             "success": True,
@@ -571,6 +651,7 @@ class NodeToolHandlers:
         node = self.graph.update_node(node_id, NodeUpdate(**update_data))
         if node is None:
             return {"success": False, "error": f"Failed to update node: {node_id}"}
+        await self._index_written(node)
 
         return {"success": True, "message": f"Updated node: {node.label}", "node_id": node.id}
 
@@ -659,11 +740,7 @@ class NodeToolHandlers:
             )
             # Filter related nodes by source scope
             if source_ids:
-                related_nodes = [
-                    n
-                    for n in related_nodes
-                    if not getattr(n, "source_id", None) or n.source_id in source_ids
-                ]
+                related_nodes = [n for n in related_nodes if item_in_source_scope(n, source_ids)]
             nodes_dict = {n.id: n for n in related_nodes}
 
             # Build edge summaries

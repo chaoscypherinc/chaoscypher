@@ -139,15 +139,19 @@ Includes all fields needed by GraphRepository including timestamps.
 
 **Attributes:**
 
+- `closed_by_source_id`: `str | None`
 - `created_at`: `datetime`
 - `id`: `str`
 - `label`: `str`
 - `model_config`
 - `properties`: `dict[str, Any]`
+- `source_id`: `str | None`
 - `source_node_id`: `str`
 - `target_node_id`: `str`
 - `template_id`: `str`
 - `updated_at`: `datetime`
+- `valid_from`: `date | None`
+- `valid_to`: `date | None`
 
 ### `class EdgeCreate`
 
@@ -248,9 +252,12 @@ Contains extracted entities, relationships, and domain detection metadata.
 Use `model_dump_json()` for JSON output or attribute access for fields.
 
 Example:
-    >>> result = await ChunkingService().process(text)
-    >>> print(result.domain, result.domain_confidence)
-    >>> print(result.model_dump_json(indent=2))
+
+```
+>>> result = await ChunkingService().process(text)
+>>> print(result.domain, result.domain_confidence)
+>>> print(result.model_dump_json(indent=2))
+```
 
 **Bases:** `BaseModel`
 
@@ -339,6 +346,7 @@ Includes all fields needed by GraphRepository including timestamps.
 - `entity_type`: `str | None`
 - `id`: `str`
 - `label`: `str`
+- `member_source_ids`: `list[str]`
 - `model_config`
 - `position`: `NodePosition | None`
 - `properties`: `dict[str, Any]`
@@ -403,10 +411,13 @@ Items in `data` are typed domain models (Node, Edge, or Template),
 not raw dicts.
 
 Example:
-    result = engine.list_nodes(page=1, page_size=20)
-    for node in result.data:
-        print(node.label)
-    print(f"Page \{result.page\} of \{result.total_pages\}")
+
+```
+result = engine.list_nodes(page=1, page_size=20)
+for node in result.data:
+    print(node.label)
+print(f"Page {result.page} of {result.total_pages}")
+```
 
 **Bases:** `BaseModel`
 
@@ -489,6 +500,57 @@ Result from Engine.rebuild_indexes().
 - `nodes_with_embeddings`: `int`
 - `total_nodes`: `int`
 
+### `class ReleasedRows`
+
+What releasing one source took from the graph (#795, D5).
+
+`deleted_*` are the rows no source attests any more, gone with the
+release; `deleted_edge_ids` includes the edges that went with a deleted
+endpoint. `touched_*` are the surviving candidates: rows the source was a
+member of, or was the home of without a membership row, that another
+source still attests. What a rebuild from the remaining members has to redo.
+
+The rebuild (`management.release.release_source_graph`) fills the rest,
+for the post-release refresh after the commit (`refresh_released_graph`):
+`stale_node_ids` are the surviving nodes whose text changed, whose
+embedding and full-text row must follow; `resolve_node_ids` the nodes the
+scoped identity resolution runs over (the rebuilt nodes and both ends of
+every surviving edge), under `conventions`, the naming conventions the
+rebuild ranked by. The resolution runs after the commit, so the writer
+lock is never held across its whole-graph load and plan (#795).
+
+**Attributes:**
+
+- `conventions`: `Any` — A `NameConventions` (`deduplication.name_identity`); typed loosely so models stay leaf.
+- `deleted_edge_ids`: `frozenset[str]`
+- `deleted_node_ids`: `frozenset[str]`
+- `resolve_node_ids`: `frozenset[str]`
+- `stale_node_ids`: `frozenset[str]`
+- `touched_edge_ids`: `frozenset[str]`
+- `touched_node_ids`: `frozenset[str]`
+
+### `class SiteStatus`
+
+Where a site import (`source_sites.status`, migration 0021) stands.
+
+The pages' own progress is computed from their source rows; this is the
+import job's state: `queued` until the worker picks it up, `importing`
+(first run) or `refreshing` (a later check) while it discovers and
+fetches, `imported` once every page was handed to the upload pipeline,
+`failed` when the run itself stopped (discovery refused the address, an
+unexpected error, a cancelled task). A failed page never fails the site.
+
+**Bases:** `StrEnum`
+
+**Attributes:**
+
+- `FAILED`
+- `IMPORTED`
+- `IMPORTING`
+- `QUEUED`
+- `REFRESHING`
+- `in_progress`: `bool` — True while a run is queued or under way (a second run would race it).
+
 ### `class Source`
 
 Unified source document model - from upload through committed.
@@ -526,6 +588,19 @@ upload → indexing → extraction → commit to graph.
 - `title`: `str | None`
 - `updated_at`: `datetime`
 - `user_metadata`: `dict[str, Any] | None`
+
+### `class SourceDeletion`
+
+What deleting one source did: whether it was there, and what its graph release did.
+
+Truthy exactly when the source was deleted, so a caller that only asks
+"was it deleted?" reads it as the bool it used to be. `released` is for
+the post-release refresh (`release.refresh_after_release`).
+
+**Attributes:**
+
+- `deleted`: `bool`
+- `released`: `ReleasedRows`
 
 ### `class SourceErrorStage`
 

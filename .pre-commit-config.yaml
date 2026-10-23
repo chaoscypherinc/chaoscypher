@@ -79,14 +79,19 @@ repos:
         # Raw benchmark runs (run-benchmark.md) carry every model response and
         # weigh 1-30 MB each; they are private and must stay rescorable.
         # Benchmark reference graphs (a ~13 MB SQLite snapshot each) are the
-        # graph every grounded-chat row was scored on; also private.
+        # graph every grounded-chat row was scored on; also private. Their
+        # pinned retrievals (one JSON per retrieval mode and settings, plus the
+        # query vector cache) are the contexts every row is served; private too,
+        # as are the holdout set's pins beside it (one pins dir per graph it was pinned on).
         exclude: >-
           (?x)^(
             packages/docs/static/img/demo\.gif|
             packages/docs/static/video/demo\.webm|
             internal/[^/]+/assets/demo/demo\.mp4|
             internal/[^/]+/runs/\d{4}-\d{2}-\d{2}-[^/]+\.json|
-            internal/[^/]+/reference/[^/]+/app\.db
+            internal/[^/]+/reference/[^/]+/app\.db|
+            internal/[^/]+/reference/[^/]+/pins/[^/]+\.json|
+            internal/[^/]+/holdout/pins[^/]*/[^/]+\.json
           )$
       - id: check-merge-conflict
         name: check for merge conflicts
@@ -239,18 +244,21 @@ repos:
         pass_filenames: false
 
   # ==========================================================================
-  # Pre-push hook: Full CI (portable — runs with or without make)
+  # Pre-push hook: the fast tier (portable — runs with or without make)
   # ==========================================================================
-  # Runs the whole sweep including the Docker test suite (via run_ci's
-  # docker-test step), so there's no separate pytest-docker hook.
+  # About three minutes: lint, types, typecheck, the architecture rules,
+  # the secret scan, docstrings and dead code. The full suite (both test tiers,
+  # docs, security, bundle size, CLI e2e) runs in GitHub CI on every pull
+  # request, on the home runners, and the merge train requires it green; until
+  # 2026-10-15 this hook ran all of it (`--mode docker`, about an hour). The full
+  # local run is still `make ci` / `run_ci.py --mode local`.
   - repo: local
     hooks:
-      - id: ci-docker
-        name: CI (full pipeline)
-        # Delegates to scripts/run_ci.py, the make-free equivalent of `make ci`,
-        # so the hook runs on Windows (Git Bash has no make) and Linux alike.
-        # language: system runs the entry directly (no shell), so no bash/make.
-        entry: uv run python scripts/run_ci.py --mode docker
+      - id: ci-push
+        name: CI (fast pre-push tier; the full suite runs in GitHub CI)
+        # Delegates to scripts/run_ci.py so the hook runs on Windows (Git Bash
+        # has no make) and Linux alike; language: system runs it directly.
+        entry: uv run python scripts/run_ci.py --mode push
         language: system
         pass_filenames: false
         stages: [pre-push]

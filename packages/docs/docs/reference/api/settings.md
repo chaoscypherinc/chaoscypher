@@ -80,7 +80,7 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
     "gemini_api_key": null,
     "gemini_chat_model": "gemini-2.5-pro",
     "ai_max_tokens": 65536,
-    "ai_temperature": 0.3,
+    "ai_temperature": 0.0,
     "thinking_for_chat": true,
     "enable_llm_queueing": true
     // + extraction models, context windows, streaming, cost tracking, etc.
@@ -100,7 +100,7 @@ Secret fields (API keys, tokens, passwords) are always masked in responses — a
   "embedding": {
     "provider": "local",
     "model": "Qwen/Qwen3-Embedding-0.6B",
-    "default_ollama_model": "qwen3-embedding:0.6b"
+    "default_ollama_model": "qwen3-embedding:4b"
     // + api_key, api_base, ollama_instance_id, max_text_length, allow_model_download
   },
   "search": {
@@ -1402,7 +1402,7 @@ curl http://localhost/api/v1/settings/embedding/models
     {
       "name": "Qwen3 Embedding 0.6B",
       "local": "Qwen/Qwen3-Embedding-0.6B",
-      "ollama": "qwen3-embedding:0.6b",
+      "ollama": "qwen3-embedding:4b",
       "dimensions": 1024,
       "mrl": true,
       "default": true

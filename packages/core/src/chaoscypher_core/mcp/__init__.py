@@ -29,11 +29,12 @@ from chaoscypher_core.mcp.processor import (
 from chaoscypher_core.mcp.server import create_mcp_server
 
 # Tool definitions
-from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, ToolDefinition, get_tools_for_mode
+from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, TOOL_PROFILES, ToolDefinition, get_tools
 
 
 __all__ = [
     "TOOL_DEFINITIONS",
+    "TOOL_PROFILES",
     "BenchmarkBridge",
     "BridgeResult",
     "CompletedFile",
@@ -44,5 +45,5 @@ __all__ = [
     "QueuedFile",
     "ToolDefinition",
     "create_mcp_server",
-    "get_tools_for_mode",
+    "get_tools",
 ]

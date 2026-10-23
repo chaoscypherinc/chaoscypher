@@ -324,6 +324,7 @@ curl -X DELETE http://localhost/api/v1/databases/old-project
 | Field | Type | Description |
 |-------|------|-------------|
 | `current` | string | Name of the currently active database |
+| `notice` | string? | One-line notice about this database, shown on the dashboard; `null` when there is none |
 | `info` | [DatabaseResponse](#databaseresponse) | Metadata for the current database |
 
 ### DatabaseCreateRequest

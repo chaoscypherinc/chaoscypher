@@ -7,6 +7,7 @@ import Graph from 'graphology';
 import type { NodeAttributes, EdgeAttributes } from '../../types';
 import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../../types';
 import { useGraphReducers } from '../useGraphReducers';
+import { FLAGGED_EDGE_SIZE } from '../../../../utils/edgeFlags';
 
 // ---------------------------------------------------------------------------
 // Fake sigma: capture the reducer functions registered via setSetting.
@@ -342,6 +343,23 @@ describe('useGraphReducers', () => {
   });
 
   describe('edgeReducer', () => {
+    it('draws a pipeline-flagged (capped) edge thin, whatever the spotlight', () => {
+      const graph = buildGraph();
+      graph.setEdgeAttribute('AC', 'properties', { capped: true });
+      graph.setEdgeAttribute('CD', 'properties', { capped: 'true' }); // the text's value
+      const { edgeReducer } = renderReducers(graph, { hoveredNode: 'A' });
+      expect(edgeReducer('AC', graph.getEdgeAttributes('AC')).size).toBe(FLAGGED_EDGE_SIZE);
+      expect(edgeReducer('AB', graph.getEdgeAttributes('AB')).size).toBe(2);
+      expect(edgeReducer('CD', graph.getEdgeAttributes('CD')).size).not.toBe(FLAGGED_EDGE_SIZE);
+    });
+
+    it('keeps a selected capped edge at the selection width', () => {
+      const graph = buildGraph();
+      graph.setEdgeAttribute('AC', 'properties', { capped: true });
+      const { edgeReducer } = renderReducers(graph, { selectedEdgeId: 'AC' });
+      expect(edgeReducer('AC', graph.getEdgeAttributes('AC')).size).toBe(4);
+    });
+
     it('applies gradient coloring to default edges', () => {
       const graph = buildGraph();
       const { edgeReducer } = renderReducers(graph);
@@ -349,6 +367,36 @@ describe('useGraphReducers', () => {
       expect(typeof res.color).toBe('string');
       expect(typeof res.targetColor).toBe('string');
       expect(res.hidden).toBeUndefined();
+    });
+
+    it('draws a pipeline-flagged (unevidenced) edge dashed and every other edge solid', () => {
+      const graph = buildGraph();
+      graph.setEdgeAttribute('AC', 'properties', {
+        unevidenced: true,
+        evidence_reason: 'neither endpoint is named in S2',
+      });
+      graph.setEdgeAttribute('CD', 'properties', { unevidenced: 'true' }); // the text's value
+      const { edgeReducer } = renderReducers(graph);
+      expect(edgeReducer('AC', graph.getEdgeAttributes('AC')).dashed).toBe(true);
+      expect(edgeReducer('AB', graph.getEdgeAttributes('AB')).dashed).toBe(false);
+      expect(edgeReducer('CD', graph.getEdgeAttributes('CD')).dashed).toBe(false);
+    });
+
+    it('draws each flag its own way: capped thin and solid, unevidenced dashed at full width', () => {
+      const graph = buildGraph();
+      graph.setEdgeAttribute('AC', 'properties', { capped: true });
+      graph.setEdgeAttribute('CD', 'properties', { unevidenced: true });
+      graph.setEdgeAttribute('AB', 'properties', { capped: true, unevidenced: true });
+      const { edgeReducer } = renderReducers(graph);
+      const capped = edgeReducer('AC', graph.getEdgeAttributes('AC'));
+      expect(capped.size).toBe(FLAGGED_EDGE_SIZE);
+      expect(capped.dashed).toBe(false);
+      const unevidenced = edgeReducer('CD', graph.getEdgeAttributes('CD'));
+      expect(unevidenced.size).not.toBe(FLAGGED_EDGE_SIZE);
+      expect(unevidenced.dashed).toBe(true);
+      const both = edgeReducer('AB', graph.getEdgeAttributes('AB'));
+      expect(both.size).toBe(FLAGGED_EDGE_SIZE);
+      expect(both.dashed).toBe(true);
     });
 
     it('renders provenance edges as a subtle line gradient', () => {

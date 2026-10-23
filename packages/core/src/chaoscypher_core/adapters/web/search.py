@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +31,7 @@ import structlog
 import trafilatura
 
 from chaoscypher_core.exceptions import MaxBytesExceeded, ValidationError
+from chaoscypher_core.ports.web import FetchResult, RawResponse
 from chaoscypher_core.settings import WebSettings
 from chaoscypher_core.utils.encoding import detect_encoding
 from chaoscypher_core.utils.url_safety import resolve_pinned_ip, validate_url_safety
@@ -51,7 +51,9 @@ def _get_client(timeout_seconds: float) -> httpx.AsyncClient:
     ``follow_redirects=False`` default is NOT set here because callers
     need per-request control; they call ``client.get()`` / ``client.stream()``
     directly with no per-call timeout override (timeout comes from the
-    caller's injected ``WebSettings``).
+    caller's injected ``WebSettings``). The User-Agent is likewise a
+    per-request header (``_pinned_request``), not a client default, so one
+    cached client serves every scraper whatever its ``WebSettings``.
 
     Args:
         timeout_seconds: HTTP timeout, sourced from the scraper's injected
@@ -85,13 +87,21 @@ _TEXTUAL_CONTENT_TYPES: frozenset[str] = frozenset(
 )
 
 
-def _pinned_request(url: str) -> tuple[httpx.URL, dict[str, str], dict[str, str]] | None:
+# Key under which the redirect loop records the logical final URL on the
+# response it returns (``response.url`` carries the pinned IP instead).
+_FINAL_URL_EXTENSION = "chaoscypher_final_url"
+
+
+def _pinned_request(
+    url: str, user_agent: str
+) -> tuple[httpx.URL, dict[str, str], dict[str, str]] | None:
     """Resolve *url* once and return a pinned request target.
 
     ``validate_url_safety`` vets the hostname but the client re-resolves DNS at
     connect time — a DNS-rebinding window. Dial the vetted IP instead, carrying
     the original authority as the Host header and, for TLS, the hostname for
     SNI + certificate verification (mirrors http_request_plugin's pinning).
+    Every request also carries *user_agent* (``WebSettings.user_agent``).
 
     Returns ``(request_url, headers, extensions)`` or ``None`` when the URL is
     blocked or unresolvable — callers MUST treat ``None`` as "blocked".
@@ -100,53 +110,44 @@ def _pinned_request(url: str) -> tuple[httpx.URL, dict[str, str], dict[str, str]
     if pinned_ip is None:
         return None
     original = httpx.URL(url)
-    headers = {"Host": original.netloc.decode("ascii")}
+    headers = {"Host": original.netloc.decode("ascii"), "User-Agent": user_agent}
     extensions: dict[str, str] = {}
     if original.scheme == "https":
         extensions = {"sni_hostname": original.host}
     return original.copy_with(host=pinned_ip), headers, extensions
 
 
-@dataclass
-class FetchResult:
-    """Result of fetching a URL.
+async def _get_capped(
+    client: httpx.AsyncClient,
+    request_url: httpx.URL,
+    headers: dict[str, str],
+    extensions: dict[str, str],
+    max_bytes: int,
+) -> httpx.Response:
+    """Stream one GET, materialising at most *max_bytes* of a successful body.
 
-    Attributes:
-        content: Decoded text content. Empty string for binary fetches.
-        content_type: Bare media type (e.g. ``application/pdf``), with
-            any ``charset=`` / ``boundary=`` parameters stripped.
-        is_binary: True when the response was treated as binary
-            (Content-Type outside the textual set). The ``bytes``
-            field carries the raw payload in that case.
-        bytes: Raw response body for binary fetches. ``None`` for
-            textual fetches.
-        url: The originally requested URL (post-redirect resolution
-            happens at the HTTP layer; the URL the caller asked about
-            is preserved here for logging / row metadata).
-        title: Page title extracted by trafilatura. Empty for binary.
-        author: Author metadata extracted by trafilatura. ``None``
-            when not available or when the response is binary.
-        date: Publication date extracted by trafilatura. ``None`` when
-            not available or when the response is binary.
-        encoding_used: The encoding label used to decode the body
-            (e.g. ``"utf-8"``, ``"cp1252"``). ``None`` for binary
-            fetches and for the legacy short-circuit error paths.
-        error: Human-readable error message when the fetch failed
-            cleanly (network error, byte cap exceeded, empty
-            extraction). Allowlist / size violations raise
-            ``ValidationError`` instead so the user gets a 400.
+    A redirect or a 4xx/5xx response comes back with an empty body (it is
+    never read). ``response._content`` is the documented httpx mechanism for
+    surfacing a streamed body as ``response.content`` outside the stream's
+    context manager.
+
+    Raises:
+        MaxBytesExceeded: When the body exceeds *max_bytes*.
     """
-
-    content: str
-    content_type: str
-    is_binary: bool = False
-    bytes: bytes | None = None
-    url: str = ""
-    title: str = ""
-    author: str | None = None
-    date: str | None = None
-    encoding_used: str | None = None
-    error: str | None = None
+    async with client.stream(
+        "GET", request_url, headers=headers, extensions=extensions
+    ) as response:
+        if response.is_redirect or response.status_code >= 400:
+            response._content = b""  # noqa: SLF001 - documented httpx idiom for materialising a streamed body
+            return response
+        accumulated = bytearray()
+        async for chunk in response.aiter_bytes():
+            accumulated.extend(chunk)
+            if len(accumulated) > max_bytes:
+                msg = f"Content exceeded max_bytes={max_bytes}"
+                raise MaxBytesExceeded(msg)
+        response._content = bytes(accumulated)  # noqa: SLF001 - documented httpx idiom for materialising a streamed body
+        return response
 
 
 class WebScraper:
@@ -345,6 +346,54 @@ class WebScraper:
             )
             return {"url": url, "title": "", "content": "", "error": "Failed to extract content"}
 
+    async def _follow_redirects(
+        self, url: str, max_bytes: int | None
+    ) -> tuple[httpx.Response, str] | None:
+        """Walk redirects from *url*, vetting and pinning every hop.
+
+        The one redirect loop every fetch path shares. Each hop is resolved
+        through ``_pinned_request`` (strict SSRF policy, pinned IP, Host
+        header, SNI, User-Agent); a ``Location`` is joined against the
+        LOGICAL url, since ``response.url`` carries the pinned IP and must not
+        leak into the next hop.
+
+        Args:
+            url: URL to fetch.
+            max_bytes: Body cap. ``None`` = a plain GET with the full body;
+                otherwise the body is streamed and the fetch aborts past it.
+
+        Returns:
+            ``(response, final_url)`` for the first non-redirect response,
+            whatever its status (a 4xx/5xx body is not read when streaming),
+            or ``None`` when a hop is blocked, a redirect has no
+            ``Location``, or the redirect budget runs out.
+
+        Raises:
+            MaxBytesExceeded: When a streamed body exceeds *max_bytes*.
+
+        """
+        current_url = url
+        client = _get_client(self._web_settings.fetch_timeout_seconds)
+        for _ in range(self._web_settings.max_redirects):
+            pinned = _pinned_request(current_url, self._web_settings.user_agent)
+            if pinned is None:
+                logger.warning("redirect_blocked_by_safety_policy", url=current_url)
+                return None
+            request_url, headers, extensions = pinned
+            if max_bytes is None:
+                response = await client.get(request_url, headers=headers, extensions=extensions)
+            else:
+                response = await _get_capped(client, request_url, headers, extensions, max_bytes)
+            if response.is_redirect:
+                location = response.headers.get("location")
+                if not location:
+                    return None
+                current_url = str(httpx.URL(current_url).join(location))
+                continue
+            return response, current_url
+        logger.warning("too_many_redirects", url=url)
+        return None
+
     async def _fetch_with_redirect_validation(self, url: str) -> str | None:
         """Fetch URL content with redirect validation to prevent SSRF.
 
@@ -358,36 +407,16 @@ class WebScraper:
             Downloaded HTML content, or None on failure.
 
         """
-        max_redirects = self._web_settings.max_redirects
-        current_url = url
-        client = _get_client(self._web_settings.fetch_timeout_seconds)
-        for _ in range(max_redirects):
-            pinned = _pinned_request(current_url)
-            if pinned is None:
-                logger.warning("redirect_blocked_by_safety_policy", url=current_url)
-                return None
-            request_url, headers, extensions = pinned
-            response = await client.get(request_url, headers=headers, extensions=extensions)
-            if response.is_redirect:
-                location = response.headers.get("location")
-                if not location:
-                    return None
-                # Join against the LOGICAL url — response.url carries the
-                # pinned IP and must not leak into the next hop.
-                current_url = str(httpx.URL(current_url).join(location))
-                continue
-            if response.status_code >= 400:
-                logger.warning(
-                    "url_fetch_http_error",
-                    url=current_url,
-                    status_code=response.status_code,
-                )
-                return None
-            return response.text
-        logger.warning("too_many_redirects", url=url)
-        return None
+        followed = await self._follow_redirects(url, None)
+        if followed is None:
+            return None
+        response, final_url = followed
+        if response.status_code >= 400:
+            logger.warning("url_fetch_http_error", url=final_url, status_code=response.status_code)
+            return None
+        return response.text
 
-    async def _fetch_with_redirect_validation_capped(  # noqa: PLR0911
+    async def _fetch_with_redirect_validation_capped(
         self, url: str, max_bytes: int | None
     ) -> httpx.Response | None:
         """Fetch URL with redirect validation and an optional byte cap.
@@ -403,73 +432,71 @@ class WebScraper:
 
         Returns:
             The completed ``httpx.Response`` on success (with ``.content``
-            and ``.headers`` populated), or ``None`` on any failure
-            short-circuit (URL safety violation, too many redirects,
-            HTTP 4xx/5xx, ...).
+            and ``.headers`` populated, and the logical final URL under
+            ``response.extensions[_FINAL_URL_EXTENSION]``), or ``None`` on
+            any failure short-circuit (URL safety violation, too many
+            redirects, HTTP 4xx/5xx, ...).
 
         Raises:
             MaxBytesExceeded: When the accumulated response body exceeds
                 *max_bytes*.
 
         """
-        max_redirects = self._web_settings.max_redirects
-        current_url = url
-        client = _get_client(self._web_settings.fetch_timeout_seconds)
-        for _ in range(max_redirects):
-            pinned = _pinned_request(current_url)
-            if pinned is None:
-                logger.warning("redirect_blocked_by_safety_policy", url=current_url)
-                return None
-            request_url, headers, extensions = pinned
-            if max_bytes is None:
-                # Legacy path: single GET, full body.
-                response = await client.get(request_url, headers=headers, extensions=extensions)
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        return None
-                    current_url = str(httpx.URL(current_url).join(location))
-                    continue
-                if response.status_code >= 400:
-                    logger.warning(
-                        "url_fetch_http_error",
-                        url=current_url,
-                        status_code=response.status_code,
-                    )
-                    return None
-                return response
-            # Capped streaming path.
-            async with client.stream(
-                "GET", request_url, headers=headers, extensions=extensions
-            ) as response:
-                if response.is_redirect:
-                    location = response.headers.get("location")
-                    if not location:
-                        return None
-                    current_url = str(httpx.URL(current_url).join(location))
-                    continue
-                if response.status_code >= 400:
-                    logger.warning(
-                        "url_fetch_http_error",
-                        url=current_url,
-                        status_code=response.status_code,
-                    )
-                    return None
-                accumulated = bytearray()
-                async for chunk in response.aiter_bytes():
-                    accumulated.extend(chunk)
-                    if len(accumulated) > max_bytes:
-                        msg = f"Content exceeded max_bytes={max_bytes}"
-                        raise MaxBytesExceeded(msg)
-                # Materialise the body so callers can inspect
-                # ``.content`` / ``.headers`` outside the streaming
-                # context manager. ``response._content`` is the
-                # documented httpx mechanism for surfacing a streamed
-                # body as ``response.content``.
-                response._content = bytes(accumulated)  # noqa: SLF001 - documented httpx idiom for materialising a streamed body
-                return response
-        logger.warning("too_many_redirects", url=url)
-        return None
+        followed = await self._follow_redirects(url, max_bytes)
+        if followed is None:
+            return None
+        response, final_url = followed
+        if response.status_code >= 400:
+            logger.warning("url_fetch_http_error", url=final_url, status_code=response.status_code)
+            return None
+        response.extensions[_FINAL_URL_EXTENSION] = final_url
+        return response
+
+    async def fetch_raw(self, url: str, *, max_bytes: int | None = None) -> RawResponse | None:
+        """Fetch *url* through the hardened client and return the response unprocessed.
+
+        For callers that read the document themselves (robots.txt, sitemaps,
+        llms.txt, HTML link lists): no Content-Type allowlist, no extraction.
+        The URL passes the strict SSRF check here and again at every hop.
+
+        Args:
+            url: URL to fetch.
+            max_bytes: Body cap; ``None`` = unlimited.
+
+        Returns:
+            A :class:`RawResponse` for any final status (the body is empty for
+            4xx/5xx), or ``None`` when the URL or a hop is blocked, the
+            redirect budget runs out, the body exceeds *max_bytes*, or the
+            request fails at the network level.
+
+        """
+        if not validate_url_safety(url, strict=True):
+            logger.warning("web_fetch_blocked_by_safety_policy", url=url)
+            return None
+        try:
+            followed = await self._follow_redirects(url, max_bytes)
+        except MaxBytesExceeded:
+            logger.warning("web_fetch_too_large", url=url, max_bytes=max_bytes)
+            return None
+        except httpx.HTTPError as exc:
+            logger.warning(
+                "web_fetch_failed",
+                url=url,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            return None
+        if followed is None:
+            return None
+        response, final_url = followed
+        media_type, _charset = self._parse_content_type(response.headers.get("content-type", ""))
+        return RawResponse(
+            url=url,
+            final_url=final_url,
+            status_code=response.status_code,
+            content_type=media_type,
+            body=b"" if response.status_code >= 400 else response.content,
+        )
 
     async def extract_full_content(  # noqa: PLR0911
         self,
@@ -530,6 +557,7 @@ class WebScraper:
                     error="Failed to fetch URL",
                 )
 
+            final_url = response.extensions.get(_FINAL_URL_EXTENSION, url)
             content_type_header = response.headers.get("content-type", "")
             media_type, charset = self._parse_content_type(content_type_header)
 
@@ -554,6 +582,7 @@ class WebScraper:
                     is_binary=True,
                     bytes=raw,
                     url=url,
+                    final_url=final_url,
                 )
 
             # Text route: honor the response charset, fall back to
@@ -586,6 +615,7 @@ class WebScraper:
                         content="",
                         content_type=media_type,
                         url=url,
+                        final_url=final_url,
                         title=title,
                         author=author,
                         date=date,
@@ -597,6 +627,7 @@ class WebScraper:
                     content=extracted,
                     content_type=media_type,
                     url=url,
+                    final_url=final_url,
                     title=title,
                     author=author,
                     date=date,
@@ -610,6 +641,7 @@ class WebScraper:
                 content=text,
                 content_type=media_type,
                 url=url,
+                final_url=final_url,
                 encoding_used=encoding_used,
             )
 
@@ -632,3 +664,6 @@ class WebScraper:
                 url=url,
                 error="Failed to extract content",
             )
+
+
+__all__ = ["FetchResult", "WebScraper"]

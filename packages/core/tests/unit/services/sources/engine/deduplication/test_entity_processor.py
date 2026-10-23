@@ -5,12 +5,12 @@
 
 import pytest
 
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import GIVEN_ALIASES_KEY
 from chaoscypher_core.services.sources.engine.deduplication.service import EntityProcessor
 from chaoscypher_core.services.sources.engine.deduplication.similarity_matcher import (
-    extract_significant_words,
     normalize_name_key,
-    should_merge_names,
 )
+from tests.fakes.domain_tables import domain_conventions
 
 
 # Title words used by tests that verify title-word filtering behavior
@@ -91,7 +91,11 @@ class TestDeduplicateEntitiesWithMappingNormalization:
     """Tests that deduplicate_entities_with_mapping uses diacritics normalization."""
 
     def test_deduplicates_diacritics_variants(self):
-        """Entities with accented vs unaccented names merge as duplicates."""
+        """Entities with accented vs unaccented names merge; the accented spelling keeps the label.
+
+        Until audit wave 6 the tie fell to codepoint order, which puts "a"
+        before "á": the stripped spelling survived.
+        """
         entities = [
             {"name": "Anna Pavlovna Scherer", "type": "Person"},
             {"name": "Anna Pávlovna Schérer", "type": "Person"},
@@ -100,7 +104,7 @@ class TestDeduplicateEntitiesWithMappingNormalization:
         unique, mapping = processor.deduplicate_entities_with_mapping(entities)
 
         assert len(unique) == 1
-        assert unique[0]["name"] == "Anna Pavlovna Scherer"
+        assert unique[0]["name"] == "Anna Pávlovna Schérer"
         assert mapping[0] == 0
         assert mapping[1] == 0
 
@@ -114,89 +118,6 @@ class TestDeduplicateEntitiesWithMappingNormalization:
         unique, _mapping = processor.deduplicate_entities_with_mapping(entities)
 
         assert len(unique) == 2
-
-
-class TestExtractSignificantWordsNormalization:
-    """Tests that extract_significant_words strips diacritics before tokenizing."""
-
-    def test_normalizes_diacritics_in_words(self):
-        """Words with diacritics are normalized so they match plain variants."""
-        words = extract_significant_words("Anna Pávlovna Schérer", frozenset())
-        assert "pavlovna" in words
-        assert "scherer" in words
-        assert "anna" in words
-
-    def test_ignores_title_words(self):
-        """Title words are still excluded after normalization."""
-        words = extract_significant_words("Prince Andréi Bolkonsky", _TEST_TITLE_WORDS)
-        assert "prince" not in words
-        assert "andrei" in words
-        assert "bolkonsky" in words
-
-
-class TestShouldMergeNamesWithDiacritics:
-    """Tests that should_merge_names handles diacritics correctly."""
-
-    def test_containment_with_diacritics(self):
-        """Containment check works across diacritics variants."""
-        _empty: frozenset[str] = frozenset()
-        words_a = extract_significant_words("Anna Pavlovna", _empty)
-        words_b = extract_significant_words("Anna Pávlovna Schérer", _empty)
-
-        merge, canonical = should_merge_names(
-            0, "Anna Pavlovna", words_a, 1, "Anna Pávlovna Schérer", words_b
-        )
-
-        assert merge is True
-        assert canonical == 1  # Longer name is canonical
-
-    def test_word_overlap_with_diacritics(self):
-        """Word overlap check works when one variant has diacritics."""
-        _empty: frozenset[str] = frozenset()
-        words_a = extract_significant_words("Pavlovna Scherer", _empty)
-        words_b = extract_significant_words("Pávlovna Schérer", _empty)
-
-        merge, _canonical = should_merge_names(
-            0, "Pavlovna Scherer", words_a, 1, "Pávlovna Schérer", words_b
-        )
-
-        assert merge is True
-
-    def test_different_patronymics_same_first_last_no_merge(self):
-        """Different patronymics with same first/last name should NOT merge."""
-        _empty: frozenset[str] = frozenset()
-        words_a = extract_significant_words("Anna Pávlovna Schérer", _empty)
-        words_b = extract_significant_words("Anna Mikháylovna Schérer", _empty)
-
-        merge, _canonical = should_merge_names(
-            0, "Anna Pávlovna Schérer", words_a, 1, "Anna Mikháylovna Schérer", words_b
-        )
-
-        assert merge is False
-
-    def test_progressive_naming_subset_merges(self):
-        """Shorter name that is a word subset of longer name should merge."""
-        _empty: frozenset[str] = frozenset()
-        words_a = extract_significant_words("Bob Smith", _empty)
-        words_b = extract_significant_words("Bob Smith Jr", _empty)
-
-        merge, canonical = should_merge_names(0, "Bob Smith", words_a, 1, "Bob Smith Jr", words_b)
-
-        assert merge is True
-        assert canonical == 1  # Longer name is canonical
-
-    def test_single_word_subset_merges(self):
-        """Two-word name that is a subset of three-word name should merge."""
-        _empty: frozenset[str] = frozenset()
-        words_a = extract_significant_words("Anna Mikháylovna", _empty)
-        words_b = extract_significant_words("Anna Mikháylovna Drubetskaya", _empty)
-
-        merge, canonical = should_merge_names(
-            0, "Anna Mikháylovna", words_a, 1, "Anna Mikháylovna Drubetskaya", words_b
-        )
-
-        assert merge is True
-        assert canonical == 1
 
 
 class TestCalculateEntitySimilarityNormalization:
@@ -218,8 +139,8 @@ class TestCalculateEntitySimilarityNormalization:
         # Should get the +0.15 bonus because entity_a's name matches entity_b's alias
         assert similarity == pytest.approx(0.95, abs=0.01)
 
-    def test_alias_overlap_with_diacritics(self):
-        """Alias overlap bonus fires across diacritics variants."""
+    def test_a_shared_alias_earns_nothing(self):
+        """An alias two names carry says which family, not whom (audit W4-3): no bonus."""
         entity_a = {
             "name": "Anna",
             "aliases": ["Anna Pavlovna"],
@@ -231,8 +152,7 @@ class TestCalculateEntitySimilarityNormalization:
 
         similarity = EntityProcessor.calculate_entity_similarity(entity_a, entity_b, 0.70)
 
-        # Should get +0.10 bonus from alias overlap
-        assert similarity == pytest.approx(0.80, abs=0.01)
+        assert similarity == pytest.approx(0.70, abs=0.01)
 
 
 class TestMergeEntitiesDescriptors:
@@ -401,34 +321,80 @@ class TestDeduplicateEntitiesAliasMatching:
         assert len(unique) == 2
 
     def test_type_compatibility_respected_for_alias_merge(self):
-        """Alias match still respects type compatibility when enabled."""
+        """Alias match still respects type compatibility (core types) when enabled."""
         entities = [
-            {"name": "Mercury", "type": "Planet", "aliases": ["Hermes"]},
-            {"name": "Hermes", "type": "God", "aliases": []},
+            {"name": "Mercury", "type": "Object", "aliases": ["Hermes"]},
+            {"name": "Hermes", "type": "Deity", "aliases": []},
         ]
         processor = EntityProcessor()
         unique, mapping = processor.deduplicate_entities_with_mapping(
-            entities,
-            require_type_compatibility=True,
-            type_compatibility_map={"beings": ["God", "Deity"]},
+            entities, require_type_compatibility=True
         )
 
         assert len(unique) == 2
 
-    def test_merged_aliases_registered_for_subsequent_entities(self):
-        """After merge, newly acquired aliases are available for future matches."""
+    def test_an_alias_acquired_by_merging_another_name_never_absorbs_a_later_entity(self):
+        """Exact dedup reads given aliases only, in every order of the mentions (audit E3, wave 5).
+
+        Mlle Schérer gives "Anna Mikháylovna" under her own name, so that is
+        alias evidence in every order (until wave 5 only the order with the
+        hostess first ignored it, because the hostess had absorbed Mlle
+        Schérer by then: one grouping per order). What protects Princess
+        Drubetskáya is her own full name: it holds "Anna Mikháylovna", so the
+        stray alias is no evidence, in every order.
+        """
+        import itertools
+
         entities = [
-            {"name": "Anna Pavlovna", "type": "Person", "aliases": ["Annette"]},
-            {"name": "Annette", "type": "Person", "aliases": ["Anne P."]},
-            {"name": "Anne P.", "type": "Person", "aliases": []},
+            {"name": "Anna Pávlovna Schérer", "type": "Person", "aliases": ["Annette"]},
+            {
+                "name": "Mlle Schérer",
+                "type": "Person",
+                "aliases": ["Anna Pávlovna Schérer", "Anna Mikháylovna"],
+            },
+            {"name": "Anna Mikháylovna", "type": "Person", "aliases": []},
+            {"name": "Princess Anna Mikháylovna Drubetskáya", "type": "Person", "aliases": []},
+        ]
+        # The book's naming conventions (Mlle is a title, -ovna a patronymic).
+        processor = EntityProcessor(name_conventions=domain_conventions("literary"))
+        seen = set()
+        for order in itertools.permutations(range(len(entities))):
+            unique, mapping = processor.deduplicate_entities_with_mapping(
+                [dict(entities[k], aliases=list(entities[k]["aliases"])) for k in order]
+            )
+            groups = {}
+            for pos, k in enumerate(order):
+                groups.setdefault(mapping[pos], set()).add(k)
+            seen.add(frozenset(frozenset(g) for g in groups.values()))
+        assert seen == {frozenset({frozenset({0, 1}), frozenset({2}), frozenset({3})})}
+        unique, _ = processor.deduplicate_entities_with_mapping([dict(e) for e in entities])
+        # The stray alias is still recorded on the hostess, just not matched on.
+        assert unique[0]["name"] == "Anna Pávlovna Schérer"
+        assert "Anna Mikháylovna" in unique[0]["aliases"]
+
+    def test_an_alias_given_under_the_same_name_matches_a_later_entity(self):
+        """Aliases the LLM gave the cluster's own name (in any mention) stay match keys."""
+        entities = [
+            {"name": "Anna Pávlovna Schérer", "type": "Person", "aliases": ["Annette"]},
+            {"name": "Anna Pavlovna Scherer", "type": "Person", "aliases": ["Anya"]},
+            {"name": "Anya", "type": "Person", "aliases": []},
+            {"name": "Annette", "type": "Person", "aliases": []},
         ]
         processor = EntityProcessor()
         unique, mapping = processor.deduplicate_entities_with_mapping(entities)
 
         assert len(unique) == 1
-        assert mapping[0] == 0
-        assert mapping[1] == 0
-        assert mapping[2] == 0
+        assert set(mapping.values()) == {0}
+
+    def test_a_merge_keeps_given_aliases_apart_from_acquired_ones(self):
+        """A merge records which aliases were given under the kept name; the rest are only aliases."""
+        processor = EntityProcessor()
+        merged = processor.merge_entities(
+            {"name": "Anna Pávlovna Schérer", "type": "Person", "aliases": ["Annette"]},
+            {"name": "Mlle Schérer", "type": "Person", "aliases": ["Anna Mikháylovna"]},
+        )
+        assert set(merged["aliases"]) == {"Annette", "Mlle Schérer", "Anna Mikháylovna"}
+        assert merged[GIVEN_ALIASES_KEY] == ["Annette"]
 
 
 class TestResolveHierarchicalNames:
@@ -441,14 +407,15 @@ class TestResolveHierarchicalNames:
         Reproduces silent data loss: with the ordering [mid, short, long] of a
         same-type containment chain, the mid name ("Bob Smith") first becomes
         canonical for the short name ("Smith"), then is itself merged into the
-        long name ("Bob Smith Jr"). The short name's subordinate group must be
+        long name ("Bob Alan Smith"). The short name's subordinate group must be
         re-parented onto the final canonical; otherwise it is dropped from
         index_mapping and every relationship touching it silently vanishes.
         """
         entities = [
             {"name": "Bob Smith", "type": "Person"},
             {"name": "Smith", "type": "Person"},
-            {"name": "Bob Smith Jr", "type": "Person"},
+            # not "Bob Smith Jr": a generation word says another person (wave 4)
+            {"name": "Bob Alan Smith", "type": "Person"},
             {"name": "Acme Corp", "type": "Organization"},
         ]
         relationships = [

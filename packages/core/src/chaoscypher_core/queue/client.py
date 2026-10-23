@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -45,6 +45,7 @@ from valkey.exceptions import NoScriptError
 from chaoscypher_core.adapters.sqlite.models import ChunkExtractionTask
 from chaoscypher_core.constants import (
     OP_CHAT_BACKGROUND,
+    OP_IMPORT_SITE,
     OPERATION_RETRY_ON_CRASH,
     QUEUE_LLM,
     QUEUE_OPERATIONS,
@@ -1845,27 +1846,22 @@ class QueueClient:
             return False
 
         allowed_ops = set(operations)
+
+        def _matches(task: dict[str, Any]) -> bool:
+            """One of *operations*, for this source in this database."""
+            meta = task.get("metadata") or {}
+            # Defensive: missing database_name in metadata is NOT a match.
+            # Previously treated as "match any DB"; now every enqueue helper
+            # sets database_name explicitly (queue_utils._build_metadata),
+            # so a missing value indicates a foreign/legacy task.
+            return (
+                task.get("operation") in allowed_ops
+                and meta.get("source_id") == source_id
+                and meta.get("database_name") == database_name
+            )
+
         try:
-            async for key in self.client.scan_iter(match="queue:task:*"):
-                key_str = _decode_bytes(key)
-                task_id = key_str.split(":")[-1]
-                task = await self.get_task(task_id)
-                if not task:
-                    continue
-                if task.get("operation") not in allowed_ops:
-                    continue
-                if task.get("status") not in ("queued", "running"):
-                    continue
-                meta = task.get("metadata") or {}
-                if meta.get("source_id") != source_id:
-                    continue
-                # Defensive: missing database_name in metadata is NOT a match.
-                # Previously treated as "match any DB"; now every enqueue helper
-                # sets database_name explicitly (queue_utils._build_metadata),
-                # so a missing value indicates a foreign/legacy task.
-                if meta.get("database_name") != database_name:
-                    continue
-                return True
+            return await self._live_task_exists(_matches)
         except Exception as exc:
             # Skip-on-error policy (Decision: skip recovery on queue error).
             # Returning False here used to cause SourceRecovery to dispatch a
@@ -1880,7 +1876,51 @@ class QueueClient:
                 error_message=str(exc),
             )
             raise
+
+    async def _live_task_exists(self, matches: Callable[[dict[str, Any]], bool]) -> bool:
+        """Whether a queued or running task in the ``queue:task:*`` keyspace *matches*.
+
+        The one scan the ``task_exists_for_*`` checks share: O(n) over every
+        task hash, each loaded via ``get_task``. Errors propagate; each caller
+        decides what an unknown answer means.
+        """
+        if self.client is None:  # each caller says what "not connected" means first
+            return False
+        async for key in self.client.scan_iter(match="queue:task:*"):
+            task = await self.get_task(_decode_bytes(key).split(":")[-1])
+            if task and task.get("status") in ("queued", "running") and matches(task):
+                return True
         return False
+
+    async def task_exists_for_site(self, *, site_id: str, database_name: str) -> bool:
+        """Whether an ``import_site`` task for this site is still queued or running.
+
+        Worker startup uses it to tell a site whose run is waiting in the queue
+        from one whose run died with the previous worker (which is then marked
+        ``failed`` so its refresh can resume it). Matched on ``metadata.site_id``
+        and ``metadata.database_name`` (``queue_utils.queue_import_site``).
+
+        Raises:
+            QueueUnavailableError: The queue is not connected: "unknown", not
+                "no task" (the caller then fails nothing).
+            Exception: Whatever the scan raised, for the same reason.
+        """
+        if self.client is None:
+            raise QueueUnavailableError(
+                "Queue server is not connected",
+                details={"site_id": site_id, "database_name": database_name},
+            )
+
+        def _matches(task: dict[str, Any]) -> bool:
+            """An ``import_site`` task for this site in this database."""
+            meta = task.get("metadata") or {}
+            return (
+                task.get("operation") == OP_IMPORT_SITE
+                and meta.get("site_id") == site_id
+                and meta.get("database_name") == database_name
+            )
+
+        return await self._live_task_exists(_matches)
 
     async def task_exists_for_chat(
         self,
@@ -1939,23 +1979,17 @@ class QueueClient:
                 details={"chat_id": chat_id, "database_name": database_name},
             )
 
+        def _matches(task: dict[str, Any]) -> bool:
+            """A chat-turn task for this chat in this database."""
+            data = task.get("data") or {}
+            return (
+                task.get("operation") == OP_CHAT_BACKGROUND
+                and data.get("chat_id") == chat_id
+                and data.get("database_name") == database_name
+            )
+
         try:
-            async for key in self.client.scan_iter(match="queue:task:*"):
-                key_str = _decode_bytes(key)
-                task_id = key_str.split(":")[-1]
-                task = await self.get_task(task_id)
-                if not task:
-                    continue
-                if task.get("operation") != OP_CHAT_BACKGROUND:
-                    continue
-                if task.get("status") not in ("queued", "running"):
-                    continue
-                data = task.get("data") or {}
-                if data.get("chat_id") != chat_id:
-                    continue
-                if data.get("database_name") != database_name:
-                    continue
-                return True
+            return await self._live_task_exists(_matches)
         except Exception as exc:
             logger.warning(
                 "task_exists_for_chat_scan_failed_reraising",
@@ -1965,7 +1999,6 @@ class QueueClient:
                 error_message=str(exc),
             )
             raise
-        return False
 
     async def cancel_all_tasks(self, queue: str | None = None) -> int:
         """Cancel all tasks in specified queue or all queues.

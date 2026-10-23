@@ -10,8 +10,9 @@ wires constructor arguments from the relevant settings groups.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -21,9 +22,11 @@ from chaoscypher_core.adapters.embedding.models import ModelValidationResult
 from chaoscypher_core.adapters.embedding.ollama_provider import OllamaEmbeddingProvider
 from chaoscypher_core.adapters.embedding.openai_provider import OpenAIEmbeddingProvider
 from chaoscypher_core.adapters.embedding.registry import get_curated_dimensions
+from chaoscypher_core.cache.wiring import digest_build_resolver, wrap_embedding
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.cache.build import BuildResolver
     from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.settings import EngineSettings
 
@@ -33,7 +36,7 @@ logger = structlog.get_logger(__name__)
 _CLOUD_PROVIDERS = ("openai", "gemini")
 
 
-def _resolve_ollama_base_url(settings: EngineSettings) -> str:
+def resolve_ollama_base_url(settings: EngineSettings) -> str:
     """Resolve the Ollama base URL for embedding requests.
 
     Priority:
@@ -59,18 +62,63 @@ def _resolve_ollama_base_url(settings: EngineSettings) -> str:
     return settings.llm.primary_ollama_url
 
 
+async def _ollama_build_report(base_url: str, model: str) -> Mapping[str, Any]:
+    """What the Ollama server at ``base_url`` says about ``model`` (read at call time, so fakeable)."""
+    from chaoscypher_core.adapters.llm.providers import ollama_provider
+
+    return await ollama_provider.ollama_model_build(base_url, model)
+
+
+def ollama_embedding_build(base_url: str, model: str) -> BuildResolver:
+    """A resolver of the Ollama embedder's model build (its digest and server version).
+
+    The completion cache's digest step
+    (:func:`~chaoscypher_core.cache.wiring.digest_build_resolver`), bound to
+    the embedder's model: one rule for a chat and an embedding build. Called
+    by the embedding cache on its first lookup, never at wrap time; answers
+    None when the server cannot report the digest, so the cache bypasses
+    rather than keying on the model name alone.
+    """
+    by_model = digest_build_resolver("ollama", base_url, _ollama_build_report)
+
+    async def resolve() -> str | None:
+        """The embedder's build, by the shared digest resolver."""
+        return await by_model(model)
+
+    return resolve
+
+
 def create_embedding_provider(settings: EngineSettings) -> EmbeddingProviderProtocol:
-    """Create an embedding provider from engine settings.
+    """Create an embedding provider from engine settings, behind the embedding cache.
 
     Reads ``settings.embedding.provider`` and constructs the matching
     concrete provider with arguments drawn from the appropriate settings
-    groups (embedding, search, paths, llm).
+    groups (embedding, search, paths, llm), then wraps it in the embedding
+    cache (:func:`chaoscypher_core.cache.wiring.wrap_embedding`) unless
+    ``settings.cache.embeddings.enabled`` is off.
 
     Args:
         settings: Full engine settings.
 
     Returns:
         Configured embedding provider implementing EmbeddingProviderProtocol.
+
+    Raises:
+        ValueError: If the provider name is unknown or a required API key
+            is missing for a cloud provider.
+
+    """
+    provider = _build_embedding_provider(settings)
+    resolve_build = (
+        ollama_embedding_build(provider.base_url, provider.model_name)
+        if isinstance(provider, OllamaEmbeddingProvider)
+        else None
+    )
+    return wrap_embedding(provider, settings, resolve_build=resolve_build)
+
+
+def _build_embedding_provider(settings: EngineSettings) -> EmbeddingProviderProtocol:
+    """The concrete provider ``settings.embedding.provider`` names (unwrapped).
 
     Raises:
         ValueError: If the provider name is unknown or a required API key
@@ -96,7 +144,7 @@ def create_embedding_provider(settings: EngineSettings) -> EmbeddingProviderProt
         )
 
     if provider == "ollama":
-        base_url = _resolve_ollama_base_url(settings)
+        base_url = resolve_ollama_base_url(settings)
         logger.info(
             "embedding_provider_created",
             provider=provider,
@@ -183,5 +231,6 @@ def validate_embedding_model(
 
 __all__ = [
     "create_embedding_provider",
+    "ollama_embedding_build",
     "validate_embedding_model",
 ]

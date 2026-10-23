@@ -97,16 +97,27 @@ class BackupService:
         if not resolved.is_relative_to(backup_dir.resolve()):
             raise ValidationError("Invalid backup path", field="backup_path")
 
+        # VACUUM INTO a name ``list_backups`` does not glob, then rename: an
+        # erroring or killed VACUUM leaves its (empty or rolled-back) target
+        # behind, and under the final name it would list as the newest
+        # backup, evict a good one from retention and pass restore's check.
+        partial = resolved.with_name(f"{resolved.name}.partial")
         conn = sqlite3.connect(str(db_path))
         try:
             # VACUUM INTO does not support parameterized queries, so we use
             # the resolved path which has been validated above. The database_name
             # is allowlisted to alphanumeric + hyphen + underscore characters only.
             # Double single quotes to escape them in the SQL string literal.
-            quoted = str(resolved).replace("'", "''")
+            quoted = str(partial).replace("'", "''")
             conn.execute(f"VACUUM INTO '{quoted}'")
-        finally:
+        except BaseException:
             conn.close()
+            for leftover in (partial, partial.with_name(f"{partial.name}-journal")):
+                leftover.unlink(missing_ok=True)
+            raise
+        else:
+            conn.close()
+        partial.replace(resolved)
 
         size = backup_path.stat().st_size
         logger.info(

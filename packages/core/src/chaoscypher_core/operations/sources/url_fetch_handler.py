@@ -9,8 +9,8 @@ fetch inline, which kept the HTTP connection open for the full duration
 of the remote fetch — slow servers stalled the worker. The route now
 enqueues this handler and returns 202 immediately.
 
-The handler fetches the URL, derives a safe filename from the page
-title, and feeds the bytes through ``SourceProcessingService.upload_file``
+The handler fetches the URL, names the page with the shared
+``page_names`` (stored title and filename stem), and feeds the bytes through ``SourceProcessingService.upload_file``
 so the result joins the standard upload pipeline (indexing → extraction
 → commit).
 
@@ -20,11 +20,12 @@ rather than showing nothing until the background job completes.  On any
 pre-upload failure the placeholder is promoted to ERROR with
 ``error_stage='url_fetch'`` so the user can see what went wrong.
 
-The handler drives the WebScraper with
-the upload Content-Type allowlist + max_bytes pulled from settings, and
-routes binary fetches (PDF, images) through a staged file with the
-correct extension so the loader registry picks the right loader.
-``ValidationError`` raised by the scraper (allowlist / size violation)
+The handler fetches through the shared ``fetch_page`` service (the one
+page fetch every URL import uses; it drives the WebScraper with the upload
+Content-Type allowlist + max_bytes from settings and owns the content-hash
+rule), and routes binary fetches (PDF, images) through a staged file with
+the correct extension so the loader registry picks the right loader.
+``ValidationError`` raised by the fetch (allowlist / size violation)
 is converted to a row-level failure so the user sees a structured
 message instead of a worker crash.
 """
@@ -33,9 +34,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import hashlib
-import re
 import tempfile
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +43,13 @@ import structlog
 
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import forced_packs_of
+from chaoscypher_core.services.sources.web import (
+    MIN_PAGE_CONTENT_CHARS,
+    FetchedPage,
+    fetch_page,
+    page_names,
+)
 from chaoscypher_core.utils.id import generate_id
 
 
@@ -51,8 +58,6 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
-
-_MIN_CONTENT_BYTES = 50
 
 
 # Map common Content-Type values to a sensible filesystem extension so
@@ -124,42 +129,57 @@ def _write_tempfile(payload: bytes, suffix: str = ".md") -> str:
         return tmp.name
 
 
-def _safe_filename_from_title(title: str, fallback: str = "web_import") -> str:
-    """Sanitize *title* into a filesystem-safe stem (≤ 100 chars)."""
-    cleaned = re.sub(r"[^\w\s-]", "", (title or "").strip())
-    return re.sub(r"\s+", " ", cleaned)[:100] or fallback
+#: Fetches one page (``fetch_page`` with the handler's settings, or a site
+#: import's throttled form of it).
+PageFetch = Callable[[str], Awaitable[FetchedPage]]
 
 
-# A fetched page's <title> is remote-controlled and, until this point, is
-# only `.strip()`ed before being persisted verbatim as `SourceRow.title`
-# (see adapters/sqlite/mixins/source_files.py) and later interpolated into
-# the chat system prompt's `<source_list>` fence (entry 584). The
-# authoritative guard lives at that interpolation point
-# (streaming/chat/messages.py:_sanitize_source_title), which every source
-# feeder (not just URL imports) passes through. This is defense in depth:
-# neutralizing here too means the persisted title itself never carries the
-# raw fence-significant (`<`/`>`) or control characters harvested from a
-# page this process does not control.
-_PAGE_TITLE_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]+")
-_PAGE_TITLE_FENCE_CHARS_RE = re.compile(r"[<>]+")
+def page_upload_problem(page: FetchedPage, url: str, max_bytes: int) -> str | None:
+    """Why a fetched page cannot be staged as a source, or ``None`` when it can.
 
-
-def _sanitize_page_title(title: str) -> str:
-    """Strip control and fence-significant characters from a scraped page title.
+    The one set of checks every URL import applies after the fetch: the
+    fetch's own error, too little content (a JavaScript shell or an empty
+    response), a payload over ``max_upload_bytes``. Each refusal is logged
+    under its ``fetch_url_*`` event.
 
     Args:
-        title: Raw ``<title>`` text extracted from a fetched page.
+        page: The fetched page.
+        url: The address requested (for the logs).
+        max_bytes: The upload cap (``settings.batching.max_upload_bytes``).
 
     Returns:
-        A single-line, `<`/`>`-free title with whitespace collapsed.
-
+        The user-facing reason, or ``None``.
     """
-    cleaned = _PAGE_TITLE_CONTROL_CHARS_RE.sub(" ", title)
-    cleaned = _PAGE_TITLE_FENCE_CHARS_RE.sub("", cleaned)
-    return re.sub(r"\s+", " ", cleaned).strip()
+    if page.error:
+        logger.warning("fetch_url_failed", url=url, error=page.error)
+        return f"Failed to fetch URL: {page.error}"
+    payload = page.payload
+    # The length that must clear the minimum: the body of a binary response,
+    # the extracted text of a textual one.
+    length = len(payload) if page.is_binary else len(page.content or "")
+    if length < MIN_PAGE_CONTENT_CHARS:
+        logger.warning("fetch_url_empty_content", url=url, length=length, is_binary=page.is_binary)
+        if page.is_binary:
+            return (
+                "Fetched binary content is too short or empty. "
+                "Page may require JavaScript or be inaccessible."
+            )
+        return "Extracted content is too short or empty. Page may require JavaScript."
+    if len(payload) > max_bytes:
+        logger.warning("fetch_url_content_too_large", url=url, size=len(payload))
+        kind = "Fetched" if page.is_binary else "Encoded"
+        return f"{kind} content exceeds max_upload_bytes={max_bytes}"
+    return None
 
 
-async def handle_fetch_url(  # noqa: PLR0911, PLR0915
+def page_suffix(page: FetchedPage) -> str:
+    """The filename extension a fetched page is staged under (it picks the loader)."""
+    if page.is_binary:
+        return _content_type_to_extension(page.content_type)
+    return _textual_extension_for(page.content_type)
+
+
+async def handle_fetch_url(
     data: dict[str, Any],
     source_processing_service: SourceProcessingService,
     metadata: dict[str, Any] | None = None,
@@ -167,20 +187,9 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
 ) -> dict[str, Any]:
     """Fetch a URL, stream content to disk, feed it through the upload pipeline.
 
-    Workflow:
-    1. Create a placeholder SourceRow with status=PENDING and
-       source_type='webpage' so the UI shows the fetch is in flight.
-    2. Fetch the URL with the same byte cap as file uploads, validating
-       the response Content-Type against the upload allowlist.
-    3. For textual responses, encode the extracted markdown and check
-       it fits within the cap.
-    4. For binary responses (PDF, images), stage the bytes verbatim
-       with the right extension so the loader registry picks the
-       correct loader.
-    5. Hand off to SourceProcessingService.upload_file with
-       ``staged_file_path`` (avoids loading content into memory twice).
-    6. On any pre-upload failure, mark the placeholder ERROR with
-       ``error_stage='url_fetch'`` so the user sees what happened.
+    The queue handler for ``fetch_url``: it reads the task and hands it to
+    :func:`import_url_page`, the URL import every page of a site import
+    also takes.
 
     Args:
         data: ``{"url": str, "options": {...upload_file kwargs...}}``.
@@ -189,172 +198,124 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
         task_id: Queue task id, for tracing.
 
     Returns:
+        See :func:`import_url_page`.
+    """
+    if metadata is None or "database_name" not in metadata:
+        msg = "URL fetch task metadata missing required 'database_name' key"
+        # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer error: metadata contract violation; queue consumer must populate database_name before dispatch
+        raise ValueError(msg)
+    return await import_url_page(
+        data["url"],
+        data.get("options") or {},
+        source_processing_service=source_processing_service,
+        database_name=metadata["database_name"],
+        task_id=task_id,
+    )
+
+
+async def import_url_page(
+    url: str,
+    options: dict[str, Any],
+    *,
+    source_processing_service: SourceProcessingService,
+    database_name: str,
+    task_id: str | None = None,
+    site_id: str | None = None,
+    fetch: PageFetch | None = None,
+) -> dict[str, Any]:
+    """Import one URL as a source: the path every URL import takes.
+
+    Workflow:
+    1. Create a placeholder SourceRow with status=PENDING and
+       source_type='webpage' so the UI shows the fetch is in flight.
+    2. Fetch the URL with the same byte cap as file uploads, validating
+       the response Content-Type against the upload allowlist.
+    3. Check the page (:func:`page_upload_problem`): the fetch's error,
+       too little content, over the cap.
+    4. Stage the payload (the extracted Markdown, or a binary body
+       verbatim) with the extension its content type calls for, so the
+       loader registry picks the right loader.
+    5. Hand off to SourceProcessingService.upload_file with
+       ``staged_file_path`` (avoids loading content into memory twice).
+    6. On any pre-upload failure, mark the placeholder ERROR with
+       ``error_stage='url_fetch'`` so the user sees what happened.
+
+    Args:
+        url: The page to import.
+        options: ``upload_file`` keyword options (the single-URL import's).
+        source_processing_service: Worker-wired source processing service.
+        database_name: The database the source lands in.
+        task_id: Queue task id, for tracing.
+        site_id: The site this URL is a page of (a site import); set on the
+            placeholder and on the source.
+        fetch: How to fetch the page; ``None`` is ``fetch_page`` with the app
+            settings. A site import passes its throttled fetch.
+
+    Returns:
         On success the ``upload_file`` result dict (id, filename, status,
         ...). On a fetch failure ``{"status": "error", "url", "error",
         "source_id"}`` — the queue records this as a normal task result
         rather than a worker crash, so retry-on-crash does not trigger.
     """
-    from chaoscypher_core.adapters.web.search import WebScraper
-
-    url = data["url"]
-    options: dict[str, Any] = data.get("options") or {}
     # ``max_upload_bytes`` + ``upload_content_type_allowlist`` live on the
     # unified ``BatchingSettings`` group, which is the SAME class on the app
     # ``Settings`` singleton and on ``EngineSettings`` post-union, so the value
     # read here is identical to the engine view. This handler receives no
     # ``EngineSettings`` object (its ``source_processing_service`` carries only
-    # managers and its caller lives in the worker package), so the engine
-    # batching values are read at this boundary; ``settings.web`` (also a
-    # unified class) is threaded into the WebScraper below for the same reason.
+    # managers and its caller lives in the worker package), so the app
+    # settings are read at this boundary and handed to ``fetch_page``, which
+    # takes the allowlist, the cap and ``settings.web`` from them.
     settings = get_settings()
     max_bytes = settings.batching.max_upload_bytes
-    allowlist = list(settings.batching.upload_content_type_allowlist)
 
     placeholder_id = generate_id()
     storage = source_processing_service.source_manager
-    if metadata is None or "database_name" not in metadata:
-        msg = "URL fetch task metadata missing required 'database_name' key"
-        # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer error: metadata contract violation; queue consumer must populate database_name before dispatch
-        raise ValueError(msg)
-    database_name = metadata["database_name"]
-
     storage.create_url_placeholder(
         source_id=placeholder_id,
         database_name=database_name,
         url=url,
+        site_id=site_id,
     )
 
     logger.info("fetch_url_starting", url=url, source_id=placeholder_id, task_id=task_id)
 
+    def _failed(error_msg: str) -> dict[str, Any]:
+        """Mark the placeholder ERROR (``url_fetch``) and answer the error result."""
+        storage.fail_url_fetch(placeholder_id, error_msg, database_name)
+        return {"status": "error", "url": url, "error": error_msg, "source_id": placeholder_id}
+
     try:
-        scraper = WebScraper(allowlist=allowlist, max_bytes=max_bytes, web_settings=settings.web)
         try:
-            result = await scraper.extract_full_content(url, max_bytes=max_bytes)
+            page = await (fetch(url) if fetch is not None else fetch_page(url, settings))
         except ValidationError as exc:
             # Allowlist / size violations: turn into a row-level error.
-            error_msg = f"Failed to fetch URL: {exc.message}"
             logger.warning(
-                "fetch_url_validation_error",
-                url=url,
-                error=exc.message,
-                task_id=task_id,
+                "fetch_url_validation_error", url=url, error=exc.message, task_id=task_id
             )
-            storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-            return {
-                "status": "error",
-                "url": url,
-                "error": error_msg,
-                "source_id": placeholder_id,
-            }
+            return _failed(f"Failed to fetch URL: {exc.message}")
 
-        if result.error:
-            error_msg = f"Failed to fetch URL: {result.error}"
-            logger.warning("fetch_url_failed", url=url, error=result.error, task_id=task_id)
-            storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-            return {
-                "status": "error",
-                "url": url,
-                "error": error_msg,
-                "source_id": placeholder_id,
-            }
+        problem = page_upload_problem(page, url, max_bytes)
+        if problem is not None:
+            return _failed(problem)
 
-        # Branch on text vs binary. Both paths funnel into the standard
-        # upload pipeline via ``staged_file_path``; only the staged
-        # contents and filename differ.
-        # The `or "Untitled Page"` fallback is applied both before AND after
-        # sanitizing: a title that is non-empty but consists entirely of
-        # control/fence characters (e.g. a page whose <title> is just "<>")
-        # would pass the pre-sanitize truthiness check yet sanitize down to
-        # an empty string, silently persisting an empty SourceRow.title.
-        page_title = _sanitize_page_title(result.title or "Untitled Page") or "Untitled Page"
-        safe_title = _safe_filename_from_title(page_title)
-
-        if result.is_binary:
-            payload = result.bytes or b""
-            if len(payload) < _MIN_CONTENT_BYTES:
-                error_msg = (
-                    "Fetched binary content is too short or empty. "
-                    "Page may require JavaScript or be inaccessible."
-                )
-                logger.warning(
-                    "fetch_url_empty_content",
-                    url=url,
-                    length=len(payload),
-                    is_binary=True,
-                )
-                storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-                return {
-                    "status": "error",
-                    "url": url,
-                    "error": error_msg,
-                    "source_id": placeholder_id,
-                }
-            if len(payload) > max_bytes:
-                error_msg = f"Fetched content exceeds max_upload_bytes={max_bytes}"
-                logger.warning("fetch_url_content_too_large", url=url, size=len(payload))
-                storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-                return {
-                    "status": "error",
-                    "url": url,
-                    "error": error_msg,
-                    "source_id": placeholder_id,
-                }
-
-            suffix = _content_type_to_extension(result.content_type)
-            filename = f"{safe_title}{suffix}"
-            content_hash = hashlib.sha256(payload).hexdigest()
-            staged_path = await asyncio.to_thread(_write_tempfile, payload, suffix)
-
-            logger.info(
-                "fetch_url_succeeded",
-                url=url,
-                title=page_title,
-                content_bytes=len(payload),
-                content_type=result.content_type,
-                is_binary=True,
-                task_id=task_id,
-            )
-        else:
-            content = result.content or ""
-            if len(content) < _MIN_CONTENT_BYTES:
-                error_msg = "Extracted content is too short or empty. Page may require JavaScript."
-                logger.warning("fetch_url_empty_content", url=url, length=len(content))
-                storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-                return {
-                    "status": "error",
-                    "url": url,
-                    "error": error_msg,
-                    "source_id": placeholder_id,
-                }
-
-            encoded = content.encode("utf-8")
-            if len(encoded) > max_bytes:
-                error_msg = f"Encoded content exceeds max_upload_bytes={max_bytes}"
-                logger.warning("fetch_url_content_too_large", url=url, size=len(encoded))
-                storage.fail_url_fetch(placeholder_id, error_msg, database_name)
-                return {
-                    "status": "error",
-                    "url": url,
-                    "error": error_msg,
-                    "source_id": placeholder_id,
-                }
-
-            ext = _textual_extension_for(result.content_type)
-            filename = f"{safe_title}{ext}"
-            content_hash = hashlib.sha256(encoded).hexdigest()
-            payload = encoded
-            staged_path = await asyncio.to_thread(_write_tempfile, encoded, ext)
-
-            logger.info(
-                "fetch_url_succeeded",
-                url=url,
-                title=page_title,
-                content_bytes=len(encoded),
-                content_type=result.content_type,
-                is_binary=False,
-                encoding_used=result.encoding_used,
-                task_id=task_id,
-            )
+        # Both kinds (text, binary) funnel into the standard upload pipeline
+        # via ``staged_file_path``; only the staged contents and filename
+        # differ. The title and filename stem come from ``page_names``, the
+        # rule every URL import shares.
+        names = page_names(page.title, settings)
+        suffix = page_suffix(page)
+        payload = page.payload
+        staged_path = await asyncio.to_thread(_write_tempfile, payload, suffix)
+        logger.info(
+            "fetch_url_succeeded",
+            url=url,
+            title=names.title,
+            content_bytes=len(payload),
+            content_type=page.content_type,
+            is_binary=page.is_binary,
+            encoding_used=page.encoding_used,
+            task_id=task_id,
+        )
 
         # The placeholder stays alive across upload_file. On success we
         # delete it (the new SourceRow inside upload_file becomes the
@@ -364,8 +325,8 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
             result_dict = await source_processing_service.upload_file(
                 staged_file_path=Path(staged_path),
                 file_size=len(payload),
-                content_hash=content_hash,
-                filename=filename,
+                content_hash=page.content_hash,
+                filename=f"{names.stem}{suffix}",
                 auto_analyze=options.get("auto_analyze", True),
                 extraction_depth=options.get("extraction_depth", "full"),
                 generate_embeddings=options.get("generate_embeddings", True),
@@ -373,10 +334,11 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
                 # W1 (2026-05-07): URL imports now thread enable_vision so
                 # the source row records the user's vision choice.
                 enable_vision=options.get("enable_vision", True),
-                forced_domain=options.get("forced_domain"),
+                # The forced packs (``forced_packs``, else the old ``forced_domain``).
+                forced_packs=forced_packs_of(options),
                 origin_url=url,
                 source_type_override="webpage",
-                title_override=page_title,
+                title_override=names.title,
                 skip_duplicates=options.get("skip_duplicates", False),
                 content_filtering=options.get("content_filtering", True),
                 filtering_mode=options.get("filtering_mode"),
@@ -388,6 +350,7 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
                 max_entity_degree_override=options.get("max_entity_degree_override"),
                 # Domain-confirmation gate: forwarded from the URL import request.
                 auto_confirm=options.get("auto_confirm", False),
+                site_id=site_id,
             )
         finally:
             with contextlib.suppress(OSError):
@@ -444,4 +407,10 @@ async def handle_fetch_url(  # noqa: PLR0911, PLR0915
         raise
 
 
-__all__ = ["handle_fetch_url"]
+__all__ = [
+    "PageFetch",
+    "handle_fetch_url",
+    "import_url_page",
+    "page_suffix",
+    "page_upload_problem",
+]

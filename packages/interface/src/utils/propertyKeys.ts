@@ -1,6 +1,8 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { EDGE_FLAG_PROPERTY_KEYS } from './edgeFlags';
+
 /**
  * Canonical set of system / provenance property keys — extraction bookkeeping
  * that is not user-authored "fact" data. These are hidden from the
@@ -21,11 +23,14 @@ export const SYSTEM_PROPERTY_KEYS: ReadonlySet<string> = new Set([
  * System / provenance keys hidden from a relationship's editable properties
  * list. Extends the shared {@link SYSTEM_PROPERTY_KEYS} with the per-edge
  * extraction signals (confidence, sentence reference, source chunk index)
- * that move into the relationship metadata card.
+ * that move into the relationship metadata card, and the pipeline's edge
+ * flags with their reasons (``utils/edgeFlags.ts``), which the edge's flag
+ * notice shows instead.
  */
 export const RELATIONSHIP_SYSTEM_KEYS: ReadonlySet<string> = new Set([
   'confidence',
   'sent_ref',
   'chunk_index',
+  ...EDGE_FLAG_PROPERTY_KEYS,
   ...SYSTEM_PROPERTY_KEYS,
 ]);

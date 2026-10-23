@@ -44,6 +44,10 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.benchmark.results import BENCHMARK_VERSION, BenchmarkResult, dump_results
+from chaoscypher_core.benchmark.retrieval import (
+    DEFAULT_RETRIEVAL_MODE,
+    validate_retrieval_mode,
+)
 from chaoscypher_core.mcp.benchmark.errors import (
     ERR_EMPTY_OUTPUT,
     ERR_INCOMPLETE_RUN,
@@ -66,6 +70,7 @@ from chaoscypher_core.utils.id import generate_id
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from chaoscypher_core.benchmark.retrieval import NaiveRetrieverFactory
     from chaoscypher_core.mcp.benchmark.suites import BenchmarkSuite, TaskRef
     from chaoscypher_core.settings import EngineSettings
 
@@ -135,13 +140,23 @@ class BenchmarkBridge:
             results and reference packs; the extraction settings resolve the
             probe prompts exactly as a local run does.
         pack_dir: Probe fixture directory (defaults to the shipped one).
+        naive_retriever: The chat suite's naive-rung index builder, provided
+            by the CLI package (it owns the llama-index extra). Without it a
+            ``naive`` chat run is refused at ``start``.
     """
 
-    def __init__(self, settings: EngineSettings, *, pack_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        settings: EngineSettings,
+        *,
+        pack_dir: Path | None = None,
+        naive_retriever: NaiveRetrieverFactory | None = None,
+    ) -> None:
         """Bind settings and the probe fixture; suites are built on first use."""
         self.settings = settings
         self.pack_dir = pack_dir or PROBE_PACK_DIR
-        self._suites: dict[tuple[str, str | None], BenchmarkSuite] = {}
+        self._naive_retriever = naive_retriever
+        self._suites: dict[tuple[str, str | None, str | None], BenchmarkSuite] = {}
         self._lock = asyncio.Lock()
 
     # ------------------------------------------------------------------ #
@@ -177,8 +192,10 @@ class BenchmarkBridge:
         if "task_ids" not in state and "probe_ids" in state:
             state["task_ids"] = state.pop("probe_ids")
         state.setdefault("reference", None)
+        state.setdefault("retrieval", None)
         state.setdefault("verdicts", {})
         state.setdefault("resubmissions_refused", 0)
+        state.setdefault("sessions", {})
         state.setdefault("finished_at", None)
         return state
 
@@ -194,39 +211,56 @@ class BenchmarkBridge:
     #  Suites and the task loop
     # ------------------------------------------------------------------ #
 
-    def suite(self, name: str, reference: str | None = None) -> BenchmarkSuite:
-        """The suite ``name`` over ``reference`` (cached per bridge).
+    def suite(
+        self, name: str, reference: str | None = None, retrieval: str | None = None
+    ) -> BenchmarkSuite:
+        """The suite ``name`` over ``reference`` under ``retrieval`` (cached per bridge).
 
         A suite that needs a reference pack resolves ``None`` to the only pack
-        there is; the suite is cached under the reference it resolved to.
+        there is; a suite with retrieval resolves ``None`` to the default
+        rung. The suite is cached under what it resolved to.
 
         Raises:
-            BenchmarkError: On an unknown suite, a reference the suite does
-                not take, or a reference the suite cannot resolve.
+            BenchmarkError: On an unknown suite, a reference or retrieval the
+                suite does not take, an unknown retrieval, or a reference the
+                suite cannot resolve.
         """
         if name not in SUITES:
             raise BenchmarkError(
                 ERR_UNKNOWN_SUITE, f"unknown suite {name!r}; choose one of {sorted(SUITES)}"
             )
-        cached = self._suites.get((name, reference))
+        if retrieval is not None:
+            try:
+                validate_retrieval_mode(retrieval)
+            except ValueError as exc:
+                raise BenchmarkError(ERR_INVALID_ARGUMENT, str(exc)) from exc
+        cached = self._suites.get((name, reference, retrieval))
         if cached is not None:
             return cached
         built = SUITES[name].factory(
-            SuiteContext(settings=self.settings, probe_pack_dir=self.pack_dir, reference=reference)
+            SuiteContext(
+                settings=self.settings,
+                probe_pack_dir=self.pack_dir,
+                reference=reference,
+                retrieval=retrieval or DEFAULT_RETRIEVAL_MODE,
+                naive_retriever=self._naive_retriever,
+            )
         )
         if reference is not None and built.reference is None:
             raise BenchmarkError(
                 ERR_INVALID_ARGUMENT, f"suite {name!r} does not take a reference pack"
             )
-        # Cache under the reference it resolved to, and keep an instance
-        # already cached there so anything bound to it (an open engine, a
-        # test's fake retriever) stays. A None reference is resolved afresh
-        # each time, so a pack exported later is seen.
-        return self._suites.setdefault((name, built.reference), built)
+        if retrieval is not None and built.retrieval is None:
+            raise BenchmarkError(ERR_INVALID_ARGUMENT, f"suite {name!r} does not take retrieval")
+        # Cache under what it resolved to, and keep an instance already
+        # cached there so anything bound to it (an open engine, a test's fake
+        # retriever) stays. A None reference is resolved afresh each time, so
+        # a pack exported later is seen.
+        return self._suites.setdefault((name, built.reference, built.retrieval), built)
 
     def _run_suite(self, state: dict[str, Any]) -> BenchmarkSuite:
         """The suite a loaded run belongs to."""
-        return self.suite(state["suite"], state.get("reference"))
+        return self.suite(state["suite"], state.get("reference"), state.get("retrieval"))
 
     @staticmethod
     def _run_tasks(state: dict[str, Any], suite: BenchmarkSuite) -> list[TaskRef]:
@@ -284,6 +318,7 @@ class BenchmarkBridge:
         only: list[str] | None = None,
         client_settings: dict[str, Any] | None = None,
         reference: str | None = None,
+        retrieval: str | None = None,
     ) -> dict[str, Any]:
         """Create a run for ``suite`` answered by ``model`` inside ``client``.
 
@@ -291,7 +326,9 @@ class BenchmarkBridge:
         benchmark cannot pin (effort, thinking mode, client version); it is
         written on the result row as ``harness_settings``. ``reference``
         names the reference pack a grounded-chat run retrieves from
-        (defaulting to the only one there is).
+        (defaulting to the only one there is); ``retrieval`` its rung
+        (``graphrag`` by default, ``hybrid`` or ``naive`` for the retrieval
+        comparison), recorded on the run and on the row's dataset id.
 
         Returns ``{run_id, suite, total, next}`` where ``next`` is the first
         task (see :meth:`next_task`).
@@ -310,7 +347,7 @@ class BenchmarkBridge:
                         f"{name} must be 1-80 characters of letters, digits and ._:@+-",
                     )
             settings = _validate_client_settings(client_settings)
-            runner = self.suite(suite, reference)
+            runner = self.suite(suite, reference, retrieval)
             selected = runner.tasks(only)
             if not selected:
                 raise BenchmarkError(ERR_INVALID_ARGUMENT, "no tasks selected")
@@ -320,6 +357,7 @@ class BenchmarkBridge:
                 "run_id": run_id,
                 "suite": suite,
                 "reference": runner.reference,
+                "retrieval": runner.retrieval,
                 "client": client,
                 "model": model,
                 "label": label,
@@ -332,6 +370,7 @@ class BenchmarkBridge:
                 "verdicts": {},
                 "results_path": None,
                 "resubmissions_refused": 0,
+                "sessions": {},
                 "finished_at": None,
             }
             self._save(state)
@@ -340,6 +379,7 @@ class BenchmarkBridge:
                 run_id=run_id,
                 suite=suite,
                 reference=runner.reference,
+                retrieval=runner.retrieval,
                 total=len(selected),
             )
             nxt = await self._next(state, runner)
@@ -349,6 +389,7 @@ class BenchmarkBridge:
                 "run_id": run_id,
                 "suite": suite,
                 "reference": runner.reference,
+                "retrieval": runner.retrieval,
                 "total": len(selected),
                 "next": nxt,
             }
@@ -478,6 +519,37 @@ class BenchmarkBridge:
             )
         raise BenchmarkError(ERR_OUT_OF_ORDER, f"submit the {pending} stage of {task_id!r} first")
 
+    async def record_session(self, run_id: str, task_id: str) -> dict[str, Any]:
+        """Count one client session spent on ``task_id``.
+
+        The driver calls it after every client session with the task that
+        session was given, whether or not the session submitted, so the
+        result row can say how many sessions each task took: a session that
+        answers in text without calling submit leaves the task pending and
+        the driver runs another (``extras["run"]["sessions"]`` lists the
+        tasks that took more than one, ``extra_sessions`` the total beyond
+        one per task). Not a client tool: the model never sees it.
+        """
+
+        async def _do() -> dict[str, Any]:
+            """Increment the task's session count and save."""
+            state = self._load(run_id)
+            if state.get("finished_at"):
+                raise BenchmarkError(ERR_RUN_FINISHED, "this run is finished; start a new one")
+            if task_id not in state["task_ids"]:
+                raise BenchmarkError(ERR_UNKNOWN_TASK, f"task {task_id!r} is not in this run")
+            sessions: dict[str, int] = state["sessions"]
+            sessions[task_id] = int(sessions.get(task_id, 0)) + 1
+            self._save(state)
+            return {
+                "success": True,
+                "run_id": run_id,
+                "task_id": task_id,
+                "sessions": sessions[task_id],
+            }
+
+        return await self._guarded(_do, "record_session")
+
     async def progress(self, run_id: str) -> dict[str, Any]:
         """Report how far ``run_id`` has got and whether it has been finished.
 
@@ -517,8 +589,9 @@ class BenchmarkBridge:
         a pending task then scores as a fail, never as a smaller
         denominator. A finished run takes no more answers; finishing again
         rewrites the file. The row's ``extras["run"]`` records when the run
-        started and finished, its task count and how many re-submissions
-        were refused.
+        started and finished, its task count, how many re-submissions were
+        refused, and the client sessions the driver reported (see
+        :meth:`record_session`).
         """
 
         async def _do() -> dict[str, Any]:
@@ -536,6 +609,7 @@ class BenchmarkBridge:
             records = [state["records"][t.id] for t in tasks if t.id in state["records"]]
             bundle = suite.score(state, records)
             finished_at = state.get("finished_at") or datetime.now(tz=UTC).isoformat()
+            sessions = {t: int(n) for t, n in (state.get("sessions") or {}).items()}
             extras = {
                 **bundle.extras,
                 "run": {
@@ -543,6 +617,10 @@ class BenchmarkBridge:
                     "finished_at": finished_at,
                     "task_count": len(tasks),
                     "resubmissions_refused": int(state.get("resubmissions_refused") or 0),
+                    # Tasks that took more than one client session, and the
+                    # total beyond one per task; empty when no driver reported.
+                    "sessions": {t: n for t, n in sessions.items() if n > 1},
+                    "extra_sessions": sum(n - 1 for n in sessions.values()),
                 },
             }
             client, model = state["client"], state["model"]

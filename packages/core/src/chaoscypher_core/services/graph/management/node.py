@@ -107,14 +107,9 @@ class NodeService:
             service = NodeService.from_adapter(adapter, EngineSettings())
 
         """
-        from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+        from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
-        if adapter.session is None:
-            msg = "SqliteAdapter.session is None — call adapter.connect() first."
-            raise RuntimeError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer error: adapter must be connected before constructing NodeService
-                msg
-            )
-        graph_repo = GraphRepository(adapter.session, settings.current_database)
+        graph_repo = get_transaction_graph_repository(adapter, settings.current_database)
         search_repo: Any = search_repository or _NullSearchRepository()
         return cls(
             graph_repository=graph_repo,

@@ -30,6 +30,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import TemplateIcon from '../../components/TemplateIcon';
 import { InfoTooltip } from '../../components/InfoTooltip';
+import { NodeFlagChips } from '../../components/NodeFlagChips';
 import GhostPagination from '../../components/GhostPagination';
 import { useSort } from '../../hooks/useSort';
 import type { ChangeEvent } from 'react';
@@ -244,6 +245,7 @@ export function NodeTable({
                       {node.label}
                     </Typography>
                   </Tooltip>
+                  <NodeFlagChips properties={node.properties} />
                 </TableCell>
                 <TableCell sx={{ display: { xs: 'none', md: 'table-cell' } }}>
                   {(() => {

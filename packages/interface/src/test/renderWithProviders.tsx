@@ -129,6 +129,11 @@ export const fakeSettings: Settings = {
     retention_count: 7,
     backup_dir: '/tmp/backups',
   },
+  cache: {
+    dir: null,
+    completions: { enabled: true, max_bytes: 2 * 1024 ** 3, require_hit: false },
+    embeddings: { enabled: true, max_bytes: 2 * 1024 ** 3, require_hit: false },
+  },
 };
 
 interface WrapperOptions {

@@ -722,6 +722,36 @@ async def test_task_exists_for_source_scan_exception_reraises() -> None:
         await client.task_exists_for_source(source_id="s1", database_name="d", operations=["op"])
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "site_id", "expected"),
+    [("queued", "site-1", True), ("completed", "site-1", False), ("queued", "site-2", False)],
+)
+async def test_task_exists_for_site(status: str, site_id: str, expected: bool) -> None:
+    """A queued or running ``import_site`` task for the site (and database) counts."""
+    client, valkey, _ = _make_queue_client()
+    valkey.scan_iter = _scan_iter([b"queue:task:t-site"])
+    valkey.hgetall = AsyncMock(
+        return_value=_hash_payload(
+            task_id="t-site",
+            operation="import_site",
+            status=status,
+            metadata=json.dumps({"site_id": site_id, "database_name": "default"}),
+        )
+    )
+
+    assert await client.task_exists_for_site(site_id="site-1", database_name="default") is expected
+
+
+@pytest.mark.asyncio
+async def test_task_exists_for_site_without_a_queue_raises() -> None:
+    """No connection is "unknown", not "no task": startup recovery then fails nothing."""
+    from chaoscypher_core.queue.client import QueueUnavailableError
+
+    with pytest.raises(QueueUnavailableError):
+        await _bare_client().task_exists_for_site(site_id="s", database_name="d")
+
+
 # ---------------------------------------------------------------------------
 # task_exists_for_chat
 # ---------------------------------------------------------------------------

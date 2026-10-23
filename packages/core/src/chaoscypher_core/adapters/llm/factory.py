@@ -6,6 +6,11 @@
 Factory for creating and caching LLM provider instances.
 Handles provider selection, lifecycle management, and fallbacks.
 
+Every chat provider it hands out (``get_chat_provider``,
+``get_extraction_provider``, ``acquire_instance``) sits behind the completion
+cache (:func:`chaoscypher_core.cache.wiring.wrap_chat`) unless
+``settings.cache.completions.enabled`` is off.
+
 This is infrastructure code (not a VSA service layer).
 Services that need LLM providers should use this factory.
 """
@@ -13,10 +18,16 @@ Services that need LLM providers should use this factory.
 from __future__ import annotations
 
 import time
+import weakref
+from collections.abc import Mapping
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+    from chaoscypher_core.cache.chat import ChatBuildResolver
     from chaoscypher_core.settings import EngineSettings
 
 import structlog
@@ -25,10 +36,34 @@ from chaoscypher_core.adapters.llm.load_balancer import (
     OllamaLoadBalancer,
     get_ollama_load_balancer,
 )
-from chaoscypher_core.adapters.llm.providers import BaseLLMProvider, get_provider
+from chaoscypher_core.adapters.llm.providers import BaseLLMProvider, get_provider, ollama_provider
+from chaoscypher_core.adapters.llm.providers.ollama_provider import ollama_runtime_config
+from chaoscypher_core.cache.wiring import digest_build_resolver, unwrap_chat, wrap_chat
 
 
 logger = structlog.get_logger(__name__)
+
+
+async def _ollama_build_report(base_url: str, model: str) -> Mapping[str, Any]:
+    """What the Ollama server at ``base_url`` says about ``model`` (read at call time, so fakeable)."""
+    return await ollama_provider.ollama_model_build(base_url, model)
+
+
+def chat_build_resolver(provider: Any) -> ChatBuildResolver | None:
+    """The model-build resolver the completion cache keys ``provider`` on.
+
+    An Ollama provider's build is its model's digest and the server version,
+    read from its own server on the first call (the cache bypasses when the
+    server cannot say); a hosted provider has no digest, so None (the cache
+    keys on ``provider:model``, a dated model id).
+    """
+    config = getattr(provider, "config", None)
+    if not isinstance(config, Mapping) or config.get("chat_provider") != "ollama":
+        return None
+    base_url = config.get("base_url")
+    if not isinstance(base_url, str) or not base_url:
+        return None
+    return digest_build_resolver("ollama", base_url, _ollama_build_report)
 
 
 class ProviderFactory:
@@ -55,12 +90,37 @@ class ProviderFactory:
         self._provider_cache: dict[str, BaseLLMProvider] = {}
         self._load_balancer: OllamaLoadBalancer | None = None
         self._load_balancer_initialized: bool = False
+        # The cache wrapper of each balancer provider this factory acquired:
+        # one per provider, so its resolved model build is kept between turns.
+        self._instance_wrappers: weakref.WeakKeyDictionary[Any, BaseLLMProvider] = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def _cached(self, provider: BaseLLMProvider) -> BaseLLMProvider:
+        """``provider`` behind the completion cache this factory's settings ask for."""
+        return wrap_chat(provider, self.settings, build_resolver=chat_build_resolver(provider))
+
+    def _cached_instance(self, provider: BaseLLMProvider) -> BaseLLMProvider:
+        """A balancer provider behind this factory's completion cache (one wrapper per provider).
+
+        Wrapped here, not where the balancer builds it: the balancer is
+        process-wide and sees only ``LLMSettings``, so a wrapper built there
+        would serve one factory's cache settings (on, off, replay) to every
+        other factory sharing the pool (the audit wave 6 bug class).
+        """
+        wrapped = self._instance_wrappers.get(provider)
+        if wrapped is None:
+            wrapped = self._cached(provider)
+            if wrapped is not provider:  # a value holding its key would never be collected
+                self._instance_wrappers[provider] = wrapped
+        return wrapped
 
     def get_chat_provider(self) -> BaseLLMProvider:
         """Get the configured chat provider (cached for session reuse).
 
         Returns:
-            Initialized BaseLLMProvider instance
+            Initialized BaseLLMProvider instance (behind the completion cache
+            when ``settings.cache.completions.enabled``)
 
         Example:
             >>> factory = ProviderFactory(settings)
@@ -79,7 +139,7 @@ class ProviderFactory:
         config = self._get_provider_config()
         config["chat_provider"] = provider_type  # Add provider type to config
 
-        provider = get_provider(config)
+        provider = self._cached(get_provider(config))
         self._provider_cache[cache_key] = provider
         logger.info("chat_provider_cached", provider_type=provider_type)
         return provider
@@ -92,7 +152,8 @@ class ProviderFactory:
         larger/smarter model for extraction while using a faster model for chat.
 
         Returns:
-            Initialized BaseLLMProvider instance for extraction
+            Initialized BaseLLMProvider instance for extraction (behind the
+            completion cache when ``settings.cache.completions.enabled``)
 
         Example:
             >>> factory = ProviderFactory(settings)
@@ -111,7 +172,7 @@ class ProviderFactory:
         config = self._get_extraction_config()
         config["chat_provider"] = provider_type
 
-        provider = get_provider(config)
+        provider = self._cached(get_provider(config))
         self._provider_cache[cache_key] = provider
         logger.debug("extraction_provider_created", provider_type=provider_type)
         return provider
@@ -158,7 +219,8 @@ class ProviderFactory:
 
         try:
             if provider_type == "chat":
-                provider = self.get_chat_provider()
+                # the model itself: a health check served from the cache proves nothing
+                provider = unwrap_chat(self.get_chat_provider())
                 test_model = self.settings.llm.chat_provider
                 start_time = time.time()
                 response = await provider.chat(
@@ -217,10 +279,7 @@ class ProviderFactory:
             # single-provider (non-load-balanced) code path.
             "base_url": llm.primary_ollama_url,
             "ollama_chat_model": llm.ollama_chat_model,
-            "ollama_num_batch": llm.ollama_num_batch,
-            "ollama_num_ctx": llm.ollama_num_ctx,
-            "ollama_num_parallel": llm.ollama_num_parallel,
-            "ollama_num_thread": llm.ollama_num_thread,
+            **ollama_runtime_config(llm),
             # OpenAI
             "openai_api_key": (
                 llm.openai_api_key.get_secret_value() if llm.openai_api_key else None
@@ -267,20 +326,42 @@ class ProviderFactory:
     async def get_load_balancer(self) -> OllamaLoadBalancer:
         """Get the Ollama load balancer (initialized and configured).
 
-        Initializes the load balancer on first call and reloads config
-        if settings have changed.
+        Loads the pool these settings ask for unless it is the one loaded
+        (:meth:`OllamaLoadBalancer.ensure_loaded`: one check-and-reload under
+        the balancer's lock). The balancer is process-wide, and another
+        factory may want another model, seed or temperature: acquire through
+        :meth:`acquire_instance`, which hands back a provider built from this
+        factory's settings (audit wave 6: a reload then an acquire as two
+        steps let two configs get each other's provider).
 
         Returns:
             Configured OllamaLoadBalancer instance
         """
         if self._load_balancer is None:
             self._load_balancer = get_ollama_load_balancer()
-
-        if not self._load_balancer_initialized:
-            await self._load_balancer.reload_config(self.settings.llm)
-            self._load_balancer_initialized = True
-
+        await self._load_balancer.ensure_loaded(self.settings.llm)
+        self._load_balancer_initialized = True
         return self._load_balancer
+
+    @asynccontextmanager
+    async def acquire_instance(
+        self, *, high_priority: bool = False
+    ) -> AsyncIterator[tuple[str, BaseLLMProvider]]:
+        """An instance slot and the provider built from this factory's settings on it.
+
+        The provider is keyed by this factory's config fingerprint, so a pool
+        loaded since by another config never answers this factory's request,
+        and sits behind this factory's completion cache
+        (:meth:`_cached_instance`).
+
+        Yields:
+            ``(instance_id, provider)`` while the instance's slot is held.
+        """
+        balancer = await self.get_load_balancer()
+        async with balancer.acquire_instance(
+            high_priority=high_priority, llm_settings=self.settings.llm
+        ) as (instance_id, provider):
+            yield instance_id, self._cached_instance(provider)
 
     async def reload_load_balancer(self) -> None:
         """Reload the load balancer configuration from current settings.

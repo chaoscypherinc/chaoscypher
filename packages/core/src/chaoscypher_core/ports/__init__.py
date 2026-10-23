@@ -38,6 +38,12 @@ from chaoscypher_core.ports.storage_graph_snapshot import (
     SnapshotStalenessInfo,
 )
 from chaoscypher_core.ports.storage_llm_metrics import LLMMetricsStorageProtocol
+from chaoscypher_core.ports.storage_sites import (
+    SitePageCount,
+    SitePageRecord,
+    SiteStorageProtocol,
+    SourceSiteRecord,
+)
 from chaoscypher_core.ports.storage_source_tags import SourceTagStorageProtocol
 from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
 from chaoscypher_core.ports.storage_tools import ToolStorageProtocol
@@ -86,8 +92,12 @@ __all__ = [
     "PluginMetadata",
     "RetryPolicyPort",
     "SearchRepositoryProtocol",
+    "SitePageCount",
+    "SitePageRecord",
+    "SiteStorageProtocol",
     "SnapshotStalenessInfo",
     "SourceDict",
+    "SourceSiteRecord",
     "SourceStorageProtocol",
     "SourceTagStorageProtocol",
     "StageProgressDict",

@@ -585,3 +585,13 @@ def test_failed_probe_scored_chat_row_lands_in_the_chat_probes_section() -> None
     assert "Probe Failed" not in judged_part
     assert "Judged" in judged_part
     assert "Probe OK" in probes_part
+
+
+def test_the_rendered_board_ends_with_exactly_one_newline():
+    """Every writer saves the string as is; a text file ends with one newline."""
+    from chaoscypher_cli.benchmark.leaderboard import render_leaderboard
+
+    row = _row(model_id="ollama/a", model_label="A", dataset_id="d", headline_score=80.0)
+    for rows in ([], [row]):
+        md = render_leaderboard(rows)
+        assert md.endswith("\n") and not md.endswith("\n\n")

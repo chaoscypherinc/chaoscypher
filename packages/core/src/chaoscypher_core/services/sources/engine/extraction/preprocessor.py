@@ -12,6 +12,8 @@ from typing import Any
 
 import structlog
 
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import NAME_RECORD_KEYS
+
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +47,17 @@ def normalize_entities(entities: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "source_chunk_indices": entity.get("source_chunk_indices")
             or ([entity["chunk_index"]] if entity.get("chunk_index") is not None else None),
         }
+        # Citation evidence resolved at aggregation; the commit reads it.
+        if "evidence" in entity:
+            normalized_entity["evidence"] = entity.get("evidence") or []
+        if entity.get("cited_chunk_id"):
+            normalized_entity["cited_chunk_id"] = entity["cited_chunk_id"]
+        # What the name rule reads besides the name and aliases (given aliases, merged-in
+        # names, attested spellings, descriptors): the commit stores them on the node and
+        # the resolver reads them back (until 2026-10-07 this dropped all four).
+        for key in NAME_RECORD_KEYS:
+            if isinstance(entity.get(key), list):
+                normalized_entity[key] = list(entity[key])
         rejected = entity.get("rejected_aliases")
         if rejected:
             normalized_entity["rejected_aliases"] = rejected

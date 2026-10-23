@@ -10,12 +10,13 @@
   "@type": "ExtractionDomain",
   "@id": "domain:technical",
   "name": "technical",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Technical documentation, code, APIs, and software libraries",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.2,
-  "strict_entity_types": true,
   "type_aliases": {
     "Func": "Function",
     "API": "Endpoint",
@@ -119,396 +120,338 @@
       ]
     }
   ],
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract modules, classes, functions, methods, exceptions, and parameters\n- Use canonical names: 'asyncio', 'collections.abc', 'StopIteration' (preserve original casing)\n- Technical entity names are typically lowercase (e.g., 'asyncio', 'dataclass', 'contextmanager') — this is correct\n- Include type hints and return types in descriptions\n- Extract PEPs and RFCs as Specification entities (e.g., 'PEP 484', 'RFC 7231')\n\nDO NOT EXTRACT:\n- Code syntax: brackets, parentheses, operators\n- Generic variable names: 'x', 'temp', 'result', 'data'\n- Built-in primitive types as standalone entities: str, int, list, dict, bool\n- Line numbers or file paths as entities\n- Glossary section headings or navigation labels",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- HIERARCHY: Use contains for module->class->method relationships\n- INHERITANCE: Always capture inherits_from for base classes\n- SIGNATURES: Extract parameters with has_parameter, return types with returns\n- ERRORS: Link exceptions with raises relationship\n- SPECIFICATIONS: Link PEPs/RFCs to what they define using 'specifies' relationship\n- Avoid creating many relationships between the same two entities — one relationship per concept\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract modules, classes, functions, methods, exceptions, and parameters\n- Use canonical names: 'asyncio', 'collections.abc', 'StopIteration' (preserve original casing)\n- Technical entity names are typically lowercase (e.g., 'asyncio', 'dataclass', 'contextmanager') — this is correct\n- Include type hints and return types in descriptions\n- Extract PEPs and RFCs as Specification entities (e.g., 'PEP 484', 'RFC 7231')\n\nDO NOT EXTRACT:\n- Code syntax: brackets, parentheses, operators\n- Generic variable names: 'x', 'temp', 'result', 'data'\n- Line numbers or file paths as entities\n- Glossary section headings or navigation labels",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- HIERARCHY: Use contains for module->class->method relationships\n- INHERITANCE: Always capture inherits_from for base classes\n- SIGNATURES: Extract parameters with has_parameter, return types with returns\n- ERRORS: Link exceptions with raises relationship\n- SPECIFICATIONS: Link PEPs/RFCs to what they define using 'specifies' relationship\n- Write each stated relationship once; two entities have several relationships when the text states several\n",
+  "subtypes": [
+    {
+      "name": "Module",
+      "of": "Object",
+      "description": "Python module or code package",
+      "properties": [
+        {
+          "name": "author",
+          "display_name": "Author",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Inventory2",
+      "color": "#d64178",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "a module",
+        "module for",
+        "module containing",
+        "this module",
+        "python module",
+        "provides functions"
+      ]
+    },
+    {
+      "name": "Class",
+      "of": "Object",
+      "description": "Object-oriented class definition",
+      "properties": [
+        {
+          "name": "base_class",
+          "display_name": "Base Class",
+          "property_type": "text"
+        },
+        {
+          "name": "abstract",
+          "display_name": "Abstract",
+          "property_type": "text"
+        }
+      ],
+      "icon": "DataObject",
+      "color": "#d64a41",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "a class",
+        "class definition",
+        "class that",
+        "this class",
+        "abstract class",
+        "base class",
+        "subclass of",
+        "inherits from"
+      ]
+    },
+    {
+      "name": "Function",
+      "of": "Object",
+      "description": "Standalone function",
+      "properties": [
+        {
+          "name": "return_type",
+          "display_name": "Return Type",
+          "property_type": "text"
+        },
+        {
+          "name": "async",
+          "display_name": "Async",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Functions",
+      "color": "#d68a41",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "a function",
+        "function that",
+        "this function",
+        "callable",
+        "takes parameters"
+      ]
+    },
+    {
+      "name": "Method",
+      "of": "Concept",
+      "description": "Method within a class",
+      "icon": "Code",
+      "color": "#d6ca41",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "a method",
+        "method of",
+        "instance method",
+        "class method",
+        "static method",
+        "method that"
+      ]
+    },
+    {
+      "name": "Parameter",
+      "of": "Object",
+      "description": "Function/method parameter",
+      "icon": "Tune",
+      "color": "#a2d641",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "parameter",
+        "argument",
+        "accepts",
+        "optional argument",
+        "required parameter"
+      ]
+    },
+    {
+      "name": "Exception",
+      "of": "Object",
+      "description": "Error/exception type",
+      "icon": "BugReport",
+      "color": "#62d641",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "exception",
+        "error type",
+        "raised when",
+        "error class",
+        "is raised",
+        "subclass of exception"
+      ]
+    },
+    {
+      "name": "Constant",
+      "of": "Object",
+      "description": "Constant value or configuration",
+      "icon": "Tag",
+      "color": "#41d660",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "constant",
+        "configuration",
+        "default value",
+        "flag",
+        "enum value"
+      ]
+    },
+    {
+      "name": "Package",
+      "of": "Object",
+      "description": "Software package or library",
+      "icon": "Inventory2",
+      "color": "#41d6a0",
+      "quality_score": 15,
+      "requires_named_referent": true
+    },
+    {
+      "name": "Interface",
+      "of": "Object",
+      "description": "An interface defining a method contract that implementations must satisfy (Java/C# interface, Go interface, ABC)",
+      "icon": "Api",
+      "color": "#41cdd6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "interface",
+        "abstract base",
+        "contract",
+        "ABC"
+      ]
+    },
+    {
+      "name": "Protocol",
+      "of": "Concept",
+      "description": "A structural protocol or duck-typed contract (Python typing.Protocol, Swift protocol, Rust trait)",
+      "icon": "Hub",
+      "color": "#41a8d6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "protocol",
+        "trait",
+        "typeclass",
+        "structural type"
+      ]
+    },
+    {
+      "name": "Type",
+      "of": "Object",
+      "description": "A concrete type definition — a struct, enum, generic type, or named type (e.g. ``struct User``, ``Result<T, E>``)",
+      "properties": [
+        {
+          "name": "concept",
+          "display_name": "Concept",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Label",
+      "color": "#418dd6",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "type",
+        "type definition",
+        "generic type",
+        "struct",
+        "enum"
+      ]
+    },
+    {
+      "name": "TypeAlias",
+      "of": "Object",
+      "description": "A type alias — a name referring to another type (e.g. ``type UserId = int``, TypeScript ``type``, Rust ``type``)",
+      "icon": "Link",
+      "color": "#4170d6",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "type alias",
+        "typedef",
+        "alias",
+        "type synonym"
+      ]
+    },
+    {
+      "name": "Decorator",
+      "of": "Object",
+      "description": "A decorator or annotation applied to code elements",
+      "icon": "AutoFixHigh",
+      "color": "#414dd6",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "decorator",
+        "annotation",
+        "@",
+        "wrapper"
+      ]
+    },
+    {
+      "name": "Endpoint",
+      "of": "Concept",
+      "description": "An API endpoint — a callable HTTP/RPC operation identified by method + path (e.g. ``GET /users/{id}``)",
+      "icon": "Http",
+      "color": "#7541d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "endpoint",
+        "API path",
+        "operation",
+        "GET",
+        "POST"
+      ]
+    },
+    {
+      "name": "Route",
+      "of": "Object",
+      "description": "A URL route or path declaration — the routing rule that maps a request to a handler",
+      "icon": "AltRoute",
+      "color": "#9241d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "route",
+        "URL pattern",
+        "path declaration"
+      ]
+    },
+    {
+      "name": "Configuration",
+      "of": "Object",
+      "description": "A configuration setting, environment variable, or config file",
+      "icon": "Settings",
+      "color": "#b541d6",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "configuration",
+        "setting",
+        "env var",
+        "config"
+      ]
+    },
+    {
+      "name": "Specification",
+      "of": "Work",
+      "description": "A PEP, RFC, standard, or formal specification document",
+      "properties": [
+        {
+          "name": "document_id",
+          "display_name": "Document ID",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Description",
+      "color": "#d641d6",
+      "quality_score": 20,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "PEP",
+        "RFC",
+        "specification",
+        "standard",
+        "enhancement proposal",
+        "request for comments"
+      ]
+    },
+    {
+      "name": "Design Pattern",
+      "of": "Concept",
+      "description": "A software design pattern or architectural pattern",
+      "icon": "Architecture",
+      "color": "#d641b8",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "pattern",
+        "design pattern",
+        "factory",
+        "singleton",
+        "observer",
+        "strategy"
+      ]
+    }
+  ],
   "templates": {
-    "node_templates": [
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_module",
-        "name": "Module",
-        "description": "Python module or code package",
-        "icon": "Inventory2",
-        "color": "#d64178",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "a module",
-          "module for",
-          "module containing",
-          "this module",
-          "python module",
-          "provides functions"
-        ],
-        "properties": [
-          {
-            "name": "author",
-            "display_name": "Author",
-            "property_type": "text",
-            "absorbs_types": [
-              "Person",
-              "Author",
-              "Creator"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_class",
-        "name": "Class",
-        "description": "Object-oriented class definition",
-        "icon": "DataObject",
-        "color": "#d64a41",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "a class",
-          "class definition",
-          "class that",
-          "this class",
-          "abstract class",
-          "base class",
-          "subclass of",
-          "inherits from"
-        ],
-        "properties": [
-          {
-            "name": "base_class",
-            "display_name": "Base Class",
-            "property_type": "text",
-            "absorbs_types": [
-              "Abstract Class",
-              "Base Class"
-            ]
-          },
-          {
-            "name": "abstract",
-            "display_name": "Abstract",
-            "property_type": "text"
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_function",
-        "name": "Function",
-        "description": "Standalone function",
-        "icon": "Functions",
-        "color": "#d68a41",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "a function",
-          "function that",
-          "this function",
-          "callable",
-          "takes parameters"
-        ],
-        "properties": [
-          {
-            "name": "return_type",
-            "display_name": "Return Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Return Type"
-            ]
-          },
-          {
-            "name": "async",
-            "display_name": "Async",
-            "property_type": "text"
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_method",
-        "name": "Method",
-        "description": "Method within a class",
-        "icon": "Code",
-        "color": "#d6ca41",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "a method",
-          "method of",
-          "instance method",
-          "class method",
-          "static method",
-          "method that"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_parameter",
-        "name": "Parameter",
-        "description": "Function/method parameter",
-        "icon": "Tune",
-        "color": "#a2d641",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "config_elements",
-        "normalization_keywords": [
-          "parameter",
-          "argument",
-          "accepts",
-          "optional argument",
-          "required parameter"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_exception",
-        "name": "Exception",
-        "description": "Error/exception type",
-        "icon": "BugReport",
-        "color": "#62d641",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "error_elements",
-        "normalization_keywords": [
-          "exception",
-          "error type",
-          "raised when",
-          "error class",
-          "is raised",
-          "subclass of exception"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_constant",
-        "name": "Constant",
-        "description": "Constant value or configuration",
-        "icon": "Tag",
-        "color": "#41d660",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "config_elements",
-        "normalization_keywords": [
-          "constant",
-          "configuration",
-          "default value",
-          "flag",
-          "enum value"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_package",
-        "name": "Package",
-        "description": "Software package or library",
-        "icon": "Inventory2",
-        "color": "#41d6a0",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "code_elements"
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_interface",
-        "name": "Interface",
-        "description": "An interface defining a method contract that implementations must satisfy (Java/C# interface, Go interface, ABC)",
-        "icon": "Api",
-        "color": "#41cdd6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "interface",
-          "abstract base",
-          "contract",
-          "ABC"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_protocol",
-        "name": "Protocol",
-        "description": "A structural protocol or duck-typed contract (Python typing.Protocol, Swift protocol, Rust trait)",
-        "icon": "Hub",
-        "color": "#41a8d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "protocol",
-          "trait",
-          "typeclass",
-          "structural type"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_type",
-        "name": "Type",
-        "description": "A concrete type definition — a struct, enum, generic type, or named type (e.g. ``struct User``, ``Result<T, E>``)",
-        "icon": "Label",
-        "color": "#418dd6",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "config_elements",
-        "normalization_keywords": [
-          "type",
-          "type definition",
-          "generic type",
-          "struct",
-          "enum"
-        ],
-        "properties": [
-          {
-            "name": "concept",
-            "display_name": "Concept",
-            "property_type": "text",
-            "absorbs_types": [
-              "Concept",
-              "Glossary Entry",
-              "Term",
-              "Keyword"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_typealias",
-        "name": "TypeAlias",
-        "description": "A type alias — a name referring to another type (e.g. ``type UserId = int``, TypeScript ``type``, Rust ``type``)",
-        "icon": "Link",
-        "color": "#4170d6",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "config_elements",
-        "normalization_keywords": [
-          "type alias",
-          "typedef",
-          "alias",
-          "type synonym"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_decorator",
-        "name": "Decorator",
-        "description": "A decorator or annotation applied to code elements",
-        "icon": "AutoFixHigh",
-        "color": "#414dd6",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "decorator",
-          "annotation",
-          "@",
-          "wrapper"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_endpoint",
-        "name": "Endpoint",
-        "description": "An API endpoint — a callable HTTP/RPC operation identified by method + path (e.g. ``GET /users/{id}``)",
-        "icon": "Http",
-        "color": "#7541d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "endpoint",
-          "API path",
-          "operation",
-          "GET",
-          "POST"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_route",
-        "name": "Route",
-        "description": "A URL route or path declaration — the routing rule that maps a request to a handler",
-        "icon": "AltRoute",
-        "color": "#9241d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "route",
-          "URL pattern",
-          "path declaration"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_config",
-        "name": "Configuration",
-        "description": "A configuration setting, environment variable, or config file",
-        "icon": "Settings",
-        "color": "#b541d6",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "config_elements",
-        "normalization_keywords": [
-          "configuration",
-          "setting",
-          "env var",
-          "config"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_specification",
-        "name": "Specification",
-        "description": "A PEP, RFC, standard, or formal specification document",
-        "icon": "Description",
-        "color": "#d641d6",
-        "requires_named_referent": true,
-        "quality_score": 20,
-        "compatibility_group": "doc_elements",
-        "normalization_keywords": [
-          "PEP",
-          "RFC",
-          "specification",
-          "standard",
-          "enhancement proposal",
-          "request for comments"
-        ],
-        "properties": [
-          {
-            "name": "document_id",
-            "display_name": "Document ID",
-            "property_type": "text",
-            "absorbs_types": [
-              "Document",
-              "Standard"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "system_template_pattern",
-        "name": "Design Pattern",
-        "description": "A software design pattern or architectural pattern",
-        "icon": "Architecture",
-        "color": "#d641b8",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "code_elements",
-        "normalization_keywords": [
-          "pattern",
-          "design pattern",
-          "factory",
-          "singleton",
-          "observer",
-          "strategy"
-        ]
-      }
-    ],
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -519,26 +462,14 @@
         "color": "#3297cc",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method",
-          "Constant",
-          "Exception",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Decorator"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -549,27 +480,14 @@
         "color": "#3267cc",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Interface",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Class",
-          "Function",
-          "Method",
-          "Constant",
-          "Exception",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Decorator",
-          "Endpoint",
-          "Route",
-          "Design Pattern"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -581,11 +499,12 @@
         "inverse": "inherited_by",
         "quality_score": 25,
         "source_types": [
-          "Class"
+          "Object"
         ],
         "target_types": [
-          "Class"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -596,17 +515,13 @@
         "color": "#5f32cc",
         "quality_score": 25,
         "source_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Module",
-          "Endpoint",
-          "Route"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Exception",
-          "Class"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -617,20 +532,14 @@
         "color": "#8f32cc",
         "quality_score": 25,
         "source_types": [
-          "Function",
-          "Method",
-          "Endpoint",
-          "Route"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Class",
-          "Type",
-          "TypeAlias",
-          "Interface",
-          "Protocol",
-          "Constant",
-          "Exception"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -641,16 +550,14 @@
         "color": "#bf32cc",
         "quality_score": 15,
         "source_types": [
-          "Class",
-          "Interface",
-          "Protocol",
-          "Module",
-          "Type"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Method",
-          "Function"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -661,18 +568,14 @@
         "color": "#cc32a7",
         "quality_score": 15,
         "source_types": [
-          "Function",
-          "Method",
-          "Decorator",
-          "Endpoint",
-          "Route"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Parameter",
-          "Type",
-          "TypeAlias",
-          "Class"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -683,19 +586,13 @@
         "color": "#cc3277",
         "quality_score": 15,
         "source_types": [
-          "Class",
-          "Module",
-          "Package",
-          "Interface",
-          "Protocol",
-          "Type"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Constant",
-          "Type",
-          "TypeAlias",
-          "Class"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -706,22 +603,16 @@
         "color": "#cc3247",
         "quality_score": 25,
         "source_types": [
-          "Class",
-          "Type",
-          "Module",
-          "Package",
-          "Function",
-          "Method",
-          "Endpoint"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Class",
-          "Interface",
-          "Protocol",
-          "Specification",
-          "Design Pattern",
-          "Type"
-        ]
+          "Object",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -732,21 +623,14 @@
         "color": "#cc4f32",
         "quality_score": 5,
         "source_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Module",
-          "Endpoint",
-          "Route",
-          "Decorator"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Endpoint",
-          "Route"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -757,29 +641,14 @@
         "color": "#cc7f32",
         "quality_score": 15,
         "source_types": [
-          "Package",
-          "Module",
-          "Class",
-          "Interface",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method",
-          "Constant",
-          "Exception",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Decorator",
-          "Endpoint",
-          "Route",
-          "Configuration"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -790,32 +659,15 @@
         "color": "#ccaf32",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method",
-          "Interface",
-          "Protocol",
-          "Endpoint",
-          "Route",
-          "Configuration",
-          "Design Pattern"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Configuration",
-          "Constant",
-          "Specification"
-        ]
+          "Object",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -826,19 +678,13 @@
         "color": "#b7cc32",
         "quality_score": 15,
         "source_types": [
-          "Decorator"
+          "Object"
         ],
         "target_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Parameter",
-          "Module",
-          "Endpoint",
-          "Route",
-          "Type",
-          "Constant"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -849,26 +695,14 @@
         "color": "#87cc32",
         "quality_score": 15,
         "source_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Module",
-          "Package"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Module",
-          "Package",
-          "Interface",
-          "Protocol",
-          "Endpoint",
-          "Route",
-          "Exception",
-          "Type",
-          "Decorator"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -879,24 +713,13 @@
         "color": "#57cc32",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Class",
-          "Package",
-          "Function",
-          "Method",
-          "Endpoint",
-          "Route",
-          "Decorator",
-          "Interface",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Configuration",
-          "Constant",
-          "Parameter",
-          "Type",
-          "TypeAlias"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -907,31 +730,15 @@
         "color": "#32cc3f",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Package",
-          "Specification",
-          "Function",
-          "Class"
+          "Object",
+          "Work"
         ],
         "target_types": [
-          "Class",
-          "Function",
-          "Method",
-          "Package",
-          "Module",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Endpoint",
-          "Route",
-          "Decorator",
-          "Exception",
-          "Constant",
-          "Configuration",
-          "Design Pattern",
-          "Parameter"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -942,27 +749,14 @@
         "color": "#32cc6f",
         "quality_score": 15,
         "source_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Decorator",
-          "Module",
-          "Package",
-          "Interface",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Function",
-          "Method",
-          "Class",
-          "Module",
-          "Package",
-          "Endpoint",
-          "Route",
-          "Type",
-          "Interface",
-          "Protocol"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -973,15 +767,14 @@
         "color": "#32cc9f",
         "quality_score": 25,
         "source_types": [
-          "Method",
-          "Function",
-          "Class"
+          "Concept",
+          "Object"
         ],
         "target_types": [
-          "Method",
-          "Function",
-          "Class"
-        ]
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -992,27 +785,13 @@
         "color": "#cc32cc",
         "quality_score": 20,
         "source_types": [
-          "Specification"
+          "Work"
         ],
         "target_types": [
-          "Module",
-          "Package",
-          "Class",
-          "Function",
-          "Method",
-          "Interface",
-          "Protocol",
-          "Type",
-          "TypeAlias",
-          "Design Pattern",
-          "Decorator",
-          "Endpoint",
-          "Route",
-          "Exception",
-          "Constant",
-          "Configuration",
-          "Parameter"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1023,24 +802,14 @@
         "color": "#32c7cc",
         "quality_score": 15,
         "source_types": [
-          "Class",
-          "Function",
-          "Method",
-          "Module",
-          "Endpoint",
-          "Route",
-          "Decorator",
-          "Interface",
-          "Protocol"
+          "Object",
+          "Concept"
         ],
         "target_types": [
-          "Class",
-          "Type",
-          "TypeAlias",
-          "Interface",
-          "Protocol",
-          "Constant"
-        ]
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1052,17 +821,16 @@
         "inverse": "inherits_from",
         "quality_score": 25,
         "source_types": [
-          "Class"
+          "Object"
         ],
         "target_types": [
-          "Class"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       }
     ]
   },
   "extraction_limits": {
-    "max_entity_degree": 20,
-    "max_same_source_type": 8,
     "max_relationship_ratio": 6.0,
     "loop_max_entity_count": 30
   },
@@ -1090,24 +858,20 @@
     ],
     "entity_examples": [
       {
-        "name": "asyncio",
-        "type": "Module",
-        "note": "Python module names are lowercase — this is correct"
+        "line": "E|asyncio|Object||1.0|S1|Module: Python module names are lowercase — this is correct",
+        "note": "subtype Module; Python module names are lowercase — this is correct"
       },
       {
-        "name": "PEP 484",
-        "type": "Specification",
-        "note": "PEPs and RFCs are Specification entities"
+        "line": "E|PEP 484|Work||1.0|S1|Specification: PEPs and RFCs are Specification entities",
+        "note": "subtype Specification; PEPs and RFCs are Specification entities"
       },
       {
-        "name": "StopIteration",
-        "type": "Exception",
-        "note": "Exception class with PascalCase name"
+        "line": "E|StopIteration|Object||1.0|S1|Exception: Exception class with PascalCase name",
+        "note": "subtype Exception; Exception class with PascalCase name"
       },
       {
-        "name": "contextmanager",
-        "type": "Decorator",
-        "note": "Decorator names are lowercase"
+        "line": "E|contextmanager|Object||1.0|S1|Decorator: Decorator names are lowercase",
+        "note": "subtype Decorator; Decorator names are lowercase"
       }
     ],
     "relationship_examples": [

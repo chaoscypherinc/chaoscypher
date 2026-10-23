@@ -32,6 +32,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_cli.sources.service import CLISourceProcessingService
+from chaoscypher_core.models import ReleasedRows
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import DomainRegistry
 
 
 if TYPE_CHECKING:
@@ -286,6 +288,21 @@ class TestUploadURL:
 
         record = mock_cli_context.storage_adapter.get_file(file_id, mock_cli_context.database_name)
         assert record["filename"] == "web_import.md"
+
+    def test_page_is_named_by_the_shared_page_names(self, mock_cli_context: MagicMock) -> None:
+        """The CLI names a page as the worker and MCP do (``page_names``)."""
+        from chaoscypher_core.services.sources.web import page_names
+
+        title = "<b>Getting Started</b>: Install\x07 guide"
+        with _patch_scraper(_fetch_result(title=title)):
+            service = CLISourceProcessingService(mock_cli_context)
+            file_id, page_title = service.upload_url("https://example.com")
+            service.close()
+
+        expected = page_names(title, mock_cli_context.settings)
+        record = mock_cli_context.storage_adapter.get_file(file_id, mock_cli_context.database_name)
+        assert page_title == expected.title
+        assert record["filename"] == f"{expected.stem}.md"
 
     def test_skip_duplicate_returns_skip_tuple(self, mock_cli_context: MagicMock) -> None:
         existing = {"id": "dup-url", "status": "indexed"}
@@ -792,6 +809,7 @@ class TestApplyVisionProcessing:
         llm = MagicMock()
         llm.chat_provider = "openai"
         llm.openai_vision_model = "gpt-4o"
+        llm.vision_max_render_pixels = 25_000_000
         mock_cli_context.settings.llm = llm
         mock_cli_context.settings.paths.data_dir = str(tmp_path / "data")
 
@@ -813,6 +831,7 @@ class TestApplyVisionProcessing:
         fake_bitmap = MagicMock()
         fake_bitmap.to_pil.return_value = fake_pil
         fake_page = MagicMock()
+        fake_page.get_size.return_value = (612.0, 792.0)  # US Letter, in points
         fake_page.render.return_value = fake_bitmap
         fake_pdf_doc = MagicMock()
         fake_pdf_doc.__getitem__ = MagicMock(return_value=fake_page)
@@ -842,9 +861,73 @@ class TestApplyVisionProcessing:
                 service.close()
 
         fake_pdfium.PdfDocument.assert_called_once_with("doc.pdf")
+        # A normal-size page renders at the CLI's 150 DPI (under the pixel cap).
+        fake_page.render.assert_called_once_with(scale=150 / 72)
         # Description merged into the page text + recombined content.
         assert "[Visual Content]" in out[0]["content"]
         assert "A chart of revenue." in out[0]["content"]
+
+    def test_oversized_pdf_page_render_is_clamped_to_pixel_cap(
+        self, mock_cli_context: MagicMock, tmp_path: Path
+    ) -> None:
+        """A page whose MediaBox would exceed vision_max_render_pixels is downscaled."""
+        import sys
+
+        llm = MagicMock()
+        llm.chat_provider = "openai"
+        llm.openai_vision_model = "gpt-4o"
+        llm.vision_max_render_pixels = 1_000_000
+        mock_cli_context.settings.llm = llm
+        mock_cli_context.settings.paths.data_dir = str(tmp_path / "data")
+
+        docs = [
+            {
+                "content": "page one text",
+                "metadata": {
+                    "pages": [{"page_number": 1, "has_images": True}],
+                    "_page_texts": ["page one text"],
+                },
+            }
+        ]
+
+        fake_pil = MagicMock()
+        fake_pil.save = MagicMock(
+            side_effect=lambda p: __import__("pathlib").Path(p).write_bytes(b"PNG")
+        )
+        fake_bitmap = MagicMock()
+        fake_bitmap.to_pil.return_value = fake_pil
+        fake_page = MagicMock()
+        fake_page.get_size.return_value = (10_000.0, 10_000.0)
+        fake_page.render.return_value = fake_bitmap
+        fake_pdf_doc = MagicMock()
+        fake_pdf_doc.__getitem__ = MagicMock(return_value=fake_page)
+        fake_pdfium = MagicMock()
+        fake_pdfium.PdfDocument.return_value = fake_pdf_doc
+
+        vision_result = MagicMock()
+        vision_result.description = "A chart of revenue."
+        vision_service = MagicMock()
+        vision_service.describe_image = AsyncMock(return_value=vision_result)
+
+        with (
+            patch.dict(sys.modules, {"pypdfium2": fake_pdfium}),
+            patch(
+                "chaoscypher_core.services.vision.create_vision_provider",
+                return_value=MagicMock(),
+            ),
+            patch(
+                "chaoscypher_core.services.vision.VisionService",
+                return_value=vision_service,
+            ),
+        ):
+            service = CLISourceProcessingService(mock_cli_context)
+            try:
+                service._apply_vision_processing(docs, "fid", "doc.pdf")
+            finally:
+                service.close()
+
+        (scale,) = fake_page.render.call_args.kwargs.values()
+        assert (10_000 * scale) ** 2 == pytest.approx(1_000_000)
 
     def test_pdf_render_failure_leaves_docs_unchanged(
         self, mock_cli_context: MagicMock, tmp_path: Path
@@ -992,11 +1075,15 @@ class TestDetectDomainForSource:
         ):
             out = service.detect_domain_for_source(file_id)
 
+        # The proposal blob every gate stores: the old keys plus ``packs`` (a
+        # result without them reads its ``detected_domain`` as one pack).
         assert out == {
             "detected_domain": "technical",
             "confidence": 0.91,
             "ranking": [{"domain": "technical", "score": 0.91}],
             "low_confidence": False,
+            "packs": ["technical"],
+            "reason": None,
         }
 
 
@@ -1033,7 +1120,8 @@ def _patch_extract_orchestration(domain_obj: MagicMock) -> list[Any]:
     }
     base = "chaoscypher_core.services.sources.engine.extraction"
     return [
-        patch(f"{base}.domains.get_domain_registry", return_value=MagicMock()),
+        # The shipped floor and packs: the plan's stack is resolved from them.
+        patch(f"{base}.domains.get_domain_registry", return_value=DomainRegistry()),
         patch(f"{base}.domains.create_domain_sample_text", return_value="sample"),
         patch(
             f"{base}.orchestration.detect_extraction_domain",
@@ -1164,9 +1252,12 @@ class TestExtractEntities:
 
         assert seen_domains == ["technical"]
         # No attempts collected -> metrics batch NOT written, but summary still
-        # computed + aggregated onto the row.
+        # computed + aggregated onto the row (after the preset the run used).
         ctx.storage_adapter.create_llm_call_metrics_batch.assert_not_called()
-        ctx.storage_adapter.update_source_columns.assert_called_once()
+        updates = [
+            c.kwargs["updates"] for c in ctx.storage_adapter.update_source_columns.call_args_list
+        ]
+        assert updates == [{"filtering_mode": "balanced"}, {"llm_total_calls": 1}]
 
     def test_no_chunks_returns_empty_tuples(
         self, mock_cli_context_with_llm: MagicMock, sample_text_file: Path
@@ -1190,6 +1281,56 @@ class TestExtractEntities:
 
         assert results == {}
         assert summary == {}
+
+    def test_groups_use_settings_sizes_and_stored_chunks_reach_aggregation(
+        self, mock_cli_context_with_llm: MagicMock, sample_text_file: Path
+    ) -> None:
+        """Group sizes come from ``settings.chunking``; stored chunks reach aggregation.
+
+        The sizes match the queue path, and the stored (pre-strip) chunks are
+        handed to the evidence resolver.
+        """
+        ctx = _llm_ctx(mock_cli_context_with_llm)
+        ctx.settings.chunking.target_group_tokens = 1234
+        ctx.settings.chunking.group_overlap = 0
+        raw_chunk = {"id": "c0", "chunk_index": 0, "content": "Page 1\nRaw text."}
+        ctx.storage_adapter.get_chunks_for_extraction = MagicMock(return_value=[raw_chunk])
+        service = CLISourceProcessingService(ctx)
+        file_id = service.upload_file(sample_text_file)
+        ctx.storage_adapter._files[file_id]["status"] = "indexed"
+
+        finalized = {"entities": [], "relationships": [], "metadata": {}}
+        patches = _patch_extract_orchestration(_domain_obj())
+        extract = AsyncMock(return_value=finalized)
+        try:
+            mocks = [p.start() for p in patches]
+            build_groups = next(
+                m
+                for m, p in zip(mocks, patches, strict=True)
+                if "build_extraction_groups" in str(p.attribute)
+            )
+            with (
+                patch.object(service, "_extract_and_finalize", new=extract),
+                patch(
+                    "chaoscypher_core.analytics.llm_metrics.LLMMetricsCollector"
+                ) as collector_cls,
+            ):
+                collector = MagicMock()
+                collector.attempts = []
+                collector.get_summary.return_value = {
+                    "total_calls": 0,
+                    "retry_calls": 0,
+                    "estimated_cost_usd": 0.0,
+                }
+                collector_cls.return_value = collector
+                service.extract_entities(file_id)
+        finally:
+            for p in patches:
+                p.stop()
+            service.close()
+
+        assert build_groups.call_args.kwargs == {"target_tokens": 1234, "overlap": 0}
+        assert extract.call_args.kwargs["stored_chunks_by_id"] == {"c0": raw_chunk}
 
     def test_happy_path_persists_summary_and_completes(
         self, mock_cli_context_with_llm: MagicMock, sample_text_file: Path
@@ -1241,12 +1382,67 @@ class TestExtractEntities:
         assert summary["total_calls"] == 1
         # LLM metrics persisted + aggregated onto the source row.
         ctx.storage_adapter.create_llm_call_metrics_batch.assert_called_once()
-        ctx.storage_adapter.update_source_columns.assert_called_once()
+        updates = [
+            c.kwargs["updates"] for c in ctx.storage_adapter.update_source_columns.call_args_list
+        ]
+        assert updates == [{"filtering_mode": "balanced"}, {"llm_total_calls": 1}]
         # Extraction marked complete with the filtering log forwarded.
         ctx.storage_adapter.complete_extraction.assert_called_once()
         complete_kwargs = ctx.storage_adapter.complete_extraction.call_args.kwargs
         assert complete_kwargs["cross_chunk_filtering_log"] == {"dropped": 0}
         assert len(complete_kwargs["entities"]) == 2
+        # The source records the packs it was extracted with (none forced here).
+        assert complete_kwargs["forced_packs"] is None
+        assert complete_kwargs["detected_packs"] == ("technical",)
+
+    def test_forced_packs_drive_detection_the_plan_and_the_row(
+        self, mock_cli_context_with_llm: MagicMock, sample_text_file: Path
+    ) -> None:
+        """An upload forcing two packs extracts with both and records both."""
+        ctx = _llm_ctx(mock_cli_context_with_llm)
+        service = CLISourceProcessingService(ctx)
+        file_id = service.upload_file(sample_text_file, domain="literary+historical")
+        record = ctx.storage_adapter._files[file_id]
+        assert record["forced_packs"] == ["literary", "historical"]  # in the order chosen
+        assert record["forced_domain"] == "literary"  # the first, for one release
+        record["status"] = "indexed"
+
+        domain = _domain_obj()
+        patches = _patch_extract_orchestration(domain)
+        detected = {
+            "packs": ("literary", "historical"),
+            "detected_domain": "literary",
+            "domain": domain,
+            "entity_guidance": "g",
+            "relationship_guidance": "rg",
+        }
+        base = "chaoscypher_core.services.sources.engine.extraction"
+        extract = AsyncMock(return_value={"entities": [], "relationships": [], "metadata": {}})
+        try:
+            for p in patches:
+                p.start()
+            with (
+                patch(
+                    f"{base}.orchestration.detect_extraction_domain", return_value=detected
+                ) as det,
+                patch.object(service, "_extract_and_finalize", new=extract),
+                patch("chaoscypher_core.analytics.llm_metrics.LLMMetricsCollector"),
+            ):
+                service.extract_entities(file_id)
+        finally:
+            for p in patches:
+                p.stop()
+            service.close()
+
+        assert det.call_args.kwargs["forced_packs"] == ("literary", "historical")
+        plan = extract.call_args.kwargs["plan"]
+        assert "Pack historical" in plan.chunk_kwargs["entity_guidance"]
+        assert "Pack literary" in plan.chunk_kwargs["entity_guidance"]
+        # The finalize threads the packs' label (sorted: an identity) as its one-name strings.
+        assert extract.call_args.kwargs["forced_domain"] == "historical+literary"
+        assert extract.call_args.kwargs["detected_domain_name"] == "historical+literary"
+        complete_kwargs = ctx.storage_adapter.complete_extraction.call_args.kwargs
+        assert complete_kwargs["forced_packs"] == ("literary", "historical")
 
     def test_failure_persists_metrics_and_fails_source(
         self, mock_cli_context_with_llm: MagicMock, sample_text_file: Path
@@ -1425,7 +1621,9 @@ class TestExtractRetryRealAdapter:
 class TestExtractAndFinalize:
     """Drive the async extract+finalize helper directly with fakes."""
 
-    def test_extracts_aggregates_and_finalizes(self, mock_cli_context_with_llm: MagicMock) -> None:
+    def test_extracts_aggregates_and_finalizes(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
         ctx = mock_cli_context_with_llm
         adapter = ctx.storage_adapter
         adapter.update_step_progress = MagicMock()
@@ -1476,15 +1674,7 @@ class TestExtractAndFinalize:
                             {"combined_content": "group one"},
                         ],
                         file_id="fid",
-                        node_templates="NT",
-                        edge_templates="ET",
-                        entity_guidance="g",
-                        relationship_guidance="rg",
-                        entity_examples=None,
-                        relationship_examples=None,
-                        entity_exclusions=None,
-                        domain_extraction_limits=None,
-                        filtering_mode="balanced",
+                        plan=stub_extraction_plan,
                         metrics_collector=collector,
                         file_record={"id": "fid"},
                         detected_domain_name="technical",
@@ -1513,23 +1703,35 @@ class TestExtractAndFinalize:
         assert result["stats"]["groups_total"] == 2
         assert result["stats"]["extraction_depth"] == "full"
 
-    def test_group_failure_is_swallowed_per_group(
-        self, mock_cli_context_with_llm: MagicMock
-    ) -> None:
-        ctx = mock_cli_context_with_llm
+    @staticmethod
+    def _drive(
+        ctx: MagicMock, plan: Any, side_effect: Any, groups: int = 1
+    ) -> tuple[Any, MagicMock, MagicMock, list[Any]]:
+        """Run ``_extract_and_finalize`` with an extractor raising/returning ``side_effect``.
+
+        Returns ``(result_or_exception, extractor, extraction_service, counters)``.
+        """
         ctx.storage_adapter.update_step_progress = MagicMock()
+        if not isinstance(ctx.settings.retries.extraction_chunk_max, int):  # a test may preset it
+            ctx.settings.retries.extraction_chunk_max = 2
+        if not isinstance(ctx.settings.extraction.empty_output_retry_min_chars, int):
+            ctx.settings.extraction.empty_output_retry_min_chars = 5
+        if not isinstance(ctx.settings.llm.chat_provider, str):  # a test may preset it
+            ctx.settings.llm.chat_provider = "ollama"  # sends the seed: the full ladder
 
         extractor = MagicMock()
-        extractor.extract_single_chunk = AsyncMock(side_effect=RuntimeError("group fail"))
-
+        extractor.extract_single_chunk = AsyncMock(side_effect=side_effect)
         extraction_service = MagicMock()
         extraction_service.finalize_distributed_extraction = AsyncMock(
             return_value={"entities": [], "relationships": []}
         )
-
         spend_tracker = MagicMock()
         collector = MagicMock()
         collector.attempts = []
+        counters: list[Any] = []
+
+        async def _count(**kwargs: Any) -> None:
+            counters.append(kwargs["counter"])
 
         base = "chaoscypher_core.services.sources.engine.extraction"
         with (
@@ -1539,39 +1741,371 @@ class TestExtractAndFinalize:
                 "chaoscypher_core.services.llm.spend.get_llm_spend_tracker",
                 return_value=spend_tracker,
             ),
+            patch(
+                "chaoscypher_core.services.quality.counters.increment_quality_counter",
+                AsyncMock(side_effect=_count),
+            ),
         ):
             service = CLISourceProcessingService(ctx)
             try:
-                result = service._run_async(
+                outcome: Any = service._run_async(
                     service._extract_and_finalize(
-                        groups_to_process=[{"combined_content": "g0"}],
+                        groups_to_process=[
+                            {"combined_content": f"group {i} text"} for i in range(groups)
+                        ],
                         file_id="fid",
-                        node_templates="NT",
-                        edge_templates="ET",
-                        entity_guidance=None,
-                        relationship_guidance=None,
-                        entity_examples=None,
-                        relationship_examples=None,
-                        entity_exclusions=None,
-                        domain_extraction_limits=None,
-                        filtering_mode="balanced",
+                        plan=plan,
                         metrics_collector=collector,
                         file_record={"id": "fid"},
                         detected_domain_name="technical",
                         forced_domain=None,
-                        total_groups=1,
+                        total_groups=groups,
                         depth="full",
                     )
                 )
+            except Exception as exc:
+                outcome = exc
             finally:
                 service.close()
+        return outcome, extractor, extraction_service, counters
 
-        # Group failed -> no entities aggregated, but finalize still ran.
+    def test_a_failed_group_fails_the_extraction_and_is_counted(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """A non-retryable failure: one attempt, counted, and no clean finalize (audit E8)."""
+        from chaoscypher_cli.sources.service import IncompleteExtractionError
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        outcome, extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, RuntimeError("group fail")
+        )
+
+        assert isinstance(outcome, IncompleteExtractionError)
+        assert "1 of 1 groups failed" in str(outcome)
+        assert "group fail" in str(outcome)
+        assert extractor.extract_single_chunk.await_count == 1
+        assert counters == [QualityCounter.LLM_CHUNKS_FAILED_PERMANENT]
+        extraction_service.finalize_distributed_extraction.assert_not_called()
+
+    def test_a_retryable_failure_is_retried_like_the_queue(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Retryable errors get ``retries.extraction_chunk_max`` more attempts, then count."""
+        from chaoscypher_cli.sources.service import IncompleteExtractionError
+        from chaoscypher_core.exceptions import LLMServiceError
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        outcome, extractor, _svc, counters = self._drive(
+            mock_cli_context_with_llm,
+            stub_extraction_plan,
+            LLMServiceError(provider="openai", reason="flaky"),
+        )
+
+        assert isinstance(outcome, IncompleteExtractionError)
+        assert extractor.extract_single_chunk.await_count == 3  # 1 + extraction_chunk_max
+        assert counters == [QualityCounter.LLM_CHUNKS_FAILED_PERMANENT]
+
+    def test_a_retry_asks_with_the_decode_fallback_ladder(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Degenerate output climbs the ladder (next seed, then 0.3); a transport error does not (wave 6)."""
+        from chaoscypher_core.exceptions import LLMServiceError
+        from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+            degenerate_output_error,
+        )
+        from chaoscypher_core.utils.decoding import effective_seed
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        sent: list[tuple[int | None, float | None]] = []
+
+        async def _degenerate(**kwargs: Any) -> Any:
+            sent.append((effective_seed(42), kwargs.get("temperature_override")))
+            raise degenerate_output_error(
+                "empty_output", provider="openai", model="m", reason="nothing came back"
+            )
+
+        self._drive(mock_cli_context_with_llm, stub_extraction_plan, _degenerate)
+        assert sent == [(42, None), (43, 0.0), (44, 0.3)]
+
+        sent.clear()
+
+        async def _flaky(**kwargs: Any) -> Any:
+            sent.append((effective_seed(42), kwargs.get("temperature_override")))
+            raise LLMServiceError(provider="openai", reason="flaky")
+
+        self._drive(mock_cli_context_with_llm, stub_extraction_plan, _flaky)
+        assert sent == [(42, None), (42, None), (42, None)]
+
+    def test_rung_two_sends_the_repeat_penalty_and_a_kept_group_counts_as_rescued(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Rung 1 sends no penalty, rung 2 sends REPEAT_PENALTY and records it; the kept group is counted."""
+        from chaoscypher_core.services.quality.counters import QualityCounter
+        from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+            DECODE_FALLBACK_KEY,
+            REPEAT_PENALTY,
+            degenerate_output_error,
+        )
+        from chaoscypher_core.utils.decoding import effective_repeat_penalty
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        penalties: list[float | None] = []
+        kept: dict[str, Any] = {}
+
+        async def _script(**_kwargs: Any) -> Any:
+            penalties.append(effective_repeat_penalty())
+            if len(penalties) < 3:
+                raise degenerate_output_error(
+                    "empty_output", provider="openai", model="m", reason="nothing came back"
+                )
+            return [{"name": "E1"}], [], 10, 5, kept
+
+        outcome, _extractor, _svc, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert penalties == [None, None, REPEAT_PENALTY]
+        assert kept[DECODE_FALLBACK_KEY]["repeat_penalty"] == REPEAT_PENALTY
+        assert counters == [QualityCounter.LLM_CHUNKS_RESCUED_BY_FALLBACK]
+        assert effective_repeat_penalty() is None
+
+        # a group kept on its pinned first try is not a rescue
+        outcome, _extractor, _svc, counters = self._drive(
+            mock_cli_context_with_llm,
+            stub_extraction_plan,
+            [([{"name": "E1"}], [], 10, 5, {})],
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert counters == []
+
+    def test_a_loop_abort_is_asked_again_on_the_ladder_and_the_last_attempt_keeps_the_partial(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """A loop-aborted group is degenerate: retried at the next seed; the last attempt keeps its output."""
+        from chaoscypher_core.utils.decoding import effective_seed
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        seen: list[int | None] = []
+        aborted = ([{"name": "Partial"}], [], 10, 5, {"aborted_by_loop": True})
+        good = ([{"name": "E1"}], [], 10, 5, {})
+
+        async def _script(**_kwargs: Any) -> Any:
+            seen.append(effective_seed(42))
+            return aborted if len(seen) == 1 else good
+
+        outcome, extractor, extraction_service, _ = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert seen == [42, 43]  # rung 1 after the abort
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert [e["name"] for e in finalize_kwargs["raw_entities"]] == ["E1"]
+
+        seen.clear()
+        mock_cli_context_with_llm.settings.retries.extraction_chunk_max = 0
+        outcome, extractor, extraction_service, _ = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert seen == [42]  # no retry left: the partial output is kept
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert [e["name"] for e in finalize_kwargs["raw_entities"]] == ["Partial"]
+
+    def test_an_unparseable_answer_climbs_the_ladder_and_a_later_success_is_kept(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Lines written and none parsed is degenerate: retried at rung 1; the last attempt keeps it.
+
+        Audit wave 7: the unparseable check had no caller, so [unparseable,
+        ok] made one call and completed with nothing.
+        """
+        from chaoscypher_core.services.quality.counters import QualityCounter
+        from chaoscypher_core.utils.decoding import effective_seed
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        seen: list[int | None] = []
+        unparseable = ([], [], 10, 5, {"parser_lines_dropped": 3})
+        good = ([{"name": "E1"}], [], 10, 5, {})
+
+        async def _script(**_kwargs: Any) -> Any:
+            seen.append(effective_seed(42))
+            return unparseable if len(seen) == 1 else good
+
+        outcome, extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert extractor.extract_single_chunk.await_count == 2
+        assert seen == [42, 43]  # rung 1 after the unparseable answer
+        assert counters == [QualityCounter.LLM_CHUNKS_RESCUED_BY_FALLBACK]
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert [e["name"] for e in finalize_kwargs["raw_entities"]] == ["E1"]
+
+        # no retry left: the group completes empty and counts as zero yield
+        seen.clear()
+        mock_cli_context_with_llm.settings.retries.extraction_chunk_max = 0
+        outcome, extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert seen == [42]
+        assert counters == [QualityCounter.LLM_CHUNKS_ZERO_YIELD]
         finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
         assert finalize_kwargs["raw_entities"] == []
-        # Failed group means record() never called (spend only on success).
-        spend_tracker.record.assert_not_called()
-        assert result["stats"]["groups_processed"] == 1
+
+    def test_an_answer_in_another_format_climbs_the_ladder(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Nothing parsed and nothing dropped (JSON, a table) is unparseable too (audit wave 8).
+
+        The parser counts no line of a format it does not know, so until wave
+        8 such an answer gave 0 dropped lines, 0 entities and no climb.
+        """
+        from chaoscypher_core.services.quality.counters import QualityCounter
+        from chaoscypher_core.utils.decoding import effective_seed
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        seen: list[int | None] = []
+        other_format = ([], [], 10, 5, {"parser_lines_dropped": 0, "parser_lines_parsed": 0})
+        good = ([{"name": "E1"}], [], 10, 5, {"parser_lines_parsed": 1})
+
+        async def _script(**_kwargs: Any) -> Any:
+            seen.append(effective_seed(42))
+            return other_format if len(seen) == 1 else good
+
+        outcome, _extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert seen == [42, 43]
+        assert counters == [QualityCounter.LLM_CHUNKS_RESCUED_BY_FALLBACK]
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert [e["name"] for e in finalize_kwargs["raw_entities"]] == ["E1"]
+
+    def test_a_group_unparseable_on_every_rung_is_no_rescue(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """The last rung keeps the unparseable output: zero yield, never rescued (audit wave 8)."""
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        unparseable = ([], [], 10, 5, {"parser_lines_dropped": 0, "parser_lines_parsed": 0})
+        outcome, extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, [unparseable] * 3
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert extractor.extract_single_chunk.await_count == 3
+        assert counters == [QualityCounter.LLM_CHUNKS_ZERO_YIELD]
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert finalize_kwargs["raw_entities"] == []
+
+    def test_a_short_group_whose_answer_holds_nothing_completes(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Below ``empty_output_retry_min_chars`` nothing parsed is no failure: one call, kept."""
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        mock_cli_context_with_llm.settings.extraction.empty_output_retry_min_chars = 200
+        nothing = ([], [], 10, 5, {"parser_lines_dropped": 0, "parser_lines_parsed": 0})
+        outcome, extractor, _svc, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, [nothing]
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert extractor.extract_single_chunk.await_count == 1
+        assert counters == [QualityCounter.LLM_CHUNKS_ZERO_YIELD]
+
+    def test_a_hosted_provider_starts_the_ladder_at_the_temperature_rung(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """No seed reaches an OpenAI model: rung 1 asks at 0.3, recorded as seedless (audit wave 8)."""
+        from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+            DECODE_FALLBACK_KEY,
+            FALLBACK_TEMPERATURE,
+            degenerate_output_error,
+        )
+        from chaoscypher_core.utils.decoding import effective_seed
+
+        mock_cli_context_with_llm.settings.llm.seed = 42
+        mock_cli_context_with_llm.settings.llm.extraction_temperature = 0.0
+        mock_cli_context_with_llm.settings.llm.chat_provider = "openai"
+        sent: list[tuple[int | None, float | None]] = []
+        kept: dict[str, Any] = {"parser_lines_parsed": 1}
+
+        async def _script(**kwargs: Any) -> Any:
+            sent.append((effective_seed(42), kwargs.get("temperature_override")))
+            if len(sent) == 1:
+                raise degenerate_output_error(
+                    "empty_output", provider="openai", model="m", reason="nothing came back"
+                )
+            return [{"name": "E1"}], [], 10, 5, kept
+
+        outcome, _extractor, _svc, _counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, _script
+        )
+        assert not isinstance(outcome, Exception), outcome
+        assert sent == [(42, None), (43, FALLBACK_TEMPERATURE)]
+        assert kept[DECODE_FALLBACK_KEY]["seed_honoured"] is False
+        assert kept[DECODE_FALLBACK_KEY]["step"] == 1
+
+    def test_an_empty_answer_on_the_last_attempt_fails_the_group(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """An empty answer is never kept: with no retry left the group fails and is counted."""
+        from chaoscypher_cli.sources.service import IncompleteExtractionError
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        mock_cli_context_with_llm.settings.retries.extraction_chunk_max = 0
+        outcome, extractor, _svc, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, [([], [], 10, 0, {})]
+        )
+        assert isinstance(outcome, IncompleteExtractionError)
+        assert extractor.extract_single_chunk.await_count == 1
+        assert counters == [QualityCounter.LLM_CHUNKS_FAILED_PERMANENT]
+
+    def test_an_empty_answer_is_retried_and_a_later_success_is_kept(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Zero output tokens on a real group is transient; the retry's result is used.
+
+        The kept output came from rung 1 of the ladder, so the group counts as
+        rescued (``LLM_CHUNKS_RESCUED_BY_FALLBACK``, audit wave 6).
+        """
+        from chaoscypher_core.services.quality.counters import QualityCounter
+
+        empty = ([], [], 10, 0, {})
+        good = ([{"name": "E1"}], [], 10, 5, {})
+        outcome, extractor, extraction_service, counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, [empty, good]
+        )
+
+        assert not isinstance(outcome, Exception), outcome
+        assert extractor.extract_single_chunk.await_count == 2
+        assert counters == [QualityCounter.LLM_CHUNKS_RESCUED_BY_FALLBACK]
+        finalize_kwargs = extraction_service.finalize_distributed_extraction.call_args.kwargs
+        assert [e["name"] for e in finalize_kwargs["raw_entities"]] == ["E1"]
+        assert finalize_kwargs["filtering_config"] is stub_extraction_plan.filtering_config
+
+    def test_the_plan_kwargs_and_the_source_reach_every_group(
+        self, mock_cli_context_with_llm: MagicMock, stub_extraction_plan: Any
+    ) -> None:
+        """Each group runs with the plan's kwargs plus the adapter/source for evidence counters."""
+        good = ([], [], 10, 5, {})
+        _outcome, extractor, _svc, _counters = self._drive(
+            mock_cli_context_with_llm, stub_extraction_plan, [good, good], groups=2
+        )
+
+        for call in extractor.extract_single_chunk.await_args_list:
+            kwargs = call.kwargs
+            for name, value in stub_extraction_plan.chunk_kwargs.items():
+                assert kwargs[name] == value, name
+            assert kwargs["source_id"] == "fid"
+            assert kwargs["adapter"] is mock_cli_context_with_llm.storage_adapter
 
 
 # ===========================================================================
@@ -1633,7 +2167,18 @@ class TestCommitToGraph:
         # Stored payload short-circuits the per-source table fallback.
         list_entities.assert_not_called()
         commit_kwargs = commit_service.commit.call_args.kwargs
-        assert commit_kwargs["commit_data"] is stored_payload
+        # The stored payload goes through the one commit-payload builder (audit W2-13).
+        from chaoscypher_core.services.sources.engine.commit.payload import (
+            COMMIT_PAYLOAD_KEYS,
+            build_commit_payload,
+        )
+
+        assert commit_kwargs["commit_data"] == build_commit_payload(
+            entities=stored_payload["entities"],
+            relationships=stored_payload["relationships"],
+            extraction_results=stored_payload,
+        )
+        assert tuple(commit_kwargs["commit_data"]) == COMMIT_PAYLOAD_KEYS
 
     def test_falls_back_to_source_tables_when_no_payload(
         self, mock_cli_context: MagicMock, sample_text_file: Path
@@ -1662,6 +2207,9 @@ class TestCommitToGraph:
         commit_kwargs = commit_service.commit.call_args.kwargs
         assert commit_kwargs["commit_data"]["entities"] == [{"name": "A"}]
         assert commit_kwargs["commit_data"]["suggested_templates"] == []
+        from chaoscypher_core.services.sources.engine.commit.payload import COMMIT_PAYLOAD_KEYS
+
+        assert tuple(commit_kwargs["commit_data"]) == COMMIT_PAYLOAD_KEYS
 
     def test_commit_failure_marks_failed_and_raises(
         self, mock_cli_context: MagicMock, sample_text_file: Path
@@ -1737,7 +2285,7 @@ class TestGetFileStatus:
 class TestResetForReExtraction:
     """Happy-path reset delegates to force_re_extract with adapter wiring."""
 
-    def test_reset_returns_artifact_counts(
+    def test_reset_returns_what_the_release_took(
         self, mock_cli_context: MagicMock, sample_text_file: Path
     ) -> None:
         service = CLISourceProcessingService(mock_cli_context)
@@ -1752,19 +2300,41 @@ class TestResetForReExtraction:
             return_value=False
         )
         mock_cli_context.storage_adapter.reset_for_re_extraction = MagicMock()
-        mock_cli_context.graph_repository.delete_source_artifacts = MagicMock(
-            return_value={"nodes_deleted": 7, "edges_deleted": 3, "templates_deleted": 1}
-        )
+        graph = MagicMock()
+        released = ReleasedRows(deleted_node_ids=frozenset({"n1", "n2"}))
+        graph.release_source.return_value = released
+        calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
 
-        removed = service.reset_for_re_extraction(file_id)
+        async def record(*args: Any, **kwargs: Any) -> None:
+            calls.append((asyncio.get_running_loop(), args, kwargs))
 
-        assert removed == {"nodes_deleted": 7, "edges_deleted": 3, "templates_deleted": 1}
-        mock_cli_context.graph_repository.delete_source_artifacts.assert_called_once_with(
-            file_id, session=mock_cli_context.storage_adapter.session
+        with (
+            patch(
+                "chaoscypher_core.services.sources.management.re_extraction."
+                "get_transaction_graph_repository",
+                return_value=graph,
+            ) as build,
+            patch("chaoscypher_cli.sources.service.refresh_after_release", record),
+        ):
+            removed = service.reset_for_re_extraction(file_id)
+
+        assert removed == released
+        build.assert_called_once_with(
+            mock_cli_context.storage_adapter, mock_cli_context.database_name
         )
+        graph.release_source.assert_called_once_with(file_id)
         mock_cli_context.storage_adapter.reset_for_re_extraction.assert_called_once_with(
             source_id=file_id, database_name=mock_cli_context.database_name
         )
+        # refreshed now (the reset commit counters make the next commit skip its cleanup),
+        # on the service's own loop: the provider's cached async client outlives a closed one
+        ((loop, args, kwargs),) = calls
+        assert loop is service._loop and not loop.is_closed()
+        assert args == (mock_cli_context.storage_adapter, mock_cli_context.database_name, released)
+        assert kwargs["search"] is mock_cli_context.search_repository
+        lent = kwargs["embedder"]
+        assert lent.owned is False  # the context keeps its provider: never closed here
+        assert lent.build() is mock_cli_context.embedding_service
 
     def test_reset_missing_source_raises(self, mock_cli_context: MagicMock) -> None:
         service = CLISourceProcessingService(mock_cli_context)

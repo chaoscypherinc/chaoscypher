@@ -12,6 +12,10 @@ from __future__ import annotations
 import contextlib
 from unittest.mock import MagicMock
 
+import pytest
+
+from chaoscypher_core.models import ReleasedRows
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -28,7 +32,18 @@ def _make_service(graph_mock, search_mock, sources_mock, indexing_mock, adapter_
     svc.sources_repository = sources_mock
     svc.indexing_repository = indexing_mock
     svc.adapter = adapter_mock
+    svc.database_name = "test"
+    svc.settings = None  # the rebuild reads the graph's conventions under the default packs
+    adapter_mock.graph = graph_mock  # what the release builds on the adapter's session
     return svc
+
+
+@pytest.fixture(autouse=True)
+def _graph_on_the_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "chaoscypher_core.repo_factories.get_transaction_graph_repository",
+        lambda adapter, _database_name: adapter.graph,
+    )
 
 
 class _FakeAdapter:
@@ -61,12 +76,7 @@ class TestRecommitCleanupAtomicity:
         """adapter.transaction() context manager is used in _cleanup_previous_commit."""
         adapter = _FakeAdapter()
         graph = MagicMock()
-        graph.delete_graph_data_by_source.return_value = {
-            "nodes_deleted": 0,
-            "edges_deleted": 0,
-            "templates_deleted": 0,
-            "deleted_node_ids": [],
-        }
+        graph.release_source.return_value = ReleasedRows()
         sources = MagicMock()
         sources.delete_citations_by_source.return_value = {
             "entity_citations_deleted": 0,
@@ -86,12 +96,9 @@ class TestRecommitCleanupAtomicity:
         """If search delete raises, the transaction rolls back (no committed graph delete)."""
         adapter = _FakeAdapter()
         graph = MagicMock()
-        graph.delete_graph_data_by_source.return_value = {
-            "nodes_deleted": 2,
-            "edges_deleted": 1,
-            "templates_deleted": 0,
-            "deleted_node_ids": ["n1", "n2"],
-        }
+        graph.release_source.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(["n1", "n2"]), deleted_edge_ids=frozenset(["e1"])
+        )
         sources = MagicMock()
         sources.delete_citations_by_source.return_value = {
             "entity_citations_deleted": 0,
@@ -115,7 +122,7 @@ class TestRecommitCleanupAtomicity:
         """If graph delete raises, the transaction rolls back before search is reached."""
         adapter = _FakeAdapter()
         graph = MagicMock()
-        graph.delete_graph_data_by_source.side_effect = RuntimeError("graph unavailable")
+        graph.release_source.side_effect = RuntimeError("graph unavailable")
         sources = MagicMock()
         search = MagicMock()
         indexing = MagicMock()
@@ -136,12 +143,7 @@ class TestRecommitCleanupAtomicity:
         """delete_nodes_batch receives session= so it joins the adapter's transaction."""
         adapter = _FakeAdapter()
         graph = MagicMock()
-        graph.delete_graph_data_by_source.return_value = {
-            "nodes_deleted": 2,
-            "edges_deleted": 0,
-            "templates_deleted": 0,
-            "deleted_node_ids": ["n1", "n2"],
-        }
+        graph.release_source.return_value = ReleasedRows(deleted_node_ids=frozenset(["n1", "n2"]))
         sources = MagicMock()
         sources.delete_citations_by_source.return_value = {
             "entity_citations_deleted": 0,
@@ -160,12 +162,9 @@ class TestRecommitCleanupAtomicity:
         """Happy path: graph, search, citations, and chunk-status all execute."""
         adapter = _FakeAdapter()
         graph = MagicMock()
-        graph.delete_graph_data_by_source.return_value = {
-            "nodes_deleted": 3,
-            "edges_deleted": 2,
-            "templates_deleted": 1,
-            "deleted_node_ids": ["n1", "n2", "n3"],
-        }
+        graph.release_source.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(["n1", "n2", "n3"]), deleted_edge_ids=frozenset(["e1", "e2"])
+        )
         sources = MagicMock()
         sources.delete_citations_by_source.return_value = {
             "entity_citations_deleted": 5,
@@ -178,7 +177,7 @@ class TestRecommitCleanupAtomicity:
         svc = _make_service(graph, search, sources, indexing, adapter)
         result = svc._cleanup_previous_commit("f1", "s1")
 
-        graph.delete_graph_data_by_source.assert_called_once_with("s1")
+        graph.release_source.assert_called_once_with("s1")
         search.delete_nodes_batch.assert_called_once()
         sources.delete_citations_by_source.assert_called_once_with("s1")
         indexing.update_chunk_status.assert_called_once_with("f1", "indexed")

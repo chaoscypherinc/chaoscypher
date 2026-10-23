@@ -56,7 +56,7 @@ Applying 24GB VRAM preset...
 
 Configure embedding provider? [y/N]:
 
-  Embedding auto-configured: ollama / qwen3-embedding:0.6b
+  Embedding auto-configured: ollama / qwen3-embedding:4b
 
 ╭─────────────── Configuration Complete ──────────────────╮
 │  Provider          ollama                               │
@@ -66,7 +66,7 @@ Configure embedding provider? [y/N]:
 │  Context Window    16384                                │
 │                                                         │
 │  Embedding Provider  ollama                             │
-│  Embedding Model     qwen3-embedding:0.6b               │
+│  Embedding Model     qwen3-embedding:4b               │
 │  Config File         ~/.local/share/chaoscypher/settings.yaml │
 ╰─────────────────────────────────────────────────────────╯
 

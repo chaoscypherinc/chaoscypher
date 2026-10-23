@@ -306,7 +306,7 @@ curl http://localhost:8080/api/v1/nodes/{node_id}/connections
       "citation_count": 3
     }
   ],
-  "pagination": {"page": 1, "page_size": 20, "total": 87}
+  "pagination": {"page": 1, "page_size": 20, "total": 87, "total_pages": 5, "has_next": true, "has_prev": false}
 }
 ```
 

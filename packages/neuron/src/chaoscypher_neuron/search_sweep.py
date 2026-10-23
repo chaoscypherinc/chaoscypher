@@ -167,6 +167,27 @@ def _source_search_failed(adapter: SqliteAdapter, source_id: str) -> bool:
     return src is not None and src.get("vector_indexing_status") == "failed"
 
 
+def _mark_indexed_if_drained(session: Any, adapter: SqliteAdapter, source_id: str | None) -> None:
+    """Flip a degraded source back to ``indexed`` once its last pending row drains.
+
+    The one degraded→indexed transition for every drain path (a re-indexed
+    node, a chunk batch, a node whose target is gone): the source recovers
+    only when no sibling row survives, and never while it is terminally
+    ``failed`` (see ``_source_search_failed``). Call it after the drained
+    row's delete is committed so the probe sees only surviving siblings.
+    """
+    if (
+        source_id
+        and not _source_has_remaining_pending(session, source_id)
+        and not _source_search_failed(adapter, source_id)
+    ):
+        mark_search_indexing_indexed(
+            adapter=adapter,
+            source_id=source_id,
+            database_name=adapter.database_name,
+        )
+
+
 def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index types in sequence; refactor out-of-scope
     adapter: SqliteAdapter,
     search_repo: SearchRepository,
@@ -244,16 +265,7 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
                     session.delete(entry)
                     session.commit()
                     stats["pending_drained"] += 1
-                    if (
-                        entry_source_id
-                        and not _source_has_remaining_pending(session, entry_source_id)
-                        and not _source_search_failed(adapter, entry_source_id)
-                    ):
-                        mark_search_indexing_indexed(
-                            adapter=adapter,
-                            source_id=entry_source_id,
-                            database_name=adapter.database_name,
-                        )
+                    _mark_indexed_if_drained(session, adapter, entry_source_id)
                     continue
                 node = _graph_node_to_pydantic(db_node)
                 search_repo.index_node(node, session=session)
@@ -278,16 +290,7 @@ def sweep_search_indexes(  # noqa: PLR0915 - sweeper orchestrates many index typ
             # 'indexed' so the UI badge clears — but only once its LAST
             # pending row drains (the deleted entry is already committed,
             # so the probe sees only surviving siblings).
-            if (
-                entry_source_id
-                and not _source_has_remaining_pending(session, entry_source_id)
-                and not _source_search_failed(adapter, entry_source_id)
-            ):
-                mark_search_indexing_indexed(
-                    adapter=adapter,
-                    source_id=entry_source_id,
-                    database_name=adapter.database_name,
-                )
+            _mark_indexed_if_drained(session, adapter, entry_source_id)
         except Exception as exc:
             # Roll back partial writes from this entry so the session
             # stays usable for subsequent entries.

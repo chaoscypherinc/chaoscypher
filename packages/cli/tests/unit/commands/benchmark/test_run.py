@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import pytest
@@ -21,6 +21,8 @@ from chaoscypher_cli.commands.benchmark.run import run
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from chaoscypher_cli.benchmark.config import BenchmarkConfig
 
 
@@ -446,7 +448,7 @@ def test_rebuild_graphs_clears_cache(tmp_path: Path):
     marker.write_text("hello")
     assert marker.exists()
 
-    cache = GraphCache(root=cache_root)
+    cache = GraphCache(root=cache_root, dedup_embedder="exact")
     cache.clear()
     assert not marker.exists()
 
@@ -658,6 +660,73 @@ def test_seed_and_temperature_flags_reach_full_mode_config(tmp_path: Path):
     cfg_used: BenchmarkConfig = captured_cfg[0]  # type: ignore[assignment]
     assert cfg_used.seed == 7
     assert cfg_used.temperature == 0.5
+
+
+def _invoke_full_capturing_cfg(
+    tmp_path: Path, write_config: Callable[[Path, str, list[str]], None], args: list[str]
+) -> tuple[Any, list[object]]:
+    """Run ``benchmark run full ARGS`` with the orchestrator faked; (result, configs it got)."""
+    builtin_ds, user_ds, builtin_cfg, user_cfg = _patch_roots(tmp_path)
+    _write_dataset(builtin_ds, "p1")
+    write_config(builtin_cfg, "full", ["p1"])
+    captured_cfg: list[object] = []
+
+    async def _fake_run_full(cfg: object, bundles: object, *, wiring: object, **_kwargs) -> list:
+        captured_cfg.append(cfg)
+        return []
+
+    with (
+        patch(
+            "chaoscypher_cli.benchmark.orchestrator.run_full_benchmark",
+            side_effect=_fake_run_full,
+        ),
+        patch("chaoscypher_cli.benchmark.orchestrator.default_wiring", return_value=object()),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_dataset_bundle",
+            side_effect=_make_load_bundle_side_effect(builtin_ds, user_ds),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.load_config",
+            side_effect=lambda name: __import__(
+                "chaoscypher_cli.benchmark.config", fromlist=["load_config"]
+            ).load_config(name, builtin_root=builtin_cfg, user_root=user_cfg),
+        ),
+        patch(
+            "chaoscypher_cli.commands.benchmark.run.user_benchmark_root",
+            return_value=tmp_path / "bench",
+        ),
+        patch("chaoscypher_cli.benchmark.models.assert_registry_coverage", return_value=[]),
+    ):
+        result = CliRunner().invoke(run, ["full", *args, "--out", str(tmp_path / "out")])
+    return result, captured_cfg
+
+
+def _write_full_config_with_chat(root: Path, name: str, datasets: list[str]) -> None:
+    """A full-mode config with one local chat model and no judge (seed 42, no chat_seed)."""
+    _write_full_config_no_chats(root, name, datasets)
+    path = root / f"{name}.yaml"
+    body = path.read_text(encoding="utf-8")
+    body += "chats:\n  - provider: ollama\n    model: local-chat\n    label: LocalChat\n"
+    path.write_text(body, encoding="utf-8")
+
+
+def test_chat_seed_moves_the_chat_seed_only(tmp_path: Path):
+    """Audit wave 4: `--seed` is the extraction seed (a new graph slot); `--chat-seed` is not."""
+    result, captured = _invoke_full_capturing_cfg(
+        tmp_path, _write_full_config_with_chat, ["--chat-seed", "43"]
+    )
+    assert result.exit_code == 0, result.output
+    cfg_used: BenchmarkConfig = captured[0]  # type: ignore[assignment]
+    assert (cfg_used.seed, cfg_used.chat_seed, cfg_used.chat_seed_or_seed) == (42, 43, 43)
+
+
+def test_chat_seed_without_a_chat_stage_is_refused(tmp_path: Path):
+    """A --chat-seed nothing decodes with would be a row seed that is not the flag's."""
+    result, captured = _invoke_full_capturing_cfg(
+        tmp_path, _write_full_config_no_chats, ["--chat-seed", "43"]
+    )
+    assert result.exit_code != 0 and "no chat stage" in result.output
+    assert captured == []
 
 
 def test_estimate_aborts_on_missing_registry_coverage(tmp_path: Path):

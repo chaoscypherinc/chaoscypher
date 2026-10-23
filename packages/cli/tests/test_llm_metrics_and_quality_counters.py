@@ -20,6 +20,7 @@ drop site.
 
 from __future__ import annotations
 
+import ast
 from collections.abc import Generator
 from pathlib import Path
 
@@ -470,6 +471,83 @@ async def test_increment_quality_counter_swallows_and_logs_adapter_failure() -> 
 # ---------------------------------------------------------------------------
 
 
+def _call_name(call: ast.Call) -> str | None:
+    """The called name of ``call`` (``f(...)`` or ``obj.f(...)``)."""
+    func = call.func
+    if isinstance(func, ast.Name):
+        return func.id
+    return func.attr if isinstance(func, ast.Attribute) else None
+
+
+def counter_increment_sites(source: str, where: str = "<source>") -> list[str]:
+    """Every place ``source`` increments a quality counter, as ``where:line``.
+
+    A site is a call of ``increment_quality_counter``, or of a forwarding
+    helper: a function of the same module whose ``increment_quality_counter``
+    call passes ``counter=`` one of the helper's own parameters (the CLI's
+    ``_increment_counter``, extraction's ``_count_flagged``). A forwarding
+    call is the helper's body, not a site; each call of the helper is one.
+    The counter itself may be any expression (a literal, a conditional, a
+    loop variable): until 2026-10-08 the audit counted the literal
+    ``counter=QualityCounter.X``, so the keep-flag work's computed counters
+    (``evidence_validator``'s kept-or-dropped choice) and the helper's
+    positional calls fell out of the count with no site lost.
+    """
+    tree = ast.parse(source)
+    forwarders: set[str] = set()
+    forwarding: set[int] = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        params = {a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and _call_name(node) == "increment_quality_counter":
+                counter = next((k.value for k in node.keywords if k.arg == "counter"), None)
+                if isinstance(counter, ast.Name) and counter.id in params:
+                    forwarders.add(fn.name)
+                    forwarding.add(id(node))
+    return [
+        f"{where}:{node.lineno}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (_call_name(node) == "increment_quality_counter" and id(node) not in forwarding)
+            or _call_name(node) in forwarders
+        )
+    ]
+
+
+def _sites_under(root: Path) -> list[str]:
+    """:func:`counter_increment_sites` of every module under ``root``."""
+    return [
+        site
+        for path in sorted(root.rglob("*.py"))
+        for site in counter_increment_sites(path.read_text(encoding="utf-8"), str(path))
+    ]
+
+
+def test_the_site_audit_counts_through_a_forwarding_helper() -> None:
+    """A helper's callers are the sites, whatever expression names the counter; its body is not."""
+    source = (
+        "async def _count(adapter, counter, n):\n"
+        "    await increment_quality_counter(adapter=adapter, counter=counter, n=n)\n"
+        "async def run(adapter, kept):\n"
+        "    await _count(adapter, QualityCounter.A, 1)\n"
+        "    await _count(adapter, QualityCounter.B, 2)\n"
+        "    await increment_quality_counter(\n"
+        "        adapter=adapter, counter=QualityCounter.C if kept else QualityCounter.D, n=1\n"
+        "    )\n"
+        "    for counter in (QualityCounter.E, QualityCounter.F):\n"
+        "        await increment_quality_counter(adapter=adapter, counter=counter, n=1)\n"
+    )
+    assert sorted(counter_increment_sites(source)) == [
+        "<source>:10",
+        "<source>:4",
+        "<source>:5",
+        "<source>:6",
+    ]
+
+
 def test_quality_counter_sites_audit() -> None:
     """Pin the current counter-increment site layout.
 
@@ -481,28 +559,18 @@ def test_quality_counter_sites_audit() -> None:
        Bug 8 progress. Counts shift; update the constants.
     3. A site is removed entirely — counts shrink. Verify that's
        intentional (counter retired? site no longer reachable?).
-    """
-    import re
-    from pathlib import Path
 
+    Sites are counted by :func:`counter_increment_sites` (calls, through
+    forwarding helpers), the same way under every root.
+    """
     # __file__ = packages/cli/tests/test_*.py
     # parents[2] = packages/
     packages_root = Path(__file__).parents[2]
     core_root = packages_root / "core" / "src" / "chaoscypher_core"
     assert core_root.exists(), f"core source root not found at {core_root}"
 
-    def _count_under(root: Path) -> int:
-        total = 0
-        for p in root.rglob("*.py"):
-            text = p.read_text(encoding="utf-8")
-            total += len(re.findall(r"counter=QualityCounter\.\w+", text))
-        return total
-
-    def _count_increments(subdir: str) -> int:
-        return _count_under(core_root / subdir)
-
-    services_count = _count_increments("services")
-    operations_count = _count_increments("operations")
+    services_count = len(_sites_under(core_root / "services"))
+    operations_count = len(_sites_under(core_root / "operations"))
 
     # The CLI's OWN increment sites. Until 2026-09-29 this audit globbed
     # `packages/core` only, so the CLI site that #651 added
@@ -511,27 +579,36 @@ def test_quality_counter_sites_audit() -> None:
     # changes — deleting it left this file's whole suite green. Behavioural
     # cover for that site lives in
     # `tests/unit/sources/test_integrity_counters_cli.py`; this baseline is
-    # the canary for the site simply disappearing.
-    # Counted by CALL SITE rather than by the `counter=QualityCounter.X`
-    # literal the core globs use: the CLI site builds its counter list first
-    # (`wanted.append(QualityCounter...)`) and then calls with `counter=counter`,
-    # so the core regex matches it zero times.
+    # the canary for the site simply disappearing. Since 2026-10-08 the
+    # CLI's calls of its `_increment_counter` helper are counted one by one
+    # (truncated, loop-aborted, degenerate, failed permanently).
     cli_root = packages_root / "cli" / "src" / "chaoscypher_cli"
     assert cli_root.exists(), f"cli source root not found at {cli_root}"
-    cli_count = 0
-    for p in cli_root.rglob("*.py"):
-        cli_count += len(re.findall(r"increment_quality_counter\(", p.read_text(encoding="utf-8")))
+    cli_count = len(_sites_under(cli_root))
 
-    assert cli_count >= 1, (
-        f"CLI-side counter call sites dropped to {cli_count} (expected >=1). "
-        "The CLI extraction path records truncation / loop-abort counters "
-        "directly; if that was retired, update this baseline and the "
-        "behavioural tests in tests/unit/sources/test_integrity_counters_cli.py."
+    assert cli_count >= 4, (
+        f"CLI-side counter call sites dropped to {cli_count} (expected >=4). "
+        "The CLI extraction path records truncation / loop-abort / degenerate / "
+        "permanent-failure counters directly; if one was retired, update this "
+        "baseline and the behavioural tests in "
+        "tests/unit/sources/test_integrity_counters_cli.py."
     )
 
     # CLI-reachable sites. Treat as a baseline — a real Bug 8 fix raises this.
-    assert services_count >= 11, (
-        f"services/ counter sites dropped to {services_count} (expected >=11). "
+    # 2026-10-08: 15 counted as calls. The branch base had 12 (every one a
+    # literal); the keep-flag work made two evidence_validator sites choose
+    # their counter (kept or dropped) and added three per-chunk flag counts
+    # through ai_entities' `_count_flagged` (excluded names, unplaced types,
+    # low plausibility), which the literal count missed (it read 10).
+    # 2026-10-10: 17. The merge with main's one-write-per-drop fix made the
+    # two evidence_validator sites four calls of its `_increment_counter`
+    # helper (one write per counter: dropped and kept, entities and
+    # relationships), counted through the helper like the CLI's.
+    # 2026-10-11: 19. The known-entities guards add two `_count_flagged` calls in
+    # ai_entities' `_filter_entities` (crossed aliases dropped, unevidenced known
+    # names demoted), reachable from the CLI like every per-chunk filter.
+    assert services_count >= 19, (
+        f"services/ counter sites dropped to {services_count} (expected >=19). "
         "If sites were retired, update the baseline. Otherwise something "
         "regressed."
     )
@@ -555,8 +632,19 @@ def test_quality_counter_sites_audit() -> None:
     # handler which is queue-only by design (same vision pipeline as
     # the truncation counter); the CLI extraction path doesn't share
     # the vision sampling code, so deliberately not mirrored.
-    assert operations_count <= 23, (
-        f"operations/ counter sites grew to {operations_count} (expected <=23). "
+    # Audit wave 5 (2026-10-06): baseline raised from 23 to 24 for the
+    # LLM_CHUNKS_ZERO_YIELD counter in the queue's chunk handler; the CLI path
+    # increments the same counter on its own (no new blind spot).
+    # 2026-10-08: counted as calls the baseline is 28, not 24. The literal
+    # count missed four computed counters on main (chunk_extraction_service's
+    # `_completion_counter`, indexing_handler's two `counter=counter` loops and
+    # its `QualityCounter[counter_name]`: 27 calls at the additive-domains
+    # base) and the additive-domains finalizer's loop over the type check's
+    # kept counters (RELATIONSHIPS_UNMATCHED_LABEL_KEPT,
+    # RELATIONSHIPS_TYPE_MISMATCH_KEPT): queue-only, a CLI blind spot recorded
+    # in internal/TODO.md.
+    assert operations_count <= 28, (
+        f"operations/ counter sites grew to {operations_count} (expected <=28). "
         "New queue-only counters extend the CLI's blind-spot gap. Either "
         "wire them in services/ instead (preferred), or update this baseline "
         "with a comment explaining why the CLI deliberately doesn't see them."

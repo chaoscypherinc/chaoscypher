@@ -102,6 +102,7 @@ def test_embedding_provider_protocol_is_runtime_checkable() -> None:
 
     class DuckEmbedding:
         model_name: str = "duck-embed"
+        query_prefix: str = ""
 
         @property
         def provider_type(self) -> str:

@@ -40,7 +40,7 @@ export interface Node {
   tags?: string[]; // Node tags
   position?: { x: number; y: number }; // Position for graph canvas
   embedding?: number[];
-  source_id?: string; // If this node is a source document
+  source_id?: string; // Home source: the one source this node is filed under
   created_at: string;
   updated_at: string;
   // Stats fields (populated when include_stats=true)
@@ -107,6 +107,8 @@ export interface Edge {
   label?: string;
   type?: string; // Edge type
   properties?: Record<string, unknown>;
+  /** Home source: the one source this edge is filed under (a merged edge has more members). */
+  source_id?: string | null;
   created_at: string;
   updated_at?: string;
 }
@@ -141,6 +143,11 @@ export interface CanvasNode {
   label: string;
   position?: { x: number; y: number } | null;
   source_id?: string | null;
+  /**
+   * The node's pipeline flag properties (``orphan``, ``descriptor_reference``,
+   * ...; see ``utils/nodeFlags.ts``). Drives the canvas's Unresolved region.
+   */
+  properties?: Record<string, unknown> | null;
 }
 
 /** Minimal edge data for canvas rendering (from GET /api/v1/graph/canvas). */
@@ -150,6 +157,12 @@ export interface CanvasEdge {
   target_node_id: string;
   template_id: string;
   label: string;
+  /**
+   * The edge's pipeline flag properties (``capped``, ``unevidenced``) and the
+   * reason the pipeline gave (``evidence_reason``); see ``utils/edgeFlags.ts``.
+   * A capped edge is drawn thin, an unevidenced one dashed.
+   */
+  properties?: Record<string, unknown> | null;
 }
 
 /** Minimal template data for canvas rendering (from GET /api/v1/graph/canvas). */

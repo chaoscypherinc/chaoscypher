@@ -8,6 +8,7 @@ Business logic for source processing operations.
 
 import asyncio
 import hashlib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ import structlog
 
 from chaoscypher_core.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import packs_of_name
 from chaoscypher_core.utils.id import generate_id
 
 
@@ -183,6 +185,8 @@ class SourceProcessingService:
         # Phase 6 (2026-05-08): nullable per-source toggles
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
+        forced_packs: Sequence[str] | None = None,
+        site_id: str | None = None,
     ) -> dict[str, Any]:
         """Upload a file to the source processing staging area.
 
@@ -199,8 +203,9 @@ class SourceProcessingService:
                 whitespace cleanup, OCR cleaning). ``None`` (default) defers to
                 the file-type default; ``True`` / ``False`` is an explicit user
                 override and is persisted on the source row.
-            forced_domain: Force a specific extraction domain (e.g., 'technical').
-                If None, domain is auto-detected from content.
+            forced_domain: The one-name form of ``forced_packs`` (a pack, the
+                packs' label, ``generic`` for the floor alone); read when
+                ``forced_packs`` is None. Neither: the packs are detected.
             origin_url: Original URL if the source was fetched from the web.
             source_type_override: Override the file-extension-derived source type
                 (e.g., 'webpage' for URL imports).
@@ -228,9 +233,13 @@ class SourceProcessingService:
             max_entity_degree_override: When a positive int, persists as the
                 per-source degree cap; None uses domain/global default.
             staged_file_path: Pre-written temp file to move to staging (avoids memory).
+            forced_packs: The packs to force (``[]`` the floor alone); None
+                with no ``forced_domain`` detects.
             content_hash: Pre-computed SHA-256 hash. If omitted with staged_file_path,
                 the hash is computed from disk in a worker thread.
             file_size: Pre-computed file size in bytes.
+            site_id: The imported site this page belongs to (a site import);
+                persisted on the row so the site counts it.
 
         Returns:
             Dictionary with file info
@@ -316,15 +325,21 @@ class SourceProcessingService:
         # mirrors prior file_info behavior.
         effective_enable_vision = True if enable_vision is None else bool(enable_vision)
 
-        # Resolve effective filtering_mode (column has a non-null default
-        # of "balanced").
-        effective_filtering_mode = filtering_mode if filtering_mode is not None else "balanced"
+        # Resolve effective filtering_mode (the column is non-null; its default is the plan's).
+        from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+            SOURCE_ROW_FILTERING_MODE,
+        )
 
-        # Domain-confirmation gate (2026-05-28): a source whose domain will be
-        # auto-detected (no forced_domain) and which was not uploaded with the
-        # bypass flag must be parked for human confirmation after indexing.
-        # forced_domain set OR auto_confirm => never park.
-        confirmation_required = (not auto_confirm) and (forced_domain is None)
+        effective_filtering_mode = (
+            filtering_mode if filtering_mode is not None else SOURCE_ROW_FILTERING_MODE
+        )
+
+        # Domain-confirmation gate (2026-05-28): a source whose packs will be
+        # detected (none forced) and which was not uploaded with the bypass
+        # flag must be parked for human confirmation after indexing.
+        # Forced packs (the floor alone included) OR auto_confirm => never park.
+        forced = tuple(forced_packs) if forced_packs is not None else packs_of_name(forced_domain)
+        confirmation_required = (not auto_confirm) and (forced is None)
 
         # Upload file via repository — Workstream 1 (2026-05-07): every
         # upload setting is persisted on the row so recovery / retry /
@@ -337,7 +352,7 @@ class SourceProcessingService:
             file_content=file_content,
             staging_dir=staging_dir,
             extraction_depth=extraction_depth,
-            forced_domain=forced_domain,
+            forced_packs=forced,
             origin_url=origin_url,
             source_type_override=source_type_override,
             title_override=title_override,
@@ -359,6 +374,7 @@ class SourceProcessingService:
             max_entity_degree_override=max_entity_degree_override,
             # Domain-confirmation gate (2026-05-28)
             confirmation_required=confirmation_required,
+            site_id=site_id,
         )
 
         # source_file is already a dict from storage adapter

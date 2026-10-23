@@ -13,6 +13,7 @@ that are not exercised by the processor or bridge test suites:
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from chaoscypher_core.mcp.server import (
     _handle_remove_document,
     _handle_wait_for_document,
 )
+from chaoscypher_core.models import ReleasedRows, SourceDeletion
 
 
 # ------------------------------------------------------------------ #
@@ -59,11 +61,12 @@ class TestHandleConfirmExtraction:
         assert result["success"] is True
         assert result["source_id"] == "src_1"
         assert result["domain"] == "medical"
-        # adapter, file_id, chosen_domain, overrides
+        assert result["packs"] == ["medical"]
+        # adapter, file_id, chosen packs, overrides
         args = mock_confirm.call_args.args
         assert args[0] is mock_engine.storage_adapter
         assert args[1] == "src_1"
-        assert args[2] == "medical"
+        assert args[2] == ("medical",)
 
     @pytest.mark.asyncio
     async def test_overrides_forwarded(self, mock_engine):
@@ -114,6 +117,49 @@ class TestHandleConfirmExtraction:
         # chosen_domain is None when the client accepts the recommendation.
         assert mock_confirm.call_args.args[2] is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("args", "chosen", "domain"),
+        [
+            ({"packs": ["literary", "historical"]}, ("literary", "historical"), "literary"),
+            ({"packs": []}, (), "generic"),  # the floor alone, chosen
+            ({"domain": "generic"}, (), "generic"),
+            ({"domain": "__auto__"}, None, None),  # accept the proposal
+        ],
+    )
+    async def test_packs_are_the_list_form(
+        self, mock_engine: Any, args: dict[str, Any], chosen: Any, domain: str | None
+    ) -> None:
+        """``packs`` is the list; ``domain`` is one element; the result names both."""
+        from chaoscypher_core.mcp.server import _handle_confirm_extraction
+
+        with patch(
+            "chaoscypher_core.mcp.server.confirm_extraction", return_value=True
+        ) as mock_confirm:
+            result = _parse_result(
+                await _handle_confirm_extraction(mock_engine, {"file_id": "src_1", **args})
+            )
+
+        assert mock_confirm.call_args.args[2] == chosen
+        assert result["packs"] == (list(chosen) if chosen is not None else None)
+        assert result["domain"] == domain
+
+    @pytest.mark.asyncio
+    async def test_packs_and_domain_together_are_refused(self, mock_engine: Any) -> None:
+        """Naming the packs twice is refused before the gate is touched."""
+        from chaoscypher_core.mcp.server import _handle_confirm_extraction
+
+        with patch("chaoscypher_core.mcp.server.confirm_extraction") as mock_confirm:
+            result = _parse_result(
+                await _handle_confirm_extraction(
+                    mock_engine, {"file_id": "src_1", "packs": ["legal"], "domain": "medical"}
+                )
+            )
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_PACKS"
+        mock_confirm.assert_not_called()
+
 
 # ------------------------------------------------------------------ #
 #  TestConfirmExtractionReadModeRejection
@@ -140,6 +186,8 @@ class TestConfirmExtractionReadModeRejection:
 
         engine = MagicMock()
         engine.settings.mcp.mode = "read"
+        engine.settings.mcp.profile = "full"
+        engine.settings.mcp.tools = []
         engine.settings.mcp.auto_extract = False
         engine.settings.mcp.completed_history_limit = 20
         engine.settings.current_database = "default"
@@ -177,6 +225,8 @@ class TestConfirmExtractionReadModeRejection:
 
         engine = MagicMock()
         engine.settings.mcp.mode = "write"
+        engine.settings.mcp.profile = "full"
+        engine.settings.mcp.tools = []
         engine.settings.mcp.auto_extract = False
         engine.settings.mcp.completed_history_limit = 20
         engine.settings.current_database = "default"
@@ -213,12 +263,62 @@ class TestConfirmExtractionReadModeRejection:
 
 
 # ------------------------------------------------------------------ #
+#  TestToolAllowlist
+# ------------------------------------------------------------------ #
+
+
+class TestToolAllowlist:
+    """``mcp.tools`` narrows what the server lists and what the gate lets through."""
+
+    @staticmethod
+    def _make_server(bridge_mock: MagicMock):
+        from chaoscypher_core.mcp.server import create_mcp_server
+        from chaoscypher_core.settings import MCPSettings
+
+        engine = MagicMock()
+        engine.settings.mcp = MCPSettings(mode="write", profile="full", tools=["search_nodes"])
+        engine.settings.current_database = "default"
+        engine.embedding_service = None
+
+        with patch("chaoscypher_core.mcp.server.MCPToolBridge", return_value=bridge_mock):
+            return create_mcp_server(engine)
+
+    @pytest.mark.asyncio
+    async def test_list_tools_is_the_allowlist(self):
+        import mcp.types
+
+        server = self._make_server(MagicMock())
+        handler = server.request_handlers[mcp.types.ListToolsRequest]
+        result = await handler(mcp.types.ListToolsRequest(method="tools/list"))
+        assert [t.name for t in result.root.tools] == ["search_nodes"]
+
+    @pytest.mark.asyncio
+    async def test_a_registered_tool_outside_the_allowlist_is_unknown(self):
+        import mcp.types
+
+        bridge = MagicMock()
+        bridge.execute = AsyncMock()
+        server = self._make_server(bridge)
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+        req = mcp.types.CallToolRequest(
+            method="tools/call",
+            params=mcp.types.CallToolRequestParams(name="get_node", arguments={"node_id": "x"}),
+        )
+        server_result = await handler(req)
+
+        bridge.execute.assert_not_awaited()
+        payload = json.loads(server_result.root.content[0].text)
+        assert payload["success"] is False
+        assert payload["error_code"] == "UNKNOWN_TOOL"
+
+
+# ------------------------------------------------------------------ #
 #  TestReadModeAllowlist
 # ------------------------------------------------------------------ #
 
 
 class TestReadModeAllowlist:
-    """Read mode permits ONLY tools advertised by get_tools_for_mode('read').
+    """Read mode permits ONLY tools advertised by get_tools('read').
 
     Regression: the gate used to be a denylist built from ``write_only``
     flags, so bridge handlers absent from TOOL_DEFINITIONS (summarize,
@@ -233,6 +333,8 @@ class TestReadModeAllowlist:
 
         engine = MagicMock()
         engine.settings.mcp.mode = "read"
+        engine.settings.mcp.profile = "full"
+        engine.settings.mcp.tools = []
         engine.settings.mcp.auto_extract = False
         engine.settings.mcp.completed_history_limit = 20
         engine.settings.current_database = "default"
@@ -266,6 +368,47 @@ class TestReadModeAllowlist:
         assert payload["error_code"] == "NOT_AUTHORIZED"
 
     @pytest.mark.asyncio
+    async def test_write_mode_rejects_unlisted_bridge_tool(self):
+        """Write mode is an allowlist too: an unadvertised handler gets UNKNOWN_TOOL.
+
+        The MCP SDK only warns about a call to a tool that was never listed,
+        so ``summarize`` reached ``bridge.execute`` in write mode.
+        """
+        import mcp.types
+
+        from chaoscypher_core.mcp.server import create_mcp_server
+
+        bridge = MagicMock()
+        bridge.execute = AsyncMock()
+        engine = MagicMock()
+        engine.settings.mcp.mode = "write"
+        engine.settings.mcp.profile = "full"
+        engine.settings.mcp.tools = []
+        engine.settings.mcp.auto_extract = False
+        engine.settings.mcp.completed_history_limit = 20
+        engine.settings.current_database = "default"
+        engine.embedding_service = None
+        with (
+            patch("chaoscypher_core.mcp.server.MCPToolBridge", return_value=bridge),
+            patch("chaoscypher_core.mcp.server.DocumentProcessor"),
+            patch("chaoscypher_core.mcp.server.ExtractionOrchestrator"),
+            patch("chaoscypher_core.mcp.server.BenchmarkBridge"),
+        ):
+            server = create_mcp_server(engine)
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+
+        req = mcp.types.CallToolRequest(
+            method="tools/call",
+            params=mcp.types.CallToolRequestParams(name="summarize", arguments={"query": "x"}),
+        )
+        server_result = await handler(req)
+
+        bridge.execute.assert_not_awaited()
+        payload = json.loads(server_result.root.content[0].text)
+        assert payload["success"] is False
+        assert payload["error_code"] == "UNKNOWN_TOOL"
+
+    @pytest.mark.asyncio
     async def test_read_mode_still_allows_read_tools(self):
         """A normal read tool (search_nodes) still reaches the bridge."""
         import mcp.types
@@ -287,6 +430,51 @@ class TestReadModeAllowlist:
         bridge.execute.assert_awaited_once_with("search_nodes", {"query": "x"})
         payload = json.loads(server_result.root.content[0].text)
         assert payload["success"] is True
+
+
+# ------------------------------------------------------------------ #
+#  TestIndexOnlyPipelineFailure
+# ------------------------------------------------------------------ #
+
+
+class TestIndexOnlyPipelineFailure:
+    """A failure after start_indexing marks the row failed instead of stranding it."""
+
+    @pytest.mark.asyncio
+    async def test_loader_error_calls_fail_indexing_and_reraises(self, tmp_path):
+        from chaoscypher_core.mcp.server import _run_index_only_pipeline
+
+        (tmp_path / "doc.txt").write_text("content")
+        engine = MagicMock()
+        engine.settings.current_database = "default"
+        engine.settings.paths.mcp_dir = tmp_path
+        engine.storage_adapter.find_by_content_hash.return_value = None
+
+        with (
+            patch(
+                "chaoscypher_core.services.sources.loaders.facade.Loaders.load_text",
+                side_effect=RuntimeError("loader exploded"),
+            ),
+            pytest.raises(RuntimeError, match="loader exploded"),
+        ):
+            await _run_index_only_pipeline(
+                engine,
+                file_path="doc.txt",
+                file_id="f1",
+                extraction_depth="full",
+                forced_domain=None,
+                enable_normalization=False,
+                skip_duplicates=False,
+                is_url=False,
+                auto_confirm=False,
+            )
+
+        engine.storage_adapter.start_indexing.assert_called_once_with("f1")
+        engine.storage_adapter.fail_indexing.assert_called_once()
+        file_id, error = engine.storage_adapter.fail_indexing.call_args.args
+        assert file_id == "f1"
+        assert error.startswith("RuntimeError:")
+        engine.storage_adapter.complete_indexing.assert_not_called()
 
 
 # ------------------------------------------------------------------ #
@@ -375,20 +563,32 @@ class TestHandleRemoveDocument:
             "chaoscypher_core.services.graph.management.source.SourceService"
         ) as mock_sms_cls:
             mock_sms = MagicMock()
-            mock_sms.delete_source.return_value = True
+            released = ReleasedRows(stale_node_ids=frozenset({"kept"}))
+            mock_sms.delete_source.return_value = SourceDeletion(deleted=True, released=released)
             mock_sms_cls.return_value = mock_sms
 
-            result = _parse_result(
-                await _handle_remove_document(mock_engine, {"source_id": "src_123"})
-            )
+            with patch(
+                "chaoscypher_core.services.graph.management.release.refresh_after_release",
+                new_callable=AsyncMock,
+            ) as refresh:
+                result = _parse_result(
+                    await _handle_remove_document(mock_engine, {"source_id": "src_123"})
+                )
+
+        # the post-release refresh re-embeds what the release rebuilt, with the engine's provider
+        refresh.assert_awaited_once_with(
+            mock_engine.storage_adapter,
+            mock_engine.settings.current_database,
+            released,
+            embedder=mock_engine.embedding_provider,
+            search=mock_engine.search_repository,
+        )
 
         assert result["success"] is True
         assert result["source_id"] == "src_123"
         assert "error" not in result
         mock_sms.delete_source.assert_called_once_with(
-            "src_123",
-            graph_repo=mock_engine.graph_repository,
-            search_repo=mock_engine.search_repository,
+            "src_123", search_repo=mock_engine.search_repository
         )
 
     @pytest.mark.asyncio
@@ -398,12 +598,16 @@ class TestHandleRemoveDocument:
             "chaoscypher_core.services.graph.management.source.SourceService"
         ) as mock_sms_cls:
             mock_sms = MagicMock()
-            mock_sms.delete_source.return_value = False
+            mock_sms.delete_source.return_value = SourceDeletion(deleted=False)
             mock_sms_cls.return_value = mock_sms
 
-            result = _parse_result(
-                await _handle_remove_document(mock_engine, {"source_id": "nonexistent"})
-            )
+            with patch(
+                "chaoscypher_core.services.graph.management.release.refresh_after_release",
+                new_callable=AsyncMock,
+            ):
+                result = _parse_result(
+                    await _handle_remove_document(mock_engine, {"source_id": "nonexistent"})
+                )
 
         assert result["success"] is False
         assert result["source_id"] == "nonexistent"
@@ -448,14 +652,19 @@ class TestHandleRemoveDocument:
             "chaoscypher_core.services.graph.management.source.SourceService"
         ) as mock_sms_cls:
             mock_sms = MagicMock()
-            mock_sms.delete_source.return_value = True
+            mock_sms.delete_source.return_value = SourceDeletion(deleted=True)
             mock_sms_cls.return_value = mock_sms
 
-            await _handle_remove_document(mock_engine, {"source_id": "src_1"})
+            with patch(
+                "chaoscypher_core.services.graph.management.release.refresh_after_release",
+                new_callable=AsyncMock,
+            ):
+                await _handle_remove_document(mock_engine, {"source_id": "src_1"})
 
         mock_sms_cls.assert_called_once_with(
             repository=mock_engine.storage_adapter,
             database_name="default",
+            settings=mock_engine.settings,
         )
 
 
@@ -1014,6 +1223,67 @@ class TestHandleAddDocumentSandbox:
         assert str(secret) not in result["error"]
 
 
+class TestHandleAddDocumentPacks:
+    """add_document takes ``packs`` (a list) or ``domain`` (one element) and carries their label."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("packs", "domain", "forced_domain"),
+        [
+            (["literary", "historical"], None, "literary+historical"),  # the ordered choice
+            ([], None, "generic"),  # the floor alone, chosen
+            (None, "legal", "legal"),
+            (None, "__auto__", None),  # detect
+            (None, None, None),
+        ],
+    )
+    async def test_the_pipeline_receives_the_packs_label(
+        self,
+        tmp_path: Any,
+        packs: list[str] | None,
+        domain: str | None,
+        forced_domain: str | None,
+    ) -> None:
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        uploads = tmp_path / "mcp"
+        uploads.mkdir()
+        doc = uploads / "doc.txt"
+        doc.write_text("x")
+        seen: dict[str, Any] = {}
+
+        async def pipeline(**kwargs: Any) -> dict[str, Any]:
+            seen.update(kwargs)
+            return {"success": True, "source_id": kwargs["file_id"]}
+
+        await _handle_add_document(
+            MagicMock(),
+            {"file_path": str(doc)},
+            forced_domain=domain,
+            packs=packs,
+            pipeline=pipeline,
+            sandbox_dir=uploads,
+        )
+        assert seen["forced_domain"] == forced_domain
+
+    @pytest.mark.asyncio
+    async def test_a_bad_pack_name_is_refused(self, tmp_path: Any) -> None:
+        from chaoscypher_core.mcp.server import _handle_add_document
+
+        pipeline = AsyncMock()
+        result = _parse_result(
+            await _handle_add_document(
+                MagicMock(),
+                {"file_path": "doc.txt"},
+                packs=["a+b"],
+                pipeline=pipeline,
+                sandbox_dir=tmp_path,
+            )
+        )
+        assert result["error_code"] == "INVALID_PACKS"
+        pipeline.assert_not_called()
+
+
 # ------------------------------------------------------------------ #
 #  TestHandleAddDocumentSandboxWaitFalse
 # ------------------------------------------------------------------ #
@@ -1448,3 +1718,92 @@ class TestHandleAddDocumentSandboxWithContent:
         )
 
         assert result["success"] is True
+
+
+# ------------------------------------------------------------------ #
+#  Tsukumo gap fixes (roadmap § 4, audited 2026-10-20)
+# ------------------------------------------------------------------ #
+
+
+def _engine(mode: str = "write", *, embedding_service: Any = None, vector_search: bool = True):
+    engine = MagicMock()
+    engine.settings.mcp.mode = mode
+    engine.settings.mcp.profile = "full"
+    engine.settings.mcp.tools = []
+    engine.settings.mcp.auto_extract = False
+    engine.settings.mcp.completed_history_limit = 20
+    engine.settings.current_database = "default"
+    engine.settings.search.enable_vector_search = vector_search
+    engine.embedding_service = embedding_service
+    return engine
+
+
+class TestToolFailuresAreErrorsOnTheWire:
+    """Gap 5: the bridge computed ``is_error`` and the server dropped it, so every failure
+    reached the client as a plain text result with ``isError: false``.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("is_error", [True, False])
+    async def test_the_bridges_verdict_reaches_the_call_tool_result(self, is_error: bool) -> None:
+        import mcp.types
+
+        from chaoscypher_core.mcp.bridge import BridgeResult
+        from chaoscypher_core.mcp.server import create_mcp_server
+
+        server = create_mcp_server(_engine())
+        handler = server.request_handlers[mcp.types.CallToolRequest]
+        text = json.dumps({"success": not is_error, "error": "boom" if is_error else None})
+        with patch(
+            "chaoscypher_core.mcp.bridge.MCPToolBridge.execute",
+            AsyncMock(return_value=BridgeResult(text=text, is_error=is_error)),
+        ):
+            req = mcp.types.CallToolRequest(
+                method="tools/call",
+                params=mcp.types.CallToolRequestParams(
+                    name="search_nodes", arguments={"query": "x"}
+                ),
+            )
+            server_result = await handler(req)
+        assert server_result.root.isError is is_error
+        assert json.loads(server_result.root.content[0].text)["success"] is not is_error
+
+
+class TestCreateTemplateSchemaIsTheOneTheHandlerAccepts:
+    """Gap 4: the MCP schema advertised ``{name, data_type, required}`` while the model needs
+    ``display_name`` and ``property_type``; the engine's own tool schema already had it right.
+    """
+
+    def test_the_property_item_schema_is_shared_with_the_engine_registry(self) -> None:
+        from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS
+        from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
+            TEMPLATE_PROPERTY_ITEM_SCHEMA,
+            TOOL_SCHEMAS,
+        )
+
+        (tool,) = [t for t in TOOL_DEFINITIONS if t.name == "create_template"]
+        items = tool.input_schema["properties"]["properties"]["items"]
+        assert items is TEMPLATE_PROPERTY_ITEM_SCHEMA
+        registry = TOOL_SCHEMAS["create_template"]["function"]["parameters"]
+        assert registry["properties"]["properties"]["items"] is TEMPLATE_PROPERTY_ITEM_SCHEMA
+        assert set(items["properties"]) == {"name", "display_name", "property_type", "required"}
+        assert "data_type" not in items["properties"]
+
+
+class TestNoEmbedderWhenVectorSearchIsOff:
+    """Gap 11: ``search.enable_vector_search`` was read nowhere and the server always wired the
+    embedder, so a keyword-only process still embedded every query (Tsukumo pointed it at a
+    closed port, about 3 s per search).
+    """
+
+    @pytest.mark.parametrize(("vector_search", "wired"), [(True, True), (False, False)])
+    def test_the_embedding_callback_follows_the_setting(
+        self, vector_search: bool, wired: bool
+    ) -> None:
+        from chaoscypher_core.mcp.server import create_mcp_server
+
+        engine = _engine(embedding_service=MagicMock(), vector_search=vector_search)
+        with patch("chaoscypher_core.mcp.server.ToolExecutorService") as executor:
+            create_mcp_server(engine)
+        callback = executor.call_args.kwargs["embedding_callback"]
+        assert (callback is not None) is wired

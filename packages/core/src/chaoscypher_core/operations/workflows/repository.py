@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from sqlalchemy import func, update
 from sqlmodel import select
 
 from chaoscypher_core.adapters.sqlite.models import WorkflowExecution
@@ -21,6 +22,12 @@ if TYPE_CHECKING:
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
 
 logger = structlog.get_logger(__name__)
+
+_TERMINAL_STATUSES = (
+    WorkflowExecutionStatus.COMPLETED,
+    WorkflowExecutionStatus.FAILED,
+    WorkflowExecutionStatus.CANCELLED,
+)
 
 
 class WorkflowExecutionRepository:
@@ -68,27 +75,34 @@ class WorkflowExecutionRepository:
             )
             session.add(execution)
 
-    def update_status(self, execution_id: str, status: str) -> None:
-        """Update execution status.
+    def update_status(self, execution_id: str, status: str) -> bool:
+        """Update execution status unless the row already reached a terminal state.
+
+        The write is a single conditional ``UPDATE`` so a cancel that lands
+        between the worker's pickup read and this write (Cortex stamps the
+        row ``cancelled``) is never resurrected to ``running``.
 
         Args:
             execution_id: Execution ID
             status: New status
 
+        Returns:
+            True if the row was updated; False if it is missing or terminal.
+
         """
+        values: dict[str, Any] = {"status": status}
+        if status == WorkflowExecutionStatus.RUNNING:
+            values["started_at"] = func.coalesce(WorkflowExecution.started_at, datetime.now(UTC))
         with self.adapter.transaction():
             session = self.adapter.session
             assert session is not None
-            statement = select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
-            execution = session.exec(statement).first()
-
-            if execution:
-                execution.status = status
-
-                if status == WorkflowExecutionStatus.RUNNING and not execution.started_at:
-                    execution.started_at = datetime.now(UTC)
-
-                session.add(execution)
+            result = session.exec(
+                update(WorkflowExecution)
+                .where(WorkflowExecution.id == execution_id)  # type: ignore[arg-type]
+                .where(WorkflowExecution.status.not_in(_TERMINAL_STATUSES))  # type: ignore[attr-defined]
+                .values(**values)
+            )
+        return bool(result.rowcount)
 
     def finalize_execution(
         self,
@@ -98,7 +112,7 @@ class WorkflowExecutionRepository:
         error_message: str | None,
         failed_step_id: str | None,
         duration_ms: int,
-    ) -> None:
+    ) -> bool:
         """Finalize an execution atomically.
 
         Writes status + outputs + error_message + failed_step_id +
@@ -113,26 +127,61 @@ class WorkflowExecutionRepository:
             failed_step_id: ID of the failed step (for failed) or None
             duration_ms: Total duration in milliseconds
 
+        Returns:
+            True if the row was finalized; False if it is missing or was
+            already cancelled by the user.
+
         """
+        values: dict[str, Any] = {
+            "status": status,
+            "completed_at": datetime.now(UTC),
+            "duration_ms": duration_ms,
+        }
+        if outputs is not None:
+            values["outputs"] = outputs
+        if error_message is not None:
+            values["error_message"] = error_message
+        if failed_step_id is not None:
+            values["failed_step_id"] = failed_step_id
         with self.adapter.transaction():
             session = self.adapter.session
             assert session is not None
-            statement = select(WorkflowExecution).where(WorkflowExecution.id == execution_id)
-            execution = session.exec(statement).first()
-            if not execution:
-                logger.warning("finalize_execution_not_found", execution_id=execution_id)
-                return
-            execution.status = status
-            if outputs is not None:
-                execution.outputs = outputs
-            if error_message is not None:
-                execution.error_message = error_message
-            if failed_step_id is not None:
-                execution.failed_step_id = failed_step_id
-            execution.completed_at = datetime.now(UTC)
-            execution.duration_ms = duration_ms
-            session.add(execution)
-            session.maybe_commit()
+            # Conditional UPDATE: a user cancel (Cortex writes ``cancelled``)
+            # is final — the worker finishing afterwards must not overwrite it.
+            result = session.exec(
+                update(WorkflowExecution)
+                .where(WorkflowExecution.id == execution_id)  # type: ignore[arg-type]
+                .where(WorkflowExecution.status != WorkflowExecutionStatus.CANCELLED)  # type: ignore[arg-type]
+                .values(**values)
+            )
+        if not result.rowcount:
+            logger.warning(
+                "finalize_execution_skipped",
+                execution_id=execution_id,
+                reason="not_found_or_cancelled",
+            )
+            return False
+        return True
+
+    def get_status(self, execution_id: str) -> str | None:
+        """Read the execution's current status straight from the database.
+
+        A column-only ``SELECT`` bypasses the session identity map, so a
+        status written by another process (a Cortex cancel) is seen on the
+        next poll instead of the cached entity's stale value.
+
+        Args:
+            execution_id: Execution ID
+
+        Returns:
+            The status string, or None if the row does not exist.
+
+        """
+        session = self.adapter.session
+        assert session is not None
+        return session.exec(
+            select(WorkflowExecution.status).where(WorkflowExecution.id == execution_id)
+        ).first()
 
     def get_execution(self, execution_id: str) -> dict[str, Any] | None:
         """Get execution details.

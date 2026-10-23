@@ -1,7 +1,5 @@
 # Chaos Cypher Neuron - Background task workers
-ARG PYTHON_BASE_IMAGE=python:3.14.3-slim@sha256:5e59aae31ff0e87511226be8e2b94d78c58f05216efda3b07dbbed938ec8583b
-
-FROM ${PYTHON_BASE_IMAGE} AS wheels-builder
+FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 AS wheels-builder
 
 ENV PIP_ROOT_USER_ACTION=ignore \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -36,7 +34,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         /wheels/chaoscypher_core-*.whl \
         /wheels/chaoscypher_neuron-*.whl
 
-FROM ${PYTHON_BASE_IMAGE}
+FROM python:3.14.8-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
 
 WORKDIR /app
 

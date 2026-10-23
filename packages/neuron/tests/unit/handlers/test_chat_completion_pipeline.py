@@ -192,6 +192,10 @@ async def test_handler_success_sets_processing_and_delegates(
     # Status was set to "processing" before delegating.
     assert run_mock.await_count == 1
     assert run_mock.await_args.kwargs["chat_id"] == "c1"
+    assert run_mock.await_args.kwargs["decoding_attempt"] == 0
+    # a regenerate's re-ask number reaches the turn (audit wave 5)
+    await handler({"chat_id": "c1", "decoding_attempt": 2}, None, "task-2")
+    assert run_mock.await_args.kwargs["decoding_attempt"] == 2
 
 
 @pytest.mark.asyncio
@@ -764,6 +768,50 @@ async def test_finalize_citation_and_entity_enrichment_with_tool_results(
 
 
 @pytest.mark.asyncio
+async def test_finalize_enriches_from_the_buffered_json_not_the_models_rendered_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A graphrag result reaches the model as its context_text; the chips read its buffered JSON.
+
+    No helper is patched: the real citation and entity pipeline runs on the
+    messages as the chat loop leaves them (the history holds the rendered
+    text, ``pending_messages`` the JSON).
+    """
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+    result = {
+        "graph_context": {
+            "seed_entities": [{"id": "node_pierre", "label": "Pierre", "description": "a count"}]
+        },
+        "context_text": "- Pierre: a count",
+    }
+    messages = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc-g", "function": {"name": "graphrag_search"}}],
+        },
+        {"role": "tool", "content": result["context_text"], "tool_call_id": "tc-g"},
+    ]
+    kwargs = _finalize_kwargs(
+        content="Meet [[node:node_pierre|Pierre]], who is the answer here.",
+        thinking=None,
+        messages_for_llm=messages,
+        total_tool_calls=1,
+    )
+    kwargs["pending_messages"] = [
+        {
+            "role": "tool",
+            "content": json.dumps(result),
+            "extra_metadata": {"tool_call_id": "tc-g", "name": "graphrag_search"},
+        }
+    ]
+    await cc._finalize_and_publish(**kwargs)
+
+    assert _done_event(publish)["referenced_entities"]["node_pierre"]["description"] == "a count"
+
+
+@pytest.mark.asyncio
 async def test_finalize_strips_blockquote_duplicating_citation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -937,3 +985,27 @@ async def test_finalize_ships_validation_verdicts(
     meta = _assistant_message(persisted)["extra_metadata"]
     assert meta["validation"]["verdict"] == "correct"
     assert _done_event(publish)["validation"]["verdict"] == "correct"
+
+
+@pytest.mark.asyncio
+async def test_finalize_records_the_decoding_the_next_regenerate_counts_from(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer records its seed and attempt (audit wave 5): regenerate reads it back."""
+    from chaoscypher_core.streaming.chat.finalize import next_regeneration_attempt
+
+    _patch_citation_helpers(monkeypatch)
+    publish = AsyncMock()
+    monkeypatch.setattr(cc, "publish_chat_event", publish)
+    kwargs = _finalize_kwargs(content="answer", thinking=None, messages_for_llm=[])
+    persisted: list[dict[str, Any]] = []
+    kwargs["chat_service"].persist_messages.side_effect = persisted.extend
+
+    await cc._finalize_and_publish(
+        **kwargs, decoding={"seed": 43, "temperature": 0.7, "attempt": 1}
+    )
+
+    assistant = next(m for m in persisted if m["role"] == "assistant")
+    assert assistant["extra_metadata"]["decoding"] == {"seed": 43, "temperature": 0.7, "attempt": 1}
+    history = [{"id": "u1", "role": "user"}, assistant]
+    assert next_regeneration_attempt(history, "u1") == 2

@@ -19,9 +19,11 @@ from chaoscypher_core.services.sources.engine.extraction.utils.post_extraction i
 
 
 class TestApplyDomainTypeAliases:
-    """Tests for ``apply_domain_type_aliases`` — the shared wrapper that
-    resolves a domain's type_aliases mapping and applies it to a list of
-    entities.
+    """Tests for ``apply_domain_type_aliases``: the finalize sites' one type rewrite.
+
+    It reads the domain's type vocabulary (its ``type_aliases``, its
+    subtypes when it is a pack) and the mapping table, and rewrites every
+    old type name to its core type, the subtype under ``entity_subtype``.
 
     Regression context (2026-05-19): a re-import of
     ``war_and_peace_tiny.txt`` after the initial type_aliases commit
@@ -32,30 +34,49 @@ class TestApplyDomainTypeAliases:
     """
 
     def test_applies_aliases_from_domain(self) -> None:
-        """Aliases declared on the domain are applied to the entity list."""
+        """Aliases declared on the domain are applied; core-typed entities are left alone."""
         domain = MagicMock()
         domain.get_type_aliases.return_value = {"Historical Figure": "Character"}
         entities = [
             {"name": "Buonaparte", "type": "Historical Figure"},
-            {"name": "Anna", "type": "Character"},
+            {"name": "Anna", "type": "Person"},
         ]
         count = apply_domain_type_aliases(entities, domain)
 
         assert count == 1
-        assert entities[0]["type"] == "Character"
-        assert entities[0]["properties"]["entity_subtype"] == "Historical Figure"
-        assert entities[1]["type"] == "Character"
+        assert entities[0]["type"] == "Person"
+        assert entities[0]["properties"]["entity_subtype"] == "character"
+        assert entities[1] == {"name": "Anna", "type": "Person"}
 
-    def test_no_op_when_domain_is_none(self) -> None:
-        """A ``None`` domain (rare; standalone helper fallback) is a no-op."""
+    def test_reads_the_real_packs_vocabulary(self) -> None:
+        """A registered pack's aliases, subtypes and qualified rows (literary, news)."""
+        from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
+            get_domain_registry,
+        )
+
+        registry = get_domain_registry()
+        entities = [{"name": "Funke", "type": "Historical Figure"}]
+        apply_domain_type_aliases(entities, registry.get_domain("literary"))
+        assert entities[0]["properties"]["entity_subtype"] == "character"
+
+        entities = [{"name": "The Times", "type": "Publication"}]
+        apply_domain_type_aliases(entities, registry.get_domain("news"))
+        assert (entities[0]["type"], entities[0]["properties"]["entity_subtype"]) == (
+            "Organization",
+            "publication",
+        )
+
+    def test_the_mapping_table_applies_when_domain_is_none(self) -> None:
+        """A ``None`` domain (rare; standalone helper fallback) still reads the mapping table."""
         entities = [{"name": "Buonaparte", "type": "Historical Figure"}]
         count = apply_domain_type_aliases(entities, None)
 
-        assert count == 0
-        assert entities[0] == {"name": "Buonaparte", "type": "Historical Figure"}
+        assert count == 1
+        assert entities[0]["type"] == "Person"
+        assert entities[0]["properties"]["entity_subtype"] == "historical_figure"
 
-    def test_no_op_when_domain_has_no_accessor(self) -> None:
-        """A domain object without ``get_type_aliases`` is a no-op.
+    def test_a_domain_without_accessors_contributes_nothing(self) -> None:
+        """A domain object without ``get_type_aliases`` adds no alias.
 
         Defensive against older / minimal domain stubs used in tests and
         early plugin shapes that pre-date the accessor.
@@ -64,33 +85,25 @@ class TestApplyDomainTypeAliases:
         class _MinimalDomain:
             name = "minimal"
 
-        entities = [{"name": "Buonaparte", "type": "Historical Figure"}]
+        entities = [{"name": "Glorp", "type": "Quux"}]
         count = apply_domain_type_aliases(entities, _MinimalDomain())
 
         assert count == 0
-
-    def test_no_op_when_accessor_returns_empty(self) -> None:
-        """A domain whose accessor returns ``{}`` performs no rewrite."""
-        domain = MagicMock()
-        domain.get_type_aliases.return_value = {}
-        entities = [{"name": "Buonaparte", "type": "Historical Figure"}]
-        count = apply_domain_type_aliases(entities, domain)
-
-        assert count == 0
-        assert entities[0]["type"] == "Historical Figure"
+        assert entities[0] == {"name": "Glorp", "type": "Quux"}
 
     def test_swallows_accessor_exception(self) -> None:
-        """A raising accessor doesn't blow up finalization — falls through as no-op.
+        """A raising accessor doesn't blow up finalization (the table still applies).
 
         Finalization is critical; an aliasing bug must not block commit.
         """
         domain = MagicMock()
         domain.get_type_aliases.side_effect = RuntimeError("boom")
-        entities = [{"name": "Buonaparte", "type": "Historical Figure"}]
+        entities = [{"name": "Glorp", "type": "Quux"}, {"name": "Lise", "type": "Character"}]
         count = apply_domain_type_aliases(entities, domain)
 
-        assert count == 0
-        assert entities[0]["type"] == "Historical Figure"
+        assert count == 1
+        assert entities[0]["type"] == "Quux"
+        assert entities[1]["type"] == "Person"
 
     def test_empty_entity_list(self) -> None:
         """Empty entity list returns 0 regardless of domain."""

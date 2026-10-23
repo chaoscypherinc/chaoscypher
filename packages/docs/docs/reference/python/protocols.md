@@ -52,16 +52,19 @@ Notes:
     - Used by ExtractionService for entity extraction
 
 Example:
-    groups = chunking_repo.get_hierarchical_groups("source_123")
 
-    if groups:
-        print(f"Using \{len(groups)\} hierarchical groups")
-        for group in groups:
-            text = group['combined_content']
-            chunk_ids = group['small_chunk_ids']
-            print(f"Group from \{len(chunk_ids)\} chunks: \{len(text)\} chars")
-    else:
-        print("No hierarchical groups - using legacy chunking")
+```
+groups = chunking_repo.get_hierarchical_groups("source_123")
+
+if groups:
+    print(f"Using {len(groups)} hierarchical groups")
+    for group in groups:
+        text = group['combined_content']
+        chunk_ids = group['small_chunk_ids']
+        print(f"Group from {len(chunk_ids)} chunks: {len(text)} chars")
+else:
+    print("No hierarchical groups - using legacy chunking")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -167,9 +170,12 @@ Raises:
     ValueError: If database not found
 
 Example:
-    db_info = database_repo.get_database("my_database")
-    print(f"Database path: \{db_info.path\}")
-    # path might be: /data/databases/my_database
+
+```
+db_info = database_repo.get_database("my_database")
+print(f"Database path: {db_info.path}")
+# path might be: /data/databases/my_database
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -194,11 +200,14 @@ Architecture:
     - EmbeddingHealthStatus is the canonical health-check return type at the port level
 
 Example:
-    from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
 
-    async def index_document(provider: EmbeddingProviderProtocol, text: str) -> list[float]:
-        result = await provider.embed(text)
-        return result.embedding
+```
+from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
+
+async def index_document(provider: EmbeddingProviderProtocol, text: str) -> list[float]:
+    result = await provider.embed(text)
+    return result.embedding
+```
 
 ### `class EmbeddingHealthStatus`
 
@@ -303,6 +312,12 @@ Raises:
 
 - `model_name`: `str` — The model identifier used by this provider.
 - `provider_type`: `str` — Return the provider type identifier (e.g., 'ollama', 'openai', 'gemini').
+- `query_prefix`: `str` — Text the provider puts before a query when it embeds one; empty when it puts none.
+
+Part of what decides a query's vector besides its text, so the
+benchmark's query-vector cache keys on it
+(`chaoscypher_core.benchmark.pins.query_vector_identity`). Every
+provider defines it; none uses a prefix today.
 
 ## `chaoscypher_core.ports.graph`
 
@@ -325,31 +340,64 @@ to satisfy this interface (structural typing).
 
 **Methods:**
 
-#### `assign_source_to_nodes(node_ids: list[str], source_id: str, database_name: str) -> int`
+#### `absorb_edge(keep_id: str, drop_id: str) -> None`
 
-Back-fill `source_id` on nodes that lack one; return rows changed.
+Fold a moved or duplicate edge into its new edge: memberships and citations.
+
+Same rules as `absorb_node`, for `RelationshipCitation.edge_id`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `keep_id` | `str` |  |
+| `drop_id` | `str` |  |
+
+#### `absorb_node(keep_id: str, drop_id: str) -> None`
+
+Fold a merged-away node into the kept one: memberships and entity citations.
+
+`drop_id`'s memberships move to `keep_id`; where both hold one for the
+same source, the kept row stays and the dropped snapshot is appended to its
+`absorbed` list. Every `SourceCitation` naming `drop_id` names
+`keep_id` after. Call before deleting `drop_id`. Joins the caller's
+transaction; nothing is committed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `keep_id` | `str` |  |
+| `drop_id` | `str` |  |
+
+#### `assign_source_to_nodes(node_ids: list[str], source_id: str, database_name: str, readings: Mapping[str, dict[str, Any]] | None = None) -> int`
+
+Link nodes to `source_id`: back-fill the home where missing, record the membership.
 
 The CCX importer creates nodes before it knows their source (the
 node->source link lives in the citation records, imported last), so it
 stamps `graph_nodes.source_id` here once citations resolve. Nodes
-that already carry a source id are left untouched (first link wins).
+that already carry a source id keep it (first link wins). Every node
+gains `source_id` as a member, its snapshot `readings[node_id]`
+(what the source wrote: the package's own entity), else the node's
+own pre-merge reading (its home's snapshot), never a merged row.
 
 Args:
     node_ids: Node ids to link.
     source_id: Source id to assign to those nodes.
     database_name: Database that owns the nodes.
+    readings: Per node id, the record `source_id` wrote for it
+        (`node_create_snapshot`).
 
 | Parameter | Type | Description |
 |---|---|---|
 | `node_ids` | `list[str]` |  |
 | `source_id` | `str` |  |
 | `database_name` | `str` |  |
+| `readings` | `Mapping[str, dict[str, Any]] \| None` |  |
 
 #### `assign_source_to_templates(template_ids: list[str], source_id: str, database_name: str) -> int`
 
 Back-fill `source_id` on templates that lack one; return rows changed.
 
-Templates are source-owned and cascade-delete with their source. The CCX
+Templates are source-owned: a source's release deletes the ones nothing
+else uses (D6). The CCX
 importer creates templates before the source exists (FK order), so it
 links them here once the source lands. Templates that already carry a
 source id are left untouched.
@@ -364,6 +412,21 @@ Args:
 | `template_ids` | `list[str]` |  |
 | `source_id` | `str` |  |
 | `database_name` | `str` |  |
+
+#### `clear_node_embeddings(node_ids: list[str]) -> int`
+
+Clear the stored embedding of each node; return rows changed.
+
+For a node whose text changed under a vector a caller cannot refresh
+at once: an indexing step that embeds only vectorless nodes then
+re-embeds it.
+
+Args:
+    node_ids: The nodes whose `embedding` is cleared.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_ids` | `list[str]` |  |
 
 #### `count_edges(source_node_id: str | None = None, target_node_id: str | None = None, source_ids: list[str] | None = None, include_disabled_sources: bool = True) -> int`
 
@@ -510,16 +573,19 @@ Note:
     `sqlalchemy.exc.IntegrityError`, not `ValueError`.
 
 Example:
-    from chaoscypher_core.models import EdgeCreate
 
-    edge_create = EdgeCreate(
-        template_id="knows",
-        source_node_id="person_123",
-        target_node_id="person_456",
-        label="knows",
-        properties=\{"since": "2020"\}
-    )
-    created_edge = graph_repo.create_edge(edge_create)
+```
+from chaoscypher_core.models import EdgeCreate
+
+edge_create = EdgeCreate(
+    template_id="knows",
+    source_node_id="person_123",
+    target_node_id="person_456",
+    label="knows",
+    properties={"since": "2020"}
+)
+created_edge = graph_repo.create_edge(edge_create)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -558,15 +624,18 @@ Note:
     `sqlalchemy.exc.IntegrityError`, not `ValueError`.
 
 Example:
-    from chaoscypher_core.models import NodeCreate
 
-    node_create = NodeCreate(
-        template_id="person",
-        label="Alice Smith",
-        properties=\{"age": 30, "email": "alice@example.com"\}
-    )
-    created_node = graph_repo.create_node(node_create)
-    print(f"Created node with ID: \{created_node.id\}")
+```
+from chaoscypher_core.models import NodeCreate
+
+node_create = NodeCreate(
+    template_id="person",
+    label="Alice Smith",
+    properties={"age": 30, "email": "alice@example.com"}
+)
+created_node = graph_repo.create_node(node_create)
+print(f"Created node with ID: {created_node.id}")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -646,24 +715,6 @@ Returns:
 |---|---|---|
 | `edge_ids` | `list[str]` |  |
 
-#### `delete_graph_data_by_source(source_id: str) -> dict[str, Any]`
-
-Delete all graph data (edges, nodes, templates) for a given source.
-
-Used for idempotent commit: cleans up previously committed graph objects
-before re-committing.
-
-Args:
-    source_id: Source ID whose graph data should be deleted.
-
-Returns:
-    Dict with edges_deleted, nodes_deleted, templates_deleted counts
-    and deleted_node_ids list.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `source_id` | `str` |  |
-
 #### `delete_node(node_id: str) -> bool`
 
 Delete a node by ID.
@@ -709,6 +760,69 @@ Delete GraphTemplate rows by ID list. Returns count.
 | Parameter | Type | Description |
 |---|---|---|
 | `template_ids` | `list[str]` |  |
+
+#### `drop_edge_citations(edge_id: str) -> None`
+
+Delete an edge's relationship citations (a merge turned it into a self-loop).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `edge_id` | `str` |  |
+
+#### `edge_members(edge_id: str) -> dict[str, dict[str, Any]]`
+
+Map source_id to the snapshot that source wrote for this edge.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `edge_id` | `str` |  |
+
+#### `edges_closed_by(source_id: str) -> list[Edge]`
+
+The edges `source_id` closed (`closed_by_source_id`).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+
+#### `edges_from(node_id: str, label: str) -> list[Edge]`
+
+Every edge from `node_id` with `label`, open or closed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_id` | `str` |  |
+| `label` | `str` |  |
+
+#### `edges_with_true_properties(keys: Sequence[str], carry: Sequence[str] = (), ids: Sequence[str] | None = None) -> dict[str, dict[str, Any]]`
+
+The edges whose properties hold JSON `true` under any of `keys`, with `carry` values.
+
+The edge counterpart of `nodes_with_true_properties`, for the
+projections that load no edge properties (the canvas's `minimal`
+listing, PageRank's `list_edges_minimal`) and must still read the
+pipeline's edge flags (`name_identity.PIPELINE_EDGE_FLAG_KEYS`: a
+capped edge is drawn thin, an unevidenced one dashed). `true`
+exactly: a string `"true"` or a number is no flag.
+
+Args:
+    keys: Top-level property keys read as flags.
+    carry: Top-level property keys whose values a flagged edge also
+        returns when it holds them (the canvas shows
+        `evidence_reason` beside `unevidenced`).
+    ids: When set, only these edges are read (as for
+        `nodes_with_true_properties`). None reads every edge.
+
+Returns:
+    Edge id -> `{key: True}` for each flag it holds, in `keys`
+    order, plus each `carry` key it holds; edges holding no flag
+    are absent.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `keys` | `Sequence[str]` |  |
+| `carry` | `Sequence[str]` |  |
+| `ids` | `Sequence[str] \| None` |  |
 
 #### `export_graph(max_items: int = 100000) -> dict[str, Any]`
 
@@ -775,9 +889,10 @@ Returns:
 
 #### `find_orphaned_nodes_by_source(*, database_name: str) -> list[str]`
 
-Return IDs of nodes whose source_id references a missing SourceRow.
+Return IDs of nodes whose source_id references a missing SourceRow and no source attests.
 
-Nodes with `source_id IS NULL` are NOT considered orphaned.
+Nodes with `source_id IS NULL` are NOT considered orphaned, nor is a
+node with any source membership (a merged node another source attests).
 
 Args:
     database_name: Database to scope to.
@@ -791,9 +906,10 @@ Returns:
 
 #### `find_orphaned_templates_by_source(*, database_name: str) -> list[str]`
 
-Return IDs of non-system templates whose source_id references a missing SourceRow.
+Return IDs of unused non-system templates whose source_id references a missing SourceRow.
 
-System templates (`is_system=True`) are never considered orphaned.
+System templates (`is_system=True`) are never considered orphaned,
+nor is a template a node or edge still uses.
 
 Args:
     database_name: Database to scope to.
@@ -850,9 +966,12 @@ Returns:
     Node object or None if not found
 
 Example:
-    node = graph_repo.get_node("person_123")
-    if node:
-        print(f"Found node: \{node.label\}")
+
+```
+node = graph_repo.get_node("person_123")
+if node:
+    print(f"Found node: {node.label}")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -952,6 +1071,24 @@ Returns:
 | `minimal` | `bool` |  |
 | `with_nodes` | `bool` |  |
 
+#### `list_edges_by_node(node_ids: Sequence[str], *, outgoing: bool, limit_per_node: int, include_disabled_sources: bool = False) -> dict[str, list[Edge]]`
+
+Each node's edges out of it (`outgoing`) or into it, as `list_edges` lists them.
+
+For every id in `node_ids`, exactly what `list_edges` returns
+with `limit=limit_per_node` and the id as `source_node_id` (as
+`target_node_id` when not `outgoing`), in its order. Every id is a
+key; a node with no edges maps to `[]`. An adapter answers in as few
+queries as it can: the graph context reads every seed's edges in both
+directions.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_ids` | `Sequence[str]` |  |
+| `outgoing` | `bool` |  |
+| `limit_per_node` | `int` |  |
+| `include_disabled_sources` | `bool` |  |
+
 #### `list_nodes(template_id: str | None = None, source_ids: list[str] | None = None, skip: int = 0, limit: int = 100, include_disabled_sources: bool = False, minimal: bool = False, include_embedding: bool = True) -> list[Node]`
 
 List all nodes, optionally filtered by template, source, and enabled status.
@@ -971,14 +1108,17 @@ Returns:
     List of Node objects (empty list if none found)
 
 Example:
-    # Get all nodes
-    all_nodes = graph_repo.list_nodes()
 
-    # Get nodes of specific type
-    people = graph_repo.list_nodes(template_id="person")
+```
+# Get all nodes
+all_nodes = graph_repo.list_nodes()
 
-    # Get nodes from specific sources
-    source_nodes = graph_repo.list_nodes(source_ids=["src_1", "src_2"])
+# Get nodes of specific type
+people = graph_repo.list_nodes(template_id="person")
+
+# Get nodes from specific sources
+source_nodes = graph_repo.list_nodes(source_ids=["src_1", "src_2"])
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1005,9 +1145,12 @@ Returns:
     List of Template objects (both node and edge templates)
 
 Example:
-    templates = graph_repo.list_templates()
-    node_templates = [t for t in templates if t.template_type == "node"]
-    edge_templates = [t for t in templates if t.template_type == "edge"]
+
+```
+templates = graph_repo.list_templates()
+node_templates = [t for t in templates if t.template_type == "node"]
+edge_templates = [t for t in templates if t.template_type == "edge"]
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1016,6 +1159,187 @@ Example:
 | `source_id` | `str \| None` |  |
 | `skip` | `int` |  |
 | `limit` | `int \| None` |  |
+
+#### `member_edge_ids(source_id: str) -> list[str]`
+
+The edges `source_id` attests, in membership order.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+
+#### `member_node_ids(source_id: str) -> list[str]`
+
+The nodes `source_id` attests, in membership order.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+
+#### `member_source_ids() -> set[str]`
+
+Every source that attests some node: the graph's sources, by membership.
+
+#### `memory_source_fields(source_ids: Iterable[str]) -> dict[str, dict[str, Any]]`
+
+Each source's `source_type`, `memory_by`, `valid_from` (a date or None), `created_at`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `Iterable[str]` |  |
+
+#### `node_member_sources(node_ids: Iterable[str]) -> dict[str, set[str]]`
+
+Map each of `node_ids` that has members to the ids of its member sources.
+
+One batched read (no snapshots): for a caller that only needs to know
+who attests a set of nodes.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_ids` | `Iterable[str]` |  |
+
+#### `node_members(node_id: str) -> dict[str, dict[str, Any]]`
+
+Map source_id to the snapshot that source wrote for this node.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_id` | `str` |  |
+
+#### `nodes_with_true_properties(keys: Sequence[str], ids: Sequence[str] | None = None) -> dict[str, list[str]]`
+
+The nodes whose properties hold JSON `true` under any of `keys`.
+
+For a projection that loads no properties (the canvas's `minimal`
+listing) and must still show the pipeline's flags
+(`name_identity.PIPELINE_FLAG_KEYS`). `true` exactly: a string
+`"true"` or a number is no flag.
+
+Args:
+    keys: Top-level property keys.
+    ids: When set, only these nodes are read (the ids a capped,
+        source-scoped listing returned), so the cost follows what
+        is shown, not the whole graph. None reads every node.
+
+Returns:
+    Node id -> the keys it holds `true` under, in `keys` order;
+    nodes holding none are absent.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `keys` | `Sequence[str]` |  |
+| `ids` | `Sequence[str] \| None` |  |
+
+#### `open_edges(node_id: str, label: str) -> list[Edge]`
+
+The edges from `node_id` with `label` whose `valid_to` is unset.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_id` | `str` |  |
+| `label` | `str` |  |
+
+#### `reattest_edges(rows: Sequence[tuple[str, EdgeCreate]]) -> set[str]`
+
+`reattest_nodes` for edges.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | `Sequence[tuple[str, EdgeCreate]]` |  |
+
+#### `reattest_nodes(rows: Sequence[tuple[str, NodeCreate]]) -> set[str]`
+
+Give each `(node_id, create)` its source's membership when that source has none.
+
+The snapshot is the record `create` writes. Returns the ids that
+gained a membership. Joins the caller's transaction; nothing is committed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | `Sequence[tuple[str, NodeCreate]]` |  |
+
+#### `record_edge_sources(rows: Sequence[tuple[str, str, dict[str, Any]]]) -> None`
+
+Record `(edge_id, source_id, snapshot)` memberships; same rules as nodes.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | `Sequence[tuple[str, str, dict[str, Any]]]` |  |
+
+#### `record_node_sources(rows: Sequence[tuple[str, str, dict[str, Any]]]) -> None`
+
+Record `(node_id, source_id, snapshot)` memberships.
+
+A source writing a node again replaces its own snapshot. Joins the
+caller's transaction; nothing is committed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `rows` | `Sequence[tuple[str, str, dict[str, Any]]]` |  |
+
+#### `rehome(nodes: Mapping[str, str], edges: Mapping[str, str], *, entity_types: Mapping[str, str] | None = None) -> None`
+
+Re-home each node (edge) id to the source it maps to.
+
+A survivor of a release is re-homed to a member that still attests it:
+its `source_id`, a node's `entity_type` (`entity_types`), and its
+template, moved to that source's template of the same type and name
+when there is one. Joins the caller's transaction; nothing is committed.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `nodes` | `Mapping[str, str]` |  |
+| `edges` | `Mapping[str, str]` |  |
+| `entity_types` | `Mapping[str, str] \| None` |  |
+
+#### `release_all_sources() -> None`
+
+Release every source of this database in one pass (the reset paths).
+
+#### `release_source(source_id: str) -> ReleasedRows`
+
+Take a source out of the graph: its memberships, and what only it attested.
+
+Candidates are the nodes and edges the source is a member of, plus the
+rows homed at it. Each loses the source's membership; a candidate no
+source attests any more is deleted (an edge also goes with a deleted
+endpoint); the surviving candidates are reported as touched. The
+source's templates follow D6: deleted when unused, else re-homed to a
+member source of a surviving user (unowned only when no user has a
+member). Joins the caller's transaction; never deletes the source row
+or its citations.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+
+#### `reopen_edges_closed_by(source_id: str) -> int`
+
+Reopen the edges `source_id` closed (`valid_to` and `closed_by_source_id` unset); how many.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str` |  |
+
+#### `set_edge_validity(edge_id: str, *, valid_from: date | None, valid_to: date | None, closed_by_source_id: str | None) -> None`
+
+Write an edge's validity window; joins the caller's transaction.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `edge_id` | `str` |  |
+| `valid_from` | `date \| None` |  |
+| `valid_to` | `date \| None` |  |
+| `closed_by_source_id` | `str \| None` |  |
+
+#### `source_valid_from(source_ids: Iterable[str]) -> dict[str, date | None]`
+
+Each source's `valid_from` (a non-memory source maps to None).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `Iterable[str]` |  |
 
 #### `update_edge(edge_id: str, edge_update: EdgeUpdate) -> Edge | None`
 
@@ -1122,14 +1446,16 @@ Returns:
 | `database_name` | `str` |  |
 | `source_id` | `str \| None` |  |
 
-#### `upsert_edges_batch(edge_creates: list[EdgeCreate]) -> tuple[list[Edge], int]`
+#### `upsert_edges_batch(edge_creates: list[EdgeCreate], *, reattested: set[str] | None = None) -> tuple[list[Edge], int]`
 
 Idempotently create or reuse edges by stable content key.
 
-Used on the commit path; mirror of `upsert_nodes_batch`.
+Used on the commit path; mirror of `upsert_nodes_batch`,
+`reattested` included.
 
 Args:
     edge_creates: List of edge creation data.
+    reattested: Filled with the reused ids that gained a membership.
 
 Returns:
     Tuple of:
@@ -1139,6 +1465,7 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `edge_creates` | `list[EdgeCreate]` |  |
+| `reattested` | `set[str] \| None` |  |
 
 #### `upsert_node_by_ccx_iri(ccx_iri: str, node_create: NodeCreate, database_name: str, source_id: str | None = None) -> dict[str, Any]`
 
@@ -1166,15 +1493,20 @@ Returns:
 | `database_name` | `str` |  |
 | `source_id` | `str \| None` |  |
 
-#### `upsert_nodes_batch(node_creates: list[NodeCreate]) -> tuple[list[Node], int]`
+#### `upsert_nodes_batch(node_creates: list[NodeCreate], *, reattested: set[str] | None = None) -> tuple[list[Node], int]`
 
 Idempotently create or reuse nodes by stable content key.
 
 Used on the commit path: re-dispatched commits observe pre-existing
-rows via a bulk SELECT-by-id and leave them untouched.
+rows via a bulk SELECT-by-id and leave them untouched. A reused row
+the incoming source does not attest (one that outlived the source's
+release under another member) gets the source's membership back with
+the reading it writes now, and its id is added to `reattested` for
+the caller to rebuild (#795).
 
 Args:
     node_creates: List of node creation data.
+    reattested: Filled with the reused ids that gained a membership.
 
 Returns:
     Tuple of:
@@ -1184,6 +1516,7 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `node_creates` | `list[NodeCreate]` |  |
+| `reattested` | `set[str] \| None` |  |
 
 #### `upsert_template(template_create: TemplateCreate, is_system: bool = False) -> tuple[Template, bool]`
 
@@ -1192,6 +1525,9 @@ Idempotently create a template by stable content key.
 Args:
     template_create: Template to create (or reuse).
     is_system: Whether this is a system template.
+
+A reused template owned by another source (or by none) since a
+release is handed back to the source its stable id names.
 
 Returns:
     Tuple of:
@@ -1218,6 +1554,16 @@ Returns:
 | Parameter | Type | Description |
 |---|---|---|
 | `template_creates` | `list[TemplateCreate]` |  |
+
+#### `write_locked() -> AbstractContextManager[None]`
+
+A unit of work that holds the database's writer lock from its first statement.
+
+For a read-then-write that must not interleave with another writer:
+what is read inside is what the writes inside build on. Commits on a
+clean exit and rolls back on an exception; inside a caller's
+transaction it joins it (taking the lock now if the transaction has
+not written yet) and commits nothing.
 
 ## `chaoscypher_core.ports.index`
 
@@ -1475,6 +1821,29 @@ via `schedule_reindex()` and flushed asynchronously by the caller.
 
 Main implementation: chaoscypher_core.adapters.sqlite.repos.SearchRepository
 
+### `class SearchHits`
+
+A search's `(item_id, score)` hits, best first, and what it found before its `k` cut.
+
+`candidates_seen` is how many distinct items the search's arms found
+that it would rank (for the hybrid search: keyword hits and vector hits
+at or above the similarity floor), counted before the cut to `k`; None
+when the search does not say. A search whose candidates did not reach
+`k` read everything its scope holds that answers the query
+(`scope_exhausted`): a shorter result is the scope running out,
+not a fault. Until 2026-10-06 the GraphRAG handler compared its hybrid
+arm with the number of chunks in the scope, which ignores the floor and
+keyword misses, so ordinary low-relevance shortfalls were recorded as
+`hybrid_search:scope_short` (audit wave 6).
+
+**Bases:** `list[tuple[str, float]]`
+
+**Attributes:**
+
+- `candidates_seen`
+- `k`
+- `scope_exhausted`: `bool | None` — Whether the candidates fell short of `k` (everything that answers was read); None when unknown.
+
 ### `class SearchRepositoryProtocol`
 
 Interface for search operations.
@@ -1486,11 +1855,29 @@ Search methods:
 - keyword_search: Fast full-text search (no LLM needed)
 - vector_search: Direct vector similarity (embedding provided)
 - semantic_search: Text-to-embedding-to-vector search (async, needs callback)
-- hybrid_search: Semantic with keyword fallback (async, needs callback)
+- hybrid_search: Keyword and vector rankings fused by reciprocal rank (async)
 
 **Bases:** `Protocol`
 
 **Methods:**
+
+#### `count_in_scope(item_type: str, source_ids: Iterable[str] | None = None) -> int`
+
+How many items of `item_type` (`"chunk"`, `"node"`) a source scope holds that may answer.
+
+A switched-off source's items are never counted (`source_visible`).
+
+Args:
+    item_type: `"chunk"` or `"node"`.
+    source_ids: The scope; None counts every item.
+
+Returns:
+    The number of items a search in that scope could return.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `item_type` | `str` |  |
+| `source_ids` | `Iterable[str] \| None` |  |
 
 #### `delete_node(node_id: str, *, session: TransactionalSession | None = None) -> None`
 
@@ -1573,22 +1960,26 @@ Get statistics about the search indexes.
 Returns:
     Dict with index statistics
 
-#### `hybrid_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, min_similarity: float = 0.55) -> list[tuple[str, float]]`
+#### `hybrid_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, min_similarity: float = 0.55, item_type: str | None = None, source_ids: Iterable[str] | None = None) -> SearchHits`
 
-Perform hybrid search: semantic with keyword fallback.
+Perform hybrid search: keyword and vector rankings fused by reciprocal rank.
 
 Strategy:
 - Short queries (< 3 chars): keyword only
-- Otherwise: semantic first, keyword fallback if no good results
+- Otherwise: both arms search `item_type` and their rankings are fused
 
 Args:
     query_text: Text to search for
     k: Number of results to return (default 10)
     embedding_provider_callback: Async callback for generating embeddings
     min_similarity: Minimum similarity score (0-1) to accept semantic results
+    item_type: "node", "chunk", or None for both.
+    source_ids: A source scope applied inside both arms, before their cut;
+        None for every source.
 
 Returns:
-    List of (node_id, similarity_score) tuples
+    The (node_id, score) hits, best first, with how many candidates
+    both arms found before the cut (`SearchHits`).
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1596,6 +1987,8 @@ Returns:
 | `k` | `int` |  |
 | `embedding_provider_callback` | `Callable[[str], Any] \| None` |  |
 | `min_similarity` | `float` |  |
+| `item_type` | `str \| None` |  |
+| `source_ids` | `Iterable[str] \| None` |  |
 
 #### `index_embeddings_batch(embeddings: list[tuple[str, list[float]]], item_type: str = 'node', text_lookup: dict[str, str] | None = None, *, session: TransactionalSession | None = None) -> int`
 
@@ -1688,13 +2081,16 @@ Args:
 | `embedding` | `list[float]` |  |
 | `session` | `TransactionalSession \| None` |  |
 
-#### `keyword_search(query: str, limit: int = 10) -> list[tuple[str, float]]`
+#### `keyword_search(query: str, limit: int = 10, item_type: str | None = 'node', source_ids: Iterable[str] | None = None) -> list[tuple[str, float]]`
 
-Perform full-text keyword search.
+Perform full-text keyword search (any significant word or quoted phrase matches).
 
 Args:
     query: Search query string
     limit: Maximum number of results (default 10)
+    item_type: "node" (default), "chunk", or None for both.
+    source_ids: A source scope applied before the `limit`; None for every source.
+        A switched-off source's items never match (`source_visible`).
 
 Returns:
     List of (node_id, score) tuples, sorted by relevance descending.
@@ -1703,6 +2099,54 @@ Returns:
 |---|---|---|
 | `query` | `str` |  |
 | `limit` | `int` |  |
+| `item_type` | `str \| None` |  |
+| `source_ids` | `Iterable[str] \| None` |  |
+
+#### `rebuild_node_fulltext(nodes: Iterable[Node | Mapping[str, Any]] | None = None, *, session: TransactionalSession | None = None) -> int`
+
+Make the node full-text index hold exactly the graph's nodes (labels and current aliases).
+
+Rows of nodes no longer in the graph are deleted; vectors are untouched.
+Called by a full reindex; a caller that knows which nodes it changed
+(the identity resolver) takes `refresh_node_fulltext`. The nodes are read from the graph inside
+the rewrite's own transaction (a list read earlier can miss a node
+committed since); `nodes` is checked against it, and used only by
+an index with no graph behind it.
+
+Args:
+    nodes: The nodes the caller expects the graph to hold (graph nodes,
+        or mappings with `id`, `label` and `properties`), or None.
+    session: Optional caller session to share a transaction with.
+
+Returns:
+    The number of rows the index holds afterwards.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `nodes` | `Iterable[Node \| Mapping[str, Any]] \| None` |  |
+| `session` | `TransactionalSession \| None` |  |
+
+#### `refresh_node_fulltext(node_ids: Iterable[str], *, session: TransactionalSession | None = None) -> int`
+
+Rewrite the full-text rows of `node_ids` from the graph as it is now; nothing else.
+
+The scoped form of `rebuild_node_fulltext` for a caller that
+knows which nodes it changed (the identity resolver): each id still in
+the graph gets its row rewritten from the node as stored, an id no
+longer there loses its row, and no other row is read or written.
+Vectors are untouched.
+
+Args:
+    node_ids: The nodes whose rows follow the graph.
+    session: Optional caller session to share a transaction with.
+
+Returns:
+    The number of rows written (ids still in the graph).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `node_ids` | `Iterable[str]` |  |
+| `session` | `TransactionalSession \| None` |  |
 
 #### `reindex_all_nodes(nodes: list[Node], *, session: TransactionalSession | None = None) -> None`
 
@@ -1752,7 +2196,7 @@ Args:
 | `text` | `str` |  |
 | `item_type` | `str` |  |
 
-#### `semantic_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None) -> list[tuple[str, float]]`
+#### `semantic_search(query_text: str, k: int = 10, embedding_provider_callback: Callable[[str], Any] | None = None, item_type: str | None = None) -> list[tuple[str, float]]`
 
 Perform semantic search using query text.
 
@@ -1764,6 +2208,8 @@ Args:
     embedding_provider_callback: Async callback that takes query text
         and returns dict with "embedding" key containing the vector.
         Example: async def(text: str) -> \{"embedding": [...]\}
+    item_type: Optional filter ("node", "chunk", "template"); None
+        searches nodes and chunks.
 
 Returns:
     List of (node_id, similarity_score) tuples
@@ -1773,6 +2219,7 @@ Returns:
 | `query_text` | `str` |  |
 | `k` | `int` |  |
 | `embedding_provider_callback` | `Callable[[str], Any] \| None` |  |
+| `item_type` | `str \| None` |  |
 
 #### `template_semantic_search(query_embedding: list[float], k: int = 10, min_similarity: float = 0.5) -> list[tuple[str, float]]`
 
@@ -1792,7 +2239,7 @@ Returns:
 | `k` | `int` |  |
 | `min_similarity` | `float` |  |
 
-#### `vector_search(query_embedding: list[float], k: int = 10, item_type: str | None = None) -> list[tuple[str, float]]`
+#### `vector_search(query_embedding: list[float], k: int = 10, item_type: str | None = None, source_ids: Iterable[str] | None = None) -> list[tuple[str, float]]`
 
 Find k nearest neighbors to query embedding.
 
@@ -1800,7 +2247,11 @@ Args:
     query_embedding: Query embedding vector (must match dimensionality
                     of indexed vectors, typically 1024)
     k: Number of results to return (default 10)
-    item_type: Optional filter by item type ("node", "chunk", "template")
+    item_type: Optional filter by item type ("node", "chunk", "template");
+        None searches nodes and chunks (templates only by name).
+    source_ids: A source scope applied before the `k` cut (chunks
+        and nodes; templates come from no source); None for every source.
+        A switched-off source's items never match (`source_visible`).
 
 Returns:
     List of (node_id, similarity_score) tuples,
@@ -1819,6 +2270,7 @@ Notes:
 | `query_embedding` | `list[float]` |  |
 | `k` | `int` |  |
 | `item_type` | `str \| None` |  |
+| `source_ids` | `Iterable[str] \| None` |  |
 
 **Attributes:**
 
@@ -1833,6 +2285,77 @@ re-embedded with the current model.
 
 Returns:
     True if a full reindex is needed.
+
+### `attesting_sources(item: object) -> list[str]`
+
+The sources that attest a graph row: its members when it has any, else its home source.
+
+A merged node is attested by every source it was merged from
+(`member_source_ids`, which the repository's node loads fill), and its
+`source_id` is only its home (#795, D7). A row with no members, or one
+loaded without them, reads its `source_id` as before; a row naming no
+source returns `[]`. The SQL form is
+`chaoscypher_core.adapters.sqlite.repos.source_visibility.attested_by_sql`.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `item` | `object` |  |
+
+### `has_no_source(source_id: str | None) -> bool`
+
+Whether an item names no source: NULL and the empty string read alike.
+
+An item with no source (a manual or legacy node) is in every source
+scope, and no switched-off source hides it. Until 2026-10-06 the search's
+node scope read `''` as no source while the graph listings read NULL
+only (audit wave 6). The SQL form is
+`chaoscypher_core.adapters.sqlite.repos.source_visibility.no_source_sql`;
+a test pins the two alike.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str \| None` |  |
+
+### `item_in_source_scope(item: object, scope: Container[str]) -> bool`
+
+Whether a graph row is in a source scope: it names no source, or a source in the scope attests it.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `item` | `object` |  |
+| `scope` | `Container[str]` |  |
+
+### `item_visible(item: object, disabled: Container[str]) -> bool`
+
+Whether a graph row may answer: it names no source, or a source not switched off attests it.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `item` | `object` |  |
+| `disabled` | `Container[str]` |  |
+
+### `node_in_source_scope(source_id: str | None, scope: Container[str]) -> bool`
+
+Whether a node of `source_id` is in a source scope: it names no source, or one in it.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str \| None` |  |
+| `scope` | `Container[str]` |  |
+
+### `source_visible(source_id: str | None, disabled: Container[str]) -> bool`
+
+Whether an item of `source_id` may answer: it names no source, or one not switched off.
+
+`disabled` holds the ids of the sources set `enabled = 0`. The SQL
+form, which every search arm, scope count and graph listing reads, is
+`chaoscypher_core.adapters.sqlite.repos.source_visibility.source_visible_sql`;
+a test pins the two alike.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_id` | `str \| None` |  |
+| `disabled` | `Container[str]` |  |
 
 ## `chaoscypher_core.ports.storage_chats`
 
@@ -2370,7 +2893,7 @@ Mark commit stage as complete.
 | `templates_created` | `int` |  |
 | `source_document_node_id` | `str \| None` |  |
 
-#### `complete_extraction(source_id: str, *, entities: list[dict[str, Any]], relationships: list[dict[str, Any]], detected_domain: str | None = None, forced_domain: str | None = None, domain_version: str | None = None, domain_content_hash: str | None = None, cross_chunk_filtering_log: dict[str, Any] | None = None) -> None`
+#### `complete_extraction(source_id: str, *, entities: list[dict[str, Any]], relationships: list[dict[str, Any]], detected_domain: str | None = None, forced_domain: str | None = None, forced_packs: Sequence[str] | None = None, detected_packs: Sequence[str] | None = None, domain_version: str | None = None, domain_content_hash: str | None = None, cross_chunk_filtering_log: dict[str, Any] | None = None) -> None`
 
 Mark extraction stage as complete and persist the entity/relationship rows.
 
@@ -2379,8 +2902,13 @@ Args:
     entities: Deduplicated entity dicts.
     relationships: Relationship dicts with integer `source` /
         `target` indices into `entities`.
-    detected_domain: Auto-detected domain name (if not forced).
-    forced_domain: User-selected domain name (if specified).
+    detected_domain: The old one-name form of `detected_packs`.
+    forced_domain: The old one-name form of `forced_packs`.
+    forced_packs: The packs the user forced (`[]` the floor alone;
+        None when detection decided).
+    detected_packs: The packs detection proposed. The source records
+        `extraction_packs` (the forced, else the detected) and their
+        label in `extraction_domain`.
     domain_version: Plugin version this source extracted under.
     domain_content_hash: sha256 of the plugin content at extraction time.
     cross_chunk_filtering_log: Cross-chunk filtering log dict
@@ -2393,6 +2921,8 @@ Args:
 | `relationships` | `list[dict[str, Any]]` |  |
 | `detected_domain` | `str \| None` |  |
 | `forced_domain` | `str \| None` |  |
+| `forced_packs` | `Sequence[str] \| None` |  |
+| `detected_packs` | `Sequence[str] \| None` |  |
 | `domain_version` | `str \| None` |  |
 | `domain_content_hash` | `str \| None` |  |
 | `cross_chunk_filtering_log` | `dict[str, Any] \| None` |  |
@@ -2601,6 +3131,15 @@ Returns:
 | `ccx_iri` | `str` |  |
 | `database_name` | `str` |  |
 
+#### `get_source_filenames_by_ids(source_ids: list[str], database_name: str) -> dict[str, str]`
+
+Map source id -> `filename` in one narrow query (missing ids absent).
+
+| Parameter | Type | Description |
+|---|---|---|
+| `source_ids` | `list[str]` |  |
+| `database_name` | `str` |  |
+
 #### `get_source_full_text(source_id: str, database_name: str) -> str | None`
 
 Read the full raw text for a source (narrow projection).
@@ -2670,7 +3209,7 @@ Single-column projection for hot per-request filters (the search
 engine calls this on every keyword/semantic/hybrid search). Must
 not hydrate stage progress or any wide columns.
 
-#### `list_sources(page: int = 1, page_size: int = 50, source_type: str | None = None, status: str | None = None, enabled: str | None = None, search: str | None = None, tag_id: str | None = None) -> tuple[list[dict[str, Any]], int]`
+#### `list_sources(page: int = 1, page_size: int = 50, source_type: str | None = None, status: str | None = None, enabled: str | None = None, search: str | None = None, tag_id: str | None = None, site_id: str | None = None, in_site: bool | None = None) -> tuple[list[dict[str, Any]], int]`
 
 List sources with filtering and pagination.
 
@@ -2682,6 +3221,9 @@ Args:
     enabled: Filter by enabled status ('enabled' or 'disabled')
     search: Search in title/origin_url
     tag_id: Filter by tag assignment
+    site_id: Only the pages of this imported site
+    in_site: True: only pages of imported sites; False: only sources
+        outside any site
 
 Returns:
     Tuple of (sources list, total count).  Each source dict
@@ -2698,6 +3240,8 @@ Returns:
 | `enabled` | `str \| None` |  |
 | `search` | `str \| None` |  |
 | `tag_id` | `str \| None` |  |
+| `site_id` | `str \| None` |  |
+| `in_site` | `bool \| None` |  |
 
 #### `start_commit(source_id: str) -> None`
 
@@ -2791,7 +3335,7 @@ Update source processing progress for UI.
 | `total_steps` | `int` |  |
 | `step_description` | `str` |  |
 
-#### `upload_source(source_id: str, database_name: str, filename: str, file_content: bytes | None = None, staging_dir: str = '', extraction_depth: str = 'full', forced_domain: str | None = None, origin_url: str | None = None, source_type_override: str | None = None, title_override: str | None = None, content_hash: str | None = None, staged_file_path: Path | None = None, file_size: int | None = None, auto_analyze: bool = True, enable_normalization: bool | None = None, enable_vision: bool = True, content_filtering: bool = True, filtering_mode: str = 'balanced', enable_direction_correction: bool | None = None, protect_orphans: bool | None = None, enable_inverse_relationships: bool | None = None, max_entity_degree_override: int | None = None, confirmation_required: bool = False) -> dict[str, Any]`
+#### `upload_source(source_id: str, database_name: str, filename: str, file_content: bytes | None = None, staging_dir: str = '', extraction_depth: str = 'full', forced_domain: str | None = None, forced_packs: Sequence[str] | None = None, origin_url: str | None = None, source_type_override: str | None = None, title_override: str | None = None, content_hash: str | None = None, staged_file_path: Path | None = None, file_size: int | None = None, auto_analyze: bool = True, enable_normalization: bool | None = None, enable_vision: bool = True, content_filtering: bool = True, filtering_mode: str = SOURCE_ROW_FILTERING_MODE, enable_direction_correction: bool | None = None, protect_orphans: bool | None = None, enable_inverse_relationships: bool | None = None, max_entity_degree_override: int | None = None, confirmation_required: bool = False, site_id: str | None = None) -> dict[str, Any]`
 
 Upload file and create source record.
 
@@ -2806,6 +3350,7 @@ Creates source with status='pending'. Returns created Source as dict.
 | `staging_dir` | `str` |  |
 | `extraction_depth` | `str` |  |
 | `forced_domain` | `str \| None` |  |
+| `forced_packs` | `Sequence[str] \| None` |  |
 | `origin_url` | `str \| None` |  |
 | `source_type_override` | `str \| None` |  |
 | `title_override` | `str \| None` |  |
@@ -2822,6 +3367,7 @@ Creates source with status='pending'. Returns created Source as dict.
 | `enable_inverse_relationships` | `bool \| None` |  |
 | `max_entity_degree_override` | `int \| None` |  |
 | `confirmation_required` | `bool` |  |
+| `site_id` | `str \| None` |  |
 
 #### `upsert_source_by_ccx_iri(ccx_iri: str, source_dict: dict[str, Any], database_name: str) -> dict[str, Any]`
 

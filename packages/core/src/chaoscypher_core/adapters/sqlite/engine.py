@@ -9,9 +9,10 @@ NOTE: This is the engine version (framework-agnostic).
 For backend-specific initialization and migrations, see backend/shared/database/init.py
 """
 
+import sqlite3
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import create_engine, event
@@ -43,6 +44,7 @@ _MAX_DB_NAME_LENGTH = 64
 
 
 def _is_safe_db_name(database_name: str) -> bool:
+    """Whether the name is non-empty, short enough, and only letters, digits, ``_`` and ``-``."""
     if not database_name or len(database_name) > _MAX_DB_NAME_LENGTH:
         return False
     return database_name.replace("_", "").replace("-", "").isalnum()
@@ -179,6 +181,7 @@ def get_engine(
                     # Busy timeout: Wait for locks instead of failing immediately
                     # This is critical for multi-process writes (Cortex + Neuron workers)
                     cursor.execute(f"PRAGMA busy_timeout={effective_busy_ms}")
+                    _optimize_on_open(cursor)
                 finally:
                     cursor.close()
 
@@ -186,6 +189,24 @@ def get_engine(
             logger.info("database_engine_created", db_path=db_path_str, wal_mode=True)
 
         return _engines[db_path_str]
+
+
+def _optimize_on_open(cursor: Any) -> None:
+    """Give the query planner statistics: ``PRAGMA optimize=0x10002`` on every new connection.
+
+    No code ever ran ``ANALYZE``, so the planner guessed: a source-scoped
+    graph listing (``source_visibility.attested_by``) scanned every node of
+    the database instead of reading the scope through the membership index
+    (24.7 ms against 1.9 ms at 200k nodes, #795). SQLite's recommended open-time
+    form: it analyzes only tables whose statistics are missing or stale, with
+    a bounded ``analysis_limit``, and is a no-op after that. A connection that
+    cannot write the statistics (read-only, locked past the busy timeout) is
+    still a working connection, so a failure is logged, never raised.
+    """
+    try:
+        cursor.execute("PRAGMA optimize=0x10002")
+    except sqlite3.Error as exc:
+        logger.warning("sqlite_optimize_on_open_failed", error=str(exc))
 
 
 def evict_engine(db_path: Path) -> None:

@@ -8,9 +8,10 @@ the StreamableHTTPSessionManager. Mounted on the FastAPI app at
 /api/v1/mcp to handle MCP Streamable HTTP protocol messages.
 
 Auth: handled at the nginx edge via ``auth_request /api/v1/auth/verify``
-like every other ``/api/`` route, so this transport does no auth of its
-own. Cortex only trusts the forwarded identity when nginx adds the shared
-edge-auth token marker.
+like every other ``/api/`` route. This transport does not validate user
+sessions itself; it only trusts the forwarded identity when nginx adds
+the shared edge-auth token marker, and answers 401 (the shared
+``AUTH_REQUIRED`` envelope) when the marker or ``X-Auth-User`` is missing.
 
 MCP mode: resolved from ``settings.mcp.mode`` (server-wide) via
 ``scope["state"]["effective_mcp_mode"]`` so downstream tool handlers can
@@ -47,9 +48,12 @@ class MCPTransportApp:
         """Forward ASGI request to the MCP session manager.
 
         Auth is enforced by nginx ``auth_request`` upstream; this transport
-        does not re-validate user sessions. We still resolve the effective
-        MCP mode from server config and stash it on ASGI scope state for
-        downstream tool handlers.
+        does not re-validate user sessions, but it does refuse a request
+        that did not come through nginx (no edge token / no ``X-Auth-User``)
+        with the same 401 envelope every other route uses, recorded in the
+        ``AuthFailureTracker``. We still resolve the effective MCP mode from
+        server config and stash it on ASGI scope state for downstream tool
+        handlers.
         """
         if scope["type"] != "http":
             return
@@ -61,8 +65,11 @@ class MCPTransportApp:
         headers = Headers(raw=scope.get("headers", []))
         username = headers.get("x-auth-user")
         if not settings.dev_mode and (not username or not has_valid_edge_token(headers, settings)):
+            from chaoscypher_cortex.features.local_auth.auth_failure_tracker import tracker
+
+            tracker.record_failure()
             await JSONResponse(
-                {"error": "authentication_required"},
+                {"error": "AUTH_REQUIRED", "message": "Authentication required"},
                 status_code=401,
             )(scope, receive, send)
             return

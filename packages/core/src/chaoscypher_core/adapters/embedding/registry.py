@@ -23,7 +23,6 @@ CURATED_EMBEDDING_MODELS: list[CuratedModel] = [
         ollama="qwen3-embedding:0.6b",
         dimensions=1024,
         mrl=True,
-        default=True,
     ),
     CuratedModel(
         name="Qwen3 Embedding 4B",
@@ -31,6 +30,7 @@ CURATED_EMBEDDING_MODELS: list[CuratedModel] = [
         ollama="qwen3-embedding:4b",
         dimensions=2560,
         mrl=True,
+        default=True,
     ),
     CuratedModel(
         name="Qwen3 Embedding 8B",
@@ -151,6 +151,21 @@ def resolve_model_name(display_or_id: str, provider: str) -> str | None:
         if display_or_id in (cloud_model.name, cloud_model.model):
             return cloud_model.model
     return None
+
+
+def canonical_embedding_model(model_id: str) -> str:
+    """One name for one curated model, whatever spelling names it.
+
+    The local id, the Ollama tag and the display name of a curated entry all
+    map to its local id; a name the registry does not know is returned as is.
+    The search repository compares stored and configured models through this,
+    so moving the embeddings between the CPU model and its Ollama twin is not
+    a model change (2026-10-20: a string compare forced a full re-embed).
+    """
+    for model in CURATED_EMBEDDING_MODELS:
+        if model_id in (model.name, model.local, model.ollama):
+            return model.local
+    return model_id
 
 
 def get_curated_dimensions(model_id: str) -> int | None:

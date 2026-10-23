@@ -116,3 +116,12 @@ class TestNormalizeEntities:
         """chunk_index=0 is a valid value and yields [0] for source_chunk_indices."""
         result = normalize_entities([{"name": "A", "chunk_index": 0}])
         assert result[0]["source_chunk_indices"] == [0]
+
+    def test_citation_evidence_survives_normalization(self) -> None:
+        """``evidence`` / ``cited_chunk_id`` from aggregation reach the commit."""
+        evidence = [{"text": "Anna smiled.", "chunk_id": "c0", "local_index": 0}]
+        (result,) = normalize_entities(
+            [{"name": "Anna", "evidence": evidence, "cited_chunk_id": "c0"}]
+        )
+        assert result["evidence"] == evidence
+        assert result["cited_chunk_id"] == "c0"

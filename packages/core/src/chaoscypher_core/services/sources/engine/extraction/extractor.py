@@ -10,12 +10,18 @@ generation.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.sources.engine.deduplication import EntityProcessor
+from chaoscypher_core.services.sources.engine.deduplication.service import (
+    publish_descriptor_references,
+    publish_given_aliases,
+    publish_text_referents,
+)
 from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
     AIEntityExtractor,
 )
@@ -23,6 +29,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner im
     clean_descriptor_aliases,
     deduplicate_relationships,
     enforce_relationship_limits,
+    move_relation_descriptors,
     validate_relationship_type_constraints,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.post_extraction import (
@@ -48,12 +55,56 @@ logger = structlog.get_logger(__name__)
 # ------------------------------------------------------------------ #
 
 
+def _stamp_evidence(
+    entities: list[dict[str, Any]],
+    relationships: list[dict[str, Any]],
+    hierarchical_groups: list[dict],
+    small_chunks: Sequence[Mapping[str, Any]],
+) -> None:
+    """Stamp each item's ``evidence`` and ``cited_chunk_id`` from its group, in place.
+
+    The one stamping the queue path's aggregation does
+    (:func:`~chaoscypher_core.services.sources.engine.extraction.orchestration.stamp_group_evidence`),
+    applied to the items ``extract_from_chunks`` tagged with their group's
+    ``chunk_index``. Until 2026-10-20 the SDK path skipped it, so every one of
+    its citations was dropped at commit (``citations_skipped_no_chunk_index``).
+    """
+    from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+        group_fallback_chunk_ids,
+        stamp_group_evidence,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+        split_into_sentences,
+    )
+
+    by_group: dict[Any, list[dict[str, Any]]] = {}
+    for item in (*entities, *relationships):
+        by_group.setdefault(item.get("chunk_index"), []).append(item)
+    fallbacks = group_fallback_chunk_ids(hierarchical_groups)
+    chunks_by_id = {str(c["id"]): c for c in small_chunks if c.get("id")}
+    for index, group in enumerate(hierarchical_groups):
+        items = by_group.get(index)
+        if not items:
+            continue
+        text = str(group.get("combined_content") or "")
+        stamp_group_evidence(
+            items,
+            sentences=split_into_sentences(text),
+            small_chunk_ids=[str(c) for c in group.get("small_chunk_ids") or []],
+            chunks_by_id=chunks_by_id or None,
+            fallback_chunk_id=fallbacks[index],
+            group_text=text,
+        )
+
+
 async def extract_entities_from_groups(
     *,
     hierarchical_groups: list[dict],
     settings: EngineSettings,
     embedding_service: Any,
     file_info: dict[str, Any] | None = None,
+    seed: Sequence[Mapping[str, Any]] = (),
+    small_chunks: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
     """Extract entities from hierarchical chunk groups using the AI pipeline.
 
@@ -74,6 +125,11 @@ async def extract_entities_from_groups(
             explicitly only when you intend to disable semantic dedup
             (e.g., a unit test that doesn't exercise the feature).
         file_info: Optional file metadata for domain detection.
+        seed: Records the KNOWN ENTITIES list starts with (the memory path).
+        small_chunks: The stored small chunks the groups are made of (``id``,
+            ``content``, ``chunk_metadata``): each extracted item is stamped with
+            its evidence and cited chunk, as the queue path's aggregation stamps
+            them, so the commit can store its citations. Empty: text-only evidence.
 
     Returns:
         Dictionary with entities, relationships, cached_embeddings,
@@ -98,7 +154,13 @@ async def extract_entities_from_groups(
 
     # Step 1: Extract entities and relationships (with domain detection)
     ai_extractor = AIEntityExtractor(settings)
-    extraction_result = await ai_extractor.extract_from_chunks(chunks, file_info)
+    extraction_result = await ai_extractor.extract_from_chunks(chunks, file_info, seed=seed)
+    _stamp_evidence(
+        extraction_result["entities"],
+        extraction_result["relationships"],
+        hierarchical_groups,
+        small_chunks,
+    )
 
     all_entities = extraction_result["entities"]
     all_relationships = extraction_result["relationships"]
@@ -107,47 +169,46 @@ async def extract_entities_from_groups(
     normalization_rules = extraction_result.get("normalization_rules", {})
     domain_extraction_limits = extraction_result.get("extraction_limits", {}) or {}
     domain_filtering_mode: str | None = extraction_result.get("filtering_mode")
-    domain_type_aliases: dict[str, str] = extraction_result.get("type_aliases") or {}
 
-    # Phase 5 (2026-05-18): canonicalize entity types via the domain's
-    # type_aliases map BEFORE structural filtering and dedup. This way:
-    #   * dedup sees canonical types and merges name variants that were
-    #     split across alias types (e.g. ``Historical Figure: Pierre`` +
-    #     ``Character: Pierre`` collapse to one node);
-    #   * the post-dedup relationship-type validator sees the canonical
-    #     types and doesn't trip on rules like
-    #     ``interacts_with: source ∈ {Character}``.
-    # The original type is preserved on each rewritten entity under
-    # ``properties.entity_subtype`` so the refinement signal survives.
-    if domain_type_aliases:
-        from chaoscypher_core.services.sources.engine.extraction.utils.type_normalizer import (
-            apply_type_aliases,
+    # Canonicalize entity types BEFORE structural filtering and dedup: the
+    # plan's type vocabulary (the packs' aliases, exact key first, their
+    # subtypes and the mapping table) gives every old template name its core
+    # type, the subtype kept under ``properties.entity_subtype``, so dedup
+    # merges ``Historical Figure: Pierre`` and ``Character: Pierre`` (both
+    # Person/character) and the post-dedup relationship-type validator compares
+    # core types. The per-chunk rescue already typed what this plan extracted;
+    # this is the rewrite the finalize paths run too
+    # (``post_extraction.apply_domain_type_aliases``).
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_normalizer import (
+        canonicalize_entity_types,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+        TypeVocabulary,
+    )
+
+    type_vocabulary = TypeVocabulary.from_config(extraction_result.get("type_vocabulary"))
+    aliased = canonicalize_entity_types(all_entities, type_vocabulary)
+    if aliased:
+        logger.info(
+            "type_aliases_applied_to_extraction",
+            domain=detected_domain,
+            rewritten=aliased,
+            alias_count=len(type_vocabulary.aliases),
         )
 
-        aliased = apply_type_aliases(all_entities, domain_type_aliases)
-        if aliased:
-            logger.info(
-                "type_aliases_applied_to_extraction",
-                domain=detected_domain,
-                rewritten=aliased,
-                alias_count=len(domain_type_aliases),
-            )
+    # The extraction plan's FilteringConfig drives the post-dedup cross-chunk
+    # filters, the dedup threshold and the structural-and-normalization
+    # helper below -- the same resolution the per-chunk extractor used.
+    _cross_chunk_config = extraction_result.get("filtering_config")
+    if _cross_chunk_config is None:
+        from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+            plan_filtering_config,
+        )
 
-    # Resolve filtering config for the post-dedup cross-chunk filters and
-    # the shared structural-and-normalization helper below.
-    from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
-        resolve_filtering_config,
-    )
-
-    _extraction_cfg = settings.extraction
-    _domain_limits = domain_extraction_limits or {}
-    _filtering_mode = domain_filtering_mode or getattr(
-        _extraction_cfg, "extraction_filtering_mode", "balanced"
-    )
-    _cross_chunk_config = resolve_filtering_config(
-        mode=str(_filtering_mode),
-        domain_overrides=dict(_domain_limits) if _domain_limits else None,
-    )
+        _cross_chunk_config = plan_filtering_config(
+            str(domain_filtering_mode or settings.extraction.extraction_filtering_mode),
+            domain_extraction_limits or None,
+        )
 
     # Step 2: Deduplicate, remap, resolve names
     from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
@@ -161,7 +222,6 @@ async def extract_entities_from_groups(
         detected_domain=detected_domain,
         settings=settings,
         embedding_service=embedding_service,
-        domain_extraction_limits=domain_extraction_limits,
         domain_resolver=domain_resolver,
         filtering_config=_cross_chunk_config,
     )
@@ -260,7 +320,8 @@ def _resolve_symmetric_types(
     direction is kept.
 
     Args:
-        domain_name: Name of the domain (may be None).
+        domain_name: Name of the domain (None is the floor alone: its
+            symmetric labels hold for every source).
         get_domain_symmetric_relationships: Callable returning a list of
             symmetric type names for the given domain name, or None.
 
@@ -268,7 +329,7 @@ def _resolve_symmetric_types(
         Frozenset of symmetric type names (lowercased), or None.
 
     """
-    if not domain_name or not get_domain_symmetric_relationships:
+    if not get_domain_symmetric_relationships:
         return None
     try:
         types = get_domain_symmetric_relationships(domain_name)
@@ -290,7 +351,8 @@ def _resolve_inverse_map(
     deduplication so only the canonical direction is kept.
 
     Args:
-        domain_name: Name of the domain (may be None).
+        domain_name: Name of the domain (None is the floor alone: its
+            inverse pairs hold for every source).
         get_domain_inverse_relationships: Callable returning a dict mapping
             edge types to their inverses for the given domain, or None.
 
@@ -298,7 +360,7 @@ def _resolve_inverse_map(
         Dict mapping type -> inverse_type, or None.
 
     """
-    if not domain_name or not get_domain_inverse_relationships:
+    if not get_domain_inverse_relationships:
         return None
     try:
         inv_map = get_domain_inverse_relationships(domain_name)
@@ -338,7 +400,7 @@ async def run_deduplication(
         embedding_service: Optional embedding provider for semantic dedup.
             When ``None``, semantic deduplication is skipped.
         domain_resolver: Object implementing domain lookup methods
-            (``get_domain_title_words``, ``get_domain_type_compatibility``,
+            (``get_domain_name_conventions``,
             ``get_domain_symmetric_relationships``,
             ``get_domain_inverse_relationships``). When ``None``, a
             :class:`DomainResolver` is auto-created from settings.
@@ -379,9 +441,14 @@ async def run_deduplication(
     )
 
     filtering_log: FilteringLogCls = FilteringLogCls()
-    title_words = domain_resolver.get_domain_title_words(detected_domain)
+    from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+        domain_name_conventions,
+    )
+
+    name_conventions = domain_name_conventions(detected_domain, domain_resolver)
+    title_words = name_conventions.titles
     entity_processor = EntityProcessor(
-        title_words=title_words,
+        name_conventions=name_conventions,
         max_description_length=settings.source_processing.entity_max_description_length,
         dedup_type_partition_cutoff=settings.extraction.dedup_type_partition_cutoff,
         dedup_no_overlap_boost=settings.extraction.dedup_no_overlap_boost,
@@ -405,15 +472,20 @@ async def run_deduplication(
         dedup_threshold = float(filtering_config.semantic_dedup_threshold)
     else:
         dedup_threshold = float(_extraction_cfg.semantic_dedup_threshold)
+    # Same-name entities merge only within one core type (``are_types_compatible``).
     require_type_compat = sp.dedup_require_type_compatibility
-    type_compat_map = sp.dedup_type_compatibility_map
-
-    # Merge domain-specific type compatibility with global settings map
-    domain_type_compat = domain_resolver.get_domain_type_compatibility(detected_domain)
-    if domain_type_compat:
-        type_compat_map = {**type_compat_map, **domain_type_compat}
 
     cached_embeddings: list[Any] = []
+
+    # An alias naming another person's relation ("Natásha's mother") is a
+    # descriptor, never a name: it moves to ``descriptors`` before the name
+    # rule reads aliases (the exact dedup's alias keys, the hierarchical
+    # pass), not after. On copies: the caller's entities stay as given.
+    entities = [dict(e) for e in entities]
+    move_relation_descriptors(entities, name_conventions, filtering_log=filtering_log)
+    # A bare title whose own sentences write it with a name ("the Emperor Alexander") is
+    # given that name, so the name rule reads who it is from its own text (per mention).
+    publish_text_referents(entities, name_conventions)
 
     # Always run exact name dedup first — collapses same-name entities
     # regardless of embedding quality or description differences
@@ -425,7 +497,6 @@ async def run_deduplication(
     deduplicated, index_mapping = entity_processor.deduplicate_entities_with_mapping(
         entities,
         require_type_compatibility=require_type_compat,
-        type_compatibility_map=type_compat_map,
         filtering_log=filtering_log,
     )
     remapped = entity_processor.remap_relationship_indices(relationships, index_mapping)
@@ -467,7 +538,6 @@ async def run_deduplication(
             embedding_service,
             dedup_threshold,
             require_type_compatibility=require_type_compat,
-            type_compatibility_map=type_compat_map,
             filtering_log=filtering_log,
             adapter=adapter,
             source_id=source_id,
@@ -484,7 +554,9 @@ async def run_deduplication(
     )
 
     # Hierarchical name resolution
-    deduplicated, remapped, _ = entity_processor.resolve_hierarchical_names(deduplicated, remapped)
+    deduplicated, remapped, _ = entity_processor.resolve_hierarchical_names(
+        deduplicated, remapped, filtering_log=filtering_log
+    )
 
     logger.info(
         "hierarchical_name_resolution_complete",
@@ -505,11 +577,16 @@ async def run_deduplication(
         inverse_map=inverse_map,
         filtering_log=filtering_log,
     )
-    removed_alias_count = clean_descriptor_aliases(
-        deduplicated, title_words, filtering_log=filtering_log
+    moved_alias_count = clean_descriptor_aliases(
+        deduplicated, title_words, filtering_log=filtering_log, conventions=name_conventions
     )
-    if removed_alias_count > 0:
-        logger.info("descriptor_aliases_cleaned", removed_count=removed_alias_count)
+    if moved_alias_count > 0:
+        logger.info("descriptor_aliases_cleaned", moved_count=moved_alias_count)
+    # Which aliases were given under each name (not acquired by a merge): the
+    # commit stores them so the post-commit resolver reads the same evidence.
+    publish_given_aliases(deduplicated)
+    # A node still labelled by a reference ("the count") is flagged for a later fold.
+    publish_descriptor_references(deduplicated, name_conventions)
 
     return deduplicated, remapped, cached_embeddings, filtering_log.to_dict()
 
@@ -526,7 +603,8 @@ async def run_deduplication(
 #      remap, hierarchical name resolution, relationship dedup
 #   5. ``apply_cross_chunk_relationship_filters`` — type-constraint validation
 #      + relationship-limit enforcement on consolidated, canonical entities
-#   6. Orphan filter at commit time (commit/service.py:drop_orphan_entities)
+#   6. Orphan rule at commit time (commit/service.py:flag_orphan_entities): an
+#      edgeless entity that carries evidence is kept flagged ``orphan``
 #
 # Why filters run AFTER dedup:
 #   Type-constraint and degree-cap filters look at entity types and

@@ -26,8 +26,8 @@ def test_get_default_model_returns_flagged_default() -> None:
     """The default model is the curated entry flagged default=True."""
     model = get_default_model()
     assert model.default is True
-    assert model.name == "Qwen3 Embedding 0.6B"
-    assert model.local == "Qwen/Qwen3-Embedding-0.6B"
+    assert model.name == "Qwen3 Embedding 4B"
+    assert model.local == "Qwen/Qwen3-Embedding-4B"
 
 
 # ---------------------------------------------------------------------------
@@ -103,3 +103,22 @@ def test_dimensions_by_display_name() -> None:
 def test_dimensions_unknown_returns_none() -> None:
     """An unknown identifier yields None dimensions."""
     assert get_curated_dimensions("mystery-model") is None
+
+
+# ---------------------------------------------------------------------------
+# canonical_embedding_model (gap 10, 2026-10-20)
+# ---------------------------------------------------------------------------
+
+
+def test_the_cpu_and_ollama_names_of_one_curated_model_are_one_canonical_name() -> None:
+    """The "same model?" check compared names, so moving the embeddings from the CPU model to
+    its Ollama twin forced a full re-embed of an unchanged space.
+    """
+    from chaoscypher_core.adapters.embedding.registry import canonical_embedding_model
+
+    local = canonical_embedding_model("Qwen/Qwen3-Embedding-0.6B")
+    assert canonical_embedding_model("qwen3-embedding:0.6b") == local
+    assert canonical_embedding_model("Qwen3 Embedding 0.6B") == local
+    assert canonical_embedding_model("Qwen/Qwen3-Embedding-4B") != local
+    assert canonical_embedding_model("some-other-model") == "some-other-model"
+    assert canonical_embedding_model("") == ""

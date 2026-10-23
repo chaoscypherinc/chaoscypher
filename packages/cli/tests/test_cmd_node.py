@@ -1,7 +1,9 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Tests for node command group: get, create, list, update (and delete top-up).
+"""Tests for node command group: get, create, list, update.
+
+Delete (prompt, cascade) lives in unit/commands/node/test_delete.py.
 
 Covers:
 - get: found (table/json/yaml), not-found exit 1, include-links, yaml ImportError fallback,
@@ -436,6 +438,37 @@ class TestNodeCreate:
         call_arg = ctx.node_service.create_node.call_args[0][0]
         assert call_arg.properties.get("role") == "CTO"
         assert call_arg.properties.get("city") == "London"
+
+    def test_create_interactive_runs_wizard_without_template_or_label(self) -> None:
+        """Bare --interactive reaches the wizard (click must not demand -t/-l)."""
+        runner = CliRunner()
+        ctx = _make_ctx()
+        ctx.template_service.list_templates.return_value = {
+            "data": [{"id": "Person", "name": "Person"}]
+        }
+        ctx.template_service.get_template.return_value = {"properties": []}
+        ctx.node_service.create_node.return_value = self._make_create_result()
+
+        with patch("chaoscypher_cli.commands.node.create.get_context", return_value=ctx):
+            result = runner.invoke(create, ["--interactive"], input="Person\nAlice\ny\n")
+
+        assert result.exit_code == 0, result.output
+        assert "Interactive Node Creation Wizard" in result.output
+        call_arg = ctx.node_service.create_node.call_args[0][0]
+        assert call_arg.template_id == "Person"
+        assert call_arg.label == "Alice"
+
+    def test_create_without_template_or_label_exits_1(self) -> None:
+        """Without --interactive, -t and -l stay mandatory."""
+        runner = CliRunner()
+        ctx = _make_ctx()
+
+        with patch("chaoscypher_cli.commands.node.create.get_context", return_value=ctx):
+            result = runner.invoke(create, ["-t", "Person"])
+
+        assert result.exit_code == 1
+        assert "--template and --label are required" in result.output
+        ctx.node_service.create_node.assert_not_called()
 
     def test_create_service_error_exits_1(self) -> None:
         """Service exception prints error and exits 1."""

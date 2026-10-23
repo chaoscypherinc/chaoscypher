@@ -14,8 +14,9 @@ from sqlalchemy import or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, func, select
 
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate, SourceRow
+from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate
 from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
+from chaoscypher_core.adapters.sqlite.repos.source_visibility import visible
 from chaoscypher_core.models import PropertyDefinition, Template, TemplateCreate, TemplateUpdate
 
 
@@ -96,9 +97,9 @@ class TemplateOperationsMixin(GraphMixinBase):
     ) -> int:
         """Back-fill ``source_id`` on templates that lack one; return rows changed.
 
-        Templates are source-owned (the per-source-templates model): a source's
-        templates cascade-delete with it via the ``graph_templates.source_id``
-        FK (ON DELETE CASCADE). The CCX importer creates templates before it
+        Templates are source-owned (the per-source-templates model): releasing a
+        source deletes its templates nothing else uses (``release_source``, D6).
+        The CCX importer creates templates before it
         knows the source id (FK order is templates -> nodes -> sources), so it
         links them here once the source lands — otherwise imported templates
         keep ``source_id = NULL`` and survive a source delete (unlike extracted
@@ -201,6 +202,8 @@ class TemplateOperationsMixin(GraphMixinBase):
 
         existing = self.session.get(GraphTemplate, template_id)
         if existing is not None:
+            if self._reclaim_template(existing, template_create.source_id):
+                self.session.maybe_commit()
             logger.debug(
                 "template_upsert_reused",
                 template_id=template_id,
@@ -233,6 +236,24 @@ class TemplateOperationsMixin(GraphMixinBase):
             source_id=template_create.source_id,
         )
         return self._db_template_to_model(db_template), True
+
+    def _reclaim_template(self, row: GraphTemplate, source_id: str | None) -> bool:
+        """Hand a reused template back to the source whose stable id it carries; whether it moved.
+
+        A template's stable id hashes its source, so the row is that source's.
+        A release of the source re-homes a template other rows still use to a
+        member of one of them, or leaves it unowned (D6). When the source
+        commits again the row is its own once more, as it was before the
+        release (#795; the alternative, a second template for the same
+        source, type and name, cannot exist under the same stable id). The
+        other users keep pointing at it; a release of this source applies D6
+        to it again.
+        """
+        if not source_id or row.source_id == source_id:
+            return False
+        row.source_id = source_id
+        self.session.add(row)
+        return True
 
     async def upsert_templates_batch(
         self, templates_to_create: list[TemplateCreate]
@@ -276,9 +297,13 @@ class TemplateOperationsMixin(GraphMixinBase):
         new_entities: list[GraphTemplate] = []
         result_entities: list[GraphTemplate] = []
         batch_seen: dict[str, GraphTemplate] = {}
+        reclaimed = False
         for stable_id, tc in zip(stable_ids, templates_to_create, strict=True):
             if stable_id in existing_rows:
                 result_entities.append(existing_rows[stable_id])
+                reclaimed = (
+                    self._reclaim_template(existing_rows[stable_id], tc.source_id) or reclaimed
+                )
                 continue
             if stable_id in batch_seen:
                 result_entities.append(batch_seen[stable_id])
@@ -303,7 +328,7 @@ class TemplateOperationsMixin(GraphMixinBase):
 
         inserted_count = len(new_entities)
 
-        if new_entities:
+        if new_entities or reclaimed:
             self.session.maybe_commit()
 
         logger.info(
@@ -397,16 +422,11 @@ class TemplateOperationsMixin(GraphMixinBase):
         if source_id is not None:
             statement = statement.where(GraphTemplate.source_id == source_id)
 
-        # Filter by source enabled status (unless including disabled or filtering by specific source)
+        # Filter by source enabled status (unless including disabled or filtering by specific
+        # source): a template of no source or an enabled one, or one a visible node or edge
+        # uses (a merged node homed at a disabled source keeps its template, #795).
         if not include_disabled_sources and source_id is None:
-            # Show templates where:
-            # - source_id is NULL (system templates, always visible)
-            # - OR source is enabled
-            statement = statement.outerjoin(
-                SourceRow, GraphTemplate.source_id == SourceRow.id
-            ).where(
-                (GraphTemplate.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            statement = statement.where(visible(GraphTemplate))
 
         statement = statement.order_by(GraphTemplate.id)
         if skip:

@@ -5,15 +5,21 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
     _merge_within_task_relationships,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
+    RelationshipOrientation,
     _has_mid_sentence_cap,
     _name_plausibility_score,
     deduplicate_relationships,
     enforce_relationship_limits,
     filter_implausible_entities,
+    orient_relationships,
     validate_relationship_type_constraints,
 )
 
@@ -385,6 +391,106 @@ class TestDeduplicateRelationships:
         result = deduplicate_relationships([])
         assert result == []
 
+    def test_symmetric_reverse_duplicates_across_chunks_share_one_direction(self) -> None:
+        """A symmetric fact written both ways in two groups leaves with one (src, tgt, type).
+
+        Both rows survive (one citation per group) but the commit's stable-edge
+        upsert now sees one edge key instead of two reverse edges.
+        """
+        rels = [
+            {"source": 1, "target": 0, "type": "interacts_with", "chunk_index": 0},
+            {"source": 0, "target": 1, "type": "interacts_with", "chunk_index": 1},
+        ]
+        result = deduplicate_relationships(rels, symmetric_types=frozenset({"interacts_with"}))
+        assert len(result) == 2
+        assert {(r["source"], r["target"], r["type"]) for r in result} == {(0, 1, "interacts_with")}
+
+    def test_inverse_pair_across_chunks_takes_one_label_and_direction(self) -> None:
+        """parent_of(A,B) in one group and child_of(B,A) in another are one fact."""
+        rels = [
+            {"source": 0, "target": 1, "type": "parent_of", "chunk_index": 0},
+            {"source": 1, "target": 0, "type": "child_of", "chunk_index": 1},
+        ]
+        result = deduplicate_relationships(
+            rels, inverse_map={"parent_of": "child_of", "child_of": "parent_of"}
+        )
+        assert {(r["source"], r["target"], r["type"]) for r in result} == {(1, 0, "child_of")}
+
+    def test_orientation_does_not_mutate_the_input(self) -> None:
+        """Orientation rewrites copies; the caller's dicts keep their direction."""
+        rel = {"source": 1, "target": 0, "type": "sibling_of", "chunk_index": 0}
+        deduplicate_relationships([rel], symmetric_types=frozenset({"sibling_of"}))
+        assert (rel["source"], rel["target"]) == (1, 0)
+
+
+class TestRelationshipOrientation:
+    """The one canonical form of a relationship fact (dedup and commit share it)."""
+
+    _RULE = RelationshipOrientation.from_domain(
+        symmetric_types=["interacts_with", "friendship", "sibling_of", "spouse_of", "cousin_of"],
+        inverse_map={"parent_of": "child_of", "child_of": "parent_of"},
+    )
+
+    def test_symmetric_endpoints_are_ordered(self) -> None:
+        """(B, A) becomes (A, B); (A, B) is returned unchanged (the same object)."""
+        forward = {"source": 0, "target": 1, "type": "spouse_of"}
+        backward = {"source": 1, "target": 0, "type": "Spouse_Of"}
+        assert self._RULE.orient(forward) is forward
+        out = self._RULE.orient(backward)
+        assert (out["source"], out["target"]) == (0, 1)
+        assert out["type"] == "Spouse_Of"
+
+    def test_integers_order_numerically(self) -> None:
+        """Index 10 sorts after index 9 (not as text)."""
+        out = self._RULE.orient({"source": 10, "target": 9, "type": "cousin_of"})
+        assert (out["source"], out["target"]) == (9, 10)
+
+    def test_inverse_pair_takes_the_first_label(self) -> None:
+        """parent_of(A,B) -> child_of(B,A); child_of stays as written."""
+        out = self._RULE.orient({"source": 0, "target": 1, "type": "parent_of"})
+        assert (out["source"], out["target"], out["type"]) == (1, 0, "child_of")
+        kept = {"source": 1, "target": 0, "type": "child_of"}
+        assert self._RULE.orient(kept) is kept
+
+    def test_directed_labels_are_left_alone(self) -> None:
+        """A label that is neither symmetric nor in an inverse pair keeps its direction."""
+        rel = {"source": 1, "target": 0, "type": "admires"}
+        assert self._RULE.orient(rel) is rel
+
+    def test_name_keyed_endpoints_swap_too(self) -> None:
+        """``from``/``to`` relationships are oriented with the same rule."""
+        out = self._RULE.orient({"from": "Boris", "to": "Anna", "type": "friendship"})
+        assert (out["from"], out["to"]) == ("Anna", "Boris")
+
+    def test_endpoint_key_orders_by_what_the_endpoint_resolves_to(self) -> None:
+        """The commit orders symmetric endpoints by node id, not by index."""
+        node_of = {0: "node_z", 1: "node_a"}
+        out = self._RULE.orient(
+            {"source": 0, "target": 1, "type": "interacts_with"}, endpoint_key=node_of.get
+        )
+        assert (out["source"], out["target"]) == (1, 0)
+
+    def test_a_self_inverse_label_is_symmetric(self) -> None:
+        """An inverse map entry that maps a label to itself orients like a symmetric label."""
+        rule = RelationshipOrientation.from_domain(inverse_map={"rivals": "rivals"})
+        out = rule.orient({"source": 3, "target": 2, "type": "rivals"})
+        assert (out["source"], out["target"]) == (2, 3)
+
+    def test_orient_relationships_counts_rewrites(self) -> None:
+        """The list helper returns the oriented list in order and how many it rewrote."""
+        rels = [
+            {"source": 1, "target": 0, "type": "interacts_with"},
+            {"source": 0, "target": 1, "type": "interacts_with"},
+            {"source": 0, "target": 1, "type": "parent_of"},
+        ]
+        oriented, rewritten = orient_relationships(rels, self._RULE)
+        assert rewritten == 2
+        assert [(r["source"], r["target"], r["type"]) for r in oriented] == [
+            (0, 1, "interacts_with"),
+            (0, 1, "interacts_with"),
+            (1, 0, "child_of"),
+        ]
+
 
 # ---------------------------------------------------------------------------
 # _merge_within_task_relationships tests
@@ -529,8 +635,8 @@ class TestValidateRelationshipTypeConstraints:
         assert len(filtered) == 1
         assert stats.get("fell_through", 0) == 1
 
-    def test_no_match_dropped_when_strict(self) -> None:
-        """Unmatched type dropped when strict_edge_type_constraints=True."""
+    def test_no_match_kept_as_the_fallback_flagged_when_strict(self) -> None:
+        """Strict: an unmatched label is kept as related_to, flagged, its label beside it (2026-10-08)."""
         rels = [{"source": 0, "target": 1, "type": "totally_unknown", "confidence": 0.9}]
         filtered, stats = validate_relationship_type_constraints(
             rels,
@@ -538,7 +644,13 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
+        assert len(filtered) == 1
+        assert filtered[0]["type"] == "related_to"
+        assert filtered[0]["properties"] == {
+            "unmatched_label": True,
+            "written_label": "totally_unknown",
+        }
+        assert stats["unmatched_label"] == 1
 
     def test_direction_corrected_when_swapped(self) -> None:
         """Backwards source/target is auto-corrected when swap matches constraints."""
@@ -566,8 +678,8 @@ class TestValidateRelationshipTypeConstraints:
         assert len(filtered) == 1
         assert stats.get("fell_through", 0) >= 1
 
-    def test_source_target_mismatch_dropped_when_strict(self) -> None:
-        """Source/target type mismatch dropped when strict=True."""
+    def test_source_target_mismatch_kept_flagged_when_strict(self) -> None:
+        """Strict: a type mismatch is kept, label unchanged, flagged with the reason (2026-10-08)."""
         # Character -> Character for resides_in — neither direction works
         rels = [{"source": 0, "target": 1, "type": "resides_in", "confidence": 0.9}]
         filtered, stats = validate_relationship_type_constraints(
@@ -576,7 +688,12 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
+        assert [(r["source"], r["type"], r["target"]) for r in filtered] == [(0, "resides_in", 1)]
+        assert filtered[0]["properties"] == {
+            "type_mismatch": True,
+            "type_mismatch_reason": "resides_in takes a target of type Location, Place, not Character",
+        }
+        assert stats["type_mismatch"] == 1
 
     def test_correct_direction_not_swapped(self) -> None:
         """Already-correct direction is not modified."""
@@ -644,15 +761,20 @@ class TestValidateRelationshipTypeConstraints:
             log,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
+        assert len(filtered) == 1
 
         log_dict = log.to_dict()
         stages = {s["stage"]: s for s in log_dict["stages"]}
         assert "relationship_type_constraint" in stages, (
             "Expected 'relationship_type_constraint' stage in filtering_log"
         )
-        assert stages["relationship_type_constraint"]["removed_count"] == 1
-        # Direction-corrected stage must NOT appear for a straight drop
+        # nothing dropped: the flag is counted (keep, flag, never delete, 2026-10-08)
+        assert stages["relationship_type_constraint"]["removed_count"] == 0
+        assert stages["relationship_type_constraint"]["counts"] == {
+            "unmatched_label": 1,
+            "type_mismatch": 0,
+        }
+        # Direction-corrected stage must NOT appear for a flag
         assert "relationship_direction_corrected" not in stages
 
     def test_type_unmatched_not_counted_in_direction_stage(self) -> None:
@@ -662,7 +784,7 @@ class TestValidateRelationshipTypeConstraints:
         )
 
         # rel 0: backwards — will be direction-corrected
-        # rel 1: totally_unknown type — will be dropped (strict mode)
+        # rel 1: totally_unknown type — kept as related_to, flagged (strict mode)
         rels = [
             {"source": 2, "target": 0, "type": "resides_in", "confidence": 0.9},
             {"source": 0, "target": 1, "type": "totally_unknown", "confidence": 0.5},
@@ -675,13 +797,13 @@ class TestValidateRelationshipTypeConstraints:
             log,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 1  # only the corrected one survives
+        assert len(filtered) == 2  # the corrected one and the flagged one
         assert stats["direction_corrected"] == 1
 
         log_dict = log.to_dict()
         stages = {s["stage"]: s for s in log_dict["stages"]}
-        # Type-constraint stage records the drop
-        assert stages["relationship_type_constraint"]["removed_count"] == 1
+        # Type-constraint stage records the flag
+        assert stages["relationship_type_constraint"]["counts"]["unmatched_label"] == 1
         # Direction stage records the correction (not a drop)
         assert stages["relationship_direction_corrected"]["removed_count"] == 1
 
@@ -828,11 +950,11 @@ class TestValidateRelationshipTypeConstraints:
         # Counter increments: measures wrong-direction emission rate
         assert stats["direction_corrected"] == 1
 
-    def test_direction_correction_drop_when_toggle_off(self) -> None:
-        """enable_direction_correction=False drops misdirected relationships.
+    def test_direction_correction_kept_flagged_when_toggle_off(self) -> None:
+        """enable_direction_correction=False keeps a misdirected relationship as written, flagged.
 
-        Counter still increments to measure wrong-direction LLM emission rate
-        independent of how we handle it.
+        Until 2026-10-08 it was dropped. Counter still increments to measure
+        wrong-direction LLM emission rate independent of how we handle it.
         """
         # Moscow (Location) -> Anna (Character) for resides_in — backwards
         rels = [{"source": 2, "target": 0, "type": "resides_in", "confidence": 0.9}]
@@ -842,8 +964,10 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             enable_direction_correction=False,
         )
-        # Relationship is ABSENT — drop instead of swap
-        assert len(filtered) == 0
+        # Kept as written, flagged (keep, flag, never delete)
+        assert [(r["source"], r["target"]) for r in filtered] == [(2, 0)]
+        assert filtered[0]["properties"]["type_mismatch"] is True
+        assert "only reversed" in filtered[0]["properties"]["type_mismatch_reason"]
         # Counter still increments (measures wrong-direction emission rate)
         assert stats["direction_corrected"] == 1
 
@@ -891,8 +1015,8 @@ class TestValidateRelationshipTypeConstraints:
         {"name": "Untyped"},  # type key missing entirely
     ]
 
-    def test_empty_source_type_dropped_when_strict(self) -> None:
-        """Source entity with empty `type` causes a strict-mode drop, not silent pass."""
+    def test_empty_source_type_flagged_when_strict(self) -> None:
+        """Source entity with empty `type` causes a strict-mode flag, not a silent pass."""
         # Pierre (type="") -> Moscow (Location), for resides_in.
         # interacts_with would also work since Pierre has no type to match.
         rels = [{"source": 1, "target": 2, "type": "resides_in", "confidence": 0.9}]
@@ -902,11 +1026,12 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
-        assert stats["dropped_source_mismatch"] >= 1
+        assert filtered[0]["properties"]["type_mismatch"] is True
+        assert filtered[0]["properties"]["type_mismatch_reason"].endswith("not an untyped entity")
+        assert stats["type_mismatch"] == 1
 
-    def test_empty_target_type_dropped_when_strict(self) -> None:
-        """Target entity with empty `type` causes a strict-mode drop, not silent pass."""
+    def test_empty_target_type_flagged_when_strict(self) -> None:
+        """Target entity with empty `type` causes a strict-mode flag, not a silent pass."""
         # Anna (Character) -> Pierre (type=""), for interacts_with
         rels = [{"source": 0, "target": 1, "type": "interacts_with", "confidence": 0.9}]
         filtered, stats = validate_relationship_type_constraints(
@@ -915,10 +1040,11 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
-        assert stats["dropped_target_mismatch"] >= 1
+        assert filtered[0]["properties"]["type_mismatch"] is True
+        assert "takes a target" in filtered[0]["properties"]["type_mismatch_reason"]
+        assert stats["type_mismatch"] == 1
 
-    def test_missing_type_key_dropped_when_strict(self) -> None:
+    def test_missing_type_key_flagged_when_strict(self) -> None:
         """Entity with the `type` key missing entirely is treated the same as type=''."""
         # Untyped (no `type` key) -> Moscow (Location), for resides_in
         rels = [{"source": 3, "target": 2, "type": "resides_in", "confidence": 0.9}]
@@ -928,7 +1054,7 @@ class TestValidateRelationshipTypeConstraints:
             self.CONSTRAINTS,
             strict_edge_type_constraints=True,
         )
-        assert len(filtered) == 0
+        assert filtered[0]["properties"]["type_mismatch"] is True
 
     def test_empty_source_type_falls_through_when_not_strict(self) -> None:
         """Non-strict mode: missing type registers as fell_through (no longer silent)."""
@@ -969,8 +1095,8 @@ class TestEnforceRelationshipLimitsOrphanProtection:
         entity_5_rels = [r for r in result if r.get("source") == 5 or r.get("target") == 5]
         assert len(entity_5_rels) == 1
 
-    def test_both_endpoints_at_cap_still_dropped(self) -> None:
-        """Both entities at cap -> relationship dropped normally."""
+    def test_both_endpoints_at_cap_still_capped(self) -> None:
+        """Both entities at cap -> relationship past the cap: kept, flagged ``capped``."""
         rels = [
             {"source": 0, "target": 1, "type": "a", "confidence": 0.9},
             {"source": 0, "target": 2, "type": "b", "confidence": 0.9},
@@ -987,11 +1113,14 @@ class TestEnforceRelationshipLimitsOrphanProtection:
             max_entity_degree=3,
             max_same_source_type=50,
         )
-        # Last rel should be dropped — both sides have 3+ edges
-        assert stats["dropped_degree"] >= 1
+        # Last rel is past the cap — both sides have 3+ edges — and kept flagged
+        assert stats["capped_degree"] >= 1
+        assert len(result) == len(rels)
+        (flagged,) = [r for r in result if r["type"] == "g"]
+        assert flagged["properties"]["capped"] is True
 
     def test_entity_with_2_edges_not_protected(self) -> None:
-        """Entity with 2 edges connecting to entity at cap -> dropped (only <2 protected)."""
+        """Entity with 2 edges connecting to entity at cap -> capped (only <2 protected)."""
         rels = [
             {"source": 0, "target": 1, "type": "a", "confidence": 0.9},
             {"source": 0, "target": 2, "type": "b", "confidence": 0.9},
@@ -1007,8 +1136,9 @@ class TestEnforceRelationshipLimitsOrphanProtection:
             max_entity_degree=3,
             max_same_source_type=50,
         )
-        # Entity 4 has 2 edges (>= 2), so not protected
-        assert stats["dropped_degree"] >= 1
+        # Entity 4 has 2 edges (>= 2), so not protected: flagged, not dropped
+        assert stats["capped_degree"] >= 1
+        assert len(result) == len(rels)
 
 
 class TestEnforceRelationshipLimitsProtectOrphansToggle:
@@ -1040,10 +1170,11 @@ class TestEnforceRelationshipLimitsProtectOrphansToggle:
         )
         entity_5_rels = [r for r in result if r.get("source") == 5 or r.get("target") == 5]
         assert len(entity_5_rels) == 1, "Orphan entity 5 should be kept when protect_orphans=True"
-        assert stats.get("dropped_degree", 0) == 0
+        assert stats.get("capped_degree", 0) == 0
+        assert "capped" not in (entity_5_rels[0].get("properties") or {})
 
-    def test_protect_orphans_false_drops_orphan_endpoint(self) -> None:
-        """When protect_orphans=False the < 2 exception is gated off; orphan loses its rel."""
+    def test_protect_orphans_false_caps_orphan_endpoint(self) -> None:
+        """When protect_orphans=False the < 2 exception is gated off; the orphan's rel is capped."""
         result, stats = enforce_relationship_limits(
             list(self._RELS),
             entity_count=6,
@@ -1052,7 +1183,77 @@ class TestEnforceRelationshipLimitsProtectOrphansToggle:
             protect_orphans=False,
         )
         entity_5_rels = [r for r in result if r.get("source") == 5 or r.get("target") == 5]
-        assert len(entity_5_rels) == 0, (
-            "Orphan entity 5 should be dropped when protect_orphans=False"
+        assert len(entity_5_rels) == 1, "keep, flag, never delete: the edge past the cap is kept"
+        assert entity_5_rels[0]["properties"]["capped"] is True
+        assert stats.get("capped_degree", 0) >= 1
+
+
+class TestMergeWithinTaskRelationshipsEvidence:
+    """A merged relationship keeps every cited sentence (citation evidence)."""
+
+    def test_merged_relationship_keeps_union_of_evidence(self) -> None:
+        a = {"text": "They met.", "chunk_id": "c0", "local_index": 0}
+        b = {"text": "They spoke.", "chunk_id": "c1", "local_index": 2}
+        rels = [
+            {"source": 0, "target": 1, "type": "knows", "sent_ref": "S1", "evidence": [a]},
+            {"source": 0, "target": 1, "type": "knows", "sent_ref": "S4", "evidence": [b, a]},
+        ]
+        (merged,) = _merge_within_task_relationships(rels)
+        assert merged["evidence"] == [a, b]
+
+
+class TestOneEdgeLabelNormaliser:
+    """The strict edge filter and the commit read labels through one normaliser (audit wave 5)."""
+
+    CONSTRAINTS = {
+        "betrothed_to": {"source_types": ["Character"], "target_types": ["Character"]},
+        "spouse_of": {"source_types": ["Character"], "target_types": ["Character"]},
+        "interacts_with": {"source_types": ["Character"], "target_types": ["Character"]},
+        "parent_of": {"source_types": ["Character"], "target_types": ["Character"]},
+    }
+    ENTITIES = [{"name": "Natásha", "type": "Character"}, {"name": "Andrew", "type": "Character"}]
+
+    def _strict(self, label: str) -> list[dict[str, Any]]:
+        """The relationships the strict filter keeps of one labelled ``label``."""
+        rels = [{"source": 0, "target": 1, "type": label, "confidence": 0.9}]
+        kept, _ = validate_relationship_type_constraints(
+            rels, self.ENTITIES, self.CONSTRAINTS, strict_edge_type_constraints=True
         )
-        assert stats.get("dropped_degree", 0) >= 1
+        return kept
+
+    def test_a_label_the_commit_would_store_as_a_template_is_that_template(self) -> None:
+        """The commit stores "betrothed to" as ``betrothed_to``: the strict filter keeps it as that."""
+        from chaoscypher_core.services.sources.engine.commit.relation import (
+            relationship_edge_label,
+        )
+
+        for label in ("betrothed to", "Betrothed To", "betrothed__to "):
+            assert relationship_edge_label({"type": label}) == "betrothed_to"
+            (kept,) = self._strict(label)
+            assert kept["type"] == "betrothed_to"
+
+    @pytest.mark.parametrize("label", ["engaged_to", "with", "of", "to", "is_with"])
+    def test_an_invented_or_function_word_label_is_no_template_in_strict_mode(
+        self, label: str
+    ) -> None:
+        """No template's words are a function word's or a different relation's.
+
+        Kept as the fallback label, flagged ``unmatched_label`` with the label as
+        written (keep, flag, never delete, 2026-10-08; until then it was dropped).
+        """
+        (kept,) = self._strict(label)
+        assert kept["type"] == "related_to"
+        assert kept["properties"] == {"unmatched_label": True, "written_label": label}
+
+    @pytest.mark.parametrize(
+        ("label", "template"), [("spouse", "spouse_of"), ("is_parent_of", "parent_of")]
+    )
+    def test_a_near_miss_takes_the_templates_label(self, label: str, template: str) -> None:
+        """A fuzzy match is rewritten to the template, never kept under the invented label."""
+        (kept,) = self._strict(label)
+        assert kept["type"] == template
+        rels = [{"source": 0, "target": 1, "type": label, "confidence": 0.9}]
+        (lenient,), _ = validate_relationship_type_constraints(
+            rels, self.ENTITIES, self.CONSTRAINTS
+        )
+        assert lenient["type"] == template

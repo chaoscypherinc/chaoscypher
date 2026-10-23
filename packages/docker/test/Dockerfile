@@ -3,7 +3,7 @@
 #
 # Usage: docker compose -f docker-compose.yml run --rm test
 
-FROM python:3.14.3-slim
+FROM python:3.14.8-slim
 
 # Set working directory
 WORKDIR /app

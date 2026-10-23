@@ -10,6 +10,7 @@ directly — this package intentionally re-exports nothing:
 - paths: Cross-platform path management with platformdirs
 - display: Status/quality color helpers
 - llm_check: LLM configuration verification utilities
+- event_loops: Persistent event-loop teardown, safe from any thread
 
 Archive helpers live in ``chaoscypher_core.services.package``; Lexicon API
 access goes through ``chaoscypher_core.services.lexicon.LexiconClient``.

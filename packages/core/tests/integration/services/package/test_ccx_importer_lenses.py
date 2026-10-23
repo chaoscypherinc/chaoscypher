@@ -96,3 +96,51 @@ async def test_ccx_importer_round_trips_lens_node(
     await importer.import_from_bytes(data, ImportOptions(database_name=target_db))
     counts_after = len(target_repo.list_nodes(include_disabled_sources=True))
     assert counts_after == counts_before
+
+
+@pytest.mark.asyncio
+async def test_ccx_importer_parses_graph_documents_once_per_import(
+    integration_adapter: SqliteAdapter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One import parses the package's graphs ONCE, not once per pass.
+
+    ``graph_documents()`` decompresses and json-parses every graph (no cache in
+    ccx-format); the templates / knowledge / lenses / workflows passes each used
+    to call it just to find their one graph.
+    """
+    import ccx.package
+
+    _seed_lens(integration_adapter)
+    assert integration_adapter.session is not None
+    graph_repo = GraphRepository(integration_adapter.session, "default")
+    exporter = CcxExporter(
+        graph_repository=graph_repo,
+        sources_repository=integration_adapter,
+        settings=build_engine_settings(get_settings()),
+        workflow_db=None,
+    )
+    data = exporter.export(include_embeddings=False, include_lenses=True)
+
+    calls = 0
+    original = ccx.package.CCXPackage.graph_documents
+
+    def _counting(self: ccx.package.CCXPackage) -> list[ccx.package.GraphDocument]:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(ccx.package.CCXPackage, "graph_documents", _counting)
+
+    target_db = "imported_parse_once"
+    target_repo = GraphRepository(integration_adapter.session, target_db)
+    importer = CcxImporter(
+        graph_repository=target_repo,
+        sources_repository=integration_adapter,
+        workflow_db=None,
+    )
+    stats = await importer.import_from_bytes(data, ImportOptions(database_name=target_db))
+
+    assert not stats.errors, stats.errors
+    assert target_repo.get_node_by_ccx_iri("urn:ccx:chaoscypher:node/lens_overview", target_db)
+    assert calls == 1

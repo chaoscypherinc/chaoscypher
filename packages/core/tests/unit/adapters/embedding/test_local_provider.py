@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 import pytest
 
 from chaoscypher_core.adapters.embedding.local_provider import LocalEmbeddingProvider
+from chaoscypher_core.adapters.embedding.vectors import normalize_vector
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
 
@@ -45,7 +46,7 @@ class TestLocalEmbeddingProvider:
 
         assert isinstance(result, EmbedResult)
         assert len(result.embedding) == 4  # Truncated to vector_dimensions
-        assert result.embedding == [0.1, 0.2, 0.3, 0.4]
+        assert result.embedding == pytest.approx(normalize_vector([0.1, 0.2, 0.3, 0.4]))
         assert result.provider == "local"
 
     @pytest.mark.asyncio

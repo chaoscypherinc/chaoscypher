@@ -178,9 +178,10 @@ npm run dev
 
 :::note[Valkey required]
 
-The worker (Neuron) requires Valkey. Start it separately:
+The worker (Neuron) requires Valkey. Start it separately, and point the queue client at it — the queue host defaults to `valkey` (the compose service name), so a bare `cc-cortex start` / `cc-neuron` cannot reach a local instance without the override:
 ```bash
-docker run -d -p 6379:6379 valkey/valkey:8-alpine
+docker run -d -p 6379:6379 valkey/valkey:8.1.6-alpine
+export QUEUE_HOST=localhost
 ```
 
 :::

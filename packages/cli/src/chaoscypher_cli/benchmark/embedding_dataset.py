@@ -15,6 +15,7 @@ import structlog
 
 from chaoscypher_cli.benchmark.dataset import DatasetSource, RawOutput
 from chaoscypher_cli.benchmark.scorers.embedding import EmbeddingRetrievalScorer
+from chaoscypher_core.benchmark.queries import BOARD_BANDS
 
 
 if TYPE_CHECKING:
@@ -122,6 +123,9 @@ class EmbeddingRetrievalDataset:
     kind: str = field(default="embedding", init=False)
     scorer: DatasetScorer = field(default_factory=EmbeddingRetrievalScorer, init=False)
     fixture: Any = field(init=False)
+    seed: int = 42
+    temperature: float = 0.0
+    """Recorded on the row like every dataset's; retrieval samples nothing, so nothing is pinned."""
 
     def __post_init__(self) -> None:
         """Set fixture from queries (satisfies BenchmarkDataset.fixture protocol)."""
@@ -137,9 +141,10 @@ class EmbeddingRetrievalDataset:
         3. Calls ``vector_search`` and records the 1-based rank of each gold ID.
 
         Queries whose gold entities cannot be resolved are recorded as skipped
-        (``"skip_reason": "gold_unresolved"``). ``out_of_scope`` queries are
-        silently excluded from the run (handled by the scorer via
-        ``queries_total``).
+        (``"skip_reason": "gold_unresolved"``). Queries outside
+        :data:`~chaoscypher_core.benchmark.queries.BOARD_BANDS` (``out_of_scope``,
+        and the chat comparison's ``graph_advantage`` band) are silently
+        excluded from the run; the scorer's ``queries_total`` counts the same set.
 
         Args:
             model: The embedder configuration to evaluate.
@@ -157,7 +162,7 @@ class EmbeddingRetrievalDataset:
                 ctx = graph.ctx
                 entities = _live_entities(ctx)
                 for q in self.queries.queries:
-                    if q.band == "out_of_scope":
+                    if q.band not in BOARD_BANDS or q.band == "out_of_scope":
                         continue
                     resolved = {n: resolve_gold_entity(n, entities) for n in q.gold_entities}
                     if any(rid is None for rid in resolved.values()):

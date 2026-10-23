@@ -10,6 +10,11 @@
  *
  * Based on sigma's EdgeLineProgram but with a second color attribute
  * that the vertex shader interpolates using the position coefficient.
+ *
+ * An edge whose display data sets ``dashed`` (a pipeline-flagged edge, see
+ * ``utils/edgeFlags.ts``) is drawn as dashes: the fragment shader drops the
+ * gaps by the distance along the edge, in screen pixels, so the dash keeps
+ * its size at every zoom. Picking still covers the whole line.
  */
 import { EdgeProgram } from 'sigma/rendering';
 import { floatColor } from 'sigma/utils';
@@ -27,6 +32,7 @@ attribute float a_normalCoef;
 attribute vec2 a_positionStart;
 attribute vec2 a_positionEnd;
 attribute float a_positionCoef;
+attribute float a_dashed;
 
 uniform mat3 u_matrix;
 uniform float u_sizeRatio;
@@ -40,6 +46,8 @@ varying vec4 v_color;
 varying vec2 v_normal;
 varying float v_thickness;
 varying float v_feather;
+varying float v_dashed;
+varying float v_along;
 
 const float bias = 255.0 / 254.0;
 
@@ -61,6 +69,11 @@ void main() {
   v_normal = unitNormal;
   v_feather = u_feather * u_correctionRatio / u_zoomRatio / u_pixelRatio * 2.0;
 
+  // Distance from the source end in screen pixels (the inverse of the thickness
+  // conversion above), for the dash pattern
+  v_dashed = a_dashed;
+  v_along = a_positionCoef * length(a_positionEnd - a_positionStart) * u_sizeRatio / u_correctionRatio;
+
   #ifdef PICKING_MODE
   v_color = a_id;
   #else
@@ -79,10 +92,19 @@ varying vec4 v_color;
 varying vec2 v_normal;
 varying float v_thickness;
 varying float v_feather;
+varying float v_dashed;
+varying float v_along;
 
 const vec4 transparent = vec4(0.0, 0.0, 0.0, 0.0);
+const float DASH_PERIOD = 10.0;
+const float DASH_ON = 6.0;
 
 void main(void) {
+  #ifndef PICKING_MODE
+  if (v_dashed > 0.5 && mod(v_along, DASH_PERIOD) > DASH_ON) {
+    discard;
+  }
+  #endif
   float dist = length(v_normal) * v_thickness;
 
   float t = smoothstep(v_thickness - v_feather, v_thickness, dist);
@@ -106,6 +128,7 @@ const UNIFORMS = [
  * Edge attributes:
  * - `color`: Color at the source end (standard sigma attribute)
  * - `targetColor`: Color at the target end (custom, set via edge reducer)
+ * - `dashed`: Draw the edge as dashes (custom, set via edge reducer)
  *
  * If `targetColor` is not set, falls back to `color` (no gradient).
  */
@@ -128,6 +151,7 @@ class EdgeGradientProgram<
         { name: 'a_color', size: 4, type: UNSIGNED_BYTE, normalized: true },
         { name: 'a_colorTarget', size: 4, type: UNSIGNED_BYTE, normalized: true },
         { name: 'a_id', size: 4, type: UNSIGNED_BYTE, normalized: true },
+        { name: 'a_dashed', size: 1, type: FLOAT },
       ],
       CONSTANT_ATTRIBUTES: [
         { name: 'a_positionCoef', size: 1, type: FLOAT },
@@ -180,7 +204,8 @@ class EdgeGradientProgram<
     array[startIndex++] = n2;
     array[startIndex++] = color;
     array[startIndex++] = targetColor;
-    array[startIndex] = edgeIndex;
+    array[startIndex++] = edgeIndex;
+    array[startIndex] = (data as unknown as Record<string, unknown>).dashed === true ? 1 : 0;
   }
 
   setUniforms(

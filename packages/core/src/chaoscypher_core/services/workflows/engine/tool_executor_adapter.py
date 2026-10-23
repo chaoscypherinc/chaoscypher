@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.services.workflows.tools.engine import ToolExecutorService
+from chaoscypher_core.services.workflows.tools.engine.chat_callbacks import queued_chat_callback
 
 
 if TYPE_CHECKING:
@@ -42,7 +43,12 @@ class BackendToolExecutorAdapter:
         Args:
             graph_repository: GraphRepository instance
             search_repository: SearchRepository instance
-            llm_provider: LLM provider instance
+            llm_provider: The LLM queue service (``LLMQueueService``), or None.
+                The tools' chat model is a callback over it at the
+                workflows' (background) priority
+                (:func:`~chaoscypher_core.services.workflows.tools.engine.chat_callbacks.queued_chat_callback`);
+                until 2026-10-09 the service itself was handed over, and
+                every tool that called it failed.
             tool_service: Optional ToolService for user tool resolution
             discovery_service: Optional DiscoveryService for research tools
 
@@ -69,11 +75,16 @@ class BackendToolExecutorAdapter:
                     return {"success": False, "error": "Gap identification not available"}
                 return {"success": False, "error": f"Unknown operation: {operation}"}
 
+        chat = (
+            queued_chat_callback(llm_provider, priority=llm_provider.settings.priorities.background)
+            if llm_provider is not None
+            else None
+        )
         # Initialize engine ToolExecutorService
         self.tool_executor = ToolExecutorService(
             graph_repository=graph_repository,
             search_repository=search_repository,
-            llm_chat_callback=llm_provider,
+            llm_chat_callback=chat,
             research_agent_callback=research_agent_callback,
         )
 

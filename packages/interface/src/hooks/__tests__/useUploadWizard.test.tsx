@@ -65,7 +65,7 @@ function makeParams(overrides: Partial<WizardUploadParams> = {}): WizardUploadPa
     filteringMode: '',
     contentFiltering: true,
     skipDuplicates: false,
-    domain: '__auto__',
+    packs: null,
     ...overrides,
   };
 }
@@ -111,14 +111,14 @@ describe('useUploadWizard', () => {
 
   // ── Override fast-path ─────────────────────────────────────────────────
 
-  it('override fast-path: a specific domain sends auto_confirm=true and skips polling', async () => {
+  it('override fast-path: chosen packs send auto_confirm=true and skip polling', async () => {
     mockedApiClient.post.mockResolvedValue({ data: makeSource() });
 
     const { result } = renderHook(() => useUploadWizard(), { wrapper: wrap });
 
     let outcome: string | undefined;
     await act(async () => {
-      outcome = (await result.current.start(makeParams({ domain: 'legal' }))).outcome;
+      outcome = (await result.current.start(makeParams({ packs: ['legal', 'historical'] }))).outcome;
     });
 
     expect(outcome).toBe('fast-path');
@@ -126,25 +126,43 @@ describe('useUploadWizard', () => {
     // Upload POSTed once; GET /sources/{id} never polled.
     expect(mockedApiClient.post).toHaveBeenCalledTimes(1);
     const form = mockedApiClient.post.mock.calls[0][1] as FormData;
-    expect(form.get('domain')).toBe('legal');
+    expect(form.getAll('packs')).toEqual(['legal', 'historical']);
+    expect(form.get('domain')).toBeNull();
     expect(form.get('auto_confirm')).toBe('true');
     expect(
       mockedApiClient.get.mock.calls.filter((c) => c[0] === '/sources/src-1'),
     ).toHaveLength(0);
   });
 
-  it('auto domain does NOT send a forced domain or auto_confirm', async () => {
+  it('auto (packs null) does NOT send packs, a forced domain or auto_confirm', async () => {
     mockedApiClient.post.mockResolvedValue({ data: makeSource() });
     mockedApiClient.get.mockResolvedValue({ data: makeSource() });
 
     const { result } = renderHook(() => useUploadWizard(), { wrapper: wrap });
     await act(async () => {
-      await result.current.start(makeParams({ domain: '__auto__' }));
+      await result.current.start(makeParams({ packs: null }));
     });
 
     const form = mockedApiClient.post.mock.calls[0][1] as FormData;
+    expect(form.getAll('packs')).toEqual([]);
     expect(form.get('domain')).toBeNull();
     expect(form.get('auto_confirm')).toBeNull();
+  });
+
+  it('the floor alone ([]) is sent as domain=generic and confirms at once', async () => {
+    mockedApiClient.post.mockResolvedValue({ data: makeSource() });
+
+    const { result } = renderHook(() => useUploadWizard(), { wrapper: wrap });
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = (await result.current.start(makeParams({ packs: [] }))).outcome;
+    });
+
+    expect(outcome).toBe('fast-path');
+    const form = mockedApiClient.post.mock.calls[0][1] as FormData;
+    expect(form.getAll('packs')).toEqual([]);
+    expect(form.get('domain')).toBe('generic');
+    expect(form.get('auto_confirm')).toBe('true');
   });
 
   // ── Skipped duplicate ──────────────────────────────────────────────────
@@ -295,7 +313,7 @@ describe('useUploadWizard', () => {
     await vi.waitFor(() => expect(result.current.phase).toBe('review'));
 
     await act(async () => {
-      await result.current.confirm({ domain: 'legal', analysis_depth: 'full' });
+      await result.current.confirm({ packs: ['legal'], analysis_depth: 'full' });
     });
 
     expect(result.current.phase).toBe('idle');
@@ -303,7 +321,7 @@ describe('useUploadWizard', () => {
       (c) => c[0] === '/sources/src-1/confirmation',
     );
     expect(confirmCall).toBeDefined();
-    expect(confirmCall?.[1]).toMatchObject({ domain: 'legal' });
+    expect(confirmCall?.[1]).toMatchObject({ packs: ['legal'] });
   });
 
   it('cancel resets the wizard from review back to idle', async () => {

@@ -17,6 +17,8 @@ export interface GraphNodeData {
   content: Record<string, unknown>;
   templateId: string;
   type?: string;
+  /** The pack subtype (`properties.entity_subtype`); the template is the core type's. */
+  subtype?: string;
   tags: string[];
   createdAt: string;
   updatedAt: string;
@@ -70,6 +72,8 @@ export interface EdgeAttributes extends GraphEdgeData {
   hidden?: boolean;
   /** True if this is a virtual provenance edge. */
   isProvenance?: boolean;
+  /** Drawn dashed (a pipeline-flagged edge: ``utils/edgeFlags.ts``); set by the edge reducer. */
+  dashed?: boolean;
 }
 
 /**

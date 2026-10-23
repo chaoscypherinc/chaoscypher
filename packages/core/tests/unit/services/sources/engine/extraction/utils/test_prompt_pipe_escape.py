@@ -35,9 +35,15 @@ def test_entity_prompt_shows_an_empty_aliases_field_and_every_example_parses() -
     from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
         parse_entity_line,
     )
+    from chaoscypher_core.services.sources.engine.extraction.utils.prompts import (
+        render_entity_format_example,
+    )
 
     assert "never omit a field" in ENTITY_HARVEST_TEMPLATE
-    examples = [ln for ln in ENTITY_HARVEST_TEMPLATE.splitlines() if ln.startswith("E|")]
+    # the example is one entity each of the core types Person, Location and Event
+    rendered = render_entity_format_example("- Person: a person\n- Event: e\n- Location: l")
+    examples = [ln for ln in rendered.splitlines() if ln.startswith("E|")]
+    assert len(examples) == 3
     parsed = [parse_entity_line(ln) for ln in examples]
     assert all(p is not None for p in parsed)
     assert any(ln.split("|")[3] == "" for ln in examples)

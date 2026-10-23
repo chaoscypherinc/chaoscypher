@@ -753,6 +753,39 @@ class TestDownload:
         assert exc_info.value.status_code == 429
         assert "Rate limit" in exc_info.value.message
 
+    @pytest.mark.asyncio
+    async def test_download_does_not_follow_hub_redirect(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hub 3xx must fail the download, never fetch the redirect target.
+
+        Drives the real ``_get_download_client`` (only the transport is
+        swapped), so flipping ``follow_redirects`` or dropping the
+        ``raise_for_status`` that rejects the unfollowed 3xx is caught —
+        the SSRF guard against cloud-metadata / localhost content landing
+        on disk as a "package".
+        """
+        requested: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requested.append(str(request.url))
+            if request.url.host == "x":
+                return httpx.Response(
+                    302, headers={"Location": "http://169.254.169.254/latest/meta-data/"}
+                )
+            return httpx.Response(200, content=b"CLOUD-METADATA")
+
+        real_async_client = httpx.AsyncClient
+
+        def client_with_mock_transport(**kwargs: Any) -> httpx.AsyncClient:
+            return real_async_client(transport=httpx.MockTransport(handler), **kwargs)
+
+        monkeypatch.setattr(httpx, "AsyncClient", client_with_mock_transport)
+        async with LexiconClient(base_url="http://x", auth=AuthConfig()) as client:
+            with pytest.raises(httpx.HTTPStatusError):
+                await client.download("alice", "medical", "1.0.0")
+        assert requested == ["http://x/api/v1/packages/alice/medical/1.0.0"]
+
 
 # ---------------------------------------------------------------------------
 # upload

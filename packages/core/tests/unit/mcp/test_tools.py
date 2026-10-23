@@ -6,7 +6,7 @@
 import pytest
 from pydantic import ValidationError
 
-from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, get_tools_for_mode
+from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, TOOL_PROFILES, get_tools
 from chaoscypher_core.settings import EngineSettings, MCPSettings
 
 
@@ -36,7 +36,7 @@ class TestToolDefinitions:
     """Tool definitions completeness and structure."""
 
     def test_total_tool_count(self):
-        assert len(TOOL_DEFINITIONS) == 36
+        assert len(TOOL_DEFINITIONS) == 44
 
     def test_all_tools_have_required_fields(self):
         for tool in TOOL_DEFINITIONS:
@@ -46,29 +46,37 @@ class TestToolDefinitions:
             assert isinstance(tool.write_only, bool), f"Tool {tool.name} missing write_only"
 
     def test_read_mode_excludes_write_tools(self):
-        read_tools = get_tools_for_mode("read")
+        read_tools = get_tools("read")
         write_names = {t.name for t in TOOL_DEFINITIONS if t.write_only}
         read_names = {t.name for t in read_tools}
         assert write_names.isdisjoint(read_names)
 
     def test_write_mode_includes_all_tools(self):
-        write_tools = get_tools_for_mode("write")
-        assert len(write_tools) == 36
+        write_tools = get_tools("write")
+        assert len(write_tools) == 44
 
     def test_read_tool_count(self):
-        read_tools = get_tools_for_mode("read")
-        assert len(read_tools) == 21
+        read_tools = get_tools("read")
+        assert len(read_tools) == 25
 
     def test_write_tool_count(self):
         write_only = [t for t in TOOL_DEFINITIONS if t.write_only]
-        assert len(write_only) == 15
+        assert len(write_only) == 19
 
     def test_new_tools_present(self):
         names = {t.name for t in TOOL_DEFINITIONS}
         assert "get_summary_context" in names
         assert "get_document_status" in names
         assert "add_document" in names
+        assert "add_site" in names
+        assert "refresh_site" in names
         assert "remove_document" in names
+
+    def test_the_site_tools_are_write_only(self):
+        by_name = {t.name: t for t in TOOL_DEFINITIONS}
+        assert by_name["add_site"].write_only and by_name["refresh_site"].write_only
+        assert by_name["add_site"].input_schema["required"] == ["url"]
+        assert by_name["refresh_site"].input_schema["required"] == ["site"]
 
     def test_schemas_have_type_object(self):
         for tool in TOOL_DEFINITIONS:
@@ -93,11 +101,11 @@ class TestConfirmExtractionTool:
         assert tool.write_only is True
 
     def test_confirm_extraction_hidden_in_read_mode(self):
-        from chaoscypher_core.mcp.tools import get_tools_for_mode
+        from chaoscypher_core.mcp.tools import get_tools
 
-        read_names = {t.name for t in get_tools_for_mode("read")}
+        read_names = {t.name for t in get_tools("read")}
         assert "confirm_extraction" not in read_names
-        write_names = {t.name for t in get_tools_for_mode("write")}
+        write_names = {t.name for t in get_tools("write")}
         assert "confirm_extraction" in write_names
 
     def test_confirm_extraction_schema_requires_file_id(self):
@@ -202,7 +210,7 @@ class TestReadModeAdvertisesOnlyExecutableTools:
     """
 
     def test_extraction_tools_not_advertised_in_read_mode(self):
-        read_names = {t.name for t in get_tools_for_mode("read")}
+        read_names = {t.name for t in get_tools("read")}
         for name in (
             "get_extraction_tasks",
             "get_extraction_chunks",
@@ -211,10 +219,51 @@ class TestReadModeAdvertisesOnlyExecutableTools:
             assert name not in read_names
 
     def test_extraction_tools_still_advertised_in_write_mode(self):
-        write_names = {t.name for t in get_tools_for_mode("write")}
+        write_names = {t.name for t in get_tools("write")}
         for name in (
             "get_extraction_tasks",
             "get_extraction_chunks",
             "get_extraction_progress",
         ):
             assert name in write_names
+
+
+class TestProfilesAndAllowlist:
+    """``get_tools``: the profile, then the mode, then the allowlist (spec decision 1)."""
+
+    def test_full_profile_write_mode_is_the_registry(self):
+        assert get_tools("write") == TOOL_DEFINITIONS
+
+    def test_memory_profile_is_only_its_names_in_registry_order(self):
+        names = [t.name for t in get_tools("write", "memory")]
+        registry = [t.name for t in TOOL_DEFINITIONS]
+        assert names == [n for n in registry if n in TOOL_PROFILES["memory"]]
+
+    def test_read_mode_drops_write_only_inside_the_profile(self):
+        assert all(not t.write_only for t in get_tools("read", "memory"))
+
+    def test_allowlist_narrows_the_profile(self):
+        names = [t.name for t in get_tools("write", "full", ["search_nodes", "get_node"])]
+        assert names == ["search_nodes", "get_node"]
+
+    def test_settings_refuse_an_unknown_profile_and_an_unknown_tool(self):
+        with pytest.raises(ValueError, match="profile"):
+            MCPSettings(profile="notes")
+        with pytest.raises(ValueError, match="no_such_tool"):
+            MCPSettings(tools=["no_such_tool"])
+
+    def test_settings_default_to_the_full_profile_and_no_allowlist(self):
+        s = MCPSettings()
+        assert s.profile == "full"
+        assert s.tools == []
+
+    def test_every_profile_name_is_a_registered_tool(self):
+        registered = {t.name for t in TOOL_DEFINITIONS}
+        for name in TOOL_PROFILES["memory"]:
+            assert name in registered
+
+
+def test_settings_refuse_an_allowlisted_tool_outside_the_profile():
+    with pytest.raises(ValueError, match="search_nodes"):
+        MCPSettings(profile="memory", tools=["search_nodes"])
+    assert MCPSettings(profile="memory", tools=["recall"]).tools == ["recall"]

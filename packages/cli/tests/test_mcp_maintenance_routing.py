@@ -73,7 +73,9 @@ def _patch_common(
     fake_ctx = SimpleNamespace(
         _engine=object(),
         database_name="warpeace",
-        settings=SimpleNamespace(mcp=SimpleNamespace(mode="read", auto_extract=False)),
+        settings=SimpleNamespace(
+            mcp=SimpleNamespace(mode="read", profile="full", auto_extract=False)
+        ),
     )
     get_ctx = MagicMock(return_value=fake_ctx)
     monkeypatch.setattr(cmd, "get_context", get_ctx)
@@ -206,3 +208,33 @@ def test_mcp_heal_error_still_routes_to_maintenance(
     spies["heal"].assert_called_once()
     spies["maint"].assert_called_once_with("warpeace")
     spies["normal"].assert_not_called()
+
+
+def test_a_database_named_on_the_command_line_is_served_as_given() -> None:
+    """Gap 8 (2026-10-20): ``-d default`` read as unset because the flag chain treats the literal
+    "default" as "no choice"; ``mount`` already passes ``explicit_database``, ``mcp`` did not.
+    """
+    from unittest.mock import patch
+
+    from click.testing import CliRunner
+
+    from chaoscypher_cli.mcp.command import mcp
+
+    with patch("chaoscypher_cli.mcp.command.serve_stdio") as serve:
+        assert CliRunner().invoke(mcp, ["-d", "default"]).exit_code == 0
+        serve.assert_called_once_with(
+            database="default",
+            mode=None,
+            profile=None,
+            server_extraction=False,
+            explicit_database=True,
+        )
+        serve.reset_mock()
+        assert CliRunner().invoke(mcp, []).exit_code == 0
+        serve.assert_called_once_with(
+            database=None,
+            mode=None,
+            profile=None,
+            server_extraction=False,
+            explicit_database=False,
+        )

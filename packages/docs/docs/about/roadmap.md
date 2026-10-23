@@ -60,7 +60,7 @@ Reimplement agent execution with LangChain agents for autonomous multi-step reas
 - **Alembic Migration Framework (April 2026)** — Schema migrations now ship as Alembic revisions under `packages/core/src/chaoscypher_core/database/migrations/versions/`; Cortex runs `alembic upgrade head` on startup. The reflective auto-migrator was retired (see [ADR-0006](../architecture/adrs/0006-re-adopt-alembic.md)).
 - [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) Client-Driven Extraction — Default to client-driven extraction, no server LLM required
 - Batch Embedding Processing — Concurrent embedding generation with per-chunk progress
-- MCP Server — 36 tools for AI assistants via stdio and Streamable HTTP transports
+- MCP Server — 44 tools for AI assistants via stdio and Streamable HTTP transports
 - Local CPU Embedding Service — sentence-transformers based embeddings replacing LLM-provider embeddings
 - GraphRAG Search — graph-enhanced retrieval fusing knowledge graph traversal with vector search
 - DX Zero-Boilerplate — typed Pydantic returns, `ChaosCypher` convenience namespace, `check_health()`

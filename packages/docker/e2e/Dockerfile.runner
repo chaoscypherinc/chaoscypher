@@ -1,5 +1,5 @@
 # E2E test runner with pytest + httpx + playwright
-FROM python:3.14.3-slim
+FROM python:3.14.8-slim
 
 WORKDIR /app
 

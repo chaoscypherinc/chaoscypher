@@ -86,6 +86,15 @@ class EmbeddingProviderProtocol(Protocol):
     model_name: str
     """The model identifier used by this provider."""
 
+    query_prefix: str
+    """Text the provider puts before a query when it embeds one; empty when it puts none.
+
+    Part of what decides a query's vector besides its text, so the
+    benchmark's query-vector cache keys on it
+    (:func:`~chaoscypher_core.benchmark.pins.query_vector_identity`). Every
+    provider defines it; none uses a prefix today.
+    """
+
     @property
     def provider_type(self) -> str:
         """Return the provider type identifier (e.g., 'ollama', 'openai', 'gemini')."""

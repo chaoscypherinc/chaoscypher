@@ -78,3 +78,44 @@ class TestClustering:
         source_ids = [c["source_id"] for c in result]
         assert source_ids.count("docA") == 3
         assert source_ids.count("docB") == 3
+
+
+class TestKMeansMemory:
+    """Pin that K-Means assignment never materializes the (n, k, dim) tensor."""
+
+    def test_kmeans_matches_reference_assignment(self):
+        """Labels should equal a naive Euclidean nearest-centroid K-Means."""
+        rng = np.random.default_rng(0)
+        centers = rng.normal(size=(4, 8)).astype(np.float32) * 10
+        embeddings = np.vstack([c + rng.normal(size=(25, 8)).astype(np.float32) for c in centers])
+        labels = SummarizeToolHandlers._kmeans(embeddings, 4)
+
+        n = embeddings.shape[0]
+        centroids = embeddings[np.linspace(0, n - 1, 4, dtype=int)].copy()
+        expected = np.zeros(n, dtype=int)
+        for _ in range(20):
+            d = np.linalg.norm(embeddings[:, None] - centroids[None, :], axis=2)
+            new = np.argmin(d, axis=1)
+            if np.array_equal(new, expected):
+                break
+            expected = new
+            for j in range(4):
+                if (expected == j).any():
+                    centroids[j] = embeddings[expected == j].mean(axis=0)
+        assert np.array_equal(labels, expected)
+
+    def test_kmeans_peak_memory_is_not_n_by_k_by_dim(self):
+        """Peak allocation must stay well below one (n, k, dim) float32 tensor."""
+        import tracemalloc
+
+        n, k, dim = 2000, 16, 1024
+        embeddings = np.random.default_rng(1).random((n, dim), dtype=np.float32)
+        tensor_bytes = n * k * dim * 4  # ~131 MB
+
+        tracemalloc.start()
+        try:
+            SummarizeToolHandlers._kmeans(embeddings, k, max_iter=2)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        assert peak < tensor_bytes / 4

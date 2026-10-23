@@ -32,7 +32,7 @@ def _ds(tmp_path: Path, *, keep_db: bool = False) -> ExtractionDataset:
         id="t",
         version="1.0",
         corpus_path=corpus,
-        domain="literary",
+        packs=("literary",),
         keep_db=keep_db,
     )
 
@@ -108,13 +108,47 @@ async def test_run_success_returns_entities_and_relationships(tmp_path: Path) ->
     # 2 chunks -> per-chunk latency list has length 2
     assert len(out.per_chunk_latency_ms) == 2
     assert out.extras["snapshot_db_path"].endswith("app.db")
-    # The pipeline was driven with the dataset's corpus + domain.
+    # The pipeline was driven with the dataset's corpus + packs.
     _, kwargs = pipeline.run.call_args
     assert kwargs["file_path"] == ds.corpus_path
-    assert kwargs["domain"] == "literary"
+    assert kwargs["packs"] == ("literary",)
     assert kwargs["skip_commit"] is True
     # Cleanup ran (keep_db False) -> ctx.disconnect called.
     ctx.disconnect.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "packs",
+    [(), ("literary",), ("historical", "literary")],  # the floor alone, one pack, two packs
+)
+async def test_the_pipeline_is_driven_with_the_datasets_packs(
+    tmp_path: Path, packs: tuple[str, ...]
+) -> None:
+    """The run extracts with every pack the manifest names (``()`` the floor alone)."""
+    ds = _ds(tmp_path)
+    ds.packs = packs
+    ctx = _fake_ctx(tmp_path, entities=[{"id": "e1"}], relationships=[])
+    result = SimpleNamespace(
+        success=True,
+        error=None,
+        file_id="f",
+        llm_total_input_tokens=1,
+        llm_total_output_tokens=1,
+        chunks_count=1,
+    )
+    service_factory, pipeline_factory, pipeline = _patch_pipeline(result)
+    fake_sources = SimpleNamespace(
+        CLISourceProcessingService=service_factory, SourcePipeline=pipeline_factory
+    )
+    with (
+        patch.dict("sys.modules", {"chaoscypher_cli.sources": fake_sources}),
+        patch.object(ds, "_build_temp_context", return_value=ctx),
+    ):
+        out = await ds.run(_model())
+    assert out.error is None
+    assert pipeline.run.call_args.kwargs["packs"] == packs
+    assert "domain" not in pipeline.run.call_args.kwargs
 
 
 @pytest.mark.asyncio
@@ -296,6 +330,8 @@ def test_build_temp_context_overrides_model_fields(tmp_path: Path) -> None:
     )
     fake_ctx = MagicMock()
     fake_ctx.settings = SimpleNamespace(llm=llm_settings)
+    seen: list[str | None] = []
+    fake_ctx.connect.side_effect = lambda: seen.append(os.environ.get("CHAOSCYPHER_LLM_PROVIDER"))
 
     ctx_factory = MagicMock(return_value=fake_ctx)
     fake_context_mod = SimpleNamespace(CLIContext=ctx_factory)
@@ -305,8 +341,8 @@ def test_build_temp_context_overrides_model_fields(tmp_path: Path) -> None:
 
     assert out is fake_ctx
     fake_ctx.connect.assert_called_once()
-    # Provider env var set before construction.
-    assert os.environ["CHAOSCYPHER_LLM_PROVIDER"] == "openai"
+    # Provider env var set while the context connects (and restored after).
+    assert seen == ["openai"]
     # Model fields overridden post-connect.
     assert llm_settings.openai_chat_model == "gpt-4o"
     assert llm_settings.openai_extraction_model == "gpt-4o"
@@ -349,6 +385,29 @@ def test_build_temp_context_unknown_provider_skips_model_fields(tmp_path: Path) 
 
     # Unknown provider -> no model fields set before the pin check raised.
     assert not hasattr(llm_settings, "mystery_chat_model")
+
+
+@pytest.mark.parametrize("previous", [None, "anthropic"])
+def test_build_temp_context_leaves_the_process_provider_as_it_found_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous: str | None
+) -> None:
+    """The provider override lasts only while the context is built (2026-10-16 leak)."""
+    if previous is None:
+        monkeypatch.delenv("CHAOSCYPHER_LLM_PROVIDER", raising=False)
+    else:
+        monkeypatch.setenv("CHAOSCYPHER_LLM_PROVIDER", previous)
+    seen: list[str | None] = []
+    fake_ctx = MagicMock()
+    fake_ctx.connect.side_effect = lambda: seen.append(os.environ.get("CHAOSCYPHER_LLM_PROVIDER"))
+    fake_ctx.settings = SimpleNamespace(llm=SimpleNamespace())
+    fake_context_mod = SimpleNamespace(CLIContext=MagicMock(return_value=fake_ctx))
+    with (
+        patch.dict("sys.modules", {"chaoscypher_cli.context": fake_context_mod}),
+        pytest.raises(AttributeError),  # the pin check: these settings have no pin fields
+    ):
+        _ds(tmp_path)._build_temp_context(ModelConfig(provider="mystery", model="m1", label="M"))
+    assert seen == ["mystery"]
+    assert os.environ.get("CHAOSCYPHER_LLM_PROVIDER") == previous
 
 
 def test_remove_temp_db_dir_evicts_and_removes(tmp_path: Path) -> None:

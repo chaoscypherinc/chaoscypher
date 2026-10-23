@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+from typing import TYPE_CHECKING
 
 import click
 from rich.console import Console
@@ -16,7 +17,29 @@ from chaoscypher_cli.commands.db.list import get_database_info, get_databases_di
 from chaoscypher_cli.context import get_database_name
 
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
 console = Console()
+
+
+def _same_database_dir(candidate: Path, protected: Path) -> bool:
+    """Return True when ``candidate`` names the same directory as ``protected``.
+
+    Path equality alone is case-sensitive for ``PosixPath``, but macOS's
+    default APFS volume is case-insensitive, so ``Default`` opens the
+    ``default`` directory there. ``samefile`` compares the directories the
+    filesystem actually resolves, covering every case-folding (or aliased)
+    filesystem while leaving genuinely distinct directories deletable.
+    """
+    if candidate == protected:
+        return True
+    try:
+        return candidate.exists() and protected.exists() and candidate.samefile(protected)
+    except OSError:
+        # Unresolvable paths cannot be proven distinct; refuse the delete.
+        return True
 
 
 @click.command()
@@ -42,14 +65,13 @@ def delete(name: str, yes: bool) -> None:
     databases_dir = get_databases_dir()
     db_path = databases_dir / name
 
-    # Path-level guards instead of string equality: Windows paths compare
-    # case-insensitively, so 'Default' cannot slip past onto the same
-    # directory as 'default'.
-    if db_path == databases_dir / "default":
+    # Filesystem-level guards instead of string equality: on case-insensitive
+    # filesystems (Windows, macOS APFS) 'Default' opens the 'default' directory.
+    if _same_database_dir(db_path, databases_dir / "default"):
         console.print("[red]Cannot delete the 'default' database.[/red]")
         sys.exit(1)
 
-    if db_path == databases_dir / get_database_name():
+    if _same_database_dir(db_path, databases_dir / get_database_name()):
         console.print("[red]Cannot delete the current database.[/red]")
         console.print("\nSwitch to another database first:")
         console.print("  [cyan]chaoscypher db switch default[/cyan]")

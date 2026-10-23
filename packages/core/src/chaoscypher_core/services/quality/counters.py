@@ -54,23 +54,79 @@ class QualityCounter(StrEnum):
     CHUNKS_COALESCED = "chunks_coalesced_count"
     LLM_CHUNKS_TRUNCATED = "llm_chunks_truncated"
     LLM_CHUNKS_ABORTED_BY_LOOP = "llm_chunks_aborted_by_loop"
+    # Audit wave 5 (2026-10-06): a group whose model produced tokens but whose
+    # output kept no entity and no relationship (parsed or filtered away).
+    LLM_CHUNKS_ZERO_YIELD = "llm_chunks_zero_yield"
+    # Audit wave 6 (2026-10-06): a group whose kept output came from a rung of
+    # the decode-fallback ladder (``chunk_failures.completion_counters``).
+    LLM_CHUNKS_RESCUED_BY_FALLBACK = "llm_chunks_rescued_by_fallback"
     PARSER_LINES_DROPPED = "parser_lines_dropped"
     DEDUP_ENTITIES_MERGED = "dedup_entities_merged"
     STRUCTURAL_ENTITIES_FILTERED = "structural_entities_filtered"
+    # Keep, flag, never delete (2026-10-07): until then the orphans the commit
+    # DELETED; now the orphans it KEPT, flagged ``properties.orphan`` (the name
+    # stays so old dashboards read the same population: the edgeless entities).
+    # The orphans it still drops, carrying neither a description nor an
+    # evidence sentence, are EVIDENCE_LESS_ENTITIES_DROPPED (migration 0013).
     ORPHAN_ENTITIES_FILTERED = "orphan_entities_filtered"
+    EVIDENCE_LESS_ENTITIES_DROPPED = "evidence_less_entities_dropped"
+    # Keep, flag, never delete (2026-10-07, migration 0014): the per-chunk entities
+    # kept flagged instead of dropped: below the plausibility bar but carrying
+    # evidence (``properties.low_plausibility``), and whose written type no core
+    # type answers to (``properties.unplaced_type``, typed Concept; the chunk's
+    # ``type_rescue`` stage counts them under ``unknown_type``).
+    PLAUSIBILITY_ENTITIES_FLAGGED = "plausibility_entities_flagged"
+    UNPLACED_TYPE_ENTITIES_FLAGGED = "unplaced_type_entities_flagged"
     RELATIONSHIPS_DROPPED_INVALID = "relationships_dropped_invalid"
+    # Keep, flag, never delete (2026-10-07): until then the relationships a cap
+    # DROPPED; now the ones past a cap KEPT, flagged ``properties.capped`` (the
+    # name stays so old dashboards read the same population: the edges past a
+    # cap). The caps drop nothing.
     RELATIONSHIPS_DROPPED_CAPPED = "relationships_dropped_capped"
     CITATIONS_SKIPPED_NO_CHUNK_INDEX = "citations_skipped_no_chunk_index"
     # Phase 2 (2026-05-08): observability completeness
+    # Keep, flag, never delete (2026-10-08): until then every entity whose cited
+    # sentence did not name it (all of them DROPPED); now only the ones the
+    # filter still drops, carrying no description. The ones it KEEPS, flagged
+    # ``properties.unevidenced``, are ENTITIES_UNEVIDENCED_KEPT (migration 0016).
     EVIDENCE_ENTITIES_DROPPED = "evidence_entities_dropped"
+    ENTITIES_UNEVIDENCED_KEPT = "entities_unevidenced_kept"
+    # Keep, flag, never delete (2026-10-08, migration 0016): an entity whose name
+    # is one of the domain's exclusion examples, kept because it carries evidence
+    # or is a reference that says something, flagged ``properties.excluded_name``.
+    EXCLUDED_ENTITIES_KEPT = "excluded_entities_kept"
+    # Known entities (2026-10-11, migration 0018): the pass-1 guards on the
+    # source's known entities (``KnownEntities.guard``): aliases dropped for
+    # naming another known entry (``properties.alias_crossed_known``) and known
+    # names the cited sentences do not identify, demoted to the one phrase they
+    # write or kept as written and flagged (``properties.referent_unevidenced``;
+    # both counted since the final review 2 of 2026-10-12: a flagged name's edges
+    # are never evidenced, so it is no silent keep).
+    ALIASES_CROSSED_KNOWN_DROPPED = "aliases_crossed_known_dropped"
+    REFERENTS_UNEVIDENCED_DEMOTED = "referents_unevidenced_demoted"
+    # Keep, flag, never delete (2026-10-07): until then every relationship the
+    # evidence filter found no evidence for (all of them DROPPED); now only the
+    # ones it still drops, an endpoint that is no entity of the chunk. The ones
+    # it KEEPS, flagged ``properties.unevidenced``, are
+    # RELATIONSHIPS_UNEVIDENCED_KEPT (migration 0015).
     EVIDENCE_RELATIONSHIPS_DROPPED = "evidence_relationships_dropped"
+    RELATIONSHIPS_UNEVIDENCED_KEPT = "relationships_unevidenced_kept"
     AGGREGATOR_RELATIONSHIPS_DROPPED = "aggregator_relationships_dropped"
     LLM_CHUNKS_TIMED_OUT = "llm_chunks_timed_out"
     LLM_CHUNKS_FAILED_PERMANENT = "llm_chunks_failed_permanent"
     STANDALONE_CHUNK_FAILURES = "standalone_chunk_failures"
     SEMANTIC_DEDUP_FALLBACKS = "semantic_dedup_fallbacks"
     RELATIONSHIPS_DIRECTION_CORRECTED = "relationships_direction_corrected"
+    # Keep, flag, never delete (2026-10-08): until then the relationships the
+    # strict type-constraint check DROPPED; now the ones it KEPT flagged (the
+    # name stays so old dashboards read the same population): the sum of
+    # RELATIONSHIPS_UNMATCHED_LABEL_KEPT (no template for the label: kept as
+    # ``related_to``, ``properties.unmatched_label`` and ``written_label``) and
+    # RELATIONSHIPS_TYPE_MISMATCH_KEPT (endpoints the template refuses:
+    # ``properties.type_mismatch``), migration 0016. The check drops nothing.
     RELATIONSHIPS_DROPPED_TYPE_UNMATCHED = "relationships_dropped_type_unmatched"
+    RELATIONSHIPS_UNMATCHED_LABEL_KEPT = "relationships_unmatched_label_kept"
+    RELATIONSHIPS_TYPE_MISMATCH_KEPT = "relationships_type_mismatch_kept"
     USER_REGEX_TIMEOUT_HITS = "user_regex_timeout_hits"
     OCR_CLEANER_SKIPPED_BY_PREDICATE = "ocr_cleaner_skipped_by_predicate"
     CHUNKER_NORMALIZE_DROPS = "chunker_normalize_drops"
@@ -114,21 +170,17 @@ class QualityCounter(StrEnum):
     # clicks Rerun on a chunk row. Surfaces total manual reruns per
     # source in the Processing tab.
     CHUNKS_RERUN_TOTAL = "chunks_rerun_total"
-    # Audit of `_fuzzy_type_match` (2026-05-20): surface rescue rates so
-    # the population sweep can decide whether the substring/word-overlap
-    # tiers are useful safety nets or are hiding type drift. Companion
-    # to RELATIONSHIPS_DROPPED_TYPE_UNMATCHED — together they describe
-    # every outcome of the cross-chunk type-constraint check.
-    #   _FUZZY_MATCHED — relationship survived because tier 2 or 3 of
-    #   _fuzzy_type_match matched the LLM-emitted entity type to an
-    #   allowed type. Symptom: high value = LLM types drifting from
-    #   the templates; either tighten the prompt or add explicit
-    #   type_aliases.
-    #   _FELL_THROUGH — relationship survived because balanced mode
-    #   let an unrecognized type pass without a constraint check
-    #   (strict mode drops the same relationships). Symptom: high
-    #   value on a balanced-mode source = same problem as fuzzy
-    #   match, just routed differently.
+    # Cross-chunk type-constraint check outcomes (audit 2026-05-20).
+    # Companion to RELATIONSHIPS_DROPPED_TYPE_UNMATCHED — together they
+    # describe every outcome of the check.
+    #   _FUZZY_MATCHED — the relationship's label was a near miss of exactly
+    #   one edge template's label (``_fuzzy_edge_type_lookup``) and took it.
+    #   Symptom: high value = the model's labels drifting from the templates.
+    #   (Entity types are compared as core types, with no fuzzy tier, since
+    #   2026-10-07.)
+    #   _FELL_THROUGH — the relationship was kept without a check because the
+    #   constraints were not strict. Every extraction plan runs them strict
+    #   since 2026-10-07 (entities are core-typed), so a plan's run counts 0.
     RELATIONSHIPS_TYPE_FUZZY_MATCHED = "relationships_type_fuzzy_matched"
     RELATIONSHIPS_TYPE_FELL_THROUGH = "relationships_type_fell_through"
 
@@ -148,16 +200,26 @@ _RESET_DEFAULTS: dict[str, Any] = {
     "chunks_coalesced_count": 0,
     "llm_chunks_truncated": 0,
     "llm_chunks_aborted_by_loop": 0,
+    "llm_chunks_zero_yield": 0,
+    "llm_chunks_rescued_by_fallback": 0,
     "parser_lines_dropped": 0,
     "dedup_entities_merged": 0,
     "structural_entities_filtered": 0,
     "orphan_entities_filtered": 0,
+    "evidence_less_entities_dropped": 0,
+    "plausibility_entities_flagged": 0,
+    "unplaced_type_entities_flagged": 0,
     "relationships_dropped_invalid": 0,
     "relationships_dropped_capped": 0,
     "citations_skipped_no_chunk_index": 0,
     # Phase 2 (2026-05-08): observability completeness.
     "evidence_entities_dropped": 0,
+    "entities_unevidenced_kept": 0,
+    "excluded_entities_kept": 0,
+    "aliases_crossed_known_dropped": 0,
+    "referents_unevidenced_demoted": 0,
     "evidence_relationships_dropped": 0,
+    "relationships_unevidenced_kept": 0,
     "aggregator_relationships_dropped": 0,
     "llm_chunks_timed_out": 0,
     "llm_chunks_failed_permanent": 0,
@@ -165,6 +227,8 @@ _RESET_DEFAULTS: dict[str, Any] = {
     "semantic_dedup_fallbacks": 0,
     "relationships_direction_corrected": 0,
     "relationships_dropped_type_unmatched": 0,
+    "relationships_unmatched_label_kept": 0,
+    "relationships_type_mismatch_kept": 0,
     "user_regex_timeout_hits": 0,
     "ocr_cleaner_skipped_by_predicate": 0,
     "chunker_normalize_drops": 0,
@@ -199,7 +263,7 @@ _RESET_DEFAULTS: dict[str, Any] = {
     "vision_pages_sampled_quick_mode": 0,
     # Per-chunk rerun feature (2026-05-15).
     "chunks_rerun_total": 0,
-    # _fuzzy_type_match audit (2026-05-20): rescue-rate counters.
+    # Type-constraint check outcomes (audit 2026-05-20).
     "relationships_type_fuzzy_matched": 0,
     "relationships_type_fell_through": 0,
     # Phase 7 audit-remediation (2026-05-09): stat column (not a QualityCounter).
@@ -221,6 +285,10 @@ _RESET_DEFAULTS: dict[str, Any] = {
     "vector_indexed_at": None,
     "vector_indexing_status": "pending",
 }
+# Every counter resets, listed above or not (until audit wave 5 the list was kept
+# by hand beside the enum; a counter missing from it survived a re-extraction).
+# A JSON-shaped counter is listed above with its own reset value.
+_RESET_DEFAULTS = {**{counter.value: 0 for counter in QualityCounter}, **_RESET_DEFAULTS}
 
 
 class _SupportsIncrement(Protocol):

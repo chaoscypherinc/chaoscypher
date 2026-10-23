@@ -26,10 +26,11 @@ from chaoscypher_core.services.quality.scoring import (
 
 @pytest.mark.unit
 class TestScoringVersion:
-    def test_scoring_version_is_v8(self) -> None:
+    def test_scoring_version_is_v9(self) -> None:
         # v8 = v7 formula + string-ID relationship-ref resolution and
-        # source_chunk_indices chunk mentions for per-source table rows.
-        assert SCORING_VERSION == 8
+        # source_chunk_indices chunk mentions for per-source table rows;
+        # v9 = the type value by core type and by a pack's subtype score.
+        assert SCORING_VERSION == 9
 
 
 @pytest.mark.unit

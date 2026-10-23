@@ -243,3 +243,82 @@ class TestCancellationFinalizesExecution:
         finalize.assert_called_once()
         assert finalize.call_args.kwargs["status"] == WorkflowExecutionStatus.FAILED
         assert "cancelled" in finalize.call_args.kwargs["error_message"].lower()
+
+
+class TestPreRecordFailureFinalizesPrecreatedRow:
+    """A validation raise must not leave the API-created row ``pending``."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_workflow_marks_precreated_row_failed(self) -> None:
+        """The HTTP endpoint creates the row before enqueueing.
+
+        Validation raises before ``_ensure_execution_record``; previously
+        nothing wrote the row, so it stayed ``pending`` with no error and
+        ``allow_parallel_execution=False`` refused every later run.
+        """
+        from unittest.mock import patch
+
+        from chaoscypher_core.operations.workflows.repository import (
+            WorkflowExecutionRepository,
+        )
+
+        adapter = MagicMock()
+        workflow_service = _make_workflow_service(
+            workflow={"id": "wf-1", "name": "wf", "is_active": True}
+        )
+
+        with (
+            patch(
+                "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+                return_value=adapter,
+            ),
+            patch.object(WorkflowExecutionRepository, "finalize_execution") as finalize,
+            pytest.raises(ValidationError),
+        ):
+            await execute_workflow_task(
+                workflow_id="wf-1",
+                inputs={},
+                workflow_service=workflow_service,
+                tool_service=None,
+                llm_service=AsyncMock(),
+                graph_repository=_make_graph_repo(),
+                search_repository=MagicMock(),
+                database_name="test_db",
+                execution_id="exec-pre",
+            )
+
+        finalize.assert_called_once()
+        assert finalize.call_args.args[0] == "exec-pre"
+        assert finalize.call_args.kwargs["status"] == WorkflowExecutionStatus.FAILED
+        assert "Invalid workflow" in finalize.call_args.kwargs["error_message"]
+        adapter.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_finalize_without_precreated_row(self) -> None:
+        """Trigger-fired runs pass no ``execution_id``: there is no row to write."""
+        from unittest.mock import patch
+
+        from chaoscypher_core.operations.workflows.repository import (
+            WorkflowExecutionRepository,
+        )
+
+        with (
+            patch(
+                "chaoscypher_core.database.adapter_factory.get_sqlite_adapter",
+                return_value=MagicMock(),
+            ),
+            patch.object(WorkflowExecutionRepository, "finalize_execution") as finalize,
+            pytest.raises(NotFoundError),
+        ):
+            await execute_workflow_task(
+                workflow_id="wf-missing",
+                inputs={},
+                workflow_service=_make_workflow_service(workflow=None),
+                tool_service=None,
+                llm_service=AsyncMock(),
+                graph_repository=_make_graph_repo(),
+                search_repository=MagicMock(),
+                database_name="test_db",
+            )
+
+        finalize.assert_not_called()

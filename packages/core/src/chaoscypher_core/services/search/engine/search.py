@@ -14,6 +14,7 @@ import structlog
 
 from chaoscypher_core.exceptions import OperationError
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.ports.search import attesting_sources
 
 
 if TYPE_CHECKING:
@@ -142,12 +143,12 @@ class SearchService:
 
         """
         if graph_repository is None:
-            from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+            from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
             if adapter.session is None:
                 msg = "SqliteAdapter.session is None — call adapter.connect() first."
                 raise OperationError(msg, operation="connect")
-            graph_repository = GraphRepository(adapter.session, settings.current_database)
+            graph_repository = get_transaction_graph_repository(adapter, settings.current_database)
         return cls(
             search_repository=search_repository,
             graph_repository=graph_repository,
@@ -214,15 +215,17 @@ class SearchService:
                 # to the local imported source. Filtering on the property wrongly
                 # dropped every imported node from search even though its source
                 # is enabled. Fall back to the property only for legacy nodes
-                # that predate a populated source_id column.
-                source_id = node.source_id or (
-                    node.properties.get("source_document_id") if node.properties else None
-                )
-                if source_id is not None and source_id not in enabled_source_ids:
+                # that predate a populated source_id column. A merged node is
+                # attested by each of its member sources and stays while any of
+                # them is enabled (#795, D7).
+                sources = attesting_sources(node)
+                if not sources and node.properties and node.properties.get("source_document_id"):
+                    sources = [node.properties["source_document_id"]]
+                if sources and not any(sid in enabled_source_ids for sid in sources):
                     logger.debug(
                         "node_filtered_disabled_source",
                         node_id=node.id,
-                        source_id=source_id,
+                        source_ids=sources,
                     )
                     continue
             nodes_dict[node.id] = node
@@ -246,12 +249,19 @@ class SearchService:
 
         chunks_dict: dict[str, dict[str, Any]] = {}
         # One SELECT for the whole result page (mirrors _hydrate_nodes'
-        # get_nodes_batch), then one get_source per DISTINCT
-        # (source_id, database_name) — chunks of one document share a
-        # source, so the per-chunk lookup re-fetched the same row.
+        # get_nodes_batch), then one narrow filename SELECT per database
+        # (normally one) — not a full get_source per distinct source, which
+        # hydrated ~160 columns plus a stage-progress query to read a filename.
         chunk_rows = self.indexing_repository.get_chunks_by_ids_batch(chunk_ids)
         chunks_by_id = {row["id"]: row for row in chunk_rows}
-        source_memo: dict[tuple[str, str], dict[str, Any] | None] = {}
+        source_ids_by_db: dict[str, set[str]] = {}
+        for row in chunk_rows:
+            if row.get("source_id") and row.get("database_name"):
+                source_ids_by_db.setdefault(row["database_name"], set()).add(row["source_id"])
+        filenames_by_db = {
+            db: self.source_repository.get_source_filenames_by_ids(sorted(ids), db)
+            for db, ids in source_ids_by_db.items()
+        }
         for chunk_id in chunk_ids:
             chunk_data = chunks_by_id.get(chunk_id)
             if not chunk_data:
@@ -260,14 +270,9 @@ class SearchService:
             source_id = chunk_data.get("source_id")
             database_name = chunk_data.get("database_name")
 
-            source: dict[str, Any] | None = None
+            filename = "Unknown"
             if source_id and database_name:
-                memo_key = (source_id, database_name)
-                if memo_key not in source_memo:
-                    source_memo[memo_key] = self.source_repository.get_source(
-                        source_id, database_name
-                    )
-                source = source_memo[memo_key]
+                filename = filenames_by_db[database_name].get(source_id, "Unknown")
             else:
                 logger.warning(
                     "chunk_missing_source_reference",
@@ -291,7 +296,7 @@ class SearchService:
 
             chunks_dict[chunk_id] = {
                 **chunk_data,
-                "filename": source["filename"] if source else "Unknown",
+                "filename": filename,
                 "source_id": source_id,
             }
         return chunks_dict
@@ -583,6 +588,7 @@ class SearchService:
 
         # Phase 1.5: Regenerate node embeddings if an embedding callback is available
         nodes_reembedded = 0
+        node_reembed_failures = 0
         if indexing_service and self.graph_repository:
             embedding_callback = getattr(indexing_service, "embedding_service", None)
             if embedding_callback:
@@ -604,9 +610,10 @@ class SearchService:
                     else _DEFAULT_EMBED_WAVE_SIZE
                 )
                 for start in range(0, len(all_nodes), wave_size):
-                    nodes_reembedded += await self._reembed_node_wave(
-                        all_nodes[start : start + wave_size], embedding_callback
-                    )
+                    wave = all_nodes[start : start + wave_size]
+                    written = await self._reembed_node_wave(wave, embedding_callback)
+                    nodes_reembedded += written
+                    node_reembed_failures += len(wave) - written
                 if nodes_reembedded:
                     logger.info(
                         "rebuild_nodes_reembedded",
@@ -617,8 +624,17 @@ class SearchService:
         # Phase 2: Rebuild per-type vec0 indexes from freshly generated embeddings
         rebuild_result = self.rebuild_indexes()
 
-        # Phase 3: Clear the reindex flag (in-memory + persisted)
-        if hasattr(self.search_repository, "clear_reindex_flag"):
+        # Phase 3: Clear the reindex flag (in-memory + persisted) — but only
+        # when every re-embed landed. The flag is the sole record that stored
+        # vectors predate the current model; clearing it after a failed
+        # re-embed routes every later rebuild to the fast path forever.
+        if regeneration_errors or node_reembed_failures:
+            logger.warning(
+                "rebuild_reindex_flag_kept",
+                regeneration_errors=regeneration_errors,
+                node_reembed_failures=node_reembed_failures,
+            )
+        elif hasattr(self.search_repository, "clear_reindex_flag"):
             self.search_repository.clear_reindex_flag()
 
         return {
@@ -650,12 +666,15 @@ class SearchService:
         Waving is what keeps one transient error from costing the whole
         graph's re-embed.
         """
-        texts: list[str] = []
-        for node in nodes:
-            # Build text from node label + properties
-            text_parts = [node.label]
-            text_parts.extend(v for v in (node.properties or {}).values() if isinstance(v, str))
-            texts.append(" ".join(text_parts))
+        # The text the node was embedded with at import (name, aliases,
+        # description, properties): a rebuild must not move the vector. It
+        # used the label plus every string property until 2026-10-04, which
+        # dropped the aliases and embedded the commit's bookkeeping.
+        from chaoscypher_core.services.sources.engine.deduplication.embedding_generator import (
+            node_embedding_text,
+        )
+
+        texts = [node_embedding_text(node) for node in nodes]
 
         try:
             result = await embedding_callback.batch_embed(texts)

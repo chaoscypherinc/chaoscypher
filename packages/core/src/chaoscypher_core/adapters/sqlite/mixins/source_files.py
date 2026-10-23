@@ -15,6 +15,7 @@ Related mixins (split for maintainability):
 - source_files_chunk_tasks.py: Chunk task CRUD, analytics, recovery
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from datetime import datetime as _dt
 from pathlib import Path
@@ -27,8 +28,10 @@ from sqlmodel import select
 
 from chaoscypher_core.adapters.sqlite.mixin_base import SqliteMixinBase
 from chaoscypher_core.adapters.sqlite.models import SourceRow
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
 from chaoscypher_core.models import SourceErrorStage, SourceStatus
 from chaoscypher_core.services.quality.counters import QualityCounter
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
 
 
 logger = structlog.get_logger(__name__)
@@ -260,6 +263,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
         staging_dir: str = "",
         extraction_depth: str = "full",
         forced_domain: str | None = None,
+        forced_packs: Sequence[str] | None = None,
         origin_url: str | None = None,
         source_type_override: str | None = None,
         title_override: str | None = None,
@@ -271,7 +275,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
         enable_normalization: bool | None = None,
         enable_vision: bool = True,
         content_filtering: bool = True,
-        filtering_mode: str = "balanced",
+        filtering_mode: str = SOURCE_ROW_FILTERING_MODE,
         # Phase 4 (2026-05-08): nullable per-source toggles
         enable_direction_correction: bool | None = None,
         protect_orphans: bool | None = None,
@@ -280,6 +284,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
         max_entity_degree_override: int | None = None,
         # Domain-confirmation gate (2026-05-28)
         confirmation_required: bool = False,
+        # Site import (migration 0021): the site this page belongs to
+        site_id: str | None = None,
     ) -> dict[str, Any]:
         """Upload file and create source record atomically.
 
@@ -289,6 +295,11 @@ class SourceLifecycleMixin(SqliteMixinBase):
         3. Insert row with the final filepath.
         4. Commit once.
         On any failure, unlink the staged file (no row exists to roll back).
+
+        ``forced_packs`` is the forced packs (``[]`` is the floor alone, None
+        is detect); ``forced_domain`` the old one-name form, read when
+        ``forced_packs`` is None. Both columns are written from the choice
+        (``pack_columns``).
 
         Crash window: bytes are durable on disk before the row commits. If the
         process is hard-killed between step 2 and step 4 the file is orphaned —
@@ -309,6 +320,11 @@ class SourceLifecycleMixin(SqliteMixinBase):
 
         file_ext = Path(filename).suffix.lstrip(".").lower() if "." in filename else None
         source_type = source_type_override or (file_ext or "file")
+        forced = pack_columns(
+            {"forced_packs": list(forced_packs)}
+            if forced_packs is not None
+            else {"forced_domain": forced_domain}
+        )
 
         safe_filename = Path(filename).name
         if not safe_filename or safe_filename.startswith("."):
@@ -339,7 +355,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
                 origin_url=origin_url,
                 status=SourceStatus.PENDING,
                 extraction_depth=extraction_depth,
-                forced_domain=forced_domain,
+                forced_domain=forced["forced_domain"],
+                forced_packs=forced["forced_packs"],
                 # Upload-settings persistence (W1, 2026-05-07): single
                 # source of truth lives on the row, so recovery / retry /
                 # re-extract preserve user choice.
@@ -356,6 +373,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
                 max_entity_degree_override=max_entity_degree_override,
                 # Domain-confirmation gate (2026-05-28)
                 confirmation_required=confirmation_required,
+                site_id=site_id,
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
             )
@@ -474,6 +492,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
                     SourceRow.extraction_domain,
                     SourceRow.extraction_domain_auto,
                     SourceRow.forced_domain,
+                    SourceRow.forced_packs,
+                    SourceRow.extraction_packs,
                     SourceRow.commit_started_at,
                     SourceRow.commit_completed_at,
                     SourceRow.commit_nodes_created,
@@ -570,6 +590,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
                     SourceRow.extraction_domain,
                     SourceRow.extraction_domain_auto,
                     SourceRow.forced_domain,
+                    SourceRow.forced_packs,
+                    SourceRow.extraction_packs,
                     SourceRow.current_extraction_job_id,
                     SourceRow.extraction_queued_at,
                     # Domain confirmation gate (migration 0049)
@@ -759,7 +781,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
             raise NotFoundError("source", source_id)
 
         immutable_fields = {"id", "database_name", "created_at", "updated_at"}
-        for field, value in updates.items():
+        # A pack choice writes its list and its old single-name column together.
+        for field, value in pack_columns(updates).items():
             if field in immutable_fields:
                 continue
             # Class-level hasattr: an instance-level check on a deferred
@@ -940,7 +963,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
         source = self.session.exec(statement).one_or_none()
         if source is None:
             raise NotFoundError("source", source_id)
-        for col, value in updates.items():
+        # A pack choice writes its list and its old single-name column together.
+        for col, value in pack_columns(updates).items():
             # Class-level hasattr: an instance-level check on a deferred
             # attribute would trigger a per-column lazy SELECT.
             if not hasattr(SourceRow, col):
@@ -996,6 +1020,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
         source_id: str,
         database_name: str,
         url: str,
+        site_id: str | None = None,
     ) -> None:
         """Create a placeholder row for a URL import that is in flight.
 
@@ -1008,6 +1033,8 @@ class SourceLifecycleMixin(SqliteMixinBase):
             source_id: Pre-generated ID for the placeholder row.
             database_name: Target database.
             url: The URL being fetched (used as filename and title).
+            site_id: The site the URL is a page of (a site import), so the
+                in-flight and failed pages count toward the site's progress.
 
         """
         self._ensure_connected()
@@ -1025,6 +1052,7 @@ class SourceLifecycleMixin(SqliteMixinBase):
             step_description="Fetching URL",
             current_step=1,
             total_steps=2,
+            site_id=site_id,
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )

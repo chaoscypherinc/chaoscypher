@@ -28,7 +28,7 @@ from chaoscypher_cortex.shared.api.responses import (
     NOT_FOUND_RESPONSE,
 )
 from chaoscypher_cortex.shared.auth.dependencies import (
-    CurrentUsername,  # noqa: TC001
+    CurrentUsername,
 )
 
 

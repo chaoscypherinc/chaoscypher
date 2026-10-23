@@ -199,11 +199,11 @@ describe('SourcesPage — single confirm flow', () => {
     });
 
     // Assert the call shape: { sourceId, options }
-    const callArgs = mutateAsync.mock.calls[0] as unknown as [{ sourceId: string; options: { domain?: string } }];
+    const callArgs = mutateAsync.mock.calls[0] as unknown as [{ sourceId: string; options: { packs?: string[] } }];
     const [callArg] = callArgs;
     expect(callArg.sourceId).toBe('src-await-1');
-    // The dialog pre-selects the top-ranked domain (science).
-    expect(callArg.options.domain).toBe('science');
+    // The dialog pre-selects the proposal (an older proposal: its top-ranked pack, science).
+    expect(callArg.options.packs).toEqual(['science']);
 
     // After success the dialog should close (the role="dialog" disappears).
     await waitFor(() => {

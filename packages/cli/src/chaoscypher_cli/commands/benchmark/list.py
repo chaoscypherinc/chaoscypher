@@ -18,6 +18,7 @@ from rich.table import Table
 from chaoscypher_cli.benchmark.config import list_configs
 from chaoscypher_cli.benchmark.discovery import discover_datasets
 from chaoscypher_cli.benchmark.extraction_dataset import ExtractionDataset
+from chaoscypher_core.benchmark.packs import packs_label
 
 
 @click.command("list")
@@ -48,17 +49,19 @@ def list_cmd() -> None:
         ds_table.add_column("Source")
         ds_table.add_column("Kind")
         ds_table.add_column("Version")
-        ds_table.add_column("Domain")
+        ds_table.add_column("Packs")
         ds_table.add_column("Corpus")
         for ds in datasets:
             src_label = (
                 "[green]builtin[/green]" if ds.source == "builtin" else "[yellow]user[/yellow]"
             )
-            # Every dataset kind declares a domain (probes too); only
-            # extraction datasets have a single corpus file.
-            domain = getattr(ds, "domain", None) or "-"
+            # Every dataset kind declares its packs (probes too), shown as the label
+            # result rows record ('generic' for the floor alone); only extraction
+            # datasets have a single corpus file.
+            packs = getattr(ds, "packs", None)
+            label = packs_label(packs) if packs is not None else "-"
             corpus = ds.corpus_path.name if isinstance(ds, ExtractionDataset) else "-"
-            ds_table.add_row(ds.id, src_label, ds.kind, ds.version, domain, corpus)
+            ds_table.add_row(ds.id, src_label, ds.kind, ds.version, label, corpus)
         console.print(ds_table)
     else:
         console.print("[yellow]No datasets found.[/yellow]")

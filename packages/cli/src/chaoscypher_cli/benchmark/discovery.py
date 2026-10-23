@@ -34,6 +34,8 @@ import yaml
 
 from chaoscypher_cli.benchmark.extraction_dataset import ExtractionDataset
 from chaoscypher_cli.benchmark.queries import LabeledQuerySet, load_queries
+from chaoscypher_core.benchmark.packs import first_domain_name, manifest_packs, packs_label
+from chaoscypher_core.benchmark.probes import PROBES_DEFAULT_PACKS
 
 
 if TYPE_CHECKING:
@@ -41,7 +43,9 @@ if TYPE_CHECKING:
 
 
 _REQUIRED_FIELDS: tuple[str, ...] = ("id", "kind", "version")
-_REQUIRED_EXTRACTION_FIELDS: tuple[str, ...] = ("domain", "corpus_path")
+_REQUIRED_EXTRACTION_FIELDS: tuple[str, ...] = ("corpus_path",)
+"""Besides the packs: ``packs`` (a list) or ``domain`` (one element), read by
+:func:`~chaoscypher_core.benchmark.packs.manifest_packs`."""
 
 
 def builtin_dataset_root() -> Path:
@@ -153,7 +157,7 @@ def _load_dataset(manifest: Path, *, source: DatasetSource) -> BenchmarkDataset:
             id=str(data["id"]),
             version=str(data["version"]),
             corpus_path=corpus_abs,
-            domain=str(data["domain"]),
+            packs=manifest_packs(data, where=str(manifest)),
             source=source,
         )
     if kind == "probes":
@@ -166,7 +170,7 @@ def _load_dataset(manifest: Path, *, source: DatasetSource) -> BenchmarkDataset:
         return ProbeDataset(
             id=str(data["id"]),
             version=str(data["version"]),
-            domain=str(data.get("domain", "literary")),
+            packs=manifest_packs(data, where=str(manifest), default=PROBES_DEFAULT_PACKS),
             probes=load_probe_sections(pack_dir, [str(s) for s in sections]),
             source=source,
             pack_dir=pack_dir,
@@ -187,7 +191,7 @@ class DatasetBundle:
     Attributes:
         id: Dataset id.
         version: Dataset version from the manifest.
-        domain: Domain label for extraction.
+        packs: The packs the corpus is extracted with (``()`` for the floor alone).
         corpus_path: Absolute path to the corpus file.
         source: builtin / user.
         extraction_dataset: An ExtractionDataset already constructed for
@@ -196,16 +200,31 @@ class DatasetBundle:
             else None. Presence of this is what unlocks embedding +
             chat benches for the dataset.
         queries_path: The queries file those were loaded from, or None.
+        label: How the leaderboard names the corpus ("War and Peace, Book One"):
+            every number the board shows says which corpus it is about, and a
+            corpus on the board must have one (the manifest's ``label``; None
+            when it sets none).
     """
 
     id: str
     version: str
-    domain: str
+    packs: tuple[str, ...]
     corpus_path: Path
     source: DatasetSource
     extraction_dataset: ExtractionDataset
     queries: LabeledQuerySet | None
     queries_path: Path | None = None
+    label: str | None = None
+
+    @property
+    def domain(self) -> str:
+        """The first pack, or ``generic``: the shim for one-domain callers (until Task 3)."""
+        return first_domain_name(self.packs)
+
+    @property
+    def extraction_domain(self) -> str:
+        """What ``extraction_domain`` records for this corpus (:func:`~chaoscypher_core.benchmark.packs.packs_label`)."""
+        return packs_label(self.packs)
 
 
 def load_dataset_bundle(
@@ -258,6 +277,7 @@ def _build_bundle(manifest: Path, *, source: DatasetSource) -> DatasetBundle:
             msg = f"{manifest}: extraction dataset missing '{required}'"
             raise ValueError(msg)
 
+    packs = manifest_packs(data, where=str(manifest))
     corpus_abs = (pack_dir / str(data["corpus_path"])).resolve()
     if not corpus_abs.exists():
         msg = f"{manifest}: corpus_path resolves to missing file: {corpus_abs}"
@@ -266,7 +286,7 @@ def _build_bundle(manifest: Path, *, source: DatasetSource) -> DatasetBundle:
         id=str(data["id"]),
         version=str(data["version"]),
         corpus_path=corpus_abs,
-        domain=str(data["domain"]),
+        packs=packs,
         source=source,
     )
 
@@ -282,12 +302,13 @@ def _build_bundle(manifest: Path, *, source: DatasetSource) -> DatasetBundle:
     return DatasetBundle(
         id=str(data["id"]),
         version=str(data["version"]),
-        domain=str(data["domain"]),
+        packs=packs,
         corpus_path=corpus_abs,
         source=source,
         extraction_dataset=extraction_ds,
         queries=queries,
         queries_path=queries_abs,
+        label=str(data["label"]) if data.get("label") else None,
     )
 
 

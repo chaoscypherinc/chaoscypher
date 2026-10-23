@@ -1,7 +1,7 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""``drop_orphan_entities`` must remap relationship indices to surviving entities.
+"""``flag_orphan_entities`` must remap relationship indices to surviving entities.
 
 Workstream 3, Tasks 3.3+3.4: when the orphan filter removes an entity,
 every entity after it shifts down by one. Downstream
@@ -19,7 +19,7 @@ returns ``(kept, remapped_relationships, dropped_count)``.
 from __future__ import annotations
 
 from chaoscypher_core.services.sources.engine.commit.service import (
-    drop_orphan_entities,
+    flag_orphan_entities,
 )
 
 
@@ -34,7 +34,9 @@ def test_orphan_filter_remaps_indices_into_surviving_entities() -> None:
         {"source": 0, "target": 2, "type": "knows"},  # Alice -> Bob
     ]
 
-    kept, remapped, dropped_count = drop_orphan_entities(entities, relationships, enabled=True)
+    kept, remapped, _flagged, dropped_count = flag_orphan_entities(
+        entities, relationships, keep_evidence_less=False
+    )
 
     # Both Alice and Bob committed; Orphan dropped.
     names = [e["name"] for e in kept]
@@ -57,7 +59,9 @@ def test_orphan_filter_preserves_signature_when_disabled() -> None:
     entities = [{"name": "Alice"}, {"name": "Carol"}]
     relationships = [{"source": 0, "target": 1, "type": "knows"}]
 
-    kept, remapped, dropped_count = drop_orphan_entities(entities, relationships, enabled=False)
+    kept, remapped, _flagged, dropped_count = flag_orphan_entities(
+        entities, relationships, keep_evidence_less=True
+    )
 
     assert kept == entities
     assert remapped == relationships
@@ -74,7 +78,9 @@ def test_orphan_filter_drops_relationships_into_removed_entity() -> None:
     relationships = [
         {"source": 0, "target": 2, "type": "knows"},  # Alice -> Bob
     ]
-    kept, remapped, dropped_count = drop_orphan_entities(entities, relationships, enabled=True)
+    kept, remapped, _flagged, dropped_count = flag_orphan_entities(
+        entities, relationships, keep_evidence_less=False
+    )
 
     # Sanity: Bob shifted from 2 -> 1.
     assert [e["name"] for e in kept] == ["Alice", "Bob"]
@@ -96,7 +102,9 @@ def test_orphan_filter_handles_multiple_drops() -> None:
         {"source": 0, "target": 3, "type": "knows"},  # A -> B
         {"source": 3, "target": 4, "type": "knows"},  # B -> C
     ]
-    kept, remapped, dropped_count = drop_orphan_entities(entities, relationships, enabled=True)
+    kept, remapped, _flagged, dropped_count = flag_orphan_entities(
+        entities, relationships, keep_evidence_less=False
+    )
 
     assert [e["name"] for e in kept] == ["A", "B", "C"]
     assert dropped_count == 2

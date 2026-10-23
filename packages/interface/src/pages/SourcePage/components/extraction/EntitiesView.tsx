@@ -7,7 +7,7 @@
  * quality score badges, and pagination.
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -25,9 +25,9 @@ import type { ExtractedEntity } from '../../../../types';
 import { StatusColors } from '../../../../theme/colors';
 import { surfaceSx, surfaceHoverSx } from '../../../../theme/cardStyles';
 import { ghostInputSx } from '../../../../theme/ghostStyles';
-import { DEFAULT_NODE_ICON } from '../../../../utils/iconSprites';
-import { getMuiIcon } from '../../../../utils/icons';
-import { cleanTypeName } from '../../../../utils/formatters';
+import { EntityTypeChip } from '../../../../components/EntityTypeChip';
+import { entitySubtype, subtypeIcons } from '../../../../utils/entityTypes';
+import { useExtractionDomains } from '../../../../services/api/useSources';
 import GhostPagination from '../../../../components/GhostPagination';
 import type { SourceTemplate } from './types';
 import { getTypeColor } from './types';
@@ -59,6 +59,8 @@ export function EntitiesView({
   templateNameMap,
 }: EntitiesViewProps) {
   const [expandedEntities, setExpandedEntities] = useState<Set<number>>(new Set());
+  const { data: domains } = useExtractionDomains();
+  const iconsBySubtype = useMemo(() => subtypeIcons(domains), [domains]);
 
   return (
     <Box>
@@ -173,27 +175,15 @@ export function EntitiesView({
                     </Tooltip>
                   )}
                   {(() => {
+                    // coloured by the core type's template, the pack subtype in the label
                     const tpl = templateNameMap.get(entity.type?.toLowerCase() ?? '');
-                    const chipColor = tpl?.color || getTypeColor(entity.type);
-                    const IconComp = getMuiIcon(tpl?.icon || DEFAULT_NODE_ICON);
+                    const subtype = entitySubtype(entity.properties);
                     return (
-                      <Chip
-                        icon={
-                          IconComp ? (
-                            <IconComp sx={{ color: `${chipColor} !important`, fontSize: 14 }} />
-                          ) : undefined
-                        }
-                        label={cleanTypeName(entity.type)}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          height: 20,
-                          fontSize: '0.65rem',
-                          bgcolor: 'transparent',
-                          borderColor: alpha(chipColor, 0.5),
-                          color: chipColor,
-                          '& .MuiChip-icon': { ml: '4px', mr: '-2px' },
-                        }}
+                      <EntityTypeChip
+                        coreType={entity.type}
+                        subtype={subtype}
+                        color={tpl?.color || getTypeColor(entity.type)}
+                        icon={(subtype && iconsBySubtype.get(subtype)) || tpl?.icon}
                       />
                     );
                   })()}

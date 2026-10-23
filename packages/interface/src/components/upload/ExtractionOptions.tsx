@@ -10,7 +10,7 @@
  *   - PROCESSING — vision, text normalization, skip-duplicate-files (preparing
  *     the document and handling the upload).
  *
- * The domain selector is promoted to the parent dialog (see DomainSelect) and
+ * The pack selector is promoted to the parent dialog (see PackSelect) and
  * is no longer rendered here.
  */
 
@@ -73,21 +73,30 @@ function CheckRow({ checked, onChange, label, tooltip, color }: CheckRowProps) {
 // ── Component ─────────────────────────────────────────────────────────────
 
 interface ExtractionOptionsProps {
-  extractEntities: boolean;
-  onExtractEntitiesChange: (value: boolean) => void;
-  enableVision: boolean;
-  onEnableVisionChange: (value: boolean) => void;
-  showNormalizationOption: boolean;
-  enableNormalization: boolean;
-  onNormalizationChange: (value: boolean) => void;
+  /**
+   * `upload` (default): every option the upload accepts. `confirm`: only the
+   * extraction controls the confirm-extraction endpoint accepts (filtering
+   * mode, content filtering, quick analysis) — the "Extract entities" row and
+   * the PROCESSING group are upload-time choices the confirm request has no
+   * fields for, so showing them there made checkboxes that did nothing
+   * (section-audit 2026-10-12).
+   */
+  scope?: 'upload' | 'confirm';
+  extractEntities?: boolean;
+  onExtractEntitiesChange?: (value: boolean) => void;
+  enableVision?: boolean;
+  onEnableVisionChange?: (value: boolean) => void;
+  showNormalizationOption?: boolean;
+  enableNormalization?: boolean;
+  onNormalizationChange?: (value: boolean) => void;
   analysisDepth: 'quick' | 'full';
   onAnalysisDepthChange: (value: 'quick' | 'full') => void;
   contentFiltering: boolean;
   onContentFilteringChange: (value: boolean) => void;
   filteringMode: string;
   onFilteringModeChange: (value: string) => void;
-  skipDuplicates: boolean;
-  onSkipDuplicatesChange: (value: boolean) => void;
+  skipDuplicates?: boolean;
+  onSkipDuplicatesChange?: (value: boolean) => void;
 }
 
 export function ExtractionOptions({
@@ -106,7 +115,11 @@ export function ExtractionOptions({
   onFilteringModeChange,
   skipDuplicates,
   onSkipDuplicatesChange,
+  scope = 'upload',
 }: ExtractionOptionsProps) {
+  const uploadScope = scope === 'upload';
+  // Without the row (confirm scope) the extraction controls are always shown.
+  const extracting = extractEntities ?? true;
   return (
     <Accordion variant="outlined" sx={accentAccordionSx('info')} disableGutters>
       <AccordionSummary expandIcon={<ExpandMoreIcon sx={{ color: ACCENT_COLORS.info }} />} sx={accordionSummarySx}>
@@ -119,12 +132,12 @@ export function ExtractionOptions({
           <Box>
             <GroupLabel>EXTRACTION</GroupLabel>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-              {extractEntities && (
+              {extracting && (
                 <Box sx={{ mb: 0.5 }}>
                   <FilteringModeSelect filteringMode={filteringMode} onFilteringModeChange={onFilteringModeChange} />
                 </Box>
               )}
-              {extractEntities && (
+              {extracting && (
                 <CheckRow
                   checked={contentFiltering}
                   onChange={onContentFilteringChange}
@@ -133,14 +146,16 @@ export function ExtractionOptions({
                   tooltip="Filters non-essential content (TOC, changelogs, legal text) from entity extraction. Filtered content is still searchable."
                 />
               )}
-              <CheckRow
-                checked={extractEntities}
-                onChange={onExtractEntitiesChange}
-                label="Extract entities"
-                color={ChaosCypherPalette.primary}
-                tooltip="Uses AI to identify people, places, concepts, and relationships from the document and add them to the knowledge graph."
-              />
-              {extractEntities && (
+              {uploadScope && onExtractEntitiesChange && (
+                <CheckRow
+                  checked={extracting}
+                  onChange={onExtractEntitiesChange}
+                  label="Extract entities"
+                  color={ChaosCypherPalette.primary}
+                  tooltip="Uses AI to identify people, places, concepts, and relationships from the document and add them to the knowledge graph."
+                />
+              )}
+              {extracting && (
                 <CheckRow
                   checked={analysisDepth === 'quick'}
                   onChange={(value) => onAnalysisDepthChange(value ? 'quick' : 'full')}
@@ -152,35 +167,41 @@ export function ExtractionOptions({
             </Box>
           </Box>
 
-          {/* PROCESSING — preparing the document + upload handling */}
-          <Box>
-            <GroupLabel>PROCESSING</GroupLabel>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-              <CheckRow
-                checked={enableVision}
-                onChange={onEnableVisionChange}
-                label="Vision processing"
-                color={ChaosCypherPalette.secondary}
-                tooltip="Uses a vision model to describe images in PDFs and image files, making visual content searchable and extractable."
-              />
-              {showNormalizationOption && (
-                <CheckRow
-                  checked={enableNormalization}
-                  onChange={onNormalizationChange}
-                  label="Text normalization"
-                  color={ChaosCypherPalette.warning}
-                  tooltip="Cleans OCR artifacts, fixes encoding issues, normalizes whitespace. May exclude some characters."
-                />
-              )}
-              <CheckRow
-                checked={skipDuplicates}
-                onChange={onSkipDuplicatesChange}
-                label="Skip duplicate files"
-                color={ChaosCypherPalette.info}
-                tooltip="If a file with identical content already exists, skip uploading and return the existing source instead of creating a duplicate."
-              />
+          {/* PROCESSING — preparing the document + upload handling (upload only) */}
+          {uploadScope && (
+            <Box>
+              <GroupLabel>PROCESSING</GroupLabel>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                {onEnableVisionChange && (
+                  <CheckRow
+                    checked={enableVision ?? false}
+                    onChange={onEnableVisionChange}
+                    label="Vision processing"
+                    color={ChaosCypherPalette.secondary}
+                    tooltip="Uses a vision model to describe images in PDFs and image files, making visual content searchable and extractable."
+                  />
+                )}
+                {showNormalizationOption && onNormalizationChange && (
+                  <CheckRow
+                    checked={enableNormalization ?? false}
+                    onChange={onNormalizationChange}
+                    label="Text normalization"
+                    color={ChaosCypherPalette.warning}
+                    tooltip="Cleans OCR artifacts, fixes encoding issues, normalizes whitespace. May exclude some characters."
+                  />
+                )}
+                {onSkipDuplicatesChange && (
+                  <CheckRow
+                    checked={skipDuplicates ?? false}
+                    onChange={onSkipDuplicatesChange}
+                    label="Skip duplicate files"
+                    color={ChaosCypherPalette.info}
+                    tooltip="If a file with identical content already exists, skip uploading and return the existing source instead of creating a duplicate."
+                  />
+                )}
+              </Box>
             </Box>
-          </Box>
+          )}
 
         </Box>
       </AccordionDetails>

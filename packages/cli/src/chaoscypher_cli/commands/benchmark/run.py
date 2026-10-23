@@ -11,21 +11,26 @@ extractors-only runner.
 The flags are pure overrides of values in the config:
   --dataset ID         - filter to one dataset within the config
   --local-only         - drop commercial-provider models
-  --seed N             - override seed
+  --seed N             - override seed (the extraction seed: it keys the graph cache slot)
+  --chat-seed N        - override the chat and judge stages' seed only (the config's
+                         ``chat_seed``): the graph, its slot and the pins stay the seed's
   --temperature F      - override temperature
   --keep-db            - preserve per-run temp DBs for inspection
   --out DIR            - override output directory
   --estimate           - print LLM-call estimate and exit without running
   --rebuild-graphs     - clear the benchmark graph cache before running
   --model-timeout S    - wall-clock cap per (model, dataset) run; over it = failed row
+  --replay             - serve every model call from the LLM caches; a miss refuses the row
+  --replay-pack NAME   - pin the extractor build that pack's manifest records (implies --replay)
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import click
 from rich.console import Console
@@ -64,7 +69,19 @@ if TYPE_CHECKING:
     "--seed",
     type=int,
     default=None,
-    help="Override the config's seed.",
+    help=(
+        "Override the config's seed (the extraction seed: a new seed is a new graph cache "
+        "slot). For another chat seed over the same graph, use --chat-seed."
+    ),
+)
+@click.option(
+    "--chat-seed",
+    type=int,
+    default=None,
+    help=(
+        "Override the chat and judge stages' seed only (the config's chat_seed); the graph, "
+        "its cache slot and the pins keep the extraction seed."
+    ),
 )
 @click.option(
     "--temperature",
@@ -110,11 +127,31 @@ if TYPE_CHECKING:
         "recorded as a failed row and the sweep continues."
     ),
 )
+@click.option(
+    "--replay",
+    is_flag=True,
+    help=(
+        "Serve every model call from the LLM caches (a reference pack's store, installed by "
+        "install.py, or a recorded run): a call the caches cannot answer is refused "
+        "(`replay miss`), never sent to a model."
+    ),
+)
+@click.option(
+    "--replay-pack",
+    "replay_packs",
+    multiple=True,
+    metavar="NAME",
+    help=(
+        "Key the extractor's calls on the build this installed pack's manifest records "
+        "(model_build), so the replay asks no server for a digest; implies --replay. Repeatable."
+    ),
+)
 def run(
     name: str | None,
     dataset_id: str | None,
     local_only: bool,
     seed: int | None,
+    chat_seed: int | None,
     temperature: float | None,
     keep_db: bool,
     out: Path | None,
@@ -122,9 +159,12 @@ def run(
     rebuild_graphs: bool,
     reuse_graph: bool,
     model_timeout: float | None,
+    replay: bool,
+    replay_packs: tuple[str, ...],
 ) -> None:
     """Run a named benchmark config (default: extraction)."""
     console = Console()
+    replay_context = _replay_context(console, replay=replay, pack_names=replay_packs)
 
     config_name = name or DEFAULT_CONFIG_NAME
     try:
@@ -171,6 +211,10 @@ def run(
         bundles = [b for b in bundles if b.id == dataset_id]
 
     is_full_mode = bool(cfg.embedders or cfg.chats)
+    if chat_seed is not None and not cfg.chats:
+        # nothing would decode with it: the row's seed would not be the flag's
+        console.print(f"[red]--chat-seed:[/red] config '{config_name}' has no chat stage to seed")
+        raise click.Abort
 
     from chaoscypher_cli.benchmark.models import assert_registry_coverage
 
@@ -201,12 +245,24 @@ def run(
     if is_full_mode:
         from dataclasses import replace
 
+        from chaoscypher_cli.benchmark.graph_cache import (
+            dedup_embedder_for,
+            default_workspace,
+            resolution_for,
+        )
         from chaoscypher_cli.benchmark.models import _LOCAL_PROVIDERS
         from chaoscypher_cli.benchmark.orchestrator import default_wiring, run_full_benchmark
+        from chaoscypher_core.app_config import get_settings
 
-        workspace = user_benchmark_root() / "workspace"
+        workspace = default_workspace()
         workspace.mkdir(parents=True, exist_ok=True)
-        wiring = default_wiring(workspace=workspace)
+        dedup_embedder = dedup_embedder_for(cfg, get_settings())
+        console.print(f"Entity merges (semantic dedup) with: {dedup_embedder}")
+        wiring = default_wiring(
+            workspace=workspace,
+            dedup_embedder=dedup_embedder,
+            resolution=resolution_for(get_settings()),
+        )
         if rebuild_graphs:
             wiring.cache.clear()
 
@@ -229,7 +285,12 @@ def run(
         # Apply the --seed / --temperature CLI overrides in full mode too —
         # the orchestrator reads config.seed / config.temperature, so leaving
         # the raw config values here silently ignored both flags.
-        filtered_cfg = replace(filtered_cfg, seed=effective_seed, temperature=effective_temp)
+        filtered_cfg = replace(
+            filtered_cfg,
+            seed=effective_seed,
+            temperature=effective_temp,
+            chat_seed=chat_seed if chat_seed is not None else filtered_cfg.chat_seed,
+        )
 
         landed_full: list[BenchmarkResult] = []
         partial_full = out_dir / "partial.json"
@@ -238,16 +299,17 @@ def run(
             landed_full.append(row)
             dump_results(landed_full, partial_full)
 
-        rows = asyncio.run(
-            run_full_benchmark(
-                filtered_cfg,
-                bundles,
-                wiring=wiring,
-                model_timeout=model_timeout,
-                on_row=_persist_full,
-                reuse_cached_graph=reuse_graph,
+        with replay_context:
+            rows = asyncio.run(
+                run_full_benchmark(
+                    filtered_cfg,
+                    bundles,
+                    wiring=wiring,
+                    model_timeout=model_timeout,
+                    on_row=_persist_full,
+                    reuse_cached_graph=reuse_graph,
+                )
             )
-        )
         partial_full.unlink(missing_ok=True)
     else:
         # Extractors-only path: existing run_benchmark + per-bundle ExtractionDataset.
@@ -278,17 +340,18 @@ def run(
             landed.append(row)
             dump_results(landed, partial_path)
 
-        rows = asyncio.run(
-            run_benchmark(
-                models=models,
-                datasets=datasets,
-                config_name=config_name,
-                seed=effective_seed,
-                temperature=effective_temp,
-                model_timeout=model_timeout,
-                on_row=_persist,
+        with replay_context:
+            rows = asyncio.run(
+                run_benchmark(
+                    models=models,
+                    datasets=datasets,
+                    config_name=config_name,
+                    seed=effective_seed,
+                    temperature=effective_temp,
+                    model_timeout=model_timeout,
+                    on_row=_persist,
+                )
             )
-        )
         partial_path.unlink(missing_ok=True)
 
     # Second resolution: two runs finishing in the same minute (a `quick`
@@ -309,6 +372,43 @@ def run(
     console.print(f"[green]Wrote[/green] {json_path}")
     console.print(f"[green]Wrote[/green] {md_path}")
     console.print(f"[green]Updated[/green] {out_dir / 'latest.md'}")
+
+
+def _replay_context(
+    console: Console, *, replay: bool, pack_names: tuple[str, ...]
+) -> contextlib.AbstractContextManager[Any]:
+    """The context the run executes in: :func:`~chaoscypher_cli.benchmark.orchestrator.replaying` under ``--replay``.
+
+    ``--replay-pack`` names installed packs (``<data_dir>/benchmark/reference``)
+    whose manifest ``model_build`` pins the extractor's build. Checked before
+    anything runs.
+
+    Raises:
+        click.Abort: When a named pack is missing, ships no LLM store, two packs
+            disagree on one extractor's build, or a cache is off.
+    """
+    if not (replay or pack_names):
+        return contextlib.nullcontext()
+    from chaoscypher_cli.benchmark.orchestrator import (
+        check_replayable,
+        replay_builds,
+        replaying,
+    )
+    from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.benchmark.reference import ReferencePackError, load_pack
+    from chaoscypher_core.exceptions import ValidationError
+
+    settings = get_settings()
+    try:
+        packs = [load_pack(settings.paths.data_dir, name) for name in pack_names]
+        builds = replay_builds(packs)
+        check_replayable(settings)
+    except (ReferencePackError, ValidationError) as exc:
+        console.print(f"[red]--replay:[/red] {exc}")
+        raise click.Abort from exc
+    for (provider, model), build in builds.items():
+        console.print(f"Replaying {provider}/{model} as {build}")
+    return replaying(settings, builds)
 
 
 def _print_estimate(cfg: BenchmarkConfig, bundles: list[DatasetBundle]) -> None:

@@ -324,28 +324,9 @@ Pre-W5, the operator's `NormalizerSettings` were silently ignored — the indexi
 | `web_trafilatura_include_comments` | `False` | Include comment sections in web extract (Phase 6) |
 | `web_basic_strip_tags` | `["nav", "footer", "header", "aside"]` | Chrome-tag list for fallback regex stripper (Phase 6) |
 
-## Phase 4: Domain normalizer overrides (2026-05-08)
+## Domain normalizer overrides (removed 2026-10-07)
 
-`DomainNormalizerOverrides` is a new section in each domain's JSON-LD
-that lets domains flip individual cleaner flags without defining a
-full custom `NormalizerSettings` object:
-
-```json
-{
-  "normalizer_overrides": {
-    "enable_encoding_fix": true,
-    "enable_ocr_cleaning": false,
-    "enable_duplicate_removal": true,
-    "enable_markdown_normalize": false
-  }
-}
-```
-
-Any key present in `normalizer_overrides` overrides the global
-`NormalizerSettings` value for sources processed under that domain.
-Keys absent from the override block inherit the global setting.
-This is applied by `ContentNormalizerService` after domain resolution
-so the override is transparent to individual cleaner implementations.
+A pack's `normalizer_overrides` block is a removed key (`REMOVED_KEYS` in `extraction/domains/config_schema.py`): a pack that declares it is refused at load. The cleaner flags are set once, in `NormalizerSettings`, for every source.
 
 ## Phase 3: Magic numbers lifted to NormalizerSettings (2026-05-08)
 

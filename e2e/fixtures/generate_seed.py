@@ -230,9 +230,9 @@ def main() -> None:
 
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.engine import get_engine
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository
     from chaoscypher_core.app_config import get_settings
     from chaoscypher_core.app_config.engine_factory import build_engine_settings
+    from chaoscypher_core.repo_factories import get_transaction_graph_repository
     from chaoscypher_core.services.export import CcxExporter
 
     db_path = str(Path(tmp.name) / "seed.db")
@@ -244,8 +244,7 @@ def main() -> None:
     try:
         _seed_graph(adapter)
 
-        assert adapter.session is not None
-        graph_repo = GraphRepository(adapter.session, "default")
+        graph_repo = get_transaction_graph_repository(adapter, "default")
         settings = build_engine_settings(get_settings())
         exporter = CcxExporter(
             graph_repository=graph_repo,

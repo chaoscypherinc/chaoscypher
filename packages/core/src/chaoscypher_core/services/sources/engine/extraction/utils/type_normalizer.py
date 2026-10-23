@@ -3,8 +3,10 @@
 
 """Entity Type Normalizer and Structural Entity Filter.
 
-Normalizes entity types post-extraction based on description keywords.
-Used to fix misclassified entities (e.g., "A class..." typed as "Item").
+Normalizes generic entity types post-extraction based on description keywords
+(e.g. "A city on the river" typed as "Thing" becomes "Location"); a core type
+is never generic. Rewrites pack aliases and old template names to their core
+type and subtype (:func:`canonicalize_entity_types`).
 
 Also provides filtering for low-value structural entities like chapters,
 sections, and parts that don't represent meaningful knowledge.
@@ -15,26 +17,34 @@ Example:
         filter_structural_entities,
     )
 
-    rules = {
-        "Class": ["a class", "class that"],
-        "Function": ["a function", "function that"],
-    }
+    rules = {"Location": ["city", "place"], "Work": ["book", "report"]}
 
     entities = [
-        {"name": "Mailbox", "type": "Item", "description": "A class in mailbox module"}
+        {"name": "Mailbox", "type": "Thing", "description": "A report on the mailbox module"}
     ]
 
     normalized = normalize_entity_types(entities, rules)
-    # Result: [{"name": "Mailbox", "type": "Class", ...}]
+    # Result: [{"name": "Mailbox", "type": "Work", ...}]
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import structlog
+
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import CORE_TYPES
+from chaoscypher_core.services.sources.engine.extraction.utils.constants import (
+    UNKNOWN_ENTITY_TYPE,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+    SUBTYPE_PROPERTY,
+    TypeVocabulary,
+    flag_unplaced_type,
+    has_phrase,
+)
 
 
 if TYPE_CHECKING:
@@ -88,77 +98,88 @@ _DEFAULT_STRUCTURAL_ENTITY_TYPES: set[str] = {
 }
 
 
-def apply_type_aliases(
+def canonicalize_entity_types(
     entities: list[dict[str, Any]],
-    aliases: Mapping[str, str],
+    vocabulary: TypeVocabulary,
     *,
-    subtype_property: str = "entity_subtype",
+    subtype_property: str = SUBTYPE_PROPERTY,
 ) -> int:
-    """Rewrite entity types via a domain alias map, preserving the original as a property.
+    """Rewrite every entity type a vocabulary resolves to its core type, the subtype as a property.
 
-    Some domain plugins declare two NodeTemplates that name effectively the
-    same concept (e.g. literary's ``Historical Figure`` vs ``Character``).
-    LLMs pick between them inconsistently, fragmenting the graph
-    (Baron Funke can show up as ``Character`` in one run and
-    ``Historical Figure`` in the next) and leaking refinement signal into
-    the entity type when it belongs in a property.
-
-    For each entity whose ``type`` exactly matches a key in ``aliases``,
-    this function:
-
-    1. Records the *original* type under
-       ``entity["properties"][subtype_property]`` (creates ``properties``
-       if absent, never overwrites an existing subtype value).
-    2. Rewrites ``entity["type"]`` to the canonical value
-       ``aliases[<original type>]``.
-
-    Matching is case-sensitive — the plugin authors control both sides of
-    the map. Entities are mutated in place. After one pass, an entity's
-    type is no longer a key in the alias map, so the function is
-    idempotent on repeated calls with the same map.
-
-    Args:
-        entities: Entity dicts (modified in-place).
-        aliases: Mapping of alias type name → canonical type name. Empty
-            map (or ``None``-equivalent) is a no-op.
-        subtype_property: Property key under which to preserve the
-            original type. Defaults to ``"entity_subtype"``.
+    The finalize paths' one type rewrite (``post_extraction.apply_domain_type_aliases``,
+    ``extractor.extract_entities_from_groups``): :meth:`TypeVocabulary.place`
+    (a listed type in any case, ``Core/subtype``, a pack alias, exact key
+    first, a mapping-table row, a pack subtype) gives ``(core, subtype)``; the
+    entity takes the core type and keeps the subtype under
+    ``properties[subtype_property]`` unless it already carries one. A
+    ``Core/subtype`` whose subtype no pack offers is kept on its core type
+    flagged ``unplaced_type`` (``type_rescue.flag_unplaced_type``): what the
+    MCP path's entities, which no per-chunk rescue read, are placed by. A
+    type nothing places is left as it is (the per-chunk rescue already typed
+    every entity a plan extracted; this is for records that predate it).
+    Entities are mutated in place; a second pass rewrites nothing.
 
     Returns:
-        Count of entities whose type was rewritten.
-
+        Count of entities whose type or subtype was rewritten.
     """
-    if not entities or not aliases:
+    if not entities:
         return 0
-
     rewritten = 0
     for entity in entities:
         current_type = entity.get("type")
-        if not isinstance(current_type, str):
+        if not isinstance(current_type, str) or vocabulary.is_listed(current_type):
             continue
-        canonical = aliases.get(current_type)
-        if canonical is None or canonical == current_type:
+        found = vocabulary.place(current_type)
+        if found is None or found.core is None:
             continue
-
-        # Preserve the alias under properties; first-write-wins so an
-        # earlier alias pass isn't clobbered.
-        if "properties" not in entity:
-            entity["properties"] = {}
-        properties = entity["properties"]
-        if subtype_property not in properties:
-            properties[subtype_property] = current_type
-
-        entity["type"] = canonical
+        if found.unplaced:
+            entity.update(flag_unplaced_type(entity, core=found.core))
+            rewritten += 1
+            continue
+        core, subtype = found.core, found.subtype
+        if subtype:
+            properties = entity.setdefault("properties", {})
+            if isinstance(properties, dict) and not properties.get(subtype_property):
+                properties[subtype_property] = subtype
+        entity["type"] = core
         rewritten += 1
 
     if rewritten:
-        logger.info(
-            "type_aliases_applied",
-            count=rewritten,
-            subtype_property=subtype_property,
-        )
-
+        logger.info("type_aliases_applied", count=rewritten, subtype_property=subtype_property)
     return rewritten
+
+
+def apply_type_aliases(
+    entities: list[dict[str, Any]],
+    aliases: Mapping[str, str] | None,
+    *,
+    subtype_property: str = SUBTYPE_PROPERTY,
+    packs: Sequence[str] = (),
+) -> int:
+    """Rewrite entity types to core types via a pack's alias map and the mapping table.
+
+    A pack may alias a name it does not declare to one of its subtypes
+    (literary's ``Historical Figure`` -> ``Character``), or to a core type
+    (investigation's ``Suspect`` -> ``Person``). For each entity whose type is
+    not a core type, the alias (exact key, as the plugin writes it) is read
+    first, then ``core_types.core_type_of`` (``packs``' qualified rows first):
+    ``Historical Figure`` becomes ``Person`` with ``entity_subtype``
+    ``character``; an alias to a core type keeps the table's subtype of the
+    written name when that is a kind of it (``Historical Event`` ->
+    ``Event``/``historical_event``). A subtype the record already carries is
+    never overwritten (:func:`canonicalize_entity_types`).
+
+    Args:
+        entities: Entity dicts (modified in-place).
+        aliases: Alias type name -> canonical type or subtype name.
+        subtype_property: Property key the subtype is kept under.
+        packs: The source's pack names (the table's pack-qualified rows).
+
+    Returns:
+        Count of entities whose type was rewritten.
+    """
+    vocabulary = TypeVocabulary(packs=tuple(packs), aliases=dict(aliases or {}))
+    return canonicalize_entity_types(entities, vocabulary, subtype_property=subtype_property)
 
 
 def is_structural_entity(
@@ -313,16 +334,10 @@ def filter_structural_entities(
     return filtered_entities, filtered_relationships, index_mapping
 
 
-# Default generic types that should be normalized when possible
-_DEFAULT_GENERIC_TYPES: set[str] = {
-    "Item",
-    "UNKNOWN",
-    "Unknown",
-    "Thing",
-    "Object",
-    "Entity",
-    "Concept",  # Often misused for code entities
-}
+# Default generic types that should be normalized when possible. No core type is
+# one (Object and Concept are core types since spec 2026-10-07): the normalizer
+# never retypes a core type, whatever a template's ``is_generic`` flag says.
+_DEFAULT_GENERIC_TYPES: set[str] = {UNKNOWN_ENTITY_TYPE, "Unknown", "Thing", "Entity"}
 
 
 def normalize_entity_types(
@@ -332,8 +347,9 @@ def normalize_entity_types(
 ) -> list[dict[str, Any]]:
     """Normalize entity types based on description keywords.
 
-    Only normalizes entities with generic types (Item, Unknown, etc.)
-    when their description matches a normalization rule.
+    Only normalizes entities with generic types (Thing, Unknown, etc.;
+    never a core type) when their description writes a rule's keyword as
+    whole words (``type_rescue.has_phrase``).
 
     Args:
         entities: List of extracted entities with name, type, description.
@@ -346,18 +362,18 @@ def normalize_entity_types(
         to entities that were modified.
 
     Example:
-        >>> rules = {"Class": ["a class", "class definition"]}
+        >>> rules = {"Location": ["city", "place"]}
         >>> entities = [
-        ...     {"name": "Foo", "type": "Item", "description": "A class..."}
+        ...     {"name": "Foo", "type": "Thing", "description": "A city..."}
         ... ]
         >>> result = normalize_entity_types(entities, rules)
         >>> result[0]["type"]
-        'Class'
+        'Location'
     """
     if not rules:
         return entities
 
-    types_to_check = generic_types or _DEFAULT_GENERIC_TYPES
+    types_to_check = (generic_types or _DEFAULT_GENERIC_TYPES) - set(CORE_TYPES)
     normalized_count = 0
 
     for entity in entities:
@@ -370,7 +386,7 @@ def normalize_entity_types(
 
         # Check each rule for a match
         for target_type, keywords in rules.items():
-            if any(kw.lower() in description for kw in keywords):
+            if any(has_phrase(description, kw) for kw in keywords):
                 entity["type"] = target_type
                 entity["type_normalized_from"] = original_type
                 normalized_count += 1
@@ -395,6 +411,8 @@ def normalize_entity_types(
 
 
 __all__ = [
+    "apply_type_aliases",
+    "canonicalize_entity_types",
     "filter_structural_entities",
     "is_structural_entity",
     "normalize_entity_types",

@@ -1,12 +1,11 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""DomainRegistry.rank_domains — the ordered candidate list get_best_domain discards.
+"""DomainRegistry.rank_domains — the ordered candidate list propose_packs reads.
 
-rank_domains exposes the `candidates` list that get_best_domain previously built
-inline (generic excluded, highest score first, can_handle=False and raising plugins
-skipped). It applies NO floor and NO generic fallback — that policy stays in
-get_best_domain / detect_extraction_domain.
+rank_domains is every can-handle candidate (the floor excluded, highest score
+first, can_handle=False and raising plugins skipped). It applies NO evidence
+floor and NO proposal limit — that policy is propose_packs'.
 """
 
 from __future__ import annotations
@@ -138,10 +137,25 @@ def test_below_floor_candidate_still_ranked(registry: DomainRegistry) -> None:
 
 
 def test_metadata_none_defaults_to_empty_dict(registry: DomainRegistry) -> None:
-    """Passing metadata=None must not crash (mirrors get_best_domain's guard)."""
+    """Passing metadata=None must not crash (propose_packs passes it through)."""
     _set_plugins(
         registry,
         {"biographical": _make_plugin("biographical", True, 1.20)},
     )
     ranked = registry.rank_domains("any text", "x.txt", None)
     assert [d.name for d, _ in ranked] == ["biographical"]
+
+
+def test_the_proposal_ranking_is_rank_domains(registry: DomainRegistry) -> None:
+    """propose_packs exposes rank_domains' list unchanged, as RankedDomain pairs."""
+    _set_plugins(
+        registry,
+        {
+            "news": _make_plugin("news", True, 0.74),
+            "biographical": _make_plugin("biographical", True, 0.60),
+            "generic": _make_plugin("generic", True, 0.10),
+        },
+    )
+    ranked = registry.rank_domains("t", "x.txt", {})
+    proposal = registry.propose_packs("t", "x.txt", {})
+    assert [(r.domain, r.score) for r in proposal.ranking] == ranked

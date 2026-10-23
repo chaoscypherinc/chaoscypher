@@ -32,6 +32,7 @@ from chaoscypher_core.operations.extraction.chunk_extraction_service import (
     ChunkExtractionOperationsService,
 )
 from chaoscypher_core.services.llm.spend import _reset_tracker_for_tests, get_llm_spend_tracker
+from chaoscypher_core.settings import EngineSettings, ExtractionSettings
 
 
 _MODULE = "chaoscypher_core.operations.extraction.chunk_extraction_service"
@@ -139,12 +140,10 @@ def _handler_data() -> dict[str, Any]:
 
 
 def _patches(settings: SimpleNamespace, *, extractor_call_recorder: list[str]):
-    # Real ints/values on attributes the handler compares numerically.
-    fake_engine_settings = SimpleNamespace(
-        extraction=SimpleNamespace(empty_output_retry_min_chars=10_000),
-        llm=SimpleNamespace(),
+    # The real settings model, so every value the handler reads is a real one.
+    fake_engine_settings = EngineSettings(
+        extraction=ExtractionSettings(empty_output_retry_min_chars=10_000)
     )
-    fake_engine_settings.model_copy = MagicMock(return_value=fake_engine_settings)
     fake_extractor = MagicMock()
 
     async def _record_extract_single_chunk(*args, **kwargs):

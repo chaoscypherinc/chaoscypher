@@ -121,6 +121,7 @@ class ProbeSuite:
         "fences, no commentary."
     )
     reference: str | None = None
+    retrieval: str | None = None
 
     def __init__(self, settings: EngineSettings, pack_dir: Path, *, name: str) -> None:
         """Bind settings, the fixture and the section filter; loading is deferred."""
@@ -169,10 +170,15 @@ class ProbeSuite:
         return self._limits
 
     def _get_templates(self) -> dict[str, str]:
-        """Format the manifest domain's templates exactly as the local runner does."""
+        """Format the manifest packs' templates exactly as the local runner does."""
         if self._templates is None:
+            from chaoscypher_core.benchmark.packs import manifest_packs
+            from chaoscypher_core.benchmark.probes import PROBES_DEFAULT_PACKS
             from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
                 get_domain_registry,
+            )
+            from chaoscypher_core.services.sources.engine.extraction.domains.stack import (
+                DomainStack,
             )
             from chaoscypher_core.services.sources.engine.extraction.orchestration import (
                 format_extraction_templates,
@@ -180,9 +186,11 @@ class ProbeSuite:
 
             manifest, _ = self._load_fixture()
             registry = get_domain_registry(self.settings, self.settings.current_database)
-            domain = registry.get_domain(str(manifest.get("domain", "literary")))
+            packs = manifest_packs(
+                manifest, where=f"{self.pack_dir}/manifest.yaml", default=PROBES_DEFAULT_PACKS
+            )
             self._templates = format_extraction_templates(
-                domain,
+                DomainStack.resolve(registry, packs),
                 examples_enabled=self.settings.llm.extraction_examples_enabled,
                 examples_max_chars=self.settings.llm.extraction_examples_max_chars,
             )
@@ -216,13 +224,23 @@ class ProbeSuite:
         return ctx
 
     async def _replay(
-        self, text: str, system_prompt: str, user_prompt: str, reported_tokens: int | None
+        self,
+        text: str,
+        system_prompt: str,
+        user_prompt: str,
+        reported_tokens: int | None,
+        *,
+        truncated: bool = False,
+        known_entity_count: int = 0,
     ) -> _PassOutcome:
         """Run one pass's answer through the loop detector and count its tokens.
 
         Token counts fall back to the same estimates ``call_llm`` uses when a
         provider does not report usage; ``reported_tokens`` (from the client)
-        replaces the output estimate when given.
+        replaces the output estimate when given. A pass the client reported
+        as ``truncated`` is recorded as ``finish_reason="length"`` — the
+        value a local run gets from the provider — so the scorer's
+        completion gate fails it instead of scoring the partial output.
         """
         from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
             replay_harvest_output,
@@ -230,8 +248,13 @@ class ProbeSuite:
         from chaoscypher_core.utils.tokens import estimate_message_tokens, estimate_tokens
 
         content, finish_reason, aborted = await replay_harvest_output(
-            text, self.settings.extraction, self._get_limits().max_entity_count
+            text,
+            self.settings.extraction,
+            self._get_limits().max_entity_count,
+            known_entity_count=known_entity_count,
         )
+        if truncated and not aborted:
+            finish_reason = "length"
         input_tokens = estimate_message_tokens(
             [
                 {"role": "system", "content": system_prompt},
@@ -259,6 +282,7 @@ class ProbeSuite:
             ctx.prompts.system_prompt,
             ctx.prompts.entity_prompt,
             stage_state.get("entities_tokens"),
+            truncated=bool(stage_state.get("entities_truncated")),
         )
         harvest = await self._get_extractor().parse_entity_harvest(
             outcome.content,
@@ -266,7 +290,6 @@ class ProbeSuite:
             chunk_content=ctx.passage,
             limits=self._get_limits(),
             entity_exclusions=self._exclusions(probe),
-            strict_entity_types=probe.strict_types,
             valid_entity_type_names=set(probe.entity_types) or None,
         )
         return outcome, harvest.entities
@@ -316,6 +339,8 @@ class ProbeSuite:
                 ctx.prompts.system_prompt,
                 self._relationship_prompt(probe, entities),
                 stage_state.get("relationships_tokens"),
+                truncated=bool(stage_state.get("relationships_truncated")),
+                known_entity_count=len(entities),
             )
         parsed = await extractor.parse_harvest_outputs(
             pass1.content,
@@ -326,7 +351,6 @@ class ProbeSuite:
             edge_templates_formatted=templates["edge_templates"],
             limits=self._get_limits(),
             entity_exclusions=self._exclusions(probe),
-            strict_entity_types=probe.strict_types,
             valid_entity_type_names=set(probe.entity_types) or None,
             relationship_examples=templates.get("relationship_examples"),
         )
@@ -424,8 +448,10 @@ class ProbeSuite:
         if stage == "entities":
             stages["entities"] = output_text
             stages["entities_tokens"] = output_tokens
+            stages["entities_truncated"] = truncated
             stages["relationships"] = None
             stages["relationships_tokens"] = None
+            stages["relationships_truncated"] = None
             _outcome, entities = await self._cached_entity_pass(probe, stages)
             if entities:
                 # Pass 2 is next for this probe.
@@ -437,6 +463,7 @@ class ProbeSuite:
                 )
             stages["relationships"] = output_text
             stages["relationships_tokens"] = output_tokens
+            stages["relationships_truncated"] = truncated
 
         return SubmitOutcome(record=await self._build_record(probe, stages))
 

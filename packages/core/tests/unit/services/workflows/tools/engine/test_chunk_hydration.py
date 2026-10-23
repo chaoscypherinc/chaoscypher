@@ -5,6 +5,7 @@
 
 from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     assign_chunk_aliases,
+    chunk_source_filenames,
     clean_chunk_metadata,
     format_chunk_content,
     neutralize_untrusted_fence,
@@ -197,3 +198,35 @@ class TestCleanChunkMetadata:
         assert hg["level"] == 2
         assert hg["parent_id"] == "p1"
         assert "combined_content" not in hg
+
+
+class TestChunkSourceFilenames:
+    """One narrow filename read per database for the sources the chunk rows name (2026-10-16)."""
+
+    def test_one_read_per_database_each_source_once(self) -> None:
+        calls: list[tuple[list[str], str]] = []
+
+        def lookup(ids: list[str], database: str) -> dict[str, str]:
+            calls.append((list(ids), database))
+            return {i: f"{i}.txt" for i in ids if i != "gone"}
+
+        rows = [
+            {"source_id": "s1", "database_name": "db"},
+            {"source_id": "s2", "database_name": "db"},
+            {"source_id": "s1", "database_name": "db"},  # read once
+            {"source_id": "", "database_name": "db"},  # no source: not read
+            {"database_name": "db"},
+            {"source_id": "gone", "database_name": "db"},  # not found: ""
+            {"source_id": "s3", "database_name": "other"},
+        ]
+        assert chunk_source_filenames(rows, lookup) == {
+            "s1": "s1.txt",
+            "s2": "s2.txt",
+            "gone": "",
+            "s3": "s3.txt",
+        }
+        assert calls == [(["s1", "s2", "gone"], "db"), (["s3"], "other")]
+
+    def test_no_lookup_names_every_source_empty(self) -> None:
+        assert chunk_source_filenames([{"source_id": "s1"}], None) == {"s1": ""}
+        assert chunk_source_filenames([], None) == {}

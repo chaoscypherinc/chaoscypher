@@ -26,7 +26,7 @@ chaoscypher health
   + Ollama          Connected at http://localhost:11434
   + Chat Model      qwen3.8:27b
   + Extraction      gemma4:26b
-  + Embeddings      qwen3-embedding:0.6b configured
+  + Embeddings      qwen3-embedding:4b configured
   + Search Index    18,432 docs / 18,432 vectors
   + Database        247 entities / 612 relationships
 
@@ -72,7 +72,7 @@ Alongside the Ollama, chat/extraction model, embeddings, search index, and datab
 | Check | How |
 |-------|-----|
 | **Lexicon Hub** | `HEAD` request to the configured hub URL (`lexicon.url`); a warning rather than a failure so an air-gapped box stays green |
-| **Cortex API** | `GET /api/v1/health` against local candidates (`http://127.0.0.1:8000`, `http://127.0.0.1:8080`); informational, since the CLI works standalone |
+| **Cortex API** | `GET /api/v1/health` against `127.0.0.1` on the port `chaoscypher serve` binds (`cli.api_port`, default 8081) and the one `cc-cortex start` / the Docker dev stack use (`ports.web_ui_api`, default 8080); informational, since the CLI works standalone |
 | **Config File** | Presence and parse status of `settings.yaml` (a parse error is reported as a failure) |
 | **Stale Files** | Leftover, no-longer-read files in the config directory (e.g. `cli.yaml`, `credentials.json`) flagged as safe to delete |
 

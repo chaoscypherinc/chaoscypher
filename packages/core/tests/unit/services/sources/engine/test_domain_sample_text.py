@@ -88,7 +88,7 @@ def test_default_caps_match_2026_05_23_audit_values() -> None:
 
     The 2026-05-23 audit showed (3 + 2, 8000) under-sampled — pipeline scores
     were 0.2-0.3 lower than full-text dry-run, pushing correct detections
-    below the registry's 1.0 absolute floor. Bumped to (5 + 3, 12000).
+    below the registry's then 1.0 absolute floor. Bumped to (5 + 3, 12000).
     """
     import inspect
 

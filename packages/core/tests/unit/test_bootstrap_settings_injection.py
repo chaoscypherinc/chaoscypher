@@ -7,8 +7,9 @@ Tier 2 config-unification (Task C3): two Engine methods in ``bootstrap.py``
 reached for the process-wide app settings via
 ``chaoscypher_core.app_config.get_settings()``:
 
-* ``_maybe_park_for_confirmation`` read ``extraction.domain_detection_*`` to
-  sample chunk content for the fast detection proposal, and
+* ``_maybe_park_for_confirmation`` sampled chunk content for the fast detection
+  proposal (since audit wave 3 through ``source_domain_sample``, the sampler
+  every detecting path uses), and
 * ``search`` read ``search.result_preview_chars`` to clip chunk previews.
 
 Post-union both field groups live on ``EngineSettings``, so the methods must
@@ -37,22 +38,28 @@ def engine(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_maybe_park_samples_from_engine_settings(engine) -> None:
-    """``_maybe_park_for_confirmation`` must sample chunk content using the
-    engine's ``extraction.domain_detection_sample_count`` / ``_sample_chars``.
+async def test_maybe_park_samples_like_the_import_path(engine) -> None:
+    """``_maybe_park_for_confirmation`` samples the source as every detecting path does.
+
+    ``source_domain_sample`` (``create_domain_sample_text`` over the chunks
+    for extraction), not a raw first-N-characters slice: until audit wave 3
+    the eager proposal read only the opening, where a novel's front matter
+    looks like any domain.
     """
-    engine.settings.extraction.domain_detection_sample_count = 6
-    engine.settings.extraction.domain_detection_sample_chars = 30
+    from chaoscypher_core.services.sources.engine.extraction.domains import (
+        create_domain_sample_text,
+    )
 
     engine.storage_adapter = MagicMock()
     engine.storage_adapter.get_source.return_value = {
         "id": "src_1",
         "filename": "doc.pdf",
     }
-    long_content = "token " * 100  # 600 chars, exceeds the 30-char window
-    engine.storage_adapter.list_chunks.return_value = [
-        {"id": "c1", "chunk_index": 0, "content": long_content},
+    chunks = [
+        {"id": f"c{i}", "chunk_index": i, "content": f"chunk {i} " + "word " * 400}
+        for i in range(12)
     ]
+    engine.storage_adapter.get_chunks_for_extraction.return_value = chunks
 
     detection = {
         "detected_domain": "generic",
@@ -85,16 +92,13 @@ async def test_maybe_park_samples_from_engine_settings(engine) -> None:
     ):
         await engine._maybe_park_for_confirmation(source_id="src_1", filename="doc.pdf")
 
-    list_kwargs = engine.storage_adapter.list_chunks.call_args.kwargs
-    assert list_kwargs["limit"] == 6, (
-        "_maybe_park_for_confirmation must read domain_detection_sample_count "
-        "from self.settings.extraction, not the app singleton"
+    engine.storage_adapter.list_chunks.assert_not_called()
+    engine.storage_adapter.get_chunks_for_extraction.assert_called_once_with(
+        source_id="src_1", database_name=engine.settings.current_database
     )
     sample_text = mock_detect.call_args.kwargs["sample_text"]
-    assert len(sample_text) == 30, (
-        "sample_text must be sliced to self.settings.extraction."
-        f"domain_detection_sample_chars (30), got {len(sample_text)}"
-    )
+    assert sample_text == create_domain_sample_text(chunks, content_key="content")
+    assert "chunk 4 " in sample_text and "chunk 5 " in sample_text  # not just the opening
 
 
 @pytest.mark.asyncio

@@ -150,7 +150,13 @@ async def test_consume_stream_error_chunk_sets_flag_and_emits() -> None:
     )
     assert err is True
     assert done is None
-    assert sink.of_type("error") == [{"error": "boom", "error_code": "LLM_ERROR"}]
+    assert sink.of_type("error") == [
+        {
+            "error": "boom",
+            "error_code": "LLM_ERROR",
+            "error_details": {"provider": "unknown", "is_retryable": False},
+        }
+    ]
 
 
 async def test_consume_stream_closes_closable_streams() -> None:
@@ -225,6 +231,21 @@ async def test_loop_executes_tool_and_buffers_result() -> None:
     # history got assistant tool_calls + tool result
     roles = [m["role"] for m in messages]
     assert roles == ["user", "assistant", "tool"]
+
+
+async def test_loop_refuses_tool_not_in_advertised_set() -> None:
+    """A model naming a registry tool it was never offered must not execute it."""
+    deps, sink = _deps(
+        [
+            _stream({"type": "done", "content": "", "tool_calls": [_tc("delete_template")]}),
+            _stream(_DONE_NO_TOOLS),
+        ],
+        tools=[{"type": "function", "function": {"name": "search_nodes"}}],
+    )
+    await run_chat_tool_loop([{"role": "user", "content": "q"}], deps)
+
+    deps.tool_executor.execute_tool.assert_not_awaited()
+    assert sink.of_type("tool_result")[0]["result"] == {"error": "Unknown tool: delete_template"}
 
 
 async def test_loop_duplicate_calls_filtered_and_guidance_injected() -> None:

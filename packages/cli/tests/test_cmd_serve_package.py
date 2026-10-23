@@ -665,7 +665,8 @@ class TestMcpHappyPath:
             result = runner.invoke(mcp, ["--database", "my-db"])
 
         assert result.exit_code == 0, result.output
-        mock_gc.assert_called_once_with(database_name="my-db", explicit_database=False)
+        # named on the command line, so served as given (gap 8, slice 1a)
+        mock_gc.assert_called_once_with(database_name="my-db", explicit_database=True)
 
     def test_mcp_help_exits_0(self) -> None:
         runner = CliRunner()

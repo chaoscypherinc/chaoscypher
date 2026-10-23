@@ -50,10 +50,22 @@ export interface UnifiedSource {
   created_at: string;
   tags?: { id: string; name: string; color?: string }[];
 
+  // Site import: the page's address, its site, and when a check for updates
+  // first found it no longer listed on the site (kept until deleted).
+  origin_url?: string | null;
+  site_id?: string | null;
+  site_gone_at?: string | null;
+  // The site leaves this page out: a check for updates does not check it.
+  site_left_out?: boolean;
+
   // Domain (available for committed/active sources)
   extraction_domain?: string;
   extraction_domain_auto?: boolean;
   extraction_domain_icon?: string;
+  /** The packs extracted with, in stored order (`[]` = the floor alone). */
+  extraction_packs?: string[] | null;
+  /** Each pack's icon name, by pack. */
+  extraction_pack_icons?: Record<string, string | null>;
 
   // Domain confirmation gate (awaiting_confirmation sources). Present only
   // for parked sources; sourced from the backend detection proposal blob.
@@ -66,6 +78,12 @@ export interface UnifiedSource {
   detection_low_confidence?: boolean;
   proposed_extraction_options?: {
     analysis_depth?: 'quick' | 'full';
+    /** The proposed packs, by score (`[]` = the floor alone). */
+    packs?: string[];
+    /** Why: `no_pack_above_floor`, `one_pack_above_floor`, `packs_above_floor`, `packs_within_margin`, `no_text`. */
+    reason?: string;
+    /** The first proposed pack (or `generic`); what a proposal written before packs carries alone. */
+    detected_domain?: string;
     domain?: string;
     filtering_mode?: string;
     content_filtering?: boolean;

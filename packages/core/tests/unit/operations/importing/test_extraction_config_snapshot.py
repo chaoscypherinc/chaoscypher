@@ -19,6 +19,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from chaoscypher_core.app_config import Settings
+from chaoscypher_core.services.sources.engine.extraction.domains.configurable import (
+    ConfigurableDomain,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import DomainRegistry
+from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+from chaoscypher_core.settings import EngineSettings
 
 
 def _make_settings(
@@ -67,24 +73,22 @@ def _make_settings(
     return settings
 
 
-def _make_domain() -> Any:
-    domain = MagicMock()
-    domain.metadata = MagicMock(plugin_id="generic")
-    domain.get_extraction_limits = MagicMock(return_value={})
-    domain.get_filtering_mode = MagicMock(return_value=None)
-    domain.get_entity_exclusions = MagicMock(return_value=[])
-    domain.get_evidence_validation_mode = MagicMock(return_value=None)
-    domain.get_strict_entity_types = MagicMock(return_value=False)
-    domain.get_edge_type_constraints = MagicMock(return_value={})
-    domain.get_templates = MagicMock(return_value={"node_templates": [], "edge_templates": []})
-    return domain
+def _stack(*, floor_strict: bool = True, pack_limits: dict[str, Any] | None = None) -> DomainStack:
+    """The shipped floor (its ``strict_entity_types`` as given), plus literary with ``pack_limits``."""
+    registry = DomainRegistry()
+    floor = ConfigurableDomain(
+        {**registry.get_domain("generic").config, "strict_entity_types": floor_strict}
+    )
+    if pack_limits is None:
+        return DomainStack(floor)
+    literary = registry.get_domain("literary").config
+    return DomainStack(floor, (ConfigurableDomain({**literary, "extraction_limits": pack_limits}),))
 
 
 def test_snapshot_carries_llm_tuning_and_loop_thresholds(monkeypatch) -> None:
     from chaoscypher_core.operations.importing import import_service
 
     settings = _make_settings()
-    domain = _make_domain()
 
     # Stub out the template formatter so we don't need a fully-wired
     # domain plugin in the unit test.
@@ -112,9 +116,7 @@ def test_snapshot_carries_llm_tuning_and_loop_thresholds(monkeypatch) -> None:
     )
 
     cfg_json = import_service._build_extraction_config(
-        domain=domain,
-        entity_guidance="ent",
-        relationship_guidance="rel",
+        stack=_stack(),
         settings=settings,
         file_info={},
         source_row=None,
@@ -137,6 +139,8 @@ def test_snapshot_carries_llm_tuning_and_loop_thresholds(monkeypatch) -> None:
     assert cfg["loop_max_property_repeat"] == 5
     assert cfg["loop_invalid_relationship_rate_warmup"] == 10
     assert cfg["loop_invalid_relationship_rate_threshold"] == 0.5
+    # The KNOWN ENTITIES block's size: one limit for every chunk task of the job.
+    assert cfg["known_entities_limit"] == EngineSettings().extraction.known_entities_limit
     assert cfg["snapshot_version"] == 2
 
 
@@ -161,7 +165,7 @@ def test_build_extraction_config_accepts_backend_settings_without_attribute_erro
     from chaoscypher_core.operations.importing import import_service
 
     settings = Settings()  # real backend Settings, no `.extraction`
-    domain = _make_domain()
+    stack = _stack()
     monkeypatch.setattr(
         "chaoscypher_core.services.sources.engine.extraction.orchestration.format_extraction_templates",
         lambda *_a, **_kw: {
@@ -175,9 +179,7 @@ def test_build_extraction_config_accepts_backend_settings_without_attribute_erro
     # Must not raise. The pre-fix code raised
     # ``AttributeError: 'Settings' object has no attribute 'extraction'``.
     cfg_json = import_service._build_extraction_config(
-        domain=domain,
-        entity_guidance=None,
-        relationship_guidance=None,
+        stack=stack,
         settings=settings,
         file_info={},
         source_row=None,
@@ -192,6 +194,7 @@ def test_build_extraction_config_accepts_backend_settings_without_attribute_erro
         "loop_max_property_repeat",
         "loop_invalid_relationship_rate_warmup",
         "loop_invalid_relationship_rate_threshold",
+        "known_entities_limit",
     ):
         assert required_key in cfg, f"snapshot missing {required_key}"
 
@@ -203,7 +206,7 @@ def test_snapshot_does_not_drift_when_settings_change_after_build(
     from chaoscypher_core.operations.importing import import_service
 
     settings = _make_settings()
-    domain = _make_domain()
+    stack = _stack()
     monkeypatch.setattr(
         "chaoscypher_core.services.sources.engine.extraction.orchestration.format_extraction_templates",
         lambda *_a, **_kw: {
@@ -215,9 +218,7 @@ def test_snapshot_does_not_drift_when_settings_change_after_build(
     )
 
     cfg_json = import_service._build_extraction_config(
-        domain=domain,
-        entity_guidance=None,
-        relationship_guidance=None,
+        stack=stack,
         settings=settings,
         file_info={},
         source_row=None,
@@ -233,8 +234,8 @@ def test_snapshot_does_not_drift_when_settings_change_after_build(
     assert cfg["extraction_max_tokens"] == 32768
 
 
-def _build_cfg_with_domain(monkeypatch, domain) -> dict[str, Any]:
-    """Helper: build the extraction config dict from a given domain mock."""
+def _build_cfg_with_stack(monkeypatch, stack: DomainStack) -> dict[str, Any]:
+    """Helper: build the extraction config dict from a given stack."""
     from chaoscypher_core.operations.importing import import_service
 
     settings = _make_settings()
@@ -248,9 +249,7 @@ def _build_cfg_with_domain(monkeypatch, domain) -> dict[str, Any]:
         },
     )
     cfg_json = import_service._build_extraction_config(
-        domain=domain,
-        entity_guidance=None,
-        relationship_guidance=None,
+        stack=stack,
         settings=settings,
         file_info={},
         source_row=None,
@@ -274,48 +273,34 @@ def test_strict_edge_type_constraints_inherits_domain_strict_entity_types(
     Character/Historical Figure/Narrator — passed silently. The domain
     plugin's strictness flag must drive the edge validator too.
     """
-    domain = _make_domain()
-    domain.get_strict_entity_types = MagicMock(return_value=True)
-
-    cfg = _build_cfg_with_domain(monkeypatch, domain)
+    cfg = _build_cfg_with_stack(monkeypatch, _stack(floor_strict=True))
 
     limits = cfg.get("extraction_limits") or {}
     assert limits.get("strict_edge_type_constraints") is True
 
 
-def test_strict_edge_type_constraints_false_when_domain_not_strict(
-    monkeypatch,
+@pytest.mark.parametrize(
+    ("floor_strict", "pack_limits"),
+    [(False, None), (True, {"strict_edge_type_constraints": False})],
+    ids=["floor-not-strict", "pack-limit-false"],
+)
+def test_strict_edge_type_constraints_is_always_on(
+    monkeypatch, floor_strict: bool, pack_limits: dict[str, Any] | None
 ) -> None:
-    """When the domain declares ``strict_entity_types=False``, the edge
-    validator stays in fall-through mode unless the preset enables it.
-    """
-    domain = _make_domain()
-    domain.get_strict_entity_types = MagicMock(return_value=False)
+    """The edge validator is strict for every stack (spec 2026-10-07 § 6).
 
-    cfg = _build_cfg_with_domain(monkeypatch, domain)
+    Every entity leaves the per-chunk filters typed as a core type and every
+    edge template names core types, so an edge whose endpoints do not fit is
+    a wrong edge, never an unknown type to let through: neither a floor
+    switch nor a pack's ``extraction_limits`` turns it off (until 2026-10-07
+    both could, for "domains in transition" that no longer exist).
+    """
+    cfg = _build_cfg_with_stack(
+        monkeypatch, _stack(floor_strict=floor_strict, pack_limits=pack_limits)
+    )
 
     limits = cfg.get("extraction_limits") or {}
-    # Either absent or explicitly False — both mean fall-through.
-    assert limits.get("strict_edge_type_constraints", False) is False
-
-
-def test_strict_edge_type_constraints_domain_limits_override_wins(
-    monkeypatch,
-) -> None:
-    """An explicit ``strict_edge_type_constraints`` in the domain's
-    ``extraction_limits`` is not overwritten by the strict_entity_types
-    flag. Lets a domain declare ``strict_entity_types=true`` for the
-    entity-type validator while keeping the edge validator lenient — useful
-    for domains in transition.
-    """
-    domain = _make_domain()
-    domain.get_strict_entity_types = MagicMock(return_value=True)
-    domain.get_extraction_limits = MagicMock(return_value={"strict_edge_type_constraints": False})
-
-    cfg = _build_cfg_with_domain(monkeypatch, domain)
-
-    limits = cfg.get("extraction_limits") or {}
-    assert limits.get("strict_edge_type_constraints") is False
+    assert limits.get("strict_edge_type_constraints") is True
 
 
 def test_apply_snapshot_overrides_returns_unchanged_when_snapshot_empty() -> None:

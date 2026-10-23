@@ -32,30 +32,20 @@ __all__ = [
 
 
 def get_quality_config(domain: str | None, database_name: str) -> dict[str, Any]:
-    """Load domain-specific quality configuration.
+    """Load the quality configuration of the source's stack (``quality_config_of``).
 
     Args:
-        domain: Domain name to load config for, or None.
+        domain: The source's ``extraction_domain`` (a pack's name or the packs' label), or None.
         database_name: Name of the database.
 
     Returns:
         Quality scoring configuration dict, or empty dict if not found.
     """
-    if not domain:
-        return {}
+    from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+        quality_config_of,
+    )
 
-    try:
-        from chaoscypher_core.services.sources.engine.extraction.domains import (
-            get_domain_registry,
-        )
-
-        registry = get_domain_registry(database_name=database_name)
-        analyzer = registry.get_domain(domain)
-        if analyzer and hasattr(analyzer, "get_quality_scoring"):
-            return analyzer.get_quality_scoring()  # type: ignore[no-any-return]
-    except Exception:
-        logger.debug("failed_to_load_quality_config", domain=domain)
-    return {}
+    return quality_config_of(domain, database_name=database_name)
 
 
 def load_source_extraction(

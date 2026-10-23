@@ -52,6 +52,7 @@ from chaoscypher_core.services.compose.resolver import PackageResolver, Resolver
 
 if TYPE_CHECKING:
     from chaoscypher_core.services.lexicon import AuthConfig
+    from chaoscypher_core.settings import EngineSettings
 
 
 logger = structlog.get_logger(__name__)
@@ -138,15 +139,19 @@ class ComposeService:
         self,
         auth: AuthConfig | None = None,
         lexicon_url: str | None = None,
+        settings: EngineSettings | None = None,
     ) -> None:
         """Initialize compose service.
 
         Args:
             auth: Optional Lexicon authentication config.
             lexicon_url: Lexicon API URL.
+            settings: The engine settings a build runs under; None reads the application's
+                (the configured embedding provider reaches the build, 2026-10-20).
         """
         self.auth = auth
         self.lexicon_url = lexicon_url
+        self.settings = settings
         self._server_process: subprocess.Popen | None = None
 
     async def build(
@@ -216,6 +221,7 @@ class ComposeService:
             merger = NamespaceMerger(
                 output_dir=output_dir,
                 strategy=config.settings.merge_strategy,
+                settings=self._engine_settings(),
             )
 
             result = await merger.merge(resolved, clean=clean)
@@ -376,6 +382,15 @@ class ComposeService:
             if asyncio.get_running_loop().time() >= deadline:
                 return "timeout"
             await asyncio.sleep(STARTUP_POLL_SECONDS)
+
+    def _engine_settings(self) -> EngineSettings:
+        """The settings a build opens the composed database with: the given ones, else the app's."""
+        if self.settings is not None:
+            return self.settings
+        from chaoscypher_core.app_config import get_settings
+        from chaoscypher_core.app_config.engine_factory import build_engine_settings
+
+        return build_engine_settings(get_settings())
 
     @staticmethod
     def _write_runtime_settings(output_dir: Path) -> None:

@@ -10,21 +10,14 @@
   "@type": "ExtractionDomain",
   "@id": "domain:legal",
   "name": "legal",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Legal documents, court cases, statutes, contracts, and regulations",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.25,
-  "strict_entity_types": true,
   "entity_exclusions": [
-    {
-      "description": "Paragraph and section numbers",
-      "examples": [
-        "Section 3.1",
-        "Article II",
-        "� 42"
-      ]
-    },
     {
       "description": "Procedural boilerplate",
       "examples": [
@@ -32,13 +25,6 @@
         "whereas",
         "notwithstanding",
         "witnesseth"
-      ]
-    },
-    {
-      "description": "Generic party references",
-      "examples": [
-        "the plaintiff",
-        "the defendant"
       ]
     },
     {
@@ -193,366 +179,322 @@
       "min_threshold": 0.4
     }
   },
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract statutes, cases, legal doctrines, courts, and named parties\n- Use official case citations and names\n- Include jurisdiction and date in properties\n\nDO NOT EXTRACT:\n- Paragraph/section numbers: � 42, Section 3.1, Article II\n- Procedural boilerplate: 'hereby', 'whereas', 'notwithstanding'\n- Generic references: 'the plaintiff', 'the defendant' (extract named parties instead)\n- Citation formatting: Id., supra, infra, op. cit.",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PRECEDENT: Capture citation chains with cites, overrules, affirms\n- PARTIES: Extract all named parties with party_to relationship\n- DOCTRINE: Link cases to legal doctrines they establish or apply\n- HIERARCHY: Use adjudicates to connect courts to cases\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract statutes, cases, legal doctrines, courts, and named parties\n- Use official case citations and names\n- Include jurisdiction and date in properties\n\nDO NOT EXTRACT:\n- Procedural boilerplate: 'hereby', 'whereas', 'notwithstanding'\n- Citation formatting: Id., supra, infra, op. cit.",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PRECEDENT: Capture citation chains with cites, overrules, affirms\n- PARTIES: Extract all named parties with party_to relationship\n- DOCTRINE: Link cases to legal doctrines they establish or apply\n- HIERARCHY: Use adjudicates to connect courts to cases\n",
+  "subtypes": [
+    {
+      "name": "Statute",
+      "of": "Work",
+      "description": "A law enacted by a legislative body",
+      "icon": "MenuBook",
+      "color": "#41c7d6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "a statute",
+        "the law",
+        "enacted by",
+        "legislative act",
+        "code section",
+        "act of",
+        "legislation"
+      ]
+    },
+    {
+      "name": "Case",
+      "of": "Event",
+      "description": "A legal case or court decision",
+      "properties": [
+        {
+          "name": "date_decided",
+          "display_name": "Date Decided",
+          "property_type": "date"
+        },
+        {
+          "name": "jurisdiction",
+          "display_name": "Jurisdiction",
+          "property_type": "text"
+        },
+        {
+          "name": "citation",
+          "display_name": "Citation",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Gavel",
+      "color": "#4192d6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "the case",
+        "court held",
+        "ruling in",
+        "decision in",
+        "v.",
+        "vs.",
+        "matter of"
+      ]
+    },
+    {
+      "name": "Legal Doctrine",
+      "of": "Concept",
+      "description": "An established legal principle or rule",
+      "icon": "Lightbulb",
+      "color": "#415ed6",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "doctrine",
+        "legal principle",
+        "rule that",
+        "established that",
+        "holding that"
+      ]
+    },
+    {
+      "name": "Court",
+      "of": "Organization",
+      "description": "A judicial body or tribunal",
+      "icon": "AccountBalance",
+      "color": "#5941d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "the court",
+        "supreme court",
+        "appellate court",
+        "tribunal",
+        "district court",
+        "circuit court"
+      ]
+    },
+    {
+      "name": "Party",
+      "of": "Person",
+      "description": "A person or entity in legal proceedings",
+      "properties": [
+        {
+          "name": "role",
+          "display_name": "Role",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Person",
+      "color": "#8e41d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "plaintiff",
+        "defendant",
+        "petitioner",
+        "respondent",
+        "appellant",
+        "appellee",
+        "party to"
+      ]
+    },
+    {
+      "name": "Jurisdiction",
+      "of": "Location",
+      "description": "A legal authority or territory",
+      "icon": "Public",
+      "color": "#c241d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "jurisdiction",
+        "state",
+        "federal",
+        "territory",
+        "venue",
+        "district"
+      ]
+    },
+    {
+      "name": "Contract",
+      "of": "Work",
+      "description": "A legally binding agreement",
+      "icon": "Description",
+      "color": "#d641b6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "agreement",
+        "contract",
+        "covenant",
+        "binding agreement",
+        "parties agree"
+      ]
+    },
+    {
+      "name": "Regulation",
+      "of": "Work",
+      "description": "An administrative rule or regulation",
+      "icon": "Policy",
+      "color": "#d64181",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "regulation",
+        "administrative rule",
+        "CFR",
+        "regulatory requirement"
+      ]
+    },
+    {
+      "name": "Legal Term",
+      "of": "Concept",
+      "description": "A legal term of art or defined term",
+      "icon": "Label",
+      "color": "#d6414c",
+      "quality_score": 15,
+      "requires_named_referent": false
+    },
+    {
+      "name": "Remedy",
+      "of": "Concept",
+      "description": "A legal remedy, relief, or sanction",
+      "icon": "Healing",
+      "color": "#d66b41",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "remedy",
+        "relief",
+        "damages",
+        "injunction",
+        "specific performance"
+      ]
+    },
+    {
+      "name": "Right",
+      "of": "Concept",
+      "description": "A legal right or entitlement",
+      "icon": "Shield",
+      "color": "#d69f41",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "right",
+        "entitlement",
+        "freedom",
+        "liberty",
+        "constitutional right",
+        "civil right"
+      ]
+    },
+    {
+      "name": "Obligation",
+      "of": "Concept",
+      "description": "A legal duty or obligation",
+      "icon": "Balance",
+      "color": "#d6d441",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "obligation",
+        "duty",
+        "requirement",
+        "liability",
+        "responsibility",
+        "must"
+      ]
+    },
+    {
+      "name": "Judge",
+      "of": "Person",
+      "description": "A judge, justice, or magistrate",
+      "names_a_person": true,
+      "icon": "Person",
+      "color": "#a4d641",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "judge",
+        "justice",
+        "magistrate",
+        "chief justice",
+        "associate justice"
+      ]
+    },
+    {
+      "name": "Clause",
+      "of": "Work",
+      "description": "A specific clause, section, subsection, or paragraph within a legal document",
+      "icon": "Article",
+      "color": "#6fd641",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "clause",
+        "section",
+        "subsection",
+        "paragraph"
+      ]
+    },
+    {
+      "name": "Provision",
+      "of": "Work",
+      "description": "A specific provision, term, or stipulation establishing a legal requirement or right",
+      "icon": "Gavel",
+      "color": "#8fd641",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "provision",
+        "stipulation",
+        "term"
+      ]
+    },
+    {
+      "name": "Legal Argument",
+      "of": "Concept",
+      "description": "A legal argument, claim, or defense",
+      "icon": "Forum",
+      "color": "#41d648",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "argument",
+        "claim",
+        "defense",
+        "motion",
+        "contention"
+      ]
+    },
+    {
+      "name": "Evidence",
+      "of": "Object",
+      "description": "Evidence presented in legal proceedings",
+      "icon": "Inventory2",
+      "color": "#41d67c",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "evidence",
+        "exhibit",
+        "testimony",
+        "proof",
+        "record"
+      ]
+    },
+    {
+      "name": "Precedent",
+      "of": "Work",
+      "description": "A legal precedent or landmark ruling",
+      "icon": "Flag",
+      "color": "#41d6b1",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "precedent",
+        "landmark case",
+        "leading case",
+        "binding authority"
+      ]
+    }
+  ],
   "templates": {
-    "node_templates": [
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_statute",
-        "name": "Statute",
-        "description": "A law enacted by a legislative body",
-        "icon": "MenuBook",
-        "color": "#41c7d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "a statute",
-          "the law",
-          "enacted by",
-          "legislative act",
-          "code section",
-          "act of",
-          "legislation"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_case",
-        "name": "Case",
-        "description": "A legal case or court decision",
-        "icon": "Gavel",
-        "color": "#4192d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "the case",
-          "court held",
-          "ruling in",
-          "decision in",
-          "v.",
-          "vs.",
-          "matter of"
-        ],
-        "properties": [
-          {
-            "name": "date_decided",
-            "display_name": "Date Decided",
-            "property_type": "date",
-            "absorbs_types": [
-              "Decision Date"
-            ]
-          },
-          {
-            "name": "jurisdiction",
-            "display_name": "Jurisdiction",
-            "property_type": "text"
-          },
-          {
-            "name": "citation",
-            "display_name": "Citation",
-            "property_type": "text",
-            "absorbs_types": [
-              "Citation"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_doctrine",
-        "name": "Legal Doctrine",
-        "description": "An established legal principle or rule",
-        "icon": "Lightbulb",
-        "color": "#415ed6",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "doctrine",
-          "legal principle",
-          "rule that",
-          "established that",
-          "holding that"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_court",
-        "name": "Court",
-        "description": "A judicial body or tribunal",
-        "icon": "AccountBalance",
-        "color": "#5941d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "legal_actors",
-        "normalization_keywords": [
-          "the court",
-          "supreme court",
-          "appellate court",
-          "tribunal",
-          "district court",
-          "circuit court"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_party",
-        "name": "Party",
-        "description": "A person or entity in legal proceedings",
-        "icon": "Person",
-        "color": "#8e41d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "legal_actors",
-        "normalization_keywords": [
-          "plaintiff",
-          "defendant",
-          "petitioner",
-          "respondent",
-          "appellant",
-          "appellee",
-          "party to"
-        ],
-        "properties": [
-          {
-            "name": "role",
-            "display_name": "Role",
-            "property_type": "text",
-            "absorbs_types": [
-              "Party Role"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_jurisdiction",
-        "name": "Jurisdiction",
-        "description": "A legal authority or territory",
-        "icon": "Public",
-        "color": "#c241d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "legal_actors",
-        "normalization_keywords": [
-          "jurisdiction",
-          "state",
-          "federal",
-          "territory",
-          "venue",
-          "district"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_contract",
-        "name": "Contract",
-        "description": "A legally binding agreement",
-        "icon": "Description",
-        "color": "#d641b6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "agreement",
-          "contract",
-          "covenant",
-          "binding agreement",
-          "parties agree"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_regulation",
-        "name": "Regulation",
-        "description": "An administrative rule or regulation",
-        "icon": "Policy",
-        "color": "#d64181",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "regulation",
-          "administrative rule",
-          "CFR",
-          "regulatory requirement"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_term",
-        "name": "Legal Term",
-        "description": "A legal term of art or defined term",
-        "icon": "Label",
-        "color": "#d6414c",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "legal_concepts"
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_remedy",
-        "name": "Remedy",
-        "description": "A legal remedy, relief, or sanction",
-        "icon": "Healing",
-        "color": "#d66b41",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "remedy",
-          "relief",
-          "damages",
-          "injunction",
-          "specific performance"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_right",
-        "name": "Right",
-        "description": "A legal right or entitlement",
-        "icon": "Shield",
-        "color": "#d69f41",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "right",
-          "entitlement",
-          "freedom",
-          "liberty",
-          "constitutional right",
-          "civil right"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_obligation",
-        "name": "Obligation",
-        "description": "A legal duty or obligation",
-        "icon": "Balance",
-        "color": "#d6d441",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "obligation",
-          "duty",
-          "requirement",
-          "liability",
-          "responsibility",
-          "must"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_judge",
-        "name": "Judge",
-        "description": "A judge, justice, or magistrate",
-        "icon": "Person",
-        "color": "#a4d641",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "legal_actors",
-        "normalization_keywords": [
-          "judge",
-          "justice",
-          "magistrate",
-          "chief justice",
-          "associate justice"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_clause",
-        "name": "Clause",
-        "description": "A specific clause, section, subsection, or paragraph within a legal document",
-        "icon": "Article",
-        "color": "#6fd641",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "clause",
-          "section",
-          "subsection",
-          "paragraph"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_provision",
-        "name": "Provision",
-        "description": "A specific provision, term, or stipulation establishing a legal requirement or right",
-        "icon": "Gavel",
-        "color": "#8fd641",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "provision",
-          "stipulation",
-          "term"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_argument",
-        "name": "Legal Argument",
-        "description": "A legal argument, claim, or defense",
-        "icon": "Forum",
-        "color": "#41d648",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "argument",
-          "claim",
-          "defense",
-          "motion",
-          "contention"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_evidence",
-        "name": "Evidence",
-        "description": "Evidence presented in legal proceedings",
-        "icon": "Inventory2",
-        "color": "#41d67c",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "legal_concepts",
-        "normalization_keywords": [
-          "evidence",
-          "exhibit",
-          "testimony",
-          "proof",
-          "record"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "legal_template_precedent",
-        "name": "Precedent",
-        "description": "A legal precedent or landmark ruling",
-        "icon": "Flag",
-        "color": "#41d6b1",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "legal_documents",
-        "normalization_keywords": [
-          "precedent",
-          "landmark case",
-          "leading case",
-          "binding authority"
-        ]
-      }
-    ],
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -563,30 +505,19 @@
         "color": "#ccae32",
         "quality_score": 25,
         "source_types": [
-          "Case",
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Legal Doctrine",
-          "Precedent",
-          "Judge",
-          "Court",
-          "Legal Argument",
-          "Clause",
-          "Provision"
+          "Event",
+          "Work",
+          "Concept",
+          "Person",
+          "Organization"
         ],
         "target_types": [
-          "Case",
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Legal Doctrine",
-          "Precedent",
-          "Clause",
-          "Provision",
-          "Legal Term",
-          "Evidence"
-        ]
+          "Event",
+          "Work",
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -597,17 +528,17 @@
         "color": "#bbcc32",
         "quality_score": 25,
         "source_types": [
-          "Case",
-          "Court",
-          "Statute",
-          "Legal Doctrine",
-          "Precedent"
+          "Event",
+          "Organization",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Case",
-          "Precedent",
-          "Legal Doctrine"
-        ]
+          "Event",
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -618,21 +549,18 @@
         "color": "#8dcc32",
         "quality_score": 25,
         "source_types": [
-          "Case",
-          "Court",
-          "Judge",
-          "Statute",
-          "Legal Doctrine",
-          "Precedent"
+          "Event",
+          "Organization",
+          "Person",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Case",
-          "Legal Doctrine",
-          "Precedent",
-          "Right",
-          "Legal Argument",
-          "Remedy"
-        ]
+          "Event",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -643,24 +571,17 @@
         "color": "#5fcc32",
         "quality_score": 25,
         "source_types": [
-          "Case",
-          "Court",
-          "Judge",
-          "Legal Doctrine",
-          "Precedent",
-          "Legal Argument"
+          "Event",
+          "Organization",
+          "Person",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Legal Doctrine",
-          "Contract",
-          "Clause",
-          "Provision",
-          "Legal Term",
-          "Right",
-          "Obligation"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -671,23 +592,15 @@
         "color": "#32cc34",
         "quality_score": 25,
         "source_types": [
-          "Case",
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Court",
-          "Precedent",
-          "Clause",
-          "Provision"
+          "Event",
+          "Work",
+          "Organization"
         ],
         "target_types": [
-          "Legal Doctrine",
-          "Right",
-          "Remedy",
-          "Obligation",
-          "Precedent",
-          "Legal Term"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -698,23 +611,18 @@
         "color": "#32cc62",
         "quality_score": 15,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Case",
-          "Legal Doctrine",
-          "Precedent",
-          "Clause",
-          "Provision",
-          "Court"
+          "Work",
+          "Event",
+          "Concept",
+          "Organization"
         ],
         "target_types": [
-          "Party",
-          "Court",
-          "Jurisdiction",
-          "Judge",
-          "Case"
-        ]
+          "Person",
+          "Organization",
+          "Location",
+          "Event"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -725,23 +633,19 @@
         "color": "#32cc90",
         "quality_score": 15,
         "source_types": [
-          "Statute",
-          "Court",
-          "Case",
-          "Regulation",
-          "Contract",
-          "Judge",
-          "Clause",
-          "Provision",
-          "Legal Doctrine"
+          "Work",
+          "Organization",
+          "Event",
+          "Person",
+          "Concept"
         ],
         "target_types": [
-          "Right",
-          "Remedy",
-          "Party",
-          "Obligation",
-          "Jurisdiction"
-        ]
+          "Concept",
+          "Person",
+          "Location"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -752,25 +656,16 @@
         "color": "#32ccbe",
         "quality_score": 25,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Case",
-          "Contract",
-          "Legal Doctrine",
-          "Precedent",
-          "Clause",
-          "Provision"
+          "Work",
+          "Event",
+          "Concept"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Case",
-          "Contract",
-          "Legal Doctrine",
-          "Precedent",
-          "Clause",
-          "Provision"
-        ]
+          "Work",
+          "Event",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -781,17 +676,16 @@
         "color": "#32abcc",
         "quality_score": 15,
         "source_types": [
-          "Party",
-          "Judge",
-          "Court"
+          "Person",
+          "Organization"
         ],
         "target_types": [
-          "Case",
-          "Contract",
-          "Legal Argument",
-          "Provision",
-          "Clause"
-        ]
+          "Event",
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -802,11 +696,12 @@
         "color": "#327dcc",
         "quality_score": 15,
         "source_types": [
-          "Court"
+          "Organization"
         ],
         "target_types": [
-          "Case"
-        ]
+          "Event"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -817,23 +712,16 @@
         "color": "#3250cc",
         "quality_score": 15,
         "source_types": [
-          "Statute",
-          "Contract",
-          "Regulation",
-          "Case",
-          "Legal Doctrine",
-          "Precedent",
-          "Clause",
-          "Provision",
-          "Court"
+          "Work",
+          "Event",
+          "Concept",
+          "Organization"
         ],
         "target_types": [
-          "Remedy",
-          "Right",
-          "Obligation",
-          "Legal Term",
-          "Party"
-        ]
+          "Concept",
+          "Person"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -844,20 +732,13 @@
         "color": "#4332cc",
         "quality_score": 25,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Case",
-          "Clause",
-          "Provision"
+          "Work",
+          "Event"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Clause",
-          "Provision"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -868,16 +749,15 @@
         "color": "#7132cc",
         "quality_score": 25,
         "source_types": [
-          "Judge",
-          "Court",
-          "Party"
+          "Person",
+          "Organization"
         ],
         "target_types": [
-          "Case",
-          "Legal Doctrine",
-          "Precedent",
-          "Legal Argument"
-        ]
+          "Event",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -888,18 +768,17 @@
         "color": "#9f32cc",
         "quality_score": 25,
         "source_types": [
-          "Judge",
-          "Court",
-          "Party"
+          "Person",
+          "Organization"
         ],
         "target_types": [
-          "Case",
-          "Judge",
-          "Legal Doctrine",
-          "Precedent",
-          "Legal Argument"
+          "Event",
+          "Person",
+          "Concept",
+          "Work"
         ],
-        "symmetric": true
+        "symmetric": true,
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -910,27 +789,16 @@
         "color": "#cc32ca",
         "quality_score": 25,
         "source_types": [
-          "Party",
-          "Case",
-          "Court",
-          "Judge",
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Clause",
-          "Provision"
+          "Person",
+          "Event",
+          "Organization",
+          "Work"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Right",
-          "Contract",
-          "Obligation",
-          "Legal Doctrine",
-          "Clause",
-          "Provision",
-          "Precedent"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -941,27 +809,20 @@
         "color": "#cc329c",
         "quality_score": 15,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Case",
-          "Legal Doctrine",
-          "Precedent",
-          "Court",
-          "Clause",
-          "Provision",
-          "Jurisdiction"
+          "Work",
+          "Event",
+          "Concept",
+          "Organization",
+          "Location"
         ],
         "target_types": [
-          "Legal Term",
-          "Right",
-          "Obligation",
-          "Party",
-          "Contract",
-          "Jurisdiction",
-          "Case",
-          "Remedy"
-        ]
+          "Concept",
+          "Person",
+          "Work",
+          "Location",
+          "Event"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -972,20 +833,13 @@
         "color": "#cc326e",
         "quality_score": 25,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Clause",
-          "Provision",
-          "Contract"
+          "Work"
         ],
         "target_types": [
-          "Legal Doctrine",
-          "Precedent",
-          "Right",
-          "Obligation",
-          "Remedy",
-          "Legal Term"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -996,20 +850,15 @@
         "color": "#cc3240",
         "quality_score": 25,
         "source_types": [
-          "Statute",
-          "Regulation",
-          "Case",
-          "Court",
-          "Clause",
-          "Provision"
+          "Work",
+          "Event",
+          "Organization"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Clause",
-          "Provision",
-          "Contract"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "verb"
       },
       {
         "@type": "EdgeTemplate",
@@ -1020,24 +869,15 @@
         "color": "#cc5332",
         "quality_score": 15,
         "source_types": [
-          "Contract",
-          "Statute",
-          "Regulation",
-          "Case",
-          "Clause",
-          "Provision",
-          "Legal Doctrine"
+          "Work",
+          "Event",
+          "Concept"
         ],
         "target_types": [
-          "Statute",
-          "Regulation",
-          "Contract",
-          "Clause",
-          "Provision",
-          "Legal Doctrine",
-          "Precedent",
-          "Legal Term"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1048,28 +888,20 @@
         "color": "#cc8132",
         "quality_score": 15,
         "source_types": [
-          "Legal Doctrine",
-          "Precedent",
-          "Statute",
-          "Regulation",
-          "Case",
-          "Contract",
-          "Clause",
-          "Provision",
-          "Right",
-          "Obligation",
-          "Remedy"
+          "Concept",
+          "Work",
+          "Event"
         ],
         "target_types": [
-          "Case",
-          "Party",
-          "Jurisdiction",
-          "Contract",
-          "Court",
-          "Legal Argument",
-          "Evidence",
-          "Legal Term"
-        ]
+          "Event",
+          "Person",
+          "Location",
+          "Work",
+          "Organization",
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       }
     ]
   },
@@ -1088,7 +920,7 @@
         "canonical": "Americans with Disabilities Act",
         "aliases": [
           "ADA",
-          "42 U.S.C. � 12101"
+          "42 U.S.C. § 12101"
         ],
         "note": "Abbreviations and code citations become aliases"
       }
@@ -1109,8 +941,6 @@
     ]
   },
   "extraction_limits": {
-    "max_entity_degree": 20,
-    "max_same_source_type": 8,
     "max_relationship_ratio": 6.0,
     "loop_max_entity_count": 35
   },

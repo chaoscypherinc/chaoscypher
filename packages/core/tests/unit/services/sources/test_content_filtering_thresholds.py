@@ -313,6 +313,80 @@ you can switch to breadth-first via the ``order`` parameter.
 ]
 
 
+CODE_BLOCKS_PROSE = [
+    # Indented verse: until 2026-10-07 every line indented four spaces was "code"
+    """
+    For the sword outwears its sheath,
+    And the soul wears out the breast,
+    And the heart must pause to breathe,
+    And love itself have rest.
+""".strip("\n"),
+    # A block-quoted letter
+    "\n".join(
+        "    " + line
+        for line in [
+            "My dear Julie,",
+            "For two days I have waited for your letter.",
+            "If you come, come before the snow;",
+            "While I live I am yours,",
+            "Mary",
+        ]
+    ),
+    # Narrative lines opening with "for", "if", "while" (the old keyword rule)
+    """
+For a long time Pierre could not understand what was said to him.
+If the count had known, he would have gone at once.
+While the army waited, the prince wrote to his father.
+For the rest of the evening Natásha did not speak.
+""".strip(),
+    # Hard-wrapped prose with semicolons, but not on several lines running
+    """
+The road was bad; the horses were tired
+and the driver slept. They reached the inn at night;
+nobody met them, and the prince went in alone
+to find the room cold and empty.
+""".strip(),
+]
+
+
+@pytest.mark.parametrize("text", CODE_BLOCKS_PROSE)
+def test_code_blocks_takes_no_verse_letter_or_narrative_for_code(text: str) -> None:
+    """A real code signal on several lines running is code; indentation or "for"/"if" is not."""
+    matcher = CONTENT_CATEGORIES["code_blocks"]
+    assert not matcher.matches(text), text
+    matched, stripped = matcher.match_and_strip(text)
+    assert not matched and stripped == text
+    assert matcher.strip_lines(text) == text
+
+
+def test_code_blocks_strips_only_the_code_run_of_a_mixed_chunk() -> None:
+    """A code-dominant chunk loses its code lines; a stray signal line in prose is kept."""
+    code = CODE_BLOCKS_POSITIVE[0]
+    text = code + "\n\nThe result is printed. x = 1 is not code here."
+    matched, stripped = CONTENT_CATEGORIES["code_blocks"].match_and_strip(text)
+    assert matched
+    assert "import asyncio" not in stripped
+    assert "The result is printed." in stripped
+
+
+def test_no_shipped_plugin_strips_table_rows_before_extraction() -> None:
+    """``data_tables`` stripped rows that carry dates and figures (keep, flag, never delete,
+    2026-10-07): no shipped plugin lists it; the matcher stays for a user's own domain.
+    """
+    import json
+    from pathlib import Path
+
+    from chaoscypher_core.services.sources.engine.extraction import domains
+
+    plugins = sorted((Path(domains.__file__).parent / "plugins").glob("*.jsonld"))
+    assert len(plugins) == 19
+    for path in plugins:
+        config = json.loads(path.read_text(encoding="utf-8"))
+        categories = (config.get("content_exclusions") or {}).get("categories") or []
+        assert "data_tables" not in categories, path.name
+    assert "data_tables" in CONTENT_CATEGORIES
+
+
 @pytest.mark.parametrize("text", CODE_BLOCKS_POSITIVE)
 def test_code_blocks_positive_fires(text: str) -> None:
     """Code-dominant content should trigger the code_blocks filter."""

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
+from chaoscypher_core.settings import EngineSettings
 
 
 # ------------------------------------------------------------------ #
@@ -89,6 +90,10 @@ def mock_engine():
     # Quick-mode sampling reads from ``analysis.quick_sample_size`` so
     # MCP and Cortex's ``import_service`` agree on the same source.
     engine.settings.analysis.quick_sample_size = 5
+    # The extraction plan reads these sections (prompt inputs, presets,
+    # limits): the real ``EngineSettings`` defaults.
+    engine.settings.llm = EngineSettings().llm
+    engine.settings.extraction = EngineSettings().extraction
 
     # Storage adapter (implements SourceStorageProtocol + ExtractionSubmissionStorageProtocol)
     engine.storage_adapter = MagicMock()
@@ -311,6 +316,10 @@ class TestGetTasks:
         ]
         mock_engine.storage_adapter.transition_source_status.return_value = True
         mock_engine.graph_repository.list_templates.return_value = []
+        # The medical domain's content exclusions drop this one tiny chunk as
+        # boilerplate, and a source with no groups is now rejected after the
+        # CAS; this test is about the gate, so pin one real group.
+        orchestrator._get_group_indices = lambda _sid: {0}
 
         with patch("chaoscypher_core.mcp.extraction.park_for_confirmation") as mock_park:
             result = await orchestrator.get_tasks("src_001")
@@ -334,12 +343,44 @@ class TestGetTasks:
         ]
         mock_engine.storage_adapter.transition_source_status.return_value = True
         mock_engine.graph_repository.list_templates.return_value = []
+        # The medical domain's content exclusions drop this one tiny chunk as
+        # boilerplate, and a source with no groups is now rejected after the
+        # CAS; this test is about the gate, so pin one real group.
+        orchestrator._get_group_indices = lambda _sid: {0}
 
         with patch("chaoscypher_core.mcp.extraction.park_for_confirmation") as mock_park:
             result = await orchestrator.get_tasks("src_001")
 
         assert result["status"] == "mcp_extracting"
         mock_park.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_source_with_no_groups_releases_the_claim(self, orchestrator, mock_engine):
+        """No chunk groups: the CAS is rolled back and get_tasks raises.
+
+        Previously quick depth divided by zero and full depth handed out zero
+        tasks, both leaving the source at mcp_extracting until the staleness
+        window; the pipeline fails such a source with the same message.
+        """
+        from chaoscypher_core.models import SourceStatus
+
+        mock_engine.storage_adapter.get_source.return_value = _make_source(status="indexed")
+        mock_engine.storage_adapter.get_chunks_for_extraction.return_value = []
+        mock_engine.storage_adapter.transition_source_status.return_value = True
+        orchestrator._get_group_indices = lambda _sid: set()
+
+        with pytest.raises(ValueError, match="No extraction groups could be built"):
+            await orchestrator.get_tasks("src_001")
+
+        calls = mock_engine.storage_adapter.transition_source_status.call_args_list
+        assert len(calls) == 2, "expected the claiming CAS plus the release"
+        assert calls[1].kwargs["from_status"] == SourceStatus.MCP_EXTRACTING
+        assert calls[1].kwargs["to_status"] == SourceStatus.INDEXED
+
+    def test_quick_sampling_of_no_indices_is_empty(self, orchestrator):
+        """The shared sampler no longer divides by ``min(sample_size, 0)``."""
+        assert orchestrator._sample_quick_indices(set()) == set()
+        assert orchestrator._sample_quick_indices({0, 1, 2}) == {0, 1, 2}
 
 
 # ------------------------------------------------------------------ #
@@ -435,11 +476,33 @@ class TestSubmitChunk:
     """ExtractionOrchestrator.submit_chunk() tests."""
 
     @pytest.mark.asyncio
+    async def test_rejects_source_not_under_mcp_extraction(self, orchestrator, mock_engine):
+        """A committed (or UI-reset) source takes no submissions.
+
+        Rows written against any other status survived a non-force get_tasks
+        and were committed as if current.
+        """
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="committed", chunks_total=3, chunk_indices=[0, 1, 2]
+        )
+
+        result = await orchestrator.submit_chunk(
+            source_id="src_001",
+            chunk_group_index=0,
+            entities_text="E|Alice|Person||0.9|S1|A person",
+            relationships_text="",
+        )
+
+        assert result["success"] is False
+        assert result["error_code"] == "INVALID_STATUS"
+        mock_engine.storage_adapter.create_extraction_submission.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_stores_submission_and_returns_progress(self, orchestrator, mock_engine):
         """Stores submission and returns progress counts."""
         mock_engine.storage_adapter.count_extraction_submissions.return_value = 1
         mock_engine.storage_adapter.get_source.return_value = _make_source(
-            chunks_total=3, chunk_indices=[0, 1, 2]
+            status="mcp_extracting", chunks_total=3, chunk_indices=[0, 1, 2]
         )
         mock_engine.storage_adapter.list_extraction_submissions.return_value = [
             {"entity_count": 5, "relationship_count": 3},
@@ -471,7 +534,7 @@ class TestSubmitChunk:
         """ready_to_finalize is True when all chunks are submitted."""
         mock_engine.storage_adapter.count_extraction_submissions.return_value = 2
         mock_engine.storage_adapter.get_source.return_value = _make_source(
-            chunks_total=2, chunk_indices=[0, 1]
+            status="mcp_extracting", chunks_total=2, chunk_indices=[0, 1]
         )
         mock_engine.storage_adapter.list_extraction_submissions.return_value = [
             {"entity_count": 3, "relationship_count": 2},
@@ -493,6 +556,7 @@ class TestSubmitChunk:
     async def test_rejects_out_of_range_index(self, orchestrator, mock_engine):
         """submit_chunk rejects indices outside the expected set."""
         mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting",
             chunks_total=3,
             chunk_indices=[0, 1, 2],
         )
@@ -514,6 +578,7 @@ class TestSubmitChunk:
     @pytest.mark.asyncio
     async def test_rejects_negative_index(self, orchestrator, mock_engine):
         mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting",
             chunks_total=3,
             chunk_indices=[0, 1, 2],
         )
@@ -583,6 +648,49 @@ class TestGetProgress:
 
 class TestFinalize:
     """ExtractionOrchestrator.finalize() tests."""
+
+    @pytest.mark.asyncio
+    async def test_submission_sent_refs_resolve_to_group_chunks(self, orchestrator, mock_engine):
+        """The MCP path aggregates through the shared aggregator.
+
+        A submission's ``S<n>`` numbers its group text and lands on the
+        group's small chunk.
+        """
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting", filename="evidence.txt", domain="technical"
+        )
+        group = {
+            "group_index": 0,
+            "small_chunk_ids": ["c1", "c2"],
+            "combined_content": "Alice met Bob.\n\nBob left town.",
+        }
+        mock_engine.storage_adapter.get_chunks_for_extraction.return_value = [
+            {"id": "c1", "chunk_index": 0, "content": "Alice met Bob."},
+            {"id": "c2", "chunk_index": 1, "content": "Bob left town."},
+        ]
+        mock_engine.storage_adapter.list_extraction_submissions.return_value = [
+            {
+                "chunk_group_index": 0,
+                "entities_text": "E|Alice|Person||0.9|S1|A\nE|Bob|Person||0.8|S2|B",
+                "relationships_text": "R|0|1|knows|0.9|S1-S2|They meet",
+            }
+        ]
+        mock_engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+            return_value={"entities": [], "relationships": [], "metadata": {}}
+        )
+        mock_engine.commit_service.commit = AsyncMock(
+            return_value={"created_nodes": [], "created_edges": [], "created_templates": []}
+        )
+        with patch.object(orchestrator, "_build_source_groups", return_value=[group]):
+            await orchestrator.finalize("src_001")
+
+        call_kwargs = mock_engine.extraction_service.finalize_distributed_extraction.call_args[1]
+        alice, bob = call_kwargs["raw_entities"]
+        assert alice["cited_chunk_id"] == "c1"
+        assert bob["cited_chunk_id"] == "c2"
+        assert bob["evidence"][0]["text"] == "Bob left town."
+        (rel,) = call_kwargs["raw_relationships"]
+        assert [e["chunk_id"] for e in rel["evidence"]] == ["c1", "c2"]
 
     @pytest.mark.asyncio
     async def test_parses_and_remaps_two_chunks(self, orchestrator, mock_engine):
@@ -1068,8 +1176,118 @@ class TestQuickModeFinalize:
 # ------------------------------------------------------------------ #
 
 
+def _finalize_ready(mock_engine) -> None:
+    """One complete submission plus a passing finalize/commit chain."""
+    mock_engine.storage_adapter.list_chunks.return_value = [
+        _make_chunk("c1", "src_001", 0, 0, "chunk"),
+    ]
+    mock_engine.storage_adapter.list_extraction_submissions.return_value = [
+        {
+            "chunk_group_index": 0,
+            "entities_text": "E|Alice|Person||0.9|S1|A person",
+            "relationships_text": "",
+        },
+    ]
+    mock_engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+        return_value={
+            "entities": [{"name": "Alice"}],
+            "relationships": [],
+            "suggested_templates": [],
+            "suggested_edge_templates": [],
+            "metadata": {},
+        }
+    )
+    mock_engine.commit_service.commit = AsyncMock(
+        return_value={"created_nodes": ["n1"], "created_edges": [], "created_templates": []}
+    )
+    mock_engine.storage_adapter.delete_extraction_submissions.return_value = 1
+
+
+class TestFinalizeDomain:
+    """finalize() runs the forced-over-detected domain, as the worker does."""
+
+    @pytest.mark.asyncio
+    async def test_forced_domain_reaches_finalize_fingerprint_and_scores(
+        self, orchestrator, mock_engine
+    ):
+        """A domain pinned at add_document / confirm_extraction time is the one used.
+
+        ``extraction_domain`` is still None at the first finalize of such a
+        source; reading only that column ran the generic domain.
+        """
+        src = _make_source(status="mcp_extracting", filename="legal.txt", domain=None)
+        src["forced_domain"] = "legal"
+        mock_engine.storage_adapter.get_source.return_value = src
+        _finalize_ready(mock_engine)
+
+        with (
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.domains.fingerprint.resolve_domain_fingerprint",
+                return_value=("1.0", "hash"),
+            ) as fingerprint,
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.orchestration.cache_quality_scores"
+            ) as scores,
+        ):
+            await orchestrator.finalize("src_001")
+
+        fde = mock_engine.extraction_service.finalize_distributed_extraction
+        assert fde.call_args.kwargs["forced_domain"] == "legal"
+        assert fde.call_args.kwargs["detected_domain"] is None
+        assert fingerprint.call_args.args[0] == "legal"
+        assert scores.call_args.kwargs["domain_name"] == "legal"
+        complete = mock_engine.storage_adapter.complete_extraction.call_args.kwargs
+        assert complete["forced_domain"] == "legal"
+        assert complete["detected_domain"] is None
+
+
 class TestFinalizeStateSafety:
     """finalize() must not strand sources or leak per-source caches."""
+
+    @pytest.mark.asyncio
+    async def test_failure_before_commit_phase_rolls_status_back(self, orchestrator, mock_engine):
+        """An embedding/dedup failure returns the source to mcp_extracting.
+
+        Without the rollback the source stayed at 'committing', where the
+        worker reconciler (no commit payload, no entity rows) dispatched an
+        empty import_commit and zero-graph-committed it.
+        """
+        from chaoscypher_core.models import SourceStatus
+
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting", filename="single.txt"
+        )
+        _finalize_ready(mock_engine)
+        mock_engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+            side_effect=RuntimeError("embedder down")
+        )
+
+        with pytest.raises(RuntimeError, match="embedder down"):
+            await orchestrator.finalize("src_001")
+
+        calls = mock_engine.storage_adapter.transition_source_status.call_args_list
+        assert len(calls) == 2, "expected the claiming CAS plus the rollback"
+        assert calls[1].kwargs["from_status"] == SourceStatus.COMMITTING
+        assert calls[1].kwargs["to_status"] == SourceStatus.MCP_EXTRACTING
+        mock_engine.storage_adapter.complete_extraction.assert_not_called()
+        assert "src_001" not in orchestrator._commit_phase
+
+    @pytest.mark.asyncio
+    async def test_failure_in_commit_phase_stays_committing(self, orchestrator, mock_engine):
+        """Once the entity rows are written, a commit failure is left for recovery."""
+        mock_engine.storage_adapter.get_source.return_value = _make_source(
+            status="mcp_extracting", filename="single.txt"
+        )
+        _finalize_ready(mock_engine)
+        mock_engine.commit_service.commit = AsyncMock(side_effect=RuntimeError("graph down"))
+
+        with pytest.raises(RuntimeError, match="graph down"):
+            await orchestrator.finalize("src_001")
+
+        calls = mock_engine.storage_adapter.transition_source_status.call_args_list
+        assert len(calls) == 1, "no rollback after complete_extraction"
+        mock_engine.storage_adapter.complete_extraction.assert_called_once()
+        assert "src_001" not in orchestrator._commit_phase
 
     @pytest.mark.asyncio
     async def test_incomplete_finalize_rolls_status_back(self, orchestrator, mock_engine):
@@ -1107,7 +1325,7 @@ class TestFinalizeStateSafety:
     async def test_successful_finalize_evicts_per_source_caches(self, orchestrator, mock_engine):
         """finalize() evicts both per-source cache entries it may hold.
 
-        ``_filtering_configs``, ``_submission_timestamps`` and
+        ``_plans``, ``_submission_timestamps`` and
         ``_group_indices`` are keyed by source_id and only exist to bridge
         get_tasks/submit_chunk into finalize; leaving any of them behind leaks
         one entry per finalized source for the lifetime of a long-lived MCP
@@ -1147,14 +1365,16 @@ class TestFinalizeStateSafety:
         mock_engine.storage_adapter.delete_extraction_submissions.return_value = 1
 
         # Simulate prior get_tasks / submit_chunk activity for this source.
-        orchestrator._filtering_configs["src_001"] = MagicMock(minimum_alias_length=2)
+        orchestrator._plans["src_001"] = orchestrator._plan_for(
+            mock_engine.storage_adapter.get_source.return_value, ()
+        )
         orchestrator._submission_timestamps["src_001"] = deque([0.0])
         orchestrator._group_indices["src_001"] = {0}
 
         result = await orchestrator.finalize("src_001")
 
         assert result["success"] is True
-        assert "src_001" not in orchestrator._filtering_configs
+        assert "src_001" not in orchestrator._plans
         assert "src_001" not in orchestrator._submission_timestamps
         assert "src_001" not in orchestrator._group_indices
 
@@ -1261,3 +1481,128 @@ class TestGroupIndicesMemo:
         after = orchestrator._get_group_indices("src_001")
 
         assert len(after) > len(before)
+
+
+# ------------------------------------------------------------------ #
+#  One prompt source: the MCP prompts are the product's renders
+# ------------------------------------------------------------------ #
+
+
+_PROMPT_CHUNK = (
+    "Captain Orsolya Darnell walked the harbour wall at dusk. "
+    "The lamplighter Bram Darnell was her father. "
+    "Margrave Oswin Kell camped beyond the marsh."
+)
+
+
+def _literary_stack():
+    """The shipped floor plus literary (guidance, examples and exclusions all set), and its registry."""
+    from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+        DomainRegistry,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
+    registry = DomainRegistry()
+    return DomainStack.resolve(registry, ["literary"]), registry
+
+
+class TestPromptsAreTheProductRenders:
+    """The MCP path prompts a client with the bytes a local model receives.
+
+    ``get_tasks`` used to carry a hand-written copy of both extraction
+    prompts that kept the relationship quota and the corpus examples after
+    the shared prompts dropped them, so harness models were benchmarked
+    under a different prompt than local ones.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_tasks_runs_with_the_sources_extraction_plan(self, orchestrator, mock_engine):
+        """``get_tasks`` caches the plan ``build_extraction_plan`` decides for the domain and row."""
+        from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+            build_extraction_plan,
+        )
+
+        stack, registry = _literary_stack()
+        src = _make_source(status="indexed", domain="literary")
+        src["forced_domain"] = "literary"
+        src["filtering_mode"] = "balanced"
+        src["confirmation_required"] = False
+        mock_engine.storage_adapter.get_source.return_value = src
+        mock_engine.storage_adapter.transition_source_status.return_value = True
+        # One group: ``get_tasks`` refuses a source that builds none.
+        group = {"group_index": 0, "combined_content": _PROMPT_CHUNK, "small_chunk_ids": ["c1"]}
+
+        with (
+            patch("chaoscypher_core.mcp.extraction.get_domain_registry", return_value=registry),
+            patch.object(orchestrator, "_build_source_groups", return_value=[group]),
+        ):
+            await orchestrator.get_tasks("src_001")
+
+        plan = orchestrator._plans["src_001"]
+        expected = build_extraction_plan(stack, mock_engine.settings, source_row=src)
+        assert plan.chunk_kwargs == expected.chunk_kwargs
+        assert plan.filtering_config == expected.filtering_config
+        assert plan.edge_type_constraints == expected.edge_type_constraints
+        # The domain's limits reach the MCP path (they used to be dropped).
+        assert plan.chunk_kwargs["domain_extraction_limits"]["strict_edge_type_constraints"] is True
+        assert plan.chunk_kwargs["entity_guidance"]
+        assert plan.chunk_kwargs["entity_examples"]
+        assert plan.chunk_kwargs["entity_exclusions"]
+
+    @pytest.mark.asyncio
+    async def test_get_tasks_and_get_chunks_render_the_extractors_bytes(
+        self, orchestrator, mock_engine
+    ):
+        """Chunk sentences substituted into the instructions == AIEntityExtractor's render."""
+        from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+            build_extraction_plan,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
+            PROMPT_CHUNK_TEXT_PLACEHOLDER,
+            PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+            AIEntityExtractor,
+        )
+        from chaoscypher_core.settings import EngineSettings
+
+        settings = EngineSettings()
+        stack, registry = _literary_stack()
+        mock_engine.settings.llm = settings.llm
+        src = _make_source(status="indexed", domain="literary")
+        src["forced_domain"] = "literary"
+        src["confirmation_required"] = False
+        mock_engine.storage_adapter.get_source.return_value = src
+        mock_engine.storage_adapter.transition_source_status.return_value = True
+        group = {"group_index": 0, "combined_content": _PROMPT_CHUNK, "small_chunk_ids": ["c1"]}
+
+        with (
+            patch("chaoscypher_core.mcp.extraction.get_domain_registry", return_value=registry),
+            patch.object(orchestrator, "_build_source_groups", return_value=[group]),
+        ):
+            tasks = await orchestrator.get_tasks("src_001")
+            chunk = (await orchestrator.get_chunks("src_001", [0]))["chunks"][0]
+
+        kwargs = build_extraction_plan(stack, settings).chunk_kwargs
+        extractor = AIEntityExtractor(settings=settings)
+        harvest = extractor.render_harvest_prompts(
+            _PROMPT_CHUNK,
+            kwargs["node_templates_formatted"],
+            entity_guidance=kwargs["entity_guidance"],
+            entity_examples=kwargs["entity_examples"],
+            entity_exclusions=kwargs["entity_exclusions"],
+            strict_entity_types=kwargs["strict_entity_types"],
+        )
+
+        assert tasks["prompt_placeholders"] == {
+            "chunk_text": PROMPT_CHUNK_TEXT_PLACEHOLDER,
+            "pass1_entities": PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+        }
+        assert chunk["numbered_sentences"] == harvest.numbered_text
+        entity_prompt = tasks["entity_instructions"].replace(
+            PROMPT_CHUNK_TEXT_PLACEHOLDER, chunk["numbered_sentences"]
+        )
+        assert entity_prompt == harvest.entity_prompt
+        assert tasks["relationship_instructions"] == extractor.render_relationship_prompt_template(
+            kwargs["edge_templates_formatted"],
+            relationship_guidance=kwargs["relationship_guidance"],
+            relationship_examples=kwargs["relationship_examples"],
+        )

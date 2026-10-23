@@ -1,5 +1,5 @@
 {
- "generated": "2026-09-26",
+ "generated": "2026-10-23",
  "vram_headroom_gb": 4,
  "score_weights": {
   "extraction": {
@@ -19,35 +19,52 @@
    "license": "mit",
    "tools": true,
    "isolated": {
-    "passed": 51,
+    "passed": 41,
     "total": 65,
-    "pct": 78
+    "pct": 63
    },
    "chunks": {
-    "passed": 4,
-    "total": 21,
-    "pct": 19
+    "passed": 20,
+    "total": 39,
+    "pct": 51
    },
    "chat": {
-    "passed": 50,
-    "total": 80,
-    "pct": 62.5,
+    "passed": 65,
+    "total": 77,
+    "pct": 84.4,
     "timed_out": false
    },
-   "chat_pct": 62.5,
+   "chat_pct": 84.4,
    "scores": {
-    "extraction": 38.9,
-    "chat": 62.5,
-    "overall": 48.3
+    "extraction": 55.2,
+    "chat": 84.4,
+    "overall": 66.9,
+    "extraction_ci90": [
+     46.0,
+     64.4
+    ],
+    "chat_ci90": [
+     77.9,
+     90.9
+    ],
+    "overall_ci90": [
+     60.8,
+     72.9
+    ]
    },
    "notes": [
-    "2 cut off isolated",
-    "1 looped isolated",
+    "3 cut off isolated",
+    "14 looped isolated",
     "thought despite think=off",
-    "7 looped in chunks"
+    "3 cut off in chunks",
+    "14 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "gemma4:12b",
@@ -61,28 +78,44 @@
     "pct": 82
    },
    "chunks": {
-    "passed": 13,
-    "total": 21,
-    "pct": 62
+    "passed": 26,
+    "total": 39,
+    "pct": 67
    },
    "chat": {
-    "passed": 51,
-    "total": 80,
-    "pct": 63.8,
+    "passed": 68,
+    "total": 77,
+    "pct": 88.3,
     "timed_out": false
    },
-   "chat_pct": 63.8,
+   "chat_pct": 88.3,
    "scores": {
-    "extraction": 68.4,
-    "chat": 63.8,
-    "overall": 66.6
+    "extraction": 71.6,
+    "chat": 88.3,
+    "overall": 78.3,
+    "extraction_ci90": [
+     62.7,
+     80.0
+    ],
+    "chat_ci90": [
+     81.8,
+     93.5
+    ],
+    "overall_ci90": [
+     72.2,
+     84.1
+    ]
    },
    "notes": [
-    "2 cut off isolated",
-    "1 cut off in chunks"
+    "3 cut off isolated",
+    "3 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "gemma4:26b",
@@ -91,32 +124,49 @@
    "license": "gemma",
    "tools": true,
    "isolated": {
-    "passed": 58,
+    "passed": 57,
     "total": 65,
-    "pct": 89
+    "pct": 88
    },
    "chunks": {
-    "passed": 16,
-    "total": 21,
-    "pct": 76
+    "passed": 24,
+    "total": 39,
+    "pct": 62
    },
    "chat": {
-    "passed": 55,
-    "total": 80,
-    "pct": 68.8,
+    "passed": 73,
+    "total": 77,
+    "pct": 94.8,
     "timed_out": false
    },
-   "chat_pct": 68.8,
+   "chat_pct": 94.8,
    "scores": {
-    "extraction": 80.5,
-    "chat": 68.8,
-    "overall": 75.8
+    "extraction": 70.3,
+    "chat": 94.8,
+    "overall": 80.1,
+    "extraction_ci90": [
+     61.0,
+     79.0
+    ],
+    "chat_ci90": [
+     90.9,
+     98.7
+    ],
+    "overall_ci90": [
+     74.2,
+     85.4
+    ]
    },
    "notes": [
+    "1 cut off isolated",
     "1 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "gemma4:31b",
@@ -125,62 +175,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 58,
-    "total": 65,
-    "pct": 89
-   },
-   "chunks": {
-    "passed": 17,
-    "total": 21,
-    "pct": 81
-   },
-   "chat": {
     "passed": 59,
-    "total": 80,
-    "pct": 73.8,
-    "timed_out": false
-   },
-   "chat_pct": 73.8,
-   "scores": {
-    "extraction": 83.7,
-    "chat": 73.8,
-    "overall": 79.7
-   },
-   "notes": [],
-   "pins_applied": true,
-   "harness": null
-  },
-  {
-   "id": "gemma4:e4b",
-   "label": "Gemma 4 E4B",
-   "vram_gb": 9.6,
-   "license": "gemma",
-   "tools": true,
-   "isolated": {
-    "passed": 46,
     "total": 65,
-    "pct": 71
+    "pct": 91
    },
    "chunks": {
-    "passed": 12,
-    "total": 21,
-    "pct": 57
+    "passed": 30,
+    "total": 39,
+    "pct": 77
    },
    "chat": {
-    "passed": 46,
-    "total": 80,
-    "pct": 57.5,
+    "passed": 75,
+    "total": 77,
+    "pct": 97.4,
     "timed_out": false
    },
-   "chat_pct": 57.5,
+   "chat_pct": 97.4,
    "scores": {
-    "extraction": 61.7,
-    "chat": 57.5,
-    "overall": 60.0
+    "extraction": 81.5,
+    "chat": 97.4,
+    "overall": 87.9,
+    "extraction_ci90": [
+     73.5,
+     89.1
+    ],
+    "chat_ci90": [
+     94.8,
+     100.0
+    ],
+    "overall_ci90": [
+     82.9,
+     92.5
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "glm-4.7-flash",
@@ -189,35 +223,52 @@
    "license": "mit",
    "tools": true,
    "isolated": {
-    "passed": 33,
+    "passed": 37,
     "total": 65,
-    "pct": 51
+    "pct": 57
    },
    "chunks": {
-    "passed": 3,
-    "total": 21,
-    "pct": 14
+    "passed": 0,
+    "total": 39,
+    "pct": 0
    },
    "chat": {
-    "passed": null,
-    "total": 80,
-    "pct": null,
-    "timed_out": true
+    "passed": 68,
+    "total": 77,
+    "pct": 88.3,
+    "timed_out": false
    },
-   "chat_pct": null,
+   "chat_pct": 88.3,
    "scores": {
-    "extraction": 26.4,
-    "chat": 0.0,
-    "overall": 15.9
+    "extraction": 19.0,
+    "chat": 88.3,
+    "overall": 46.7,
+    "extraction_ci90": [
+     15.9,
+     22.1
+    ],
+    "chat_ci90": [
+     81.8,
+     93.5
+    ],
+    "overall_ci90": [
+     43.5,
+     49.7
+    ]
    },
    "notes": [
-    "10 cut off isolated",
-    "4 looped isolated",
-    "13 cut off in chunks",
-    "12 looped in chunks"
+    "13 cut off isolated",
+    "5 looped isolated",
+    "17 cut off in chunks",
+    "17 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g3484a117e",
+    "0.5.0+g42406fc7d",
+    "0.5.0+g818675ae2"
+   ]
   },
   {
    "id": "glm4:9b",
@@ -226,34 +277,49 @@
    "license": "mit",
    "tools": true,
    "isolated": {
-    "passed": 36,
+    "passed": 38,
     "total": 65,
-    "pct": 55
+    "pct": 58
    },
    "chunks": {
-    "passed": 12,
-    "total": 21,
-    "pct": 57
+    "passed": 20,
+    "total": 39,
+    "pct": 51
    },
    "chat": {
-    "passed": 50,
-    "total": 80,
-    "pct": 62.5,
+    "passed": 64,
+    "total": 77,
+    "pct": 83.1,
     "timed_out": false
    },
-   "chat_pct": 62.5,
+   "chat_pct": 83.1,
    "scores": {
-    "extraction": 56.6,
-    "chat": 62.5,
-    "overall": 58.9
+    "extraction": 53.7,
+    "chat": 83.1,
+    "overall": 65.5,
+    "extraction_ci90": [
+     44.1,
+     63.2
+    ],
+    "chat_ci90": [
+     75.3,
+     89.6
+    ],
+    "overall_ci90": [
+     59.1,
+     71.6
+    ]
    },
    "notes": [
-    "2 cut off isolated",
-    "2 cut off in chunks",
-    "1 looped in chunks"
+    "7 cut off isolated",
+    "7 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "gpt-oss:20b",
@@ -262,34 +328,51 @@
    "license": "mit",
    "tools": true,
    "isolated": {
-    "passed": 39,
+    "passed": 44,
     "total": 65,
-    "pct": 60
+    "pct": 68
    },
    "chunks": {
-    "passed": 3,
-    "total": 21,
-    "pct": 14
+    "passed": 5,
+    "total": 39,
+    "pct": 13
    },
    "chat": {
-    "passed": 54,
-    "total": 80,
-    "pct": 67.5,
+    "passed": 63,
+    "total": 77,
+    "pct": 81.8,
     "timed_out": false
    },
-   "chat_pct": 67.5,
+   "chat_pct": 81.8,
    "scores": {
-    "extraction": 29.5,
-    "chat": 67.5,
-    "overall": 44.7
+    "extraction": 31.1,
+    "chat": 81.8,
+    "overall": 51.4,
+    "extraction_ci90": [
+     25.0,
+     37.9
+    ],
+    "chat_ci90": [
+     74.0,
+     88.3
+    ],
+    "overall_ci90": [
+     46.4,
+     56.2
+    ]
    },
    "notes": [
-    "20 cut off isolated",
+    "16 cut off isolated",
     "thought despite think=off",
-    "18 cut off in chunks"
+    "16 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g3484a117e",
+    "0.5.0+g42406fc7d",
+    "0.5.0+g818675ae2"
+   ]
   },
   {
    "id": "granite4.2:30b",
@@ -298,69 +381,52 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 49,
+    "passed": 44,
     "total": 65,
-    "pct": 75
+    "pct": 68
    },
    "chunks": {
-    "passed": 9,
-    "total": 21,
-    "pct": 43
+    "passed": 12,
+    "total": 39,
+    "pct": 31
    },
    "chat": {
-    "passed": null,
-    "total": 80,
-    "pct": null,
-    "timed_out": true
-   },
-   "chat_pct": null,
-   "scores": {
-    "extraction": 53.7,
-    "chat": 0.0,
-    "overall": 32.2
-   },
-   "notes": [
-    "1 cut off isolated",
-    "2 cut off in chunks"
-   ],
-   "pins_applied": true,
-   "harness": null
-  },
-  {
-   "id": "granite4.2:8b",
-   "label": "Granite 4.2 8B",
-   "vram_gb": 5.3,
-   "license": "apache-2.0",
-   "tools": true,
-   "isolated": {
-    "passed": 30,
-    "total": 65,
-    "pct": 46
-   },
-   "chunks": {
-    "passed": 7,
-    "total": 21,
-    "pct": 33
-   },
-   "chat": {
-    "passed": 52,
-    "total": 80,
-    "pct": 65.0,
+    "passed": 67,
+    "total": 77,
+    "pct": 87.0,
     "timed_out": false
    },
-   "chat_pct": 65.0,
+   "chat_pct": 87.0,
    "scores": {
-    "extraction": 37.6,
-    "chat": 65.0,
-    "overall": 48.6
+    "extraction": 43.1,
+    "chat": 87.0,
+    "overall": 60.7,
+    "extraction_ci90": [
+     34.2,
+     51.5
+    ],
+    "chat_ci90": [
+     80.5,
+     93.5
+    ],
+    "overall_ci90": [
+     54.9,
+     66.6
+    ]
    },
    "notes": [
-    "2 looped isolated",
-    "1 cut off in chunks",
-    "8 looped in chunks"
+    "3 cut off isolated",
+    "4 cut off in chunks",
+    "6 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g0803c70ec.dirty",
+    "0.5.0+g288b3fc6e.dirty",
+    "0.5.0+g818675ae2",
+    "0.5.0+g8cc937485"
+   ]
   },
   {
    "id": "llama3.1:8b",
@@ -369,33 +435,51 @@
    "license": "llama3.1",
    "tools": true,
    "isolated": {
-    "passed": 36,
+    "passed": 40,
     "total": 65,
-    "pct": 55
+    "pct": 62
    },
    "chunks": {
-    "passed": 8,
-    "total": 21,
-    "pct": 38
+    "passed": 9,
+    "total": 39,
+    "pct": 23
    },
    "chat": {
-    "passed": 45,
-    "total": 80,
-    "pct": 56.2,
+    "passed": 67,
+    "total": 77,
+    "pct": 87.0,
     "timed_out": false
    },
-   "chat_pct": 56.2,
+   "chat_pct": 87.0,
    "scores": {
-    "extraction": 43.9,
-    "chat": 56.2,
-    "overall": 48.8
+    "extraction": 35.9,
+    "chat": 87.0,
+    "overall": 56.3,
+    "extraction_ci90": [
+     28.4,
+     44.1
+    ],
+    "chat_ci90": [
+     80.5,
+     93.5
+    ],
+    "overall_ci90": [
+     51.0,
+     61.9
+    ]
    },
    "notes": [
-    "8 cut off isolated",
-    "7 cut off in chunks"
+    "22 cut off isolated",
+    "6 looped isolated",
+    "22 cut off in chunks",
+    "6 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "mistral-small3.2:24b",
@@ -404,32 +488,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 49,
+    "passed": 53,
     "total": 65,
-    "pct": 75
+    "pct": 82
    },
    "chunks": {
-    "passed": 14,
-    "total": 21,
-    "pct": 67
+    "passed": 24,
+    "total": 39,
+    "pct": 62
    },
    "chat": {
-    "passed": 50,
-    "total": 80,
-    "pct": 62.5,
+    "passed": 70,
+    "total": 77,
+    "pct": 90.9,
     "timed_out": false
    },
-   "chat_pct": 62.5,
+   "chat_pct": 90.9,
    "scores": {
-    "extraction": 69.6,
-    "chat": 62.5,
-    "overall": 66.7
+    "extraction": 68.2,
+    "chat": 90.9,
+    "overall": 77.3,
+    "extraction_ci90": [
+     59.1,
+     76.8
+    ],
+    "chat_ci90": [
+     85.7,
+     96.1
+    ],
+    "overall_ci90": [
+     71.3,
+     83.0
+    ]
    },
-   "notes": [
-    "1 cut off isolated"
-   ],
+   "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "muse-glimmer:30b",
@@ -438,30 +536,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 59,
+    "passed": 58,
     "total": 65,
-    "pct": 91
+    "pct": 89
    },
    "chunks": {
-    "passed": 12,
-    "total": 21,
-    "pct": 57
+    "passed": 27,
+    "total": 39,
+    "pct": 69
    },
    "chat": {
-    "passed": 61,
-    "total": 80,
-    "pct": 76.2,
+    "passed": 72,
+    "total": 77,
+    "pct": 93.5,
     "timed_out": false
    },
-   "chat_pct": 76.2,
+   "chat_pct": 93.5,
    "scores": {
-    "extraction": 68.4,
-    "chat": 76.2,
-    "overall": 71.5
+    "extraction": 75.9,
+    "chat": 93.5,
+    "overall": 82.9,
+    "extraction_ci90": [
+     67.5,
+     83.9
+    ],
+    "chat_ci90": [
+     88.3,
+     97.4
+    ],
+    "overall_ci90": [
+     77.6,
+     88.2
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "nemotron-3.5-lightning:30b-a3b",
@@ -470,32 +584,51 @@
    "license": "nvidia-open-model",
    "tools": true,
    "isolated": {
-    "passed": 46,
+    "passed": 40,
     "total": 65,
-    "pct": 71
+    "pct": 62
    },
    "chunks": {
-    "passed": 3,
-    "total": 21,
-    "pct": 14
+    "passed": 10,
+    "total": 39,
+    "pct": 26
    },
    "chat": {
-    "passed": 53,
-    "total": 80,
-    "pct": 66.2,
+    "passed": 66,
+    "total": 77,
+    "pct": 85.7,
     "timed_out": false
    },
-   "chat_pct": 66.2,
+   "chat_pct": 85.7,
    "scores": {
-    "extraction": 33.1,
-    "chat": 66.2,
-    "overall": 46.4
+    "extraction": 37.6,
+    "chat": 85.7,
+    "overall": 56.8,
+    "extraction_ci90": [
+     29.6,
+     46.2
+    ],
+    "chat_ci90": [
+     79.2,
+     92.2
+    ],
+    "overall_ci90": [
+     51.2,
+     62.6
+    ]
    },
    "notes": [
-    "1 looped in chunks"
+    "9 cut off isolated",
+    "3 looped isolated",
+    "9 cut off in chunks",
+    "3 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "phi4:14b",
@@ -504,30 +637,46 @@
    "license": "mit",
    "tools": false,
    "isolated": {
-    "passed": 43,
+    "passed": 46,
     "total": 65,
-    "pct": 66
+    "pct": 71
    },
    "chunks": {
-    "passed": 14,
-    "total": 21,
-    "pct": 67
+    "passed": 24,
+    "total": 39,
+    "pct": 62
    },
    "chat": {
-    "passed": 52,
-    "total": 80,
-    "pct": 65.0,
+    "passed": 69,
+    "total": 77,
+    "pct": 89.6,
     "timed_out": false
    },
-   "chat_pct": 65.0,
+   "chat_pct": 89.6,
    "scores": {
-    "extraction": 66.5,
-    "chat": 65.0,
-    "overall": 65.9
+    "extraction": 64.6,
+    "chat": 89.6,
+    "overall": 74.6,
+    "extraction_ci90": [
+     55.6,
+     73.5
+    ],
+    "chat_ci90": [
+     83.1,
+     94.8
+    ],
+    "overall_ci90": [
+     68.9,
+     80.4
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen2.5:14b-instruct",
@@ -536,32 +685,49 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 47,
+    "passed": 46,
     "total": 65,
-    "pct": 72
+    "pct": 71
    },
    "chunks": {
-    "passed": 16,
-    "total": 21,
-    "pct": 76
+    "passed": 19,
+    "total": 39,
+    "pct": 49
    },
    "chat": {
-    "passed": 54,
-    "total": 80,
-    "pct": 67.5,
+    "passed": 69,
+    "total": 77,
+    "pct": 89.6,
     "timed_out": false
    },
-   "chat_pct": 67.5,
+   "chat_pct": 89.6,
    "scores": {
-    "extraction": 74.9,
-    "chat": 67.5,
-    "overall": 71.9
+    "extraction": 56.1,
+    "chat": 89.6,
+    "overall": 69.5,
+    "extraction_ci90": [
+     46.3,
+     65.6
+    ],
+    "chat_ci90": [
+     83.1,
+     94.8
+    ],
+    "overall_ci90": [
+     63.3,
+     75.4
+    ]
    },
    "notes": [
-    "1 looped in chunks"
+    "9 looped isolated",
+    "9 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3.5:27b",
@@ -570,30 +736,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 53,
+    "passed": 57,
     "total": 65,
-    "pct": 82
+    "pct": 88
    },
    "chunks": {
-    "passed": 14,
-    "total": 21,
-    "pct": 67
+    "passed": 25,
+    "total": 39,
+    "pct": 64
    },
    "chat": {
-    "passed": 58,
-    "total": 80,
-    "pct": 72.5,
+    "passed": 71,
+    "total": 77,
+    "pct": 92.2,
     "timed_out": false
    },
-   "chat_pct": 72.5,
+   "chat_pct": 92.2,
    "scores": {
-    "extraction": 71.6,
-    "chat": 72.5,
-    "overall": 72.0
+    "extraction": 72.0,
+    "chat": 92.2,
+    "overall": 80.1,
+    "extraction_ci90": [
+     63.1,
+     80.7
+    ],
+    "chat_ci90": [
+     87.0,
+     96.2
+    ],
+    "overall_ci90": [
+     74.3,
+     85.6
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3.5:9b",
@@ -602,32 +784,48 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 48,
+    "passed": 45,
     "total": 65,
-    "pct": 74
+    "pct": 69
    },
    "chunks": {
-    "passed": 14,
-    "total": 21,
-    "pct": 67
+    "passed": 19,
+    "total": 39,
+    "pct": 49
    },
    "chat": {
-    "passed": 57,
-    "total": 80,
-    "pct": 71.2,
+    "passed": 66,
+    "total": 77,
+    "pct": 85.7,
     "timed_out": false
    },
-   "chat_pct": 71.2,
+   "chat_pct": 85.7,
    "scores": {
-    "extraction": 69.1,
-    "chat": 71.2,
-    "overall": 69.9
+    "extraction": 55.6,
+    "chat": 85.7,
+    "overall": 67.6,
+    "extraction_ci90": [
+     46.5,
+     64.6
+    ],
+    "chat_ci90": [
+     79.2,
+     92.2
+    ],
+    "overall_ci90": [
+     61.4,
+     73.7
+    ]
    },
    "notes": [
     "1 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g42406fc7d",
+    "0.5.0+g818675ae2"
+   ]
   },
   {
    "id": "qwen3.6:27b",
@@ -636,30 +834,49 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 50,
+    "passed": 51,
     "total": 65,
-    "pct": 77
+    "pct": 78
    },
    "chunks": {
-    "passed": 14,
-    "total": 21,
-    "pct": 67
+    "passed": 22,
+    "total": 39,
+    "pct": 56
    },
    "chat": {
-    "passed": 60,
-    "total": 80,
-    "pct": 75.0,
+    "passed": 72,
+    "total": 77,
+    "pct": 93.5,
     "timed_out": false
    },
-   "chat_pct": 75.0,
+   "chat_pct": 93.5,
    "scores": {
-    "extraction": 70.1,
-    "chat": 75.0,
-    "overall": 72.1
+    "extraction": 63.8,
+    "chat": 93.5,
+    "overall": 75.7,
+    "extraction_ci90": [
+     54.7,
+     72.6
+    ],
+    "chat_ci90": [
+     88.3,
+     97.4
+    ],
+    "overall_ci90": [
+     69.7,
+     81.4
+    ]
    },
-   "notes": [],
+   "notes": [
+    "1 cut off isolated",
+    "1 cut off in chunks"
+   ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3.6:35b-a3b",
@@ -668,30 +885,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 49,
+    "passed": 52,
     "total": 65,
-    "pct": 75
+    "pct": 80
    },
    "chunks": {
-    "passed": 13,
-    "total": 21,
-    "pct": 62
+    "passed": 21,
+    "total": 39,
+    "pct": 54
    },
    "chat": {
-    "passed": 63,
-    "total": 80,
-    "pct": 78.8,
+    "passed": 74,
+    "total": 77,
+    "pct": 96.1,
     "timed_out": false
    },
-   "chat_pct": 78.8,
+   "chat_pct": 96.1,
    "scores": {
-    "extraction": 66.4,
-    "chat": 78.8,
-    "overall": 71.3
+    "extraction": 62.6,
+    "chat": 96.1,
+    "overall": 76.0,
+    "extraction_ci90": [
+     53.3,
+     71.6
+    ],
+    "chat_ci90": [
+     92.2,
+     98.7
+    ],
+    "overall_ci90": [
+     70.1,
+     81.6
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3.8:27b",
@@ -700,30 +933,46 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 54,
+    "passed": 55,
     "total": 65,
-    "pct": 83
+    "pct": 85
    },
    "chunks": {
-    "passed": 15,
-    "total": 21,
-    "pct": 71
+    "passed": 25,
+    "total": 39,
+    "pct": 64
    },
    "chat": {
-    "passed": 62,
-    "total": 80,
-    "pct": 77.5,
+    "passed": 74,
+    "total": 77,
+    "pct": 96.1,
     "timed_out": false
    },
-   "chat_pct": 77.5,
+   "chat_pct": 96.1,
    "scores": {
-    "extraction": 75.3,
-    "chat": 77.5,
-    "overall": 76.2
+    "extraction": 70.9,
+    "chat": 96.1,
+    "overall": 81.0,
+    "extraction_ci90": [
+     62.0,
+     79.8
+    ],
+    "chat_ci90": [
+     92.2,
+     98.7
+    ],
+    "overall_ci90": [
+     75.4,
+     86.5
+    ]
    },
    "notes": [],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3:14b",
@@ -732,32 +981,49 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 46,
+    "passed": 51,
     "total": 65,
-    "pct": 71
+    "pct": 78
    },
    "chunks": {
-    "passed": 12,
-    "total": 21,
-    "pct": 57
+    "passed": 21,
+    "total": 39,
+    "pct": 54
    },
    "chat": {
-    "passed": 51,
-    "total": 80,
-    "pct": 63.8,
+    "passed": 69,
+    "total": 77,
+    "pct": 89.6,
     "timed_out": false
    },
-   "chat_pct": 63.8,
+   "chat_pct": 89.6,
    "scores": {
-    "extraction": 61.7,
-    "chat": 63.8,
-    "overall": 62.5
+    "extraction": 62.1,
+    "chat": 89.6,
+    "overall": 73.1,
+    "extraction_ci90": [
+     53.0,
+     70.8
+    ],
+    "chat_ci90": [
+     84.4,
+     94.8
+    ],
+    "overall_ci90": [
+     67.2,
+     78.8
+    ]
    },
    "notes": [
-    "1 cut off isolated"
+    "1 cut off isolated",
+    "1 cut off in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3:30b-instruct",
@@ -766,32 +1032,51 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 49,
+    "passed": 50,
     "total": 65,
-    "pct": 75
+    "pct": 77
    },
    "chunks": {
-    "passed": 10,
-    "total": 21,
-    "pct": 48
+    "passed": 19,
+    "total": 39,
+    "pct": 49
    },
    "chat": {
-    "passed": 58,
-    "total": 80,
-    "pct": 72.5,
+    "passed": 71,
+    "total": 77,
+    "pct": 92.2,
     "timed_out": false
    },
-   "chat_pct": 72.5,
+   "chat_pct": 92.2,
    "scores": {
-    "extraction": 56.9,
-    "chat": 72.5,
-    "overall": 63.1
+    "extraction": 58.1,
+    "chat": 92.2,
+    "overall": 71.8,
+    "extraction_ci90": [
+     49.2,
+     67.0
+    ],
+    "chat_ci90": [
+     87.0,
+     97.4
+    ],
+    "overall_ci90": [
+     66.1,
+     77.7
+    ]
    },
    "notes": [
-    "1 cut off isolated"
+    "2 cut off isolated",
+    "1 looped isolated",
+    "2 cut off in chunks",
+    "1 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   },
   {
    "id": "qwen3:8b",
@@ -800,35 +1085,51 @@
    "license": "apache-2.0",
    "tools": true,
    "isolated": {
-    "passed": 40,
+    "passed": 41,
     "total": 65,
-    "pct": 62
+    "pct": 63
    },
    "chunks": {
-    "passed": 5,
-    "total": 21,
-    "pct": 24
+    "passed": 16,
+    "total": 39,
+    "pct": 41
    },
    "chat": {
-    "passed": 55,
-    "total": 80,
-    "pct": 68.8,
+    "passed": 64,
+    "total": 77,
+    "pct": 83.1,
     "timed_out": false
    },
-   "chat_pct": 68.8,
+   "chat_pct": 83.1,
    "scores": {
-    "extraction": 36.4,
-    "chat": 68.8,
-    "overall": 49.3
+    "extraction": 48.4,
+    "chat": 83.1,
+    "overall": 62.3,
+    "extraction_ci90": [
+     39.0,
+     57.8
+    ],
+    "chat_ci90": [
+     76.6,
+     89.6
+    ],
+    "overall_ci90": [
+     56.4,
+     68.5
+    ]
    },
    "notes": [
-    "4 cut off isolated",
-    "2 looped isolated",
-    "4 cut off in chunks",
-    "9 looped in chunks"
+    "12 cut off isolated",
+    "11 looped isolated",
+    "12 cut off in chunks",
+    "11 looped in chunks"
    ],
    "pins_applied": true,
-   "harness": null
+   "harness": null,
+   "app_versions": [
+    "0.5.0+g818675ae2",
+    "0.5.0+g8a8d393d6"
+   ]
   }
  ]
 }

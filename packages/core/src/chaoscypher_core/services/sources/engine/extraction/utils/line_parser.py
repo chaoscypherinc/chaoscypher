@@ -6,20 +6,16 @@ r"""Line-based parser for LLM extraction output.
 Parses pipe-delimited line format for entities, relationships, properties, and renames.
 Uses greedy parsing (volatile fields LAST) to handle unescaped pipes in prose text.
 
-Format specifications (V1 — legacy):
-- Entity: E|name|type|aliases|confidence|description
-- Relationship: R|source|target|type|confidence|justification
-- Property: P|entity_name|key|value
-- Rename: A|old_name|new_name|confidence|reasoning
-
-Format specifications (V2 — evidence-gated):
+Format specifications (evidence-gated; the earlier sent_ref-less format
+is not supported):
 - Entity: E|name|type|aliases|confidence|sent_ref|description
 - Relationship: R|source|target|type|confidence|sent_ref|justification
 - Property: P|entity_index|key|value  (index is 0-based int)
-- Rename: A|old_name|new_name|confidence|sent_ref|reasoning
+- Rename: A|old_name|new_name|confidence|sent_ref|reasoning (no prompt asks
+  for one; the path is dormant)
 
-Auto-detection: V2 is detected when field count is 6+ and the 5th field
-matches the sentence reference pattern ``S\d+(-S\d+)?``.
+Entity fields are located by anchoring on confidence + sent_ref rather than
+by position, so a missing or doubled aliases field still parses.
 
 Example:
     E|Prince Andrei|Character|Andrei; Prince Andrew|0.9|S1-S3|The eldest son of Prince Bolkonsky
@@ -36,6 +32,7 @@ import structlog
 from chaoscypher_core.services.sources.engine.extraction.utils.constants import (
     LOOP_MAX_OUT_OF_BOUNDS,
     LOOP_MAX_SOURCE_TYPE_REPEAT,
+    UNKNOWN_ENTITY_TYPE,
 )
 
 
@@ -285,6 +282,48 @@ def sanitize_justification(
 # which becomes the description.
 _ENTITY_MAXSPLIT = 8
 
+# A complete line of each kind has this many fields after its ``X|`` prefix
+# (``E``: name, type, aliases, confidence, sent_ref, description; ``R``:
+# source, target, type, confidence, sent_ref, justification; ``P``: entity,
+# key, value). A trailing ``|`` is the model's line terminator only when the
+# line already carries them all.
+_FULL_FIELD_COUNT: dict[str, int] = {"E": 6, "R": 6, "P": 3}
+
+
+def _strip_terminator_pipe(line: str) -> str:
+    r"""Drop a trailing ``|`` the model wrote as a line terminator, never a field.
+
+    LLMs often close a line with ``|`` (``P|Napoleon|age|Middle-aged|``);
+    stripped blindly, the last field of every parser captured it. But a
+    trailing ``|`` on a line whose last field is empty IS that field
+    (``E|Napoleon|Person||1.0|S1|`` — no description; ``R|0|1|knows|0.9|S1|``
+    — no justification), and the prompt tells the model to keep every field
+    even when empty. Until 2026-10-12 both were stripped to one field short
+    and dropped as malformed. The pipe goes only when the line holds more
+    fields than its format; an escaped ``\\|`` is never a terminator.
+    """
+    if not line.endswith("|") or line.endswith("\\|"):
+        return line
+    full = _FULL_FIELD_COUNT.get(line[:1])
+    if full is None or line[1:2] != "|":
+        return line[:-1]
+    if len(split_fields(line[2:], len(line))) > full:
+        return line[:-1]
+    return line
+
+
+def _separators_are_spaced(parts: list[str]) -> bool:
+    """Whether every ``|`` of the line was written as ``␠|␠`` (the model's separator).
+
+    ``E| Pierre | Person | Pierre Bezukhov | 1.0 | S1 | a count`` pads every
+    field; ``E|Rostov | Bolkonsky & Sons|Organization|…`` pads one, around the
+    unescaped pipe inside the name. The unescaped-pipe guard applies to the
+    second shape only (until 2026-10-12 it rejected the first, and the
+    ``P|`` lines of the dropped entity with it).
+    """
+    return all(p.startswith(" ") for p in parts[1:]) and all(p.endswith(" ") for p in parts[:-1])
+
+
 _CONFIDENCE_NUMBER = re.compile(r"(\d+(?:\.\d+)?)")
 
 
@@ -390,7 +429,11 @@ def parse_entity_line(
             expected=6,
         )
         return None
-    if parts[0] != parts[0].rstrip() and parts[1] != parts[1].lstrip():
+    if (
+        parts[0] != parts[0].rstrip()
+        and parts[1] != parts[1].lstrip()
+        and not _separators_are_spaced(parts)
+    ):
         # ``Rostov | Bolkonsky & Sons``: a spaced, unescaped pipe inside the
         # name. Parsed, it would yield name "Rostov", type "Bolkonsky & Sons".
         logger.warning(
@@ -424,7 +467,7 @@ def parse_entity_line(
         return None
 
     if not entity_type:
-        entity_type = "UNKNOWN"
+        entity_type = UNKNOWN_ENTITY_TYPE
 
     parsed_aliases, rejected = _parse_aliases(
         aliases_str, minimum_alias_length=minimum_alias_length
@@ -525,8 +568,13 @@ def _is_proper_name_alias(alias: str) -> bool:
         True if alias looks like a proper name
 
     """
-    # Possessive phrases like "Boris's mother" are descriptors
-    if "'s " in alias:
+    # Possessive phrases like "Boris's mother" (either apostrophe, or the plural
+    # "the Kurágins' set") are descriptors: the name rule's one reading of a possessive.
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        has_possessive,
+    )
+
+    if has_possessive(alias):
         return False
     # Check if any word starts with uppercase
     return any(word[0].isupper() for word in alias.split() if word)
@@ -630,7 +678,9 @@ def parse_relationship_line(line: str) -> dict[str, Any] | None:
         return None
 
     if not rel_type:
-        rel_type = "related_to"
+        # A line that names no relationship states none: never a guessed related_to.
+        logger.warning("relationship_line_malformed", reason="empty_type", line=line[:100])
+        return None
 
     return {
         "source": source,
@@ -815,6 +865,10 @@ def _parse_mixed_lines(  # noqa: C901, PLR0912, PLR0915 - line dispatcher: each 
     # Track the index of the most recently parsed entity so P| lines
     # can be annotated with their proximity parent (the E| they follow).
     last_entity_index = len(entities) - 1  # -1 means "no entity yet"
+    # True while the P| lines that follow belong to an E| line that failed to
+    # parse: they describe the dropped entity, so they are dropped with it
+    # rather than landing on the previous entity by proximity.
+    parent_entity_dropped = False
 
     for raw_line in content.strip().splitlines():
         stripped = raw_line.strip()
@@ -825,19 +879,20 @@ def _parse_mixed_lines(  # noqa: C901, PLR0912, PLR0915 - line dispatcher: each 
         # Handles: "- E|...", "* E|...", "1. E|...", etc.
         normalized = _strip_bullet_prefix(stripped)
 
-        # Strip trailing pipe — LLMs often treat | as a line terminator,
-        # producing "P|Napoleon|age|Middle-aged|". Without this, the last
-        # field in every parser captures the trailing pipe as part of the value.
-        if normalized.endswith("|"):
-            normalized = normalized[:-1]
+        # Strip a trailing pipe the model wrote as a line terminator — but
+        # not one that closes an empty last field (see _strip_terminator_pipe).
+        normalized = _strip_terminator_pipe(normalized)
 
         if normalized.startswith("E|"):
             entity = parse_entity_line(normalized, minimum_alias_length=minimum_alias_length)
             if entity:
                 entities.append(entity)
                 last_entity_index = len(entities) - 1
-            elif stats is not None:
-                stats["dropped_lines"] = stats.get("dropped_lines", 0) + 1
+                parent_entity_dropped = False
+            else:
+                parent_entity_dropped = True
+                if stats is not None:
+                    stats["dropped_lines"] = stats.get("dropped_lines", 0) + 1
             # Reset tracking on entity lines
             last_source_type = None
             source_type_streak = 0
@@ -894,7 +949,13 @@ def _parse_mixed_lines(  # noqa: C901, PLR0912, PLR0915 - line dispatcher: each 
                 stats["dropped_lines"] = stats.get("dropped_lines", 0) + 1
         elif normalized.startswith("P|"):
             prop = parse_property_line(normalized)
-            if prop:
+            if prop and parent_entity_dropped:
+                # The parent E| line was dropped: this property describes an
+                # entity that does not exist, not the one parsed before it.
+                logger.debug("property_line_of_dropped_entity", line=stripped[:80])
+                if stats is not None:
+                    stats["dropped_lines"] = stats.get("dropped_lines", 0) + 1
+            elif prop:
                 # Annotate with proximity: the index of the last E| line
                 # seen before this P| line. Used by apply_properties_to_entities()
                 # to prefer positional context over the LLM's entity_index.
@@ -947,10 +1008,13 @@ def parse_extraction_output(
         stats: Optional mutable dict that the parser populates with
             ``dropped_lines`` (count of structured-prefix lines that
             failed to parse: malformed entity / relationship / property /
-            rename, plus relationships skipped by loop detection). Lets
-            the indexing pipeline surface the parser-drop count as a
-            quality counter on the source row without changing the
-            return shape.
+            rename, plus relationships skipped by loop detection) and
+            ``parsed_lines`` (the entity, relationship and property lines
+            it read). Lets the indexing pipeline surface the parser-drop
+            count as a quality counter on the source row, and tell an
+            answer nothing parses from (JSON, a table, another prefix:
+            ``chunk_failures.degenerate_output_check``), without changing
+            the return shape.
 
     Returns:
         Tuple of (entities, relationships, properties)
@@ -1011,6 +1075,9 @@ def parse_extraction_output(
 
     if stats is not None:
         stats["dropped_lines"] = stats.get("dropped_lines", 0) + local_stats["dropped_lines"]
+        stats["parsed_lines"] = (
+            stats.get("parsed_lines", 0) + len(entities) + len(relationships) + len(properties)
+        )
 
     return entities, relationships, properties
 

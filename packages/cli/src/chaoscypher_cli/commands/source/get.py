@@ -318,8 +318,13 @@ def get(source_id: str, database: str) -> None:
     try:
         ctx = get_context(database_name=database)
 
-        # Get file from adapter
-        file_record = ctx.storage_adapter.get_file(source_id, ctx.database_name)
+        # The light row (every lifecycle, LLM-metric and domain column, plus
+        # ``stage_progress``): ``get_file`` is the handlers' narrow
+        # projection, and until 2026-10-12 this command read it, so its
+        # Updated, Est. Cost, Model, LLM-metrics, domain-version and Stages
+        # blocks could never render (the phantom-columns class of the
+        # 2026-06-11 CLI audit, pinned by test_cmd_source_get).
+        file_record = ctx.storage_adapter.get_source(source_id, ctx.database_name)
 
         if not file_record:
             console.print(f"[red]File not found:[/red] {source_id}")

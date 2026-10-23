@@ -38,7 +38,7 @@ from chaoscypher_cortex.features.settings.ollama_models_service import (
     OllamaModelsService,
 )
 from chaoscypher_cortex.shared.auth.dependencies import (
-    CurrentUsername,  # noqa: TC001 - FastAPI runtime dep
+    CurrentUsername,
 )
 
 

@@ -18,6 +18,7 @@ import structlog
 
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
 
 logger = structlog.get_logger(__name__)
@@ -46,6 +47,7 @@ class DataResetService:
         - Source entity embeddings
         - Chunk extraction tasks
         - Chunk extraction jobs
+        - The graph rows only sources attest (the membership release)
         - Source files
         - Uploaded import files directory
 
@@ -91,7 +93,10 @@ class DataResetService:
                 adapter.delete_extraction_jobs(database_name=self.database_name)
                 logger.info("deleted_chunk_extraction_jobs", count=jobs_count)
 
-                # 5. Delete source files
+                # 5. Release every source from the graph (#795: graph_*.source_id
+                # is ON DELETE SET NULL, so the source rows take no graph rows),
+                # then delete the source files
+                get_transaction_graph_repository(adapter, self.database_name).release_all_sources()
                 adapter.delete_all_sources(database_name=self.database_name)
                 logger.info("deleted_source_files", count=source_processing_count)
 

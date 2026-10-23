@@ -119,7 +119,7 @@ curl http://localhost/api/v1/graph/source_groups
 GET /api/v1/graph/canvas
 ```
 
-Bulk fetch all graph data for canvas rendering in a single request. Returns minimal node, edge, and template data optimized for the graph canvas — no properties, embeddings, or timestamps. Replaces the need for separate paginated calls to `/nodes`, `/edges`, and `/templates`.
+Bulk fetch all graph data for canvas rendering in a single request. Returns minimal node, edge, and template data optimized for the graph canvas — no embeddings or timestamps, and no properties but the pipeline's flags (see `properties` below). Replaces the need for separate paginated calls to `/nodes`, `/edges`, and `/templates`.
 
 #### Query Parameters
 
@@ -150,6 +150,14 @@ curl "http://localhost/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002
       "label": "Albert Einstein",
       "position": { "x": 100.0, "y": 200.0 },
       "source_id": "src-001"
+    },
+    {
+      "id": "node-ghi-321",
+      "template_id": "person",
+      "label": "the count",
+      "position": null,
+      "source_id": "src-001",
+      "properties": { "descriptor_reference": true }
     }
   ],
   "edges": [
@@ -159,6 +167,17 @@ curl "http://localhost/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002
       "target_node_id": "node-def-456",
       "template_id": "rel-worked-on",
       "label": "worked on"
+    },
+    {
+      "id": "edge-uvw-456",
+      "source_node_id": "node-abc-123",
+      "target_node_id": "node-ghi-321",
+      "template_id": "rel-knows",
+      "label": "knows",
+      "properties": {
+        "unevidenced": true,
+        "evidence_reason": "\"Albert Einstein\" is named in S4 but \"the count\" is not, and knows needs both endpoints named (the domain's relation vocabulary has no words for it)"
+      }
     }
   ],
   "templates": [
@@ -181,8 +200,8 @@ curl "http://localhost/api/v1/graph/canvas?source_ids=src-001&source_ids=src-002
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `nodes` | array | Minimal node objects (id, template_id, label, position, source_id) |
-| `edges` | array | Minimal edge objects (id, source_node_id, target_node_id, template_id, label) |
+| `nodes` | array | Minimal node objects (id, template_id, label, position, source_id); a node the pipeline flagged also carries `properties` holding exactly its flags, each `true` (`orphan`, `descriptor_reference`, `low_plausibility`, `unplaced_type`, `unevidenced`, `excluded_name`), which the canvas groups in its "Unresolved" region |
+| `edges` | array | Minimal edge objects (id, source_node_id, target_node_id, template_id, label); an edge the pipeline flagged also carries `properties` holding its flags (`capped`; `unevidenced: true`: no cited sentence states the relationship, with the `evidence_reason`; `unmatched_label`, with the `written_label`; `type_mismatch`, with the `type_mismatch_reason`); the canvas draws an unevidenced edge dashed and the others thin |
 | `templates` | array | Template objects (id, name, template_type, icon, color, description) |
 | `total_nodes` | int | Number of nodes returned |
 | `total_edges` | int | Number of edges returned |

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,6 +18,10 @@ from chaoscypher_cortex.features.sources.chunk_attempts_api import (
 from chaoscypher_cortex.features.sources.chunk_attempts_service import (
     ChunkAttemptsService,
 )
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _summary_row(attempt_number: int = 1) -> dict:
@@ -175,3 +180,70 @@ async def test_get_attempt_404_missing(
             _="user",
             service=service,
         )
+
+
+# --- The response models take every column the real adapter returns (audit wave 6) ---
+
+
+def test_every_attempt_column_is_a_field_of_the_detail_model() -> None:
+    """``ChunkAttemptDetail`` forbids extra keys: a column added to the attempt row must be declared.
+
+    The hand-written rows above could not notice: 0011 added
+    ``decode_fallback`` to the row and the detail endpoint would have
+    answered 500 for every attempt.
+    """
+    from chaoscypher_core.adapters.sqlite.models import ChunkExtractionAttempt
+    from chaoscypher_cortex.features.sources.models import ChunkAttemptDetail
+
+    missing = set(ChunkExtractionAttempt.model_fields) - set(ChunkAttemptDetail.model_fields)
+    assert not missing, sorted(missing)
+
+
+def test_real_adapter_rows_validate_with_their_decode_fallback(tmp_path: Path) -> None:
+    """A rerun on a real adapter: the list and detail rows validate and carry the fallback."""
+    from sqlmodel import SQLModel
+
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.engine import evict_engine, get_engine
+    from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+        decode_fallback,
+    )
+    from chaoscypher_cortex.features.sources.models import (
+        ChunkAttemptDetail,
+        ChunkAttemptSummary,
+    )
+
+    db_path = tmp_path / "app.db"
+    SQLModel.metadata.create_all(get_engine(str(db_path)), checkfirst=True)
+    adapter = SqliteAdapter(str(db_path), database_name="default")
+    adapter.connect()
+    fallback = decode_fallback(2, seed=42, temperature=0.0)
+    assert fallback is not None
+    try:
+        adapter.upload_source(
+            source_id="src-1",
+            database_name="default",
+            filename="t.txt",
+            file_content=b"hello world",
+            staging_dir=str(tmp_path),
+        )
+        adapter.update_source_columns(
+            source_id="src-1", database_name="default", updates={"status": "committed"}
+        )
+        adapter.create_extraction_job(job_id="job-1", source_id="src-1", database_name="default")
+        adapter.create_chunk_task(
+            task_id="tsk-1", job_id="job-1", database_name="default", chunk_index=0
+        )
+        adapter.update_chunk_task(
+            "tsk-1", {"status": "completed", "decode_fallback": fallback.record()}
+        )
+        adapter.reset_chunk_task_for_rerun(task_id="tsk-1", source_id="src-1")
+        rows = adapter.list_chunk_attempts(chunk_task_id="tsk-1")
+        detail = adapter.get_chunk_attempt(rows[0]["id"])
+    finally:
+        adapter.disconnect()
+        evict_engine(db_path)
+
+    assert detail is not None
+    assert [ChunkAttemptSummary(**r).decode_fallback for r in rows] == [fallback.record()]
+    assert ChunkAttemptDetail(**detail).decode_fallback == fallback.record()

@@ -14,6 +14,8 @@ from unittest.mock import MagicMock
 from chaoscypher_core.operations.importing.import_service import (
     _resume_extraction_job,
 )
+from chaoscypher_core.services.sources.engine.extraction.domains import get_domain_registry
+from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
 from chaoscypher_core.utils.id import generate_id
 
 
@@ -61,8 +63,7 @@ class TestResumeExtractionClearsStaleError:
         adapter = MagicMock()
         adapter.get_chunks_for_extraction.return_value = [chunk]
 
-        registry = MagicMock()
-        registry.get_domain.return_value = None
+        registry = get_domain_registry()
 
         existing_job = _make_existing_job(source_id, job_id)
 
@@ -97,8 +98,7 @@ class TestResumeExtractionClearsStaleError:
             call_order.append("get_chunks") or [chunk]
         )
 
-        registry = MagicMock()
-        registry.get_domain.return_value = None
+        registry = get_domain_registry()
 
         existing_job = _make_existing_job(source_id, job_id)
 
@@ -123,9 +123,7 @@ class TestResumeExtractionClearsStaleError:
         adapter = MagicMock()
         adapter.get_chunks_for_extraction.return_value = chunks
 
-        fake_domain = MagicMock()
-        registry = MagicMock()
-        registry.get_domain.return_value = fake_domain
+        registry = get_domain_registry()
 
         existing_job = _make_existing_job(
             source_id,
@@ -142,5 +140,7 @@ class TestResumeExtractionClearsStaleError:
         )
 
         assert returned_job_id == job_id
-        assert returned_domain is fake_domain
+        # the job's stack (the floor plus its packs), as a fresh job builds it
+        assert isinstance(returned_domain, DomainStack)
+        assert returned_domain.names == ("technical",)
         assert returned_chunks == chunks

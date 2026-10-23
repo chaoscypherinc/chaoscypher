@@ -41,6 +41,10 @@ def build_public_settings(settings: Settings) -> PublicSettings:
         batch_export_max_attempts=settings.batching.export_max_attempts,
         batch_import_max_attempts=settings.batching.import_max_attempts,
         batch_graph_source_page_size=settings.batching.graph_source_page_size,
+        # Site import
+        web_site_max_pages=settings.web.site_max_pages,
+        web_site_preview_debounce_ms=settings.web.site_preview_debounce_ms,
+        web_site_pages_named_max=settings.web.site_pages_named_max,
         # Recovery
         recovery_warn_threshold=settings.source_recovery.recovery_warn_threshold,
         recovery_max_attempts=settings.source_recovery.max_recovery_attempts,

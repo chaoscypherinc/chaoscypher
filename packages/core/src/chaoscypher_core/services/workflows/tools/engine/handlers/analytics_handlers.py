@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from chaoscypher_core.ports.search import attesting_sources, item_in_source_scope
 from chaoscypher_core.services.graph.engine.analytics import GraphAnalyticsService
 from chaoscypher_core.services.workflows.tools.engine.handlers.decorators import tool_handler
 from chaoscypher_core.settings import BatchingSettings
@@ -154,10 +155,8 @@ class AnalyticsToolHandlers:
         # Filter nodes by source scope
         if source_ids:
             pre_filter = len(nodes)
-            pre_filter_sample = [getattr(n, "source_id", None) for n in nodes[:5]]
-            nodes = [
-                n for n in nodes if not getattr(n, "source_id", None) or n.source_id in source_ids
-            ]
+            pre_filter_sample = [attesting_sources(n) for n in nodes[:5]]
+            nodes = [n for n in nodes if item_in_source_scope(n, source_ids)]
             logger.info(
                 "graph_analysis_source_filter",
                 before_source_filter=pre_filter,
@@ -315,9 +314,7 @@ class AnalyticsToolHandlers:
         nodes = self._load_nodes()
 
         if source_ids:
-            nodes = [
-                n for n in nodes if not getattr(n, "source_id", None) or n.source_id in source_ids
-            ]
+            nodes = [n for n in nodes if item_in_source_scope(n, source_ids)]
 
         edges = self._load_edges()
 
@@ -353,13 +350,11 @@ class AnalyticsToolHandlers:
             return {"success": False, "error": f"Node not found: {node_id}"}
 
         # Check scope on the source node itself
-        if source_ids:
-            node_source = getattr(node, "source_id", None)
-            if node_source and node_source not in source_ids:
-                return {
-                    "success": False,
-                    "error": f"Node '{node.label}' is not accessible in the current source scope",
-                }
+        if source_ids and not item_in_source_scope(node, source_ids):
+            return {
+                "success": False,
+                "error": f"Node '{node.label}' is not accessible in the current source scope",
+            }
 
         # Use vector search if node has embedding
         if node.embedding:
@@ -377,11 +372,7 @@ class AnalyticsToolHandlers:
 
             # Filter by source scope
             if source_ids:
-                nodes = [
-                    n
-                    for n in nodes
-                    if not getattr(n, "source_id", None) or n.source_id in source_ids
-                ]
+                nodes = [n for n in nodes if item_in_source_scope(n, source_ids)]
             nodes_dict = {n.id: n for n in nodes}
 
             similar = [
@@ -400,11 +391,7 @@ class AnalyticsToolHandlers:
 
             # Filter by source scope
             if source_ids:
-                all_nodes = [
-                    n
-                    for n in all_nodes
-                    if not getattr(n, "source_id", None) or n.source_id in source_ids
-                ]
+                all_nodes = [n for n in all_nodes if item_in_source_scope(n, source_ids)]
 
             similar = [
                 {
@@ -527,9 +514,7 @@ class AnalyticsToolHandlers:
         nodes = self.graph.get_nodes_batch(result_node_ids, include_embedding=False)
         # Filter by source scope
         if source_ids:
-            nodes = [
-                n for n in nodes if not getattr(n, "source_id", None) or n.source_id in source_ids
-            ]
+            nodes = [n for n in nodes if item_in_source_scope(n, source_ids)]
         nodes_dict = {n.id: n for n in nodes}
 
         # Build final results

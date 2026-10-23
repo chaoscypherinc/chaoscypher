@@ -10,8 +10,10 @@ JSON fields use SQLModel's JSON type for structured data.
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlmodel import JSON, Column, Field, Relationship, SQLModel
+
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
 
 
 # pragma: ensure edit applied
@@ -318,6 +320,43 @@ class TriggerExecutionRow(SQLModel, table=True):
 # ================================
 
 
+class SourceSiteRow(SQLModel, table=True):
+    """One imported docs site (migration 0021; spec 2026-10-22-site-import-design, decision 4).
+
+    Each page is a source whose ``site_id`` names this row. ``status`` is a
+    ``chaoscypher_core.models.SiteStatus`` value (the import job's state);
+    the pages' progress is computed from their rows, never stored here.
+    ``options`` are the single-URL import's upload options, applied to every
+    page. ``discovery_method`` is a ``DiscoveryMethod`` value once a run has
+    discovered the site (``None`` before). ``run_started_at`` is when the
+    current run was queued or started (migration 0022: a run older than the
+    operations timeout is stale); ``run_cursor`` is how many of the
+    discovered pages the open pass has handled (``None``: no pass is open).
+    ``excluded_pages`` (migration 0023) is the page identities the user left
+    out (``None`` on a site imported before it: none); a refresh keeps them out.
+    """
+
+    __tablename__ = "source_sites"
+    __table_args__ = (
+        Index("ix_source_sites_database_name_created_at", "database_name", "created_at"),
+    )
+
+    id: str = Field(primary_key=True)
+    database_name: str
+    url: str
+    title: str
+    discovery_method: str | None = None
+    status: str
+    page_count: int = 0
+    options: dict[str, Any] | None = Field(default=None, sa_column=Column(JSON))
+    error_message: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    last_checked_at: datetime | None = None
+    run_started_at: datetime | None = None
+    run_cursor: int | None = None
+    excluded_pages: list[str] | None = Field(default=None, sa_column=Column(JSON))
+
+
 class SourceRow(SQLModel, table=True):
     """Unified source model - single record from upload through committed.
 
@@ -365,8 +404,26 @@ class SourceRow(SQLModel, table=True):
 
     # ========== Source Metadata ==========
     title: str | None = None  # Human-readable name (defaults to filename)
-    source_type: str | None = None  # "pdf", "text", "csv", "webpage", etc.
+    source_type: str | None = None  # "pdf", "text", "csv", "webpage", "memory", etc.
     origin_url: str | None = None  # Original location (URL, file path, etc.)
+
+    # ========== Memory provenance (source_type "memory"; migration 0020) ==========
+    memory_by: str | None = None  # who stated it ("user", an agent name)
+    memory_scope: str | None = None  # the scope it belongs to (None: unscoped)
+    valid_from: str | None = None  # from when it holds, ISO date YYYY-MM-DD
+
+    # ========== Site import (migration 0021) ==========
+    # The docs site this page was imported with (``source_sites``); SET NULL
+    # when the site row goes, so its pages are removed only through the
+    # source delete. ``site_gone_at``: when a refresh first found the page no
+    # longer listed by the site (kept, never deleted; cleared when listed again).
+    site_id: str | None = Field(
+        default=None,
+        sa_column=Column(
+            String, ForeignKey("source_sites.id", ondelete="SET NULL"), index=True, nullable=True
+        ),
+    )
+    site_gone_at: datetime | None = None
 
     # CCX 3.0 stable identity: the IRI anchoring this source to its identity in
     # an exported CCX package, so re-imports upsert by IRI. Added by migration
@@ -475,8 +532,13 @@ class SourceRow(SQLModel, table=True):
     extraction_entities_count: int = Field(default=0)
     extraction_relationships_count: int = Field(default=0)
     extraction_domain: str | None = (
-        None  # Domain used for extraction (e.g., 'technical', 'generic')
+        None  # The packs' label (packs.packs_label): 'literary', 'historical+literary', 'generic'
     )
+    # The packs the source was extracted with (migration 0017, 2026-10-08):
+    # a JSON list on the floor every source has, [] for the floor alone. The
+    # old ``extraction_domain`` above holds their label for one release
+    # (``domains.packs.pack_columns`` keeps the two in step).
+    extraction_packs: list[str] | None = Field(default=None, sa_column=Column(JSON))
     extraction_domain_auto: bool = Field(
         default=True
     )  # True if auto-detected, False if user-selected
@@ -492,7 +554,11 @@ class SourceRow(SQLModel, table=True):
     domain_content_hash: str | None = Field(default=None)
 
     # User-controlled extraction settings (set on upload, used during extraction)
-    forced_domain: str | None = Field(default=None)  # User-selected domain (None = auto-detect)
+    forced_domain: str | None = Field(default=None)  # First forced pack or 'generic' (None = auto)
+    # The packs the user chose (migration 0017): None = detect, [] = the floor
+    # alone. ``forced_domain`` holds the first of them (or 'generic') for one
+    # release (``domains.packs.pack_columns``).
+    forced_packs: list[str] | None = Field(default=None, sa_column=Column(JSON))
 
     # Whether the upload flow should auto-queue analysis after indexing
     # completes. Also consulted by the source reconciler when
@@ -536,7 +602,7 @@ class SourceRow(SQLModel, table=True):
         description="Apply domain content-exclusion rules during extraction.",
     )
     filtering_mode: str = Field(
-        default="balanced",
+        default=SOURCE_ROW_FILTERING_MODE,
         description=(
             "Strictness of post-extraction filters: "
             "'unfiltered' / 'minimal' / 'lenient' / 'balanced' / "
@@ -624,8 +690,10 @@ class SourceRow(SQLModel, table=True):
     )
     # Ranked-domain proposal blob persisted at park time by
     # ``park_for_confirmation`` (Phase 3). Shape:
-    # ``{ranking: [{domain, score}], confidence: float,
-    #     detected_domain: str, low_confidence: bool}``. Lives on SourceRow
+    # ``{ranking: [{domain, score}], confidence: float, packs: [str],
+    #     detected_domain: str, low_confidence: bool, reason: str}``
+    # (``packs`` since 2026-10-08; ``detected_domain`` is its first or
+    # 'generic'). Lives on SourceRow
     # (not the ChunkExtractionJob) so the CLI path — which never creates a job
     # row — participates and confirm re-resolves config rather than resuming.
     # Modeled on ``extraction_pending_file_info`` (sa.JSON via sqlmodel.JSON).
@@ -709,11 +777,25 @@ class SourceRow(SQLModel, table=True):
     chunks_coalesced_count: int = Field(default=0)
     llm_chunks_truncated: int = Field(default=0)
     llm_chunks_aborted_by_loop: int = Field(default=0)
+    llm_chunks_zero_yield: int = Field(default=0)
+    # Groups whose kept output came from a rung of the decode-fallback ladder
+    # (``chunk_failures.completion_counters``; migration 0011).
+    llm_chunks_rescued_by_fallback: int = Field(default=0)
     parser_lines_dropped: int = Field(default=0)
     dedup_entities_merged: int = Field(default=0)
     structural_entities_filtered: int = Field(default=0)
+    # Since 2026-10-07 the orphans the commit kept, flagged ``properties.orphan``
+    # (before, the ones it deleted); the ones it drops, carrying no evidence, are
+    # ``evidence_less_entities_dropped`` (migration 0013).
     orphan_entities_filtered: int = Field(default=0)
+    evidence_less_entities_dropped: int = Field(default=0)
+    # The per-chunk entities kept flagged since 2026-10-07 (migration 0014): below the
+    # plausibility bar but carrying evidence, and whose written type no core type answers to.
+    plausibility_entities_flagged: int = Field(default=0)
+    unplaced_type_entities_flagged: int = Field(default=0)
     relationships_dropped_invalid: int = Field(default=0)
+    # Since 2026-10-07 the relationships past a cap kept, flagged ``properties.capped``
+    # (before, the ones the cap dropped).
     relationships_dropped_capped: int = Field(default=0)
     citations_skipped_no_chunk_index: int = Field(default=0)
     vector_indexed_at: datetime | None = Field(default=None)
@@ -725,20 +807,38 @@ class SourceRow(SQLModel, table=True):
     # All counters are additive, NOT NULL, and reset to 0 on
     # force_re_extract.  Increment sites are best-effort: failure never
     # blocks the pipeline.
+    # Since 2026-10-08 only the entities the evidence filter drops (no description);
+    # the ones it keeps flagged ``properties.unevidenced`` are
+    # ``entities_unevidenced_kept``, an excluded name kept flagged
+    # ``properties.excluded_name`` is ``excluded_entities_kept`` (migration 0016).
     evidence_entities_dropped: int = Field(default=0)
+    entities_unevidenced_kept: int = Field(default=0)
+    excluded_entities_kept: int = Field(default=0)
+    # The pass-1 known-entities guards (migration 0018): aliases dropped for naming
+    # another known entry, known names demoted to the reference their sentences write.
+    aliases_crossed_known_dropped: int = Field(default=0)
+    referents_unevidenced_demoted: int = Field(default=0)
+    # Since 2026-10-07 only the relationships the evidence filter drops (an endpoint
+    # that is no entity of the chunk); the ones it keeps flagged
+    # ``properties.unevidenced`` are ``relationships_unevidenced_kept`` (migration 0015).
     evidence_relationships_dropped: int = Field(default=0)
+    relationships_unevidenced_kept: int = Field(default=0)
     aggregator_relationships_dropped: int = Field(default=0)
     llm_chunks_timed_out: int = Field(default=0)
     llm_chunks_failed_permanent: int = Field(default=0)
     standalone_chunk_failures: int = Field(default=0)
     semantic_dedup_fallbacks: int = Field(default=0)
     relationships_direction_corrected: int = Field(default=0)
+    # Since 2026-10-08 the relationships the strict type check kept flagged (before, the
+    # ones it dropped): ``relationships_unmatched_label_kept`` plus
+    # ``relationships_type_mismatch_kept`` (migration 0016).
     relationships_dropped_type_unmatched: int = Field(default=0)
-    # _fuzzy_type_match audit (2026-05-20, migration 0041): rescue-rate
-    # counters. _fuzzy_matched counts relationships that survived because
-    # tier 2/3 of _fuzzy_type_match matched the LLM-emitted entity type
-    # to an allowed type. _fell_through counts balanced-mode survivors
-    # where the type didn't match any template at all. Together with
+    relationships_unmatched_label_kept: int = Field(default=0)
+    relationships_type_mismatch_kept: int = Field(default=0)
+    # Type-constraint check counters (audit 2026-05-20, migration 0041).
+    # _fuzzy_matched counts relationships whose near-miss label was matched
+    # to its one edge template. _fell_through counts survivors kept without
+    # a check because the constraints were not strict. Together with
     # relationships_dropped_type_unmatched they cover every outcome of
     # the cross-chunk type-constraint check.
     relationships_type_fuzzy_matched: int = Field(default=0)
@@ -945,8 +1045,13 @@ class ChunkExtractionJob(SQLModel, table=True):
     generate_embeddings: bool = Field(default=True)
 
     # Domain Detection
-    forced_domain: str | None = Field(default=None)  # User-selected domain (e.g., 'technical')
-    detected_domain: str | None = Field(default=None)  # Auto-detected domain name
+    forced_domain: str | None = Field(default=None)  # First forced pack or 'generic' (None = auto)
+    detected_domain: str | None = Field(default=None)  # First detected pack or 'generic'
+    # The packs as lists (migration 0017): forced (None = detection decided)
+    # and detected; the single-name columns above hold the first of each for
+    # one release (``domains.packs.pack_columns``, ``job_packs``).
+    forced_packs: list[str] | None = Field(default=None, sa_column=Column(JSON))
+    detected_packs: list[str] | None = Field(default=None, sa_column=Column(JSON))
     domain_guidance: str | None = Field(
         default=None, sa_column=Column(Text)
     )  # Domain-specific LLM guidance (can be long)
@@ -1116,6 +1221,9 @@ class ChunkExtractionTask(SQLModel, table=True):
     # 0022 migration.
     finish_reason: str | None = None
     aborted_by_loop: bool | None = None
+    # The decoding a retry asked with instead of the pinned one
+    # (``chunk_failures.DecodeFallback.record``, audit wave 5); NULL for a first try.
+    decode_fallback: dict | None = Field(default=None, sa_column=Column(JSON))
 
 
 class ChunkExtractionAttempt(SQLModel, table=True):
@@ -1145,7 +1253,9 @@ class ChunkExtractionAttempt(SQLModel, table=True):
     attempt_number: int = Field(nullable=False)
     snapshotted_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # Snapshotted from ChunkExtractionTask at reset time
+    # Snapshotted from ChunkExtractionTask at reset time: every column below is
+    # copied, then reset on the task (``ATTEMPT_SNAPSHOT_FIELDS`` in
+    # ``_chunk_tasks_lifecycle``), so a column added here must exist on the task.
     started_at: datetime | None = None
     completed_at: datetime | None = None
     input_text: str | None = Field(default=None, sa_column=Column(Text))
@@ -1172,6 +1282,10 @@ class ChunkExtractionAttempt(SQLModel, table=True):
     # a TEXT-vs-VARCHAR drift on this column).
     error_message: str | None = Field(default=None, sa_column=Column(Text))
     error_type: str | None = None
+    # The decoding the snapshotted try asked with instead of the pinned one
+    # (``chunk_failures.DecodeFallback.record``; migration 0011); NULL for a
+    # pinned try.
+    decode_fallback: dict | None = Field(default=None, sa_column=Column(JSON))
 
 
 # ================================
@@ -1483,9 +1597,10 @@ class GraphNode(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # Source tracking for enabled filtering (CASCADE delete with source)
+    # Home source, for enabled filtering. ``SET NULL``, not ``CASCADE``: what a
+    # source delete removes is decided by the membership release (#795, D1/D5).
     source_id: str | None = Field(
-        sa_column=Column(String, ForeignKey("sources.id", ondelete="CASCADE"), index=True),
+        sa_column=Column(String, ForeignKey("sources.id", ondelete="SET NULL"), index=True),
         default=None,
     )
 
@@ -1534,9 +1649,10 @@ class GraphEdge(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # Source tracking for enabled filtering (CASCADE delete with source)
+    # Home source, for enabled filtering. ``SET NULL``, not ``CASCADE``: what a
+    # source delete removes is decided by the membership release (#795, D1/D5).
     source_id: str | None = Field(
-        sa_column=Column(String, ForeignKey("sources.id", ondelete="CASCADE"), index=True),
+        sa_column=Column(String, ForeignKey("sources.id", ondelete="SET NULL"), index=True),
         default=None,
     )
 
@@ -1544,6 +1660,34 @@ class GraphEdge(SQLModel, table=True):
     # an exported CCX package, so re-imports upsert by IRI. Added by migration
     # 0003. Nullable: legacy rows and not-yet-exported edges stay NULL.
     ccx_iri: str | None = Field(default=None, index=True)
+
+    # Validity window (migration 0020): ISO dates. ``valid_to`` set means a later
+    # memory on a single-valued relation closed this edge; ``closed_by_source_id``
+    # names it, with no foreign key on purpose (forgetting that source reopens).
+    valid_from: str | None = None
+    valid_to: str | None = None
+    closed_by_source_id: str | None = None
+
+
+class MemoryAuditRow(SQLModel, table=True):
+    """One row per ``forget``: when, which handle, by whom, which scope, the counts; never the text."""
+
+    __tablename__ = "memory_audit"
+    __table_args__ = (Index("ix_memory_audit_database_name_at", "database_name", "at"),)
+
+    id: str = Field(primary_key=True)
+    database_name: str
+    at: str
+    action: str
+    handle: str
+    by: str | None = None
+    scope: str | None = None
+    facts_removed: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
+    )
+    facts_kept: int = Field(
+        default=0, sa_column=Column(Integer, nullable=False, server_default="0")
+    )
 
 
 class GraphTemplate(SQLModel, table=True):
@@ -1588,11 +1732,66 @@ class GraphTemplate(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # Source tracking for enabled filtering (CASCADE delete with source)
+    # Home source, for enabled filtering. ``SET NULL``, not ``CASCADE``: what a
+    # source delete removes is decided by the membership release (#795, D1/D5).
     source_id: str | None = Field(
-        sa_column=Column(String, ForeignKey("sources.id", ondelete="CASCADE"), index=True),
+        sa_column=Column(String, ForeignKey("sources.id", ondelete="SET NULL"), index=True),
         default=None,
     )
+
+
+class GraphNodeSource(SQLModel, table=True):
+    """Which sources attest a graph node, and what each one wrote (migration 0019).
+
+    ``graph_nodes.source_id`` is the node's home source; this table is the
+    membership truth. A node merged from several sources has one row per
+    source. ``snapshot`` is the node record that source wrote (the shape of
+    ``services.graph.resolution.apply.node_record``, no embedding), taken at
+    write time, so a later release of one source can rebuild the node from the
+    others. Rows go with their node and with their source (both ``CASCADE``).
+    """
+
+    __tablename__ = "graph_node_sources"
+
+    node_id: str = Field(
+        sa_column=Column(
+            String, ForeignKey("graph_nodes.id", ondelete="CASCADE"), primary_key=True
+        ),
+    )
+    source_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("sources.id", ondelete="CASCADE"),
+            primary_key=True,
+            index=True,
+        ),
+    )
+    snapshot: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+
+
+class GraphEdgeSource(SQLModel, table=True):
+    """Which sources attest a graph edge, and what each one wrote (migration 0019).
+
+    The edge twin of :class:`GraphNodeSource`; ``snapshot`` has the shape of
+    ``services.graph.resolution.apply.edge_record``.
+    """
+
+    __tablename__ = "graph_edge_sources"
+
+    edge_id: str = Field(
+        sa_column=Column(
+            String, ForeignKey("graph_edges.id", ondelete="CASCADE"), primary_key=True
+        ),
+    )
+    source_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("sources.id", ondelete="CASCADE"),
+            primary_key=True,
+            index=True,
+        ),
+    )
+    snapshot: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
 
 
 # ================================
@@ -1666,6 +1865,8 @@ class LLMCallMetric(SQLModel, table=True):
     retry_reason: str | None = (
         None  # 'schema_validation', 'quality_issues', 'truncation', 'exception'
     )
+    # The decoding a retried group asked with (``DecodeFallback.record``); NULL when pinned.
+    decode_fallback: dict | None = Field(default=None, sa_column=Column(JSON))
 
     # Extraction context (for entity extraction calls)
     chunk_index: int | None = None

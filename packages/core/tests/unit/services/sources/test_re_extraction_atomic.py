@@ -1,7 +1,7 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
 
-"""Regression: force-re-extract must roll back graph delete if reset fails."""
+"""Regression: force-re-extract must roll back the graph release if reset fails."""
 
 from __future__ import annotations
 
@@ -9,15 +9,32 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from chaoscypher_core.models import ReleasedRows
 from chaoscypher_core.services.sources.management.re_extraction import (
     force_re_extract,
 )
 
 
-def test_graph_delete_rolled_back_when_reset_fails() -> None:
-    storage_adapter = MagicMock()
-    graph_repository = MagicMock()
+@pytest.fixture
+def graph(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """The repository force_re_extract builds on the adapter's session; records the build."""
+    repo = MagicMock()
+    repo.release_source.return_value = ReleasedRows(deleted_node_ids=frozenset({"n1", "n2"}))
+    repo.built_with = []
 
+    def _build(adapter: object, database_name: str) -> MagicMock:
+        repo.built_with.append((adapter, database_name))
+        return repo
+
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.management.re_extraction.get_transaction_graph_repository",
+        _build,
+    )
+    return repo
+
+
+def test_graph_release_rolled_back_when_reset_fails(graph: MagicMock) -> None:
+    storage_adapter = MagicMock()
     storage_adapter.reset_for_re_extraction.side_effect = RuntimeError("boom")
 
     with pytest.raises(RuntimeError, match="boom"):
@@ -25,7 +42,7 @@ def test_graph_delete_rolled_back_when_reset_fails() -> None:
             source_id="src_1",
             database_name="default",
             storage_adapter=storage_adapter,
-            graph_repository=graph_repository,
+            settings=None,
         )
 
     assert storage_adapter.transaction.called
@@ -35,74 +52,55 @@ def test_graph_delete_rolled_back_when_reset_fails() -> None:
     assert exit_call[0][0] is RuntimeError
 
 
-def test_graph_delete_uses_shared_session() -> None:
-    """The graph delete must run on the adapter's session so transaction()
-    actually rolls it back. This is the difference between 'documented
-    atomicity' and 'real atomicity'.
+def test_graph_release_runs_on_the_adapters_session(graph: MagicMock) -> None:
+    """The release must run on the adapter's session so transaction() actually rolls it back.
+
+    This is the difference between 'documented atomicity' and 'real atomicity':
+    the repository is built from the adapter, never taken from the caller.
     """
     storage_adapter = MagicMock()
-    sentinel_session = MagicMock(name="adapter_session")
-    storage_adapter.session = sentinel_session
-    storage_adapter.transaction.return_value.__enter__ = MagicMock(return_value=None)
-    storage_adapter.transaction.return_value.__exit__ = MagicMock(return_value=None)
-    graph_repository = MagicMock()
 
     force_re_extract(
-        source_id="src_1",
-        database_name="default",
-        storage_adapter=storage_adapter,
-        graph_repository=graph_repository,
+        source_id="src_1", database_name="default", storage_adapter=storage_adapter, settings=None
     )
 
-    # Confirm the graph delete received the adapter's session.
-    call_kwargs = graph_repository.delete_source_artifacts.call_args.kwargs
-    assert call_kwargs.get("session") is sentinel_session
+    assert graph.built_with == [(storage_adapter, "default")]
 
 
-def test_happy_path_calls_both_in_order() -> None:
+def test_happy_path_calls_both_in_order(graph: MagicMock) -> None:
     storage_adapter = MagicMock()
-    graph_repository = MagicMock()
-    storage_adapter.transaction.return_value.__enter__ = MagicMock(return_value=None)
-    storage_adapter.transaction.return_value.__exit__ = MagicMock(return_value=None)
-    graph_repository.delete_source_artifacts.return_value = {
-        "nodes_deleted": 2,
-        "edges_deleted": 1,
-        "templates_deleted": 0,
-    }
+    order: list[str] = []
+    graph.release_source.side_effect = lambda sid: (
+        order.append("release") or ReleasedRows(deleted_node_ids=frozenset({"n1", "n2"}))
+    )
+    storage_adapter.reset_for_re_extraction.side_effect = lambda **_: order.append("reset")
 
     result = force_re_extract(
         source_id="src_1",
         database_name="default",
         storage_adapter=storage_adapter,
-        graph_repository=graph_repository,
+        settings=None,
     )
 
-    # delete_source_artifacts is called with the positional source_id and the
-    # adapter's session so all three SQL deletes share the adapter transaction.
-    graph_repository.delete_source_artifacts.assert_called_once_with(
-        "src_1", session=storage_adapter.session
-    )
+    graph.release_source.assert_called_once_with("src_1")
     storage_adapter.reset_for_re_extraction.assert_called_once_with(
         source_id="src_1", database_name="default"
     )
-    assert result["nodes_deleted"] == 2
+    assert order == ["release", "reset"]
+    assert result.deleted_node_ids == {"n1", "n2"}
 
 
 def test_raises_when_adapter_session_is_none() -> None:
     storage_adapter = MagicMock()
     storage_adapter.session = None
-    storage_adapter.transaction.return_value.__enter__ = MagicMock(return_value=None)
-    storage_adapter.transaction.return_value.__exit__ = MagicMock(return_value=None)
-    graph_repository = MagicMock()
 
     with pytest.raises(RuntimeError, match="connected adapter"):
         force_re_extract(
             source_id="src_1",
             database_name="default",
             storage_adapter=storage_adapter,
-            graph_repository=graph_repository,
+            settings=None,
         )
 
     # Neither write should have been attempted.
-    graph_repository.delete_source_artifacts.assert_not_called()
     storage_adapter.reset_for_re_extraction.assert_not_called()

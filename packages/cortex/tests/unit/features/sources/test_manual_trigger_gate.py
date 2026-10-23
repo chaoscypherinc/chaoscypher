@@ -137,3 +137,93 @@ async def test_manual_trigger_unforced_parks_instead_of_queue() -> None:
         "get_domain_registry received None (built-ins only); expected full engine settings "
         "so that user custom domain plugins are included in the proposal"
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kwargs", "forced_packs", "forced_domain"),
+    [
+        ({"packs": ["literary", "historical"]}, ["literary", "historical"], "literary"),
+        ({"packs": []}, [], "generic"),  # the floor alone, chosen
+        ({"domain": "medical"}, ["medical"], "medical"),  # the single-select UI's form
+        ({"domain": "__auto__"}, None, None),  # detect
+    ],
+)
+async def test_manual_trigger_queues_the_forced_packs(
+    kwargs: dict[str, Any], forced_packs: list[str] | None, forced_domain: str | None
+) -> None:
+    """The queue payload carries the forced packs and their first as the old ``forced_domain``."""
+    engine = MagicMock()
+    engine.get_source.return_value = _indexed_source()
+    adapter = MagicMock()
+    service = _make_service(engine, adapter)
+    seen: dict[str, Any] = {}
+
+    def _gate(source: dict[str, Any]) -> str:
+        seen["gate_source"] = source
+        return "proceed"
+
+    with (
+        patch("chaoscypher_cortex.features.sources.service.queue_utils") as mock_queue,
+        patch("chaoscypher_cortex.features.sources.service.gate_decision", side_effect=_gate),
+        patch(
+            "chaoscypher_core.llm_queue.get_provider_factory",
+            new=MagicMock(return_value=MagicMock(get_chat_provider=MagicMock())),
+        ),
+    ):
+        mock_queue.queue_import_analysis = AsyncMock(return_value="t1")
+        await service.trigger_extraction(source_id="src_1", **kwargs)
+
+    file_info = mock_queue.queue_import_analysis.call_args.kwargs["file_info"]
+    assert file_info["forced_packs"] == forced_packs
+    assert file_info["forced_domain"] == forced_domain
+    if forced_packs is not None:  # the gate sees the forced choice and proceeds
+        assert seen["gate_source"]["forced_packs"] == forced_packs
+
+
+@pytest.mark.asyncio
+async def test_manual_trigger_naming_the_packs_twice_is_refused_before_anything_runs() -> None:
+    from chaoscypher_core.exceptions import ValidationError
+
+    engine = MagicMock()
+    adapter = MagicMock()
+    service = _make_service(engine, adapter)
+    with pytest.raises(ValidationError, match="not both"):
+        await service.trigger_extraction(source_id="src_1", domain="legal", packs=["medical"])
+    engine.get_source.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reclassify_forwards_the_packs() -> None:
+    """Reclassify is trigger_extraction with force=True and the packs forced."""
+    engine = MagicMock()
+    engine.get_source.return_value = _indexed_source()
+    service = _make_service(engine, MagicMock())
+    service.trigger_extraction = AsyncMock(return_value={"status": "extracting"})  # type: ignore[method-assign]
+
+    await service.reclassify_source(source_id="src_1", packs=["legal", "medical"])
+
+    call = service.trigger_extraction.call_args.kwargs
+    assert call["packs"] == ["legal", "medical"]
+    assert call["force"] is True
+
+
+def test_the_request_models_read_packs_and_domain_alike() -> None:
+    """``packs`` is the list; ``domain`` one element; reclassify needs one of them."""
+    from pydantic import ValidationError as PydanticValidationError
+
+    from chaoscypher_cortex.features.sources.extraction_api import (
+        ConfirmExtractionRequest,
+        ReclassifyRequest,
+        TriggerExtractionRequest,
+    )
+    from chaoscypher_cortex.features.sources.models import UrlImportRequest
+
+    assert TriggerExtractionRequest(domain="legal").forced_packs() == ("legal",)
+    assert TriggerExtractionRequest(packs=["b", "a"]).forced_packs() == ("b", "a")  # given order
+    assert TriggerExtractionRequest().forced_packs() is None
+    assert ConfirmExtractionRequest(packs=[]).forced_packs() == ()
+    assert ReclassifyRequest(domain="generic").forced_packs() == ()
+    assert UrlImportRequest(url="https://x.test", packs=["news"]).forced_packs() == ("news",)
+    with pytest.raises(PydanticValidationError, match="needs 'packs'"):
+        ReclassifyRequest()

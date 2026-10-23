@@ -117,3 +117,15 @@ def test_merge_no_history_when_confidence_equal() -> None:
 
 
 __all__: list[str] = []
+
+
+def test_merge_keeps_union_of_citation_evidence() -> None:
+    """A merged entity keeps the kept side's cited chunk and every cited sentence."""
+    proc = _make_processor()
+    a = {"text": "Anna smiled.", "chunk_id": "c0", "local_index": 0}
+    b = {"text": "Anna left.", "chunk_id": "c7", "local_index": 1}
+    kept = _make_entity("Anna", evidence=[a], cited_chunk_id="c0")
+    duplicate = _make_entity("Anna", evidence=[b, a], cited_chunk_id="c7")
+    merged = proc.merge_entities(kept, duplicate)
+    assert merged["evidence"] == [a, b]
+    assert merged["cited_chunk_id"] == "c0"

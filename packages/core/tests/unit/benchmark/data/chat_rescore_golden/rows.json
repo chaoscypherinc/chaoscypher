@@ -1,0 +1,779 @@
+{
+  "schema_version": 1,
+  "results": [
+    {
+      "model_id": "ollama/golden-0",
+      "model_label": "Golden 0",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon kept them [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "M\u00e1rfa is the daughter of the miller.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "It was Y\u00e1kov",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "S\u00e1vin bought it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "300 rubles at Zav\u00eddovo.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Zav\u00eddovo; Y\u00e1kov copied the record [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-1",
+      "model_label": "Golden 1",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "Y\u00e1kov kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "Even so, she is his niece.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov copied it; T\u00edkhon only kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The sources do not say; it was most likely S\u00e1vin's heir.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "He lent her three hundred rubles [[cite:C0:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Zav\u00eddovo; T\u00edkhon copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-2",
+      "model_label": "Golden 2",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon, with help from Step\u00e1n.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the niece of T\u00edkhon.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "T\u00edkhon copied it, not Y\u00e1kov.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "Not in the sources; only S\u00e1vina's debts are mentioned.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Three hundred rubles.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Moscow; Y\u00e1kov copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-3",
+      "model_label": "Golden 3",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "The sources do not say who kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the miller's niece [[cite:C1:S2|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov [C0].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The context does not mention a sale.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Three hundred rubles, in 1812.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "State the place: Zav\u00eddovo, and Y\u00e1kov copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-4",
+      "model_label": "Golden 4",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon's books were the mill's accounts; T\u00edkhon kept them.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the niece of T\u00edkhon's master, the miller.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov, the clerk [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The ledger does not say who bought the mill.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Four hundred rubles.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "Zav\u00eddovo, with Y\u00e1kov's copy.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-5",
+      "model_label": "Golden 5",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon kept them [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "Even so, she is his niece.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "T\u00edkhon copied it, not Y\u00e1kov.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The context does not mention a sale.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Four hundred rubles.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Zav\u00eddovo; Y\u00e1kov copied the record [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-6",
+      "model_label": "Golden 6",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "Y\u00e1kov kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the niece of T\u00edkhon.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov [C0].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The ledger does not say who bought the mill.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "300 rubles at Zav\u00eddovo.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Zav\u00eddovo; T\u00edkhon copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-7",
+      "model_label": "Golden 7",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon, with help from Step\u00e1n.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the miller's niece [[cite:C1:S2|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov, the clerk [[cite:C1:S1|ledger.txt]].",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "S\u00e1vin bought it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "He lent her three hundred rubles [[cite:C0:S1|ledger.txt]].",
+            "finish_reason": "length",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "At Moscow; Y\u00e1kov copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-8",
+      "model_label": "Golden 8",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "The sources do not say who kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "She is the niece of T\u00edkhon's master, the miller.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "The sources do not say; it was most likely S\u00e1vin's heir.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Three hundred rubles.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "State the place: Zav\u00eddovo, and Y\u00e1kov copied it.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    },
+    {
+      "model_id": "ollama/golden-9",
+      "model_label": "Golden 9",
+      "dataset_id": "golden__chat__probe",
+      "dataset_kind": "chat",
+      "dataset_version": "golden-1",
+      "dataset_source": "builtin",
+      "config_name": "golden",
+      "headline_score": 0.0,
+      "metrics": {},
+      "latency_ms_total": 1,
+      "latency_ms_per_chunk_p50": 1,
+      "input_tokens": 1,
+      "output_tokens": 1,
+      "cost_usd": 0.0,
+      "success": true,
+      "error": null,
+      "timestamp": "2026-10-06T00:00:00+00:00",
+      "benchmark_version": "2.0",
+      "scorer_version": 6,
+      "seed": 42,
+      "temperature": 0.0,
+      "thinking": false,
+      "thinking_honoured": null,
+      "chunks_truncated": 0,
+      "chunks_aborted_by_loop": 0,
+      "extras": {
+        "per_query": [
+          {
+            "query_id": "g01",
+            "band": null,
+            "answer": "T\u00edkhon's books were the mill's accounts; T\u00edkhon kept them.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g02",
+            "band": null,
+            "answer": "M\u00e1rfa is the daughter of the miller.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g03",
+            "band": null,
+            "answer": "Y\u00e1kov copied it; T\u00edkhon only kept the accounts.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g04",
+            "band": null,
+            "answer": "Not in the sources; only S\u00e1vina's debts are mentioned.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g05",
+            "band": null,
+            "answer": "Three hundred rubles, in 1812.",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n"
+          },
+          {
+            "query_id": "g06",
+            "band": null,
+            "answer": "",
+            "finish_reason": "stop",
+            "context_text": "[CHUNK C0 | ledger.txt]\n[S1] Prince Grig\u00f3ri S\u00e1vin lent M\u00e1rfa Iv\u00e1novna three hundred rubles at Zav\u00eddovo.\n[CHUNK C1 | ledger.txt]\n[S1] Her cousin T\u00edkhon, the steward, kept the accounts; the clerk Y\u00e1kov copied them. [S2] M\u00e1rfa is the niece of the old miller.\n",
+            "error": "TimeoutError: no answer"
+          }
+        ]
+      },
+      "pins_applied": true,
+      "harness": null,
+      "harness_settings": null,
+      "app_version": "golden",
+      "scorer_recipe": null
+    }
+  ]
+}

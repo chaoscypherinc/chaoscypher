@@ -7,10 +7,14 @@ Defines Protocol for graph data access (nodes, edges, templates).
 Main app implements this via an adapter class that wraps its GraphRepository.
 """
 
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
 
 if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
+    from datetime import date
+
     from chaoscypher_core.models import (
         Edge,
         EdgeCreate,
@@ -19,6 +23,7 @@ if TYPE_CHECKING:
         Node,
         NodeCreate,
         NodeUpdate,
+        ReleasedRows,
         Template,
         TemplateCreate,
         TemplateUpdate,
@@ -93,6 +98,58 @@ class GraphRepositoryProtocol(Protocol):
             # Get nodes from specific sources
             source_nodes = graph_repo.list_nodes(source_ids=["src_1", "src_2"])
 
+        """
+        ...
+
+    def nodes_with_true_properties(
+        self, keys: Sequence[str], ids: Sequence[str] | None = None
+    ) -> dict[str, list[str]]:
+        """The nodes whose properties hold JSON ``true`` under any of ``keys``.
+
+        For a projection that loads no properties (the canvas's ``minimal``
+        listing) and must still show the pipeline's flags
+        (``name_identity.PIPELINE_FLAG_KEYS``). ``true`` exactly: a string
+        ``"true"`` or a number is no flag.
+
+        Args:
+            keys: Top-level property keys.
+            ids: When set, only these nodes are read (the ids a capped,
+                source-scoped listing returned), so the cost follows what
+                is shown, not the whole graph. None reads every node.
+
+        Returns:
+            Node id -> the keys it holds ``true`` under, in ``keys`` order;
+            nodes holding none are absent.
+        """
+        ...
+
+    def edges_with_true_properties(
+        self,
+        keys: Sequence[str],
+        carry: Sequence[str] = (),
+        ids: Sequence[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """The edges whose properties hold JSON ``true`` under any of ``keys``, with ``carry`` values.
+
+        The edge counterpart of :meth:`nodes_with_true_properties`, for the
+        projections that load no edge properties (the canvas's ``minimal``
+        listing, PageRank's ``list_edges_minimal``) and must still read the
+        pipeline's edge flags (``name_identity.PIPELINE_EDGE_FLAG_KEYS``: a
+        capped edge is drawn thin, an unevidenced one dashed). ``true``
+        exactly: a string ``"true"`` or a number is no flag.
+
+        Args:
+            keys: Top-level property keys read as flags.
+            carry: Top-level property keys whose values a flagged edge also
+                returns when it holds them (the canvas shows
+                ``evidence_reason`` beside ``unevidenced``).
+            ids: When set, only these edges are read (as for
+                :meth:`nodes_with_true_properties`). None reads every edge.
+
+        Returns:
+            Edge id -> ``{key: True}`` for each flag it holds, in ``keys``
+            order, plus each ``carry`` key it holds; edges holding no flag
+            are absent.
         """
         ...
 
@@ -173,18 +230,24 @@ class GraphRepositoryProtocol(Protocol):
         node_ids: list[str],
         source_id: str,
         database_name: str,
+        readings: Mapping[str, dict[str, Any]] | None = None,
     ) -> int:
-        """Back-fill ``source_id`` on nodes that lack one; return rows changed.
+        """Link nodes to ``source_id``: back-fill the home where missing, record the membership.
 
         The CCX importer creates nodes before it knows their source (the
         node->source link lives in the citation records, imported last), so it
         stamps ``graph_nodes.source_id`` here once citations resolve. Nodes
-        that already carry a source id are left untouched (first link wins).
+        that already carry a source id keep it (first link wins). Every node
+        gains ``source_id`` as a member, its snapshot ``readings[node_id]``
+        (what the source wrote: the package's own entity), else the node's
+        own pre-merge reading (its home's snapshot), never a merged row.
 
         Args:
             node_ids: Node ids to link.
             source_id: Source id to assign to those nodes.
             database_name: Database that owns the nodes.
+            readings: Per node id, the record ``source_id`` wrote for it
+                (``node_create_snapshot``).
         """
         ...
 
@@ -196,7 +259,8 @@ class GraphRepositoryProtocol(Protocol):
     ) -> int:
         """Back-fill ``source_id`` on templates that lack one; return rows changed.
 
-        Templates are source-owned and cascade-delete with their source. The CCX
+        Templates are source-owned: a source's release deletes the ones nothing
+        else uses (D6). The CCX
         importer creates templates before the source exists (FK order), so it
         links them here once the source lands. Templates that already carry a
         source id are left untouched.
@@ -215,6 +279,18 @@ class GraphRepositoryProtocol(Protocol):
 
         Args:
             embeddings: Mapping of node id to its embedding vector (list[float]).
+        """
+        ...
+
+    def clear_node_embeddings(self, node_ids: list[str]) -> int:
+        """Clear the stored embedding of each node; return rows changed.
+
+        For a node whose text changed under a vector a caller cannot refresh
+        at once: an indexing step that embeds only vectorless nodes then
+        re-embeds it.
+
+        Args:
+            node_ids: The nodes whose ``embedding`` is cleared.
         """
         ...
 
@@ -438,6 +514,25 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
+    def list_edges_by_node(
+        self,
+        node_ids: Sequence[str],
+        *,
+        outgoing: bool,
+        limit_per_node: int,
+        include_disabled_sources: bool = False,
+    ) -> dict[str, list[Edge]]:
+        """Each node's edges out of it (``outgoing``) or into it, as :meth:`list_edges` lists them.
+
+        For every id in ``node_ids``, exactly what :meth:`list_edges` returns
+        with ``limit=limit_per_node`` and the id as ``source_node_id`` (as
+        ``target_node_id`` when not ``outgoing``), in its order. Every id is a
+        key; a node with no edges maps to ``[]``. An adapter answers in as few
+        queries as it can: the graph context reads every seed's edges in both
+        directions.
+        """
+        ...
+
     def update_edge(self, edge_id: str, edge_update: EdgeUpdate) -> Edge | None:
         """Update an existing edge.
 
@@ -649,22 +744,6 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
-    def delete_graph_data_by_source(self, source_id: str) -> dict[str, Any]:
-        """Delete all graph data (edges, nodes, templates) for a given source.
-
-        Used for idempotent commit: cleans up previously committed graph objects
-        before re-committing.
-
-        Args:
-            source_id: Source ID whose graph data should be deleted.
-
-        Returns:
-            Dict with edges_deleted, nodes_deleted, templates_deleted counts
-            and deleted_node_ids list.
-
-        """
-        ...
-
     async def create_nodes_batch(self, node_creates: list[NodeCreate]) -> list[Node]:
         """Create multiple nodes in batch.
 
@@ -677,14 +756,21 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
-    async def upsert_nodes_batch(self, node_creates: list[NodeCreate]) -> tuple[list[Node], int]:
+    async def upsert_nodes_batch(
+        self, node_creates: list[NodeCreate], *, reattested: set[str] | None = None
+    ) -> tuple[list[Node], int]:
         """Idempotently create or reuse nodes by stable content key.
 
         Used on the commit path: re-dispatched commits observe pre-existing
-        rows via a bulk SELECT-by-id and leave them untouched.
+        rows via a bulk SELECT-by-id and leave them untouched. A reused row
+        the incoming source does not attest (one that outlived the source's
+        release under another member) gets the source's membership back with
+        the reading it writes now, and its id is added to ``reattested`` for
+        the caller to rebuild (#795).
 
         Args:
             node_creates: List of node creation data.
+            reattested: Filled with the reused ids that gained a membership.
 
         Returns:
             Tuple of:
@@ -705,13 +791,17 @@ class GraphRepositoryProtocol(Protocol):
         """
         ...
 
-    async def upsert_edges_batch(self, edge_creates: list[EdgeCreate]) -> tuple[list[Edge], int]:
+    async def upsert_edges_batch(
+        self, edge_creates: list[EdgeCreate], *, reattested: set[str] | None = None
+    ) -> tuple[list[Edge], int]:
         """Idempotently create or reuse edges by stable content key.
 
-        Used on the commit path; mirror of :meth:`upsert_nodes_batch`.
+        Used on the commit path; mirror of :meth:`upsert_nodes_batch`,
+        ``reattested`` included.
 
         Args:
             edge_creates: List of edge creation data.
+            reattested: Filled with the reused ids that gained a membership.
 
         Returns:
             Tuple of:
@@ -744,6 +834,9 @@ class GraphRepositoryProtocol(Protocol):
         Args:
             template_create: Template to create (or reuse).
             is_system: Whether this is a system template.
+
+        A reused template owned by another source (or by none) since a
+        release is handed back to the source its stable id names.
 
         Returns:
             Tuple of:
@@ -806,9 +899,10 @@ class GraphRepositoryProtocol(Protocol):
         ...
 
     def find_orphaned_nodes_by_source(self, *, database_name: str) -> list[str]:
-        """Return IDs of nodes whose source_id references a missing SourceRow.
+        """Return IDs of nodes whose source_id references a missing SourceRow and no source attests.
 
-        Nodes with ``source_id IS NULL`` are NOT considered orphaned.
+        Nodes with ``source_id IS NULL`` are NOT considered orphaned, nor is a
+        node with any source membership (a merged node another source attests).
 
         Args:
             database_name: Database to scope to.
@@ -823,9 +917,10 @@ class GraphRepositoryProtocol(Protocol):
         ...
 
     def find_orphaned_templates_by_source(self, *, database_name: str) -> list[str]:
-        """Return IDs of non-system templates whose source_id references a missing SourceRow.
+        """Return IDs of unused non-system templates whose source_id references a missing SourceRow.
 
-        System templates (``is_system=True``) are never considered orphaned.
+        System templates (``is_system=True``) are never considered orphaned,
+        nor is a template a node or edge still uses.
 
         Args:
             database_name: Database to scope to.
@@ -857,4 +952,162 @@ class GraphRepositoryProtocol(Protocol):
                 sources (mirrors ``list_templates``) for pagination totals; ignored
                 when ``source_id`` is given.
         """
+        ...
+
+    # ---- Source memberships (which sources attest a node or edge) ----
+
+    def record_node_sources(self, rows: Sequence[tuple[str, str, dict[str, Any]]]) -> None:
+        """Record ``(node_id, source_id, snapshot)`` memberships.
+
+        A source writing a node again replaces its own snapshot. Joins the
+        caller's transaction; nothing is committed.
+        """
+        ...
+
+    def record_edge_sources(self, rows: Sequence[tuple[str, str, dict[str, Any]]]) -> None:
+        """Record ``(edge_id, source_id, snapshot)`` memberships; same rules as nodes."""
+        ...
+
+    def absorb_node(self, keep_id: str, drop_id: str) -> None:
+        """Fold a merged-away node into the kept one: memberships and entity citations.
+
+        ``drop_id``'s memberships move to ``keep_id``; where both hold one for the
+        same source, the kept row stays and the dropped snapshot is appended to its
+        ``absorbed`` list. Every ``SourceCitation`` naming ``drop_id`` names
+        ``keep_id`` after. Call before deleting ``drop_id``. Joins the caller's
+        transaction; nothing is committed.
+        """
+        ...
+
+    def absorb_edge(self, keep_id: str, drop_id: str) -> None:
+        """Fold a moved or duplicate edge into its new edge: memberships and citations.
+
+        Same rules as :meth:`absorb_node`, for ``RelationshipCitation.edge_id``.
+        """
+        ...
+
+    def drop_edge_citations(self, edge_id: str) -> None:
+        """Delete an edge's relationship citations (a merge turned it into a self-loop)."""
+        ...
+
+    def reattest_nodes(self, rows: Sequence[tuple[str, NodeCreate]]) -> set[str]:
+        """Give each ``(node_id, create)`` its source's membership when that source has none.
+
+        The snapshot is the record ``create`` writes. Returns the ids that
+        gained a membership. Joins the caller's transaction; nothing is committed.
+        """
+        ...
+
+    def reattest_edges(self, rows: Sequence[tuple[str, EdgeCreate]]) -> set[str]:
+        """:meth:`reattest_nodes` for edges."""
+        ...
+
+    def member_source_ids(self) -> set[str]:
+        """Every source that attests some node: the graph's sources, by membership."""
+        ...
+
+    def write_locked(self) -> AbstractContextManager[None]:
+        """A unit of work that holds the database's writer lock from its first statement.
+
+        For a read-then-write that must not interleave with another writer:
+        what is read inside is what the writes inside build on. Commits on a
+        clean exit and rolls back on an exception; inside a caller's
+        transaction it joins it (taking the lock now if the transaction has
+        not written yet) and commits nothing.
+        """
+        ...
+
+    def member_node_ids(self, source_id: str) -> list[str]:
+        """The nodes ``source_id`` attests, in membership order."""
+        ...
+
+    def member_edge_ids(self, source_id: str) -> list[str]:
+        """The edges ``source_id`` attests, in membership order."""
+        ...
+
+    def open_edges(self, node_id: str, label: str) -> list[Edge]:
+        """The edges from ``node_id`` with ``label`` whose ``valid_to`` is unset."""
+        ...
+
+    def edges_from(self, node_id: str, label: str) -> list[Edge]:
+        """Every edge from ``node_id`` with ``label``, open or closed."""
+        ...
+
+    def set_edge_validity(
+        self,
+        edge_id: str,
+        *,
+        valid_from: date | None,
+        valid_to: date | None,
+        closed_by_source_id: str | None,
+    ) -> None:
+        """Write an edge's validity window; joins the caller's transaction."""
+        ...
+
+    def edges_closed_by(self, source_id: str) -> list[Edge]:
+        """The edges ``source_id`` closed (``closed_by_source_id``)."""
+        ...
+
+    def reopen_edges_closed_by(self, source_id: str) -> int:
+        """Reopen the edges ``source_id`` closed (``valid_to`` and ``closed_by_source_id`` unset); how many."""
+        ...
+
+    def source_valid_from(self, source_ids: Iterable[str]) -> dict[str, date | None]:
+        """Each source's ``valid_from`` (a non-memory source maps to None)."""
+        ...
+
+    def memory_source_fields(self, source_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Each source's ``source_type``, ``memory_by``, ``valid_from`` (a date or None), ``created_at``."""
+        ...
+
+    def node_members(self, node_id: str) -> dict[str, dict[str, Any]]:
+        """Map source_id to the snapshot that source wrote for this node."""
+        ...
+
+    def edge_members(self, edge_id: str) -> dict[str, dict[str, Any]]:
+        """Map source_id to the snapshot that source wrote for this edge."""
+        ...
+
+    def node_member_sources(self, node_ids: Iterable[str]) -> dict[str, set[str]]:
+        """Map each of ``node_ids`` that has members to the ids of its member sources.
+
+        One batched read (no snapshots): for a caller that only needs to know
+        who attests a set of nodes.
+        """
+        ...
+
+    def rehome(
+        self,
+        nodes: Mapping[str, str],
+        edges: Mapping[str, str],
+        *,
+        entity_types: Mapping[str, str] | None = None,
+    ) -> None:
+        """Re-home each node (edge) id to the source it maps to.
+
+        A survivor of a release is re-homed to a member that still attests it:
+        its ``source_id``, a node's ``entity_type`` (``entity_types``), and its
+        template, moved to that source's template of the same type and name
+        when there is one. Joins the caller's transaction; nothing is committed.
+        """
+        ...
+
+    # ---- Release (what a source delete, re-commit, re-extract or reset removes) ----
+
+    def release_source(self, source_id: str) -> ReleasedRows:
+        """Take a source out of the graph: its memberships, and what only it attested.
+
+        Candidates are the nodes and edges the source is a member of, plus the
+        rows homed at it. Each loses the source's membership; a candidate no
+        source attests any more is deleted (an edge also goes with a deleted
+        endpoint); the surviving candidates are reported as touched. The
+        source's templates follow D6: deleted when unused, else re-homed to a
+        member source of a surviving user (unowned only when no user has a
+        member). Joins the caller's transaction; never deletes the source row
+        or its citations.
+        """
+        ...
+
+    def release_all_sources(self) -> None:
+        """Release every source of this database in one pass (the reset paths)."""
         ...

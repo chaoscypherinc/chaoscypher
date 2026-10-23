@@ -3,10 +3,11 @@
 
 """MCP service wiring for Cortex.
 
-Creates an MCP Server using the shared Core ``create_mcp_server()`` factory,
-which provides the full tool set including extraction orchestration and
-document processing. Manages the Streamable HTTP session manager lifecycle
-for the mounted ASGI transport.
+Creates an MCP Server using the shared Core ``create_mcp_server()`` factory.
+The tool set follows ``settings.mcp.mode``: read mode serves the read tools
+only; write mode adds extraction orchestration and document processing.
+Manages the Streamable HTTP session manager lifecycle for the mounted ASGI
+transport.
 """
 
 from typing import Any

@@ -96,6 +96,10 @@ services:
       - QUEUE_PORT=6379
       - QUEUE_DB=0
       - QUEUE_PASSWORD=${QUEUE_PASSWORD:?QUEUE_PASSWORD must be set for dev environment}
+      # Host header allow-list. The Vite proxy (changeOrigin) rewrites Host to
+      # the service name, so `cortex` must be allowed or every proxied /api
+      # call is rejected with 421 once setup completes.
+      - CHAOSCYPHER_ALLOWED_HOSTS=${CHAOSCYPHER_ALLOWED_HOSTS:-localhost,127.0.0.1,::1,cortex}
       - LEXICON_URL=http://host.docker.internal:3001  # Lexicon package registry base URL
       - CHAOSCYPHER_OLLAMA_URL=http://host.docker.internal:11434  # First-boot Ollama URL (library default is localhost)
       - WATCHFILES_FORCE_POLLING=true
@@ -127,6 +131,10 @@ services:
         max-size: "50m"
         max-file: "3"
     restart: unless-stopped
+    # Cortex drains in-flight requests for cortex_shutdown_grace_seconds (30s
+    # default); Docker's own 10s default would SIGKILL it mid-drain. Same knob
+    # and default as the all-in-one compose.
+    stop_grace_period: ${CHAOSCYPHER_STOP_GRACE_PERIOD:-60s}
 
   # Interface service (Web UI with Vite dev server)
   interface:
@@ -196,7 +204,6 @@ services:
       - HF_HUB_DISABLE_PROGRESS_BARS=1
       - TQDM_DISABLE=1
       - TOKENIZERS_PARALLELISM=false
-      - WORKER_AUTO_RELOAD=true
       - WATCHFILES_FORCE_POLLING=true
       - CHAOSCYPHER_ALLOW_USER_PLUGINS=${CHAOSCYPHER_ALLOW_USER_PLUGINS:-1}
       - CHAOSCYPHER_ALLOW_DEV_MODE=1

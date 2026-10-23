@@ -120,7 +120,14 @@ curl -X POST http://localhost/api/v1/exports/import \
 | `merge=true` | Reuses a local template that shares a name |
 
 Import is **always additive**: entities, edges, and sources upsert by their
-CCX IRI, and existing data is never cleared.
+CCX IRI, and existing data is never cleared. Each imported source is recorded
+as attesting the entities it cites, with the package's own content for each;
+an entity a source outside the package already shares (it was merged into the
+same node) is rebuilt from every source's content, which can change its label
+and home source, so deleting any one source later removes only what that
+source said. An entity only the package's own sources cite is left as the
+package wrote it. See
+[Knowledge Graph Storage](../../architecture/graph-storage.md#provenance-membership-and-the-enabled-filter).
 
 ### Response `202 Accepted` -- ImportResponse
 

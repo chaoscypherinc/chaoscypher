@@ -31,9 +31,10 @@ imported the ``chaoscypher.templates`` graph.
 from __future__ import annotations
 
 import hashlib
+from datetime import date
 from typing import Any
 
-from chaoscypher_core.services.export import ccx_identity
+from chaoscypher_core.services.export import ccx_identity, ccx_mapping
 
 
 # Reserved JSON-LD keys that are never node properties or simple-edge
@@ -70,6 +71,25 @@ def _is_object_ref(value: Any) -> bool:
 # ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
+
+
+def extracted_by_text(value: Any) -> str | None:
+    """``ccx:Source.extractedBy`` as the text the ``extraction_mode`` column stores.
+
+    A string is kept as is; the object form (``{"name"|"tool": ..., "version": ...}``) is
+    written ``name@version``, the way Tsukumo already spells it as a string. Until 2026-10-20
+    the object was copied into the text column and the import failed with a database error.
+    """
+    if not value:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        name = str(value.get("name") or value.get("tool") or "").strip()
+        version = str(value.get("version") or "").strip()
+        text = f"{name}@{version}" if name and version else name or version
+        return text or None
+    return str(value)
 
 
 def jsonld_entity_to_node(obj: dict) -> tuple[str, dict]:
@@ -274,3 +294,78 @@ def ccx_chunk_to_chunk(rec: dict, full_text: str | None) -> dict:
         "char_end": char_end,
         "citations": rec.get("ccx:citation") or [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Source provenance, relationship citations, closures
+# ---------------------------------------------------------------------------
+
+
+def source_provenance(rec: dict) -> dict[str, str]:
+    """The provenance columns a ``ccx:Source`` record carries: inverse of the exporter's terms.
+
+    Reads :data:`ccx_mapping.SOURCE_PROVENANCE_TERMS` (``sourceType``, and a
+    memory's ``memoryBy`` / ``memoryScope`` / ``validFrom``) back to their
+    ``sources`` columns; an absent or empty term is left out.
+    """
+    return {
+        column: str(rec[term])
+        for column, term in ccx_mapping.SOURCE_PROVENANCE_TERMS
+        if isinstance(rec.get(term), str) and rec[term]
+    }
+
+
+def edge_reference_key(ref: Any) -> tuple[str, str, str] | None:
+    """``(subject IRI, predicate, object IRI)`` of an ``edge_reference``; None when malformed.
+
+    Inverse of :func:`ccx_mapping.edge_reference`: the key the importer files
+    each written edge under, so a relationship citation or a closure finds it.
+    """
+    if not isinstance(ref, dict):
+        return None
+    subject = ref.get("ccx:subject")
+    obj = ref.get("ccx:object")
+    predicate = ref.get("ccx:predicate")
+    subject_iri = subject.get("@id") if isinstance(subject, dict) else None
+    object_iri = obj.get("@id") if isinstance(obj, dict) else None
+    if not (isinstance(subject_iri, str) and isinstance(object_iri, str)):
+        return None
+    if not (isinstance(predicate, str) and predicate):
+        return None
+    return subject_iri, predicate, object_iri
+
+
+def cited_sentences(
+    citation: dict, chunk_iri_to_id: dict[str, str], chunk_id: str
+) -> list[dict[str, Any]]:
+    """A relationship citation's sentences as ``citation_metadata`` stores them.
+
+    Each ``{"text", "localIndex", "chunk"?}`` becomes ``{"text", "chunk_id",
+    "local_index"}``; the chunk is the one the sentence names when this import
+    wrote it, else the citation's own (``chunk_id``). A sentence that is not
+    an object is left out.
+    """
+    out: list[dict[str, Any]] = []
+    for sentence in citation.get("cc:sentences") or []:
+        if not isinstance(sentence, dict):
+            continue
+        ref = sentence.get("chunk")
+        named = ref.get("@id") if isinstance(ref, dict) else None
+        out.append(
+            {
+                "text": sentence.get("text"),
+                "chunk_id": chunk_iri_to_id.get(named, chunk_id) if named else chunk_id,
+                "local_index": sentence.get("localIndex"),
+            }
+        )
+    return out
+
+
+def iso_date(value: Any) -> date | None:
+    """A ``YYYY-MM-DD`` term as a date; None when absent or unreadable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None

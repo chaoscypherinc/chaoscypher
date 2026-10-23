@@ -352,3 +352,71 @@ async def test_ccx_importer_full_text_offsets_round_trip(
     assert chunk["char_start"] == 0
     assert chunk["char_end"] == 5
     assert chunk["content"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_ccx_property_less_parallel_edges_keep_their_templates(
+    integration_adapter: SqliteAdapter,
+) -> None:
+    """Property-less parallel edges on different templates round-trip intact.
+
+    Two ``Alice -knows-> Bob`` edges with no properties, filed under the
+    "Mentorship" and "Colleague" edge templates, must import as two edges on
+    those templates — not collapse into one edge on a synthesized "knows"
+    template.
+    """
+    assert integration_adapter.session is not None
+    session = integration_adapter.session
+    session.add(
+        GraphTemplate(id="tpl_p", database_name="default", name="Person", template_type="node")
+    )
+    for tpl_id, name in (("tpl_mentor", "Mentorship"), ("tpl_colleague", "Colleague")):
+        session.add(
+            GraphTemplate(id=tpl_id, database_name="default", name=name, template_type="edge")
+        )
+    session.flush()
+    for node_id, label in (("n_alice", "Alice"), ("n_bob", "Bob")):
+        session.add(
+            GraphNode(
+                id=node_id,
+                database_name="default",
+                graph_name="knowledge",
+                template_id="tpl_p",
+                label=label,
+            )
+        )
+    session.flush()
+    for edge_id, tpl_id in (("e_mentor", "tpl_mentor"), ("e_colleague", "tpl_colleague")):
+        session.add(
+            GraphEdge(
+                id=edge_id,
+                database_name="default",
+                graph_name="knowledge",
+                template_id=tpl_id,
+                source_node_id="n_alice",
+                target_node_id="n_bob",
+                label="knows",
+            )
+        )
+    session.commit()
+
+    graph_repo = GraphRepository(session, "default")
+    exporter = CcxExporter(
+        graph_repository=graph_repo,
+        sources_repository=integration_adapter,
+        settings=build_engine_settings(get_settings()),
+        workflow_db=None,
+    )
+    data = exporter.export(include_embeddings=False)
+
+    target_db = "imported_parallel"
+    stats = await _import(integration_adapter, data, target_db)
+    assert not stats.errors, stats.errors
+
+    target_repo = GraphRepository(session, target_db)
+    edges = target_repo.list_edges(include_disabled_sources=True)
+    template_names = {
+        tmpl.name for edge in edges if (tmpl := target_repo.get_template(edge.template_id))
+    }
+    assert len(edges) == 2
+    assert template_names == {"Mentorship", "Colleague"}

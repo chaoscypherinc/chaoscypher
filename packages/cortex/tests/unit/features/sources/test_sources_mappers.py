@@ -20,6 +20,7 @@ from chaoscypher_cortex.features.sources.mappers import (
     attach_quality_scores,
     build_domain_icon_map,
     calculate_duration,
+    enrich_domain_changed,
     enrich_domain_icons,
     get_quality_config_for_domain,
 )
@@ -152,6 +153,50 @@ class TestEnrichDomainIcons:
         enrich_domain_icons(sources, {"technical": "CodeIcon"})
         assert sources == []
 
+    def test_a_label_gets_one_icon_per_pack_in_stored_order(self) -> None:
+        """Two packs: an icon each (the stored score order), the old field the first pack's."""
+        sources: list[dict[str, Any]] = [
+            {
+                "id": "s1",
+                "extraction_domain": "historical+literary",
+                "extraction_packs": ["literary", "historical"],
+            },
+            {"id": "s2", "extraction_domain": "generic", "extraction_packs": []},
+        ]
+        enrich_domain_icons(sources, {"literary": "MenuBook", "historical": "History"})
+        assert list(sources[0]["extraction_pack_icons"].items()) == [
+            ("literary", "MenuBook"),
+            ("historical", "History"),
+        ]
+        assert sources[0]["extraction_domain_icon"] == "MenuBook"
+        assert "extraction_pack_icons" not in sources[1]
+
+
+class TestEnrichDomainChanged:
+    """``domain_changed_since_extraction`` reads the packs a source was extracted with."""
+
+    def test_two_packs_compare_one_hash_over_both(self) -> None:
+        from chaoscypher_core.services.sources.engine.extraction.domains.fingerprint import (
+            stack_content_hash,
+        )
+
+        live = {"historical": "h1", "literary": "l1"}
+        stored = stack_content_hash(live, ["historical", "literary"])
+        fresh = {"extraction_packs": ["literary", "historical"], "domain_content_hash": stored}
+        stale = {"extraction_packs": ["literary", "historical"], "domain_content_hash": "old"}
+        by_label = {"extraction_domain": "historical+literary", "domain_content_hash": "old"}
+        gone = {"extraction_packs": ["literary", "gone"], "domain_content_hash": "old"}
+        one = {"extraction_packs": ["literary"], "domain_content_hash": "l0"}
+        sources = [fresh, stale, by_label, gone, one]
+        enrich_domain_changed(sources, live)
+        assert [s["domain_changed_since_extraction"] for s in sources] == [
+            False,
+            True,
+            True,
+            False,
+            True,
+        ]
+
 
 # ---------------------------------------------------------------------------
 # build_domain_icon_map
@@ -207,19 +252,18 @@ class TestGetQualityConfigForDomain:
         assert get_quality_config_for_domain(None, "default") == {}
 
     def test_returns_config_from_domain_analyzer(self) -> None:
-        """Returns the dict produced by analyzer.get_quality_scoring()."""
-        mock_analyzer = MagicMock()
-        mock_analyzer.get_quality_scoring.return_value = {"min_score": 50}
-        mock_registry = MagicMock()
-        mock_registry.get_domain.return_value = mock_analyzer
+        """The source's stack: the floor's scores per core type, the pack's per subtype (Task 7)."""
+        result = get_quality_config_for_domain("literary", "default")
 
-        with patch(
-            "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
-            return_value=mock_registry,
-        ):
-            result = get_quality_config_for_domain("technical", "default")
+        assert result["entity_scores"]["Person"] == 25
+        assert result["subtype_scores"]["character"] == 25
+        assert result["relationship_scores"]["parent_of"] == 25
+        assert "betrothed_to" in result["relationship_scores"]
 
-        assert result == {"min_score": 50}
+    def test_a_label_of_two_packs_reads_both(self) -> None:
+        result = get_quality_config_for_domain("historical+literary", "default")
+
+        assert {"character", "historical_figure"} <= set(result["subtype_scores"])
 
     def test_returns_empty_dict_when_analyzer_missing(self) -> None:
         """Returns {} when the registry does not have the domain."""

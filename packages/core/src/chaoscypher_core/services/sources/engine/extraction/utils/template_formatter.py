@@ -7,10 +7,13 @@ Provides formatted template lists for AI extraction prompts using domain configu
 """
 
 import re
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import structlog
 
 from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_core.services.sources.engine.extraction.utils.prompts import subtype_clause
 
 
 logger = structlog.get_logger(__name__)
@@ -91,6 +94,59 @@ def _get_fallback_edge_templates() -> str:
 # ============================================================================
 
 
+def format_node_line(
+    template: Mapping[str, Any],
+    *,
+    subtypes: Sequence[str] = (),
+    extra_properties: Sequence[Mapping[str, Any]] = (),
+) -> str:
+    """One entity type's line in the prompt's type list.
+
+    ``- Person: An individual human being (subtypes: author, character —
+    write Person/author) (properties: title=Title/Role, ...)``: the subtypes
+    as the slugs the model writes, ``Core/subtype`` (``prompts.subtype_clause``).
+    The property hints show the key
+    and its display name, so the model knows which key a ``P|`` line uses;
+    ``extra_properties`` (a pack's ``core_properties``) follow the
+    template's own, a key the template already has being skipped.
+
+    Args:
+        template: A node template (``name``, ``description``, ``properties``).
+        subtypes: The subtype values offered under this type, in order.
+        extra_properties: Further property definitions for this type.
+
+    Returns:
+        The line, without a trailing newline.
+    """
+    name = template.get("name", "Unknown")
+    desc = template.get("description", "No description provided")
+    line = f"- {name}: {desc}"
+    if subtypes:
+        line += f" {subtype_clause(str(name), subtypes)}"
+    seen: set[str] = set()
+    prop_hints = []
+    for prop in [*(template.get("properties") or []), *extra_properties]:
+        key = prop.get("name")
+        if key and key not in seen:
+            seen.add(key)
+            prop_hints.append(f"{key}={prop.get('display_name', key)}")
+    if prop_hints:
+        line += f" (properties: {', '.join(prop_hints)})"
+    return line
+
+
+def format_edge_line(template: Mapping[str, Any]) -> str:
+    """One relationship type's line in the prompt's type list.
+
+    ``- slug: description``; a template whose name is not already its slug
+    (``Works At``) shows the name too: ``- works_at (Works At): description``.
+    """
+    name = str(template.get("name", "unknown"))
+    desc = template.get("description", "Generic relationship")
+    slug = template_name_to_snake_case(name)
+    return f"- {slug}: {desc}" if slug == name else f"- {slug} ({name}): {desc}"
+
+
 def format_domain_node_templates(
     templates: dict[str, list[dict]],
     *,
@@ -132,26 +188,7 @@ def format_domain_node_templates(
         logger.warning("domain_node_templates_empty_using_fallback")
         return _get_fallback_node_templates()
 
-    formatted_lines = []
-    for template in node_templates:
-        name = template.get("name", "Unknown")
-        desc = template.get("description", "No description provided")
-        props = template.get("properties", [])
-
-        line = f"- {name}: {desc}"
-
-        # Add property hints if template has property definitions
-        # Show both key and display name so LLM knows what key to use in P| lines
-        if props:
-            prop_hints = [
-                f"{p.get('name', '')}={p.get('display_name', p.get('name', ''))}"
-                for p in props
-                if p.get("name")
-            ]
-            line += f" (properties: {', '.join(prop_hints)})"
-
-        formatted_lines.append(line)
-
+    formatted_lines = [format_node_line(template) for template in node_templates]
     logger.debug("domain_node_templates_formatted", template_count=len(node_templates))
     return "\n".join(formatted_lines)
 
@@ -191,14 +228,7 @@ def format_domain_edge_templates(
         logger.warning("domain_edge_templates_empty_using_fallback")
         return _get_fallback_edge_templates()
 
-    formatted_lines = []
-    for template in edge_templates:
-        name = template.get("name", "unknown")
-        desc = template.get("description", "Generic relationship")
-        # Convert to snake_case for consistency
-        type_slug = template_name_to_snake_case(name)
-        formatted_lines.append(f"- {type_slug} ({name}): {desc}")
-
+    formatted_lines = [format_edge_line(template) for template in edge_templates]
     logger.debug("domain_edge_templates_formatted", template_count=len(edge_templates))
     return "\n".join(formatted_lines)
 

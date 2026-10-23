@@ -7,7 +7,8 @@
  * Thin orchestrator that renders the MUI table structure with source
  * rows. Delegates row rendering to {@link SourceRow}, status display
  * to {@link SourceStatusCell}, and action menus to
- * {@link useSourceActionMenu}.
+ * {@link useSourceActionMenu}. Each imported site is one {@link SiteRow}
+ * above the sources, expandable to its pages (the same source rows).
  */
 
 import {
@@ -22,12 +23,18 @@ import {
   Typography,
 } from '@mui/material';
 import UploadIcon from '@mui/icons-material/Upload';
-import type { UnifiedSource, SourceQualityScore } from '../../types';
+import type { Site, UnifiedSource, SourceQualityScore } from '../../types';
+import { SiteRow } from './components/SiteRow';
 import { SourceRow } from './components/SourceRow';
 import { useSourceActionMenu } from './components/SourceActionMenu';
+import { SOURCES_POLL_INTERVAL_MS } from './hooks/useSourcesData';
 
 interface SourcesTableProps {
   sources: UnifiedSource[];
+  /** Imported sites, one row each, above the sources. */
+  sites?: Site[];
+  /** Poll interval (ms) for an expanded site's pages while it is busy. */
+  pollInterval?: number;
   selectedIds: Set<string>;
   onSelectionChange: (sourceId: string) => void;
   onSelectAll: () => void;
@@ -46,6 +53,8 @@ interface SourcesTableProps {
 
 export function SourcesTable({
   sources,
+  sites = [],
+  pollInterval = SOURCES_POLL_INTERVAL_MS,
   selectedIds,
   onSelectionChange,
   onSelectAll,
@@ -79,7 +88,7 @@ export function SourcesTable({
     onRetrySource,
   });
 
-  if (sources.length === 0) {
+  if (sources.length === 0 && sites.length === 0) {
     return (
       <Box sx={{ py: 4, textAlign: 'center' }}>
         <UploadIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
@@ -117,6 +126,27 @@ export function SourcesTable({
             </TableRow>
           </TableHead>
           <TableBody>
+            {sites.map((site) => (
+              <SiteRow
+                key={site.id}
+                site={site}
+                pollInterval={pollInterval}
+                renderPage={(page) => (
+                  <SourceRow
+                    key={page.id}
+                    source={page}
+                    nested
+                    isSelected={false}
+                    anySelected={false}
+                    onSelectionChange={() => {}}
+                    onRowClick={onRowClick}
+                    onMenuOpen={openMenu}
+                    qualityScores={qualityScores}
+                    onConfirmExtraction={onConfirmExtraction}
+                  />
+                )}
+              />
+            ))}
             {sources.map((source) => (
               <SourceRow
                 key={source.id}

@@ -384,3 +384,43 @@ def test_unknown_operation_falls_through_to_drop_and_log(
         task_id="tsk_unknown",
         payload_version=0,
     )  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# site_bound: an interrupted site import fails its site (it never stays "importing")
+# ---------------------------------------------------------------------------
+
+
+def test_import_site_is_site_bound() -> None:
+    from chaoscypher_core.constants import OP_IMPORT_SITE
+
+    assert OPERATION_RECOVERY_CATEGORY[OP_IMPORT_SITE] == "site_bound"
+
+
+def test_an_upgrade_interrupted_site_import_fails_its_site(
+    db_adapter: SqliteAdapter, patched_adapter_factory: None
+) -> None:
+    from chaoscypher_core.constants import OP_IMPORT_SITE
+    from chaoscypher_core.operations.sources.site_runs import SITE_RUN_INTERRUPTED_MESSAGE
+
+    db_adapter.create_site(
+        site_id="site-1",
+        database_name="default",
+        url="https://docs.example.com",
+        title="Docs",
+        status="importing",
+        options={},
+    )
+
+    apply_upgrade_recovery(
+        operation=OP_IMPORT_SITE,
+        data={"site_id": "site-1", "refresh": False},
+        metadata={"database_name": "default", "site_id": "site-1"},
+        task_id="task-1",
+        payload_version=99,
+    )
+
+    site = db_adapter.get_site("site-1", "default")
+    assert site is not None
+    assert site["status"] == "failed"
+    assert site["error_message"] == SITE_RUN_INTERRUPTED_MESSAGE

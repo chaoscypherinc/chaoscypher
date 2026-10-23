@@ -31,6 +31,32 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
+from chaoscypher_core.testing import (
+    data_dir_in_tmp,  # noqa: F401 — autouse: the data directory is a tmp dir
+    llm_cache_in_tmp,  # noqa: F401 — autouse: the LLM caches live in a tmp dir
+    ollama_offline,  # noqa: F401 — autouse: no test reaches Ollama
+)
+from chaoscypher_core.testing.fake_web import (
+    fake_site,  # noqa: F401 — `source add --site`'s fake web
+)
+
+
+@pytest.fixture(autouse=True)
+def _no_model_build_fetch(monkeypatch):
+    """The runner asks no Ollama for a row's model build (audit wave 4): a fake reports none.
+
+    ``run_benchmark`` stamps ``extras["model_build"]`` from
+    :func:`~chaoscypher_cli.benchmark.runner.fetch_model_build`, which calls
+    the configured Ollama; the unit tests fake it (the Ollama guard would
+    refuse the connection). A test of the recording passes its own fetcher.
+    """
+
+    async def _none(_model: Any) -> None:
+        return None
+
+    monkeypatch.setattr("chaoscypher_cli.benchmark.runner.fetch_model_build", _none)
+
 
 @pytest.fixture
 def isolated_settings(tmp_path, monkeypatch):
@@ -119,6 +145,7 @@ def mock_storage_adapter() -> MagicMock:
         staging_dir: str,
         extraction_depth: str = "full",
         forced_domain: str | None = None,
+        forced_packs: list[str] | tuple[str, ...] | None = None,
         content_hash: str | None = None,
         # W1 (2026-05-07): upload-row settings that the real adapter
         # persists; the mock just round-trips them so callers can assert.
@@ -145,7 +172,12 @@ def mock_storage_adapter() -> MagicMock:
             "file_type": suffix,
             "status": "uploaded",
             "extraction_depth": extraction_depth,
-            "forced_domain": forced_domain,
+            # The real adapter's write rule: the list and the old name in step.
+            **pack_columns(
+                {"forced_packs": list(forced_packs)}
+                if forced_packs is not None
+                else {"forced_domain": forced_domain}
+            ),
             "content_hash": content_hash,
             # Round-trip upload-row settings.
             "auto_analyze": auto_analyze,
@@ -165,7 +197,7 @@ def mock_storage_adapter() -> MagicMock:
 
     def update_file(file_id: str, database_name: str, updates: dict[str, Any]) -> None:
         if file_id in adapter._files:
-            adapter._files[file_id].update(updates)
+            adapter._files[file_id].update(pack_columns(updates))
 
     def start_indexing(file_id: str) -> None:
         if file_id in adapter._files:
@@ -285,6 +317,11 @@ def mock_cli_context(temp_dir: Path, mock_storage_adapter: MagicMock) -> MagicMo
     # Paths config needed by LoaderRegistry for plugin discovery
     settings.paths = MagicMock()
     settings.paths.data_dir = str(temp_dir / "data")
+
+    # The known-entities list's size, read by every extraction loop (KnownEntities.for_plan)
+    from chaoscypher_core.settings import ExtractionSettings
+
+    settings.extraction.known_entities_limit = ExtractionSettings().known_entities_limit
 
     ctx.settings = settings
 
@@ -538,3 +575,39 @@ def mock_hub_api_client() -> MagicMock:
     client.download = mock_download
 
     return client
+
+
+@pytest.fixture
+def stub_extraction_plan() -> Any:
+    """A minimal ``ExtractionPlan`` for driving ``_extract_and_finalize`` directly.
+
+    The chunk kwargs carry the template markers the extractor fakes look for
+    (``NT`` / ``ET``); the FilteringConfig is the ``balanced`` preset.
+    """
+    from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+        ExtractionPlan,
+        plan_filtering_config,
+    )
+
+    kwargs: dict[str, Any] = {
+        "node_templates_formatted": "NT",
+        "edge_templates_formatted": "ET",
+        "entity_guidance": None,
+        "relationship_guidance": None,
+        "entity_examples": None,
+        "relationship_examples": None,
+        "domain_extraction_limits": {},
+        "filtering_mode": "balanced",
+        "entity_exclusions": None,
+        "strict_entity_types": False,
+        "valid_entity_type_names": None,
+        "evidence_validation_mode": None,
+        "named_referent_types": None,
+        "normalization_rules": None,
+        "property_type_mapping": None,
+    }
+    return ExtractionPlan(
+        chunk_kwargs=kwargs,
+        filtering_config=plan_filtering_config("balanced", {}),
+        edge_type_constraints=None,
+    )

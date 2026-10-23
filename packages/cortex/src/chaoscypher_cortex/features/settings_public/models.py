@@ -47,6 +47,15 @@ class PublicSettings(BaseModel):
     batch_import_max_attempts: int = Field(description="Max poll attempts for import jobs.")
     batch_graph_source_page_size: int = Field(description="Graph canvas source list page size.")
 
+    # Site import
+    web_site_max_pages: int = Field(description="Most pages one site import takes.")
+    web_site_preview_debounce_ms: int = Field(
+        description="Add Source dialog: pause after typing before the site check (ms)."
+    )
+    web_site_pages_named_max: int = Field(
+        description="Page addresses a site's messages name before 'and N more'."
+    )
+
     # Recovery thresholds (closes the TODO in recoveryThresholds.ts)
     recovery_warn_threshold: int = Field(
         description="Recovery attempt count above which to warn the operator."

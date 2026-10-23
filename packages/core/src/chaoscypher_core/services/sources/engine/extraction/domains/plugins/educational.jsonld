@@ -10,12 +10,13 @@
   "@type": "ExtractionDomain",
   "@id": "domain:educational",
   "name": "educational",
-  "version": "1.11.1",
+  "version": "2.0.0",
   "description": "Educational materials, textbooks, courses, and instructional content",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.1,
-  "strict_entity_types": true,
   "type_aliases": {
     "Teacher": "Educator"
   },
@@ -151,15 +152,6 @@
   },
   "entity_exclusions": [
     {
-      "description": "Structural markers",
-      "examples": [
-        "Chapter 1",
-        "Unit 3",
-        "Exercise 2a",
-        "Lesson 5"
-      ]
-    },
-    {
       "description": "Instructional boilerplate",
       "examples": [
         "In this chapter you will learn",
@@ -175,517 +167,445 @@
       ]
     }
   ],
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract concepts, learning objectives, prerequisites, and assessments\n- Include subject areas and difficulty levels in properties\n- Use clear, descriptive names for concepts\n\nDO NOT EXTRACT:\n- Structural markers: Chapter 1, Unit 3, Lesson 5, Exercise 2a\n- Instructional boilerplate: 'In this chapter you will learn', 'Key takeaways'\n- Generic student references: 'the student', 'learners', 'you'\n- Page numbers, answer keys, or index references",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PROGRESSION: Use requires, builds_on to show learning dependencies\n- OBJECTIVES: Link lessons to objectives with teaches relationship\n- PRACTICE: Connect exercises to concepts with practices\n- ASSESSMENT: Link assessments to objectives with assessed_by\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
-  "templates": {
-    "node_templates": [
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract concepts, learning objectives, prerequisites, and assessments\n- Include subject areas and difficulty levels in properties\n- Use clear, descriptive names for concepts\n\nDO NOT EXTRACT:\n- Instructional boilerplate: 'In this chapter you will learn', 'Key takeaways'\n- Generic student references: 'the student', 'learners', 'you'\n- Page numbers, answer keys, or index references",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PROGRESSION: Use requires, builds_on to show learning dependencies\n- OBJECTIVES: Link lessons to objectives with teaches relationship\n- PRACTICE: Connect exercises to concepts with practices\n- ASSESSMENT: Link assessments to objectives with assesses\n",
+  "subtypes": [
+    {
+      "name": "Learning Objective",
+      "of": "Concept",
+      "description": "A specific learning outcome or objective",
+      "properties": [
+        {
+          "name": "bloom_level",
+          "display_name": "Bloom's Level",
+          "property_type": "text"
+        },
+        {
+          "name": "subject_area",
+          "display_name": "Subject Area",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Flag",
+      "color": "#afd641",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "learning objective",
+        "objective",
+        "students will",
+        "by the end of",
+        "able to"
+      ]
+    },
+    {
+      "name": "Prerequisite",
+      "of": "Concept",
+      "description": "Required prior knowledge or skill",
+      "icon": "Label",
+      "color": "#82d641",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "prerequisite",
+        "prior knowledge",
+        "required",
+        "before learning",
+        "foundation"
+      ]
+    },
+    {
+      "name": "Lesson",
+      "of": "Work",
+      "description": "An instructional unit or lesson",
+      "properties": [
+        {
+          "name": "duration",
+          "display_name": "Duration",
+          "property_type": "text"
+        },
+        {
+          "name": "difficulty",
+          "display_name": "Difficulty Level",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Class",
+      "color": "#55d641",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "lesson",
+        "lecture",
+        "class",
+        "session",
+        "instruction"
+      ]
+    },
+    {
+      "name": "Module",
+      "of": "Work",
+      "description": "A larger instructional module or unit",
+      "properties": [
+        {
+          "name": "duration",
+          "display_name": "Duration",
+          "property_type": "text"
+        },
+        {
+          "name": "level",
+          "display_name": "Level",
+          "property_type": "text"
+        }
+      ],
+      "icon": "LibraryBooks",
+      "color": "#41d65a",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "module",
+        "unit",
+        "chapter",
+        "section"
+      ]
+    },
+    {
+      "name": "Exercise",
+      "of": "Work",
+      "description": "A practice problem or activity",
+      "icon": "Assignment",
+      "color": "#41d687",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "exercise",
+        "problem",
+        "practice",
+        "activity",
+        "question"
+      ]
+    },
+    {
+      "name": "Example",
+      "of": "Concept",
+      "description": "An illustrative example or case",
+      "icon": "FormatQuote",
+      "color": "#41d6b3",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "example",
+        "illustration",
+        "case",
+        "instance",
+        "demonstration"
+      ]
+    },
+    {
+      "name": "Definition",
+      "of": "Concept",
+      "description": "A term definition or key vocabulary",
+      "icon": "Description",
+      "color": "#41ccd6",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "definition",
+        "defined as",
+        "means",
+        "refers to",
+        "key term"
+      ]
+    },
+    {
+      "name": "Skill",
+      "of": "Concept",
+      "description": "An ability or competency to develop",
+      "icon": "Build",
+      "color": "#41a0d6",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "skill",
+        "ability",
+        "competency",
+        "proficiency"
+      ]
+    },
+    {
+      "name": "Assessment",
+      "of": "Work",
+      "description": "A test, quiz, or evaluation",
+      "icon": "Quiz",
+      "color": "#4173d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "test",
+        "quiz",
+        "exam",
+        "assessment",
+        "evaluation"
+      ]
+    },
+    {
+      "name": "Theory",
+      "of": "Concept",
+      "description": "An educational theory or pedagogical conjecture (e.g. Constructivism, Bloom's Taxonomy)",
+      "icon": "Psychology",
+      "color": "#4146d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "theory",
+        "pedagogical theory",
+        "learning theory"
+      ]
+    },
+    {
+      "name": "Framework",
+      "of": "Concept",
+      "description": "A structured framework or methodology for instruction (e.g. Backward Design, UbD)",
+      "icon": "Category",
+      "color": "#4170d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "framework",
+        "model",
+        "approach",
+        "methodology"
+      ]
+    },
+    {
+      "name": "Diagram",
+      "of": "Work",
+      "description": "A structured visual showing relationships (flowcharts, mind maps, schematics, concept maps)",
+      "icon": "AccountTree",
+      "color": "#6941d6",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "diagram",
+        "flowchart",
+        "schematic",
+        "concept map",
+        "mind map"
+      ]
+    },
+    {
+      "name": "Figure",
+      "of": "Work",
+      "description": "A figure, chart, or illustration in an educational resource (graphs, tables, images)",
+      "icon": "Insights",
+      "color": "#9341d6",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "figure",
+        "chart",
+        "graph",
+        "illustration",
+        "table",
+        "image"
+      ]
+    },
+    {
+      "name": "Formula",
+      "of": "Concept",
+      "description": "A mathematical formula, equation, or rule",
+      "icon": "Science",
+      "color": "#9641d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "formula",
+        "equation",
+        "rule",
+        "law",
+        "theorem"
+      ]
+    },
+    {
+      "name": "Taxonomy",
+      "of": "Concept",
+      "description": "A classification system or hierarchy (e.g., Bloom's taxonomy)",
+      "icon": "AccountTree",
+      "color": "#c241d6",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "taxonomy",
+        "classification",
+        "hierarchy",
+        "categorization"
+      ]
+    },
+    {
+      "name": "Learning Path",
+      "of": "Work",
+      "description": "A sequence of courses, modules, or certifications",
+      "icon": "Timeline",
+      "color": "#d641be",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "learning path",
+        "curriculum",
+        "course sequence",
+        "track",
+        "certification"
+      ]
+    },
+    {
+      "name": "Misconception",
+      "of": "Concept",
+      "description": "A common misunderstanding or incorrect belief",
+      "icon": "ReportProblem",
+      "color": "#d64191",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "misconception",
+        "common mistake",
+        "misunderstanding",
+        "fallacy",
+        "myth"
+      ]
+    },
+    {
+      "name": "Author",
+      "of": "Person",
+      "description": "An author of an educational resource (textbook, paper, curriculum)",
+      "names_a_person": true,
+      "icon": "Edit",
+      "color": "#d64164",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "author",
+        "writer",
+        "co-author"
+      ]
+    },
+    {
+      "name": "Educator",
+      "of": "Person",
+      "description": "An educator, teacher, instructor, or educational theorist",
+      "names_a_person": true,
+      "icon": "Person",
+      "color": "#d64190",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "educator",
+        "teacher",
+        "instructor",
+        "professor",
+        "lecturer",
+        "theorist",
+        "researcher"
+      ]
+    },
+    {
+      "name": "Resource",
+      "of": "Work",
+      "description": "A textbook, reference material, or supplementary resource",
+      "icon": "MenuBook",
+      "color": "#d64b41",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "textbook",
+        "reference",
+        "resource",
+        "handbook",
+        "guide"
+      ]
+    },
+    {
+      "name": "Standard",
+      "of": "Work",
+      "description": "An educational standard or accreditation requirement (e.g. Common Core, NGSS)",
+      "icon": "Policy",
+      "color": "#d67841",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "standard",
+        "requirement",
+        "accreditation",
+        "competency standard"
+      ]
+    },
+    {
+      "name": "Benchmark",
+      "of": "Concept",
+      "description": "A measurable proficiency benchmark used to evaluate learning against a standard",
+      "icon": "Speed",
+      "color": "#d69441",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "benchmark",
+        "proficiency level",
+        "grade-level expectation"
+      ]
+    },
+    {
+      "name": "Subject",
+      "of": "Concept",
+      "description": "A school subject (e.g. Mathematics, Biology, History)",
+      "icon": "School",
+      "color": "#d6a541",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "subject",
+        "school subject",
+        "course subject"
+      ]
+    },
+    {
+      "name": "Discipline",
+      "of": "Concept",
+      "description": "A broader academic discipline or field of study (e.g. Sciences, Humanities)",
+      "icon": "MenuBook",
+      "color": "#d6c141",
+      "quality_score": 15,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "discipline",
+        "field",
+        "area of study",
+        "domain"
+      ]
+    }
+  ],
+  "core_properties": {
+    "Concept": [
       {
-        "@type": "NodeTemplate",
-        "id": "edu_template_concept",
-        "name": "Concept",
-        "description": "A key concept or idea to be learned",
-        "icon": "Lightbulb",
-        "color": "#d6d141",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "concept",
-          "idea",
-          "principle",
-          "topic",
-          "subject matter"
-        ],
-        "properties": [
-          {
-            "name": "difficulty_level",
-            "display_name": "Difficulty Level",
-            "property_type": "text",
-            "absorbs_types": [
-              "Difficulty Level"
-            ]
-          },
-          {
-            "name": "subject_area",
-            "display_name": "Subject Area",
-            "property_type": "text",
-            "absorbs_types": [
-              "Subject Area"
-            ]
-          }
-        ]
+        "name": "difficulty_level",
+        "display_name": "Difficulty Level",
+        "property_type": "text"
       },
       {
-        "@type": "NodeTemplate",
-        "id": "edu_template_objective",
-        "name": "Learning Objective",
-        "description": "A specific learning outcome or objective",
-        "icon": "Flag",
-        "color": "#afd641",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "objectives",
-        "normalization_keywords": [
-          "learning objective",
-          "objective",
-          "students will",
-          "by the end of",
-          "able to"
-        ],
-        "properties": [
-          {
-            "name": "bloom_level",
-            "display_name": "Bloom's Level",
-            "property_type": "text",
-            "absorbs_types": [
-              "Bloom's Level",
-              "Cognitive Level"
-            ]
-          },
-          {
-            "name": "subject_area",
-            "display_name": "Subject Area",
-            "property_type": "text",
-            "absorbs_types": [
-              "Subject Area"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_prerequisite",
-        "name": "Prerequisite",
-        "description": "Required prior knowledge or skill",
-        "icon": "Label",
-        "color": "#82d641",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "objectives",
-        "normalization_keywords": [
-          "prerequisite",
-          "prior knowledge",
-          "required",
-          "before learning",
-          "foundation"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_lesson",
-        "name": "Lesson",
-        "description": "An instructional unit or lesson",
-        "icon": "Class",
-        "color": "#55d641",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "lesson",
-          "lecture",
-          "class",
-          "session",
-          "instruction"
-        ],
-        "properties": [
-          {
-            "name": "duration",
-            "display_name": "Duration",
-            "property_type": "text",
-            "absorbs_types": [
-              "Duration"
-            ]
-          },
-          {
-            "name": "difficulty",
-            "display_name": "Difficulty Level",
-            "property_type": "text",
-            "absorbs_types": [
-              "Difficulty Level"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_module",
-        "name": "Module",
-        "description": "A larger instructional module or unit",
-        "icon": "LibraryBooks",
-        "color": "#41d65a",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "module",
-          "unit",
-          "chapter",
-          "section"
-        ],
-        "properties": [
-          {
-            "name": "duration",
-            "display_name": "Duration",
-            "property_type": "text"
-          },
-          {
-            "name": "level",
-            "display_name": "Level",
-            "property_type": "text"
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_exercise",
-        "name": "Exercise",
-        "description": "A practice problem or activity",
-        "icon": "Assignment",
-        "color": "#41d687",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "exercise",
-          "problem",
-          "practice",
-          "activity",
-          "question"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_example",
-        "name": "Example",
-        "description": "An illustrative example or case",
-        "icon": "FormatQuote",
-        "color": "#41d6b3",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "example",
-          "illustration",
-          "case",
-          "instance",
-          "demonstration"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_definition",
-        "name": "Definition",
-        "description": "A term definition or key vocabulary",
-        "icon": "Description",
-        "color": "#41ccd6",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "definition",
-          "defined as",
-          "means",
-          "refers to",
-          "key term"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_skill",
-        "name": "Skill",
-        "description": "An ability or competency to develop",
-        "icon": "Build",
-        "color": "#41a0d6",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "skill",
-          "ability",
-          "competency",
-          "proficiency"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_assessment",
-        "name": "Assessment",
-        "description": "A test, quiz, or evaluation",
-        "icon": "Quiz",
-        "color": "#4173d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "test",
-          "quiz",
-          "exam",
-          "assessment",
-          "evaluation"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_theory",
-        "name": "Theory",
-        "description": "An educational theory or pedagogical conjecture (e.g. Constructivism, Bloom's Taxonomy)",
-        "icon": "Psychology",
-        "color": "#4146d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "theory",
-          "pedagogical theory",
-          "learning theory"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_framework",
-        "name": "Framework",
-        "description": "A structured framework or methodology for instruction (e.g. Backward Design, UbD)",
-        "icon": "Category",
-        "color": "#4170d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "framework",
-          "model",
-          "approach",
-          "methodology"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_diagram",
-        "name": "Diagram",
-        "description": "A structured visual showing relationships (flowcharts, mind maps, schematics, concept maps)",
-        "icon": "AccountTree",
-        "color": "#6941d6",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "diagram",
-          "flowchart",
-          "schematic",
-          "concept map",
-          "mind map"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_figure",
-        "name": "Figure",
-        "description": "A figure, chart, or illustration in an educational resource (graphs, tables, images)",
-        "icon": "Insights",
-        "color": "#9341d6",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "figure",
-          "chart",
-          "graph",
-          "illustration",
-          "table",
-          "image"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_formula",
-        "name": "Formula",
-        "description": "A mathematical formula, equation, or rule",
-        "icon": "Science",
-        "color": "#9641d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "formula",
-          "equation",
-          "rule",
-          "law",
-          "theorem"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_taxonomy",
-        "name": "Taxonomy",
-        "description": "A classification system or hierarchy (e.g., Bloom's taxonomy)",
-        "icon": "AccountTree",
-        "color": "#c241d6",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "taxonomy",
-          "classification",
-          "hierarchy",
-          "categorization"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_learning_path",
-        "name": "Learning Path",
-        "description": "A sequence of courses, modules, or certifications",
-        "icon": "Timeline",
-        "color": "#d641be",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "learning path",
-          "curriculum",
-          "course sequence",
-          "track",
-          "certification"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_misconception",
-        "name": "Misconception",
-        "description": "A common misunderstanding or incorrect belief",
-        "icon": "ReportProblem",
-        "color": "#d64191",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "misconception",
-          "common mistake",
-          "misunderstanding",
-          "fallacy",
-          "myth"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_author",
-        "name": "Author",
-        "description": "An author of an educational resource (textbook, paper, curriculum)",
-        "icon": "Edit",
-        "color": "#d64164",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "author",
-          "writer",
-          "co-author"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_educator",
-        "name": "Educator",
-        "description": "An educator, teacher, instructor, or educational theorist",
-        "icon": "Person",
-        "color": "#d64190",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "educator",
-          "teacher",
-          "instructor",
-          "professor",
-          "lecturer",
-          "theorist",
-          "researcher"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_resource",
-        "name": "Resource",
-        "description": "A textbook, reference material, or supplementary resource",
-        "icon": "MenuBook",
-        "color": "#d64b41",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "textbook",
-          "reference",
-          "resource",
-          "handbook",
-          "guide"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_standard",
-        "name": "Standard",
-        "description": "An educational standard or accreditation requirement (e.g. Common Core, NGSS)",
-        "icon": "Policy",
-        "color": "#d67841",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "standard",
-          "requirement",
-          "accreditation",
-          "competency standard"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_benchmark",
-        "name": "Benchmark",
-        "description": "A measurable proficiency benchmark used to evaluate learning against a standard",
-        "icon": "Speed",
-        "color": "#d69441",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "structure",
-        "normalization_keywords": [
-          "benchmark",
-          "proficiency level",
-          "grade-level expectation"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_subject",
-        "name": "Subject",
-        "description": "A school subject (e.g. Mathematics, Biology, History)",
-        "icon": "School",
-        "color": "#d6a541",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "subject",
-          "school subject",
-          "course subject"
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "edu_template_discipline",
-        "name": "Discipline",
-        "description": "A broader academic discipline or field of study (e.g. Sciences, Humanities)",
-        "icon": "MenuBook",
-        "color": "#d6c141",
-        "requires_named_referent": true,
-        "quality_score": 15,
-        "compatibility_group": "content",
-        "normalization_keywords": [
-          "discipline",
-          "field",
-          "area of study",
-          "domain"
-        ]
+        "name": "subject_area",
+        "display_name": "Subject Area",
+        "property_type": "text"
       }
-    ],
+    ]
+  },
+  "core_rescue_keywords": {
+    "Concept": [
+      "concept",
+      "idea",
+      "principle",
+      "topic",
+      "subject matter"
+    ]
+  },
+  "templates": {
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -696,25 +616,14 @@
         "color": "#9a32cc",
         "quality_score": 25,
         "source_types": [
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Resource",
-          "Educator",
-          "Example",
-          "Exercise"
+          "Work",
+          "Person",
+          "Concept"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Definition",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Subject",
-          "Discipline"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -725,27 +634,14 @@
         "color": "#c232cc",
         "quality_score": 25,
         "source_types": [
-          "Lesson",
-          "Module",
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Learning Path",
-          "Assessment",
-          "Exercise",
-          "Resource",
-          "Standard",
-          "Benchmark"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Prerequisite",
           "Concept",
-          "Skill",
-          "Learning Objective",
-          "Lesson",
-          "Module",
-          "Resource"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -757,28 +653,13 @@
         "quality_score": 25,
         "source_types": [
           "Concept",
-          "Lesson",
-          "Module",
-          "Skill",
-          "Learning Objective",
-          "Learning Path",
-          "Framework",
-          "Theory",
-          "Formula",
-          "Assessment",
-          "Exercise"
+          "Work"
         ],
         "target_types": [
           "Concept",
-          "Lesson",
-          "Module",
-          "Skill",
-          "Learning Objective",
-          "Prerequisite",
-          "Framework",
-          "Theory",
-          "Formula"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -789,20 +670,13 @@
         "color": "#cc3286",
         "quality_score": 15,
         "source_types": [
-          "Exercise",
-          "Assessment",
-          "Example",
-          "Lesson",
-          "Module"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Formula",
-          "Framework",
-          "Definition"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -813,22 +687,14 @@
         "color": "#cc325e",
         "quality_score": 15,
         "source_types": [
-          "Example",
-          "Exercise",
-          "Figure",
-          "Diagram",
-          "Lesson",
-          "Educator"
+          "Concept",
+          "Work",
+          "Person"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Theory",
-          "Framework",
-          "Formula",
-          "Learning Objective",
-          "Definition"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -839,22 +705,13 @@
         "color": "#cc3236",
         "quality_score": 15,
         "source_types": [
-          "Definition",
-          "Lesson",
-          "Module",
-          "Resource",
-          "Taxonomy",
-          "Framework",
-          "Standard"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Misconception"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -865,19 +722,13 @@
         "color": "#cc5732",
         "quality_score": 25,
         "source_types": [
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Exercise",
-          "Assessment",
-          "Resource",
-          "Educator"
+          "Work",
+          "Person"
         ],
         "target_types": [
-          "Skill",
-          "Concept",
-          "Learning Objective"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -888,20 +739,14 @@
         "color": "#cc7f32",
         "quality_score": 25,
         "source_types": [
-          "Assessment",
-          "Exercise",
-          "Benchmark",
-          "Educator",
-          "Standard"
+          "Work",
+          "Concept",
+          "Person"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Prerequisite",
-          "Formula",
-          "Misconception"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -912,28 +757,13 @@
         "color": "#cca732",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Lesson",
-          "Resource",
-          "Learning Path",
-          "Assessment"
+          "Work"
         ],
         "target_types": [
-          "Lesson",
-          "Module",
-          "Exercise",
-          "Assessment",
-          "Example",
-          "Definition",
-          "Diagram",
-          "Figure",
-          "Formula",
-          "Concept",
-          "Learning Objective",
-          "Misconception",
-          "Resource",
-          "Taxonomy"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -944,22 +774,14 @@
         "color": "#c8cc32",
         "quality_score": 15,
         "source_types": [
-          "Exercise",
-          "Example",
-          "Lesson",
-          "Module",
-          "Assessment",
-          "Educator"
+          "Work",
+          "Concept",
+          "Person"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Definition",
-          "Learning Objective"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -970,25 +792,13 @@
         "color": "#a0cc32",
         "quality_score": 15,
         "source_types": [
-          "Resource",
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Assessment",
-          "Exercise",
-          "Framework",
-          "Theory",
-          "Taxonomy",
-          "Standard",
-          "Diagram",
-          "Figure",
-          "Formula",
-          "Definition"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Author",
-          "Educator"
-        ]
+          "Person"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -999,24 +809,14 @@
         "color": "#78cc32",
         "quality_score": 15,
         "source_types": [
-          "Learning Objective",
-          "Assessment",
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Resource",
-          "Exercise",
           "Concept",
-          "Skill",
-          "Framework"
+          "Work"
         ],
         "target_types": [
-          "Standard",
-          "Benchmark",
-          "Framework",
-          "Taxonomy",
-          "Learning Objective"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1027,121 +827,14 @@
         "color": "#50cc32",
         "quality_score": 15,
         "source_types": [
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Assessment",
-          "Exercise",
-          "Resource",
-          "Framework",
-          "Taxonomy",
-          "Standard",
-          "Benchmark",
-          "Learning Objective",
-          "Diagram",
-          "Figure"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Standard",
-          "Resource",
           "Concept",
-          "Formula"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "edu_edge_references",
-        "name": "references",
-        "description": "Any educational content references or cites another resource, concept, theory, standard, figure, or related material",
-        "icon": "MenuBook",
-        "color": "#32cc3d",
-        "quality_score": 15,
-        "source_types": [
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Resource",
-          "Exercise",
-          "Example",
-          "Assessment",
-          "Definition",
-          "Diagram",
-          "Figure",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Standard",
-          "Benchmark",
-          "Concept",
-          "Educator",
-          "Author"
+          "Work"
         ],
-        "target_types": [
-          "Resource",
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Prerequisite",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Standard",
-          "Benchmark",
-          "Formula",
-          "Definition",
-          "Diagram",
-          "Figure",
-          "Lesson",
-          "Module",
-          "Exercise",
-          "Example",
-          "Author",
-          "Educator",
-          "Subject",
-          "Discipline",
-          "Misconception"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "edu_edge_belongs_to",
-        "name": "belongs_to",
-        "description": "Concept, skill, lesson, course, resource, or other content item belongs to a subject, discipline, learning path, or higher-level grouping",
-        "icon": "School",
-        "color": "#32cc64",
-        "quality_score": 15,
-        "source_types": [
-          "Concept",
-          "Skill",
-          "Lesson",
-          "Module",
-          "Learning Path",
-          "Learning Objective",
-          "Assessment",
-          "Exercise",
-          "Resource",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Formula",
-          "Definition",
-          "Standard",
-          "Benchmark",
-          "Misconception",
-          "Educator",
-          "Author"
-        ],
-        "target_types": [
-          "Subject",
-          "Discipline",
-          "Learning Path",
-          "Module",
-          "Taxonomy"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1153,24 +846,13 @@
         "quality_score": 25,
         "source_types": [
           "Concept",
-          "Lesson",
-          "Module",
-          "Definition",
-          "Example",
-          "Exercise",
-          "Assessment",
-          "Resource",
-          "Educator",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Figure",
-          "Diagram"
+          "Work",
+          "Person"
         ],
         "target_types": [
-          "Misconception",
           "Concept"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1181,24 +863,14 @@
         "color": "#32ccb4",
         "quality_score": 15,
         "source_types": [
-          "Diagram",
-          "Figure",
-          "Example",
-          "Resource"
+          "Work",
+          "Concept"
         ],
         "target_types": [
           "Concept",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Skill",
-          "Learning Path",
-          "Learning Objective",
-          "Standard",
-          "Definition",
-          "Misconception"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1209,17 +881,12 @@
         "color": "#32bbcc",
         "quality_score": 15,
         "source_types": [
-          "Formula",
-          "Theory",
-          "Definition"
+          "Concept"
         ],
         "target_types": [
-          "Concept",
-          "Theory",
-          "Framework",
-          "Skill",
-          "Formula"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1230,26 +897,14 @@
         "color": "#3293cc",
         "quality_score": 15,
         "source_types": [
-          "Taxonomy",
-          "Framework",
-          "Standard",
-          "Discipline",
-          "Subject",
-          "Concept"
+          "Concept",
+          "Work"
         ],
         "target_types": [
           "Concept",
-          "Skill",
-          "Learning Objective",
-          "Assessment",
-          "Lesson",
-          "Module",
-          "Misconception",
-          "Theory",
-          "Formula",
-          "Definition",
-          "Resource"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1260,26 +915,14 @@
         "color": "#326bcc",
         "quality_score": 15,
         "source_types": [
-          "Module",
-          "Lesson",
-          "Exercise",
-          "Assessment",
-          "Learning Path",
-          "Concept",
-          "Skill",
-          "Learning Objective"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Module",
-          "Lesson",
-          "Exercise",
-          "Assessment",
-          "Learning Path",
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Prerequisite"
-        ]
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1290,21 +933,13 @@
         "color": "#3243cc",
         "quality_score": 25,
         "source_types": [
-          "Assessment",
-          "Exercise",
-          "Example"
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Concept",
-          "Skill",
-          "Learning Objective",
-          "Formula",
-          "Theory",
-          "Framework",
-          "Definition",
-          "Prerequisite",
-          "Misconception"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1316,34 +951,13 @@
         "quality_score": 15,
         "source_types": [
           "Concept",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Skill",
-          "Formula",
-          "Standard",
-          "Benchmark",
-          "Definition",
-          "Learning Objective",
-          "Module",
-          "Lesson",
-          "Learning Path"
+          "Work"
         ],
         "target_types": [
           "Concept",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Skill",
-          "Formula",
-          "Standard",
-          "Benchmark",
-          "Definition",
-          "Learning Objective",
-          "Module",
-          "Lesson",
-          "Learning Path"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1354,27 +968,15 @@
         "color": "#7232cc",
         "quality_score": 15,
         "source_types": [
-          "Example",
-          "Lesson",
-          "Module",
-          "Definition",
-          "Figure",
-          "Diagram",
-          "Exercise",
-          "Resource",
-          "Educator"
+          "Concept",
+          "Work",
+          "Person"
         ],
         "target_types": [
           "Concept",
-          "Theory",
-          "Framework",
-          "Formula",
-          "Taxonomy",
-          "Skill",
-          "Standard",
-          "Misconception",
-          "Prerequisite"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1385,48 +987,12 @@
         "color": "#3d6a8f",
         "quality_score": 20,
         "source_types": [
-          "Educator",
-          "Author"
+          "Person"
         ],
         "target_types": [
-          "Concept",
-          "Theory",
-          "Framework",
-          "Skill",
-          "Learning Objective",
-          "Taxonomy",
-          "Misconception",
-          "Formula",
-          "Definition"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "edu_edge_influences",
-        "name": "influences",
-        "description": "An educator, theory, or framework influenced another (intellectual lineage)",
-        "icon": "TrendingUp",
-        "color": "#4d7a9f",
-        "quality_score": 20,
-        "source_types": [
-          "Educator",
-          "Author",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Learning Path"
+          "Concept"
         ],
-        "target_types": [
-          "Educator",
-          "Author",
-          "Theory",
-          "Framework",
-          "Taxonomy",
-          "Lesson",
-          "Module",
-          "Concept",
-          "Standard"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1438,19 +1004,16 @@
         "symmetric": true,
         "quality_score": 20,
         "source_types": [
-          "Educator",
-          "Author"
+          "Person"
         ],
         "target_types": [
-          "Educator",
-          "Author"
-        ]
+          "Person"
+        ],
+        "two_endpoints_only": true
       }
     ]
   },
   "extraction_limits": {
-    "max_entity_degree": 20,
-    "max_same_source_type": 8,
     "max_relationship_ratio": 6.0,
     "loop_max_entity_count": 35
   },
@@ -1483,7 +1046,7 @@
         "canonical": "Pythagorean Theorem",
         "aliases": [
           "Pythagoras' Theorem",
-          "a� + b� = c�"
+          "a² + b² = c²"
         ],
         "note": "Alternate names and symbolic forms become aliases"
       },

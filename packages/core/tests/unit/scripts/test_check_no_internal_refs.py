@@ -85,3 +85,46 @@ def test_does_not_scan_internal_tree(tmp_path: Path) -> None:
     internal.mkdir(parents=True)
     (internal / "x.md").write_text(f"# {_BAD}\n", encoding="utf-8")
     assert _GUARD.find_internal_refs(tmp_path) == []
+
+
+def test_finds_every_private_repo_name(tmp_path: Path) -> None:
+    """A private repo name in a docstring or a workflow is caught at commit time (#808).
+
+    Until 2026-10-17 only the weekly export gate looked for these, so a test docstring naming
+    the dev repo passed every commit and PR check and blocked that week's public snapshot.
+    """
+    pkg = tmp_path / "packages" / "core"
+    pkg.mkdir(parents=True)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    for i, marker in enumerate(_GUARD.PRIVATE_REPO_MARKERS):
+        (pkg / f"t{i}.py").write_text(f'"""Found on {marker} in October."""\n', encoding="utf-8")
+        (workflows / f"w{i}.yml").write_text(
+            f"if: github.repository == 'org/{marker}'\n", encoding="utf-8"
+        )
+    hits = _GUARD.find_internal_refs(tmp_path)
+    for i in range(len(_GUARD.PRIVATE_REPO_MARKERS)):
+        assert any(f"t{i}.py" in h for h in hits)
+        assert any(f"w{i}.yml" in h for h in hits)
+
+
+def test_the_public_repo_name_is_not_private(tmp_path: Path) -> None:
+    pkg = tmp_path / "packages" / "core"
+    pkg.mkdir(parents=True)
+    public = "/".join(("chaoscypherinc", "chaoscypher"))
+    (pkg / "thing.py").write_text(f"# see https://github.com/{public}/issues\n", encoding="utf-8")
+    assert _GUARD.find_internal_refs(tmp_path) == []
+
+
+def test_tracked_limits_the_scan_to_tracked_files(tmp_path: Path) -> None:
+    """Untracked build output is not shipped, and in a checkout it names the checkout's path."""
+    docs = tmp_path / "packages" / "docs"
+    (docs / ".docusaurus").mkdir(parents=True)
+    marker = _GUARD.PRIVATE_REPO_MARKERS[0]
+    (docs / ".docusaurus" / "client-modules.js").write_text(
+        f'require("/home/me/{marker}/packages/docs/x.css");\n', encoding="utf-8"
+    )
+    (docs / "page.md").write_text(f"see {_PRIVATE_REF}\n", encoding="utf-8")
+    hits = _GUARD.find_internal_refs(tmp_path, tracked=frozenset({"packages/docs/page.md"}))
+    assert len(hits) == 1
+    assert "page.md" in hits[0]

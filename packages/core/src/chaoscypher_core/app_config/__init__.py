@@ -19,6 +19,7 @@ appear in both this file and ``chaoscypher_core.settings``. This is by design:
 
 import difflib
 import os
+from collections.abc import Callable, Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -196,6 +197,7 @@ from chaoscypher_core.settings import (
     AnalysisSettings,
     BackoffSettings,
     BatchingSettings,
+    CacheSettings,
     ChatSettings,
     ChunkingSettings,
     CLISettings,
@@ -203,6 +205,8 @@ from chaoscypher_core.settings import (
     EmbeddingSettings,
     ExportSettings,
     ExtractionSettings,
+    GraphRAGSettings,
+    GraphSettings,
     LexiconSettings,
     LLMSettings,
     MCPSettings,
@@ -1262,6 +1266,23 @@ class BenchmarkSettings(BaseModel):
         ge=1,
         description="Max nodes loaded per batch when reindexing embeddings during benchmark runs.",
     )
+    chat_question_retries: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Times a chat-stage question is asked again when the model call fails with a "
+            "retryable error (a refused or dropped connection, a timeout), before the question "
+            "is recorded as an error and scored as a wrong answer. One transient retry is the "
+            "benchmark pipeline audit's wave-3 decision (2026-10-06): a second failure is a "
+            "host problem worth seeing on the row, not something to wait out; a model error "
+            "is never retried."
+        ),
+    )
+    chat_retry_backoff_seconds: float = Field(
+        default=30.0,
+        ge=0,
+        description="Wait before the first such retry; each further retry waits one more step.",
+    )
 
 
 # Settings keys removed from the schema; old settings.yaml files may still
@@ -1369,6 +1390,42 @@ def _apply_paths_env_overrides(paths_data: dict[str, Any]) -> None:
 # ============================================================================
 
 
+def _normalise_section_keys(model: type[BaseModel], data: dict[str, Any]) -> dict[str, Any]:
+    """Lowercase the keys of ``data`` that name fields of ``model``, recursing into sub-models.
+
+    A dynaconf dunder env var (``CHAOSCYPHER_CACHE__COMPLETIONS__ENABLED``)
+    surfaces every nested key in UPPERCASE when settings.yaml has no such
+    section, while the model fields are lowercase. Only keys that name a
+    field are touched and only sub-model fields are recursed into, so
+    user-defined dict keys (``graph.inverse_relationship_map``) keep their
+    written case.
+    """
+    fields = model.model_fields
+    out: dict[str, Any] = {}
+    for key, value in data.items():
+        name = str(key).lower() if str(key).lower() in fields else key
+        sub = fields[name].annotation if name in fields else None
+        nested = isinstance(value, dict) and isinstance(sub, type) and issubclass(sub, BaseModel)
+        out[name] = _normalise_section_keys(sub, value) if nested else value
+    return out
+
+
+def _unlisted_sections(
+    cls: type[BaseSettings],
+    get_section: Callable[[str], dict[str, Any]],
+    listed: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build every section-typed field of ``cls`` that ``listed`` does not carry, from ``get_section``."""
+    out: dict[str, Any] = {}
+    for name, field in cls.model_fields.items():
+        model = field.annotation
+        if name in listed or not (isinstance(model, type) and issubclass(model, BaseModel)):
+            continue
+        data = _normalise_section_keys(model, get_section(name.upper()))
+        out[name] = model(**data) if data else model()
+    return out
+
+
 class Settings(BaseSettings):
     """Application settings with dynaconf-powered loading.
 
@@ -1408,6 +1465,27 @@ class Settings(BaseSettings):
     chunking: ChunkingSettings = Field(default_factory=ChunkingSettings)
     embedding: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    graphrag: GraphRAGSettings = Field(
+        default_factory=GraphRAGSettings,
+        description=(
+            "GraphRAG search and chat-context levers, and the profiles that bind them to a "
+            "chat model (settable here since 2026-10-05; the engine defaults before)"
+        ),
+    )
+    graph: GraphSettings = Field(
+        default_factory=GraphSettings,
+        description=(
+            "Graph commit configuration, including the post-commit identity resolver "
+            "(settable here since 2026-10-05; the engine defaults before)"
+        ),
+    )
+    cache: CacheSettings = Field(
+        default_factory=CacheSettings,
+        description=(
+            "LLM response and embedding caches under <data_dir>/cache/llm: on by default, "
+            "2 GB each, pinned decoding only"
+        ),
+    )
     source_processing: SourceProcessingSettings = Field(default_factory=SourceProcessingSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
     lexicon: LexiconSettings = Field(default_factory=LexiconSettings)
@@ -1664,99 +1742,107 @@ class Settings(BaseSettings):
         benchmark_data = _scrub_retired_keys("benchmark", get_section("BENCHMARK"))
 
         # Create validated Settings instance
-        return cls(
-            app_name=get_ci("app_name", "Chaos Cypher"),
-            current_database=get_ci("current_database", "default"),
-            dark_mode=get_ci("dark_mode", True),
-            auto_enable=get_ci("auto_enable", True),
-            setup_completed=get_ci("setup_completed", False),
-            local_auth=(
+        listed: dict[str, Any] = {
+            "app_name": get_ci("app_name", "Chaos Cypher"),
+            "current_database": get_ci("current_database", "default"),
+            "dark_mode": get_ci("dark_mode", True),
+            "auto_enable": get_ci("auto_enable", True),
+            "setup_completed": get_ci("setup_completed", False),
+            "local_auth": (
                 LocalAuthSettings(**local_auth_data) if local_auth_data else LocalAuthSettings()
             ),
-            llm=LLMSettings(**llm_data) if llm_data else LLMSettings(),
-            queue=QueueSettings(**queue_data) if queue_data else QueueSettings(),
-            chunking=ChunkingSettings(**chunking_data) if chunking_data else ChunkingSettings(),
-            embedding=(
+            "llm": LLMSettings(**llm_data) if llm_data else LLMSettings(),
+            "queue": QueueSettings(**queue_data) if queue_data else QueueSettings(),
+            "chunking": ChunkingSettings(**chunking_data) if chunking_data else ChunkingSettings(),
+            "embedding": (
                 EmbeddingSettings(**embedding_data) if embedding_data else EmbeddingSettings()
             ),
-            search=SearchSettings(**search_data) if search_data else SearchSettings(),
-            source_processing=(
+            "search": SearchSettings(**search_data) if search_data else SearchSettings(),
+            "source_processing": (
                 SourceProcessingSettings(**source_processing_data)
                 if source_processing_data
                 else SourceProcessingSettings()
             ),
-            export=ExportSettings(**export_data) if export_data else ExportSettings(),
-            lexicon=LexiconSettings(**lexicon_data) if lexicon_data else LexiconSettings(),
-            paths=PathSettings(**paths_data) if paths_data else PathSettings(),
-            priorities=(
+            "export": ExportSettings(**export_data) if export_data else ExportSettings(),
+            "lexicon": LexiconSettings(**lexicon_data) if lexicon_data else LexiconSettings(),
+            "paths": PathSettings(**paths_data) if paths_data else PathSettings(),
+            "priorities": (
                 PrioritySettings(**priorities_data) if priorities_data else PrioritySettings()
             ),
-            timeouts=(TimeoutSettings(**timeouts_data) if timeouts_data else TimeoutSettings()),
-            ports=PortSettings(**ports_data) if ports_data else PortSettings(),
-            batching=(BatchSettings(**batching_data) if batching_data else BatchSettings()),
-            pagination=(
+            "timeouts": (TimeoutSettings(**timeouts_data) if timeouts_data else TimeoutSettings()),
+            "ports": PortSettings(**ports_data) if ports_data else PortSettings(),
+            "batching": (BatchSettings(**batching_data) if batching_data else BatchSettings()),
+            "pagination": (
                 PaginationSettings(**pagination_data) if pagination_data else PaginationSettings()
             ),
-            retries=RetrySettings(**retries_data) if retries_data else RetrySettings(),
-            queue_recovery=(
+            "retries": RetrySettings(**retries_data) if retries_data else RetrySettings(),
+            "queue_recovery": (
                 QueueRecoverySettings(**queue_recovery_data)
                 if queue_recovery_data
                 else QueueRecoverySettings()
             ),
-            source_recovery=(
+            "source_recovery": (
                 SourceRecoverySettings(**source_recovery_data)
                 if source_recovery_data
                 else SourceRecoverySettings()
             ),
-            services=ServicesSettings(**services_data) if services_data else ServicesSettings(),
-            backoff=BackoffSettings(**backoff_data) if backoff_data else BackoffSettings(),
-            analysis=AnalysisSettings(**analysis_data) if analysis_data else AnalysisSettings(),
-            chat_context=(
+            "services": ServicesSettings(**services_data) if services_data else ServicesSettings(),
+            "backoff": BackoffSettings(**backoff_data) if backoff_data else BackoffSettings(),
+            "analysis": AnalysisSettings(**analysis_data) if analysis_data else AnalysisSettings(),
+            "chat_context": (
                 ChatContextSettings(**chat_context_data)
                 if chat_context_data
                 else ChatContextSettings()
             ),
-            chat=ChatSettings(**chat_data) if chat_data else ChatSettings(),
-            workers=WorkerSettings(**workers_data) if workers_data else WorkerSettings(),
-            cors=CorsSettings(**cors_data) if cors_data else CorsSettings(),
-            mcp=MCPSettings(**mcp_data) if mcp_data else MCPSettings(),
-            backup=BackupSettings(**backup_data) if backup_data else BackupSettings(),
-            database=(DatabaseSettings(**database_data) if database_data else DatabaseSettings()),
-            shutdown=ShutdownSettings(**shutdown_data) if shutdown_data else ShutdownSettings(),
-            health_monitor=(
+            "chat": ChatSettings(**chat_data) if chat_data else ChatSettings(),
+            "workers": WorkerSettings(**workers_data) if workers_data else WorkerSettings(),
+            "cors": CorsSettings(**cors_data) if cors_data else CorsSettings(),
+            "mcp": MCPSettings(**mcp_data) if mcp_data else MCPSettings(),
+            "backup": BackupSettings(**backup_data) if backup_data else BackupSettings(),
+            "database": (
+                DatabaseSettings(**database_data) if database_data else DatabaseSettings()
+            ),
+            "shutdown": ShutdownSettings(**shutdown_data) if shutdown_data else ShutdownSettings(),
+            "health_monitor": (
                 HealthMonitorSettings(**health_monitor_data)
                 if health_monitor_data
                 else HealthMonitorSettings()
             ),
-            rate_limit=(
+            "rate_limit": (
                 RateLimitSettings(**rate_limit_data) if rate_limit_data else RateLimitSettings()
             ),
-            tls=TLSSettings(**tls_data) if tls_data else TLSSettings(),
-            security=(SecuritySettings(**security_data) if security_data else SecuritySettings()),
-            logs=LogsSettings(**logs_data) if logs_data else LogsSettings(),
-            intervals=IntervalsSettings(**intervals_data)
+            "tls": TLSSettings(**tls_data) if tls_data else TLSSettings(),
+            "security": (
+                SecuritySettings(**security_data) if security_data else SecuritySettings()
+            ),
+            "logs": LogsSettings(**logs_data) if logs_data else LogsSettings(),
+            "intervals": IntervalsSettings(**intervals_data)
             if intervals_data
             else IntervalsSettings(),
-            workflows=(
+            "workflows": (
                 WorkflowsSettings(**workflows_data) if workflows_data else WorkflowsSettings()
             ),
-            web=WebSettings(**web_data) if web_data else WebSettings(),
-            extraction=(
+            "web": WebSettings(**web_data) if web_data else WebSettings(),
+            "extraction": (
                 ExtractionSettings(**extraction_data) if extraction_data else ExtractionSettings()
             ),
-            graph_snapshot=(
+            "graph_snapshot": (
                 GraphSnapshotSettings(**graph_snapshot_data)
                 if graph_snapshot_data
                 else GraphSnapshotSettings()
             ),
-            pause=PauseSettings(**pause_data) if pause_data else PauseSettings(),
-            quality=QualitySettings(**quality_data) if quality_data else QualitySettings(),
-            cli=CliSettings(**cli_data) if cli_data else CliSettings(),
-            benchmark=(
+            "pause": PauseSettings(**pause_data) if pause_data else PauseSettings(),
+            "quality": QualitySettings(**quality_data) if quality_data else QualitySettings(),
+            "cli": CliSettings(**cli_data) if cli_data else CliSettings(),
+            "benchmark": (
                 BenchmarkSettings(**benchmark_data) if benchmark_data else BenchmarkSettings()
             ),
-            custom_settings=get_ci("custom_settings", {}),
-        )
+            "custom_settings": get_ci("custom_settings", {}),
+        }
+        # Every section not listed above is built the same way from its YAML or env
+        # section, so a new section is never silently ignored (``graphrag`` was until
+        # 2026-10-05: its levers and profiles in settings.yaml did nothing).
+        return cls(**listed, **_unlisted_sections(cls, get_section, listed))
 
     # ========================================================================
     # Path Properties (Computed from settings)

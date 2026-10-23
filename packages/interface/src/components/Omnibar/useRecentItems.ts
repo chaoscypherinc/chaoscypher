@@ -7,6 +7,7 @@
  */
 import { useCallback, useSyncExternalStore } from 'react';
 import type { RecentItem } from './types';
+import { readStoredJson, readStoredString, removeStoredItem, writeStoredJson } from '../../utils/storage';
 
 const STORAGE_KEY = 'chaoscypher-omnibar-recent';
 const MAX_ITEMS = 5;
@@ -29,15 +30,15 @@ function emitChange() {
 }
 
 function getSnapshot(): RecentItem[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === cachedRaw) return cachedItems;
-    cachedRaw = raw;
-    cachedItems = raw ? JSON.parse(raw) : EMPTY;
-    return cachedItems;
-  } catch {
-    return EMPTY;
-  }
+  const raw = readStoredString(STORAGE_KEY);
+  if (raw === cachedRaw) return cachedItems;
+  cachedRaw = raw;
+  cachedItems = readStoredJson<RecentItem[]>(STORAGE_KEY, EMPTY, isRecentItemList);
+  return cachedItems;
+}
+
+function isRecentItemList(value: unknown): value is RecentItem[] {
+  return Array.isArray(value);
 }
 
 function subscribe(listener: () => void): () => void {
@@ -54,12 +55,12 @@ export function useRecentItems() {
     const current = getSnapshot();
     const filtered = current.filter((i) => !(i.id === item.id && i.type === item.type));
     const updated = [{ ...item, timestamp: Date.now() }, ...filtered].slice(0, MAX_ITEMS);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    writeStoredJson(STORAGE_KEY, updated);
     emitChange();
   }, []);
 
   const clearRecentItems = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
+    removeStoredItem(STORAGE_KEY);
     emitChange();
   }, []);
 

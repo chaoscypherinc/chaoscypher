@@ -7,7 +7,7 @@ relational store (migration 0042) before the orphan filter runs.
 ``list_source_relationships`` → ``_relationship_row_to_dict`` projects each
 ``SourceRelationship`` row with ``source``/``target`` holding STRING entity
 IDs (``rel.source_entity_id`` / ``rel.target_entity_id``) plus ``from``/``to``
-names. But ``drop_orphan_entities`` and ``relation.py``'s endpoint resolver
+names. But ``flag_orphan_entities`` and ``relation.py``'s endpoint resolver
 expect ``source``/``target`` to be INTEGER indices into the entities list.
 
 Before this fix, the CLI ``source add`` commit path and the core recovery
@@ -24,7 +24,7 @@ through untouched.
 from __future__ import annotations
 
 from chaoscypher_core.services.sources.engine.commit.service import (
-    drop_orphan_entities,
+    flag_orphan_entities,
     normalize_relationship_endpoints,
 )
 
@@ -102,7 +102,9 @@ def test_reload_shape_entities_survive_orphan_filter() -> None:
     ]
 
     normalized = normalize_relationship_endpoints(entities, relationships)
-    kept, _remapped, dropped = drop_orphan_entities(entities, normalized, enabled=True)
+    kept, _remapped, _flagged, dropped = flag_orphan_entities(
+        entities, normalized, keep_evidence_less=False
+    )
 
     assert {e["id"] for e in kept} == {"ent_a", "ent_b"}
     assert dropped == 1  # only Carol, the real orphan

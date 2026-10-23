@@ -196,6 +196,70 @@ class DomainAnalyzer(Protocol):
         """
         ...
 
+    def get_feminine_titles(self) -> list[str]:
+        """Return the titles that say a woman, for the name rule's gender guard.
+
+        Returns:
+            Title words; empty to use the name rule's universal ones.
+        """
+        ...
+
+    def get_masculine_titles(self) -> list[str]:
+        """Return the titles that say a man, for the name rule's gender guard.
+
+        Returns:
+            Title words; empty to use the name rule's universal ones.
+        """
+        ...
+
+    def get_generation_words(self) -> dict[str, str]:
+        """Return the words that say which generation a name means (``old`` -> ``elder``).
+
+        Returns:
+            Word to generation label; empty to use the universal ones.
+        """
+        ...
+
+    def get_name_forms(self) -> dict[str, list[dict[str, Any]]]:
+        """Return name-form endings by language (``{"ending", "stem", "gender"}`` each).
+
+        Returns:
+            Language code to forms; empty for none.
+        """
+        ...
+
+    def get_relation_vocabulary(self) -> dict[str, dict[str, list[str]]]:
+        """Return the words that state each relation, with the edge labels that state it.
+
+        Returns:
+            Relation name to ``{"labels": [...], "words": [...]}``; empty for none.
+        """
+        ...
+
+    def get_vocabulary_exclusions(self) -> list[str]:
+        """Return the edge labels the universal kin vocabulary does not state in this domain.
+
+        Returns:
+            Edge labels (a financial ``parent_of`` names a parent company); empty for none.
+        """
+        ...
+
+    def get_role_words(self) -> list[str]:
+        """Return the words naming a role one person has to another (``valet``, ``steward``).
+
+        Returns:
+            Role words; empty to use the name rule's universal ones (with the relation words).
+        """
+        ...
+
+    def get_title_equivalents(self) -> list[list[str]]:
+        """Return groups of spellings of one title (``["mme", "madame"]``).
+
+        Returns:
+            The groups; empty to use the universal ones.
+        """
+        ...
+
     def get_extraction_density(self) -> float:
         """Return extraction density factor for this domain.
 
@@ -225,20 +289,6 @@ class DomainAnalyzer(Protocol):
         Returns:
             Typed exclusion rules. Empty list means no domain-specific
             exclusions (only generic prompt defaults apply).
-        """
-        ...
-
-    def get_type_compatibility(self) -> dict[str, list[str]]:
-        """Return domain-specific type compatibility groups for deduplication.
-
-        Types within the same group are considered compatible for entity
-        merging during deduplication. For example, an entity appearing as
-        "Medical Condition" in one chunk and "Plot Element" in another can
-        be merged if both types appear in the same compatibility group.
-
-        Returns:
-            Mapping of group name to list of compatible type names.
-            Empty dict means no domain-specific compatibility rules.
         """
         ...
 

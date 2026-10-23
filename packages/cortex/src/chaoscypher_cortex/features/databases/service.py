@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING
 import structlog
 
 from chaoscypher_core.app_config import get_config_manager, reload_settings
+from chaoscypher_core.database.core_types_guard import pre_core_types_notice
 from chaoscypher_core.database.engine import (
     database_exists,
+    get_engine,
     init_database,
 )
 from chaoscypher_core.exceptions import NotFoundError, ValidationError
@@ -53,7 +55,7 @@ class DatabasesService:
         )
 
     def get_current_database(self) -> CurrentDatabaseResponse:
-        """Get the currently active database."""
+        """Get the currently active database, with its notice (a database from before the core types)."""
         current_db_name = self.settings.current_database
 
         db_info = self.database_repository.get_database(current_db_name)
@@ -61,9 +63,15 @@ class DatabasesService:
             msg = "Database"
             raise NotFoundError(msg, current_db_name)
 
+        notice = (
+            pre_core_types_notice(get_engine(current_db_name), current_db_name)
+            if database_exists(current_db_name)
+            else None
+        )
         return CurrentDatabaseResponse(
             current=current_db_name,
             info=DatabaseResponse.model_validate(db_info.model_dump()),
+            notice=notice,
         )
 
     def switch_database(self, name: str) -> DatabaseSwitchResponse:

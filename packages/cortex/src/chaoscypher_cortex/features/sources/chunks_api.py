@@ -30,7 +30,7 @@ from chaoscypher_cortex.features.sources.models import (
     SourceTemplatesResponse,
 )
 from chaoscypher_cortex.shared.api.dependencies import (
-    PageParams,  # noqa: TC001 - FastAPI runtime dep
+    PageParams,
 )
 from chaoscypher_cortex.shared.api.errors import raise_if_not_found, resource_not_found_error
 from chaoscypher_cortex.shared.api.models import PaginationMetadata
@@ -40,7 +40,7 @@ from chaoscypher_cortex.shared.api.responses import (
     ErrorDetail,
 )
 from chaoscypher_cortex.shared.auth.dependencies import (
-    CurrentUsername,  # noqa: TC001 - FastAPI runtime dep
+    CurrentUsername,
 )
 
 

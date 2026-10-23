@@ -318,7 +318,17 @@ async def test_recovery_redispatch_reparks_without_bypass() -> None:
 
 
 @pytest.mark.asyncio
-async def test_recovery_redispatch_uses_persisted_forced_domain() -> None:
+@pytest.mark.parametrize(
+    ("row_columns", "expected"),
+    [
+        ({"forced_domain": "medical"}, ("medical",)),  # a row written before the lists
+        ({"forced_packs": ["medical", "legal"], "forced_domain": "medical"}, ("medical", "legal")),
+        ({"forced_packs": [], "forced_domain": "generic"}, ()),  # the floor alone, chosen
+    ],
+)
+async def test_recovery_redispatch_uses_persisted_forced_domain(
+    row_columns: dict[str, Any], expected: tuple[str, ...]
+) -> None:
     """Recovery re-dispatch of a CONFIRMED source must use its forced_domain.
 
     Regression: after confirm sets ``SourceRow.forced_domain=medical`` (and
@@ -331,7 +341,7 @@ async def test_recovery_redispatch_uses_persisted_forced_domain() -> None:
     BOTH detection and ``_create_fresh_extraction_job`` receive ``medical``.
     """
     src = _auto_indexed_source()
-    src["forced_domain"] = "medical"  # persisted by confirm
+    src.update(row_columns)  # persisted by confirm
     src["extraction_confirmed_at"] = "2026-05-28T00:00:00+00:00"
     adapter = MagicMock(unsafe=True)
     adapter.get_source.return_value = src
@@ -398,12 +408,97 @@ async def test_recovery_redispatch_uses_persisted_forced_domain() -> None:
 
     # Confirmed source never re-parks.
     park.assert_not_called()
-    # Detection ran under the confirmed domain (no re-auto-detection).
+    # Detection ran under the confirmed packs (no re-auto-detection).
     detect.assert_called_once()
-    assert detect.call_args.kwargs["forced_domain"] == "medical"
-    # The create call received the confirmed domain from the row.
+    assert detect.call_args.kwargs["forced_packs"] == expected
+    # The create call received the confirmed packs from the row.
     create.assert_called_once()
-    assert create.call_args.kwargs["forced_domain"] == "medical"
+    assert create.call_args.kwargs["forced_packs"] == expected
+
+
+@pytest.mark.asyncio
+async def test_row_packs_win_over_the_payloads_upload_snapshot() -> None:
+    """A confirm that lands while the source is still indexing wins over the upload's packs.
+
+    Regression (section-audit 2026-10-12): the upload payload carries the
+    source dict, ``forced_packs`` included, unchanged through indexing ->
+    embedding -> analysis. A confirm sent in that window rewrites the row's
+    packs (``confirmation_gate`` bucket 2) but not the travelling payload, and
+    the gate used to read the payload first — so the source extracted under
+    the stale upload packs and wrote them back over the confirmed ones. The
+    row is read first; the payload is only the fallback for a row that forces
+    nothing (the recovery re-dispatch case above).
+    """
+    src = _auto_indexed_source()
+    src["forced_packs"] = ["medical"]  # the confirm's packs, on the row
+    src["forced_domain"] = "medical"
+    src["extraction_confirmed_at"] = "2026-05-28T00:00:00+00:00"
+    adapter = MagicMock(unsafe=True)
+    adapter.get_source.return_value = src
+    adapter.assert_extractable.return_value = None
+    adapter.get_chunks_for_extraction.return_value = [{"content": "hello"}]
+    adapter.get_active_extraction_job.return_value = None
+    adapter.try_claim_extraction.return_value = True
+    adapter.clear_extraction_waiting.return_value = None
+    adapter.update_step_progress.return_value = None
+    service = _make_service(adapter)
+
+    detect_result = {
+        "domain": MagicMock(),
+        "detected_domain": "medical",
+        "confidence": 1.0,
+        "ranking": [{"domain": "medical", "score": 1.0}],
+        "low_confidence": False,
+        "entity_guidance": "",
+        "relationship_guidance": "",
+    }
+    create = MagicMock(side_effect=RuntimeError("stop-after-create"))
+
+    with (
+        patch(
+            "chaoscypher_core.app_config.get_settings",
+            return_value=_make_settings(),
+        ),
+        patch(
+            "chaoscypher_core.operations.pause_guard.check_paused",
+            return_value=MagicMock(paused=False),
+        ),
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.orchestration.detect_extraction_domain",
+            return_value=detect_result,
+        ) as detect,
+        patch(
+            "chaoscypher_core.operations.importing.import_service._create_fresh_extraction_job",
+            new=create,
+        ),
+        patch("chaoscypher_core.operations.importing.import_service.event_bus"),
+        patch(
+            "chaoscypher_core.operations.importing.confirmation_gate.park_for_confirmation"
+        ) as park,
+        patch(
+            "chaoscypher_core.operations.importing.import_service.trigger_next_waiting_extraction",
+            new=AsyncMock(),
+        ),
+    ):
+        # The upload-time payload: the packs chosen at upload, now stale.
+        with pytest.raises(RuntimeError, match="stop-after-create"):
+            await service._import_analysis_handler(
+                data={
+                    "file_id": "src-1",
+                    "file_info": {"filename": "doc.pdf", "forced_packs": ["legal"]},
+                    "analysis_depth": "full",
+                }
+            )
+
+    park.assert_not_called()
+    detect.assert_called_once()
+    assert detect.call_args.kwargs["forced_packs"] == ("medical",)
+    create.assert_called_once()
+    assert create.call_args.kwargs["forced_packs"] == ("medical",)
 
 
 @pytest.mark.asyncio

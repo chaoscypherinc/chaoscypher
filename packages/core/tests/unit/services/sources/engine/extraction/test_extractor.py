@@ -54,9 +54,9 @@ def _batch_result(embeddings: list[list[float]]) -> SimpleNamespace:
 class TestResolveSymmetricTypes:
     """Tests for _resolve_symmetric_types."""
 
-    def test_none_domain_returns_none(self) -> None:
-        """No domain name yields None."""
-        assert _resolve_symmetric_types(None, lambda _: ["x"]) is None
+    def test_none_domain_asks_the_resolver(self) -> None:
+        """No domain name is the floor alone: the resolver answers for it (its labels hold too)."""
+        assert _resolve_symmetric_types(None, lambda _: ["x"]) == frozenset({"x"})
 
     def test_none_resolver_returns_none(self) -> None:
         """Missing resolver callable yields None."""
@@ -89,9 +89,9 @@ class TestResolveSymmetricTypes:
 class TestResolveInverseMap:
     """Tests for _resolve_inverse_map."""
 
-    def test_none_domain_returns_none(self) -> None:
-        """No domain name yields None."""
-        assert _resolve_inverse_map(None, lambda _: {"a": "b"}) is None
+    def test_none_domain_asks_the_resolver(self) -> None:
+        """No domain name is the floor alone: the resolver answers for it (its pairs hold too)."""
+        assert _resolve_inverse_map(None, lambda _: {"a": "b"}) == {"a": "b"}
 
     def test_none_resolver_returns_none(self) -> None:
         """Missing resolver callable yields None."""

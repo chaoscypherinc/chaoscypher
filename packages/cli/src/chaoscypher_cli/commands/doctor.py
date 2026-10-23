@@ -72,7 +72,7 @@ def check_cortex(candidate_urls: list[str], timeout: float) -> tuple[bool, str |
     The CLI works standalone without Cortex, so failure is informational.
 
     Args:
-        candidate_urls: Base URLs to try (e.g. ``http://127.0.0.1:8000``).
+        candidate_urls: Base URLs to try (e.g. ``http://127.0.0.1:8081``).
         timeout: Per-attempt timeout in seconds.
 
     Returns:
@@ -165,10 +165,16 @@ def doctor() -> None:
     embedding_model_name = settings.embedding.model
     lexicon_url = settings.lexicon.url
 
-    # Cortex candidates: Docker dev maps the API on :8080, the all-in-one
-    # image and `chaoscypher serve` default to :8000. Either is a valid
-    # "local Cortex" — we just want to know if anything is listening.
-    cortex_candidates = ["http://127.0.0.1:8000", "http://127.0.0.1:8080"]
+    # Cortex candidates, read from the same settings the launchers use:
+    # `chaoscypher serve` binds `cli.api_port`, `cc-cortex start` and the
+    # Docker dev stack `ports.web_ui_api`. Either is a valid "local Cortex"
+    # — we just want to know if anything is listening.
+    cortex_candidates = list(
+        dict.fromkeys(
+            f"http://127.0.0.1:{port}"
+            for port in (settings.cli.api_port, settings.ports.web_ui_api)
+        )
+    )
     cortex_timeout = settings.cli.ollama_connect_timeout_seconds
 
     pool = ThreadPoolExecutor(max_workers=settings.cli.health_check_workers)

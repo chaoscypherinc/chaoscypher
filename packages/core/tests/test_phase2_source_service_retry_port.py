@@ -52,7 +52,6 @@ def test_source_service_default_retry_policy_is_db_lock_policy() -> None:
 
 def test_source_service_delete_uses_injected_policy() -> None:
     repo = MagicMock()
-    repo.get_orphaned_entity_uris.return_value = []
     repo.get_source.return_value = None
     policy = _FakeRetryPolicy()
     svc = SourceService(repository=repo, database_name="test_db", retry_policy=policy)

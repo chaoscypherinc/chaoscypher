@@ -21,6 +21,7 @@ Public API:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -37,13 +38,73 @@ from chaoscypher_core.services.sources.engine.extraction.safe_user_regex import 
 logger = structlog.get_logger(__name__)
 
 __all__ = [
+    "CODE_SIGNAL",
     "CONTENT_CATEGORIES",
+    "MIN_CODE_RUN",
     "CategoryMatcher",
     "UnknownContentCategoryError",
+    "code_lines",
     "compile_custom_patterns",
     "resolve_categories",
     "validate_custom_patterns",
 ]
+
+
+# ---------------------------------------------------------------------------
+# What a line of code looks like (code_blocks)
+# ---------------------------------------------------------------------------
+
+
+CODE_SIGNAL = re.compile(
+    r"^\s*```"  # a Markdown fence
+    r"|[{};]\s*$|^\s*[{}]"  # a brace or a statement's semicolon closing or opening a line
+    r"|^\s*[\w.\[\]\"']+(?:\s*:\s*[\w.\[\], |]+)?\s*(?:[-+*/%|&^]|//|<<|>>)?=(?!=)\s*\S"  # x = 1
+    r"|^\s*(?:const|let|var)\s+\w+\s*="  # const x =
+    r"|^\s*(?:async\s+)?(?:def|function|fn|func)\s+\w+\s*\("  # a function definition
+    r"|^\s*class\s+\w+\s*[(:{]"  # a class
+    r"|^\s*(?:import\s+[\w.]+(?:\s*,\s*[\w.]+)*\s*;?\s*$|from\s+[\w.]+\s+import\s)"  # imports
+    r"|^\s*(?:if|elif|for|while|with|async\s+with)\b[^\n]*[()\[\]=<>.][^\n]*:\s*$"  # if x == 1:
+    r"|^\s*(?:if|for|while|switch)\s*\(.*\)\s*\{?\s*$"  # if (x) {
+    r"|^\s*(?:else|try|finally|except\b[^\n]*)\s*:\s*$"  # else:
+    r"|^\s*return\b(?:\s*$|[^\n]*[()\[\].])"  # return x.y()
+    r"|^\s*[\w.]+\([^\n]*\)\s*;?\s*$"  # a call statement: print(x)
+    r"|^\s*[a-z_][\w.-]*:(?:\s+\S+)?\s*$"  # a config line: port: 8080
+    r"|^\s*\$\s+\S"  # a shell prompt
+)
+"""One line's code signal: punctuation or a shape prose does not write.
+
+Indentation is no signal (verse, block quotes and letters are indented), nor
+is a line opening with ``for``, ``if`` or ``while`` (prose does): such a line
+is code only with a code character (``if x == 1:``, ``while (n) {``)."""
+
+MIN_CODE_RUN = 3
+"""Consecutive code-signal lines (blank lines between them aside) that make a run of code."""
+
+
+def code_lines(lines: Sequence[str]) -> list[bool]:
+    """Which of ``lines`` (non-empty, in order) are code: those in a run of :data:`MIN_CODE_RUN` signal lines.
+
+    A line is code only when it carries a code signal (:data:`CODE_SIGNAL`)
+    and sits in a run of at least :data:`MIN_CODE_RUN` consecutive signal
+    lines: a lone assignment in a paragraph, or an indented line of verse, is
+    prose. Until 2026-10-07 the ``code_blocks`` category took any line
+    indented four spaces or opening with ``for``/``if``/``while``, so a
+    verse-heavy literary chunk was stripped as code at 0.75 of its lines.
+    """
+    signal = [bool(CODE_SIGNAL.search(line)) for line in lines]
+    flags = [False] * len(signal)
+    start = 0
+    while start < len(signal):
+        if not signal[start]:
+            start += 1
+            continue
+        end = start
+        while end < len(signal) and signal[end]:
+            end += 1
+        if end - start >= MIN_CODE_RUN:
+            flags[start:end] = [True] * (end - start)
+        start = end
+    return flags
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +124,10 @@ class CategoryMatcher:
         pattern: Compiled regex pattern for detection.
         threshold: Trigger value — minimum ratio for line_ratio mode,
             minimum match count for count mode.
+        line_classifier: For ``line_ratio`` mode, what marks a chunk's lines
+            instead of ``pattern`` line by line: the non-empty lines in, one
+            flag per line out (``code_blocks``: a line is code only inside a
+            run of code-signal lines, :func:`code_lines`).
     """
 
     name: str
@@ -70,6 +135,18 @@ class CategoryMatcher:
     mode: str
     pattern: re.Pattern[str] | SafeUserRegex
     threshold: float
+    line_classifier: Callable[[Sequence[str]], list[bool]] | None = None
+
+    def _line_flags(self, lines: Sequence[str]) -> list[bool]:
+        """Which of ``lines`` this matcher takes (the classifier's reading, else the pattern's)."""
+        if self.line_classifier is not None:
+            return self.line_classifier(lines)
+        return [bool(self.pattern.search(line)) for line in lines]
+
+    def _strip(self, all_lines: list[str]) -> list[str]:
+        """``all_lines`` without the lines this matcher takes (blank lines are kept)."""
+        flags = iter(self._line_flags([line for line in all_lines if line.strip()]))
+        return [line for line in all_lines if not line.strip() or not next(flags)]
 
     def matches(self, text: str) -> bool:
         """Check whether the text matches this category's detection rule.
@@ -100,8 +177,7 @@ class CategoryMatcher:
         """
         if self.mode != "line_ratio":
             return text
-        kept = [line for line in text.splitlines() if not self.pattern.search(line)]
-        return "\n".join(kept)
+        return "\n".join(self._strip(text.splitlines()))
 
     def _check_line_ratio(self, text: str) -> bool:
         """Check whether matching lines exceed the threshold ratio.
@@ -118,7 +194,7 @@ class CategoryMatcher:
         lines = [line for line in text.splitlines() if line.strip()]
         if not lines:
             return False
-        matching = sum(1 for line in lines if self.pattern.search(line))
+        matching = sum(self._line_flags(lines))
         return matching / len(lines) >= self.threshold
 
     def _check_count(self, text: str) -> bool:
@@ -164,14 +240,13 @@ class CategoryMatcher:
         if not non_empty:
             return False, text
 
-        matching_count = sum(1 for line in non_empty if self.pattern.search(line))
+        matching_count = sum(self._line_flags(non_empty))
         matched = matching_count / len(non_empty) >= self.threshold
 
         if not matched:
             return False, text
 
-        kept = [line for line in all_lines if not self.pattern.search(line)]
-        return True, "\n".join(kept)
+        return True, "\n".join(self._strip(all_lines))
 
 
 class UnknownContentCategoryError(ValidationError, KeyError):
@@ -289,15 +364,12 @@ CONTENT_CATEGORIES: dict[str, CategoryMatcher] = {
         name="code_blocks",
         description="Source code, config snippets, shell commands",
         mode="line_ratio",
-        pattern=re.compile(
-            r"^\s{4,}\S|^\t\S|^```"
-            r"|^\s*(?:import |from |def |class |function |const |let |var "
-            r"|return |if |for |while )[a-zA-Z]",
-        ),
+        pattern=CODE_SIGNAL,
         # Tuned via test_code_blocks_* fixtures. 0.60 stripped tutorials
         # and README-style docs that embed code inline; 0.75 requires a
         # genuinely code-dominant chunk.
         threshold=0.75,
+        line_classifier=code_lines,
     ),
     "data_tables": CategoryMatcher(
         name="data_tables",

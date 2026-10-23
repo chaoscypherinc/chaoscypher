@@ -44,6 +44,7 @@ import structlog
 from chaoscypher_core.adapters.llm.error_types import map_exception_to_error_type
 from chaoscypher_core.adapters.llm.schema.base import build_extraction_tools
 from chaoscypher_core.exceptions import ModelCapabilityError
+from chaoscypher_core.utils.decoding import effective_seed, resample_decoding, seed_override
 
 
 if TYPE_CHECKING:
@@ -197,26 +198,34 @@ class StructuredExtractor:
         total_llm_calls = 0
         validation_errors: list[str] = []
 
-        # Retry loop with validation feedback
+        # Retry loop with validation feedback. Each retry asks with the next seed
+        # at the same temperature (audit wave 5): under pinned decoding the same
+        # request repeated the same failed output. The base is the seed in force
+        # (audit wave 6): under an outer override (a chat regenerate's tool call)
+        # attempt 0 keeps that seed instead of cancelling it with the configured one.
+        base_seed = effective_seed(getattr(self.provider_factory.settings.llm, "seed", None))
         for attempt in range(max_retries + 1):
             attempt_start = time.time()
+            attempt_seed = resample_decoding(base_seed, attempt)
+            logger.debug("structured_extraction_attempt", attempt=attempt, seed=attempt_seed)
             try:
-                (
-                    result,
-                    extracted_data,
-                    input_tokens,
-                    output_tokens,
-                ) = await self._attempt_extraction(
-                    provider=provider,
-                    enhanced_system_prompt=enhanced_system_prompt,
-                    user_prompt=user_prompt,
-                    tools_payload=tools_payload,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    provider_name=provider_name,
-                    attempt=attempt,
-                    max_retries=max_retries,
-                )
+                with seed_override(attempt_seed):
+                    (
+                        result,
+                        extracted_data,
+                        input_tokens,
+                        output_tokens,
+                    ) = await self._attempt_extraction(
+                        provider=provider,
+                        enhanced_system_prompt=enhanced_system_prompt,
+                        user_prompt=user_prompt,
+                        tools_payload=tools_payload,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        provider_name=provider_name,
+                        attempt=attempt,
+                        max_retries=max_retries,
+                    )
                 attempt_duration_ms = int((time.time() - attempt_start) * 1000)
                 total_llm_calls += 1
                 total_input_tokens += input_tokens

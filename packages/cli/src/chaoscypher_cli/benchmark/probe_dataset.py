@@ -60,7 +60,9 @@ class ProbeDataset:
 
     id: str
     version: str
-    domain: str
+    packs: tuple[str, ...]
+    """The packs the probes' templates are rendered with, on the floor (the manifest's, read
+    by :func:`~chaoscypher_core.benchmark.packs.manifest_packs`)."""
     probes: list[Probe]
     source: DatasetSource = "builtin"
     thinking: bool = False
@@ -95,6 +97,9 @@ class ProbeDataset:
         from chaoscypher_cli.benchmark.extraction_dataset import ExtractionDataset
         from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
             get_domain_registry,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.domains.stack import (
+            DomainStack,
         )
         from chaoscypher_core.services.sources.engine.extraction.orchestration import (
             format_extraction_templates,
@@ -133,9 +138,8 @@ class ProbeDataset:
 
             ctx = shim._build_temp_context(model)  # noqa: SLF001 - shared builder
             registry = get_domain_registry(ctx.settings, ctx.database_name)
-            domain = registry.get_domain(self.domain)
             templates = format_extraction_templates(
-                domain,
+                DomainStack.resolve(registry, self.packs),
                 examples_enabled=ctx.settings.llm.extraction_examples_enabled,
                 examples_max_chars=ctx.settings.llm.extraction_examples_max_chars,
             )

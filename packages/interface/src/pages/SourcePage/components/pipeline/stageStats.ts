@@ -62,9 +62,36 @@ export function buildStageStats(
   const filter: StageStatItem[] = [];
   if (num('dedup_entities_merged') > 0) filter.push({ label: 'Merged', value: num('dedup_entities_merged'), description: 'Duplicate entities merged into one during cross-chunk de-duplication.' });
   if (num('structural_entities_filtered') > 0) filter.push({ label: 'Structural', value: num('structural_entities_filtered'), description: 'Entities removed by structural filters — headings, formatting artifacts, and other non-entities.' });
-  if (num('orphan_entities_filtered') > 0) filter.push({ label: 'Orphan', value: num('orphan_entities_filtered'), description: 'Entities removed because they had no relationships (orphans), when orphan protection is off.' });
+  // Keep, flag, never delete (2026-10-07): orphan_entities_filtered now counts the edgeless
+  // entities KEPT (flagged `orphan`); evidence_less_entities_dropped the ones still dropped.
+  if (num('orphan_entities_filtered') > 0) filter.push({ label: 'Unconnected', value: num('orphan_entities_filtered'), description: 'Entities committed with no relationship, kept because they carry a description or evidence and flagged as unconnected (grouped in the canvas\'s Unresolved region).' });
+  if (num('evidence_less_entities_dropped') > 0) filter.push({ label: 'No evidence', value: num('evidence_less_entities_dropped'), description: 'Entities with no relationship and neither a description nor an evidence sentence, dropped at commit (kept when orphan protection is on).' });
+  // Keep, flag, never delete (2026-10-07): per-chunk entities kept flagged instead of dropped.
+  if (num('plausibility_entities_flagged') > 0) filter.push({ label: 'Low plausibility', value: num('plausibility_entities_flagged'), description: 'Entities whose name scored below the plausibility bar, kept because they carry a description or evidence and flagged as low plausibility (grouped in the canvas\'s Unresolved region).' });
+  if (num('unplaced_type_entities_flagged') > 0) filter.push({ label: 'Unplaced type', value: num('unplaced_type_entities_flagged'), description: 'Entities whose written type no core type answers to, kept as a Concept with the written type and flagged as unplaced (grouped in the canvas\'s Unresolved region).' });
+  // Keep, flag, never delete (2026-10-07): relationships_unevidenced_kept counts the relationships
+  // the evidence filter KEPT flagged `unevidenced`; evidence_relationships_dropped only the ones it
+  // still drops (an endpoint that is no entity), where it used to count every one without evidence.
+  if (num('relationships_unevidenced_kept') > 0) filter.push({ label: 'Unevidenced', value: num('relationships_unevidenced_kept'), description: 'Relationships no cited sentence states, kept with their justification and the reason, drawn dashed on the canvas and left out of chat answers by default.' });
+  if (num('evidence_relationships_dropped') > 0) filter.push({ label: 'No-entity rels', value: num('evidence_relationships_dropped'), description: 'Relationships the evidence filter dropped because an endpoint is no entity of their chunk.' });
+  // Keep, flag, never delete (2026-10-08): the entity half of the evidence filter, the domain's
+  // exclusion examples and the strict type check keep what they used to drop, flagged.
+  // evidence_entities_dropped now counts only the entities with no description, and
+  // relationships_dropped_type_unmatched the relationships the type check KEPT flagged.
+  if (num('entities_unevidenced_kept') > 0) filter.push({ label: 'Unevidenced ents', value: num('entities_unevidenced_kept'), description: 'Entities whose cited sentence does not name them, kept because they carry a description and flagged as unevidenced (grouped in the canvas\'s Unresolved region).' });
+  if (num('evidence_entities_dropped') > 0) filter.push({ label: 'No-evidence ents', value: num('evidence_entities_dropped'), description: 'Entities the evidence filter dropped: their cited sentence does not name them and they carry no description.' });
+  if (num('excluded_entities_kept') > 0) filter.push({ label: 'Excluded names', value: num('excluded_entities_kept'), description: 'Entities whose name is one of the domain\'s exclusion examples, kept because they carry a description or evidence and flagged as an excluded name (grouped in the canvas\'s Unresolved region).' });
+  // The known-entities guards (2026-10-11): pass 1 is checked against the entities the source's
+  // earlier groups named. A known name the guard could not support is counted whether it was
+  // demoted or kept as written and flagged.
+  if (num('aliases_crossed_known_dropped') > 0) filter.push({ label: 'Crossed aliases', value: num('aliases_crossed_known_dropped'), description: 'Aliases that are the name of another entity this source already knows, taken off the entity that gave them and kept on it as the crossed alias.' });
+  if (num('referents_unevidenced_demoted') > 0) filter.push({ label: 'Demoted or flagged names', value: num('referents_unevidenced_demoted'), description: 'Entities written under a name this source already knows that their cited sentences never write: renamed to the one reference those sentences write, or kept under the name and flagged when they write none or several (their relationships then kept flagged as unevidenced), with the name they were given kept beside it.' });
+  if (num('relationships_unmatched_label_kept') > 0) filter.push({ label: 'Unmatched labels', value: num('relationships_unmatched_label_kept'), description: 'Relationships whose label no relationship type of the domain answers to, kept as related_to with the label as written, flagged, ranked last and drawn thin.' });
+  if (num('relationships_type_mismatch_kept') > 0) filter.push({ label: 'Type mismatches', value: num('relationships_type_mismatch_kept'), description: 'Relationships whose endpoints are not the types their relationship type allows, kept with their label, flagged, ranked last and drawn thin.' });
   if (num('relationships_dropped_invalid') > 0) filter.push({ label: 'Invalid rels', value: num('relationships_dropped_invalid'), description: 'Relationships dropped for being invalid — missing endpoints or a disallowed type.' });
-  if (num('relationships_dropped_capped') > 0) filter.push({ label: 'Capped rels', value: num('relationships_dropped_capped'), description: 'Relationships dropped because a per-chunk relationship cap was exceeded.' });
+  // Since 2026-10-07 relationships_dropped_capped counts the relationships past a cap KEPT
+  // (flagged `capped`, drawn thin); the caps drop nothing.
+  if (num('relationships_dropped_capped') > 0) filter.push({ label: 'Capped rels', value: num('relationships_dropped_capped'), description: 'Relationships past a relationship cap (same source and type, entity degree or total), kept and flagged as capped: they rank last and are drawn thin on the canvas.' });
   if (num('relationships_direction_corrected') > 0) filter.push({ label: 'Dir fixed', value: num('relationships_direction_corrected'), description: 'Relationships whose direction was auto-corrected to match the template definition.' });
 
   const commit: StageStatItem[] = [];

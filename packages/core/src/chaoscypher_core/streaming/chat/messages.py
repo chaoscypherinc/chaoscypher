@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.app_config import get_settings
-from chaoscypher_core.services.chat.engine.constants import SYSTEM_PROMPT
+from chaoscypher_core.services.chat.engine.constants import GROUNDED_ANSWER_POLICY, SYSTEM_PROMPT
 from chaoscypher_core.streaming.chat.utils import (
     get_context_window_for_provider,
     strip_thinking_tags,
@@ -312,6 +312,15 @@ def _convert_message_to_llm_format(message: dict[str, Any]) -> dict[str, Any]:
     return {"role": message["role"], "content": clean_content}
 
 
+def _answer_policy_on(settings: Settings | None = None) -> bool:
+    """``graphrag.answer_policy`` for the configured chat model, its profile resolved."""
+    from chaoscypher_core.graphrag_profiles import chat_model_of, resolve_graphrag_profile
+
+    app = settings or get_settings()
+    graphrag = resolve_graphrag_profile(app.graphrag, model=chat_model_of(app.llm))
+    return bool(graphrag.answer_policy)
+
+
 def build_messages_for_llm(
     chat: dict[str, Any],
     chat_id: str,
@@ -344,8 +353,11 @@ def build_messages_for_llm(
         message_overhead=cc.message_structure_token_overhead,
     )
 
-    # Build system prompt (with optional source scope context)
+    # Build system prompt (with optional source scope context). The grounded answer
+    # policy rides on the engine's GraphRAG settings, as the search handler's own do.
     system_content = SYSTEM_PROMPT
+    if _answer_policy_on(settings):
+        system_content += f"\n\n{GROUNDED_ANSWER_POLICY}"
     if source_metadata:
         source_lines = "\n".join(
             f'- "{_sanitize_source_title(s["title"])}" ({_sanitize_source_title(s["id"])})'

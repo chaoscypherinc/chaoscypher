@@ -37,7 +37,11 @@ from chaoscypher_core.utils.task_callbacks import log_task_exception
 from chaoscypher_neuron.config import load_worker_config
 
 # Extracted modules
-from chaoscypher_neuron.recovery import recover_orphaned_extraction_tasks, recover_stuck_sources
+from chaoscypher_neuron.recovery import (
+    recover_interrupted_site_runs,
+    recover_orphaned_extraction_tasks,
+    recover_stuck_sources,
+)
 from chaoscypher_neuron.settings_sync import listen_for_settings_changes
 from chaoscypher_neuron.setup import (
     setup_llm_handlers,
@@ -62,7 +66,7 @@ logger = get_logger(__name__)
 
 
 async def _run_startup_recovery(ctx: WorkerContext) -> None:
-    """Run extraction recovery on startup.
+    """Run extraction recovery on startup, then fail the site runs the last worker left.
 
     Args:
         ctx: Typed worker context with shared services.
@@ -104,6 +108,16 @@ async def _run_startup_recovery(ctx: WorkerContext) -> None:
     except Exception as e:
         logger.exception(
             "extraction_recovery_error",
+            error=str(e),
+            error_type=type(e).__name__,
+        )
+
+    try:
+        failed_sites = await recover_interrupted_site_runs(adapter, current_database)
+        logger.info("site_run_recovery_completed", marked_failed=len(failed_sites))
+    except Exception as e:
+        logger.exception(
+            "site_run_recovery_error",
             error=str(e),
             error_type=type(e).__name__,
         )

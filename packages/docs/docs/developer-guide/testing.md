@@ -167,11 +167,12 @@ The full CI pipeline (`make ci`) runs, in order:
 8. **Dead code detection** — vulture scanning
 9. **Bundle-size budget** — frontend build + size-limit check
 10. **Docs build** — `npm ci` + Docusaurus build in `packages/docs`
-11. **License scan** — Python + frontend dependency license policy
-12. **Frontend tests + coverage** — Vitest with coverage
-13. **Docker tests** — full Python test suite with the 80% coverage gate
-14. **Diff coverage (advisory)** — ≥90% on changed lines vs `origin/main`
-15. **CLI E2E tier** — the no-Docker CLI end-to-end tests under `e2e/cli`
-16. **Security audit** — pip-audit + npm audit
+11. **Docs generated** — the committed Python API reference matches the generator's output
+12. **License scan** — Python + frontend dependency license policy
+13. **Frontend tests + coverage** — Vitest with coverage
+14. **Docker tests** — full Python test suite with the 80% coverage gate
+15. **Diff coverage (advisory)** — ≥90% on changed lines vs `origin/main`
+16. **CLI E2E tier** — the no-Docker CLI end-to-end tests under `e2e/cli`
+17. **Security audit** — pip-audit + npm audit
 
 The authoritative step list lives in `scripts/run_ci.py` (`uv run python scripts/run_ci.py --list`). All blocking checks must pass before merging.

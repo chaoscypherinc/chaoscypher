@@ -10,6 +10,13 @@ MCP server loaded. The bridge returns no verdicts until ``finish`` and refuses
 a second answer for a task. One session per task also means each question is
 answered fresh, as the local runs do.
 
+A session that answers in text without calling ``submit_benchmark_output``
+leaves its task pending and the driver runs another session for it (three
+in a row with no progress and it stops; ``--resume`` continues). Every
+session is reported to the bridge with the task it was given, so the row
+records the tasks that took more than one (``extras["run"]["sessions"]``)
+and the leaderboard can say so.
+
 The bridge is client-agnostic; what differs per client is how tightly its
 session can be restricted, and the row records that in ``client_settings``:
 
@@ -23,8 +30,14 @@ session can be restricted, and the row records that in ``client_settings``:
 Usage (from the repository, with the reference pack exported)::
 
     uv run python scripts/benchmark/run_mcp_suite.py --suite chat
-        --reference war_and_peace_book1 --client claude-code
+        --reference war_and_peace_book1-v3 --client claude-code
         --model claude-sonnet-5 --effort high
+
+``--retrieval hybrid`` or ``--retrieval naive`` runs the chat suite under one
+of the leaderboard's baseline rungs (the chat column counts ``graphrag`` runs
+only); the row records the mode and a baseline's dataset id carries it. The
+naive rung's index is the CLI's optional llama-index extra, handed to the
+bridge here as a factory.
 """
 
 from __future__ import annotations
@@ -38,6 +51,8 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+
+from chaoscypher_core.benchmark.retrieval import DEFAULT_RETRIEVAL_MODE, RETRIEVAL_MODES
 
 
 TASK_PROMPT = (
@@ -167,6 +182,12 @@ async def _main() -> int:
     ap.add_argument("--suite", required=True)
     ap.add_argument("--reference", help="Reference pack name (chat suite)")
     ap.add_argument(
+        "--retrieval",
+        choices=list(RETRIEVAL_MODES),
+        default=DEFAULT_RETRIEVAL_MODE,
+        help="Chat suite only: the retrieval rung the context comes from",
+    )
+    ap.add_argument(
         "--client",
         choices=sorted(TASK_CMDS),
         default="claude-code",
@@ -191,13 +212,18 @@ async def _main() -> int:
     ap.add_argument("--resume", help="Run id to continue instead of starting a new run")
     args = ap.parse_args()
 
+    from chaoscypher_cli.benchmark.naive_retrieval import naive_retriever_factory
     from chaoscypher_core.app_config import get_settings
     from chaoscypher_core.app_config.engine_factory import build_engine_settings
     from chaoscypher_core.mcp.benchmark import BenchmarkBridge
 
     # The same engine settings the CLI's MCP server runs on, so the driver and
-    # the server share one data dir, one state directory and one reference pack.
-    bridge = BenchmarkBridge(build_engine_settings(get_settings()))
+    # the server share one data dir, one state directory and one reference
+    # pack; the same naive-rung factory too, since the first task's retrieval
+    # happens here and the rest in the server.
+    bridge = BenchmarkBridge(
+        build_engine_settings(get_settings()), naive_retriever=naive_retriever_factory
+    )
     client_settings: dict[str, Any] = {
         "effort": args.effort,
         "client_version": _version(VERSION_CMDS[args.client]),
@@ -205,6 +231,10 @@ async def _main() -> int:
     }
     if args.client == "claude-code":
         client_settings["thinking"] = "adaptive"
+    retrieval = args.retrieval if args.suite == "chat" else None
+    if retrieval is not None:
+        # The rung is part of the row's identity on the harness track too.
+        client_settings["retrieval"] = retrieval
     if args.resume:
         run_id = args.resume
     else:
@@ -216,6 +246,7 @@ async def _main() -> int:
             only=args.only,
             client_settings=client_settings,
             reference=args.reference,
+            retrieval=retrieval,
         )
         if not started.get("success"):
             print(json.dumps(started, indent=1))
@@ -233,6 +264,10 @@ async def _main() -> int:
             submitted, total = progress.get("submitted", 0), progress.get("total", 0)
             if progress.get("pending_count", total - submitted) == 0:
                 break
+            # The bridge hands out the first pending task, so this is the one
+            # the session is about to be given; counted whether it submits or
+            # not, so the row says how many sessions each task took.
+            attempting = str(progress["pending"][0]["task_id"])
             code, out = _run_task(
                 run_id,
                 client=args.client,
@@ -243,6 +278,7 @@ async def _main() -> int:
                 cwd=cwd,
                 timeout=args.task_timeout,
             )
+            await bridge.record_session(run_id, attempting)
             after = await bridge.progress(run_id)
             if after.get("submitted", 0) > submitted:
                 stalls = 0

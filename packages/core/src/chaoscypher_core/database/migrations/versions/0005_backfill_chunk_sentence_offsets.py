@@ -1,6 +1,6 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Backfill chunk-local sentence_offsets in document_chunks.chunk_metadata
+"""Backfill chunk-local sentence_offsets in document_chunks.chunk_metadata.
 
 Revision ID: 0005
 Revises: 0004
@@ -20,11 +20,10 @@ hence ``needs_confirmation``.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 
-import sqlalchemy as sa
 from alembic import op
+
 
 # Revision identifiers, used by Alembic.
 revision: str = "0005"
@@ -42,40 +41,17 @@ def upgrade() -> None:
     """Recompute ``sentence_offsets`` for every non-empty chunk from its content.
 
     Uses the canonical sentence splitter so the stored offsets match what the
-    runtime consumers slice against. Imported lazily so loading the migration
-    module for lineage inspection stays cheap.
+    runtime consumers slice against (``backfills.recompute_chunk_sentence_offsets``,
+    shared with 0008). Imported lazily so loading the migration module for
+    lineage inspection stays cheap.
     """
-    from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
-        split_into_sentences_with_offsets,
-    )
+    from chaoscypher_core.database.migrations.backfills import recompute_chunk_sentence_offsets
 
-    conn = op.get_bind()
-    rows = conn.execute(
-        sa.text(
-            "SELECT id, content, chunk_metadata FROM document_chunks "
-            "WHERE content IS NOT NULL AND content != ''"
-        )
-    ).fetchall()
-
-    for chunk_id, content, meta_json in rows:
-        try:
-            meta = json.loads(meta_json) if meta_json else {}
-        except (json.JSONDecodeError, TypeError):
-            meta = {}
-        if not isinstance(meta, dict):
-            meta = {}
-
-        new_offsets = split_into_sentences_with_offsets(content)
-        if meta.get("sentence_offsets") == new_offsets:
-            continue
-
-        meta["sentence_offsets"] = new_offsets
-        conn.execute(
-            sa.text("UPDATE document_chunks SET chunk_metadata = :meta WHERE id = :id"),
-            {"meta": json.dumps(meta), "id": chunk_id},
-        )
+    recompute_chunk_sentence_offsets(op.get_bind())
 
 
 def downgrade() -> None:
-    """No-op: the pre-0005 corrupted offsets are not restorable (and the
-    recomputed values are the canonical ones every consumer expects)."""
+    """No-op: the pre-0005 corrupted offsets are not restorable.
+
+    The recomputed values are the canonical ones every consumer expects.
+    """

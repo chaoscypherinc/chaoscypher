@@ -153,11 +153,11 @@ def test_import_citations_no_write_when_every_citation_is_skipped() -> None:
 
 
 def test_import_citations_records_node_source_links() -> None:
-    """The node -> source back-fill map is still populated, first source wins."""
+    """The node -> source back-fill map records every citing source, first citer first (#795)."""
     importer, _graph, _sources = _importer()
     stats = ImportStats()
     iri = "urn:ccx:chaoscypher:node/alice"
-    node_source_links: dict[str, str] = {"local-alice": "src-first"}
+    node_source_links: dict[str, list[str]] = {"local-alice": ["src-first"]}
 
     importer._import_citations(
         [_citation(iri)],
@@ -170,8 +170,44 @@ def test_import_citations_records_node_source_links() -> None:
         {iri: "Person"},
         node_source_links,
     )
+    importer._import_citations(  # the same source citing again adds nothing
+        [_citation(iri)],
+        "chunk-2",
+        "src-second",
+        "default",
+        stats,
+        {iri: "local-alice"},
+        {iri: "Alice"},
+        {iri: "Person"},
+        node_source_links,
+    )
 
-    assert node_source_links == {"local-alice": "src-first"}
+    assert node_source_links == {"local-alice": ["src-first", "src-second"]}
+
+
+def test_finalize_homes_a_node_with_its_first_citer_and_links_every_other() -> None:
+    """A node two sources cite is homed at the first and attested by both (#795)."""
+    importer, graph, _sources = _importer()
+    graph.assign_source_to_nodes.return_value = 0
+    readings = {"shared": {"label": "Shared"}, "only-a": {"label": "Only A"}}
+    importer._finalize_imported_sources(
+        "default",
+        {"iri:a": ("src-a", None), "iri:b": ("src-b", None)},
+        [],
+        {"shared": ["src-b", "src-a"], "only-a": ["src-a"]},
+        ["shared", "only-a"],
+        readings,
+    )
+    calls = [c.args for c in graph.assign_source_to_nodes.call_args_list]
+    assert calls == [
+        (["only-a"], "src-a", "default"),
+        (["shared"], "src-b", "default"),  # home: stamped while still unhomed
+        (["shared"], "src-a", "default"),  # then a member: the home stays src-b
+    ]
+    # every link records what the package wrote for the node, never the row (#795 M5)
+    assert all(
+        c.kwargs == {"readings": readings} for c in graph.assign_source_to_nodes.call_args_list
+    )
 
 
 def test_import_citations_falls_back_to_iri_label_and_null_type() -> None:
@@ -198,3 +234,63 @@ def test_import_citations_falls_back_to_iri_label_and_null_type() -> None:
     # Defaults preserved from the single-row path.
     assert row["confidence"] == 1.0
     assert row["extraction_method"] == "imported"
+
+
+def test_only_a_node_an_outside_source_attests_is_rebuilt_under_the_engine_settings() -> None:
+    """A node only this import's sources attest holds the package's one reading: left as written.
+
+    One a source outside the import attests too is rebuilt from its members, ranked
+    under the importer's engine settings (as a release ranks), and its id returned so
+    the import clears its vector.
+    """
+    from unittest.mock import patch
+
+    from chaoscypher_core.settings import EngineSettings
+
+    settings = EngineSettings()
+    graph = MagicMock()
+    importer = CcxImporter(
+        graph_repository=graph, sources_repository=MagicMock(), settings=settings
+    )
+    release = "chaoscypher_core.services.graph.management.release"
+    with (
+        patch(f"{release}.graph_conventions", return_value="conv") as conventions,
+        patch(f"{release}.rebuild_from_members") as rebuild,
+    ):
+        rebuild.return_value.changed_node_ids = frozenset({"shared"})
+        changed = importer._rebuild_shared_nodes(
+            "default",
+            {"ours": {"src-a", "src-b"}, "shared": {"src-a", "extracted"}},
+            {"src-a", "src-b"},
+        )
+    assert changed == frozenset({"shared"})
+    graph.node_members.assert_not_called()
+    assert conventions.call_args.args[3] is settings
+    rebuild.assert_called_once_with(graph, ["shared"], [], "conv")
+
+
+def test_finalize_reads_members_once_and_refreshes_only_its_own_sole_readings() -> None:
+    """An unlinked upserted node whose sole member is this import's source gets its reading again.
+
+    One attested by another source alone is never touched: the upsert's content may
+    be another package's reading of the same IRI.
+    """
+    importer, graph, _sources = _importer()
+    graph.assign_source_to_nodes.return_value = 0
+    graph.node_member_sources.return_value = {
+        "linked": {"src-a"},
+        "uncited-ours": {"src-a"},
+        "uncited-theirs": {"elsewhere"},
+    }
+    readings = {n: {"label": n} for n in ("linked", "uncited-ours", "uncited-theirs")}
+    importer._finalize_imported_sources(
+        "default",
+        {"iri:a": ("src-a", None), "iri:b": ("src-b", None)},
+        [],
+        {"linked": ["src-a"]},
+        ["linked", "uncited-ours", "uncited-theirs"],
+        readings,
+    )
+    graph.node_member_sources.assert_called_once()
+    calls = [c.args for c in graph.assign_source_to_nodes.call_args_list]
+    assert calls == [(["linked"], "src-a", "default"), (["uncited-ours"], "src-a", "default")]

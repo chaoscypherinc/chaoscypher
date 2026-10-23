@@ -387,3 +387,62 @@ async def test_commit_search_repository_built_from_engine_settings(monkeypatch) 
     assert search_repo_seen.get("embedding_model") == "engine-embed-model"
     assert search_repo_seen.get("vector_dim") != "APP_VECTOR_DIM"
     assert search_repo_seen.get("embedding_model") != "APP_EMBED_MODEL"
+
+
+@pytest.mark.asyncio
+async def test_commit_reuses_worker_embedding_provider(monkeypatch) -> None:
+    """The commit service gets the worker-cached provider instead of building its own.
+
+    A per-task provider reloads the local embedding model on every commit
+    that creates templates; the IndexingService's provider is built once per
+    worker setup from the same engine settings.
+    """
+    from chaoscypher_core.operations.importing import import_service
+
+    adapter = MagicMock()
+    adapter.get_source.return_value = {"commit_complete": False}
+
+    engine_settings = EngineSettings(current_database="engine-db")
+    service = _make_import_service(adapter, engine_settings=engine_settings)
+    worker_provider = MagicMock(name="worker_embedding_provider")
+    service.indexing_service.embedding_service = worker_provider
+    service.search_repository = MagicMock()
+
+    commit_service = MagicMock()
+    commit_service.commit = AsyncMock(return_value={"created_nodes": [], "created_edges": []})
+    commit_service_cls = MagicMock(return_value=commit_service)
+
+    class _NullCtx:
+        async def __aenter__(self) -> None:
+            return None
+
+        async def __aexit__(self, *a: Any) -> None:
+            return None
+
+    monkeypatch.setattr(import_service, "source_heartbeat", lambda **kw: _NullCtx())
+
+    app_settings = MagicMock(name="app_settings")
+    app_settings.priorities.background = 50
+
+    with (
+        patch("chaoscypher_core.app_config.get_settings", return_value=app_settings),
+        patch(
+            "chaoscypher_core.operations.pause_guard.check_paused",
+            return_value=MagicMock(paused=False),
+        ),
+        patch(
+            "chaoscypher_core.services.sources.engine.commit.SourceCommitService",
+            commit_service_cls,
+        ),
+        patch.object(import_service, "queue_client", MagicMock(enqueue_task=AsyncMock())),
+    ):
+        await service._import_commit_handler(
+            data={
+                "file_id": "src-1",
+                "file_info": {"filename": "doc.txt"},
+                "commit_data": {},
+            }
+        )
+
+    commit_service_cls.assert_called_once()
+    assert commit_service_cls.call_args.kwargs["embedding_provider"] is worker_provider

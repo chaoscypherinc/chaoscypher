@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { settingsApi } from '../../services/api/settings';
+import { pageSaveUpdates } from '../../utils/settingsSections';
 import { dataApi } from '../../services/api/data';
 import { databaseApi } from '../../services/api/databases';
 import { useSettings } from '../../contexts/useSettings';
@@ -19,6 +20,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog';
 import { LLM_HEALTH_KEY } from '../../hooks/useLLMHealth';
 import { getApiErrorMessage } from '../../utils/errors';
 import { logger } from '../../utils/logger';
+import { formatFileSize } from '../../utils/formatters';
 import type { Settings, DatabaseInfo } from '../../types';
 
 /** Export options for data export. */
@@ -157,7 +159,10 @@ export function useSettingsActions(): UseSettingsActionsReturn {
     try {
       setSaving(true);
       setSuccess(false);
-      const response = await settingsApi.update(settings);
+      // The self-saved sections (the Cache and GraphRAG accordions) are saved
+      // by their own controls; sending this page's copy back would undo a
+      // toggle made since the page loaded (SELF_SAVED_SECTIONS).
+      const response = await settingsApi.update(pageSaveUpdates(settings));
 
       if (response.settings) {
         setSettings(response.settings as Settings);
@@ -330,14 +335,6 @@ export function useSettingsActions(): UseSettingsActionsReturn {
     }
   };
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-  };
-
   return {
     settings,
     setSettings,
@@ -367,6 +364,6 @@ export function useSettingsActions(): UseSettingsActionsReturn {
     handleCreateDatabase,
     handleDeleteDatabase,
     handleSwitchDatabase,
-    formatBytes,
+    formatBytes: formatFileSize,
   };
 }

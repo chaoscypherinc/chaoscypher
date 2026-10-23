@@ -18,12 +18,14 @@ Each database (workspace) gets one SQLite file:
 
 Resolved by `get_db_path()` in `packages/core/src/chaoscypher_core/adapters/sqlite/engine.py`. Every connection loads the [`sqlite-vec`](https://github.com/asg017/sqlite-vec) extension so vector search runs in the same process.
 
-Four tables hold the graph:
+Six tables hold the graph:
 
 | Table | Role |
 |---|---|
 | `graph_nodes` | Entities (people, organizations, concepts, …) |
 | `graph_edges` | Relationships between nodes |
+| `graph_node_sources` | Which sources attest each node, with what each one wrote |
+| `graph_edge_sources` | Which sources attest each edge, with what each one wrote |
 | `graph_templates` | Type schemas for nodes and edges |
 | `graph_snapshots` | Precomputed `GraphBreakdown` payload for dashboard reads |
 
@@ -43,7 +45,7 @@ Defined in `packages/core/src/chaoscypher_core/adapters/sqlite/models.py`.
 | `properties` | JSON | Free-form property bag matching the template |
 | `position_x`, `position_y` | FLOAT | Canvas coordinates (optional) |
 | `embedding` | JSON array | Float32 vector for similarity |
-| `source_id` | FK → `sources`, CASCADE | Provenance — drives the "enabled" filter |
+| `source_id` | FK → `sources`, SET NULL | Home source — one of the node's members (see [Provenance](#provenance-membership-and-the-enabled-filter)) |
 | `created_at`, `updated_at` | DATETIME UTC | |
 
 Indexes on `(database_name, source_id)` and `(database_name, template_id)`.
@@ -59,13 +61,23 @@ Indexes on `(database_name, source_id)` and `(database_name, template_id)`.
 | `target_node_id` | FK → `graph_nodes`, CASCADE, indexed | "To" endpoint |
 | `label` | TEXT | Human-readable predicate (`"worked_at"`) |
 | `properties` | JSON | Edge properties |
-| `source_id` | FK → `sources`, CASCADE | Provenance |
+| `source_id` | FK → `sources`, SET NULL | Home source — one of the edge's members |
 
 Two endpoint indexes — `ix_graph_edges_db_source_node` and `ix_graph_edges_db_target_node` — make 1-hop neighbor lookups O(degree).
 
 ### `graph_templates`
 
-`id`, `database_name`, `name`, `template_type` (`'node'` or `'edge'`), `properties` (JSON array of property definitions), `icon`, `color`, `embedding`. Templates are referenced by both `graph_nodes` and `graph_edges` with `ON DELETE RESTRICT` — you cannot delete a template that is in use.
+`id`, `database_name`, `name`, `template_type` (`'node'` or `'edge'`), `properties` (JSON array of property definitions), `icon`, `color`, `embedding`, `source_id` (owning source, FK → `sources`, SET NULL). Templates are referenced by both `graph_nodes` and `graph_edges` with `ON DELETE RESTRICT` — you cannot delete a template that is in use.
+
+### `graph_node_sources` and `graph_edge_sources`
+
+| Column | Type | Notes |
+|---|---|---|
+| `node_id` / `edge_id` | FK → `graph_nodes` / `graph_edges`, CASCADE, PK | The attested row |
+| `source_id` | FK → `sources`, CASCADE, PK, indexed | An attesting source |
+| `snapshot` | JSON | What that source wrote for the row: label, type, aliases and properties (no embedding) |
+
+One row per (node or edge, source). A node written by one source has one membership; identity resolution merging nodes from several sources gives the kept node one membership per source. These tables, not `source_id`, decide what a source delete removes and which nodes a disabled source hides.
 
 ### `graph_snapshots`
 
@@ -222,15 +234,27 @@ Edges hash `(db, source, template, source_node_id, target_node_id, label)`. Beca
 
 For the full commit pipeline see [Commit to Graph](./extraction-pipeline/commit.md).
 
-## Provenance and the "Enabled" Filter
+## Provenance, Membership and the "Enabled" Filter
 
-Every node and edge has an optional `source_id` foreign key with `ON DELETE CASCADE`. Two consequences:
+`source_id` on a node or edge names its **home** source. The membership tables name **every** source that attests it, each with a snapshot of what that source wrote. Identity resolution can merge nodes extracted from different sources into one node; the merge moves the dropped node's memberships, snapshots and citations to the kept node, so the kept node records every source that contributed to it.
 
-1. **Deleting a source wipes its graph data.** No application logic needed — the FK cascade handles it.
-2. **Disabling a source hides its graph data.** Default list queries `OUTER JOIN sources` and apply `(source_id IS NULL OR sources.enabled = TRUE)`. Pass `include_disabled_sources=True` to bypass.
+**Deleting a source releases it.** A source delete, a re-commit and a forced re-extract all take the source out of the graph the same way, in one transaction with the source-row change:
+
+1. The source's memberships are removed.
+2. A node or edge no source attests any more is deleted (an edge also goes with a deleted endpoint).
+3. A node or edge another source still attests survives and is **rebuilt** from the snapshots of the sources it still has: the survivor ranking picks the reading whose label it keeps, the other readings fold into it, and it is re-homed to that reading's source. Sources that wrote the same thing count as one reading (provenance such as `source_document_id` aside), so a reading never folds into itself, and the current home keeps the node when it holds the chosen reading. Nothing the released source wrote stays on it.
+4. A template the source owned is deleted when nothing uses it, and otherwise handed to a source that still attests one of its users. When that source (or, for users with no membership, the unowned templates) already has a template of the same type and name, the users move to it and the released template is deleted. A system template is never that twin: a user template is not folded into it.
+
+After the commit, identity resolution runs again over the rebuilt nodes, and the rebuilt nodes are re-embedded and re-indexed. Each merge group, the alias drops and the flags commit as their own unit under the writer lock, so a failure partway leaves the units before it applied; the search cleanup and the re-embedding then cover exactly those. The search index follows only the nodes the resolution changed: the merged-away nodes lose their keyword and vector rows and the changed nodes have their full-text rows rewritten (`SearchRepository.refresh_node_fulltext`). The whole-table rebuild (`rebuild_node_fulltext`) is reserved for an explicit reindex; at 200,000 nodes it held the writer lock for 11 s. Deleting a source row directly no longer cascades: the foreign keys are `ON DELETE SET NULL`, so graph rows only ever leave through the release.
+
+A re-commit lands on the same content-addressed ids as the source's first commit. When one of those rows outlived the release because another source attests it, the re-committing source gets its membership back with what it writes now, and the row is rebuilt from all its members again.
+
+**A CCX import records what its package says.** The importer upserts each entity by its CCX IRI, then links every node its package cites to the importing source. The membership snapshot is the package's own entity, never the node's row: when the IRI names a node that other sources share (a merge folded them in), the row carries every member's names, and a later release would rebuild the node from them. A node the package has no entity for falls back to its own pre-merge reading (its home source's snapshot, as it is). Each package reading carries its own source's `source_document_id`. The upsert names no source and leaves every existing membership alone, whoever the members are: the same IRI may be another package's entity, whose reading this content is not. A node the package upserts but no chunk cites keeps a reading only when one of the import's own sources is its sole member (a re-import of the package that wrote it); that reading is refreshed from the package. Edges imported from a CCX package carry no source and get no membership, as before. Once the links are in, a node that a source from outside the import attests too is rebuilt from all its members, so deleting any one of them later removes that source's names and keeps the others'. Such a re-import can therefore change the node's label and home source (the survivor ranking picks among every member's reading). A node only the import's own sources attest (a multi-source bundle citing one entity from several sources) is left as the package wrote it, homed at its first citer. A rebuilt node whose text changed has its vector cleared after the bundle's vectors are restored, so the import's indexing, which embeds only nodes with no vector, re-embeds it from its new text; its full-text row follows there too. An import with no embedding model leaves such a node without a vector until the search indexes are rebuilt.
+
+**Disabling a source hides what only it attests.** Default list queries show a node or edge while at least one of its member sources is enabled; a row with no membership (a manual or legacy row) is shown unless its own `source_id` names a disabled source. A merged node stays visible while any of its sources is enabled, and per-source counts count it once under each member. Pass `include_disabled_sources=True` to bypass.
 
 ```python
-# Default: hides data from disabled sources
+# Default: hides data no enabled source attests
 nodes = graph_repo.list_nodes(template_id="tpl_person")
 
 # Admin / export: include everything
@@ -245,7 +269,7 @@ The design is consciously skewed toward operational simplicity over arbitrary sc
 
 - One file per workspace — `cp app.db` is a complete backup.
 - `sqlite-vec` runs vector search inside the same connection — no separate index service.
-- FK cascades give "delete source → all entities/edges/citations gone" for free.
+- Source memberships make "delete source → everything only it attests is gone, everything another source also attests is rebuilt from that source" one release in one transaction.
 - `rustworkx` is fast: a 10k-node / 100k-edge graph builds and runs Dijkstra in tens of milliseconds, all in compiled Rust.
 
 **Costs:**

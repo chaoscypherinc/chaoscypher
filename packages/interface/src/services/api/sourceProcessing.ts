@@ -20,7 +20,40 @@ import type {
   FilteringLog,
   ExtractedEntity,
   InferredRelationship,
+  UrlImportOptions,
+  UrlImportResponse,
 } from '../../types';
+
+/** The Add Source dialog's choices, as a URL import (or a site import) takes them. */
+interface UrlImportChoices {
+  extractEntities: boolean;
+  analysisDepth: 'quick' | 'full';
+  enableNormalization: boolean;
+  /** null leaves the choice to detection; [] is the floor alone. */
+  packs?: string[] | null;
+  filteringMode?: string;
+  contentFiltering: boolean;
+  skipDuplicates: boolean;
+  enableVision?: boolean;
+}
+
+/**
+ * The upload options of a URL import, from the dialog's choices: the one
+ * mapping both the single-URL import and the site import send.
+ */
+export function buildUrlImportOptions(choices: UrlImportChoices): UrlImportOptions {
+  return {
+    extract_entities: choices.extractEntities,
+    analysis_depth: choices.analysisDepth,
+    enable_normalization: choices.enableNormalization,
+    enable_vision: choices.enableVision ?? true,
+    packs: choices.packs ?? null,
+    filtering_mode: (choices.filteringMode || null) as UrlImportOptions['filtering_mode'],
+    content_filtering: choices.contentFiltering,
+    skip_duplicates: choices.skipDuplicates,
+    auto_confirm: false,
+  };
+}
 
 /**
  * Status payload returned by GET /sources/{id}/extraction.
@@ -72,6 +105,23 @@ export interface ExtractionDomain {
   icon?: string;                // MUI icon name (e.g., "MenuBook"), null = fallback
   extraction_density?: number;  // Domain-specific output multiplier (default 1.0)
   prompt_tokens?: number;       // Estimated prompt tokens for this domain
+  /** 'floor' for the floor every source has (generic); 'pack' for one a source may add. */
+  role?: 'floor' | 'pack';
+  /** A pack's subtypes (none for the floor): what a node's `entity_subtype` shows. */
+  subtypes?: DomainSubtype[];
+}
+
+/** One subtype a pack adds to a core type (`GET /sources/domains`). */
+export interface DomainSubtype {
+  /** The stored `entity_subtype` value ('military_unit'). */
+  key: string;
+  /** The pack's name for it ('Military Unit'). */
+  name: string;
+  /** The core type it is a kind of ('Organization'). */
+  of: string;
+  /** The subtype's own icon, when the pack gives one. */
+  icon?: string | null;
+  color?: string | null;
 }
 
 /**
@@ -81,6 +131,9 @@ export interface ExtractionDomain {
  * defaults server-side.
  */
 export interface ConfirmExtractionOptions {
+  /** The chosen packs; `[]` is the floor alone. Preferred over `domain`. */
+  packs?: string[];
+  /** One pack (or `generic`); still accepted by the API. */
   domain?: string;
   analysis_depth?: 'quick' | 'full';
   filtering_mode?: string;
@@ -92,6 +145,21 @@ export interface ConfirmExtractionOptions {
 }
 
 /**
+ * Write a pack choice into a multipart upload: `null`/`undefined` leaves the
+ * choice to detection (nothing sent); `[]` is the floor alone, sent as
+ * `domain=generic` (an empty repeated field cannot travel in a form); a list
+ * is sent as repeated `packs` fields.
+ */
+function appendPacks(formData: FormData, packs: string[] | null | undefined): void {
+  if (packs == null) return;
+  if (packs.length === 0) {
+    formData.append('domain', 'generic');
+    return;
+  }
+  packs.forEach((pack) => formData.append('packs', pack));
+}
+
+/**
  * Map a SourceSummary from the list API to a UnifiedSource for the UI.
  *
  * Uses SourceSummary (the list-view projection) rather than the full SourceResponse
@@ -99,7 +167,7 @@ export interface ConfirmExtractionOptions {
  * Fields only present in the full detail response (indexing_started_at,
  * extraction_started_at) are not available here and are omitted.
  */
-function mapSourceToUnified(s: SourceSummary): UnifiedSource {
+export function mapSourceToUnified(s: SourceSummary): UnifiedSource {
   const isActive = s.status === 'committed';
   const isProcessing = ['indexing', 'vision_pending', 'extracting', 'mcp_extracting', 'committing'].includes(s.status);
   const stage: 'queued' | 'processing' | 'active' = isActive
@@ -117,9 +185,15 @@ function mapSourceToUnified(s: SourceSummary): UnifiedSource {
     status: s.status,
     created_at: s.created_at,
     tags: s.tags?.map(t => ({ id: t.id, name: t.name, color: t.color ?? undefined })),
+    origin_url: s.origin_url,
+    site_id: s.site_id,
+    site_gone_at: s.site_gone_at,
+    site_left_out: s.site_left_out,
     extraction_domain: s.extraction_domain ?? undefined,
     extraction_domain_auto: s.extraction_domain_auto,
     extraction_domain_icon: s.extraction_domain_icon ?? undefined,
+    extraction_packs: s.extraction_packs ?? undefined,
+    extraction_pack_icons: s.extraction_pack_icons ?? undefined,
     // Per-source pause state
     is_paused: s.is_paused ?? false,
     paused_at: s.paused_at,
@@ -292,21 +366,23 @@ export const sourceProcessingApi = {
     extractEntities: boolean = true,
     analysisDepth: 'quick' | 'full' = 'full',
     enableNormalization: boolean = false,
-    domain?: string,
+    packs?: string[] | null,
     filteringMode?: string,
     contentFiltering: boolean = true,
     skipDuplicates: boolean = false,
-  ): Promise<Source> => {
-    const response = await apiClient.post<Source>('/sources/url', {
-      url,
-      extract_entities: extractEntities,
-      analysis_depth: analysisDepth,
-      enable_normalization: enableNormalization,
-      domain: domain || null,
-      filtering_mode: filteringMode || null,
-      content_filtering: contentFiltering,
-      skip_duplicates: skipDuplicates,
+  ): Promise<UrlImportResponse> => {
+    // 202: the fetch is queued; the worker creates the source (or skips a
+    // duplicate) when it runs, so the answer names the task, not a source.
+    const options = buildUrlImportOptions({
+      extractEntities,
+      analysisDepth,
+      enableNormalization,
+      packs,
+      filteringMode,
+      contentFiltering,
+      skipDuplicates,
     });
+    const response = await apiClient.post<UrlImportResponse>('/sources/url', { url, ...options });
     return response.data;
   },
 
@@ -315,7 +391,7 @@ export const sourceProcessingApi = {
     extractEntities: boolean = true,
     analysisDepth: 'quick' | 'full' = 'full',
     enableNormalization: boolean = false,
-    domain?: string,
+    packs?: string[] | null,
     onUploadProgress?: (progress: number) => void,
     enableVision?: boolean | null,
     filteringMode?: string,
@@ -330,9 +406,7 @@ export const sourceProcessingApi = {
     formData.append('analysis_depth', analysisDepth);
     formData.append('enable_normalization', enableNormalization.toString());
     formData.append('content_filtering', contentFiltering.toString());
-    if (domain) {
-      formData.append('domain', domain);
-    }
+    appendPacks(formData, packs);
     if (enableVision !== undefined && enableVision !== null) {
       formData.append('enable_vision', enableVision.toString());
     }
@@ -342,9 +416,9 @@ export const sourceProcessingApi = {
     if (skipDuplicates) {
       formData.append('skip_duplicates', 'true');
     }
-    // Override fast-path: when the user pre-selects a specific domain in the
-    // wizard's step 1, the upload carries auto_confirm=true so the backend
-    // domain-confirmation gate is bypassed entirely (no park, no review).
+    // Override fast-path: when the user chooses the packs in the wizard's
+    // step 1, the upload carries auto_confirm=true so the backend
+    // confirmation gate is bypassed entirely (no park, no review).
     if (autoConfirm) {
       formData.append('auto_confirm', 'true');
     }
@@ -373,7 +447,7 @@ export const sourceProcessingApi = {
     extractEntities: boolean = true,
     analysisDepth: 'quick' | 'full' = 'full',
     enableNormalization: boolean = false,
-    domain?: string,
+    packs?: string[] | null,
     enableVision?: boolean | null,
     filteringMode?: string,
     contentFiltering: boolean = true,
@@ -385,9 +459,7 @@ export const sourceProcessingApi = {
     formData.append('analysis_depth', analysisDepth);
     formData.append('enable_normalization', enableNormalization.toString());
     formData.append('content_filtering', contentFiltering.toString());
-    if (domain) {
-      formData.append('domain', domain);
-    }
+    appendPacks(formData, packs);
     if (enableVision !== undefined && enableVision !== null) {
       formData.append('enable_vision', enableVision.toString());
     }
@@ -510,6 +582,8 @@ export const sourceProcessingApi = {
     status?: string;
     source_type?: string;
     search?: string;
+    /** false: only sources outside any imported site (each site is a row of its own). */
+    in_site?: boolean;
   }): Promise<UnifiedSource[]> => {
     try {
       // GET /sources returns PaginatedSourcesResponse with data: SourceSummary[]
@@ -518,6 +592,7 @@ export const sourceProcessingApi = {
           search: params?.search,
           source_type: params?.source_type,
           status: params?.status,
+          in_site: params?.in_site,
           page_size: DEFAULT_PUBLIC_SETTINGS.batch_graph_source_page_size,
         },
       });
@@ -592,6 +667,8 @@ export const sourceProcessingApi = {
     sourceId: string,
     options: {
       analysis_depth?: 'quick' | 'full';
+      /** The packs to extract with; `[]` is the floor alone. */
+      packs?: string[];
       domain?: string;
       force?: boolean;
       filtering_mode?: string;
@@ -601,6 +678,28 @@ export const sourceProcessingApi = {
     const response = await apiClient.post<{ source_id: string; status: string }>(
       `/sources/${sourceId}/extraction`,
       options,
+    );
+    return response.data;
+  },
+
+  /**
+   * Re-extract a source under other packs (source settings).
+   *
+   * Resets a committed source's graph artifacts (nodes, edges, templates)
+   * and queues a fresh extraction with the floor plus `packs` (`[]` is the
+   * floor alone). Eligible for `indexed` and `committed` sources.
+   *
+   * POST /sources/{id}/reclassify
+   *
+   * @throws HTTPError 400 if the source is not in a valid state.
+   */
+  reclassify: async (
+    sourceId: string,
+    packs: string[],
+  ): Promise<{ source_id: string; status: string }> => {
+    const response = await apiClient.post<{ source_id: string; status: string }>(
+      `/sources/${sourceId}/reclassify`,
+      { packs },
     );
     return response.data;
   },

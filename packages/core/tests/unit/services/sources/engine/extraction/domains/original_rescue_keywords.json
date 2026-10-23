@@ -1,0 +1,2579 @@
+{
+  "biographical": {
+    "Person": [
+      "person",
+      "individual",
+      "he",
+      "she",
+      "subject",
+      "figure"
+    ],
+    "Life Event": [
+      "event",
+      "occurred",
+      "happened",
+      "took place",
+      "born",
+      "died",
+      "married"
+    ],
+    "Achievement": [
+      "achievement",
+      "accomplishment",
+      "award",
+      "won",
+      "received",
+      "earned",
+      "achieved"
+    ],
+    "Personal Relationship": [
+      "relationship",
+      "married to",
+      "father of",
+      "mother of",
+      "friend of",
+      "colleague"
+    ],
+    "Institution": [
+      "school",
+      "university",
+      "company",
+      "organization",
+      "institution",
+      "employer"
+    ],
+    "Location": [
+      "city",
+      "town",
+      "country",
+      "place",
+      "location",
+      "born in",
+      "lived in"
+    ],
+    "Era": [
+      "era",
+      "period",
+      "age",
+      "time of",
+      "during the",
+      "century"
+    ],
+    "Work": [
+      "work",
+      "book",
+      "invention",
+      "creation",
+      "contribution",
+      "published"
+    ],
+    "Legacy": [
+      "legacy",
+      "remembered for",
+      "known for",
+      "contribution to",
+      "impact on"
+    ],
+    "Career": [
+      "career",
+      "position",
+      "role",
+      "appointed",
+      "served as",
+      "worked as"
+    ],
+    "Education": [
+      "education",
+      "degree",
+      "studied",
+      "graduated",
+      "trained"
+    ],
+    "Residence": [
+      "residence",
+      "home",
+      "lived in",
+      "settled in",
+      "moved to"
+    ],
+    "Legacy Impact": [
+      "legacy",
+      "impact",
+      "lasting influence",
+      "changed the course of",
+      "pioneered"
+    ],
+    "Award": [
+      "award",
+      "prize",
+      "honor",
+      "medal",
+      "fellowship",
+      "recognition"
+    ]
+  },
+  "cybersecurity": {
+    "Threat Actor": [
+      "threat actor",
+      "APT",
+      "adversary",
+      "group",
+      "gang",
+      "nation-state",
+      "hacktivist",
+      "cybercriminal",
+      "attacker"
+    ],
+    "Malware": [
+      "malware",
+      "ransomware",
+      "trojan",
+      "worm",
+      "RAT",
+      "backdoor",
+      "rootkit",
+      "implant",
+      "payload",
+      "dropper",
+      "loader"
+    ],
+    "Vulnerability": [
+      "vulnerability",
+      "CVE",
+      "flaw",
+      "weakness",
+      "bug",
+      "security issue",
+      "zero-day",
+      "0-day"
+    ],
+    "Attack Technique": [
+      "technique",
+      "TTP",
+      "tactic",
+      "procedure",
+      "method",
+      "attack vector",
+      "ATT&CK"
+    ],
+    "Campaign": [
+      "campaign",
+      "operation",
+      "attack campaign",
+      "intrusion set",
+      "activity cluster"
+    ],
+    "Infrastructure": [
+      "infrastructure",
+      "C2",
+      "command and control",
+      "server",
+      "domain",
+      "IP address",
+      "hosting"
+    ],
+    "Indicator of Compromise": [
+      "IOC",
+      "indicator",
+      "artifact",
+      "hash",
+      "signature",
+      "forensic evidence"
+    ],
+    "Target": [
+      "target",
+      "victim",
+      "targeted organization",
+      "affected entity",
+      "compromised"
+    ],
+    "Software": [
+      "software",
+      "application",
+      "operating system",
+      "library",
+      "firmware",
+      "OS"
+    ],
+    "Product": [
+      "product",
+      "platform",
+      "appliance",
+      "device"
+    ],
+    "Exploit": [
+      "exploit",
+      "PoC",
+      "proof of concept",
+      "weaponized",
+      "exploit code",
+      "exploit kit"
+    ],
+    "Mitigation": [
+      "mitigation",
+      "patch",
+      "fix",
+      "workaround",
+      "countermeasure",
+      "remediation",
+      "detection rule"
+    ],
+    "Detection Rule": [
+      "YARA",
+      "Snort",
+      "Sigma",
+      "detection rule",
+      "signature",
+      "rule",
+      "heuristic"
+    ],
+    "Security Incident": [
+      "incident",
+      "breach",
+      "data leak",
+      "compromise",
+      "intrusion",
+      "security event"
+    ],
+    "Security Framework": [
+      "framework",
+      "standard",
+      "NIST",
+      "ISO 27001",
+      "OWASP",
+      "CIS",
+      "compliance",
+      "ATT&CK"
+    ],
+    "Protocol": [
+      "protocol",
+      "HTTP",
+      "DNS",
+      "SMB",
+      "RDP",
+      "SSH"
+    ],
+    "Service": [
+      "service",
+      "daemon",
+      "listener",
+      "port"
+    ],
+    "Security Researcher": [
+      "researcher",
+      "analyst",
+      "security team",
+      "threat intelligence",
+      "discovered by",
+      "reported by"
+    ],
+    "Intrusion Set": [
+      "intrusion set",
+      "activity cluster",
+      "activity group",
+      "threat cluster",
+      "UNC",
+      "DEV-",
+      "tracked as"
+    ],
+    "Tool": [
+      "tool",
+      "utility",
+      "dual-use",
+      "legitimate tool",
+      "LOLBin",
+      "living off the land",
+      "red team tool",
+      "penetration testing"
+    ],
+    "Location": [
+      "country",
+      "region",
+      "location",
+      "geography",
+      "based in",
+      "operating from"
+    ]
+  },
+  "design": {
+    "Designer": [
+      "designer",
+      "UX designer",
+      "UI designer",
+      "product designer",
+      "visual designer",
+      "interaction designer",
+      "design author",
+      "design researcher"
+    ],
+    "Organization": [
+      "studio",
+      "design studio",
+      "agency",
+      "design agency",
+      "company",
+      "design firm",
+      "design school",
+      "organization"
+    ],
+    "Design System": [
+      "design system",
+      "design language",
+      "component library",
+      "pattern library",
+      "style guide",
+      "design framework",
+      "UI kit"
+    ],
+    "Component": [
+      "component",
+      "button",
+      "card",
+      "modal",
+      "dialog",
+      "tooltip",
+      "dropdown",
+      "menu",
+      "navigation",
+      "tab",
+      "input",
+      "form field"
+    ],
+    "Design Principle": [
+      "design principle",
+      "principle",
+      "guideline",
+      "rule of thumb",
+      "best practice",
+      "design rule"
+    ],
+    "Heuristic": [
+      "heuristic",
+      "usability heuristic",
+      "Nielsen's heuristic",
+      "golden rule",
+      "evaluation criterion"
+    ],
+    "Design Pattern": [
+      "design pattern",
+      "UI pattern",
+      "UX pattern",
+      "interaction pattern",
+      "navigation pattern",
+      "form pattern"
+    ],
+    "Tool": [
+      "tool",
+      "design tool",
+      "prototyping tool",
+      "vector tool",
+      "image editor",
+      "design software"
+    ],
+    "Typeface": [
+      "typeface",
+      "font family",
+      "font",
+      "type family"
+    ],
+    "Color Palette": [
+      "color palette",
+      "palette",
+      "color scheme",
+      "color system",
+      "swatch set"
+    ],
+    "Color": [
+      "color",
+      "hue",
+      "shade",
+      "tint",
+      "tone",
+      "color token"
+    ],
+    "Grid System": [
+      "grid",
+      "grid system",
+      "layout grid",
+      "baseline grid",
+      "column grid",
+      "modular scale"
+    ],
+    "Accessibility Guideline": [
+      "accessibility guideline",
+      "WCAG",
+      "Section 508",
+      "EN 301 549",
+      "success criterion",
+      "conformance criterion",
+      "ARIA practice"
+    ],
+    "User Research Method": [
+      "user research",
+      "usability testing",
+      "heuristic evaluation",
+      "A/B test",
+      "card sorting",
+      "tree test",
+      "diary study",
+      "contextual inquiry",
+      "user interview",
+      "survey"
+    ],
+    "Persona": [
+      "persona",
+      "user persona",
+      "user archetype",
+      "target user",
+      "user profile"
+    ],
+    "Mockup": [
+      "wireframe",
+      "mockup",
+      "prototype",
+      "low-fidelity",
+      "high-fidelity",
+      "lo-fi",
+      "hi-fi",
+      "click-through",
+      "interactive prototype"
+    ]
+  },
+  "educational": {
+    "Concept": [
+      "concept",
+      "idea",
+      "principle",
+      "topic",
+      "subject matter"
+    ],
+    "Learning Objective": [
+      "learning objective",
+      "objective",
+      "students will",
+      "by the end of",
+      "able to"
+    ],
+    "Prerequisite": [
+      "prerequisite",
+      "prior knowledge",
+      "required",
+      "before learning",
+      "foundation"
+    ],
+    "Lesson": [
+      "lesson",
+      "lecture",
+      "class",
+      "session",
+      "instruction"
+    ],
+    "Module": [
+      "module",
+      "unit",
+      "chapter",
+      "section"
+    ],
+    "Exercise": [
+      "exercise",
+      "problem",
+      "practice",
+      "activity",
+      "question"
+    ],
+    "Example": [
+      "example",
+      "illustration",
+      "case",
+      "instance",
+      "demonstration"
+    ],
+    "Definition": [
+      "definition",
+      "defined as",
+      "means",
+      "refers to",
+      "key term"
+    ],
+    "Skill": [
+      "skill",
+      "ability",
+      "competency",
+      "proficiency"
+    ],
+    "Assessment": [
+      "test",
+      "quiz",
+      "exam",
+      "assessment",
+      "evaluation"
+    ],
+    "Theory": [
+      "theory",
+      "pedagogical theory",
+      "learning theory"
+    ],
+    "Framework": [
+      "framework",
+      "model",
+      "approach",
+      "methodology"
+    ],
+    "Diagram": [
+      "diagram",
+      "flowchart",
+      "schematic",
+      "concept map",
+      "mind map"
+    ],
+    "Figure": [
+      "figure",
+      "chart",
+      "graph",
+      "illustration",
+      "table",
+      "image"
+    ],
+    "Formula": [
+      "formula",
+      "equation",
+      "rule",
+      "law",
+      "theorem"
+    ],
+    "Taxonomy": [
+      "taxonomy",
+      "classification",
+      "hierarchy",
+      "categorization"
+    ],
+    "Learning Path": [
+      "learning path",
+      "curriculum",
+      "course sequence",
+      "track",
+      "certification"
+    ],
+    "Misconception": [
+      "misconception",
+      "common mistake",
+      "misunderstanding",
+      "fallacy",
+      "myth"
+    ],
+    "Author": [
+      "author",
+      "writer",
+      "co-author"
+    ],
+    "Educator": [
+      "educator",
+      "teacher",
+      "instructor",
+      "professor",
+      "lecturer",
+      "theorist",
+      "researcher"
+    ],
+    "Resource": [
+      "textbook",
+      "reference",
+      "resource",
+      "handbook",
+      "guide"
+    ],
+    "Standard": [
+      "standard",
+      "requirement",
+      "accreditation",
+      "competency standard"
+    ],
+    "Benchmark": [
+      "benchmark",
+      "proficiency level",
+      "grade-level expectation"
+    ],
+    "Subject": [
+      "subject",
+      "school subject",
+      "course subject"
+    ],
+    "Discipline": [
+      "discipline",
+      "field",
+      "area of study",
+      "domain"
+    ]
+  },
+  "financial": {
+    "Financial Instrument": [
+      "stock",
+      "bond",
+      "security",
+      "derivative",
+      "share",
+      "equity"
+    ],
+    "Company": [
+      "company",
+      "corporation",
+      "firm",
+      "business",
+      "Inc.",
+      "Ltd.",
+      "Corp."
+    ],
+    "Market": [
+      "market",
+      "exchange",
+      "NYSE",
+      "NASDAQ",
+      "stock exchange",
+      "trading"
+    ],
+    "Transaction": [
+      "transaction",
+      "trade",
+      "merger",
+      "acquisition",
+      "deal"
+    ],
+    "Regulation": [
+      "regulation",
+      "rule",
+      "compliance",
+      "act",
+      "requirement"
+    ],
+    "Regulator": [
+      "regulator",
+      "regulatory body",
+      "SEC",
+      "FCA",
+      "FINRA",
+      "oversight body"
+    ],
+    "Financial Metric": [
+      "ratio",
+      "metric",
+      "indicator",
+      "P/E",
+      "ROI",
+      "EBITDA"
+    ],
+    "Risk": [
+      "risk",
+      "exposure",
+      "volatility",
+      "downside",
+      "credit risk"
+    ],
+    "Portfolio": [
+      "portfolio",
+      "investment portfolio",
+      "holdings",
+      "allocation"
+    ],
+    "Fund": [
+      "fund",
+      "ETF",
+      "mutual fund",
+      "hedge fund",
+      "investment fund"
+    ],
+    "Economic Event": [
+      "economic event",
+      "market event",
+      "crash",
+      "rally",
+      "recession",
+      "boom",
+      "crisis"
+    ],
+    "Sector": [
+      "sector",
+      "segment"
+    ],
+    "Industry": [
+      "industry",
+      "vertical"
+    ],
+    "Analyst": [
+      "analyst",
+      "research analyst",
+      "equity analyst",
+      "credit analyst"
+    ],
+    "Investor": [
+      "investor",
+      "fund manager",
+      "portfolio manager",
+      "trader",
+      "shareholder",
+      "stakeholder"
+    ],
+    "Earnings Report": [
+      "earnings",
+      "quarterly results",
+      "annual report",
+      "10-K",
+      "10-Q"
+    ],
+    "Index": [
+      "index",
+      "S&P 500",
+      "Dow Jones",
+      "NASDAQ composite"
+    ],
+    "Benchmark": [
+      "benchmark",
+      "reference rate",
+      "LIBOR",
+      "SOFR"
+    ],
+    "Currency": [
+      "currency",
+      "dollar",
+      "euro",
+      "yen",
+      "cryptocurrency",
+      "bitcoin"
+    ]
+  },
+  "historical": {
+    "Historical Event": [
+      "event",
+      "occurred in",
+      "took place",
+      "battle of",
+      "treaty of",
+      "war of",
+      "revolution",
+      "siege of"
+    ],
+    "Historical Figure": [
+      "historical figure",
+      "king",
+      "emperor",
+      "ruler",
+      "leader",
+      "statesman",
+      "general",
+      "reformer"
+    ],
+    "Era": [
+      "era",
+      "period",
+      "age",
+      "century",
+      "dynasty period",
+      "epoch",
+      "time of"
+    ],
+    "Institution": [
+      "institution",
+      "government",
+      "organization",
+      "body",
+      "assembly",
+      "council"
+    ],
+    "Treaty": [
+      "treaty",
+      "agreement",
+      "accord",
+      "pact",
+      "alliance"
+    ],
+    "Conflict": [
+      "war",
+      "battle",
+      "conflict",
+      "uprising",
+      "rebellion",
+      "siege",
+      "invasion"
+    ],
+    "Movement": [
+      "movement",
+      "revolution",
+      "reform",
+      "uprising"
+    ],
+    "Dynasty": [
+      "dynasty",
+      "house of",
+      "ruling family",
+      "succession of"
+    ],
+    "Primary Source": [
+      "primary source",
+      "document",
+      "manuscript",
+      "chronicle",
+      "record"
+    ],
+    "Artifact": [
+      "artifact",
+      "relic",
+      "object",
+      "archaeological find",
+      "remains"
+    ],
+    "Location": [
+      "city",
+      "town",
+      "place",
+      "capital",
+      "port",
+      "fortress",
+      "site"
+    ],
+    "Territory": [
+      "territory",
+      "province",
+      "colony",
+      "domain",
+      "realm",
+      "protectorate"
+    ],
+    "Region": [
+      "region",
+      "area",
+      "zone",
+      "borderlands"
+    ],
+    "Cultural Achievement": [
+      "monument",
+      "achievement",
+      "masterwork",
+      "cathedral",
+      "cultural"
+    ],
+    "Law": [
+      "law",
+      "code",
+      "charter",
+      "statute"
+    ],
+    "Decree": [
+      "decree",
+      "edict",
+      "proclamation",
+      "bull"
+    ],
+    "Religion": [
+      "religion",
+      "faith",
+      "church",
+      "sect",
+      "denomination"
+    ],
+    "Trade Route": [
+      "trade route",
+      "silk road",
+      "trade network",
+      "commercial route"
+    ],
+    "Technology": [
+      "technology",
+      "tool",
+      "weapon",
+      "technique"
+    ],
+    "Innovation": [
+      "innovation",
+      "invention",
+      "discovery",
+      "breakthrough"
+    ]
+  },
+  "intelligence": {
+    "Person": [
+      "person",
+      "individual",
+      "officer",
+      "official",
+      "analyst",
+      "director",
+      "deputy",
+      "chief",
+      "secretary",
+      "ambassador",
+      "attaché"
+    ],
+    "Witness": [
+      "witness",
+      "observer",
+      "eyewitness",
+      "pilot",
+      "radar operator",
+      "ground observer",
+      "tower controller",
+      "civilian observer"
+    ],
+    "Source": [
+      "source",
+      "asset",
+      "informant",
+      "defector",
+      "agent",
+      "human source",
+      "intercept",
+      "imagery source"
+    ],
+    "Agency": [
+      "agency",
+      "bureau",
+      "directorate",
+      "service",
+      "ministry",
+      "department",
+      "command",
+      "office",
+      "task force"
+    ],
+    "Program": [
+      "program",
+      "project",
+      "study",
+      "initiative",
+      "blue book",
+      "AATIP",
+      "AAWSAP",
+      "Sign",
+      "Grudge",
+      "Stargate"
+    ],
+    "Operation": [
+      "operation",
+      "mission",
+      "covert action",
+      "surveillance operation",
+      "reconnaissance mission",
+      "exfiltration",
+      "tasking"
+    ],
+    "Intelligence Report": [
+      "intelligence report",
+      "briefing",
+      "dossier",
+      "assessment",
+      "estimate",
+      "national intelligence estimate",
+      "presidents daily brief",
+      "PDB",
+      "NIE",
+      "summary",
+      "memorandum"
+    ],
+    "Cable": [
+      "cable",
+      "message",
+      "telegram",
+      "communique",
+      "dispatch",
+      "transmission",
+      "SITREP",
+      "FLASH",
+      "IMMEDIATE",
+      "ROUTINE"
+    ],
+    "Sighting": [
+      "sighting",
+      "observation",
+      "encounter",
+      "incident",
+      "report of",
+      "visual",
+      "radar contact",
+      "pilot encounter"
+    ],
+    "Anomalous Object": [
+      "object",
+      "UAP",
+      "UFO",
+      "unidentified",
+      "craft",
+      "vehicle",
+      "phenomenon",
+      "anomalous object",
+      "luminous",
+      "disc",
+      "saucer",
+      "cigar-shaped",
+      "triangle"
+    ],
+    "Sensor": [
+      "radar",
+      "FLIR",
+      "infrared",
+      "telescope",
+      "satellite",
+      "sensor",
+      "imaging system",
+      "gun camera",
+      "ELINT collector",
+      "ground station"
+    ],
+    "Classification Marking": [
+      "classification",
+      "top secret",
+      "secret",
+      "confidential",
+      "FOUO",
+      "NOFORN",
+      "ORCON",
+      "SCI",
+      "compartmented",
+      "marking",
+      "handling caveat"
+    ],
+    "FOIA Case": [
+      "FOIA",
+      "FOIA request",
+      "FOIA case",
+      "MORI",
+      "Mandatory Declassification Review",
+      "MDR",
+      "release",
+      "declassification review"
+    ],
+    "Location": [
+      "location",
+      "site",
+      "base",
+      "facility",
+      "installation",
+      "country",
+      "region",
+      "city",
+      "coordinates",
+      "grid reference"
+    ],
+    "Phenomenon": [
+      "phenomenon",
+      "wave",
+      "flap",
+      "pattern",
+      "cluster",
+      "activity",
+      "incident series"
+    ]
+  },
+  "investigation": {
+    "Person": [
+      "person",
+      "individual",
+      "suspect",
+      "victim",
+      "witness",
+      "detective",
+      "officer",
+      "agent",
+      "investigator",
+      "defendant",
+      "plaintiff",
+      "informant",
+      "accomplice"
+    ],
+    "Evidence": [
+      "evidence",
+      "exhibit",
+      "item",
+      "artifact",
+      "proof",
+      "clue",
+      "physical evidence",
+      "digital evidence",
+      "trace evidence"
+    ],
+    "Event": [
+      "event",
+      "incident",
+      "crime",
+      "arrest",
+      "search",
+      "hearing",
+      "occurrence",
+      "shooting",
+      "robbery",
+      "assault",
+      "homicide",
+      "break-in"
+    ],
+    "Location": [
+      "location",
+      "address",
+      "place",
+      "residence",
+      "business",
+      "premises",
+      "building",
+      "property",
+      "jurisdiction",
+      "venue"
+    ],
+    "Crime Scene": [
+      "crime scene",
+      "scene of crime",
+      "scene",
+      "primary scene",
+      "secondary scene",
+      "dump site",
+      "point of entry"
+    ],
+    "Forensic Report": [
+      "forensic report",
+      "autopsy report",
+      "lab report",
+      "ballistics report",
+      "toxicology report",
+      "DNA analysis",
+      "fingerprint analysis",
+      "forensic analysis",
+      "pathology report"
+    ],
+    "Legal Filing": [
+      "warrant",
+      "indictment",
+      "complaint",
+      "motion",
+      "subpoena",
+      "court order",
+      "filing",
+      "petition",
+      "affidavit",
+      "search warrant",
+      "arrest warrant"
+    ],
+    "Communication": [
+      "email",
+      "text message",
+      "phone call",
+      "letter",
+      "communication",
+      "correspondence",
+      "intercepted",
+      "recorded call",
+      "voicemail"
+    ],
+    "Organization": [
+      "organization",
+      "agency",
+      "department",
+      "company",
+      "corporation",
+      "gang",
+      "group",
+      "bureau",
+      "precinct",
+      "unit",
+      "task force"
+    ],
+    "Financial Record": [
+      "bank statement",
+      "transaction",
+      "wire transfer",
+      "financial record",
+      "payment",
+      "deposit",
+      "withdrawal",
+      "tax filing",
+      "invoice",
+      "receipt"
+    ],
+    "Vehicle": [
+      "vehicle",
+      "car",
+      "truck",
+      "van",
+      "motorcycle",
+      "boat",
+      "aircraft",
+      "automobile"
+    ],
+    "Weapon": [
+      "weapon",
+      "firearm",
+      "gun",
+      "knife",
+      "blade",
+      "pistol",
+      "rifle",
+      "shotgun",
+      "instrument",
+      "explosive"
+    ],
+    "Charge": [
+      "charge",
+      "count",
+      "criminal charge",
+      "civil claim",
+      "offense",
+      "violation",
+      "felony charge",
+      "misdemeanor charge"
+    ],
+    "Testimony": [
+      "testimony",
+      "statement",
+      "deposition",
+      "interview",
+      "affidavit",
+      "sworn statement",
+      "declaration",
+      "witness statement"
+    ]
+  },
+  "legal": {
+    "Statute": [
+      "a statute",
+      "the law",
+      "enacted by",
+      "legislative act",
+      "code section",
+      "act of",
+      "legislation"
+    ],
+    "Case": [
+      "the case",
+      "court held",
+      "ruling in",
+      "decision in",
+      "v.",
+      "vs.",
+      "matter of"
+    ],
+    "Legal Doctrine": [
+      "doctrine",
+      "legal principle",
+      "rule that",
+      "established that",
+      "holding that"
+    ],
+    "Court": [
+      "the court",
+      "supreme court",
+      "appellate court",
+      "tribunal",
+      "district court",
+      "circuit court"
+    ],
+    "Party": [
+      "plaintiff",
+      "defendant",
+      "petitioner",
+      "respondent",
+      "appellant",
+      "appellee",
+      "party to"
+    ],
+    "Jurisdiction": [
+      "jurisdiction",
+      "state",
+      "federal",
+      "territory",
+      "venue",
+      "district"
+    ],
+    "Contract": [
+      "agreement",
+      "contract",
+      "covenant",
+      "binding agreement",
+      "parties agree"
+    ],
+    "Regulation": [
+      "regulation",
+      "administrative rule",
+      "CFR",
+      "regulatory requirement"
+    ],
+    "Remedy": [
+      "remedy",
+      "relief",
+      "damages",
+      "injunction",
+      "specific performance"
+    ],
+    "Right": [
+      "right",
+      "entitlement",
+      "freedom",
+      "liberty",
+      "constitutional right",
+      "civil right"
+    ],
+    "Obligation": [
+      "obligation",
+      "duty",
+      "requirement",
+      "liability",
+      "responsibility",
+      "must"
+    ],
+    "Judge": [
+      "judge",
+      "justice",
+      "magistrate",
+      "chief justice",
+      "associate justice"
+    ],
+    "Clause": [
+      "clause",
+      "section",
+      "subsection",
+      "paragraph"
+    ],
+    "Provision": [
+      "provision",
+      "stipulation",
+      "term"
+    ],
+    "Legal Argument": [
+      "argument",
+      "claim",
+      "defense",
+      "motion",
+      "contention"
+    ],
+    "Evidence": [
+      "evidence",
+      "exhibit",
+      "testimony",
+      "proof",
+      "record"
+    ],
+    "Precedent": [
+      "precedent",
+      "landmark case",
+      "leading case",
+      "binding authority"
+    ]
+  },
+  "literary": {
+    "Literary Work": [
+      "novel",
+      "poem",
+      "play",
+      "book",
+      "work by",
+      "written by",
+      "the story of"
+    ],
+    "Author": [
+      "author",
+      "writer",
+      "poet",
+      "playwright",
+      "novelist",
+      "written by",
+      "by the author"
+    ],
+    "Structural Unit": [
+      "chapter",
+      "part",
+      "book",
+      "act",
+      "scene",
+      "volume",
+      "section",
+      "canto"
+    ],
+    "Character": [
+      "character",
+      "protagonist",
+      "antagonist",
+      "hero",
+      "heroine",
+      "villain",
+      "prince",
+      "princess",
+      "count",
+      "countess",
+      "duke",
+      "duchess",
+      "lord",
+      "lady",
+      "mr.",
+      "mrs.",
+      "miss",
+      "dr."
+    ],
+    "Theme": [
+      "theme",
+      "central idea",
+      "motif",
+      "explores the idea of",
+      "meditation on",
+      "examination of"
+    ],
+    "Symbol": [
+      "symbol",
+      "symbolizes",
+      "represents",
+      "symbolic of",
+      "stands for",
+      "embodies"
+    ],
+    "Literary Device": [
+      "metaphor",
+      "simile",
+      "irony",
+      "imagery",
+      "foreshadowing",
+      "uses the device of"
+    ],
+    "Genre": [
+      "genre",
+      "form",
+      "type of literature",
+      "literary tradition",
+      "in the style of"
+    ],
+    "Plot Element": [
+      "plot",
+      "conflict",
+      "climax",
+      "resolution",
+      "turning point",
+      "event",
+      "scene where",
+      "moment when"
+    ],
+    "Setting": [
+      "setting",
+      "takes place in",
+      "set in",
+      "backdrop",
+      "during the",
+      "in the year",
+      "in the city of"
+    ],
+    "Narrator": [
+      "narrator",
+      "narrative voice",
+      "storyteller",
+      "point of view",
+      "first person",
+      "third person"
+    ],
+    "Event": [
+      "battle",
+      "ceremony",
+      "incident",
+      "duel",
+      "ball",
+      "party",
+      "feast",
+      "siege",
+      "retreat",
+      "campaign",
+      "reception",
+      "soiree",
+      "dinner",
+      "name day",
+      "funeral",
+      "wedding"
+    ],
+    "Object": [
+      "letter",
+      "portrait",
+      "sword",
+      "ring",
+      "artifact",
+      "document"
+    ],
+    "Location": [
+      "city",
+      "country",
+      "estate",
+      "village",
+      "palace",
+      "church",
+      "river",
+      "mountain",
+      "province",
+      "capital"
+    ],
+    "Cultural Reference": [
+      "religion",
+      "philosophy",
+      "faith",
+      "creed",
+      "religious order",
+      "prayer",
+      "hymn",
+      "painting"
+    ],
+    "Social Group": [
+      "family",
+      "regiment",
+      "army",
+      "society",
+      "aristocracy",
+      "peasantry",
+      "household",
+      "faction"
+    ],
+    "Philosophy": [
+      "philosophy",
+      "stoicism",
+      "rationalism",
+      "romanticism",
+      "enlightenment",
+      "existentialism"
+    ],
+    "Ideology": [
+      "ideology",
+      "liberalism",
+      "conservatism",
+      "nihilism",
+      "socialism",
+      "anarchism"
+    ],
+    "Military Unit": [
+      "regiment",
+      "battalion",
+      "brigade",
+      "division",
+      "corps",
+      "squadron",
+      "garrison",
+      "guard",
+      "hussars",
+      "infantry"
+    ]
+  },
+  "medical": {
+    "Condition": [
+      "a disease",
+      "disorder",
+      "condition",
+      "syndrome",
+      "illness",
+      "diagnosed with",
+      "suffers from",
+      "presents with"
+    ],
+    "Symptom": [
+      "symptom",
+      "presents with",
+      "clinical sign",
+      "manifestation",
+      "complains of",
+      "experiences"
+    ],
+    "Treatment": [
+      "treatment",
+      "therapy",
+      "intervention",
+      "management of",
+      "treated with",
+      "therapeutic approach"
+    ],
+    "Drug": [
+      "drug",
+      "medication",
+      "pharmaceutical",
+      "administered",
+      "prescribed",
+      "compound"
+    ],
+    "Procedure": [
+      "procedure",
+      "surgery",
+      "operation",
+      "intervention",
+      "performed"
+    ],
+    "Diagnostic Test": [
+      "test",
+      "diagnostic",
+      "imaging",
+      "laboratory test",
+      "screening",
+      "biopsy"
+    ],
+    "Anatomy": [
+      "organ",
+      "tissue",
+      "body part",
+      "anatomical structure",
+      "system",
+      "gland"
+    ],
+    "Pathogen": [
+      "pathogen",
+      "virus",
+      "bacteria",
+      "organism",
+      "infection caused by"
+    ],
+    "Clinical Trial": [
+      "clinical trial",
+      "trial",
+      "study",
+      "randomized controlled trial",
+      "phase",
+      "RCT"
+    ],
+    "Side Effect": [
+      "side effect",
+      "adverse effect",
+      "adverse reaction",
+      "adverse event"
+    ],
+    "Risk Factor": [
+      "risk factor",
+      "risk",
+      "predisposition",
+      "susceptibility",
+      "predisposing factor"
+    ],
+    "Gene": [
+      "gene",
+      "allele",
+      "mutation",
+      "polymorphism",
+      "locus"
+    ],
+    "Biomarker": [
+      "biomarker",
+      "genetic marker",
+      "indicator",
+      "marker"
+    ],
+    "Patient Population": [
+      "population",
+      "cohort",
+      "patient group",
+      "demographic",
+      "subjects"
+    ],
+    "Guideline": [
+      "guideline",
+      "recommendation",
+      "best practice",
+      "standard of care"
+    ],
+    "Protocol": [
+      "protocol",
+      "regimen",
+      "procedure sequence"
+    ],
+    "Outcome": [
+      "outcome",
+      "result",
+      "survival",
+      "mortality"
+    ],
+    "Endpoint": [
+      "endpoint",
+      "primary endpoint",
+      "secondary endpoint",
+      "efficacy",
+      "response rate"
+    ],
+    "Mechanism of Action": [
+      "mechanism",
+      "pathway",
+      "action",
+      "receptor",
+      "cascade"
+    ]
+  },
+  "news": {
+    "News Event": [
+      "event",
+      "incident",
+      "occurred",
+      "happened",
+      "took place",
+      "breaking",
+      "developing"
+    ],
+    "Person": [
+      "person",
+      "individual",
+      "official",
+      "spokesperson",
+      "witness"
+    ],
+    "Organization": [
+      "company",
+      "organization",
+      "government",
+      "agency",
+      "group",
+      "corporation"
+    ],
+    "Quote": [
+      "quote",
+      "said",
+      "stated",
+      "commented",
+      "remarked"
+    ],
+    "Source": [
+      "source",
+      "according to",
+      "reported by",
+      "confirmed by",
+      "official said"
+    ],
+    "Location": [
+      "location",
+      "city",
+      "country",
+      "place",
+      "at",
+      "in"
+    ],
+    "Statement": [
+      "statement",
+      "announcement",
+      "press release",
+      "official statement"
+    ],
+    "Policy": [
+      "policy",
+      "directive",
+      "guideline"
+    ],
+    "Regulation": [
+      "regulation",
+      "rule",
+      "mandate",
+      "order",
+      "executive order"
+    ],
+    "Investigation": [
+      "investigation",
+      "probe",
+      "inquiry",
+      "audit"
+    ],
+    "Legal Action": [
+      "lawsuit",
+      "indictment",
+      "trial",
+      "charges",
+      "legal action"
+    ],
+    "Government Agency": [
+      "agency",
+      "department",
+      "bureau",
+      "ministry",
+      "commission"
+    ]
+  },
+  "philosophical": {
+    "Philosopher": [
+      "a philosopher",
+      "the philosopher",
+      "thinker",
+      "sage",
+      "master",
+      "teacher of wisdom",
+      "philosophical figure",
+      "wrote philosophy",
+      "known for arguing"
+    ],
+    "Philosophical Tradition": [
+      "tradition",
+      "philosophical tradition",
+      "Western philosophy",
+      "Eastern philosophy",
+      "African philosophy",
+      "Islamic philosophy"
+    ],
+    "School of Thought": [
+      "a school",
+      "philosophical movement",
+      "tradition of",
+      "philosophical school",
+      "followers of",
+      "adherents of",
+      "ism that",
+      "philosophy of"
+    ],
+    "Philosophical Concept": [
+      "a concept",
+      "philosophical notion",
+      "the idea of",
+      "category of",
+      "fundamental concept",
+      "key term in philosophy",
+      "abstract idea"
+    ],
+    "Argument": [
+      "an argument",
+      "the argument",
+      "argues that",
+      "reasoning that",
+      "proof that",
+      "demonstration that",
+      "line of reasoning",
+      "syllogism"
+    ],
+    "Thesis": [
+      "a thesis",
+      "the thesis",
+      "the claim that",
+      "position that",
+      "maintains that",
+      "holds that",
+      "proposition that",
+      "view that"
+    ],
+    "Thought Experiment": [
+      "thought experiment",
+      "hypothetical scenario",
+      "imagine that",
+      "suppose that",
+      "considered as a case",
+      "parable",
+      "koan"
+    ],
+    "Philosophical Work": [
+      "philosophical work",
+      "treatise",
+      "dialogue",
+      "book by",
+      "written by",
+      "published in",
+      "essay on",
+      "sutra",
+      "text"
+    ],
+    "Principle": [
+      "a principle",
+      "first principle",
+      "axiom",
+      "foundational claim",
+      "fundamental assumption",
+      "basic premise",
+      "teaching",
+      "the principle of",
+      "universal law",
+      "hermetic principle",
+      "cosmic law"
+    ],
+    "Philosophical Problem": [
+      "a problem",
+      "philosophical question",
+      "puzzle",
+      "aporia",
+      "paradox",
+      "the problem of",
+      "koan"
+    ],
+    "Philosophical Era": [
+      "era",
+      "period",
+      "ancient philosophy",
+      "medieval philosophy",
+      "modern philosophy",
+      "contemporary philosophy"
+    ],
+    "Practice": [
+      "practice of",
+      "discipline of",
+      "method of",
+      "way of",
+      "meditation",
+      "contemplation"
+    ],
+    "Epistemological Position": [
+      "epistemological",
+      "knowledge theory",
+      "justification",
+      "belief",
+      "certainty"
+    ],
+    "Ethical Theory": [
+      "ethical theory",
+      "moral theory",
+      "ethics of",
+      "morality",
+      "normative"
+    ],
+    "Metaphysical Claim": [
+      "metaphysical",
+      "ontological",
+      "existence",
+      "reality",
+      "being",
+      "substance"
+    ],
+    "Logical Fallacy": [
+      "fallacy",
+      "error in reasoning",
+      "logical error",
+      "invalid argument",
+      "sophism"
+    ],
+    "Dialogue": [
+      "dialogue",
+      "exchange",
+      "discourse"
+    ],
+    "Debate": [
+      "debate",
+      "disputation",
+      "argument"
+    ]
+  },
+  "political": {
+    "Political Entity": [
+      "state",
+      "nation",
+      "country",
+      "republic",
+      "kingdom",
+      "federation"
+    ],
+    "Institution": [
+      "government",
+      "parliament",
+      "congress",
+      "court",
+      "ministry",
+      "agency",
+      "cabinet"
+    ],
+    "Political Figure": [
+      "politician",
+      "president",
+      "prime minister",
+      "senator",
+      "leader",
+      "statesman"
+    ],
+    "Political Party": [
+      "party",
+      "coalition",
+      "political party",
+      "faction"
+    ],
+    "Policy": [
+      "policy",
+      "program",
+      "initiative",
+      "reform",
+      "legislation"
+    ],
+    "Law": [
+      "law",
+      "statute",
+      "constitution",
+      "act",
+      "bill",
+      "regulation"
+    ],
+    "Ideology": [
+      "ideology",
+      "political philosophy",
+      "doctrine",
+      "ism"
+    ],
+    "Political Event": [
+      "election",
+      "referendum",
+      "coup",
+      "revolution",
+      "reform",
+      "inauguration"
+    ],
+    "Treaty": [
+      "treaty",
+      "agreement",
+      "accord",
+      "pact",
+      "convention",
+      "protocol"
+    ],
+    "Political Movement": [
+      "movement",
+      "campaign",
+      "protest",
+      "uprising"
+    ],
+    "Electoral District": [
+      "district",
+      "constituency",
+      "ward",
+      "precinct",
+      "riding"
+    ],
+    "Bill": [
+      "bill",
+      "proposed law",
+      "measure",
+      "resolution"
+    ],
+    "Legislation": [
+      "legislation",
+      "act",
+      "enacted law"
+    ],
+    "International Organization": [
+      "UN",
+      "EU",
+      "NATO",
+      "international organization",
+      "intergovernmental"
+    ],
+    "Diplomatic Relation": [
+      "diplomatic",
+      "diplomacy",
+      "embassy",
+      "ambassador",
+      "relations"
+    ],
+    "Campaign": [
+      "campaign",
+      "election campaign",
+      "candidacy",
+      "run for office"
+    ],
+    "Sanction": [
+      "sanction",
+      "embargo",
+      "restriction",
+      "trade ban"
+    ]
+  },
+  "reference": {
+    "Standard": [
+      "RFC",
+      "ISO",
+      "IEEE",
+      "ANSI",
+      "ECMA",
+      "FIPS",
+      "JSR",
+      "W3C Recommendation",
+      "standard",
+      "international standard"
+    ],
+    "Standards Body": [
+      "standards body",
+      "standards organization",
+      "working group",
+      "consortium",
+      "committee",
+      "task force",
+      "alliance"
+    ],
+    "Specification": [
+      "specification",
+      "spec",
+      "draft specification",
+      "technical specification",
+      "interface specification",
+      "schema"
+    ],
+    "Section": [
+      "section",
+      "clause",
+      "subsection",
+      "appendix",
+      "annex",
+      "chapter",
+      "part"
+    ],
+    "Requirement": [
+      "requirement",
+      "normative requirement",
+      "MUST",
+      "SHALL",
+      "SHOULD",
+      "MAY",
+      "conformance requirement"
+    ],
+    "Manual": [
+      "user manual",
+      "user guide",
+      "operator manual",
+      "administrator guide",
+      "administration guide",
+      "configuration guide",
+      "installation guide",
+      "troubleshooting guide",
+      "reference manual"
+    ],
+    "API Reference": [
+      "API reference",
+      "method reference",
+      "function reference",
+      "endpoint reference",
+      "command reference",
+      "class reference",
+      "signature",
+      "syntax"
+    ],
+    "Parameter": [
+      "parameter",
+      "argument",
+      "option",
+      "flag",
+      "switch",
+      "named argument",
+      "keyword argument"
+    ],
+    "Configuration Item": [
+      "configuration item",
+      "config key",
+      "setting",
+      "environment variable",
+      "config option",
+      "directive",
+      "feature flag"
+    ],
+    "Procedure": [
+      "procedure",
+      "process",
+      "workflow",
+      "installation procedure",
+      "configuration procedure",
+      "upgrade procedure",
+      "rollback procedure"
+    ],
+    "Step": [
+      "step",
+      "action",
+      "instruction"
+    ],
+    "Glossary Term": [
+      "term",
+      "defined term",
+      "glossary term",
+      "definition",
+      "abbreviation",
+      "acronym"
+    ],
+    "Error Code": [
+      "error code",
+      "return code",
+      "exit code",
+      "status code",
+      "errno",
+      "error number",
+      "fault code"
+    ],
+    "Product": [
+      "product",
+      "software",
+      "hardware",
+      "platform",
+      "service",
+      "library",
+      "framework",
+      "appliance",
+      "device"
+    ],
+    "Version": [
+      "version",
+      "release",
+      "edition",
+      "build"
+    ]
+  },
+  "scientific": {
+    "Hypothesis": [
+      "a hypothesis",
+      "we hypothesize",
+      "predicts that",
+      "proposed that",
+      "hypothesized",
+      "prediction that"
+    ],
+    "Experiment": [
+      "an experiment",
+      "study design",
+      "we conducted",
+      "trial of",
+      "investigation of",
+      "experimental study"
+    ],
+    "Method": [
+      "methodology",
+      "procedure",
+      "protocol",
+      "technique used",
+      "method of",
+      "approach"
+    ],
+    "Finding": [
+      "finding",
+      "result shows",
+      "we found",
+      "data indicates",
+      "observation",
+      "discovered that",
+      "results demonstrate"
+    ],
+    "Dataset": [
+      "dataset",
+      "data collected",
+      "sample of",
+      "corpus of",
+      "collection of measurements"
+    ],
+    "Variable": [
+      "variable",
+      "factor",
+      "measured",
+      "controlled for",
+      "independent variable",
+      "dependent variable"
+    ],
+    "Theory": [
+      "theory of",
+      "theoretical framework",
+      "model predicts",
+      "explains that"
+    ],
+    "Model": [
+      "model",
+      "mathematical model",
+      "computational model",
+      "simulation",
+      "framework"
+    ],
+    "Researcher": [
+      "researcher",
+      "author",
+      "scientist",
+      "investigator",
+      "study team"
+    ],
+    "Publication": [
+      "paper",
+      "article",
+      "study",
+      "publication",
+      "preprint"
+    ],
+    "Organism": [
+      "organism",
+      "strain",
+      "specimen",
+      "model organism"
+    ],
+    "Species": [
+      "species",
+      "genus",
+      "taxon",
+      "taxonomic group"
+    ],
+    "Chemical": [
+      "chemical",
+      "element",
+      "substance",
+      "reagent"
+    ],
+    "Compound": [
+      "compound",
+      "molecule",
+      "salt",
+      "polymer"
+    ],
+    "Equipment": [
+      "equipment",
+      "apparatus",
+      "device",
+      "fixture"
+    ],
+    "Instrument": [
+      "instrument",
+      "microscope",
+      "spectrometer",
+      "telescope",
+      "detector"
+    ],
+    "Equation": [
+      "equation",
+      "law",
+      "relation"
+    ],
+    "Formula": [
+      "formula",
+      "expression",
+      "rule",
+      "chemical formula"
+    ],
+    "Metric": [
+      "metric",
+      "indicator",
+      "unit",
+      "quantity"
+    ],
+    "Measurement": [
+      "measurement",
+      "value",
+      "observation",
+      "reading"
+    ]
+  },
+  "technical": {
+    "Module": [
+      "a module",
+      "module for",
+      "module containing",
+      "this module",
+      "python module",
+      "provides functions"
+    ],
+    "Class": [
+      "a class",
+      "class definition",
+      "class that",
+      "this class",
+      "abstract class",
+      "base class",
+      "subclass of",
+      "inherits from"
+    ],
+    "Function": [
+      "a function",
+      "function that",
+      "this function",
+      "callable",
+      "takes parameters"
+    ],
+    "Method": [
+      "a method",
+      "method of",
+      "instance method",
+      "class method",
+      "static method",
+      "method that"
+    ],
+    "Parameter": [
+      "parameter",
+      "argument",
+      "accepts",
+      "optional argument",
+      "required parameter"
+    ],
+    "Exception": [
+      "exception",
+      "error type",
+      "raised when",
+      "error class",
+      "is raised",
+      "subclass of exception"
+    ],
+    "Constant": [
+      "constant",
+      "configuration",
+      "default value",
+      "flag",
+      "enum value"
+    ],
+    "Interface": [
+      "interface",
+      "abstract base",
+      "contract",
+      "ABC"
+    ],
+    "Protocol": [
+      "protocol",
+      "trait",
+      "typeclass",
+      "structural type"
+    ],
+    "Type": [
+      "type",
+      "type definition",
+      "generic type",
+      "struct",
+      "enum"
+    ],
+    "TypeAlias": [
+      "type alias",
+      "typedef",
+      "alias",
+      "type synonym"
+    ],
+    "Decorator": [
+      "decorator",
+      "annotation",
+      "@",
+      "wrapper"
+    ],
+    "Endpoint": [
+      "endpoint",
+      "API path",
+      "operation",
+      "GET",
+      "POST"
+    ],
+    "Route": [
+      "route",
+      "URL pattern",
+      "path declaration"
+    ],
+    "Configuration": [
+      "configuration",
+      "setting",
+      "env var",
+      "config"
+    ],
+    "Specification": [
+      "PEP",
+      "RFC",
+      "specification",
+      "standard",
+      "enhancement proposal",
+      "request for comments"
+    ],
+    "Design Pattern": [
+      "pattern",
+      "design pattern",
+      "factory",
+      "singleton",
+      "observer",
+      "strategy"
+    ]
+  },
+  "theological": {
+    "Deity": [
+      "god",
+      "goddess",
+      "divine being",
+      "the Lord",
+      "deity",
+      "divine",
+      "almighty"
+    ],
+    "Prophet": [
+      "prophet",
+      "messenger",
+      "founder of",
+      "revealed to",
+      "apostle of"
+    ],
+    "Sacred Text": [
+      "scripture",
+      "holy book",
+      "sacred text",
+      "gospel",
+      "sutra",
+      "revealed text"
+    ],
+    "Doctrine": [
+      "doctrine",
+      "teaching",
+      "belief",
+      "dogma",
+      "tenet",
+      "creed"
+    ],
+    "Practice": [
+      "ritual",
+      "ceremony",
+      "sacrament",
+      "observance",
+      "practice of"
+    ],
+    "Religious Tradition": [
+      "religion",
+      "faith",
+      "denomination",
+      "sect",
+      "tradition",
+      "church"
+    ],
+    "Religious Figure": [
+      "saint",
+      "mystic",
+      "holy person",
+      "religious leader",
+      "monk",
+      "nun"
+    ],
+    "Sacred Place": [
+      "holy site",
+      "temple",
+      "shrine",
+      "church",
+      "mosque",
+      "pilgrimage",
+      "sacred place"
+    ],
+    "Religious Event": [
+      "religious event",
+      "revelation",
+      "miracle",
+      "divine event",
+      "sacred event",
+      "vision"
+    ],
+    "Theological Concept": [
+      "concept of",
+      "the idea of",
+      "theological notion",
+      "spiritual principle"
+    ],
+    "Commandment": [
+      "commandment",
+      "precept",
+      "prohibition",
+      "mitzvah"
+    ],
+    "Religious Law": [
+      "religious law",
+      "halakha",
+      "sharia",
+      "canon law",
+      "jurisprudence"
+    ],
+    "Miracle": [
+      "miracle",
+      "wonder",
+      "sign",
+      "divine intervention",
+      "supernatural"
+    ],
+    "Covenant": [
+      "covenant",
+      "pact",
+      "promise",
+      "testament",
+      "agreement"
+    ],
+    "Angelic Being": [
+      "angel",
+      "archangel",
+      "cherub",
+      "seraph",
+      "celestial being",
+      "spirit"
+    ],
+    "Denomination": [
+      "denomination",
+      "branch",
+      "communion"
+    ],
+    "Sect": [
+      "sect",
+      "order",
+      "school",
+      "movement"
+    ],
+    "Theological Debate": [
+      "debate",
+      "controversy",
+      "council",
+      "dispute",
+      "heresy",
+      "schism"
+    ]
+  }
+}

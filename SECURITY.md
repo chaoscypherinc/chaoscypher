@@ -31,11 +31,11 @@ In scope:
 Out of scope (known properties, not bugs):
 - User-dropped plugins in `<data-dir>/plugins/` (`/data/plugins/` in the container) execute with server privileges. This is documented in `packages/core/src/chaoscypher_core/plugins/TRUST_BOUNDARY.md`. Use `CHAOSCYPHER_ALLOW_USER_PLUGINS=0` to disable.
 - Entry-point plugins (e.g. `chaoscypher.providers`, `chaoscypher.cleaners`, `chaoscypher.archive_handlers`) execute with server privileges and are not signature-verified — trust derives from what's installed in the venv. Same `TRUST_BOUNDARY.md` documents the posture.
-- Self-hosted deployments that expose the Cortex API over the public internet without HTTPS and a strong password. The default bind address is `CHAOSCYPHER_BIND=0.0.0.0` (matches self-hosted convention: Vaultwarden, Jellyfin, Home Assistant); operators who require loopback-only access should set `CHAOSCYPHER_BIND=127.0.0.1`. See `packages/docs/docs/security/self-hosted-threat-model.md` for the full security rationale.
+- Self-hosted deployments that expose the Cortex API over the public internet without HTTPS and a strong password. The default bind address is `CHAOSCYPHER_BIND=0.0.0.0` (matches self-hosted convention: Vaultwarden, Jellyfin, Home Assistant); operators who require loopback-only access set `CHAOSCYPHER_BIND=127.0.0.1` when running the repo's `docker-compose.yml`, or publish the port as `-p 127.0.0.1:80:80` with `docker run` (the variable is read by the compose file only). See `packages/docs/docs/security/self-hosted-threat-model.md` for the full security rationale.
 
 ## Known security posture (for auditors)
 
-- Nginx `auth_request` gates every `/api/` request. The app never sees unauthenticated traffic.
+- Nginx `auth_request` gates every `/api/` request except the auth bootstrap and recovery endpoints (`/api/v1/auth/{status,setup,login,logout}`), the public settings and host hints (`/api/v1/settings/{public,host}`) and `/api/v1/health`, which are auth-exempt by design in the nginx config. Everything else never reaches the app unauthenticated.
 - Sessions are HMAC-signed cookies.
 - Rate limiting is enabled by default (`RATE_LIMIT.enabled` in `settings.yaml`, default `true`).
 - Rate-limit violation logs include client IPs at WARNING level (GDPR-relevant — configure retention per deployment).

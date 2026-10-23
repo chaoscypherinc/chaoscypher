@@ -291,8 +291,8 @@ class TestAnalysisDepth:
 
     @pytest.mark.asyncio
     async def test_process_document_passes_analysis_depth(self, engine):
-        """process_document() forwards analysis_depth to chunking_service.process()."""
-        from chaoscypher_core.models import ChunksResult, ExtractionResult
+        """A sampled depth re-chunks for extraction without storing (the stored chunks are all of them)."""
+        from chaoscypher_core.models import ChunksResult
 
         mock_chunks = ChunksResult(
             small_chunks=[],
@@ -302,7 +302,7 @@ class TestAnalysisDepth:
             total_original_chunks=0,
             total_original_groups=0,
         )
-        mock_extraction = ExtractionResult(entities=[], relationships=[])
+        mock_extraction = {"entities": [], "relationships": []}
         mock_finalized = {"entities": [], "relationships": [], "suggested_templates": []}
         mock_commit = {"nodes": [], "edges": [], "templates": []}
         mock_index = {"chunks_count": 0, "embedding_model": "m", "embedding_dimensions": 1}
@@ -311,7 +311,11 @@ class TestAnalysisDepth:
             patch.object(
                 engine.chunking_service, "create_chunks", new_callable=AsyncMock
             ) as mock_cc,
-            patch.object(engine.chunking_service, "process", new_callable=AsyncMock) as mock_proc,
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.extractor."
+                "extract_entities_from_groups",
+                new_callable=AsyncMock,
+            ) as mock_proc,
             patch.object(
                 engine.indexing_service, "create_index", new_callable=AsyncMock
             ) as mock_idx,
@@ -328,8 +332,11 @@ class TestAnalysisDepth:
 
             await engine.process_document("text", analysis_depth="quick")
 
-            _, kwargs = mock_proc.call_args
-            assert kwargs.get("analysis_depth") == "quick"
+            # stage 1 stores every chunk; the sampled re-chunk is for extraction alone
+            depths = [c.kwargs.get("analysis_depth", "full") for c in mock_cc.call_args_list]
+            stores = [c.kwargs.get("store") for c in mock_cc.call_args_list]
+            assert (depths, stores) == (["full", "quick"], [None, False])
+            mock_proc.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_add_document_passes_analysis_depth(self, engine, tmp_path):

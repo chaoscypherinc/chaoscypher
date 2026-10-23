@@ -9,7 +9,6 @@ edge template creation and batch edge processing.
 Extracted from commit_service.py for SRP compliance.
 """
 
-import re
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -17,6 +16,15 @@ import structlog
 from chaoscypher_core.models import (
     EdgeCreate,
     TemplateCreate,
+)
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import INVERSE_OF_KEY
+from chaoscypher_core.services.sources.engine.deduplication.service import merge_edge_properties
+from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
+    RelationshipOrientation,
+    orient_relationships,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+    canonical_edge_label,
 )
 from chaoscypher_core.settings import GraphSettings
 from chaoscypher_core.templates.visuals import (
@@ -29,34 +37,44 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
-_LABEL_NONWORD = re.compile(r"[\s_]+")
-
 
 def _canonicalize_edge_label(raw: str | None) -> str:
-    """Collapse spaces, underscores, and case into a single canonical form.
+    """The persisted form of a relationship label (``relation_vocabulary.canonical_edge_label``).
 
     'Confides In', 'confides_in', and '  CONFIDES   IN  ' all map to
-    'confides_in'. Used to normalize the persisted label column so the
-    same fact across chunks reads consistently.
+    'confides_in'; the strict edge-type filter and the relation vocabulary
+    read labels through the same function.
 
     Args:
         raw: Raw label string from the extraction pipeline.
 
     Returns:
-        Normalized label with spaces and underscores collapsed to single
-        underscores and all characters lowercased. Returns an empty string
-        for ``None`` or empty input.
+        The canonical label; an empty string for ``None`` or empty input.
 
     """
-    if not raw:
-        return ""
-    return _LABEL_NONWORD.sub("_", raw.strip().lower()).strip("_")
+    return canonical_edge_label(raw)
 
 
 # Load graph settings for defaults (inverse map now comes from domain configs)
 _GRAPH = GraphSettings()
 _DEFAULT_RELATIONSHIP_TYPE = _GRAPH.default_relationship_type
 _DEFAULT_EDGE_TEMPLATE = _GRAPH.default_edge_template
+
+
+def relationship_edge_label(rel: dict[str, Any]) -> str:
+    """Return the persisted edge label a relationship dict commits as.
+
+    One definition for edge creation and for matching a created edge back to
+    the relationship it came from (relationship citations).
+
+    Args:
+        rel: Relationship dict from the extraction pipeline.
+
+    Returns:
+        The canonical edge label for the relationship's type.
+
+    """
+    return _canonicalize_edge_label(rel.get("type", _DEFAULT_RELATIONSHIP_TYPE))
 
 
 def _build_edge_properties(rel: dict[str, Any]) -> dict[str, Any]:
@@ -83,6 +101,36 @@ def _build_edge_properties(rel: dict[str, Any]) -> dict[str, Any]:
         props["chunk_index"] = rel["chunk_index"]
 
     return props
+
+
+def fold_fact_copies(edges: list[EdgeCreate]) -> list[EdgeCreate]:
+    """Give the first edge of each stored fact the properties of all its copies, in place.
+
+    The stable-edge upsert stores one edge per ``(template, source node,
+    target node)`` and keeps the first copy's properties (first write wins),
+    so a fact written in several chunks used to keep whichever copy came
+    first. Since relationships without evidence are kept flagged
+    (``unevidenced``, keep, flag, never delete, 2026-10-07), the copies fold
+    through the one edge-merge policy (``merge_edge_properties``): the fact is
+    flagged only when every copy is, and an evidenced copy's sentence leads.
+    Justifications are not gathered here: each copy keeps its own on its
+    relationship citation. Copies that agree leave the first edge unchanged.
+
+    Args:
+        edges: The edges about to be upserted, in creation order.
+
+    Returns:
+        ``edges`` (the same list), the first copy of each fact updated.
+    """
+    first: dict[tuple[str, str, str], EdgeCreate] = {}
+    for edge in edges:
+        key = (str(edge.template_id), edge.source_node_id, edge.target_node_id)
+        lead = first.setdefault(key, edge)
+        if lead is not edge:
+            lead.properties = merge_edge_properties(
+                lead.properties or {}, edge.properties or {}, keep_justifications=False
+            )
+    return edges
 
 
 class RelationshipCommitHandler:
@@ -145,6 +193,54 @@ class RelationshipCommitHandler:
         self.graph_repository = graph_repository
 
     @staticmethod
+    def orient_relationships_for_commit(
+        relationships: list[dict],
+        *,
+        symmetric_relationships: list[str] | None,
+        inverse_relationships: dict[str, str] | None,
+        entity_name_to_node_id: dict[str, str],
+        entity_index_to_node_id: dict[int, str],
+    ) -> list[dict]:
+        """Put every relationship in its canonical fact form, ordered by node id.
+
+        The same rule the relationship deduplication applies
+        (:class:`RelationshipOrientation`), applied again here by node id so
+        relationships stored by any path commit once: a symmetric fact
+        written both ways, or an inverse pair (``parent_of`` A->B and
+        ``child_of`` B->A), becomes one ``(source, target, label)`` and the
+        stable-edge upsert stores one edge. Edge creation and the citation
+        match both read the returned list, so every relationship still finds
+        its edge.
+
+        Args:
+            relationships: Relationships about to be committed.
+            symmetric_relationships: The domain's symmetric labels.
+            inverse_relationships: The domain's inverse map.
+            entity_name_to_node_id: Entity name -> node id (name-keyed rels).
+            entity_index_to_node_id: Entity index -> node id.
+
+        Returns:
+            The oriented relationships, in input order.
+
+        """
+        orientation = RelationshipOrientation.from_domain(
+            symmetric_types=symmetric_relationships, inverse_map=inverse_relationships
+        )
+
+        def _node_key(endpoint: Any) -> str:
+            """Order symmetric endpoints by the node they resolve to."""
+            if isinstance(endpoint, int) and endpoint in entity_index_to_node_id:
+                return entity_index_to_node_id[endpoint]
+            if isinstance(endpoint, str) and endpoint in entity_name_to_node_id:
+                return entity_name_to_node_id[endpoint]
+            return "" if endpoint is None else str(endpoint)
+
+        oriented, rewritten = orient_relationships(relationships, orientation, _node_key)
+        if rewritten:
+            logger.info("relationships_oriented_for_commit", rewritten=rewritten)
+        return oriented
+
+    @staticmethod
     def _resolve_node_ids(
         rel: dict,
         entity_name_to_node_id: dict[str, str],
@@ -164,20 +260,14 @@ class RelationshipCommitHandler:
             Tuple of (from_node_id, to_node_id) if resolved, None otherwise.
 
         """
-        # Handle name-based relationships (NLP workflow)
-        if "from" in rel and "to" in rel:
-            from_name = rel["from"]
-            to_name = rel["to"]
-            from_node_id = entity_name_to_node_id.get(from_name)
-            to_node_id = entity_name_to_node_id.get(to_name)
-            if not from_node_id or not to_node_id:
-                logger.warning(
-                    "relationship_entities_not_found", from_entity=from_name, to_entity=to_name
-                )
-                return None
-            return from_node_id, to_node_id
-
-        # Handle index-based relationships (standard workflow)
+        # Index-based relationships (the standard workflow) first: the index
+        # names one record, where a name keeps only the last node written
+        # under it, so two same-name entities the type gate kept apart
+        # ("Moscow" the place and "Moscow" the organization) would both land
+        # on the last one. The reload paths (the CLI's ``source add``
+        # fallback, recovery) project name and index together, and a None
+        # name must not drop an edge whose index resolves (section-audit
+        # 2026-10-12).
         if "source" in rel and "target" in rel:
             from_idx = rel.get("source")
             to_idx = rel.get("target")
@@ -191,6 +281,19 @@ class RelationshipCommitHandler:
                     "relationship_nodes_not_found_for_indices",
                     from_index=from_idx,
                     to_index=to_idx,
+                )
+                return None
+            return from_node_id, to_node_id
+
+        # Name-based relationships (the NLP workflow)
+        if "from" in rel and "to" in rel:
+            from_name = rel["from"]
+            to_name = rel["to"]
+            from_node_id = entity_name_to_node_id.get(from_name)
+            to_node_id = entity_name_to_node_id.get(to_name)
+            if not from_node_id or not to_node_id:
+                logger.warning(
+                    "relationship_entities_not_found", from_entity=from_name, to_entity=to_name
                 )
                 return None
             return from_node_id, to_node_id
@@ -235,7 +338,12 @@ class RelationshipCommitHandler:
         created_edge_template_ids: list[str] = []
         all_used_edge_template_ids: list[str] = []
         edge_templates_inserted = 0
-        inverse_map = inverse_relationships or {}
+        # Both directions of every pair: relationships arrive oriented on the
+        # pair's canonical label (``orient_relationships_for_commit``), which a
+        # one-way domain map (``serves`` -> ``is_served_by``) may only list as a value.
+        inverse_map = dict(inverse_relationships or {})
+        for label, inverse_label in list(inverse_map.items()):
+            inverse_map.setdefault(inverse_label, label)
         descriptions = edge_descriptions or {}
 
         if not relationships:
@@ -249,16 +357,18 @@ class RelationshipCommitHandler:
         logger.info("processing_relationships", relationship_count=len(relationships))
 
         # Batch create all missing edge templates upfront (including inverse types)
-        unique_edge_types = set()
+        # First-seen order, not a set's: the templates are created in this order, and a
+        # set's order follows the string hash seed (audit W4-4).
+        unique_edge_types: dict[str, None] = {}
         for rel in relationships:
             edge_type = rel.get("type", _DEFAULT_RELATIONSHIP_TYPE)
             if not rel.get("template_id"):
-                unique_edge_types.add(edge_type)
+                unique_edge_types[edge_type] = None
                 # Also add inverse type if it exists and the toggle is on
                 if enable_inverse_relationships:
                     inverse_type = inverse_map.get(edge_type)
                     if inverse_type and inverse_type != edge_type:  # Skip symmetric
-                        unique_edge_types.add(inverse_type)
+                        unique_edge_types[inverse_type] = None
 
         # Batch create all templates and get the mapping
         # Per-source templates: Always create new templates for this source
@@ -314,7 +424,6 @@ class RelationshipCommitHandler:
                             edge_type=edge_type,
                         )
 
-            edge_label = edge_type
             edge_properties = _build_edge_properties(rel)
 
             edges_to_create.append(
@@ -322,7 +431,7 @@ class RelationshipCommitHandler:
                     template_id=template_id,
                     source_node_id=from_node_id,
                     target_node_id=to_node_id,
-                    label=_canonicalize_edge_label(edge_label),
+                    label=relationship_edge_label(rel),
                     properties=edge_properties,
                     source_id=source_id,
                 )
@@ -342,7 +451,7 @@ class RelationshipCommitHandler:
 
                 # Create inverse edge properties (same confidence/justification)
                 inverse_properties = edge_properties.copy()
-                inverse_properties["inverse_of"] = edge_type
+                inverse_properties[INVERSE_OF_KEY] = edge_type
 
                 edges_to_create.append(
                     EdgeCreate(
@@ -355,6 +464,7 @@ class RelationshipCommitHandler:
                     )
                 )
 
+        fold_fact_copies(edges_to_create)
         logger.info(
             "relationship_edges_prepared",
             edges_prepared=len(edges_to_create),
@@ -521,11 +631,15 @@ class RelationshipCommitHandler:
             )
             return _DEFAULT_EDGE_TEMPLATE
 
-    async def batch_create_edges(self, edges_to_create: list[EdgeCreate]) -> tuple[list[str], int]:
+    async def batch_create_edges(
+        self, edges_to_create: list[EdgeCreate], *, reattested: set[str] | None = None
+    ) -> tuple[list[str], int]:
         """Batch create edges.
 
         Args:
             edges_to_create: List of EdgeCreate objects
+            reattested: Filled with the reused edge ids this source attests
+                again (``upsert_edges_batch(reattested=)``), for the rebuild.
 
         Returns:
             Tuple of:
@@ -543,7 +657,7 @@ class RelationshipCommitHandler:
         # edge side. Relies on upsert_nodes_batch having produced
         # stable endpoint IDs earlier in the commit pass.
         batch_created_edges, inserted_count = await self.graph_repository.upsert_edges_batch(
-            edges_to_create
+            edges_to_create, reattested=reattested
         )
 
         created_edges = [edge.id for edge in batch_created_edges]

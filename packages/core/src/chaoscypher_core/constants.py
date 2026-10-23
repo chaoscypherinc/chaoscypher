@@ -7,6 +7,11 @@ System-wide constants used across features.
 """
 
 # Queue names
+SOURCE_ROW_FILTERING_MODE = "balanced"
+"""The extraction filtering mode a source row carries when nothing set one: the default the
+storage port, the SQLite adapter and the extraction plan all read (one fact, one place; audit
+wave 4 found it hard-coded three times)."""
+
 QUEUE_LLM = "llm"
 QUEUE_OPERATIONS = "operations"
 
@@ -36,6 +41,9 @@ OP_INDEX_IMPORTED_NODES = "index_imported_nodes"
 # enqueues OP_FETCH_URL and returns 202 immediately; the worker fetches and
 # feeds the bytes through the standard upload_file pipeline.
 OP_FETCH_URL = "fetch_url"
+# Site import (spec 2026-10-22): discover a docs site's pages and import or
+# refresh each through the fetch_url path, paced by the site's crawl delay.
+OP_IMPORT_SITE = "import_site"
 OP_REBUILD_SEARCH_INDEXES = "rebuild_search_indexes"
 OP_CHAT_BACKGROUND = "chat_background"
 # Reset / cleanup operations — moved to queue + 202 per 2026-04-18 decision 3.
@@ -89,6 +97,7 @@ OPERATION_QUEUE_ROUTING: dict[str, str] = {
     OP_IMPORT_ANALYSIS: QUEUE_OPERATIONS,
     OP_INDEX_DOCUMENT: QUEUE_OPERATIONS,
     OP_FETCH_URL: QUEUE_OPERATIONS,
+    OP_IMPORT_SITE: QUEUE_OPERATIONS,
     "lexicon_import": QUEUE_OPERATIONS,
     "execute_workflow": QUEUE_OPERATIONS,
     "execute_step": QUEUE_OPERATIONS,
@@ -157,7 +166,8 @@ OPERATION_RETRY_ON_CRASH: dict[str, bool] = {
     OP_INDEX_DOCUMENT: True,  # resumable indexing pipeline
     "lexicon_import": False,  # bare-callable registration; no idempotency guard declared
     OP_FETCH_URL: False,  # bare-callable registration; no idempotency guard declared
-    "execute_workflow": True,  # completed/failed executions skip re-execution
+    OP_IMPORT_SITE: False,  # the site is failed at startup; its refresh resumes from the cursor
+    "execute_workflow": True,  # terminal rows skip; a crashed RUNNING row is failed, not replayed
     "execute_step": True,  # stateless step handler, safe to re-run
     "recalculate_quality_scores": False,  # bare-callable registration; no idempotency guard declared
     OP_REBUILD_SEARCH_INDEXES: False,  # bare-callable registration; no idempotency guard declared

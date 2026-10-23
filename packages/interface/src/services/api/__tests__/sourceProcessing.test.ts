@@ -283,9 +283,11 @@ describe('sourceProcessingApi.listDomains', () => {
 describe('sourceProcessingApi.importUrl', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('posts to /sources/url with defaults and returns response.data', async () => {
-    const source = { id: 'src-1', status: 'pending' };
-    mockPost.mockResolvedValue(makeResponse(source));
+  it('posts to /sources/url with defaults and returns the queued fetch', async () => {
+    // The route answers 202 with the queued task, not a source: the worker
+    // creates the source when it fetches the page.
+    const queued = { task_id: 'task-1', url: 'https://example.com', status: 'queued' };
+    mockPost.mockResolvedValue(makeResponse(queued));
 
     const result = await sourceProcessingApi.importUrl('https://example.com');
 
@@ -294,15 +296,17 @@ describe('sourceProcessingApi.importUrl', () => {
       extract_entities: true,
       analysis_depth: 'full',
       enable_normalization: false,
-      domain: null,
+      packs: null,
       filtering_mode: null,
       content_filtering: true,
       skip_duplicates: false,
+      enable_vision: true,
+      auto_confirm: false,
     });
-    expect(result).toEqual(source);
+    expect(result).toEqual(queued);
   });
 
-  it('uses provided domain and filteringMode when given', async () => {
+  it('uses provided packs and filteringMode when given', async () => {
     const source = { id: 'src-2', status: 'pending' };
     mockPost.mockResolvedValue(makeResponse(source));
 
@@ -311,7 +315,7 @@ describe('sourceProcessingApi.importUrl', () => {
       false,
       'quick',
       true,
-      'science',
+      ['science', 'legal'],
       'strict',
       false,
       true,
@@ -322,22 +326,26 @@ describe('sourceProcessingApi.importUrl', () => {
       extract_entities: false,
       analysis_depth: 'quick',
       enable_normalization: true,
-      domain: 'science',
+      packs: ['science', 'legal'],
       filtering_mode: 'strict',
       content_filtering: false,
       skip_duplicates: true,
+      enable_vision: true,
+      auto_confirm: false,
     });
   });
 
-  it('sends null for empty domain and filteringMode', async () => {
+  it('sends null packs (detection) and null filteringMode when absent; [] is the floor alone', async () => {
     const source = { id: 'src-3', status: 'pending' };
     mockPost.mockResolvedValue(makeResponse(source));
 
-    await sourceProcessingApi.importUrl('https://example.com', true, 'full', false, '', '');
-
+    await sourceProcessingApi.importUrl('https://example.com', true, 'full', false, undefined, '');
     const callArg = mockPost.mock.calls[0][1] as Record<string, unknown>;
-    expect(callArg.domain).toBeNull();
+    expect(callArg.packs).toBeNull();
     expect(callArg.filtering_mode).toBeNull();
+
+    await sourceProcessingApi.importUrl('https://example.com', true, 'full', false, [], '');
+    expect((mockPost.mock.calls[1][1] as Record<string, unknown>).packs).toEqual([]);
   });
 });
 
@@ -368,15 +376,31 @@ describe('sourceProcessingApi.upload', () => {
     expect(result).toEqual(source);
   });
 
-  it('appends domain and filteringMode when provided', async () => {
+  it('appends packs and filteringMode when provided', async () => {
     mockPost.mockResolvedValue(makeResponse({ id: 'src-2' }));
     const file = new File(['x'], 'a.txt', { type: 'text/plain' });
 
-    await sourceProcessingApi.upload(file, true, 'full', false, 'science', undefined, null, 'strict');
+    await sourceProcessingApi.upload(file, true, 'full', false, ['science', 'legal'], undefined, null, 'strict');
 
     const body = mockPost.mock.calls[0][1] as FormData;
-    expect(body.get('domain')).toBe('science');
+    expect(body.getAll('packs')).toEqual(['science', 'legal']);
+    expect(body.get('domain')).toBeNull();
     expect(body.get('filtering_mode')).toBe('strict');
+  });
+
+  it('sends the floor alone ([]) as domain=generic and detection (null) as nothing', async () => {
+    mockPost.mockResolvedValue(makeResponse({ id: 'src-2' }));
+    const file = new File(['x'], 'a.txt', { type: 'text/plain' });
+
+    await sourceProcessingApi.upload(file, true, 'full', false, []);
+    await sourceProcessingApi.upload(file, true, 'full', false, null);
+
+    const floor = mockPost.mock.calls[0][1] as FormData;
+    expect(floor.getAll('packs')).toEqual([]);
+    expect(floor.get('domain')).toBe('generic');
+    const auto = mockPost.mock.calls[1][1] as FormData;
+    expect(auto.getAll('packs')).toEqual([]);
+    expect(auto.get('domain')).toBeNull();
   });
 
   it('appends enable_vision when provided', async () => {
@@ -447,14 +471,14 @@ describe('sourceProcessingApi.uploadBatch', () => {
     expect(result).toEqual(batchResult);
   });
 
-  it('appends domain, vision, filteringMode, skipDuplicates when provided', async () => {
+  it('appends packs, vision, filteringMode, skipDuplicates when provided', async () => {
     mockPost.mockResolvedValue(makeResponse({ uploaded: 1, failed: 0, files: [], errors: [] }));
     const files = [new File(['x'], 'x.pdf', { type: 'application/pdf' })];
 
-    await sourceProcessingApi.uploadBatch(files, true, 'quick', true, 'science', true, 'strict', false, true);
+    await sourceProcessingApi.uploadBatch(files, true, 'quick', true, ['science'], true, 'strict', false, true);
 
     const body = mockPost.mock.calls[0][1] as FormData;
-    expect(body.get('domain')).toBe('science');
+    expect(body.getAll('packs')).toEqual(['science']);
     expect(body.get('enable_vision')).toBe('true');
     expect(body.get('filtering_mode')).toBe('strict');
     expect(body.get('skip_duplicates')).toBe('true');

@@ -105,3 +105,57 @@ async def test_run_records_ranks_and_skips_out_of_scope():
     assert per_query[0]["query_id"] == "q1"
     assert per_query[0]["ranks"]["ARPA"] == 1
     assert per_query[0]["skipped"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_skips_the_graph_advantage_band_and_the_scorer_total_agrees():
+    """The chat comparison's band is asked by chat runs only; retrieval scoring never sees it."""
+    from chaoscypher_cli.benchmark.scorers.embedding import EmbeddingRetrievalScorer
+
+    queries = LabeledQuerySet(
+        version="1.0",
+        queries=[
+            LabeledQuery(
+                id="q1",
+                band="factual_single_hop",
+                question="?",
+                gold_entities=["ARPA"],
+                gold_answer="a",
+            ),
+            LabeledQuery(
+                id="q081",
+                band="graph_advantage",
+                kind="relationship_path",
+                question="?",
+                gold_entities=["ARPA"],
+                gold_answer="a",
+            ),
+        ],
+    )
+    fake_ctx = MagicMock()
+    fake_ctx.graph_repository.list_nodes = MagicMock(
+        return_value=[SimpleNamespace(id="uuid-1", label="ARPA", aliases=[])]
+    )
+    indexed = MagicMock()
+    indexed.ctx = fake_ctx
+
+    @asynccontextmanager
+    async def fake_indexed_graph(*, embedder):
+        yield indexed
+
+    provider = MagicMock()
+    provider.indexed_graph = fake_indexed_graph
+    ds = EmbeddingRetrievalDataset(
+        id="demo",
+        version="1.0",
+        corpus_id="demo",
+        queries=queries,
+        graph_provider=provider,
+        embed_query=AsyncMock(return_value=[0.1, 0.2]),
+        vector_search=AsyncMock(return_value=[("uuid-1", 0.9)]),
+        top_k=10,
+    )
+    out = await ds.run(ModelConfig(provider="ollama", model="nomic", label="N"))
+    assert [e["query_id"] for e in out.extras["per_query"]] == ["q1"]
+    score = EmbeddingRetrievalScorer().score(out, queries)
+    assert score.metrics["queries_total"] == 1

@@ -379,20 +379,20 @@ class TestQualityConfigForDomain:
         assert service._get_quality_config_for_domain("") == {}
 
     def test_returns_domain_scoring_config(self) -> None:
-        """Resolved analyzer's get_quality_scoring result is returned."""
-        analyzer = MagicMock()
-        analyzer.get_quality_scoring.return_value = {"weights": {"x": 1}}
-        registry = MagicMock()
-        registry.get_domain.return_value = analyzer
+        """The source's stack (floor plus pack) scoring config is returned (Task 7)."""
+        from chaoscypher_core.services.sources.engine.extraction.domains import (
+            get_domain_registry,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+
         service = _make_service()
+        result = service._get_quality_config_for_domain("medical")
 
-        with patch(
-            "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
-            return_value=registry,
-        ):
-            result = service._get_quality_config_for_domain("medical")
-
-        assert result == {"weights": {"x": 1}}
+        assert (
+            result
+            == DomainStack.from_domain_name(get_domain_registry(), "medical").get_quality_scoring()
+        )
+        assert result["entity_scores"]["Person"] == 25
 
     def test_swallows_registry_exception(self) -> None:
         """A registry failure is logged and yields an empty config."""

@@ -49,6 +49,7 @@ from chaoscypher_core.utils.url_safety import validate_url_safety
 from chaoscypher_cortex.shared.api.dependencies import (
     LimitParam,
 )
+from chaoscypher_cortex.shared.api.errors import read_capped_upload
 from chaoscypher_cortex.shared.api.responses import (
     AUTH_ERROR_RESPONSES,
     COMMON_ERROR_RESPONSES,
@@ -583,15 +584,7 @@ async def upload_package(
     """
     max_upload_bytes = settings.batching.max_upload_bytes
     try:
-        content = await file.read(max_upload_bytes + 1)
-        if len(content) > max_upload_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=ErrorDetail(
-                    code="PAYLOAD_TOO_LARGE",
-                    message=f"Package file too large (max {max_upload_bytes // 1024 // 1024} MB)",
-                ).model_dump(),
-            )
+        content = await read_capped_upload(file, max_upload_bytes, "Package file")
         request = LexiconUploadRequest(public=public, message=message)
         return await service.upload(content, request)
     except LexiconClientError as e:

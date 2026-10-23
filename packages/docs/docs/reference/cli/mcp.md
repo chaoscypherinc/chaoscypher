@@ -19,6 +19,7 @@ chaoscypher mcp [OPTIONS]
 |--------|-------------|
 | `--database, -d` | Database name (default: from settings) |
 | `--mode, -m` | Tool access mode: `read` or `write` (default: from settings, usually `read`) |
+| `--profile, -p` | Tool profile to serve: `full` or `memory` (default: from settings, usually `full`); `memory` serves the five memory tools only |
 | `--server-extraction` | Use server-side LLM for extraction instead of client-driven |
 | `--help` | Show help message |
 

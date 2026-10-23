@@ -100,10 +100,17 @@ says?**
   adds the phenomenon that trips models on real text (negation, reported
   speech, capitalised roles). The headline is the tier-weighted pass rate.
 - **Carrier tier (section H)**: the same instructions and checks, spliced
-  into a real ~3,000-character extraction group with 21 named entities. This
-  is the "does it transfer to production-sized chunks?" column. Two extra
-  checks apply there: the carrier's own cast is still found, and nothing
-  outside the input is invented.
+  into a real ~3,000-character extraction group of Book One: 21 probes in
+  the soirée chunk (21 named entities) and, since 2026-10-01, the same 21 in
+  a second chunk, the end of Dólokhov's window bet running into the Rostóv
+  name day (25 names), 39 in all: three variants are left out because the
+  chunk itself contains a person the probe's check forbids (the "stay
+  unlinked" probe names Alexander, who is at the soirée being discussed).
+  This is the "does it transfer to production-sized chunks?" column, and
+  with 39 probes one verdict moves the Overall score by about a point
+  instead of two. Two extra checks apply
+  there: the carrier's own cast is still found, and nothing outside the
+  input is invented. A row run on the first chunk only says so in its notes.
 - **Completion gate**: a probe whose response hit the token limit or the
   loop detector fails regardless of what was parsed. Rows also carry the
   truncation and loop counters, and the leaderboard shows them.
@@ -131,19 +138,39 @@ passes:
   `queries.yaml` an `answer_terms` item may be a list of aliases, such as
   `[Mary, "Andrew's sister"]`, and naming any one of them satisfies it. An
   alias matches only as a whole phrase: "his sister" does not satisfy
-  `"Andrew's sister"`. A plain term matches more loosely, on any significant
-  word of it.
+  `"Andrew's sister"`; an alias of the form "X of Y" tolerates up to four
+  words between X and Y, so "the father of the prodigal son Anatole" does
+  satisfy `"father of Anatole"`. A plain term matches more loosely, on any
+  significant word of it.
 - **no_unsupported_names** - every proper name is in the retrieved context or
   the question (possessives, headings and acronym expansions are tolerated).
 - **no_unsupported_numbers** - every year or number is in the retrieved
   context or the question, so the right names with a wrong year still fail.
 - **must_not_contain** - none of the question's declared wrong facts is
   stated: the famous wrong year, or the answer a wrong join between two
-  facts produces.
+  facts produces. A wrong fact named inside a negated clause is not
+  stated: "he came on inspection business, not for the name day" does not
+  state "for the name day". The clause runs from the nearest negation
+  before the phrase ("not", "n't", "never", "no", "nor", "neither",
+  "cannot", "rather than", "instead of") to the next clause boundary (a
+  full stop, `;`, `:`, a line break, a dash, "but" or "except", a comma
+  before a new subject, or the end of the answer), so a negation in the
+  sentence before still leaves the wrong fact stated. "Not only X" asserts
+  X, unless the declared phrase itself starts with "only": "there is not
+  only one Pétya" denies "only one Pétya". A phrase that carries its own
+  negation, an exceptive or inner punctuation ("age is not stated",
+  "squadron commander beyond Schubert", "his son, Borís") is stated wherever
+  it stands, and so is a phrase the fixture marks with a leading `!`: a
+  wrong refusal whose negation sits outside the phrase.
 - **leads_with_gold** (fine-grained) - the right entity comes before the
   confusable one.
 - **declines_when_unsupported** (out-of-scope) - the answer declines and
-  asserts none of the tempting world-knowledge answers.
+  asserts none of the tempting world-knowledge answers. A decline is a
+  known phrase ("not in the sources") or a pattern: a negation near a
+  source word, "does not say", "is not stated", "cannot determine", "no
+  mention", "absent from". A labelled final answer that does not itself
+  decline ("Answer: Schubert") counts as an assertion, whatever the model
+  hedged on the way to it.
 
 The out-of-scope questions ask for famous facts the corpus does not contain,
 so a model that answers from memory fails them. Tiers weight the bands as
@@ -168,19 +195,38 @@ the only thing that changes between rows is the chat model. It shows the
 percentage, with the count and the rest of the detail in the hover, `—`
 for a model that was not measured, and a flag for a run that hit the
 per-model time limit ("did not finish") or for answers cut off at the
-output-token cap. Because
-every model reads the same retrieved context, a question that every scored
-model fails is, in practice, a retrieval miss: the fact never reached the
-context. The page states that count (the retrieval floor), so the effective
-ceiling is 80 minus it. `export_leaderboard.py --chat <run.json>` adds the
-column.
+output-token cap. Because every model reads the same retrieved context, a
+question whose fact never reaches that context measures nothing about the
+model: every row is guessing, and a lexical scorer passes whoever names
+the right term in passing. The fixture was audited against the retrieved
+context on 2026-10-01 and the questions it found unanswerable carry
+`answerable: false` (six at this writing — `excluded_ids` in the exported
+board is the count): they are still asked, their answers kept, but they are on
+no row's count, so every model is scored on the remaining questions (74). The page says so, draws them as
+dashed cells, and still reports any remaining question every scored model
+fails (the retrieval floor). `export_leaderboard.py --chat <run.json>`
+adds the column.
 
 The page shows one percentage per job and keeps the counts in the hovers.
 On wide screens a detail line under each model draws every probe and every
-question as a cell (isolated, in chunks, chat; orange = failed, dim = a
-retrieval miss every model shares), in the same order on every row, so a
-column of orange is a question the graph never answered and a lone cell is
-one model's miss. Hover a cell for the instruction or question.
+question as a cell (isolated, in chunks, chat; orange = failed, half-tone =
+failed in some runs, dim = a retrieval miss every model shares, dashed =
+excluded by the audit), in the same order on every row, so a column of
+orange is a question the graph never answered and a lone cell is one
+model's miss. Hover a cell for the instruction or question.
+
+**Every score carries a 90% interval**, shown as ± beside the number and
+spelled out in the hover. It comes from resampling the row's tasks (2,000
+seeded draws; a task's verdict is one of its runs' at random), so it says
+how much the score could move if the suite had drawn other tasks of the
+same kind. Rows whose intervals overlap are not separable by this board:
+sorted by Overall, the page marks such a row with ≈ and the homepage
+teaser gives it a tied rank. On the 2026-10-01 board one in-chunks verdict
+moved Overall by 1.9 points, so most neighbouring rows are ties. Several
+runs of one model pool: the row shows the mean, says "mean of N runs" in
+its notes, and each cell is the fraction of runs that passed the task.
+Local rows at temperature 0 and seed 42 reproduce themselves, so repeats
+narrow nothing there; the interval is about the size of the suite.
 **Extraction** blends the two probe boards as pass rates, in chunks counted
 twice and isolated once, because in chunks is the number that transfers to
 real data and isolated is the diagnostic behind it; the in-chunks strip (one
@@ -206,6 +252,98 @@ model dropdowns are generated from the same export (`chat_pct`, `chunks`,
 tool calling and chat runs that timed out are listed there under
 "Not recommended".
 
+### Where the graph matters: the three-rung retrieval comparison
+
+The chat column proves which chat model does best on ChaosCypher's
+retrieval. It does not show what that retrieval adds over the RAG a
+prospective user already has, so the leaderboard carries a second section,
+"Where the graph matters", that answers the same questions with the same
+prompt, the same context renderer and the same chat model under three
+retrievals that differ only in what they retrieve:
+
+1. **naive** - the canonical tutorial pipeline, run through LlamaIndex rather
+   than code of ours: a sentence splitter (512 tokens, 50 overlap) over the
+   corpus text, a vector index embedded with the pack's embedder, pure vector
+   similarity, the top four chunks.
+2. **hybrid** - ChaosCypher's chunk search without the graph: the hybrid arm
+   (BM25 keyword plus cosine over the pack's 900-character chunks, merged by
+   max), the top ten chunks, rendered as chunks only.
+3. **graphrag** - the product's `graphrag_search`: seed entities, personalised
+   PageRank, the chunks the top entities cite merged with the same hybrid
+   search (a reserved share of the budget keeps the hybrid arm's best hits),
+   the entity and relationship lines plus ten chunks.
+
+The budgets match: four chunks of 512 tokens is about 8,000 characters, ten
+900-character chunks about 7,700, so the comparison is about what is
+retrieved, not how much; the graphrag rung adds its entity and relationship
+lines on top of that matched chunk budget, which is the thing measured.
+
+The questions are the fixture's `graph_advantage` band, written in advance
+to need what a graph provides, in four kinds: *cross-chapter join* (the
+answer joins facts stated in different chapters), *relationship path* (how
+two people are connected, through one or two others), *cast aggregate*
+(which people share a property or scene) and *disambiguation* (two people
+the text keeps apart by a shared name or title). The keep rule was fixed
+before any candidate was run: a candidate is dropped only when no rung
+retrieves its answer terms, never because a baseline wins it, and the
+section reports every kept question under every rung, the ones plain RAG
+wins included. The band is never counted in the chat column.
+
+For each model with rows under all three rungs the section shows, per kind,
+for the band as a whole and for the original 80 questions, how many it
+answered right under each rung, and the lift of GraphRAG over each baseline
+in questions with a 90% interval from a paired bootstrap (resample the
+questions, score both rungs on the sample, take the difference; 2,000
+seeded draws). Every question is scored with the same checks and the
+`answerable` flags off, since a rung's retrieval miss is exactly what the
+section measures. Three worked examples follow: the questions with the
+largest lift over naive RAG, preferring different kinds, with each rung's
+retrieved context trimmed to the lines that hold an answer term plus two
+lines around them, the model's answer and its verdict, for the best local
+model by Overall and the best Claude row. Nothing in them is hand-edited.
+
+**The headlines and their bars.** The section, and the homepage's figures, state
+a headline only when the exporter finds that it holds across the models
+measured, never on one or two of them, and only on a board that was not
+let through with an override. Each comes straight from the rows:
+
+- *Fewer failed answers on ordinary questions.* The median, over models, of
+  the share of plain RAG's failed answers that GraphRAG removes on the 80
+  original questions, which were not written for the graph. It holds when the
+  median is at least 25% and most models clear 25% too.
+- *Fewer failed answers on graph-shaped questions.* The same measure on the
+  band, held to the bar against plain RAG and against hybrid search.
+- *A smaller model, the same answers.* The best local model on plain RAG over
+  the original questions, against the smallest local model the graph lifts to
+  that score (with the graph at least as good, and better than its own plain
+  RAG). It holds when most models reach that score with the graph and the
+  bigger model needs at least 1.8 times the smaller one's GPU memory.
+- *Answered only with the graph.* Band questions no model answers on plain
+  RAG or hybrid search and at least half do with the graph; it needs 5.
+
+A failed answer is any answer that does not pass. Most of the misses the
+graph removes are answers that left out what was asked or declined when the
+context held it; wrong facts stated are a small share of the misses under
+every rung, so the headlines say "failed", not "wrong" or "hallucinated".
+Each corpus is reported on its own: every headline, bar, interval and count
+is computed over one corpus's questions and names the corpus it is about,
+nothing is pooled across corpora, and a headline that holds on one corpus and
+not on another is shown for that corpus only.
+
+**Citation accuracy.** The context labels every chunk (`[CHUNK C3 | ...]`)
+and models cite those labels. A reported check, `cites_the_answer`, parses
+the citations and asks whether a cited chunk holds an answer term; an
+answer that cites nothing is uncited, neither right nor wrong, and an
+out-of-scope answer is not judged. The share of cited answers that cite a
+chunk holding the answer is shown in the chat hover on the main board and
+per rung in the comparison. It is a number, not a gate: a model that answers
+right but cites the wrong chunk keeps its point, and is visible.
+
+The comparison runs through `scripts/benchmark/run_mcp_suite.py --retrieval
+<rung>` for harness rows and the `retrieval:` field of a chat config for
+local models; `export_leaderboard.py` writes it as `suites.chat.comparison`
+once a model has all three rungs.
+
 ## Benchmark any MCP client
 
 The benchmark can also run against whatever model sits behind an MCP
@@ -224,6 +362,32 @@ Two suites are available:
   leaves no entities, the pipeline would skip the second pass, and so does
   the run. The answers go through the same parser, filters, loop detector and
   checks as a local run.
+
+  From a source's second group on, the pipeline's entity prompt also carries
+  a **KNOWN ENTITIES** block: the named entities the earlier groups of the
+  same source produced, one line each with its type, the aliases given so far
+  (never a single word, such as a diminutive, a given name alone or a bare
+  title, nor a speaker-relative phrase such as "my wife"; the guards still
+  read them) and up to three relation phrases (its title, role or family role and its
+  edges to other listed entities), ranked by how many groups cite them. It is there
+  because each group is otherwise read alone, so a later passage's "the
+  margrave" or "the regiment" would become a node of its own instead of the
+  entity an earlier group named ("Margrave Oswin Kell", alias "the
+  margrave"). The block holds at most `extraction.known_entities_limit` lines
+  (default 80; `0` turns the block and its guards off). Two code guards keep
+  the model from crossing two listed entities: an alias that is another
+  listed entity's name is dropped from the record, and a listed name that
+  the record's cited sentences do not support is demoted to the one
+  reference phrase they write, or kept and flagged when they write none or
+  several; both are flagged on the node and counted on the source's quality
+  metrics. A title or kinship word alone never names a listed entity: an
+  edge whose endpoint is written so, or is a name the guard kept flagged,
+  is kept flagged `known_endpoint_not_named` and left out of the default
+  chat context. A record the filters flagged, or whose name the name guard could
+  not support, is never listed, so a doubted name is not offered to later
+  groups and its aliases never support it there; a record that only lost a
+  crossed alias is listed without it. A probe is a single passage, so its
+  prompt has no block.
 - **Grounded chat** (`chat`). Each question of the chat fixture is one
   `answer` stage. The bridge runs GraphRAG retrieval against a **reference
   pack** - the same extracted graph the local chat runs retrieved from,
@@ -245,11 +409,12 @@ A reference pack lives in `<data dir>/benchmark/reference/<name>/`
 
 ```bash
 chaoscypher benchmark reference export --dataset war_and_peace_book1 \
-  --extractor ollama/gemma4:31b --embedder ollama/qwen3-embedding:0.6b
+  --extractor ollama/gemma4:31b --embedder ollama/qwen3-embedding:4b \
+  --dedup-embedder ollama/qwen3-embedding:4b
 chaoscypher benchmark reference list
 ```
 
-`--workspace` points at the benchmark workspace holding `graph_cache/`
+`--dedup-embedder` names the embedder whose vectors merged the graph's entities during extraction (`benchmark run` prints it; `exact` when semantic deduplication is off). It is part of the graph and of its cache key, unlike `--embedder`, which only indexes the graph for retrieval and can be swapped by re-indexing. `--workspace` points at the benchmark workspace holding `graph_cache/`
 (default: the one `benchmark run` uses); the pack is named after the dataset
 unless `--name` says otherwise. Export indexes the pack with its embedder
 right away (`--no-index` defers that to the first chat task), so the
@@ -290,6 +455,13 @@ A complete leaderboard row takes three suites with the same `--model`:
 (the same instructions inside production-size chunks, section H), or
 `probes-all` in place of the last two. A row without a carrier run shows no
 "in chunks" score, and that column is two thirds of the extraction score.
+A session that answers in text instead of calling `submit_benchmark_output`
+leaves its task pending and the driver runs another session for it; the
+driver reports every session, the row records the tasks that took more
+than one, and the page notes "N extra sessions on M tasks". Claude cannot
+be pinned (Claude Code exposes no temperature or seed, and the Claude 5.5
+API accepts none), so a harness row is one draw: run the suites again and
+pass every run to the exporter, which pools them as repeats.
 
 A row produced this way is a **harness track** row. The benchmark cannot
 pin the client's temperature, seed or thinking, and the model name is
@@ -352,7 +524,7 @@ if a pin did not take), so a leaderboard cannot silently mix configurations.
 | Context window | the Ollama default for the preset (32k on the reference machine) | same | Enough for the largest production extraction group with room to spare; a smaller window would turn length into a hidden variable. |
 | Completion | a probe whose response hit the token limit or the loop detector **fails** | same | A partial answer can outscore a complete one on any additive metric; measured 2026-09-22 on the corpus grade. Rows also carry the counts and the leaderboard warns. |
 | Per-model cap | `--model-timeout 5400` (90 min) | same | One hung model must not stall the sweep; the row is recorded as failed and the next model runs. |
-| Reference machine | one RTX 5090 (32 GB), models as pulled from Ollama | same | Every local model in the table fits this machine; the VRAM column is the model's weights, and the leaderboard's VRAM filter adds headroom for context. |
+| Reference machine | one 32 GB consumer GPU, models as pulled from Ollama | same | Every local model in the table fits this machine; the VRAM column is the model's weights, and the leaderboard's VRAM filter adds headroom for context. |
 
 Change any of these and you are running a different benchmark. That is fine -
 the CLI flags let you - but the results should not be compared against the
@@ -469,10 +641,19 @@ on the next `chaoscypher benchmark list` or `bench run`.
 id: my_internal_docs       # must match the directory name
 kind: extraction
 version: "1.0"
-domain: technical          # see chaoscypher_core domains
+packs: [technical]         # the domain packs added to the floor; [] for the floor alone
 corpus_path: my_internal_docs.txt   # sibling-relative, just the filename
 description: "What's special about this corpus."
 ```
+
+`packs` lists the domain packs the corpus is extracted with, on the floor
+(the core types and labels) every extraction gets. The older
+`domain: technical` is still read, as a one-element list, and
+`domain: generic` means the floor alone. Result rows and reference packs
+record the packs in their `extraction_domain` field: one pack's name, several
+sorted and joined with `+` (`historical+literary`), `generic` for the floor
+alone. Until sources store a list of packs, an extraction runs with one pack
+or none; a dataset that lists two is refused when it runs.
 
 A user dataset with the same id as a built-in **overrides** the built-in
 (useful for swapping a corpus while keeping the metadata structure). The
@@ -525,7 +706,7 @@ Full-pipeline configs can additionally set `defaults:` and `weights:`
 # Pinned embedder/chat held fixed when attributing retrieval/chat scores
 # back to an extractor in the composite Overall column.
 defaults:
-  embedder: "ollama/qwen3-embedding:8b"
+  embedder: "ollama/qwen3-embedding:4b"
   chat: "ollama/qwen3:14b"
 
 # Per-dimension Overall weights (defaults shown).

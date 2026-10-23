@@ -1017,6 +1017,62 @@ describe('chat: cross-chat stream isolation', () => {
     });
     await waitFor(() => expect(result.current.loading).toBe(false));
   });
+
+  it("chat A's tool-approval prompt does not open over chat B and is decided for A", async () => {
+    const controlled = makeControlledSseResponse();
+    installSseFetchMock(() => controlled.response);
+    routeGet({
+      chats: [makeChatMeta({ id: 'c1', status: 'processing' }), makeChatMeta({ id: 'c2' })],
+      chat: (id) => makeChat({ id, status: id === 'c1' ? 'processing' : 'completed' }),
+    });
+    mockedApiClient.post.mockResolvedValue({ data: undefined, status: 204 });
+
+    const { result } = renderHook(() => useChat(), {
+      wrapper: makeChatWrapper(['/chat/c1']),
+    });
+    await waitFor(() => expect(result.current.loading).toBe(true));
+
+    act(() => {
+      result.current.handleSelectChat('c2');
+    });
+    await waitFor(() => expect(result.current.currentChat?.id).toBe('c2'));
+
+    // Chat A's still-open stream asks for approval while B is on screen.
+    act(() => {
+      controlled.push({
+        type: 'tool_approval_required',
+        tool_call_id: 'tc-a',
+        tool_name: 'create_node',
+        arguments: {},
+        iteration: 1,
+      });
+    });
+    // Let the event flush, then confirm it never surfaces on B.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(result.current.pendingApproval).toBeNull();
+
+    // Back on A the prompt is waiting, and the decision targets A.
+    act(() => {
+      result.current.handleSelectChat('c1');
+    });
+    await waitFor(() => expect(result.current.pendingApproval?.tool_call_id).toBe('tc-a'));
+    await act(async () => {
+      await result.current.decideToolApproval('approve');
+    });
+    const decisionCalls = mockedApiClient.post.mock.calls.filter((c) =>
+      String(c[0]).endsWith('/tool_decision'),
+    );
+    expect(decisionCalls).toHaveLength(1);
+    expect(String(decisionCalls[0][0])).toContain('/chats/c1/');
+
+    act(() => {
+      controlled.push({ type: 'done', content: 'finished' });
+      controlled.close();
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+  });
 });
 
 // ===========================================================================

@@ -39,6 +39,8 @@ export interface SourcesListFilters {
   status?: string;
   source_type?: string;
   search?: string;
+  /** false: only sources outside any imported site (the sites are rows of their own). */
+  in_site?: boolean;
 }
 
 export interface QueueStats {
@@ -93,6 +95,7 @@ export function useSourcesList(
         status: filters.status || undefined,
         source_type: filters.source_type || undefined,
         search: filters.search || undefined,
+        in_site: filters.in_site,
       }),
     refetchInterval:
       pollInterval && shouldPoll

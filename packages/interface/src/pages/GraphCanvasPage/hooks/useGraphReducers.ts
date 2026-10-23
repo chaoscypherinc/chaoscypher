@@ -6,7 +6,7 @@
  *
  * Applies visual effects — selection highlights, search dimming,
  * spotlight hover, gradient edges, zoom-adaptive icon visibility,
- * and provenance edge styling — via sigma's nodeReducer / edgeReducer
+ * pipeline-flagged edges (``utils/edgeFlags``: capped thin, unevidenced dashed), and provenance edge styling — via sigma's nodeReducer / edgeReducer
  * settings.
  */
 
@@ -17,6 +17,7 @@ import type { NodeAttributes, EdgeAttributes } from '../types';
 import { isSourceGroupNode, isProvenanceEdge } from '../types';
 import { GraphColors } from '../../../theme/colors';
 import { ChaosCypherPalette } from '../../../theme/palette';
+import { FLAGGED_EDGE_SIZE, edgeDrawing } from '../../../utils/edgeFlags';
 
 /** Minimum connections for a node to keep full template color intensity. */
 const CONNECTION_THRESHOLD = 2;
@@ -203,6 +204,11 @@ export function useGraphReducers({
         return res;
       }
 
+      // Pipeline-flagged edges (utils/edgeFlags.ts, one reader): an unevidenced one (no cited
+      // sentence states it) is drawn dashed, a capped one (past a relationship cap) thin.
+      const drawing = edgeDrawing(data.properties);
+      res.dashed = drawing.dashed;
+
       // Gradient coloring — each end uses its own node's color.
       // Intensity scales inversely with that node's degree so hubs stay clean.
       const sourceDegree = graph.degree(source);
@@ -291,6 +297,11 @@ export function useGraphReducers({
           res.label = '';
           res.zIndex = -1;
         }
+      }
+
+      // A capped edge is drawn thin whatever the spotlight, except the selected edge itself.
+      if (edge !== selectedEdgeId && drawing.thin) {
+        res.size = Math.min(res.size ?? 1, FLAGGED_EDGE_SIZE);
       }
 
       return res;

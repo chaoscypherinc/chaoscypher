@@ -327,7 +327,7 @@ async def test_invoke_fallback_thinking_not_supported_retries_without_reasoning(
     # Reasoning support is remembered as disabled for future calls.
     assert provider._model_supports_reasoning is False
     # A reasoning-disabled LLM was requested and tools were rebound onto it.
-    get_cached.assert_called_once_with(None, None, reasoning=False)
+    get_cached.assert_called_once_with(None, None, reasoning=False, decoding=None)
     fallback_llm.bind_tools.assert_called_once_with(tools, tool_choice="any")
 
 
@@ -615,7 +615,10 @@ async def test_stream_chat_generic_error_yields_error_chunk() -> None:
             )
         ]
 
-    assert events == [{"type": "error", "error": "LLM streaming failed"}]
+    # an error no rule names: a plain, non-retryable LLMError (audit wave 5, one classifier)
+    assert [(e["type"], e["error_code"], e["error_details"]["is_retryable"]) for e in events] == [
+        ("error", "LLM_ERROR", False)
+    ]
 
 
 @pytest.mark.asyncio
@@ -626,7 +629,7 @@ async def test_stream_chat_other_response_error_yields_error_chunk() -> None:
     provider = _make_provider()
 
     async def _raising_stream(*_a: Any, **_kw: Any) -> Any:
-        raise ResponseError("internal server error")
+        raise ResponseError("internal server error", 500)
         yield  # pragma: no cover - makes this an async generator
 
     fake_llm = MagicMock()
@@ -641,7 +644,10 @@ async def test_stream_chat_other_response_error_yields_error_chunk() -> None:
             )
         ]
 
-    assert events == [{"type": "error", "error": "LLM streaming failed"}]
+    # a 500 from Ollama is a crashed runner: retried once (audit wave 5)
+    assert [(e["type"], e["error_code"], e["error_details"]["retry_limit"]) for e in events] == [
+        ("error", "LLM_SERVICE_ERROR", 1)
+    ]
 
 
 # ---------------------------------------------------------------------------

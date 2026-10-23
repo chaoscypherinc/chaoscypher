@@ -30,6 +30,8 @@ class _FakeDataset:
     version: str = "1.0"
     fixture: Any = None
     source: str = "builtin"
+    seed: int = 42
+    temperature: float = 0.0
 
     def __init__(self) -> None:
         self.scorer: DatasetScorer = _FakeScorer()

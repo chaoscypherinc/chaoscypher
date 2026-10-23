@@ -34,7 +34,7 @@ import type { Settings } from '../../types';
 const DEFAULT_OLLAMA_PRESET_ID = 'vram_16gb';
 
 /** Embedding default derived from the chat provider. Ollama-chat users
- *  get GPU-accelerated Qwen3 8B at its native 4096d — they already have
+ *  get GPU-accelerated Qwen3 4B at its native 2560d — they already have
  *  a GPU available, so we lean on the higher-quality model. Cloud-chat
  *  users fall back to local CPU embeddings on Qwen3 0.6B at its native
  *  1024d (avoids hitting another paid API and stays light on CPU). Both
@@ -44,7 +44,7 @@ function deriveEmbeddingDefault(
   chatProvider: string,
 ): { provider: 'ollama' | 'local'; model: string; dimensions: number } {
   if (chatProvider === 'ollama') {
-    return { provider: 'ollama', model: 'qwen3-embedding:8b', dimensions: 4096 };
+    return { provider: 'ollama', model: 'qwen3-embedding:4b', dimensions: 2560 };
   }
   return { provider: 'local', model: 'Qwen/Qwen3-Embedding-0.6B', dimensions: 1024 };
 }

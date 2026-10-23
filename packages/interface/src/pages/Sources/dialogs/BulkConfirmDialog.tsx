@@ -4,10 +4,10 @@
 /**
  * @module BulkConfirmDialog
  * Bulk-confirm parked (awaiting_confirmation) sources. Each CONFIDENT source is
- * confirmed with its detected domain (ranking[0]). LOW-CONFIDENCE sources
- * (`detection_low_confidence === true` or empty ranking) are EXCLUDED from the
- * bulk payload and flagged for individual review — the single-source
- * ConfirmExtractionDialog is the right path for them (human picks the domain).
+ * confirmed with the packs detection proposed. LOW-CONFIDENCE sources
+ * (`detection_low_confidence === true` or no proposed pack) are EXCLUDED from
+ * the bulk payload and flagged for individual review — the single-source
+ * ConfirmExtractionDialog is the right path for them (human picks the packs).
  *
  * Per-item: a failure on one confident row never aborts the others (contrast
  * index.tsx:185-206's abort-on-first delete loop); failures surface inline
@@ -32,16 +32,17 @@ import { AccentSection } from '../../../components/AccentSection';
 import { ghostButtonSx, ghostCancelBtnSx, ghostDialogPaperSx } from '../../../theme/ghostStyles';
 import { ChaosCypherPalette } from '../../../theme/palette';
 import type { UnifiedSource } from '../../../types';
+import { FLOOR_DOMAIN, packsLabel } from '../../../utils/packs';
 
 /**
- * Item passed to `onConfirmAll`. `domain` is informational/display-only — the
- * bulk endpoint is source_ids-only and re-reads the stored detected_domain on
- * the backend, so the per-item domain field is not sent in the payload (Task
- * 5.7 wiring: do not forward `domain` to the bulk API call).
+ * Item passed to `onConfirmAll`. `packs` is informational/display-only — the
+ * bulk endpoint is source_ids-only and re-reads the stored proposal on the
+ * backend, so the per-item packs are not sent in the payload (Task 5.7
+ * wiring: do not forward them to the bulk API call).
  */
 export interface BulkConfirmItem {
   source_id: string;
-  domain?: string;
+  packs?: string[];
 }
 
 export interface BulkConfirmError {
@@ -58,9 +59,17 @@ interface BulkConfirmDialogProps {
   onConfirmAll: (items: BulkConfirmItem[]) => void;
 }
 
+/** The packs detection proposed (the proposal's list, else an older proposal's one domain or top-ranked). */
+function proposedOf(s: UnifiedSource): string[] {
+  const proposal = s.proposed_extraction_options;
+  if (proposal?.packs) return proposal.packs;
+  const one = proposal?.detected_domain ?? s.detection_ranking?.[0]?.domain;
+  return one && one !== FLOOR_DOMAIN ? [one] : [];
+}
+
 /** Returns true when a source is NOT safe to bulk-confirm as-detected. */
 function isLowConfidence(s: UnifiedSource): boolean {
-  return !!s.detection_low_confidence || !s.detection_ranking?.length;
+  return !!s.detection_low_confidence || proposedOf(s).length === 0;
 }
 
 export function BulkConfirmDialog({
@@ -81,7 +90,7 @@ export function BulkConfirmDialog({
     onConfirmAll(
       confidentSources.map((s) => ({
         source_id: s.id,
-        domain: s.detection_ranking?.[0]?.domain,
+        packs: proposedOf(s),
       })),
     );
   };
@@ -107,8 +116,8 @@ export function BulkConfirmDialog({
       </DialogTitle>
       <DialogContent>
         <Typography variant="caption" sx={{ color: 'text.secondary', mb: 1, display: 'block' }}>
-          Each source is confirmed with its recommended domain. Use the single
-          source dialog to override a domain.
+          Each source is confirmed with its proposed packs. Use the single
+          source dialog to change them.
         </Typography>
         {lowConfidenceCount > 0 && (
           <Typography
@@ -116,14 +125,14 @@ export function BulkConfirmDialog({
             sx={{ color: ChaosCypherPalette.warning, mb: 1.5, display: 'block' }}
           >
             {allLowConfidence
-              ? `All ${lowConfidenceCount} source${lowConfidenceCount === 1 ? '' : 's'} need individual review — open each one to confirm its domain.`
+              ? `All ${lowConfidenceCount} source${lowConfidenceCount === 1 ? '' : 's'} need individual review — open each one to confirm its packs.`
               : `${lowConfidenceCount} source${lowConfidenceCount === 1 ? '' : 's'} need individual review and will not be bulk-confirmed.`}
           </Typography>
         )}
         <AccentSection color="file" sx={{ maxHeight: 280, overflow: 'auto' }}>
           {sources.map((s, idx) => {
             const low = isLowConfidence(s);
-            const top = s.detection_ranking?.[0]?.domain;
+            const proposed = proposedOf(s);
             const err = errorById.get(s.id);
             return (
               <Box
@@ -172,7 +181,7 @@ export function BulkConfirmDialog({
                     />
                   ) : (
                     <Typography variant="caption" sx={{ color: 'text.secondary' }}>
-                      {top ?? 'choose a domain'}
+                      {proposed.length ? packsLabel(proposed) : 'choose the packs'}
                     </Typography>
                   )}
                 </Box>

@@ -52,6 +52,74 @@ async def _build_index(pack: ReferencePack) -> None:
         pass
 
 
+def _export_llm_store(
+    root: Path, provider: str, model: str, *, model_build: str | None, console: Console
+) -> dict[str, str]:
+    """Write the extractor's completions from the run's completion store into the pack.
+
+    The run's store is the one ``benchmark run`` recorded into (the configured
+    ``cache`` section's ``completions.db``); only the entries of the
+    extractor's model build are taken (``--model-build``, else the one build
+    of ``provider``/``model`` the store holds). Returns the manifest fields
+    (:data:`~chaoscypher_core.benchmark.reference.LLM_STORE_FIELDS`), empty when
+    the store holds nothing of the extractor (the pack ships no store).
+
+    Raises:
+        click.ClickException: When ``--model-build`` is not in the store, or the
+            store holds several builds of the extractor and none was chosen.
+    """
+    from chaoscypher_core.app_config import get_settings
+    from chaoscypher_core.app_config.engine_factory import build_engine_settings
+    from chaoscypher_core.benchmark.reference import LLM_STORE_FILE
+    from chaoscypher_core.cache import wiring
+    from chaoscypher_core.cache.chat import COMPLETIONS_NAMESPACE
+    from chaoscypher_core.cache.export import export_store
+    from chaoscypher_core.cache.keys import build_names_model
+    from chaoscypher_core.cache.sqlite_store import read_entries
+
+    settings = build_engine_settings(get_settings())
+    source = wiring.store_path(settings, "completions")
+    builds = (
+        sorted(
+            {
+                entry.model_build
+                for _ns, _key, entry in read_entries(source, namespace=COMPLETIONS_NAMESPACE)
+                if build_names_model(entry.model_build, provider, model)
+            }
+        )
+        if source.is_file()
+        else []
+    )
+    if model_build is not None and model_build not in builds:
+        msg = (
+            f"--model-build {model_build!r} has no completions in {source} "
+            f"(builds of {provider}/{model} there: {', '.join(builds) or 'none'})"
+        )
+        raise click.ClickException(msg)
+    if model_build is None and len(builds) > 1:
+        msg = (
+            f"{source} holds {len(builds)} builds of {provider}/{model} "
+            f"({', '.join(builds)}); pass --model-build with the one that built the graph"
+        )
+        raise click.ClickException(msg)
+    build = model_build or (builds[0] if builds else None)
+    if build is None:
+        console.print(
+            f"[yellow]No completions of {provider}/{model} in {source}:[/yellow] "
+            "the pack ships no LLM store (record one by running the benchmark with the "
+            "completion cache on)."
+        )
+        return {}
+    sha = export_store(
+        wiring.open_store(settings, "completions"),
+        root / LLM_STORE_FILE,
+        namespace=COMPLETIONS_NAMESPACE,
+        model_build=build,
+    )
+    console.print(f"LLM store: the completions of {build} ({LLM_STORE_FILE})")
+    return {"llm_store": LLM_STORE_FILE, "llm_store_sha256": sha, "model_build": build}
+
+
 @click.group("reference")
 def reference_group() -> None:
     """Export and list the reference graphs grounded-chat MCP runs retrieve from."""
@@ -64,7 +132,7 @@ def reference_group() -> None:
     default=None,
     help=(
         "Benchmark workspace holding graph_cache/ (default: the one `benchmark run` "
-        "uses, <data_dir>/benchmark/workspace)."
+        "and install.py use, graph_cache.default_workspace())."
     ),
 )
 @click.option(
@@ -79,6 +147,15 @@ def reference_group() -> None:
     "--embedder",
     required=True,
     help="provider/model the local chat rows retrieved with, e.g. ollama/qwen3-embedding:0.6b.",
+)
+@click.option(
+    "--dedup-embedder",
+    required=True,
+    help=(
+        "provider/model whose vectors merged the graph's entities at extraction "
+        "(`benchmark run` prints it), or 'exact' when semantic dedup was off; "
+        "part of the graph's cache key."
+    ),
 )
 @click.option("--name", default=None, help="Pack name (default: the dataset id).")
 @click.option(
@@ -108,22 +185,48 @@ def reference_group() -> None:
     show_default=True,
     help="Decoding temperature the cached graph was extracted with (part of its cache key).",
 )
+@click.option(
+    "--llm-store/--no-llm-store",
+    default=True,
+    show_default=True,
+    help=(
+        "Ship the extractor's completions from the run's completion store (llm_store.db), so "
+        "`benchmark run --replay` rebuilds the graph with no model calls."
+    ),
+)
+@click.option(
+    "--model-build",
+    default=None,
+    help=(
+        "The extractor's build id to export (provider:model:digest@server) when the store "
+        "holds more than one."
+    ),
+)
 def export_cmd(
     workspace: Path | None,
     dataset_id: str,
     extractor: str,
     embedder: str,
+    dedup_embedder: str,
     name: str | None,
     data_dir: Path | None,
     force: bool,
     index: bool,
     seed: int,
     temperature: float,
+    llm_store: bool,
+    model_build: str | None,
 ) -> None:
     """Export a cached reference graph and its chat fixture as a reference pack."""
-    from chaoscypher_cli.benchmark.discovery import load_dataset_bundle, user_benchmark_root
-    from chaoscypher_cli.benchmark.graph_cache import GraphCache
+    from chaoscypher_cli.benchmark.discovery import load_dataset_bundle
+    from chaoscypher_cli.benchmark.graph_cache import (
+        GraphCache,
+        dataset_corpus_identity,
+        default_workspace,
+        resolution_for,
+    )
     from chaoscypher_cli.benchmark.models import ModelConfig
+    from chaoscypher_core.app_config import get_settings
     from chaoscypher_core.benchmark.reference import (
         PACK_NAME_RE,
         ReferencePackError,
@@ -142,6 +245,8 @@ def export_cmd(
     try:
         ext_provider, ext_model = split_model_id(extractor)
         split_model_id(embedder)
+        if dedup_embedder != "exact":
+            split_model_id(dedup_embedder)
     except ReferencePackError as exc:
         raise click.BadParameter(str(exc)) from exc
     try:
@@ -152,8 +257,11 @@ def export_cmd(
         msg = f"dataset {dataset_id!r} has no chat fixture (queries_path)"
         raise click.ClickException(msg)
 
-    workspace = workspace or (user_benchmark_root() / "workspace")
-    cache = GraphCache(root=workspace / "graph_cache")
+    workspace = workspace or default_workspace()
+    resolution = resolution_for(get_settings())
+    cache = GraphCache(
+        root=workspace / "graph_cache", dedup_embedder=dedup_embedder, resolution=resolution
+    )
     model = ModelConfig(provider=ext_provider, model=ext_model, label=extractor)
     key = cache.key_for(
         corpus_id=bundle.id,
@@ -166,8 +274,20 @@ def export_cmd(
     if not snapshot.is_file():
         msg = (
             f"no cached graph for {dataset_id} {bundle.version} by {extractor} "
-            f"at seed {seed} / temperature {temperature} (looked for {snapshot}); "
+            f"at seed {seed} / temperature {temperature}, entities merged with "
+            f"{dedup_embedder} (looked for {snapshot}); "
             "run the chat benchmark with that extractor and those pins first"
+        )
+        raise click.ClickException(msg)
+    adopted = cache.slot_adopted_from(key)
+    if adopted is not None:
+        # audit wave 3: the slot holds pack <adopted>'s graph under today's key; exported, it
+        # would become a "new" pack that claims today's extraction recipe for an older graph
+        msg = (
+            f"the cached graph at {snapshot} was seeded from pack {adopted!r} by "
+            "install.py --adopt-current-recipe, not extracted here; it is not exported as a "
+            f"new pack. Use {adopted!r} as it is, or extract the graph (benchmark run without "
+            "REUSE_GRAPH replaces the adopted slot) and export that"
         )
         raise click.ClickException(msg)
 
@@ -182,6 +302,13 @@ def export_cmd(
     try:
         snapshot_sqlite(snapshot, root / "app.db")
         shutil.copyfile(bundle.queries_path, root / "queries.yaml")
+        store_fields = (
+            _export_llm_store(
+                root, ext_provider, ext_model, model_build=model_build, console=console
+            )
+            if llm_store
+            else {}
+        )
         write_manifest(
             root,
             {
@@ -192,10 +319,28 @@ def export_cmd(
                 "extractor": extractor,
                 "extractor_label": _extractor_label(extractor),
                 "embedder": embedder,
+                "dedup_embedder": dedup_embedder,
                 "graph_cache_key": key,
                 "created": datetime.now(tz=UTC).isoformat(timespec="seconds"),
+                **({"resolution": resolution} if resolution else {}),
+                # The domain and corpus the graph cache keys on (audit W2-4): install.py
+                # seeds the slot the sweep computes only when the manifest records them.
+                **{
+                    k: v
+                    for k, v in zip(
+                        ("extraction_domain", "corpus_sha256"),
+                        dataset_corpus_identity(bundle.id),
+                        strict=True,
+                    )
+                    if v
+                },
+                # The recipe the key proves, recorded so install.py seeds the same slot
+                # the corpus's domain's recipe, as the slot's key (audit wave 4, M3)
+                "extraction_recipe": cache.recipe_for(bundle.id),
                 "snapshot_file": "app.db",
                 "queries_file": "queries.yaml",
+                # the completions the graph was built from (replay: no model calls)
+                **store_fields,
             },
         )
         pack = load_pack(base, pack_name)

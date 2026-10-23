@@ -50,10 +50,18 @@ async def _never_shutdown() -> bool:
 class TestHealthEvaluatorLoop:
     @pytest.mark.asyncio
     async def test_tick_called_repeatedly(self) -> None:
+        two_ticks = asyncio.Event()
+
+        async def _tick() -> None:
+            if evaluator.tick.await_count >= 2:
+                two_ticks.set()
+
         evaluator = MagicMock()
-        evaluator.tick = AsyncMock()
+        evaluator.tick = AsyncMock(side_effect=_tick)
         adapter, _events = _make_scoped_adapter()
 
+        # Wait on the second tick, not a fixed sleep: one tick in 80 ms is
+        # enough to fail a sleep-then-count test on a loaded CI runner.
         task = asyncio.create_task(
             _health_evaluator_loop(
                 evaluator=evaluator,
@@ -62,8 +70,10 @@ class TestHealthEvaluatorLoop:
                 should_shutdown=_never_shutdown,
             )
         )
-        await asyncio.sleep(0.08)
-        await _cancel(task)
+        try:
+            await asyncio.wait_for(two_ticks.wait(), timeout=5.0)
+        finally:
+            await _cancel(task)
 
         assert evaluator.tick.await_count >= 2
 

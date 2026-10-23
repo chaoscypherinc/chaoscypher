@@ -20,7 +20,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Entity extraction** — the stage that asks an LLM to find nodes and edges in groups. Constrained by domain templates.
 
-**Domain** — a `.jsonld` file declaring node templates, edge templates, and prompts for a specific subject area (e.g., research, recipes, philosophy). 19 built-in domains; users can add custom domains.
+**Domain** — a `.jsonld` file configuring extraction: the **floor** (`generic`, the eight core entity types and the core relationship labels, which every source has) or a **pack** that adds subtypes, relationship labels and prompts for a subject area (e.g., literary, legal, philosophy). 18 built-in packs; users can add custom packs. See [Extraction Domains](./user-guide/domains.md).
 
 **Node template / Edge template / Graph template** — reusable schema fragments. Distinct: node templates describe entities, edge templates describe relationships, graph templates compose the two for a domain.
 
@@ -34,7 +34,7 @@ description: Domain terms used across Chaos Cypher docs.
 
 **Citation** — a back-reference from a generated answer to the chunk(s) that grounded it.
 
-**MCP** — [Model Context Protocol](https://modelcontextprotocol.io/). Chaos Cypher exposes 36 MCP tools for AI clients (21 read, 15 write).
+**MCP** — [Model Context Protocol](https://modelcontextprotocol.io/). Chaos Cypher exposes 44 MCP tools for AI clients (25 read, 19 write-only).
 
 **Operations queue / LLM queue** — the two named worker queues. Operations (8 concurrent) handles indexing/dedup/commit; LLM (1 concurrent) handles extraction LLM calls.
 

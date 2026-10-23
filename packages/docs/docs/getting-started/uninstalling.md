@@ -38,10 +38,11 @@ That removes everything: the SQLite database, uploaded sources, embeddings, chat
 
 ```bash
 make docker-down
-docker compose -f packages/docker/multi-container/docker-compose.dev.yml down --volumes
+QUEUE_PASSWORD="${QUEUE_PASSWORD:-unused-by-down}" \
+  docker compose -f packages/docker/multi-container/docker-compose.dev.yml down --volumes
 ```
 
-`down --volumes` removes the dev stack's `app-data` and `valkey-data` named volumes — there is no host-side data directory to delete.
+`down --volumes` removes the dev stack's `app-data` and `valkey-data` named volumes — there is no host-side data directory to delete. The compose file hard-requires `QUEUE_PASSWORD` even for `down` (which never uses its value), so the command supplies a placeholder when it is not already exported.
 
 ## CLI install (`pip install chaoscypher-cli`)
 
@@ -52,17 +53,17 @@ pip uninstall chaoscypher-cli
 
 # Data dir (settings.yaml with API keys, databases, downloaded models)
 rm -rf ~/.local/share/chaoscypher/                   # Linux
-rm -rf "~/Library/Application Support/chaoscypher/"  # macOS
+rm -rf "$HOME/Library/Application Support/chaoscypher/"  # macOS
 # Windows: rmdir /s "%LOCALAPPDATA%\chaoscypher"
 
 # Config dir (auth.json login state)
 rm -rf ~/.config/chaoscypher/                        # Linux
-rm -rf "~/Library/Application Support/chaoscypher/"  # macOS (same as data)
+rm -rf "$HOME/Library/Application Support/chaoscypher/"  # macOS (same as data)
 # Windows: rmdir /s "%LOCALAPPDATA%\chaoscypher"   (same directory as the data dir — already covered above)
 
 # Cache dir
 rm -rf ~/.cache/chaoscypher/                         # Linux
-rm -rf "~/Library/Caches/chaoscypher/"               # macOS
+rm -rf "$HOME/Library/Caches/chaoscypher/"               # macOS
 # Windows: rmdir /s "%LOCALAPPDATA%\chaoscypher\Cache"
 ```
 

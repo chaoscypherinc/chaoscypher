@@ -268,7 +268,10 @@ def test_build_messages_basic_system_and_history():
     result = build_messages_for_llm(chat, "chat-1")
     assert isinstance(result, MessageBuildResult)
     assert result.messages_for_llm[0]["role"] == "system"
-    assert result.messages_for_llm[0]["content"] == SYSTEM_PROMPT
+    # the grounded answer policy rides on the system prompt by default (2026-10-05)
+    from chaoscypher_core.services.chat.engine.constants import GROUNDED_ANSWER_POLICY
+
+    assert result.messages_for_llm[0]["content"] == f"{SYSTEM_PROMPT}\n\n{GROUNDED_ANSWER_POLICY}"
     roles = [m["role"] for m in result.messages_for_llm]
     assert roles == ["system", "user", "assistant"]
     info = result.context_info
@@ -504,3 +507,16 @@ def test_module_exports():
         "build_messages_for_llm",
         "log_messages_debug",
     }
+
+
+def test_the_system_prompt_carries_the_answer_policy_when_the_setting_is_on(monkeypatch):
+    """The same policy text the benchmark prompt adds (2026-10-05), behind graphrag.answer_policy."""
+    from chaoscypher_core.services.chat.engine.constants import GROUNDED_ANSWER_POLICY
+
+    chat = {"messages": [{"role": "user", "content": "Hi"}]}
+    monkeypatch.setattr(msg_mod, "_answer_policy_on", lambda settings=None: False)
+    off = msg_mod.build_messages_for_llm(chat, "chat-1").messages_for_llm[0]["content"]
+    assert off == SYSTEM_PROMPT
+    monkeypatch.setattr(msg_mod, "_answer_policy_on", lambda settings=None: True)
+    on = msg_mod.build_messages_for_llm(chat, "chat-1").messages_for_llm[0]["content"]
+    assert on.startswith(SYSTEM_PROMPT) and on.endswith(GROUNDED_ANSWER_POLICY)

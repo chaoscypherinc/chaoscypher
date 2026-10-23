@@ -23,6 +23,7 @@ import structlog
 from chaoscypher_core.operations import queue_utils
 from chaoscypher_core.operations.extraction.extraction_finalizer import TERMINAL_TASK_STATES
 from chaoscypher_core.services.events.bus import event_bus
+from chaoscypher_core.services.sources.engine.commit.payload import build_commit_payload
 from chaoscypher_core.vision.states import VisionPageStatus
 
 
@@ -1406,13 +1407,7 @@ class SourceRecovery:
 
         if not entities and not relationships:
             return {}
-        return {
-            "entities": entities,
-            "relationships": relationships,
-            "suggested_templates": [],
-            "suggested_edge_templates": [],
-            "inverse_relationships": {},
-        }
+        return build_commit_payload(entities=entities, relationships=relationships)
 
     async def _queue_has_task_for(
         self,
@@ -1499,15 +1494,12 @@ class SourceRecovery:
         enqueued commit task can't find it. Audit fix #C4.
         """
         file_info = _build_file_info_from_source(source)
-        payload = {
-            "entities": commit_data.get("entities", []),
-            "relationships": commit_data.get("relationships", []),
-            "suggested_templates": commit_data.get("suggested_templates", []),
-            "suggested_edge_templates": commit_data.get("suggested_edge_templates", []),
-            "inverse_relationships": commit_data.get("inverse_relationships", {}),
-            "create_templates": True,
-            "auto_enable": True,
-        }
+        payload = build_commit_payload(
+            entities=commit_data.get("entities", []),
+            relationships=commit_data.get("relationships", []),
+            extraction_results=commit_data,
+            auto_enable=True,
+        )
         await queue_utils.queue_import_commit(
             file_id=source["id"],
             commit_data=payload,

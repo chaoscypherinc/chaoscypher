@@ -359,6 +359,7 @@ Downloading john/medical-ontology... ━━━━━━━━━━━━━━�
 
 Next steps:
   chaoscypher graph package load john-medical-ontology.ccx
+  chaoscypher mount john-medical-ontology.ccx
 ```
 
 Download a specific version and extract:
@@ -379,8 +380,11 @@ Extracting to packages/john-medical-ontology...
 ✓ Extracted to packages/john-medical-ontology
 
 Next steps:
-  chaoscypher graph package load packages/john-medical-ontology
+  chaoscypher graph package load packages/john-medical-ontology-1.2.0.ccx
+  chaoscypher mount packages/john-medical-ontology-1.2.0.ccx
 ```
+
+The extracted directory is for inspection only — `graph package load` and `mount` read the `.ccx` archive.
 
 If the file already exists:
 

@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Fail if any shipped source file references a private internal/ doc path.
+"""Fail if any shipped source file references a private internal/ doc path or private repo.
 
 The private docs tree is stripped from the public export, so an in-code
 reference to one of its subdirectories becomes a dangling pointer in the
-public repo and leaks private planning / investigation filenames. This guard
-runs over the shipped trees (packages/, e2e/) as a pre-commit hook and in the
-local CI sweep. Replace any flagged reference with a self-contained summary or
-a public-docs link.
+public repo and leaks private planning / investigation filenames. A private
+repository's name leaks the same way. This guard runs over the shipped trees
+(packages/, e2e/) as a pre-commit hook and in the local CI sweep, and the
+public export gate reuses it. Replace any flagged reference with a
+self-contained summary or a public-docs link.
+
+The private repo names were checked only by the export gate until
+2026-10-17, so a test docstring naming the dev repo passed every commit and
+PR check and blocked that week's public snapshot (#808).
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -42,6 +48,13 @@ _PRIVATE_SUBDIRS = (
 )
 _DOCS_DIR = "internal"
 _PATTERN = re.compile(rf"{_DOCS_DIR}/(?:{'|'.join(_PRIVATE_SUBDIRS)})/")
+
+# Private repositories: the dev workspace (since 2026-06-07), and the pre-move
+# dev URL and staging repo under the personal account. Assembled at runtime for
+# the same reason as the pattern above. The public repo's own name,
+# chaoscypherinc/chaoscypher, matches neither.
+_PRODUCT = "chaoscypher"
+PRIVATE_REPO_MARKERS = (f"{_PRODUCT}-dev", f"dmacpherson/{_PRODUCT}")
 
 _ROOTS = ("packages", "e2e", "scripts", "tools", ".github")
 _ROOT_FILES = (
@@ -78,8 +91,14 @@ def find_internal_refs(
     repo_root: Path,
     roots: tuple[str, ...] = _ROOTS,
     root_files: tuple[str, ...] = _ROOT_FILES,
+    tracked: frozenset[str] | None = None,
 ) -> list[str]:
-    """Return ``path:lineno: line`` strings for every private-docs reference found."""
+    """Return ``path:lineno: line`` strings for every private-docs reference found.
+
+    ``tracked`` (repo-relative POSIX paths) limits the scan to those files: in a
+    checkout, untracked build output such as the docs site's ``.docusaurus/``
+    cache holds absolute paths, which name the checkout's own directory.
+    """
     paths_to_scan: list[Path] = []
     for root in roots:
         base = repo_root / root
@@ -96,6 +115,9 @@ def find_internal_refs(
         if path.is_file():
             paths_to_scan.append(path)
 
+    if tracked is not None:
+        paths_to_scan = [p for p in paths_to_scan if p.relative_to(repo_root).as_posix() in tracked]
+
     hits: list[str] = []
     for path in paths_to_scan:
         try:
@@ -107,16 +129,19 @@ def find_internal_refs(
         except (UnicodeDecodeError, OSError):  # fmt: skip
             continue
         for lineno, line in enumerate(text.splitlines(), 1):
-            if _PATTERN.search(line):
+            if _PATTERN.search(line) or any(m in line for m in PRIVATE_REPO_MARKERS):
                 hits.append(f"{path.relative_to(repo_root)}:{lineno}: {line.strip()}")
     return hits
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parent.parent
-    hits = find_internal_refs(repo_root)
+    listing = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, text=True, check=True
+    )
+    hits = find_internal_refs(repo_root, tracked=frozenset(listing.stdout.split("\0")) - {""})
     if hits:
-        print("Shipped files reference a private docs path (stripped from the public export):")
+        print("Shipped files reference a private docs path or repo (not in the public export):")
         for hit in hits:
             print(f"  {hit}")
         print("\nReplace with a self-contained summary or a public-docs link.")

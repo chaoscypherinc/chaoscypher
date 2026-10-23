@@ -10,27 +10,19 @@
   "@type": "ExtractionDomain",
   "@id": "domain:investigation",
   "name": "investigation",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "description": "Criminal and civil investigations: case files, evidence, witness statements, forensic reports, legal filings, crime scene documentation, and financial records",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.3,
-  "strict_entity_types": true,
   "type_aliases": {
     "Suspect": "Person",
     "Victim": "Person",
     "Witness": "Person"
   },
   "entity_exclusions": [
-    {
-      "description": "Generic role references without names",
-      "examples": [
-        "the officer",
-        "a detective",
-        "the victim",
-        "the suspect"
-      ]
-    },
     {
       "description": "Form instructions",
       "examples": [
@@ -266,746 +258,516 @@
       "min_threshold": 0.4
     }
   },
-  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract named people with their investigative role (suspect, victim, witness, investigator, expert) as a property\n- Extract evidence items with IDs/tags when available\n- Extract events with dates and locations\n- Extract crime scenes as distinct from general locations\n- Extract forensic findings with report type and conclusions\n- Extract legal filings with case/docket numbers\n\nDO NOT EXTRACT:\n- Generic role references without names: 'the officer', 'a detective', 'the victim'\n- Report boilerplate: headers, footers, page numbers, form field labels\n- Procedural timestamps: log entries, dispatch times (unless part of a key event)\n- Form instructions: 'check one', 'sign below', 'see reverse'",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PEOPLE-EVENTS: Use involved_in for general participation, witnessed for eyewitness, investigated for investigators, arrested_for for arrests\n- PEOPLE-EVIDENCE: Use linked_to_evidence for any person-evidence connection, collected for who gathered it, authored for report writers\n- EVIDENCE-LOCATIONS: Use found_at for where evidence was recovered, occurred_at for event locations\n- EVIDENCE-EVIDENCE: Use corroborates when evidence supports other evidence, contradicts when it conflicts, resulted_in for evidence producing reports\n- LEGAL: Use charged_with for charges against people, filed_against for legal filings, authorizes for warrants authorizing searches\n- COMMUNICATIONS: Use sent/received for message authorship and recipients\n- FINANCIAL: Use financial_link for person-to-record, transacted_with for person-to-person financial connections\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
-  "templates": {
-    "node_templates": [
+  "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract named people with their investigative role (suspect, victim, witness, investigator, expert) as a property\n- Extract evidence items with IDs/tags when available\n- Extract events with dates and locations\n- Extract crime scenes as distinct from general locations\n- Extract forensic findings with report type and conclusions\n- Extract legal filings with case/docket numbers\n\nDO NOT EXTRACT:\n- Report boilerplate: headers, footers, page numbers, form field labels\n- Procedural timestamps as standalone entities: log entries, dispatch times (record them as a time property of their event)\n- Form instructions: 'check one', 'sign below', 'see reverse'",
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- PEOPLE-EVENTS: Use involved_in for general participation, witnessed for eyewitness, investigated for investigators, arrested_for for arrests\n- PEOPLE-EVIDENCE: Use linked_to_evidence for any person-evidence connection, collected for who gathered it, authored for report writers\n- EVIDENCE-LOCATIONS: Use found_at for where evidence was recovered, occurred_at for event locations\n- EVIDENCE-EVIDENCE: Use corroborates when evidence supports other evidence, contradicts when it conflicts, resulted_in for evidence producing reports\n- LEGAL: Use charged_with for charges against people, filed_against for legal filings, authorizes for warrants authorizing searches\n- COMMUNICATIONS: Use sent/received for message authorship and recipients\n- FINANCIAL: Use financial_link for person-to-record, transacted_with for person-to-person financial connections\n",
+  "subtypes": [
+    {
+      "name": "Evidence",
+      "of": "Object",
+      "description": "A piece of physical, digital, or documentary evidence",
+      "properties": [
+        {
+          "name": "evidence_id",
+          "display_name": "Evidence ID",
+          "property_type": "text"
+        },
+        {
+          "name": "evidence_type",
+          "display_name": "Evidence Type",
+          "property_type": "text"
+        },
+        {
+          "name": "collected_by",
+          "display_name": "Collected By",
+          "property_type": "text"
+        },
+        {
+          "name": "date_collected",
+          "display_name": "Date Collected",
+          "property_type": "date"
+        },
+        {
+          "name": "location_found",
+          "display_name": "Location Found",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Inventory2",
+      "color": "#41d6c8",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "evidence",
+        "exhibit",
+        "item",
+        "artifact",
+        "proof",
+        "clue",
+        "physical evidence",
+        "digital evidence",
+        "trace evidence"
+      ]
+    },
+    {
+      "name": "Crime Scene",
+      "of": "Location",
+      "description": "A specific scene where a crime or incident occurred",
+      "properties": [
+        {
+          "name": "scene_type",
+          "display_name": "Scene Type",
+          "property_type": "text"
+        },
+        {
+          "name": "date_processed",
+          "display_name": "Date Processed",
+          "property_type": "date"
+        },
+        {
+          "name": "processed_by",
+          "display_name": "Processed By",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Explore",
+      "color": "#5d41d6",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "crime scene",
+        "scene of crime",
+        "scene",
+        "primary scene",
+        "secondary scene",
+        "dump site",
+        "point of entry"
+      ]
+    },
+    {
+      "name": "Forensic Report",
+      "of": "Work",
+      "description": "A forensic analysis report: autopsy, ballistics, toxicology, DNA, digital forensics",
+      "properties": [
+        {
+          "name": "report_type",
+          "display_name": "Report Type",
+          "property_type": "text"
+        },
+        {
+          "name": "analyst",
+          "display_name": "Analyst",
+          "property_type": "text"
+        },
+        {
+          "name": "date_issued",
+          "display_name": "Date Issued",
+          "property_type": "date"
+        },
+        {
+          "name": "conclusion",
+          "display_name": "Conclusion",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Science",
+      "color": "#9d41d6",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "forensic report",
+        "autopsy report",
+        "lab report",
+        "ballistics report",
+        "toxicology report",
+        "DNA analysis",
+        "fingerprint analysis",
+        "forensic analysis",
+        "pathology report"
+      ]
+    },
+    {
+      "name": "Legal Filing",
+      "of": "Work",
+      "description": "A legal document: warrant, indictment, complaint, motion, subpoena, court order",
+      "properties": [
+        {
+          "name": "filing_type",
+          "display_name": "Filing Type",
+          "property_type": "text"
+        },
+        {
+          "name": "case_number",
+          "display_name": "Case Number",
+          "property_type": "text"
+        },
+        {
+          "name": "date_filed",
+          "display_name": "Date Filed",
+          "property_type": "date"
+        },
+        {
+          "name": "court",
+          "display_name": "Court",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Gavel",
+      "color": "#d641d0",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "warrant",
+        "indictment",
+        "complaint",
+        "motion",
+        "subpoena",
+        "court order",
+        "filing",
+        "petition",
+        "affidavit",
+        "search warrant",
+        "arrest warrant"
+      ]
+    },
+    {
+      "name": "Communication",
+      "of": "Event",
+      "description": "A communication: email, text message, phone call, intercepted conversation, letter",
+      "properties": [
+        {
+          "name": "medium",
+          "display_name": "Medium",
+          "property_type": "text"
+        },
+        {
+          "name": "date_sent",
+          "display_name": "Date Sent",
+          "property_type": "date"
+        },
+        {
+          "name": "participants",
+          "display_name": "Participants",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Forum",
+      "color": "#d64190",
+      "quality_score": 25,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "email",
+        "text message",
+        "phone call",
+        "letter",
+        "communication",
+        "correspondence",
+        "intercepted",
+        "recorded call",
+        "voicemail"
+      ]
+    },
+    {
+      "name": "Financial Record",
+      "of": "Work",
+      "description": "A financial document: bank statement, transaction record, wire transfer, tax filing",
+      "properties": [
+        {
+          "name": "record_type",
+          "display_name": "Record Type",
+          "property_type": "text"
+        },
+        {
+          "name": "amount",
+          "display_name": "Amount",
+          "property_type": "text"
+        },
+        {
+          "name": "date",
+          "display_name": "Date",
+          "property_type": "date"
+        }
+      ],
+      "icon": "AttachMoney",
+      "color": "#d67241",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "bank statement",
+        "transaction",
+        "wire transfer",
+        "financial record",
+        "payment",
+        "deposit",
+        "withdrawal",
+        "tax filing",
+        "invoice",
+        "receipt"
+      ]
+    },
+    {
+      "name": "Vehicle",
+      "of": "Object",
+      "description": "A vehicle involved in the investigation",
+      "properties": [
+        {
+          "name": "make",
+          "display_name": "Make",
+          "property_type": "text"
+        },
+        {
+          "name": "model",
+          "display_name": "Model",
+          "property_type": "text"
+        },
+        {
+          "name": "plate_number",
+          "display_name": "Plate Number",
+          "property_type": "text"
+        },
+        {
+          "name": "vin",
+          "display_name": "VIN",
+          "property_type": "text"
+        }
+      ],
+      "icon": "DirectionsCar",
+      "color": "#d6b241",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "vehicle",
+        "car",
+        "truck",
+        "van",
+        "motorcycle",
+        "boat",
+        "aircraft",
+        "automobile"
+      ]
+    },
+    {
+      "name": "Weapon",
+      "of": "Object",
+      "description": "A weapon or instrument used in the crime",
+      "properties": [
+        {
+          "name": "weapon_type",
+          "display_name": "Weapon Type",
+          "property_type": "text"
+        },
+        {
+          "name": "serial_number",
+          "display_name": "Serial Number",
+          "property_type": "text"
+        },
+        {
+          "name": "caliber",
+          "display_name": "Caliber",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Shield",
+      "color": "#bbd641",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "weapon",
+        "firearm",
+        "gun",
+        "knife",
+        "blade",
+        "pistol",
+        "rifle",
+        "shotgun",
+        "instrument",
+        "explosive"
+      ]
+    },
+    {
+      "name": "Charge",
+      "of": "Concept",
+      "description": "A criminal charge or civil claim filed against a person",
+      "properties": [
+        {
+          "name": "charge_type",
+          "display_name": "Charge Type",
+          "property_type": "text"
+        },
+        {
+          "name": "statute",
+          "display_name": "Statute",
+          "property_type": "text"
+        },
+        {
+          "name": "date_filed",
+          "display_name": "Date Filed",
+          "property_type": "date"
+        }
+      ],
+      "icon": "Balance",
+      "color": "#7bd641",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "charge",
+        "count",
+        "criminal charge",
+        "civil claim",
+        "offense",
+        "violation",
+        "felony charge",
+        "misdemeanor charge"
+      ]
+    },
+    {
+      "name": "Testimony",
+      "of": "Work",
+      "description": "A formal witness statement, deposition, or interview transcript",
+      "properties": [
+        {
+          "name": "testimony_type",
+          "display_name": "Testimony Type",
+          "property_type": "text"
+        },
+        {
+          "name": "date_given",
+          "display_name": "Date Given",
+          "property_type": "date"
+        },
+        {
+          "name": "given_to",
+          "display_name": "Given To",
+          "property_type": "text"
+        }
+      ],
+      "icon": "FormatQuote",
+      "color": "#41d648",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "testimony",
+        "statement",
+        "deposition",
+        "interview",
+        "affidavit",
+        "sworn statement",
+        "declaration",
+        "witness statement"
+      ]
+    }
+  ],
+  "core_properties": {
+    "Person": [
       {
-        "@type": "NodeTemplate",
-        "id": "inv_template_person",
-        "name": "Person",
-        "description": "A person involved in the investigation in any role",
-        "icon": "Person",
-        "color": "#41d688",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "person",
-          "individual",
-          "suspect",
-          "victim",
-          "witness",
-          "detective",
-          "officer",
-          "agent",
-          "investigator",
-          "defendant",
-          "plaintiff",
-          "informant",
-          "accomplice"
-        ],
-        "properties": [
-          {
-            "name": "role",
-            "display_name": "Role",
-            "property_type": "text",
-            "absorbs_types": [
-              "Role",
-              "Investigative Role",
-              "Party Role"
-            ]
-          },
-          {
-            "name": "alias",
-            "display_name": "Alias",
-            "property_type": "text",
-            "absorbs_types": [
-              "Alias",
-              "Known As"
-            ]
-          },
-          {
-            "name": "date_of_birth",
-            "display_name": "Date of Birth",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date of Birth",
-              "DOB"
-            ]
-          }
-        ]
+        "name": "role",
+        "display_name": "Role",
+        "property_type": "text"
       },
       {
-        "@type": "NodeTemplate",
-        "id": "inv_template_evidence",
-        "name": "Evidence",
-        "description": "A piece of physical, digital, or documentary evidence",
-        "icon": "Inventory2",
-        "color": "#41d6c8",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "evidence",
-        "normalization_keywords": [
-          "evidence",
-          "exhibit",
-          "item",
-          "artifact",
-          "proof",
-          "clue",
-          "physical evidence",
-          "digital evidence",
-          "trace evidence"
-        ],
-        "properties": [
-          {
-            "name": "evidence_id",
-            "display_name": "Evidence ID",
-            "property_type": "text",
-            "absorbs_types": [
-              "Evidence Tag",
-              "Item Number",
-              "Exhibit Number"
-            ]
-          },
-          {
-            "name": "evidence_type",
-            "display_name": "Evidence Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Evidence Type",
-              "Evidence Category"
-            ]
-          },
-          {
-            "name": "collected_by",
-            "display_name": "Collected By",
-            "property_type": "text",
-            "absorbs_types": [
-              "Collected By"
-            ]
-          },
-          {
-            "name": "date_collected",
-            "display_name": "Date Collected",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Collected",
-              "Collection Date"
-            ]
-          },
-          {
-            "name": "location_found",
-            "display_name": "Location Found",
-            "property_type": "text",
-            "absorbs_types": [
-              "Location Found",
-              "Found At"
-            ]
-          }
-        ]
+        "name": "alias",
+        "display_name": "Alias",
+        "property_type": "text"
       },
       {
-        "@type": "NodeTemplate",
-        "id": "inv_template_event",
-        "name": "Event",
-        "description": "An event relevant to the investigation: crime, arrest, search, hearing, incident",
-        "icon": "Event",
-        "color": "#41a5d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "events",
-        "normalization_keywords": [
-          "event",
-          "incident",
-          "crime",
-          "arrest",
-          "search",
-          "hearing",
-          "occurrence",
-          "shooting",
-          "robbery",
-          "assault",
-          "homicide",
-          "break-in"
-        ],
-        "properties": [
-          {
-            "name": "date",
-            "display_name": "Date",
-            "property_type": "date",
-            "absorbs_types": [
-              "Event Date",
-              "Date of Incident"
-            ]
-          },
-          {
-            "name": "time",
-            "display_name": "Time",
-            "property_type": "text",
-            "absorbs_types": [
-              "Event Time",
-              "Time of Incident"
-            ]
-          },
-          {
-            "name": "event_type",
-            "display_name": "Event Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Event Type",
-              "Incident Type"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_location",
-        "name": "Location",
-        "description": "A place relevant to the investigation",
-        "icon": "Place",
-        "color": "#4165d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "locations",
-        "normalization_keywords": [
-          "location",
-          "address",
-          "place",
-          "residence",
-          "business",
-          "premises",
-          "building",
-          "property",
-          "jurisdiction",
-          "venue"
-        ],
-        "properties": [
-          {
-            "name": "address",
-            "display_name": "Address",
-            "property_type": "text",
-            "absorbs_types": [
-              "Address",
-              "Street Address"
-            ]
-          },
-          {
-            "name": "location_type",
-            "display_name": "Location Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Location Type"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_crime_scene",
-        "name": "Crime Scene",
-        "description": "A specific scene where a crime or incident occurred",
-        "icon": "Explore",
-        "color": "#5d41d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "locations",
-        "normalization_keywords": [
-          "crime scene",
-          "scene of crime",
-          "scene",
-          "primary scene",
-          "secondary scene",
-          "dump site",
-          "point of entry"
-        ],
-        "properties": [
-          {
-            "name": "scene_type",
-            "display_name": "Scene Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Scene Type"
-            ]
-          },
-          {
-            "name": "date_processed",
-            "display_name": "Date Processed",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Processed"
-            ]
-          },
-          {
-            "name": "processed_by",
-            "display_name": "Processed By",
-            "property_type": "text",
-            "absorbs_types": [
-              "Processed By"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_forensic_report",
-        "name": "Forensic Report",
-        "description": "A forensic analysis report: autopsy, ballistics, toxicology, DNA, digital forensics",
-        "icon": "Science",
-        "color": "#9d41d6",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "evidence",
-        "normalization_keywords": [
-          "forensic report",
-          "autopsy report",
-          "lab report",
-          "ballistics report",
-          "toxicology report",
-          "DNA analysis",
-          "fingerprint analysis",
-          "forensic analysis",
-          "pathology report"
-        ],
-        "properties": [
-          {
-            "name": "report_type",
-            "display_name": "Report Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Report Type",
-              "Analysis Type"
-            ]
-          },
-          {
-            "name": "analyst",
-            "display_name": "Analyst",
-            "property_type": "text",
-            "absorbs_types": [
-              "Analyst",
-              "Examiner"
-            ]
-          },
-          {
-            "name": "date_issued",
-            "display_name": "Date Issued",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Issued",
-              "Report Date"
-            ]
-          },
-          {
-            "name": "conclusion",
-            "display_name": "Conclusion",
-            "property_type": "text",
-            "absorbs_types": [
-              "Conclusion",
-              "Finding",
-              "Determination"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_legal_filing",
-        "name": "Legal Filing",
-        "description": "A legal document: warrant, indictment, complaint, motion, subpoena, court order",
-        "icon": "Gavel",
-        "color": "#d641d0",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "warrant",
-          "indictment",
-          "complaint",
-          "motion",
-          "subpoena",
-          "court order",
-          "filing",
-          "petition",
-          "affidavit",
-          "search warrant",
-          "arrest warrant"
-        ],
-        "properties": [
-          {
-            "name": "filing_type",
-            "display_name": "Filing Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Filing Type",
-              "Document Type"
-            ]
-          },
-          {
-            "name": "case_number",
-            "display_name": "Case Number",
-            "property_type": "text",
-            "absorbs_types": [
-              "Case Number",
-              "Docket Number"
-            ]
-          },
-          {
-            "name": "date_filed",
-            "display_name": "Date Filed",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Filed",
-              "Filing Date"
-            ]
-          },
-          {
-            "name": "court",
-            "display_name": "Court",
-            "property_type": "text",
-            "absorbs_types": [
-              "Court",
-              "Jurisdiction"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_communication",
-        "name": "Communication",
-        "description": "A communication: email, text message, phone call, intercepted conversation, letter",
-        "icon": "Forum",
-        "color": "#d64190",
-        "requires_named_referent": false,
-        "quality_score": 25,
-        "compatibility_group": "evidence",
-        "normalization_keywords": [
-          "email",
-          "text message",
-          "phone call",
-          "letter",
-          "communication",
-          "correspondence",
-          "intercepted",
-          "recorded call",
-          "voicemail"
-        ],
-        "properties": [
-          {
-            "name": "medium",
-            "display_name": "Medium",
-            "property_type": "text",
-            "absorbs_types": [
-              "Medium",
-              "Communication Type"
-            ]
-          },
-          {
-            "name": "date_sent",
-            "display_name": "Date Sent",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Sent",
-              "Date of Communication"
-            ]
-          },
-          {
-            "name": "participants",
-            "display_name": "Participants",
-            "property_type": "text",
-            "absorbs_types": [
-              "Participants"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_organization",
-        "name": "Organization",
-        "description": "An agency, company, department, gang, or group",
-        "icon": "Business",
-        "color": "#d64150",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "organization",
-          "agency",
-          "department",
-          "company",
-          "corporation",
-          "gang",
-          "group",
-          "bureau",
-          "precinct",
-          "unit",
-          "task force"
-        ],
-        "properties": [
-          {
-            "name": "org_type",
-            "display_name": "Organization Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Organization Type"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_financial_record",
-        "name": "Financial Record",
-        "description": "A financial document: bank statement, transaction record, wire transfer, tax filing",
-        "icon": "AttachMoney",
-        "color": "#d67241",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "evidence",
-        "normalization_keywords": [
-          "bank statement",
-          "transaction",
-          "wire transfer",
-          "financial record",
-          "payment",
-          "deposit",
-          "withdrawal",
-          "tax filing",
-          "invoice",
-          "receipt"
-        ],
-        "properties": [
-          {
-            "name": "record_type",
-            "display_name": "Record Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Record Type",
-              "Transaction Type"
-            ]
-          },
-          {
-            "name": "amount",
-            "display_name": "Amount",
-            "property_type": "text",
-            "absorbs_types": [
-              "Amount",
-              "Transaction Amount"
-            ]
-          },
-          {
-            "name": "date",
-            "display_name": "Date",
-            "property_type": "date",
-            "absorbs_types": [
-              "Transaction Date",
-              "Record Date"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_vehicle",
-        "name": "Vehicle",
-        "description": "A vehicle involved in the investigation",
-        "icon": "DirectionsCar",
-        "color": "#d6b241",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "vehicle",
-          "car",
-          "truck",
-          "van",
-          "motorcycle",
-          "boat",
-          "aircraft",
-          "automobile"
-        ],
-        "properties": [
-          {
-            "name": "make",
-            "display_name": "Make",
-            "property_type": "text",
-            "absorbs_types": [
-              "Make",
-              "Vehicle Make"
-            ]
-          },
-          {
-            "name": "model",
-            "display_name": "Model",
-            "property_type": "text",
-            "absorbs_types": [
-              "Model",
-              "Vehicle Model"
-            ]
-          },
-          {
-            "name": "plate_number",
-            "display_name": "Plate Number",
-            "property_type": "text",
-            "absorbs_types": [
-              "Plate Number",
-              "License Plate"
-            ]
-          },
-          {
-            "name": "vin",
-            "display_name": "VIN",
-            "property_type": "text",
-            "absorbs_types": [
-              "VIN",
-              "Vehicle Identification Number"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_weapon",
-        "name": "Weapon",
-        "description": "A weapon or instrument used in the crime",
-        "icon": "Shield",
-        "color": "#bbd641",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "weapon",
-          "firearm",
-          "gun",
-          "knife",
-          "blade",
-          "pistol",
-          "rifle",
-          "shotgun",
-          "instrument",
-          "explosive"
-        ],
-        "properties": [
-          {
-            "name": "weapon_type",
-            "display_name": "Weapon Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Weapon Type"
-            ]
-          },
-          {
-            "name": "serial_number",
-            "display_name": "Serial Number",
-            "property_type": "text",
-            "absorbs_types": [
-              "Serial Number"
-            ]
-          },
-          {
-            "name": "caliber",
-            "display_name": "Caliber",
-            "property_type": "text",
-            "absorbs_types": [
-              "Caliber",
-              "Gauge"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_charge",
-        "name": "Charge",
-        "description": "A criminal charge or civil claim filed against a person",
-        "icon": "Balance",
-        "color": "#7bd641",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "charge",
-          "count",
-          "criminal charge",
-          "civil claim",
-          "offense",
-          "violation",
-          "felony charge",
-          "misdemeanor charge"
-        ],
-        "properties": [
-          {
-            "name": "charge_type",
-            "display_name": "Charge Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Charge Type",
-              "Offense Type"
-            ]
-          },
-          {
-            "name": "statute",
-            "display_name": "Statute",
-            "property_type": "text",
-            "absorbs_types": [
-              "Statute",
-              "Code Section"
-            ]
-          },
-          {
-            "name": "date_filed",
-            "display_name": "Date Filed",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Filed",
-              "Charge Date"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "inv_template_testimony",
-        "name": "Testimony",
-        "description": "A formal witness statement, deposition, or interview transcript",
-        "icon": "FormatQuote",
-        "color": "#41d648",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "evidence",
-        "normalization_keywords": [
-          "testimony",
-          "statement",
-          "deposition",
-          "interview",
-          "affidavit",
-          "sworn statement",
-          "declaration",
-          "witness statement"
-        ],
-        "properties": [
-          {
-            "name": "testimony_type",
-            "display_name": "Testimony Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Testimony Type",
-              "Statement Type"
-            ]
-          },
-          {
-            "name": "date_given",
-            "display_name": "Date Given",
-            "property_type": "date",
-            "absorbs_types": [
-              "Date Given",
-              "Statement Date"
-            ]
-          },
-          {
-            "name": "given_to",
-            "display_name": "Given To",
-            "property_type": "text",
-            "absorbs_types": [
-              "Given To",
-              "Taken By"
-            ]
-          }
-        ]
+        "name": "date_of_birth",
+        "display_name": "Date of Birth",
+        "property_type": "date"
       }
     ],
+    "Event": [
+      {
+        "name": "date",
+        "display_name": "Date",
+        "property_type": "date"
+      },
+      {
+        "name": "time",
+        "display_name": "Time",
+        "property_type": "text"
+      },
+      {
+        "name": "event_type",
+        "display_name": "Event Type",
+        "property_type": "text"
+      }
+    ],
+    "Location": [
+      {
+        "name": "address",
+        "display_name": "Address",
+        "property_type": "text"
+      },
+      {
+        "name": "location_type",
+        "display_name": "Location Type",
+        "property_type": "text"
+      }
+    ],
+    "Organization": [
+      {
+        "name": "org_type",
+        "display_name": "Organization Type",
+        "property_type": "text"
+      }
+    ]
+  },
+  "core_rescue_keywords": {
+    "Person": [
+      "person",
+      "individual",
+      "suspect",
+      "victim",
+      "witness",
+      "detective",
+      "officer",
+      "agent",
+      "investigator",
+      "defendant",
+      "plaintiff",
+      "informant",
+      "accomplice"
+    ],
+    "Event": [
+      "event",
+      "incident",
+      "crime",
+      "arrest",
+      "search",
+      "hearing",
+      "occurrence",
+      "shooting",
+      "robbery",
+      "assault",
+      "homicide",
+      "break-in"
+    ],
+    "Location": [
+      "location",
+      "address",
+      "place",
+      "residence",
+      "business",
+      "premises",
+      "building",
+      "property",
+      "jurisdiction",
+      "venue"
+    ],
+    "Organization": [
+      "organization",
+      "agency",
+      "department",
+      "company",
+      "corporation",
+      "gang",
+      "group",
+      "bureau",
+      "precinct",
+      "unit",
+      "task force"
+    ]
+  },
+  "templates": {
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -1018,12 +780,12 @@
         "source_types": [
           "Person",
           "Organization",
-          "Vehicle",
-          "Weapon"
+          "Object"
         ],
         "target_types": [
           "Event"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1039,7 +801,8 @@
         ],
         "target_types": [
           "Event"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1058,9 +821,9 @@
           "Person",
           "Organization",
           "Location",
-          "Crime Scene",
-          "Financial Record"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1075,8 +838,9 @@
         ],
         "target_types": [
           "Event",
-          "Charge"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1091,14 +855,11 @@
           "Organization"
         ],
         "target_types": [
-          "Evidence",
-          "Weapon",
-          "Vehicle",
-          "Communication",
-          "Financial Record",
-          "Forensic Report",
-          "Testimony"
-        ]
+          "Object",
+          "Event",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1113,12 +874,11 @@
           "Organization"
         ],
         "target_types": [
-          "Evidence",
-          "Weapon",
-          "Vehicle",
-          "Communication",
-          "Financial Record"
-        ]
+          "Object",
+          "Event",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1133,8 +893,9 @@
           "Organization"
         ],
         "target_types": [
-          "Testimony"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1149,29 +910,10 @@
           "Organization"
         ],
         "target_types": [
-          "Forensic Report",
-          "Legal Filing",
-          "Testimony",
-          "Communication"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "inv_edge_associated_with",
-        "name": "associated_with",
-        "description": "Person or organization is associated with another person or organization (e.g., gang, accomplice, employer)",
-        "icon": "People",
-        "color": "#32cc5b",
-        "symmetric": true,
-        "quality_score": 15,
-        "source_types": [
-          "Person",
-          "Organization"
+          "Work",
+          "Event"
         ],
-        "target_types": [
-          "Person",
-          "Organization"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1189,7 +931,8 @@
         "target_types": [
           "Person",
           "Organization"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1200,36 +943,15 @@
         "color": "#32ccab",
         "quality_score": 25,
         "source_types": [
-          "Evidence",
-          "Weapon",
-          "Vehicle",
-          "Communication",
-          "Financial Record",
-          "Person",
-          "Forensic Report"
-        ],
-        "target_types": [
-          "Location",
-          "Crime Scene"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "inv_edge_occurred_at",
-        "name": "occurred_at",
-        "description": "Event, testimony, or communication occurred at a location or crime scene",
-        "icon": "Place",
-        "color": "#32c4cc",
-        "quality_score": 25,
-        "source_types": [
+          "Object",
           "Event",
-          "Testimony",
-          "Communication"
+          "Work",
+          "Person"
         ],
         "target_types": [
-          "Location",
-          "Crime Scene"
-        ]
+          "Location"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1240,11 +962,13 @@
         "color": "#329ccc",
         "quality_score": 25,
         "source_types": [
-          "Crime Scene"
+          "Location"
         ],
         "target_types": [
           "Event"
-        ]
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1256,21 +980,16 @@
         "symmetric": true,
         "quality_score": 25,
         "source_types": [
-          "Evidence",
-          "Testimony",
-          "Forensic Report",
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
+          "Object",
+          "Work",
+          "Event"
         ],
         "target_types": [
-          "Evidence",
-          "Testimony",
-          "Forensic Report",
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
-        ]
+          "Object",
+          "Work",
+          "Event"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1282,21 +1001,16 @@
         "symmetric": true,
         "quality_score": 25,
         "source_types": [
-          "Evidence",
-          "Testimony",
-          "Forensic Report",
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
+          "Object",
+          "Work",
+          "Event"
         ],
         "target_types": [
-          "Evidence",
-          "Testimony",
-          "Forensic Report",
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
-        ]
+          "Object",
+          "Work",
+          "Event"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1307,19 +1021,16 @@
         "color": "#4132cc",
         "quality_score": 15,
         "source_types": [
-          "Evidence",
+          "Object",
           "Event",
-          "Testimony",
-          "Communication",
-          "Legal Filing",
-          "Forensic Report"
+          "Work"
         ],
         "target_types": [
-          "Forensic Report",
-          "Charge",
-          "Legal Filing",
+          "Work",
+          "Concept",
           "Event"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1334,9 +1045,10 @@
           "Organization"
         ],
         "target_types": [
-          "Charge",
+          "Concept",
           "Event"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1347,15 +1059,16 @@
         "color": "#9132cc",
         "quality_score": 25,
         "source_types": [
-          "Legal Filing",
-          "Charge"
+          "Work",
+          "Concept"
         ],
         "target_types": [
           "Person",
           "Organization",
-          "Vehicle",
+          "Object",
           "Location"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1366,17 +1079,16 @@
         "color": "#b932cc",
         "quality_score": 25,
         "source_types": [
-          "Legal Filing"
+          "Work"
         ],
         "target_types": [
           "Event",
           "Person",
           "Organization",
           "Location",
-          "Crime Scene",
-          "Vehicle",
-          "Communication"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1394,7 +1106,8 @@
         "target_types": [
           "Person",
           "Organization"
-        ]
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1408,12 +1121,13 @@
           "Person",
           "Organization",
           "Event",
-          "Evidence",
-          "Communication"
+          "Object"
         ],
         "target_types": [
-          "Financial Record"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1428,10 +1142,10 @@
           "Organization"
         ],
         "target_types": [
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
-        ]
+          "Event",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1446,10 +1160,10 @@
           "Organization"
         ],
         "target_types": [
-          "Communication",
-          "Financial Record",
-          "Legal Filing"
-        ]
+          "Event",
+          "Work"
+        ],
+        "two_endpoints_only": true
       }
     ]
   },
@@ -1541,8 +1255,6 @@
     "counsel"
   ],
   "extraction_limits": {
-    "max_entity_degree": 25,
-    "max_same_source_type": 10,
     "max_relationship_ratio": 8.0,
     "loop_max_entity_count": 40
   },

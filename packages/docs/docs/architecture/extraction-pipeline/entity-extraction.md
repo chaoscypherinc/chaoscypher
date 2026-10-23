@@ -41,7 +41,7 @@ flowchart TD
 
 ## Domain Detection and Selection
 
-Before extraction begins, the system determines which domain configuration to use. Domains provide extraction guidance, entity/relationship templates, examples, and post-processing rules tailored to specific content types (literary, technical, scientific, etc.).
+Before extraction begins, the system determines which packs a source extracts with. Every source extracts with the **floor** (`generic`: the eight core entity types and the core relationship labels) plus zero or more **packs** that add subtypes of the core types, extra relationship labels, guidance, examples and post-processing rules for a kind of content (literary, technical, scientific, etc.). See [Extraction Domains](../../user-guide/domains.md).
 
 ### How Domain Detection Works
 
@@ -50,9 +50,9 @@ The `DomainRegistry` auto-discovers domains from two locations:
 1. **Built-in domains** -- JSON-LD files in `packages/core/src/chaoscypher_core/services/sources/engine/extraction/domains/plugins/`
 2. **User domains** -- JSON-LD files in `data/plugins/domains/` (drop-in, no Python code required)
 
-Each domain implements `can_analyze(text, filename, metadata)` which returns a `(can_handle, confidence)` tuple. The registry runs all registered domains against a text sample and selects the highest-confidence match. If nothing matches well, it falls back to the `generic` domain.
+Each pack implements `can_analyze(text, filename, metadata)` which returns a `(can_handle, confidence)` tuple. The registry runs every pack against a text sample and proposes (`propose_packs`) every pack whose evidence — its score minus its own base score — reaches 0.30, highest score first, at most two. When no pack clears the bar the proposal is the floor alone, marked low confidence. The proposal waits for the user's confirmation unless packs were chosen at upload.
 
-Users can also **force** a specific domain, bypassing auto-detection entirely (confidence is set to 1.0).
+Users can also **choose** the packs (`packs` / `--pack`), bypassing auto-detection entirely; an empty list is the floor alone.
 
 ### What Domains Provide
 
@@ -60,26 +60,24 @@ Users can also **force** a specific domain, bypassing auto-detection entirely (c
 |-----------|---------|---------|
 | Entity guidance | Domain-specific instructions appended to entity extraction prompt | Pass 1 |
 | Relationship guidance | Domain-specific instructions appended to relationship extraction prompt | Pass 2 |
-| Node templates | Entity type definitions (name + description) | Pass 1 prompt |
-| Edge templates | Relationship type definitions | Pass 2 prompt |
+| Node templates (the floor) and subtypes (packs) | The core types, each with every pack's subtypes of it | Pass 1 prompt |
+| Edge templates | The core relationship labels, then each pack's extra ones | Pass 2 prompt |
 | Examples | Few-shot examples for entity and relationship extraction | Both passes |
 | Entity exclusions | Categories of things the LLM should skip | Pass 1 prompt + code-level filter |
-| Normalization rules | Type correction rules applied post-extraction | Post-processing |
+| Type aliases and rescue keywords | Map a written type onto a subtype or a core type (the type rescue) | Post-processing |
 | Extraction limits | Override global relationship density caps | Post-processing |
-| Type compatibility | Groups of entity types that can be merged during dedup | Deduplication |
+| Core types | Same-name entities merge only within one core type (two subtypes of one core type are one entity) | Deduplication |
 | Title words | Honorifics/titles to exclude from name matching during dedup | Deduplication |
-| Evidence validation mode | Per-domain override for evidence strictness | Filtering |
-| Strict entity types | Whether to enforce template-only types | Filtering |
-| `system_prompt` | Optional domain-level system prompt override (Phase 6; see below) | Both passes |
 
 #### Phase 6: System-prompt customization (2026-05-08)
 
-The `ExtractionSettings.system_prompt` setting and its domain-level
-counterpart let operators replace the default extraction system prompt
-entirely:
-
-- **Global setting** — `ExtractionSettings.system_prompt` is a plain string whose default *is* the built-in extraction system prompt. Editing it changes the system prompt sent with every LLM extraction call globally (there is no null/unset state).
-- **Domain override** — the domain's JSON-LD can set `extraction_overrides.system_prompt` to a domain-specific string, which takes precedence over the global value.
+The `ExtractionSettings.system_prompt` setting lets operators replace the
+default extraction system prompt entirely: it is a plain string whose default
+*is* the built-in extraction system prompt, and editing it changes the system
+prompt sent with every LLM extraction call (there is no null/unset state). A
+pack cannot override it: `extraction_overrides` is a removed key
+(`REMOVED_KEYS` in `extraction/domains/config_schema.py`), and a pack that
+declares it is refused at load.
 
 This is useful for operators running models that have been fine-tuned with
 domain-specific system prompts, or for A/B testing prompt variants.
@@ -225,13 +223,14 @@ Every entity and relationship must reference the sentence(s) that support it via
 The `ENTITY_HARVEST_TEMPLATE` includes:
 
 1. Numbered sentences from the chunk
-2. Node template definitions from the domain
-3. Strict type enforcement instruction (if domain enables it)
-4. Entity extraction guidelines (named entities only, proper names, rich descriptions, alias rules)
-5. Domain-specific entity exclusion rules
-6. A worked example showing E| and P| lines
-7. Domain-specific entity guidance (appended if available)
-8. Domain-specific entity examples (appended if available)
+2. The KNOWN ENTITIES block, from the source's second group on: the named entities the earlier groups produced (name, type, aliases but never a single word such as a diminutive or a given name alone, nor one opening with a possessive such as "my wife", up to three relation phrases), leaving out any record the filters kept but flagged (unevidenced, low plausibility, an excluded name, an unplaced type, or a listed name the name guard below could not support; a record that only lost a crossed alias is listed), at most `extraction.known_entities_limit` lines, so the model writes a later "the regiment" by the name an earlier group gave it; two guards in the filtering step drop an alias that names another listed entity and demote a listed name the cited sentences do not support
+3. Node template definitions from the domain
+4. Strict type enforcement instruction (if domain enables it)
+5. Entity extraction guidelines (names as the text writes them, rich descriptions, alias rules)
+6. Domain-specific entity exclusion rules
+7. A worked example showing E| and P| lines
+8. Domain-specific entity guidance (appended if available)
+9. Domain-specific entity examples (appended if available)
 
 **Pass 2 (Relationship Harvest):**
 
@@ -257,10 +256,12 @@ After Pass 2 parses R| lines, each relationship's type is validated against the 
 
 When a match is found, the relationship type is **rewritten** to the canonical template name. If no match is found, the behavior depends on the `strict_edge_type_constraints` setting:
 
-- **`false`** (default) -- unmatched types fall through and are kept as-is
-- **`true`** -- unmatched types cause the relationship to be dropped
+- **`false`** -- unmatched types fall through and are kept as-is
+- **`true`** (every extraction plan since October 2026) -- an unmatched type is kept as `related_to`, flagged `properties.unmatched_label: true` with the label as written under `properties.written_label`
 
-The same setting also controls **source/target entity type validation**. When edge templates define `source_types` and `target_types`, the endpoint entity types are checked against those constraints. When `strict_edge_type_constraints` is `false` (default), source/target type mismatches also fall through -- the relationship is kept even if the endpoint entity types don't match the template. When `true`, mismatches cause the relationship to be dropped.
+The same setting also controls **source/target entity type validation**. When edge templates define `source_types` and `target_types`, the endpoint entity types are checked against those constraints, compared as core types. When `strict_edge_type_constraints` is `false`, source/target type mismatches fall through -- the relationship is kept even if the endpoint entity types don't match the template. When `true`, a mismatch is kept with its label, flagged `properties.type_mismatch: true` with the reason under `properties.type_mismatch_reason` ("parent_of takes a source of type Person, not Location").
+
+Keep, flag, never delete (October 2026): until then strict mode dropped both, justification and all. Nothing is dropped now; the flagged relationships rank last in chat retrieval, with a capped one, and the graph canvas draws them thin. The `relationship_type_constraint` stage of the filtering log counts them under `counts.unmatched_label` and `counts.type_mismatch` (its `removed_count` is 0), and the source counts them in `relationships_unmatched_label_kept` and `relationships_type_mismatch_kept`; `relationships_dropped_type_unmatched` now counts the two together. Replayed over the v3 *War and Peace* graph (252 edges) under the floor's and the literary pack's constraints, the check refuses 9, every one the extraction's own type mistake; they are kept flagged and none is dropped.
 
 This fuzzy matching significantly improves extraction quality because LLMs frequently produce slight variations of the intended relationship types (e.g., `"located_in"` vs `"located_at"`, `"member_of"` vs `"is_member_of"`).
 
@@ -268,7 +269,7 @@ This fuzzy matching significantly improves extraction quality because LLMs frequ
 
 When source/target entity types don't match the edge template's constraints, the pipeline attempts to auto-correct the direction by swapping source and target. If the swapped direction satisfies the constraints, the relationship is kept with corrected direction. This handles a common LLM error where relationships are extracted backwards (e.g., "WAR AND PEACE -> wrote -> Leo Tolstoy" is corrected to "Leo Tolstoy -> wrote -> WAR AND PEACE").
 
-The correction logic runs before fall-through -- so a backwards relationship with a matching template gets fixed rather than passed through with wrong direction. If neither direction matches the constraints, the behavior follows `strict_edge_type_constraints` (drop when strict, fall through when not).
+The correction logic runs before fall-through -- so a backwards relationship with a matching template gets fixed rather than passed through with wrong direction. If neither direction matches the constraints, the behavior follows `strict_edge_type_constraints` (flagged `type_mismatch` when strict, fall through when not). With direction correction off (`enable_direction_correction: false`), a relationship that fits only reversed is kept as written, flagged `type_mismatch` (until October 2026 it was dropped).
 
 `RELATIONSHIPS_DIRECTION_CORRECTED` / `relationships_direction_corrected`
 counts every detected wrong-direction relationship regardless of the
@@ -302,40 +303,109 @@ Between pass 1 and pass 2, extracted entities go through multiple filtering stag
 
 ### Evidence Validation
 
-Five modes controlled by `evidence_validation_mode` (domains can override):
+Five modes controlled by the `evidence_validation_mode` extraction setting (a preset supplies the default; a pack cannot override it — the key is in `REMOVED_KEYS`):
 
 | Mode | Entity Check | Relationship Check |
 |------|-------------|-------------------|
-| `strict` | Full name or alias must appear as substring in referenced sentence(s) | Both entity names must appear |
-| `standard` (default) | Any significant word (>= 4 chars) from name/aliases must appear | At least one entity name must appear |
-| `narrative` | Accepts one entity name (no keyword required) or zero names with a relationship type keyword present in the sentence | One entity name or relationship type keyword must appear |
+| `strict` | Full name or alias appears in the referenced sentence(s) as consecutive whole words | Both endpoints named |
+| `standard` (default) | Strict, or a naming word (>= 4 letters) of the name or an alias appears as a whole word, read through the domain's naming conventions (surname forms, plurals, a title the chunk's one candidate holds) | Both endpoints named, or one named plus a word of the domain's `relation_vocabulary` for the label; a label with no vocabulary words (`two_endpoints_only`) needs both |
+| `narrative` | Standard, or a significant word of one of the entity's descriptors ("the little princess") | As standard, with the narrative naming |
 | `relaxed` | Valid `sent_ref` in bounds is sufficient | Valid `sent_ref` is sufficient |
 | `off` | Skipped entirely | Skipped entirely |
 
-The `narrative` mode sits between `standard` and `relaxed` and is designed for literary and narrative content where characters are often referred to by pronouns or descriptive phrases rather than by name. The `literary` domain uses this mode by default.
+#### A relationship without evidence is kept, flagged
+
+Keep, flag, never delete (October 2026). A relationship whose two endpoints
+are entities of its chunk but whose cited sentence does not state it is
+**kept**, not dropped: the evidence filter
+(`evidence_validator.sort_relationships_by_evidence`, the one decision; the
+verdict is `relationship_evidence`) sets `properties.unevidenced: true` and
+records why in `properties.evidence_reason`, one sentence naming the failure:
+
+| Failure | Reason it records (example) |
+|---------|-----------------------------|
+| `endpoints_not_named` | neither "Prince Vasíli" nor "Anna Pávlovna" is named in S15 |
+| `relation_not_stated` | "Princess Mary Bolkónskaya" is named in S19 but "Anna Pávlovna" is not, and no word of the domain's relation vocabulary for related_to stands there |
+| `label_needs_both_endpoints` | "St. Petersburg" is named in S6 but "Anna Pávlovna Schérer" is not, and located_in needs both endpoints named (the domain's relation vocabulary has no words for it) |
+| `endpoint_not_named` | (strict mode) one endpoint named, and strict needs both |
+| `known_endpoint_not_named` | "Count Varo Tesk" is not named in S4 (a known entity needs its name in the sentence) |
+| `no_sent_ref`, `unreadable_sent_ref`, `sent_ref_out_of_range` | it cites no sentence, or none its chunk has |
+
+`known_endpoint_not_named` means an endpoint is an entity the source already named in an
+earlier group, and the cited sentences (or the one before them) do not write its name or a
+distinctive alias of it: a title or kinship word alone ("the count", "her father") never names
+such an entity, and a name the guard kept but flagged names none of its edges.
+
+The edge is committed like any other, with its justification. The chat
+context leaves it out unless `graphrag.include_unevidenced_edges` is on
+([Search](../../user-guide/search.md#graphrag-tuning)), and the graph canvas
+draws it dashed, its detail panel showing the reason. A copy of a fact its
+chunk also states with evidence is folded into the evidenced copy (its
+justification kept in `properties.justifications`) instead of being listed
+twice, and the commit stores a fact written in several chunks as one edge
+that is unevidenced only when every copy is. Only a relationship with an
+endpoint that is no entity of its chunk is still dropped: it carries nothing.
+
+The rules that decide whether a sentence states a relationship are
+unchanged: what changed is what happens when one does not. On the B0
+*War and Peace* Book One packs this was the largest deletion in the
+pipeline, a third of what the model wrote (162 relationships on the
+literary arm, 105 on the generic one); replayed offline under the new
+filter, every one of them is kept (literary 157 flagged and 1 folded into
+its evidenced copy, generic 99 and 4) and none is dropped. The counters are
+`relationships_unevidenced_kept` (new) and `evidence_relationships_dropped`,
+which now counts only the invalid-endpoint drops
+([Quality Counters](quality-counters.md)).
+
+#### An entity without evidence is kept, flagged
+
+The same rule applies to the entity half of the filter (October 2026). An
+entity whose cited sentence does not name it (or that cites no sentence, or
+one outside its chunk) but that carries a description is **kept**, flagged
+`properties.unevidenced: true` (the key the relationships use) with the
+reason in `properties.evidence_reason` ("\"Anna Pávlovna\" is not named in
+S2"); `evidence_validator.sort_entities_by_evidence` is the one decision.
+Pass 2 then lists it, so its relationships can attach to it; chat retrieval
+ranks it after every undoubted entity of its standing, and the graph canvas
+groups it in its "Unresolved" region. Only an entity that carries nothing is
+dropped. The rules that decide whether a sentence names an entity are
+unchanged. The `entity_evidence_filter` stage counts the drops as its
+`removed_count` and the flags under `counts.unevidenced_kept`; the source's
+`entities_unevidenced_kept` counter adds the flags up, and
+`evidence_entities_dropped` now counts only the drops. On the B0 *War and
+Peace* packs the old rule dropped 1 literary entity and no generic one.
+
+The `narrative` mode sits between `standard` and `relaxed` and is designed for literary and narrative content where characters are often referred to by pronouns or descriptive phrases rather than by name. It comes with the `lenient` preset (the `biographical` and `historical` packs); the `literary` pack names no preset and so takes the floor's `balanced`, whose evidence mode is `standard`.
 
 The `off` mode bypasses both the entity and relationship evidence filters entirely. It is pinned automatically by the `unfiltered` filtering preset rather than configured directly.
 
 ### Exclusion Filter
 
-A code-level safety net that catches entities the LLM extracted despite being told to skip them in the prompt. Domain-specific exclusion rules (e.g., "bare titles without names") are applied as pattern matches against entity names and types.
+A code-level safety net that catches entities the LLM extracted despite being told to skip them in the prompt. Domain-specific exclusion rules (e.g., pronouns, page furniture, a raw number that belongs in a property) are applied as pattern matches against entity names and types.
+
+An exclusion names only what carries no fact. A record that carries evidence is kept and flagged, never dropped: an entity whose name matches an exclusion example and that carries a description, or a reference that says something of its own, is kept flagged `properties.excluded_name: true` with the rule that matched under `properties.excluded_by` (until October 2026 a non-person one was dropped); only one carrying nothing is dropped. The `entity_exclusion_filter` stage counts the flags under `counts.excluded_name_kept` and the source's `excluded_entities_kept` counter adds them up. The prompt is held to the same rule: no shipped domain tells the model to skip a person called only by a title or a role ("the count", "the plaintiff"). The floor's TITLES rule says to write the name when the passage gives one and the title as the passage writes it when it does not, and the deduplication folds or flags that reference. A guard test (`test_prompt_content_guards.py`) fails on an exclusion that is not on its reviewed list, or on guidance that tells the model to leave out a record carrying a fact: a bare title, a role word, "minor", "only the main", "unless", or a limit on how many.
 
 ### Type Rescue
 
-When a domain enables `strict_entity_types`, entities with types not in the domain's template list are processed through a rescue system before being discarded:
+Every entity leaves the per-chunk filters typed as one of the floor's eight core types (Person, Organization, Location, Event, Work, Concept, Object, Group), with a pack's subtype kept as the `entity_subtype` property. The rescue always runs, and reads what the model wrote in the type column in this order:
 
-1. **Normalization rules** -- if the invalid type matches a keyword pattern, remap to the correct type (e.g., "Philosophical Idea" -> "Concept")
-2. **Property-type mapping** -- absorb the entity as a property on a related entity (e.g., "Personality Trait" -> `Character.personality_traits`)
+1. **An exact core type** is itself. **`Core/subtype`**, the form the prompt teaches (each core type's line lists its subtypes as the slugs to write, `(subtypes: author, character, narrator — write Person/author)`), is the subtype's core type with that subtype: `Person/character` is Person / `character`, and `Location/character` is Person / `character` too (the subtype's own core type wins over the one written). A subtype no selected pack offers (`Person/wizard`) is kept on the written core type, flagged `properties.unplaced_type: true` with `properties.written_type` `Person/wizard`, and counted under `unplaced_subtype`.
+2. **A pack's alias** (`type_aliases`, exact key) is read as its target: literary's `Historical Figure` is its `Character` subtype.
+3. **A name the mapping table knows** gives its core type and subtype (`Character` → Person / `character`, `Military Unit` → Organization / `military_unit`): the selected packs' own rows first (news's `Publication` is an outlet, an Organization), then the shared row, then the packs' own subtype names.
+4. **The selected packs' rescue keywords** (each subtype's `rescue_keywords`, then the pack's `core_rescue_keywords`), matched as whole words in the description and then the written name, give the subtype or core type they belong to: under literary, `Countess` is Person / `character` and `Battle` is Event.
+5. **The floor's normalization keywords**, matched the same way, give a core type with no subtype.
+6. **A reference that says something of its own**, such as `the count` or `Natásha's mother`, is typed Person when its own words name a person (a title, or a relation or role word).
 
-:::note[Phase 6: `enable_type_rescue` gating (2026-05-08)]
+An empty type column states no type, so only the keywords in its description, or the reference rule, can rescue it. A pronoun (`he`, `she`, `a man`, `a woman`) is never a rescue keyword. Any other entity is kept as a `Concept`, flagged `properties.unplaced_type: true` with the type as written under `properties.written_type`, and counted under `unknown_type` in the `type_rescue` stage of the chunk's filtering log and in the source's `unplaced_type_entities_flagged` counter (until October 2026 it was dropped, description and all). The exact deduplication reads such a Concept as no type: a mention of `Natásha` whose type column was empty joins the `Natásha` the other mentions typed Person, when the name has one core type. No entity is stored as `UNKNOWN`. The per-chunk filter and `rescue_type()` run the same ordered decision (`TypeVocabulary.decide`).
 
-The type rescue pass is gated on `FilteringConfig.enable_type_rescue`
-(default `True`). The `minimal` and `unfiltered` presets disable it
-automatically; domains and per-source filtering overrides can flip it via
-the standard preset/domain/source override chain. It is **not** an
+:::note[`enable_type_rescue` gates the salvage tiers only]
+
+`FilteringConfig.enable_type_rescue` (default `True`; the `minimal` and
+`unfiltered` presets turn it off) gates the rescue's two salvage tiers:
+dropping obvious junk (an empty name, a name equal to its type, a single
+stop word) and absorbing a property-like type into its target's property
+(`absorbs_types`). The core-type rescue itself always runs. It is **not** an
 `ExtractionSettings` key — setting it in `settings.yaml` fails validation.
-When disabled, the domain's `strict_entity_types` policy applies directly:
-entities with unrecognized types are dropped without a rescue attempt.
 
 :::
 
@@ -345,6 +415,18 @@ Catches LLM-hallucinated descriptive names that read like sentence fragments rat
 
 - `plausibility_threshold` -- for entity types that require proper named referents
 - `plausibility_threshold_non_named` -- for other entity types (more lenient)
+
+A name below the bar that carries evidence (a description or an evidence
+sentence) is **kept**, flagged `properties.low_plausibility: true` with its
+score under `properties.plausibility`; only one carrying nothing, and an
+empty name, is dropped. The `implausible_entity_filter` stage counts the
+drops as its `removed_count` and the flags under `counts.low_plausibility`,
+and the source's `plausibility_entities_flagged` counter adds them up. Until
+October 2026 every name below the bar was dropped, description and all
+(`conservatory`, `doll`, `drawing room` on a novel's first book). A record
+written under a reference that says something of its own (`the count`, and
+of any type `the army`, `the government`, `the village`) is never scored: it
+is kept and the deduplication flags it `descriptor_reference`.
 
 ## Chunk Result Aggregation
 
@@ -413,20 +495,11 @@ The final cleanup pass (`clean_descriptor_aliases()`) removes aliases that are d
 
 Before deduplication, `filter_structural_entities()` removes entities that represent document structure rather than meaningful content (chapters, sections, page headers). Domain configurations specify which entity types are considered structural and which are generic catch-all types.
 
-This step can be disabled per-domain via the `filter_structural_entities` extraction limit.
+A pack can disable this step with `enable_structural_filter: false` in its `extraction_limits` (the `FilteringConfig` field name; any other key is silently ignored).
 
 ## Type Normalization
 
-After deduplication, domain-specific `normalization_rules` are applied to fix entity types. Each rule maps a target type to a list of trigger keywords found in entity descriptions:
-
-```json
-{
-  "Character": ["a character", "protagonist", "antagonist"],
-  "Location": ["a place", "a city", "located in"]
-}
-```
-
-Generic types (defined per-domain) are also normalized when a more specific match is available.
+After deduplication, the floor's normalization keywords retype entities that carry a generic fallback type; packs declare no rules of their own. See [Type Normalization](./deduplication.md#type-normalization).
 
 ## Finalization
 
@@ -477,18 +550,20 @@ The `extraction_filtering_mode` setting selects a **preset** that controls which
 
 | Preset | Evidence | Type Constraints | Plausibility | Relationship Limits | Orphan Protection |
 |--------|----------|-----------------|--------------|--------------------|--------------------|
-| **`maximum`** | Full name/alias match | Drop on mismatch | Tighter thresholds | All active | On |
-| **`strict`** | Full name/alias match | Drop on mismatch | Standard thresholds | All active | On |
-| **`balanced`** (default) | Significant word match | Fall-through on mismatch | Standard thresholds | All active | On |
-| **`lenient`** | Lenient (pronoun-heavy prose) | Fall-through on mismatch | Lower thresholds | All active | On |
+| **`maximum`** | Full name/alias match | Flag on mismatch | Tighter thresholds | All active | Off |
+| **`strict`** | Full name/alias match | Flag on mismatch | Standard thresholds | All active | Off |
+| **`balanced`** (default) | Significant word match | Fall-through on mismatch | Standard thresholds | All active | Off |
+| **`lenient`** | Lenient (pronoun-heavy prose) | Fall-through on mismatch | Lower thresholds | All active | Off |
 | **`minimal`** | Relaxed (valid sent_ref only) | Disabled | Elevated limits | Most filters disabled | On |
-| **`unfiltered`** | Disabled | Disabled | Disabled | Data integrity only | N/A |
+| **`unfiltered`** | Disabled | Disabled | Disabled | Data integrity only | On |
+
+Orphan protection (`protect_orphans`) exempts an endpoint with fewer than 2 edges from the relationship caps and keeps, at commit, the orphan entities that carry neither a description nor an evidence sentence. An orphan that carries either is committed under every preset, flagged `properties.orphan` ([Commit](commit.md#orphan-entities-keep-flag-never-delete)).
 
 **`maximum`** enables all filters with the tightest thresholds. Evidence validation requires full name or alias substring matches. Plausibility threshold is tighter than `strict`. Best for cases where absolute precision is required.
 
-**`strict`** uses strict evidence validation and type constraints (dropping on mismatch) with standard plausibility thresholds and orphan protection. Best for factual and structured content where entities have formal names and relationships follow well-defined schemas.
+**`strict`** uses strict evidence validation and type constraints (flagging mismatches) with standard plausibility thresholds. Best for factual and structured content where entities have formal names and relationships follow well-defined schemas.
 
-**`balanced`** (the default) activates all filters with fall-through behavior -- unmatched relationship types and entity type mismatches are kept rather than dropped. Orphan protection prevents degree and ratio caps from disconnecting sparsely-connected entities. Suitable for most general content.
+**`balanced`** (the default) activates all filters with fall-through behavior -- unmatched relationship types and entity type mismatches are kept unflagged rather than flagged (an extraction plan runs the type check strict whatever the preset). Suitable for most general content.
 
 **`lenient`** uses narrative evidence validation designed for prose where characters are often referenced by pronouns or descriptive phrases rather than by name. Plausibility thresholds are lowered to accommodate literary naming conventions. All other filters remain active with fall-through behavior.
 
@@ -500,16 +575,16 @@ Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) ar
 
 ### Domain-to-Preset Mapping
 
-Each built-in domain maps to one of these presets. Of the 19 built-in domains, 11 need zero per-domain overrides:
+The floor and each built-in pack map to one of these presets:
 
-| Preset | Domains |
+| Preset | Floor and packs |
 |--------|---------|
-| **`balanced`** | generic, educational, financial, philosophical, political, technical, theological, design, reference |
-| **`strict`** | cybersecurity, legal, investigation, medical, scientific, intelligence |
-| **`lenient`** | literary, biographical, historical |
+| **`balanced`** | generic (the floor), design, educational, financial, philosophical, political, reference, technical, theological |
+| **`strict`** | cybersecurity, intelligence, investigation, legal, medical, scientific |
+| **`lenient`** | biographical, historical |
 | **`minimal`** | news |
 
-Domain configs declare their preset via the `extraction_filtering_mode` field. Specific filter values can still be overridden per-domain when needed -- the preset provides the baseline, and overrides are applied on top. For example, the literary domain raises `max_entity_degree` to 40 (from 30 in the `lenient` preset) for dense character-interaction scenes.
+The `literary` pack names no preset and takes the floor's. A source's packs give the preset when they name one (packs naming different presets fall back to the floor's). Specific filter values can still be overridden per pack via `extraction_limits` -- the preset provides the baseline, and overrides are applied on top, except that a pack's `loop_max_entity_count` and `minimum_alias_length` move with a mode the user chooses away from `balanced` ([Domain packs and the slider](../../reference/filtering-modes.md#domain-packs-and-the-slider)); the floor's `max_entity_degree` (80) and `max_same_source_type` (20) can only be raised.
 
 ### Override Hierarchy
 
@@ -526,8 +601,8 @@ Multiple layers of relationship limiting act as a **safety net** to prevent extr
 | Limit | Setting | Default | Description |
 |-------|---------|---------|-------------|
 | Ratio cap | `max_relationship_ratio` | 8.0 | Max relationships as a multiple of entity count |
-| Degree cap | `max_entity_degree` | 25 | Max relationships per entity (source + target combined) |
-| Source-type cap | `max_same_source_type` | 12 | Max relationships with the same (source, type) pair |
+| Degree cap | `max_entity_degree` | 80 (the floor's) | Max relationships per entity (source + target combined) |
+| Source-type cap | `max_same_source_type` | 20 (the floor's) | Max relationships with the same (source, type) pair |
 
 These defaults are intentionally generous. Primary extraction quality comes from evidence validation, type constraints, and deduplication -- the limits above only activate when those upstream filters are insufficient. All limits can be overridden per-domain via `extraction_limits`. When trimming is needed, lower-confidence relationships are dropped first.
 

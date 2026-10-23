@@ -3,17 +3,24 @@
 
 """MCP tool definitions for ChaosCypher.
 
-Defines the 36 tools exposed via MCP, each with a JSON Schema for input
-validation and a ``write_only`` flag used by ``get_tools_for_mode()`` to
-filter tools based on server access mode.
+Defines the tools exposed via MCP (``TOOL_DEFINITIONS``; its length is the
+count, which the public docs quote and ``test_public_docs_guards`` checks),
+each with a JSON Schema for input validation and a ``write_only`` flag used
+by ``get_tools()`` to filter tools based on server access mode.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, get_args
 
+from chaoscypher_core.benchmark.retrieval import RETRIEVAL_MODES
 from chaoscypher_core.mcp.benchmark.suites import SUITES, all_stages
+from chaoscypher_core.models import AnalysisDepth
+from chaoscypher_core.services.workflows.tools.engine.schema_registry import (
+    TEMPLATE_PROPERTY_ITEM_SCHEMA,
+)
 
 
 @dataclass(frozen=True)
@@ -212,6 +219,112 @@ _resolve_node = ToolDefinition(
         },
         "required": ["query"],
     },
+)
+
+_list_nodes = ToolDefinition(
+    name="list_nodes",
+    description=(
+        "List graph nodes without a query: every node, or the nodes of one template, "
+        "paged by skip and limit. Use it to see what a template holds."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "template_id": {
+                "type": "string",
+                "description": "A template's id or name; omitted lists every template's nodes.",
+            },
+            "skip": {
+                "type": "integer",
+                "description": "Nodes to skip (paging).",
+                "default": 0,
+                "minimum": 0,
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum nodes to return (1 to 200).",
+                "default": 50,
+                "minimum": 1,
+                "maximum": 200,
+            },
+        },
+        "required": [],
+    },
+)
+
+_remember = ToolDefinition(
+    name="remember",
+    description="Remember one sentence or note; it is dated and linked to what is known.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "text": {"type": "string", "description": "What to remember."},
+            "by": {"type": "string", "description": "Who says it."},
+            "scope": {"type": "string", "description": "A scope name."},
+            "valid_from": {"type": "string", "description": "YYYY-MM-DD."},
+            "about": {"type": "string", "description": "Names, comma-separated."},
+        },
+        "required": ["text"],
+    },
+    write_only=True,
+)
+
+_recall = ToolDefinition(
+    name="recall",
+    description="What is known about something, with who said it and when.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "A question or a name."},
+            "scope": {"type": "string", "description": "Only this scope."},
+            "as_of": {"type": "string", "description": "As of YYYY-MM-DD."},
+            "more": {"type": "boolean", "description": "A longer answer."},
+            "ids": {"type": "boolean", "description": "Append ids."},
+        },
+        "required": ["query"],
+    },
+)
+
+_list_memories = ToolDefinition(
+    name="list_memories",
+    description="The memories, newest first.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "scope": {"type": "string", "description": "Only this scope."},
+            "about": {"type": "string", "description": "About this name."},
+            "limit": {"type": "integer", "description": "At most (default 10)."},
+        },
+        "required": [],
+    },
+)
+
+_digest = ToolDefinition(
+    name="digest",
+    description="What changed since a date: added, replaced, forgotten.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "scope": {"type": "string", "description": "Only this scope."},
+            "since": {"type": "string", "description": "YYYY-MM-DD."},
+        },
+        "required": [],
+    },
+)
+
+_forget = ToolDefinition(
+    name="forget",
+    description="Forget a memory: preview by query, then confirm with its handle.",
+    input_schema={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "Words to match."},
+            "handle": {"type": "string", "description": "From the preview."},
+            "confirm": {"type": "boolean", "description": "Do it."},
+        },
+        "required": [],
+    },
+    write_only=True,
 )
 
 _create_node = ToolDefinition(
@@ -442,14 +555,7 @@ _create_template = ToolDefinition(
             },
             "properties": {
                 "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                        "data_type": {"type": "string"},
-                        "required": {"type": "boolean"},
-                    },
-                },
+                "items": TEMPLATE_PROPERTY_ITEM_SCHEMA,
                 "description": "Property definitions for the template.",
             },
         },
@@ -606,8 +712,10 @@ _get_summary_context = ToolDefinition(
 _get_document_status = ToolDefinition(
     name="get_document_status",
     description=(
-        "Get the processing status of all documents: queued, in-progress, "
-        "and completed uploads with their current pipeline stage."
+        "List the documents in the current database (newest 1000) with their "
+        "status and pipeline stage, plus any awaiting domain confirmation. "
+        "Files still waiting in the upload queue are not listed — use "
+        "wait_for_document with the file_id add_document returned."
     ),
     input_schema={
         "type": "object",
@@ -655,16 +763,26 @@ _add_document = ToolDefinition(
                     "relationships, 'quick' extracts only key entities. "
                     "Defaults to 'full'."
                 ),
-                "enum": ["quick", "full"],
+                "enum": list(get_args(AnalysisDepth)),
                 "default": "full",
+            },
+            "packs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Force the domain packs to extract with, on the floor every "
+                    'source has (e.g. ["historical", "literary"]; [] is the '
+                    "floor alone). When omitted, the packs are detected from "
+                    "content (recommended). Only set this if the user "
+                    "explicitly requests specific packs."
+                ),
             },
             "domain": {
                 "type": "string",
                 "description": (
-                    "Force a specific extraction domain. When omitted, "
-                    "domain is auto-detected from content (recommended). "
-                    "Only set this if the user explicitly requests a "
-                    "specific domain."
+                    "One pack to force, the single-name form of 'packs' "
+                    "('generic' is the floor alone, '__auto__' detects). Do not "
+                    "pass both 'packs' and 'domain'."
                 ),
             },
             "enable_normalization": {
@@ -736,14 +854,67 @@ _add_document = ToolDefinition(
     write_only=True,
 )
 
+_add_site = ToolDefinition(
+    name="add_site",
+    description=(
+        "Import every page of a documentation site from its address. Finds the "
+        "pages the way the site publishes them (its llms.txt, its sitemap, or "
+        "its links), answers how many it found, then in the background fetches "
+        "every page and indexes each for search as its own document. Stays on "
+        "the given site "
+        "and path, honours robots.txt, and fetches politely."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "The site's address, e.g. https://docs.example.com.",
+            },
+        },
+        "required": ["url"],
+    },
+    write_only=True,
+)
+
+_refresh_site = ToolDefinition(
+    name="refresh_site",
+    description=(
+        "Check an imported documentation site for updates: every page is "
+        "fetched again, only changed pages are re-imported, new pages are "
+        "added, and pages the site no longer lists are marked gone (kept). "
+        "The pages the site leaves out (passed as exclude before, or deleted "
+        "from it) stay out; the answer names them."
+    ),
+    input_schema={
+        "type": "object",
+        "properties": {
+            "site": {
+                "type": "string",
+                "description": "The site's address or title, as add_site named it.",
+            },
+            "exclude": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Page addresses to leave out from now on, replacing the site's "
+                    "list; [] brings every page back. Omit to keep the list."
+                ),
+            },
+        },
+        "required": ["site"],
+    },
+    write_only=True,
+)
+
 _confirm_extraction = ToolDefinition(
     name="confirm_extraction",
     description=(
-        "Confirm (and optionally override) the auto-detected extraction "
-        "domain for a source parked at 'awaiting_confirmation', then start "
-        "extraction. Omit 'domain' to accept the detected recommendation. "
+        "Confirm (and optionally override) the detected extraction packs "
+        "for a source parked at 'awaiting_confirmation', then start "
+        "extraction. Omit 'packs' to accept the detected proposal. "
         "Full extraction options may be overridden at confirmation time. "
-        "Returns success and the resolved domain; a source not in "
+        "Returns success and the forced packs; a source not in "
         "'awaiting_confirmation' is reported as a conflict."
     ),
     input_schema={
@@ -753,17 +924,25 @@ _confirm_extraction = ToolDefinition(
                 "type": "string",
                 "description": "ID of the source parked at awaiting_confirmation.",
             },
+            "packs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Override the proposed packs ([] is the floor alone). Omit "
+                    "to accept the packs detection proposed."
+                ),
+            },
             "domain": {
                 "type": "string",
                 "description": (
-                    "Override the detected domain. Omit to accept the "
-                    "recommended domain from detection."
+                    "One pack to force instead of the proposal, the single-name "
+                    "form of 'packs'. Do not pass both."
                 ),
             },
             "analysis_depth": {
                 "type": "string",
                 "description": "Extraction depth override.",
-                "enum": ["quick", "full"],
+                "enum": list(get_args(AnalysisDepth)),
             },
             "filtering_mode": {
                 "type": "string",
@@ -1042,6 +1221,17 @@ _start_benchmark = ToolDefinition(
                     "(defaults to the only one installed)."
                 ),
             },
+            "retrieval": {
+                "type": "string",
+                "enum": list(RETRIEVAL_MODES),
+                "description": (
+                    "Grounded chat only: the retrieval rung the context comes from. "
+                    "'graphrag' (default) is the product's search; 'hybrid' is its chunk "
+                    "search without the graph; 'naive' is a plain vector index over the "
+                    "corpus (LlamaIndex). The leaderboard's retrieval comparison runs all "
+                    "three; the chat column counts graphrag runs only."
+                ),
+            },
             "client": {
                 "type": "string",
                 "description": (
@@ -1214,6 +1404,13 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     _get_node,
     _get_node_context,
     _resolve_node,
+    _list_nodes,
+    # The memory tools (recall, list_memories and digest read; remember writes)
+    _recall,
+    _list_memories,
+    _digest,
+    _remember,
+    _forget,
     # Node operations (write)
     _create_node,
     _update_node,
@@ -1239,6 +1436,8 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
     _get_document_status,
     # MCP-specific write tools
     _add_document,
+    _add_site,
+    _refresh_site,
     _wait_for_document,
     _remove_document,
     _confirm_extraction,
@@ -1257,18 +1456,46 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = (
 )
 
 
-def get_tools_for_mode(mode: Literal["read", "write"]) -> tuple[ToolDefinition, ...]:
-    """Return tool definitions filtered by access mode.
+TOOL_PROFILES: dict[str, tuple[str, ...] | None] = {
+    "full": None,
+    "memory": ("remember", "recall", "forget", "list_memories", "digest"),
+}
+"""The named tool profiles: ``None`` serves every definition; a tuple names the served tools.
+
+The ``memory`` profile is the surface an agent memory client sees (spec decision 1): five
+tools, so a small model's tool list stays short. A name here before its tool is registered is
+tolerated (the slices land one tool at a time); ``get_tools`` serves what the registry has.
+"""
+
+
+def get_tools(
+    mode: Literal["read", "write"],
+    profile: str = "full",
+    tools: Sequence[str] = (),
+) -> tuple[ToolDefinition, ...]:
+    """The tool definitions a server serves: the profile, then the mode, then the allowlist.
 
     Args:
-        mode: ``"read"`` returns only read tools; ``"write"`` returns all tools.
+        mode: ``"read"`` drops the ``write_only`` definitions; ``"write"`` keeps all.
+        profile: a key of :data:`TOOL_PROFILES`; ``"full"`` is every definition.
+        tools: an allowlist of names narrowing the profile; empty means all of it.
 
     Returns:
-        Filtered tuple of tool definitions.
+        The served definitions, in registry order.
+
+    Raises:
+        KeyError: an unknown profile (``MCPSettings`` refuses one before it gets here).
     """
-    if mode == "write":
-        return TOOL_DEFINITIONS
-    return tuple(t for t in TOOL_DEFINITIONS if not t.write_only)
+    names = TOOL_PROFILES[profile]
+    served = (
+        TOOL_DEFINITIONS if names is None else tuple(t for t in TOOL_DEFINITIONS if t.name in names)
+    )
+    if mode == "read":
+        served = tuple(t for t in served if not t.write_only)
+    if tools:
+        allowed = set(tools)
+        served = tuple(t for t in served if t.name in allowed)
+    return served
 
 
 # ============================================================================

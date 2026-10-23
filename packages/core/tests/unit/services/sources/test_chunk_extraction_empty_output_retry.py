@@ -35,6 +35,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chaoscypher_core.settings import EngineSettings, ExtractionSettings
+
 
 def _make_adapter(
     chunk_content: str,
@@ -137,8 +139,9 @@ async def test_empty_output_on_substantive_chunk_triggers_retry() -> None:
     adapter = _make_adapter(chunk_content)
     settings = _make_settings()
 
-    engine_settings_mock = MagicMock()
-    engine_settings_mock.extraction.empty_output_retry_min_chars = 200
+    engine_settings_mock = EngineSettings(
+        extraction=ExtractionSettings(empty_output_retry_min_chars=200)
+    )
 
     with (
         patch(
@@ -207,8 +210,9 @@ async def test_empty_output_on_tiny_chunk_accepts_as_completed() -> None:
     adapter = _make_adapter(chunk_content)
     settings = _make_settings()
 
-    engine_settings_mock = MagicMock()
-    engine_settings_mock.extraction.empty_output_retry_min_chars = 200
+    engine_settings_mock = EngineSettings(
+        extraction=ExtractionSettings(empty_output_retry_min_chars=200)
+    )
 
     with (
         patch(

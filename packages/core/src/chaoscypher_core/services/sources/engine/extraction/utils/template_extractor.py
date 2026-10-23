@@ -12,6 +12,8 @@ from typing import Any
 
 import structlog
 
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import CORE_TYPES
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import committed_type
 from chaoscypher_core.templates.visuals import (
     resolve_edge_visuals,
     resolve_node_visuals,
@@ -25,7 +27,7 @@ class TemplateExtractor:
     """Generates template suggestions from extracted entities and relationships.
 
     Responsibilities:
-    - Generate node template suggestions from entity types
+    - Generate node template suggestions, one per core type present
     - Generate edge template suggestions from relationship types
     """
 
@@ -76,78 +78,84 @@ class TemplateExtractor:
     def generate_suggestions_from_entities(
         entities: list[dict[str, Any]],
         domain_templates: list[dict[str, Any]] | None = None,
+        subtype_visuals: dict[str, dict[str, str | None]] | None = None,
     ) -> list[dict[str, Any]]:
-        """Generate template suggestions from extracted entity types.
+        """One template suggestion per core type the entities carry (at most eight).
 
-        Per-Source Templates: Generates suggestions for ALL entity types found,
-        regardless of templates in other sources. Each source gets its own templates.
+        Per-source templates: each source gets its own, created by the commit
+        (``commit/template.py``). Spec 2026-10-07 § 6: a node's template is its
+        core type's (``Person``), its pack subtype (``character``) rides on the
+        node as ``properties.entity_subtype``. A record's type is read with
+        :func:`~chaoscypher_core.services.sources.engine.extraction.utils.type_rescue.committed_type`
+        (an old ``Character`` counts as Person); a record no core type answers
+        gets no template (the matcher's fallback).
 
         Args:
-            entities: List of extracted entities with 'type' field
-            domain_templates: Optional list of domain-specific template definitions
-                with 'name' and 'description' fields (from domain config)
+            entities: Extracted entities with a ``type`` field.
+            domain_templates: The floor's node templates (the core types),
+                for each suggestion's description, icon and colour.
+            subtype_visuals: ``{entity_subtype: {"icon", ...}}`` of the
+                source's packs (``DomainStack.subtype_visuals``): a subtype's
+                own icon is offered to the UI as ``subtype_icons``.
 
         Returns:
-            List of suggested templates with name, description, reason, and entity_count
+            Suggestions ``{name, description, reason, entity_count, icon,
+            color, subtypes}``, the most common core type first; ``subtypes``
+            counts the entities of each subtype, and ``subtype_icons`` (when
+            any) the subtypes' own icons.
 
         Example:
             >>> suggestions = TemplateExtractor.generate_suggestions_from_entities(
             ...     entities=[
-            ...         {"type": "Module", "name": "os"},
-            ...         {"type": "Module", "name": "sys"},
-            ...         {"type": "Class", "name": "Path"},
+            ...         {"type": "Person", "name": "Pierre", "properties": {"entity_subtype": "character"}},
+            ...         {"type": "Person", "name": "Tolstoy", "properties": {"entity_subtype": "author"}},
+            ...         {"type": "Location", "name": "Moscow"},
             ...     ]
             ... )
-            >>> print(suggestions)
-            [
-                {"name": "Module", "description": "Python module or code package", ...},
-                {"name": "Class", "description": "Object-oriented class definition", ...},
-            ]
+            >>> [s["name"] for s in suggestions]
+            ['Person', 'Location']
 
         """
-        # Aggregate entity types and counts
-        type_counts: dict[str, int] = {}
-        skip_types = ("unknown", "item")
+        counts: dict[str, int] = {}
+        subtypes: dict[str, dict[str, int]] = {}
         for entity in entities:
-            entity_type = entity.get("type", "").strip()
-            if entity_type and entity_type.lower() not in skip_types:
-                normalized_type = entity_type.title()
-                type_counts[normalized_type] = type_counts.get(normalized_type, 0) + 1
+            typed = committed_type(entity)
+            if typed is None:
+                continue
+            core, subtype = typed
+            counts[core] = counts.get(core, 0) + 1
+            if subtype:
+                by_subtype = subtypes.setdefault(core, {})
+                by_subtype[subtype] = by_subtype.get(subtype, 0) + 1
 
-        # Build domain template lookups (lowercase keys)
         domain_descriptions = TemplateExtractor._extract_domain_descriptions(domain_templates)
         domain_visuals = TemplateExtractor._extract_domain_visuals(domain_templates)
+        own_icons = {
+            key: str(v["icon"]) for key, v in (subtype_visuals or {}).items() if v.get("icon")
+        }
 
-        # Types to skip in suggestions (too generic)
-        generic_types = ("item", "unknown", "thing", "object", "entity")
-
-        # Generate suggestions for all entity types (per-source templates)
         suggestions: list[dict[str, Any]] = []
-        for entity_type, count in sorted(type_counts.items(), key=lambda x: -x[1]):
-            type_lower = entity_type.lower()
-            if type_lower in generic_types:
-                continue
-
-            description = TemplateExtractor._get_description(entity_type, domain_descriptions)
-            reason = f"{count} {'entity' if count == 1 else 'entities'} extracted"
-
-            # Check domain config first, then fall back to generic mapping table
-            dv = domain_visuals.get(type_lower)
+        for core in sorted(counts, key=lambda c: (-counts[c], CORE_TYPES.index(c))):
+            count = counts[core]
+            dv = domain_visuals.get(core.lower())
             if dv and (dv.get("icon") or dv.get("color")):
                 visuals = {"icon": dv.get("icon"), "color": dv.get("color")}
             else:
-                visuals = resolve_node_visuals(entity_type)
-
-            suggestions.append(
-                {
-                    "name": entity_type,
-                    "description": description,
-                    "reason": reason,
-                    "entity_count": count,
-                    "icon": visuals["icon"],
-                    "color": visuals["color"],
-                }
-            )
+                visuals = resolve_node_visuals(core)
+            of_core = dict(sorted(subtypes.get(core, {}).items(), key=lambda kv: (-kv[1], kv[0])))
+            suggestion: dict[str, Any] = {
+                "name": core,
+                "description": TemplateExtractor._get_description(core, domain_descriptions),
+                "reason": f"{count} {'entity' if count == 1 else 'entities'} extracted",
+                "entity_count": count,
+                "icon": visuals["icon"],
+                "color": visuals["color"],
+                "subtypes": of_core,
+            }
+            icons = {key: own_icons[key] for key in of_core if key in own_icons}
+            if icons:
+                suggestion["subtype_icons"] = icons
+            suggestions.append(suggestion)
 
         if suggestions:
             logger.info(

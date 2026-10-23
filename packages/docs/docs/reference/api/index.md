@@ -310,6 +310,7 @@ Request-body validation failures return `422` with:
 | [Pause](pause.md) | `/sources`, `/system/processing` | Per-source and system-wide pause / resume controls |
 | [Settings](settings.md) | `/settings` | Application configuration |
 | [Backup](backup.md) | `/backup` | Database backup operations |
+| [Cache](cache.md) | `/cache` | LLM completion and embedding caches: settings, size, hits, clearing |
 | [Logs](logs.md) | `/logs` | Container service logs (all-in-one deployment) |
 | [Diagnostics](diagnostics.md) | `/diagnostics` | Diagnostic bundle export for troubleshooting |
 | [Edition](edition.md) | `/edition` | Edition info, license status, and feature list |

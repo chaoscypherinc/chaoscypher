@@ -35,9 +35,13 @@ from chaoscypher_core.services.workflows.tools.engine.handlers.template_handlers
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.ports.graph import GraphRepositoryProtocol
     from chaoscypher_core.ports.index import IndexingProtocol
     from chaoscypher_core.ports.search import SearchRepositoryProtocol
+    from chaoscypher_core.services.workflows.tools.engine.handlers.question_shape import (
+        ChatCallback,
+    )
     from chaoscypher_core.services.workflows.tools.engine.registry import ToolRegistry
     from chaoscypher_core.settings import EngineSettings
 
@@ -59,6 +63,7 @@ class ToolExecutorService:
         "get_node_edges",
         "traverse_path",
         "resolve_node",
+        "list_nodes",
         "create_node",
         "update_node",
         "create_edge",
@@ -77,12 +82,13 @@ class ToolExecutorService:
         search_repository: SearchRepositoryProtocol,
         indexing_repository: IndexingProtocol | None = None,
         embedding_callback: Callable | None = None,
-        llm_chat_callback: Callable | None = None,
+        llm_chat_callback: ChatCallback | None = None,
         research_agent_callback: Callable | None = None,
         search_settings: Any | None = None,
         engine_settings: EngineSettings | None = None,
         scope: dict[str, Any] | None = None,
         source_storage: Any | None = None,
+        embedding_provider: EmbeddingProviderProtocol | None = None,
     ):
         """Initialize tool executor service.
 
@@ -91,12 +97,16 @@ class ToolExecutorService:
             search_repository: SearchRepository implementation
             indexing_repository: Optional IndexingProtocol for chunk operations
             embedding_callback: Optional async callback for generating embeddings
-            llm_chat_callback: Optional async callback for LLM chat completions
+            llm_chat_callback: The tools' chat model (the summarize tool, the
+                shape router): a ``ChatCallback`` answering ``{"content": ...}``,
+                built with ``chat_callbacks``
             research_agent_callback: Optional callback for research agent (backend-specific)
             search_settings: Optional SearchSettings for reranking configuration
             engine_settings: Optional full engine settings for summarize handler
             scope: Optional scope constraints (e.g. {"source_ids": [...]})
             source_storage: Optional SourceStorageProtocol for citation lookups
+            embedding_provider: The provider that embeds a node written through the
+                tools (handed to ``NodeToolHandlers``); None indexes keywords alone
 
         """
         self.scope = scope or {}
@@ -110,6 +120,7 @@ class ToolExecutorService:
             indexing_repository,
             embedding_callback=embedding_callback,
             search_settings=search_settings,
+            embedding_provider=embedding_provider,
         )
         self.edge_handlers = EdgeToolHandlers(graph_repository)
 
@@ -139,6 +150,18 @@ class ToolExecutorService:
             settings=summarize_settings,
             scope=scope,
         )
+        if engine_settings is not None:
+            # The levers the chat model answers best with (graphrag_profiles):
+            # resolved once per executor, for the model the settings name.
+            from chaoscypher_core.graphrag_profiles import chat_model_of, resolve_graphrag_profile
+
+            engine_settings = engine_settings.model_copy(
+                update={
+                    "graphrag": resolve_graphrag_profile(
+                        engine_settings.graphrag, model=chat_model_of(engine_settings.llm)
+                    )
+                }
+            )
         self.graphrag_handlers = GraphRAGToolHandlers(
             graph_repository=graph_repository,
             search_repository=search_repository,
@@ -147,6 +170,7 @@ class ToolExecutorService:
             embedding_callback=embedding_callback,
             settings=engine_settings,
             database_name=scope.get("database_name", "default") if scope else "default",
+            chat_callback=llm_chat_callback,
         )
 
         # Strategy pattern: Tool name -> handler method (O(1) lookup)
@@ -159,6 +183,7 @@ class ToolExecutorService:
             "get_node": self.node_handlers.get_node,
             "get_node_context": self.node_handlers.get_node_context,
             "resolve_node": self.node_handlers.resolve_node,
+            "list_nodes": self.node_handlers.list_nodes,
             "create_node": self.node_handlers.create_node,
             "update_node": self.node_handlers.update_node,
             "delete_node": self.node_handlers.delete_node,

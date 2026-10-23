@@ -13,10 +13,12 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Response, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, model_validator
 
+from chaoscypher_core.models import AnalysisDepth
 from chaoscypher_cortex.features.sources.api import get_source_service
 from chaoscypher_cortex.features.sources.models import (
+    EntityDegreeOverride,
     ExtractionStatusResponse,
     ExtractionTaskChartPoint,
     ExtractionTaskListResponse,
@@ -25,8 +27,9 @@ from chaoscypher_cortex.features.sources.models import (
     FilteringLogResponse,
     FilteringMode,
 )
+from chaoscypher_cortex.features.sources.packs import PacksFields
 from chaoscypher_cortex.shared.api.dependencies import (
-    PageParams,  # noqa: TC001 - FastAPI runtime dep
+    PageParams,
 )
 from chaoscypher_cortex.shared.api.errors import (
     raise_if_not_found,
@@ -41,7 +44,7 @@ from chaoscypher_cortex.shared.api.responses import (
     SERVICE_UNAVAILABLE_RESPONSE,
 )
 from chaoscypher_cortex.shared.auth.dependencies import (
-    CurrentUsername,  # noqa: TC001 - FastAPI runtime dep
+    CurrentUsername,
 )
 
 
@@ -58,11 +61,10 @@ router = APIRouter()
 # ================================
 
 
-class TriggerExtractionRequest(BaseModel):
-    """Request model for triggering manual extraction on a source."""
+class TriggerExtractionRequest(PacksFields):
+    """Request model for triggering manual extraction on a source (``packs`` / ``domain``: :class:`PacksFields`)."""
 
-    analysis_depth: str = "full"
-    domain: str | None = None
+    analysis_depth: AnalysisDepth = "full"
     force: bool = False
     filtering_mode: FilteringMode | None = None
     content_filtering: bool = True
@@ -70,18 +72,18 @@ class TriggerExtractionRequest(BaseModel):
     protect_orphans: bool | None = None
     # Phase 6 (2026-05-08): per-source inverse-relationships toggle and degree cap.
     enable_inverse_relationships: bool | None = None
-    max_entity_degree_override: int | None = None
+    max_entity_degree_override: EntityDegreeOverride | None = None
 
 
-class ConfirmExtractionRequest(BaseModel):
-    """Confirm a parked source's domain + extraction options before extraction.
+class ConfirmExtractionRequest(PacksFields):
+    """Confirm a parked source's packs + extraction options before extraction.
 
     Mirrors TriggerExtractionRequest (the editable extraction options) minus
     ``force`` — confirm always re-resolves config via the create path.
+    ``packs`` / ``domain`` (:class:`PacksFields`) omitted accepts the proposal.
     """
 
-    analysis_depth: str = "full"
-    domain: str | None = None
+    analysis_depth: AnalysisDepth = "full"
     filtering_mode: FilteringMode | None = None
     # Tri-state: None (default) = leave the persisted upload-time value as-is;
     # True/False = explicit override. A non-optional default would silently
@@ -91,29 +93,26 @@ class ConfirmExtractionRequest(BaseModel):
     protect_orphans: bool | None = None
     # Phase 6 (2026-05-08): per-source inverse-relationships toggle and degree cap.
     enable_inverse_relationships: bool | None = None
-    max_entity_degree_override: int | None = None
-
-    @field_validator("max_entity_degree_override")
-    @classmethod
-    def _reject_nonpositive_degree(cls, v: int | None) -> int | None:
-        """A degree cap must be a positive int (matches TriggerExtractionRequest)."""
-        if v is not None and v <= 0:
-            msg = "max_entity_degree_override must be a positive integer"
-            raise ValueError(msg)
-        return v
+    max_entity_degree_override: EntityDegreeOverride | None = None
 
 
-class ReclassifyRequest(BaseModel):
-    """Request model for reclassifying a source under a different domain.
+class ReclassifyRequest(PacksFields):
+    """Request model for reclassifying a source under different packs.
 
     Reclassification resets any prior extraction state (for committed sources)
-    and queues a new extraction pass with the specified domain. Use this
-    instead of passing ``force_domain`` at upload time — decoupling domain
-    selection from the upload flow lets you correct the domain after the
-    source has been indexed and inspected.
+    and queues a new extraction pass with the specified packs (``packs``, or
+    ``domain`` as one element; one of them is required). Use this instead of
+    passing a domain at upload time — decoupling the choice from the upload
+    flow lets you correct it after the source has been indexed and inspected.
     """
 
-    domain: str
+    @model_validator(mode="after")
+    def _requires_a_choice(self) -> ReclassifyRequest:
+        """Reclassify names the packs (``[]`` is the floor alone): ``packs`` or ``domain``."""
+        if self.packs is None and not self.domain:
+            msg = "reclassify needs 'packs' (or 'domain')"
+            raise ValueError(msg)
+        return self
 
 
 class BulkConfirmExtractionRequest(BaseModel):
@@ -197,7 +196,8 @@ async def trigger_extraction(
 
     **Request Body (optional):**
     - ``analysis_depth``: Extraction depth - quick or full (default: full)
-    - ``domain``: Force a specific extraction domain (optional, auto-detected if omitted)
+    - ``packs``: Force the packs (optional, detected if omitted; ``[]`` is the floor alone)
+    - ``domain``: One pack, the single-element form of ``packs`` (optional)
     - ``force``: If True, allow re-extraction on already-committed sources (default: False)
 
     **Returns 202 Accepted** with source_id and status.
@@ -211,7 +211,7 @@ async def trigger_extraction(
     return await service.trigger_extraction(
         source_id=source_id,
         analysis_depth=body.analysis_depth,
-        domain=body.domain,
+        packs=body.forced_packs(),
         force=body.force,
         filtering_mode=body.filtering_mode,
         content_filtering=body.content_filtering,
@@ -260,7 +260,7 @@ async def confirm_extraction(
     return await service.confirm_extraction(
         source_id=source_id,
         analysis_depth=body.analysis_depth,
-        domain=body.domain,
+        packs=body.forced_packs(),
         filtering_mode=body.filtering_mode,
         content_filtering=body.content_filtering,
         enable_direction_correction=body.enable_direction_correction,
@@ -363,8 +363,9 @@ async def reclassify_source(
     (re-extraction with full reset).
 
     **Request body:**
-    - ``domain``: Domain name to use (e.g. ``"medical"``, ``"legal"``).
-      Use ``GET /api/v1/sources/domains`` to list available domains.
+    - ``packs``: The packs to use (e.g. ``["historical", "literary"]``; ``[]``
+      is the floor alone), or ``domain``: one pack (e.g. ``"medical"``).
+      Use ``GET /api/v1/sources/domains`` to list them (``role == "pack"``).
 
     **Returns 202 Accepted** with source_id and status.
 
@@ -375,7 +376,7 @@ async def reclassify_source(
     """
     return await service.reclassify_source(
         source_id=source_id,
-        domain=request.domain,
+        packs=request.forced_packs(),
     )
 
 

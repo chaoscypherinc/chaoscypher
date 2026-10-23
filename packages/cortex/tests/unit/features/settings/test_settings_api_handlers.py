@@ -98,7 +98,7 @@ async def test_update_settings_returns_warnings_and_notifies() -> None:
     service.get_settings.return_value = old
     service.update_settings = AsyncMock(return_value=updated)
     service.get_update_warnings.return_value = []
-    service.notify_workers_llm_settings_changed = AsyncMock()
+    service.notify_workers_of_sections = AsyncMock(return_value=True)
 
     body = SettingsUpdateRequest.model_validate({"llm": {"chat_provider": "ollama"}})
 
@@ -107,8 +107,9 @@ async def test_update_settings_returns_warnings_and_notifies() -> None:
     )
 
     service.update_settings.assert_awaited_once()
-    # llm changed → workers notified
-    service.notify_workers_llm_settings_changed.assert_awaited_once()
+    # the written sections go to the one worker-notification gate
+    service.notify_workers_of_sections.assert_awaited_once()
+    assert list(service.notify_workers_of_sections.await_args.args[0]) == ["llm"]
     assert result.warnings == []
 
 
@@ -120,7 +121,7 @@ async def test_update_settings_invalidates_singletons_on_embedding_change() -> N
     service.get_settings.return_value = Settings()
     service.update_settings = AsyncMock(return_value=Settings())
     service.get_update_warnings.return_value = []
-    service.notify_workers_llm_settings_changed = AsyncMock()
+    service.notify_workers_of_sections = AsyncMock(return_value=True)
 
     body = SettingsUpdateRequest.model_validate({"embedding": {"provider": "openai"}})
 
@@ -136,7 +137,7 @@ async def test_update_settings_invalidates_singletons_on_embedding_change() -> N
 
     inv_emb.assert_called_once()
     inv_search.assert_called_once()
-    service.notify_workers_llm_settings_changed.assert_awaited_once()
+    service.notify_workers_of_sections.assert_awaited_once()
 
 
 # ===========================================================================

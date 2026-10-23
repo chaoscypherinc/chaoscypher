@@ -84,14 +84,7 @@ brew install ffmpeg
 winget install ffmpeg
 ```
 
-The Whisper model downloads automatically on first use and is cached locally. Transcription runs on CPU by default -- no GPU is required. The model size, device and conversion timeout are settings under `loader:`:
-
-```yaml
-loader:
-  whisper_model_size: base        # tiny | base | small | medium | large (larger = more accurate, slower, more RAM)
-  whisper_device: cpu             # cpu | cuda | auto
-  whisper_timeout_seconds: 600    # hard cap for the ffmpeg conversion / audio extraction step
-```
+The Whisper model downloads automatically on first use and is cached locally. Transcription runs on CPU by default -- no GPU is required. The model size, device and conversion timeout are Python-API knobs on `EngineSettings(loader=LoaderSettings(...))` (`whisper_model_size`: tiny | base | small | medium | large; `whisper_device`: cpu | cuda | auto; `whisper_timeout_seconds`: the hard cap for the ffmpeg conversion step). There is no `loader:` group in `settings.yaml`: the app refuses to start on an unknown top-level key, so the server and CLI run on the defaults.
 
 **Image metadata extraction** works with Pillow (included). For image content understanding, the vision LLM service handles description separately from the loader.
 

@@ -195,6 +195,9 @@ def _display_import_results(stats: ImportStats) -> None:
     table.add_row("Sources imported", str(stats.sources_imported))
     table.add_row("Chunks imported", str(stats.chunks_imported))
     table.add_row("Citations imported", str(stats.citations_imported))
+    # A bundle from before the core entity types: what moved onto them.
+    for old_type, row in stats.core_types_mapped.items():
+        table.add_row(f"Mapped {old_type} -> {row['core_type']}", str(row["count"]))
 
     console.print(table)
 

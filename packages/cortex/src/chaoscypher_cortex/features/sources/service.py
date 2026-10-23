@@ -25,21 +25,33 @@ from chaoscypher_core.operations.importing.confirmation_gate import (
 from chaoscypher_core.operations.importing.confirmation_gate import (
     gate_decision,
     park_for_confirmation,
+    proposal_from_detection,
 )
 from chaoscypher_core.services.events import event_bus
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    chosen_packs_of,
+    pack_columns,
+)
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
 from chaoscypher_cortex.features.sources.mappers import (
     attach_quality_scores,
 )
+from chaoscypher_cortex.features.sources.packs import forced_packs
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
     from chaoscypher_core.app_config import Settings
+    from chaoscypher_core.models import ReleasedRows
+    from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
+    from chaoscypher_core.services.graph.management.release import LazyEmbedder
     from chaoscypher_core.services.graph.management.source import (
         SourceService as EngineSourceService,
     )
+    from chaoscypher_core.settings import EngineSettings
     from chaoscypher_cortex.features.sources.extraction_api import (
         BulkConfirmExtractionResponse,
     )
@@ -149,8 +161,10 @@ class SourceService:
         enabled: str | None = None,
         search: str | None = None,
         tag_id: str | None = None,
+        site_id: str | None = None,
+        in_site: bool | None = None,
     ) -> dict[str, Any]:
-        """List sources with filtering and pagination."""
+        """List sources with filtering and pagination (``site_id`` / ``in_site``: by site)."""
         if page_size is None:
             page_size = self.settings.pagination.default_page_size
         return self.engine_service.list_sources(
@@ -161,6 +175,8 @@ class SourceService:
             enabled=enabled,
             search=search,
             tag_id=tag_id,
+            site_id=site_id,
+            in_site=in_site,
         )
 
     async def trigger_extraction(
@@ -175,6 +191,7 @@ class SourceService:
         protect_orphans: bool | None = None,
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
+        packs: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Queue manual entity extraction for an indexed (or committed+force) source.
 
@@ -186,8 +203,8 @@ class SourceService:
         Args:
             source_id: Source file ID.
             analysis_depth: ``quick`` or ``full`` (default).
-            domain: Force a specific extraction domain; ``None`` or
-                ``__auto__`` auto-detects.
+            domain: One pack to force, the single-element form of ``packs``
+                (``generic`` the floor alone); ``None`` or ``__auto__`` detects.
             force: When True, allow re-extraction on an already-committed source.
             filtering_mode: Optional filtering-mode override.
             content_filtering: Enable chunk content-filtering.
@@ -203,13 +220,16 @@ class SourceService:
             max_entity_degree_override: When a positive int, persists the
                 per-source degree cap on the source row so the extraction
                 worker applies it. None leaves the current row value untouched.
+            packs: The packs to force (``[]`` the floor alone); with
+                ``domain`` too it is refused (``forced_packs``).
 
         Returns:
             ``{"source_id": source_id, "status": SourceStatus.EXTRACTING}``
 
         Raises:
             NotFoundError: Source does not exist.
-            ValidationError: Source status is not eligible for extraction.
+            ValidationError: Source status is not eligible for extraction, or
+                the packs are named twice / malformed.
             ExternalServiceError: No LLM provider configured.
             OperationError: Queue enqueue failed.
         """
@@ -220,6 +240,7 @@ class SourceService:
             ValidationError,
         )
 
+        forced = forced_packs(packs, domain)
         source = self.get_source(source_id)
         if source is None:
             raise NotFoundError("Source", source_id)
@@ -270,19 +291,20 @@ class SourceService:
         # Both writes run inside adapter.transaction() via force_re_extract so the
         # adapter-side reset rolls back on any exception.
         if force and source_status == SourceStatus.COMMITTED:
-            if self.graph_repository is None:
-                raise OperationError(
-                    "graph_repository required for force-re-extract on committed source",
-                    operation="re_extract",
-                )
-            force_re_extract(
+            released = force_re_extract(
                 source_id=source_id,
                 database_name=self.database_name,
                 storage_adapter=self.storage_adapter,
-                graph_repository=self.graph_repository,
+                settings=self._engine_settings(),
             )
+            # Now: the reset commit counters make the next commit skip its cleanup.
+            await self._refresh_released(released)
 
-        resolved_domain = domain if domain and domain != "__auto__" else None
+        # The forced packs as the columns a row and a queue payload carry
+        # (``forced_packs`` and the old ``forced_domain``); both None to detect.
+        forced_columns = pack_columns(
+            {"forced_packs": list(forced) if forced is not None else None}
+        )
 
         # Phase 4 (2026-05-08): persist enable_direction_correction and
         # protect_orphans on the source row when explicitly provided so the
@@ -307,19 +329,16 @@ class SourceService:
             )
 
         # Unified confirmation gate (design §3.2 / §6.2): evaluate gate_decision
-        # against an effective source view that already reflects the resolved
-        # forced_domain, so a caller that supplies an explicit domain is treated
-        # as a "forced" trigger and proceeds unconditionally, while an unforced
+        # against an effective source view that already reflects the forced
+        # packs, so a caller that supplies explicit packs is treated as a
+        # "forced" trigger and proceeds unconditionally, while an unforced
         # manual trigger on a gate-eligible source (confirmation_required=True,
         # not yet confirmed, not already past INDEXED) parks identically to the
-        # upload path. The effective_source merges resolved_domain in-memory so
+        # upload path. The effective_source merges the forced packs in-memory so
         # gate_decision sees the correct state without a round-trip to storage.
-        effective_source: dict[str, Any] = {
-            **source,
-            "forced_domain": resolved_domain
-            if resolved_domain is not None
-            else source.get("forced_domain"),
-        }
+        effective_source: dict[str, Any] = (
+            {**source, **forced_columns} if forced is not None else dict(source)
+        )
         if gate_decision(effective_source) == "park":
             from chaoscypher_core.app_config.engine_factory import (
                 build_engine_settings,
@@ -352,12 +371,7 @@ class SourceService:
                 filename=source.get("filename", ""),
                 metadata={},
             )
-            proposal = {
-                "ranking": domain_result.get("ranking", []),
-                "confidence": domain_result.get("confidence"),
-                "detected_domain": domain_result.get("detected_domain"),
-                "low_confidence": domain_result.get("low_confidence", False),
-            }
+            proposal = proposal_from_detection(domain_result)
             park_for_confirmation(self.storage_adapter, source_id, proposal)
             logger.info("manual_extraction_parked", source_id=source_id)
             return {"source_id": source_id, "status": SourceStatus.AWAITING_CONFIRMATION}
@@ -370,7 +384,7 @@ class SourceService:
             "auto_analyze": True,
             "analysis_depth": analysis_depth,
             "generate_embeddings": True,
-            "forced_domain": resolved_domain,
+            **forced_columns,
             "filtering_mode": filtering_mode,
             "content_filtering": content_filtering,
         }
@@ -400,7 +414,7 @@ class SourceService:
             "manual_extraction_triggered",
             source_id=source_id,
             analysis_depth=analysis_depth,
-            domain=resolved_domain,
+            packs=list(forced) if forced is not None else None,
             force=force,
         )
 
@@ -417,8 +431,12 @@ class SourceService:
         protect_orphans: bool | None = None,
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
+        packs: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Record a confirm decision regardless of where the source is — thin pass-through.
+
+        ``packs`` (or ``domain`` as one element) is the user's choice; neither
+        accepts the proposal's packs.
 
         Validates the source exists, then delegates to the **state-aware** core
         ``confirm_extraction`` gate primitive, which branches on the persisted
@@ -448,6 +466,7 @@ class SourceService:
         """
         from chaoscypher_core.exceptions import NotFoundError
 
+        chosen = forced_packs(packs, domain)
         source = self.get_source(source_id)
         if source is None:
             raise NotFoundError("Source", source_id)
@@ -458,7 +477,6 @@ class SourceService:
         # awaiting_confirmation so the wizard's confirm-before-park case works.
         pre_confirm_status = source.get("status")
 
-        resolved_domain = domain if domain and domain != "__auto__" else None
         # Build overrides with ONLY the keys actually supplied (drop None) so an
         # absent option leaves the persisted upload-time column as-is rather
         # than clobbering it. Writing the all-keys dict would NULL the NOT NULL
@@ -481,7 +499,7 @@ class SourceService:
         recorded = await confirm_extraction_gate(
             adapter=self.storage_adapter,
             file_id=source_id,
-            chosen_domain=resolved_domain,
+            chosen_packs=chosen,
             overrides=overrides,
         )
         # Parked branch (or its benign CAS-loss) lands at INDEXED; the pre-gate
@@ -495,7 +513,7 @@ class SourceService:
         logger.info(
             "source_extraction_confirmed",
             source_id=source_id,
-            domain=resolved_domain,
+            packs=list(chosen) if chosen is not None else None,
             recorded=recorded,
             status=result_status,
         )
@@ -537,11 +555,12 @@ class SourceService:
     async def reclassify_source(
         self,
         source_id: str,
-        domain: str,
+        domain: str | None = None,
         analysis_depth: str = "full",
         content_filtering: bool = True,
+        packs: Sequence[str] | None = None,
     ) -> dict[str, Any]:
-        """Reclassify a source under a different domain and queue re-extraction.
+        """Reclassify a source under different packs and queue re-extraction.
 
         Reclassification is a convenience wrapper around ``trigger_extraction``
         with ``force=True``. It accepts any source in ``indexed`` or ``committed``
@@ -551,12 +570,14 @@ class SourceService:
         - ``committed``: atomically resets graph artifacts + source state via
           ``force_re_extract`` then queues extraction.
 
-        The ``domain`` argument is always forwarded as ``forced_domain`` so
-        auto-detection is bypassed.
+        The ``packs`` (or ``domain`` as one element) are always forwarded as
+        the forced packs so auto-detection is bypassed.
 
         Args:
             source_id: Source file ID.
-            domain: Domain name to use (e.g. ``"medical"``, ``"legal"``).
+            domain: One pack to use (e.g. ``"medical"``), the single-element
+                form of ``packs``.
+            packs: The packs to use (``[]`` the floor alone).
             analysis_depth: ``quick`` or ``full`` (default).
             content_filtering: Enable chunk content-filtering.
 
@@ -579,6 +600,7 @@ class SourceService:
             source_id=source_id,
             analysis_depth=analysis_depth,
             domain=domain,
+            packs=packs,
             force=True,
             content_filtering=content_filtering,
         )
@@ -592,6 +614,8 @@ class SourceService:
         enabled: str | None = None,
         search: str | None = None,
         tag_id: str | None = None,
+        site_id: str | None = None,
+        in_site: bool | None = None,
     ) -> dict[str, Any]:
         """List sources with duration fields, tags (batched), and domain icons enriched.
 
@@ -619,6 +643,8 @@ class SourceService:
             enabled=enabled,
             search=search,
             tag_id=tag_id,
+            site_id=site_id,
+            in_site=in_site,
         )
 
         sources = [add_duration_fields(s) for s in result.get("sources", [])]
@@ -656,13 +682,66 @@ class SourceService:
             user_metadata=user_metadata,
         )
 
-    def delete_source(self, source_id: str) -> bool:
-        """Delete a source (hard delete) with cascade cleanup."""
-        result = self.engine_service.delete_source(
-            source_id,
-            graph_repo=self.graph_repository,
-            search_repo=self.search_repository,
+    def _engine_settings(self) -> EngineSettings | None:
+        """The engine settings the engine service deletes under: one set for every release path."""
+        return self.engine_service.settings
+
+    def _release_embedder(self) -> LazyEmbedder:
+        """The provider the post-release refresh re-embeds with, built only when a node went stale.
+
+        Built from the engine settings for this refresh alone, and closed after
+        it (``owned``); no settings, or a provider that cannot be built, is the
+        refresh's logged non-fatal failure.
+        """
+        from chaoscypher_core.adapters.embedding import create_embedding_provider
+        from chaoscypher_core.services.graph.management.release import LazyEmbedder
+
+        def build() -> EmbeddingProviderProtocol:
+            settings = self._engine_settings()
+            if settings is None:
+                msg = "no engine settings to build an embedding provider from"
+                raise ValueError(msg)
+            return create_embedding_provider(settings)
+
+        return LazyEmbedder(build=build, owned=True)
+
+    async def _refresh_released(self, released: ReleasedRows) -> None:
+        """After a release commits: its search rows and embeddings (``refresh_after_release``)."""
+        from chaoscypher_core.services.graph.management.release import refresh_after_release
+
+        await refresh_after_release(
+            self.storage_adapter,
+            self.database_name,
+            released,
+            embedder=self._release_embedder(),
+            search=self.search_repository,
         )
+
+    def delete_source(self, source_id: str, *, leave_out_of_site: bool = True) -> bool:
+        """Delete a source (hard delete) with cascade cleanup.
+
+        Runs in a worker thread (the API offloads it), so the post-release
+        refresh runs on its own event loop (``refresh_after_release_sync``).
+        A page of a docs site joins the pages the site leaves out unless
+        ``leave_out_of_site`` is False (the site is being deleted with it).
+        """
+        from chaoscypher_core.services.graph.management.release import (
+            refresh_after_release_sync,
+        )
+
+        deletion = self.engine_service.delete_source(
+            source_id,
+            search_repo=self.search_repository,
+            leave_out_of_site=leave_out_of_site,
+        )
+        refresh_after_release_sync(
+            self.storage_adapter,
+            self.database_name,
+            deletion.released,
+            embedder=self._release_embedder(),
+            search=self.search_repository,
+        )
+        result = deletion.deleted
 
         # Clean up rendered vision images
         if result:
@@ -1698,8 +1777,7 @@ class SourceService:
             NotFoundError: Source does not exist.
             ValidationError: Source status is not eligible for re-extract.
             ConflictError: Source is paused or system processing is paused.
-            OperationError: graph_repository missing for a COMMITTED source,
-                or queue dispatch failed.
+            OperationError: Queue dispatch failed.
             ExternalServiceError: No LLM provider configured.
         """
         from chaoscypher_core.exceptions import (
@@ -1758,20 +1836,17 @@ class SourceService:
 
         # Branch on current status to choose the right reset primitive.
         if source_status == SourceStatus.COMMITTED:
-            if self.graph_repository is None:
-                raise OperationError(
-                    "graph_repository required for re-extract on a committed source",
-                    operation="re_extract",
-                )
-            # force_re_extract is the atomic graph-delete + row-reset helper.
+            # force_re_extract is the atomic graph-release + row-reset helper.
             # It now clears commit_payload too (audit fix #F44), so the new
             # extraction starts from a fully clean slate.
-            force_re_extract(
+            released = force_re_extract(
                 source_id=source_id,
                 database_name=self.database_name,
                 storage_adapter=self.storage_adapter,
-                graph_repository=self.graph_repository,
+                settings=self._engine_settings(),
             )
+            # Now: the reset commit counters make the next commit skip its cleanup.
+            await self._refresh_released(released)
         elif source_status == SourceStatus.ERROR:
             # Errored source: use reset_for_retry which clears the error
             # bookkeeping and (with clear_commit_payload=True) the stale
@@ -1815,9 +1890,7 @@ class SourceService:
 
         # Build the file_info for OP_IMPORT_ANALYSIS — same shape as the
         # commit-only retry path so the worker sees a consistent payload.
-        forced_domain_value = source.get("forced_domain")
-        if not forced_domain_value and not source.get("extraction_domain_auto", True):
-            forced_domain_value = source.get("extraction_domain")
+        chosen = chosen_packs_of(source)
 
         analysis_depth = source.get("extraction_depth") or "full"
         file_info: dict[str, Any] = {
@@ -1828,7 +1901,7 @@ class SourceService:
             "auto_analyze": True,
             "analysis_depth": analysis_depth,
             "generate_embeddings": True,
-            "forced_domain": forced_domain_value,
+            **pack_columns({"forced_packs": list(chosen) if chosen is not None else None}),
             "content_filtering": True,
         }
 
@@ -1920,13 +1993,11 @@ class SourceService:
                 ensures the fetch failure leaves the row in ERROR (audit fix #H8).
 
         """
-        # Prefer forced_domain (set on the source row at upload time per fix #1).
-        # Fall back to extraction_domain when extraction has run and recorded a
-        # non-auto choice, preserving compat with rows persisted before the
-        # upload-time persistence fix.
-        forced_domain_value = source.get("forced_domain")
-        if not forced_domain_value and not source.get("extraction_domain_auto", True):
-            forced_domain_value = source.get("extraction_domain")
+        # Prefer the forced packs (set on the source row at upload time per
+        # fix #1); fall back to the extraction packs when extraction has run
+        # and recorded a non-auto choice, preserving compat with rows persisted
+        # before the upload-time persistence fix (``chosen_packs_of``).
+        chosen = chosen_packs_of(source)
 
         file_info: dict[str, Any] = {
             "id": source_id,
@@ -1936,7 +2007,7 @@ class SourceService:
             "auto_analyze": True,
             "analysis_depth": source.get("extraction_depth") or "full",
             "generate_embeddings": True,
-            "forced_domain": forced_domain_value,
+            **pack_columns({"forced_packs": list(chosen) if chosen is not None else None}),
             "content_filtering": True,
         }
 

@@ -188,6 +188,10 @@ LAZY_COMMANDS = {
     ),
     # MCP server
     "mcp": ("chaoscypher_cli.mcp.command:mcp", "Start MCP server over stdio"),
+    "memory": (
+        "chaoscypher_cli.commands.memory:memory",
+        "Export the memories the MCP memory tools store",
+    ),
     "mount": (
         "chaoscypher_cli.commands.mount:mount",
         "Pull a knowledge package and serve it over MCP",
@@ -235,6 +239,13 @@ _FIRST_RUN_SAFE_SUBCOMMANDS = frozenset(
         # answers the questions — no chat/extraction LLM is needed, so a
         # fresh `pipx install` must not be bounced into the setup wizard.
         "mount",
+        # `mcp` serves the graph to a host whose own model answers (Tsukumo's memory
+        # server, Claude Desktop): no chat or extraction LLM is needed either (2026-10-20;
+        # Tsukumo wrote `setup_completed: true` into every brain folder to get past this).
+        "mcp",
+        # `memory export` packs what the memory tools stored on such an install; it reads
+        # the database and asks no model either.
+        "memory",
         "health",
         "doctor",
         "diagnostics",

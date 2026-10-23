@@ -1,5 +1,11 @@
 name: CI
 
+# Where jobs run: the repository variable CI_RUNS_ON (a JSON label list, e.g.
+# '["self-hosted","home"]' on the dev repo's home runner); unset, GitHub-hosted
+# ubuntu-latest. Every CI-type workflow uses this one switch; publishing
+# workflows stay hosted (OIDC trusted publishing). Pinned by
+# packages/core/tests/unit/scripts/test_ci_config_guards.py.
+
 on:
   pull_request:
   push:
@@ -9,10 +15,16 @@ on:
 permissions:
   contents: read
 
+# A new push to a PR cancels its superseded run: the home fleet is four runners, and a stale run
+# holds them while the current one queues. Runs on main always finish.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   python-quality:
     name: Python Quality
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     # 30 (was 20): the Architecture-rules step now runs the full lint-claude
     # sweep (rule self-tests + import-linter + semgrep + AST checker), ~7 min
     # warm on top of ruff/mypy — 20 was tight on a cold runner.
@@ -28,7 +40,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen)
@@ -49,10 +60,119 @@ jobs:
         # same single-source-of-truth pattern as the security job.
         run: uv run python scripts/run_ci.py --steps lint-claude
 
+      - name: Secret scan
+        # detect-secrets over the tracked tree (and gitleaks too, where installed): the engine the
+        # routine sandbox and the public export gate use, so a finding fails here, on its own PR.
+        run: uv run python scripts/run_ci.py --steps lint-secrets
+
+  # The per-file test timings the shards pack by (the repo-root conftest, CI_TEST_DURATIONS):
+  # restored once here and handed to every shard, so all six pack from one record even when another
+  # run saves a newer one meanwhile; shards packed from two records could run a file twice or never.
+  test-timings:
+    name: Test timings for the shards
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    steps:
+      - name: Restore the latest recorded timings
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test-durations
+          key: test-durations-${{ github.run_id }}
+          restore-keys: test-durations-
+
+      # No record yet (or evicted): an empty one, and the shards pack by test count.
+      - name: Make sure a record exists
+        run: |
+          mkdir -p test-durations
+          ls test-durations/*.json >/dev/null 2>&1 || echo '{}' > test-durations/none.json
+
+      - name: Hand the record to the shards
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-durations
+          path: test-durations/
+          retention-days: 1
+          if-no-files-found: error
+
   python-tests:
-    name: Python Unit Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Sharded (CI_TEST_SHARD, the repo-root conftest; the matrix list is the one place the count
+    # lives): the whole suite took about 27 minutes on one 4-CPU home runner, past the timeout. Each
+    # shard keeps its coverage data; python-coverage combines them and holds the 80% gate. Six, not
+    # three, since the fleet grew to 12 runners across three servers (2026-10-16): a run's wall time
+    # is its slowest shard, which took 36 minutes of 40 at three.
+    name: Python Unit Tests (${{ matrix.shard }}/${{ strategy.job-total }})
+    needs: test-timings
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    # 40: a shard ends on the recipe tests, a few of which run the retrieval sample for minutes
+    # each (a known cost, tracked to be made fast); faulthandler names any one test past five
+    # minutes, so a real hang still shows.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+    env:
+      CI_TEST_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
+      COVERAGE_FILE: coverage-data/shard-${{ matrix.shard }}
+      CI_TEST_DURATIONS: test-durations
+      CI_TEST_DURATIONS_OUT: coverage-data/durations-shard-${{ matrix.shard }}.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Fetch the timings the shards pack by
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: test-durations
+          path: test-durations
+
+      # Some tests run the leaderboard page's TypeScript module under node (type stripping, the
+      # supported floor): a runner's system node (Ubuntu's, or the hosted image's 20) cannot.
+      - name: Set up Node (the supported floor)
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen)
+        run: uv sync --all-packages --extra dev --frozen
+
+      # faulthandler_timeout: a test past five minutes dumps every thread's stack, so a hang names
+      # itself instead of ending in a silent job timeout; --durations lists the slowest tests.
+      - name: Run this shard's unit tests with coverage (xdist parallel)
+        run: |
+          mkdir -p coverage-data
+          uv run pytest packages/core/tests packages/cortex/tests packages/cli/tests packages/neuron/tests -m "not e2e" --tb=short --import-mode=importlib \
+            -n auto \
+            --cov=packages/core/src/chaoscypher_core \
+            --cov=packages/cortex/src/chaoscypher_cortex \
+            --cov=packages/cli/src/chaoscypher_cli \
+            --cov=packages/neuron/src/chaoscypher_neuron \
+            --cov-report= \
+            --durations=40 \
+            -o faulthandler_timeout=300
+
+      - name: Keep the shard's coverage data
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: coverage-data-${{ matrix.shard }}
+          path: coverage-data/
+          retention-days: 1
+          if-no-files-found: error
+
+  python-coverage:
+    name: Python Coverage
+    needs: python-tests
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -64,23 +184,35 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen)
         run: uv sync --all-packages --extra dev --frozen
 
-      - name: Run unit tests with coverage (xdist parallel + Cobertura xml for diff-cover)
+      - name: Fetch every shard's coverage data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: coverage-data-*
+          path: coverage-data
+          merge-multiple: true
+
+      # Each shard wrote its files' seconds; together they are the next run's record.
+      - name: Gather this run's test timings
         run: |
-          uv run pytest packages/core/tests packages/cortex/tests packages/cli/tests packages/neuron/tests -m "not e2e" --tb=short --import-mode=importlib \
-            -n auto \
-            --cov=packages/core/src/chaoscypher_core \
-            --cov=packages/cortex/src/chaoscypher_cortex \
-            --cov=packages/cli/src/chaoscypher_cli \
-            --cov=packages/neuron/src/chaoscypher_neuron \
-            --cov-report=term \
-            --cov-report=xml:coverage.xml \
-            --cov-fail-under=80
+          mkdir -p test-durations
+          cp coverage-data/durations-shard-*.json test-durations/
+
+      - name: Save them for the next run's shards
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test-durations
+          key: test-durations-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Combine, gate at 80%, write Cobertura xml for diff-cover
+        run: |
+          uv run coverage combine coverage-data/shard-*
+          uv run coverage report --fail-under=80
+          uv run coverage xml -o coverage.xml
 
       - name: Diff coverage (advisory — >=90% on lines changed vs origin/main)
         if: github.event_name == 'pull_request'
@@ -99,7 +231,7 @@ jobs:
 
   frontend:
     name: Frontend (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -127,7 +259,6 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Install dependencies
@@ -154,7 +285,7 @@ jobs:
 
   security:
     name: Dependency Audits
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -167,14 +298,13 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: packages/interface/package-lock.json
 
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen, with dev extras for pip-audit)
@@ -194,7 +324,7 @@ jobs:
 
   public-gates:
     name: Public Gates (internal-ref scan, license policy, docs build)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -207,12 +337,11 @@ jobs:
       - name: Set up Node.js 24
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
 
       - name: Install uv
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
-          enable-cache: true
           cache-dependency-glob: uv.lock
 
       - name: Sync workspace (frozen, with dev extras for pip-licenses)
@@ -232,9 +361,46 @@ jobs:
         # is absent, which it is on the public tree.
         run: uv run python scripts/run_ci.py --steps lint-internal-refs,license-check,docs-build
 
+  remaining-gates:
+    name: Remaining gates (docstrings, dead code, bundle size, generated docs, CLI e2e)
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: packages/interface/package-lock.json
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          cache-dependency-glob: uv.lock
+
+      - name: Sync workspace (frozen, with dev extras)
+        run: uv sync --all-packages --extra dev --frozen
+
+      - name: Install frontend deps
+        working-directory: packages/interface
+        run: npm ci
+
+      - name: The run_ci steps no other job runs
+        # Single source of truth, as the security and public-gates jobs: these steps were in the
+        # pre-push gate only until 2026-10-15, when it became a fast tier and this job took them
+        # (test_run_ci_plan pins that every step of the full local plan runs somewhere in CI).
+        run: uv run python scripts/run_ci.py --steps types,docstrings,deadcode,bundle-size,docs-generated,e2e-cli
+
   docker-image:
     name: Production Image Build (image-relevant changes only)
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

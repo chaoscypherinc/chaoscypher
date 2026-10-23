@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 import uuid
 
-from chaoscypher_core.utils.id import generate_id
+from chaoscypher_core.utils.id import generate_hex_id, generate_id
 
 
 # RFC 4122 v4 UUID: 8-4-4-4-12 hex with the canonical version (4) +
@@ -80,3 +80,11 @@ def test_uuid_part_after_prefix_is_a_valid_v4() -> None:
     _, _, rest = raw.partition("_")
     parsed = uuid.UUID(rest)
     assert parsed.version == 4
+
+
+def test_hex_id_is_a_bare_32_char_v4_hex() -> None:
+    """``generate_hex_id`` → 32 lowercase hex chars, no dash or prefix (memory ids, whose prefixes are handles)."""
+    out = generate_hex_id()
+    assert re.fullmatch(r"[0-9a-f]{32}", out) is not None
+    assert uuid.UUID(hex=out).version == 4
+    assert generate_hex_id() != out

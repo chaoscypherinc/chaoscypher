@@ -34,6 +34,14 @@ class CurrentDatabaseResponse(BaseModel):
 
     current: str
     info: DatabaseResponse
+    notice: str | None = Field(
+        default=None,
+        description=(
+            "A one-line notice about this database, shown on the dashboard: set for a "
+            "database made before the core entity types (export it with the previous "
+            "version, update, import the export). Null otherwise."
+        ),
+    )
 
 
 class DatabaseCreateRequest(BaseModel):

@@ -41,9 +41,10 @@ def rebuild_database_bound_context(ctx: WorkerContext, settings: Settings) -> No
     Shared by boot (:func:`setup_shared`) and the settings-reload path.
     """
     from chaoscypher_core.adapters.sqlite import SqliteAdapter
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
+    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
     from chaoscypher_core.database.engine import get_engine
     from chaoscypher_core.queue.service import register_worker_adapter
+    from chaoscypher_core.repo_factories import get_transaction_graph_repository
     from chaoscypher_core.services.events import event_bus
 
     current_database = settings.current_database
@@ -74,7 +75,7 @@ def rebuild_database_bound_context(ctx: WorkerContext, settings: Settings) -> No
         msg = "SqliteAdapter.connect() did not initialise a session"
         raise RuntimeError(msg)
 
-    graph_repository = GraphRepository(worker_session, current_database)
+    graph_repository = get_transaction_graph_repository(storage_adapter, current_database)
 
     ctx["current_database"] = current_database
     ctx["search_repository"] = search_repository

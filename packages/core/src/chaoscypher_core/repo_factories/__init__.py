@@ -14,7 +14,10 @@ uses ``fastapi.Depends`` for HTTP-layer DI.
 """
 
 from chaoscypher_core.repo_factories.embedding_factory import get_embedding_service
-from chaoscypher_core.repo_factories.graph_factory import get_graph_repository
+from chaoscypher_core.repo_factories.graph_factory import (
+    get_graph_repository,
+    get_transaction_graph_repository,
+)
 from chaoscypher_core.repo_factories.search_factory import get_search_repository
 
 
@@ -22,4 +25,5 @@ __all__ = [
     "get_embedding_service",
     "get_graph_repository",
     "get_search_repository",
+    "get_transaction_graph_repository",
 ]

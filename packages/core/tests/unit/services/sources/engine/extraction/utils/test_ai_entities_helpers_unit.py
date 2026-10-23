@@ -14,7 +14,8 @@ Covered:
 - _resolve_minimum_alias_length (domain / slider / fallback precedence)
 - _build_entity_prompt / _build_relationship_prompt (placeholder substitution)
 - _StreamLoopDetector.check_line branches (entity cap / streaks / OOB)
-- _safe_type_aliases (defensive accessor handling)
+- type_rescue.domain_type_aliases (defensive accessor handling; it replaced
+  ai_entities._safe_type_aliases and post_extraction's own copy)
 """
 
 from __future__ import annotations
@@ -28,8 +29,13 @@ from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities impor
     _resolve_chunk_filtering_config,
     _resolve_loop_max_entity_count,
     _resolve_minimum_alias_length,
-    _safe_type_aliases,
     _StreamLoopDetector,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.prompts import (
+    STRICT_TYPE_INSTRUCTION,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+    domain_type_aliases,
 )
 from chaoscypher_core.settings import ExtractionSettings
 
@@ -216,7 +222,7 @@ class TestBuildEntityPrompt:
         assert "1. Hello" in prompt
         assert "NODE_T" in prompt
         # No strict instruction, no exclusion lines.
-        assert "ONLY use the entity types" not in prompt
+        assert "IMPORTANT: The type is one of the entity types" not in prompt
         assert "SKIP these" not in prompt
 
     def test_strict_and_exclusions_and_extras(self) -> None:
@@ -233,7 +239,7 @@ class TestBuildEntityPrompt:
         )
         assert "SKIP these" in prompt
         assert "no dates" in prompt
-        assert "ONLY use the entity types" in prompt
+        assert STRICT_TYPE_INSTRUCTION in prompt  # no subtype offered: the core-type line
         assert "Additional guidance:\nGUIDE" in prompt
         assert prompt.endswith("EXAMPLES")
 
@@ -248,7 +254,7 @@ class TestBuildRelationshipPrompt:
             numbered_sentences="1. S",
             entity_list="0: A (Person)",
             max_entity_index=5,
-            edge_templates="EDGE_T",
+            edge_templates_formatted="EDGE_T",
             relationship_guidance=None,
             relationship_examples=None,
         )
@@ -263,7 +269,7 @@ class TestBuildRelationshipPrompt:
             numbered_sentences="s",
             entity_list="e",
             max_entity_index="N",
-            edge_templates="et",
+            edge_templates_formatted="et",
             relationship_guidance="RGUIDE",
             relationship_examples="REX",
         )
@@ -368,33 +374,33 @@ class TestStreamLoopDetector:
 
 
 # ---------------------------------------------------------------------------
-# _safe_type_aliases
+# domain_type_aliases
 # ---------------------------------------------------------------------------
 class TestSafeTypeAliases:
     def test_no_accessor_returns_empty(self) -> None:
         domain = SimpleNamespace()  # no get_type_aliases
-        assert _safe_type_aliases(domain) == {}
+        assert domain_type_aliases(domain) == {}
 
     def test_non_callable_accessor_returns_empty(self) -> None:
         domain = SimpleNamespace(get_type_aliases="not callable")
-        assert _safe_type_aliases(domain) == {}
+        assert domain_type_aliases(domain) == {}
 
     def test_accessor_raising_returns_empty(self) -> None:
         def _raise() -> dict[str, str]:
             raise RuntimeError("boom")
 
         domain = SimpleNamespace(get_type_aliases=_raise)
-        assert _safe_type_aliases(domain) == {}
+        assert domain_type_aliases(domain) == {}
 
     def test_non_dict_return_returns_empty(self) -> None:
         domain = SimpleNamespace(get_type_aliases=lambda: ["not", "a", "dict"])
-        assert _safe_type_aliases(domain) == {}
+        assert domain_type_aliases(domain) == {}
 
     def test_valid_dict_coerced_to_str(self) -> None:
         domain = SimpleNamespace(
             get_type_aliases=lambda: {"Person": "Human", "Org": "Organization"}
         )
-        assert _safe_type_aliases(domain) == {
+        assert domain_type_aliases(domain) == {
             "Person": "Human",
             "Org": "Organization",
         }
@@ -408,4 +414,4 @@ class TestSafeTypeAliases:
                 123: "skip-non-str-key",
             }
         )
-        assert _safe_type_aliases(domain) == {"Good": "Value"}
+        assert domain_type_aliases(domain) == {"Good": "Value"}

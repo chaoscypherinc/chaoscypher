@@ -30,6 +30,13 @@ def _load_plugin(name: str) -> ConfigurableDomain:
         return ConfigurableDomain(json.load(f))
 
 
+def _type_names(domain: ConfigurableDomain) -> set[str]:
+    """The types a domain's entities may carry: the core types and its subtypes (spec 2026-10-07 § 3)."""
+    from chaoscypher_core.services.sources.engine.extraction.domains.core_types import CORE_TYPES
+
+    return set(CORE_TYPES) | {s.name for s in domain.subtypes()}
+
+
 class TestGetTypeAliasesAccessor:
     """Direct accessor behavior on ConfigurableDomain."""
 
@@ -102,8 +109,7 @@ class TestShippedPluginAliases:
         """
         domain = _load_plugin("literary")
         aliases = domain.get_type_aliases()
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         for alias, canonical in aliases.items():
             assert canonical in node_names, (
                 f"literary type_aliases[{alias!r}] = {canonical!r} but "
@@ -113,8 +119,7 @@ class TestShippedPluginAliases:
     def test_news_canonical_targets_are_real_node_templates(self) -> None:
         domain = _load_plugin("news")
         aliases = domain.get_type_aliases()
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         for alias, canonical in aliases.items():
             assert canonical in node_names, (
                 f"news type_aliases[{alias!r}] = {canonical!r} but "
@@ -132,8 +137,7 @@ class TestShippedPluginAliases:
     def test_investigation_canonical_targets_are_real_node_templates(self) -> None:
         domain = _load_plugin("investigation")
         aliases = domain.get_type_aliases()
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         for alias, canonical in aliases.items():
             assert canonical in node_names, (
                 f"investigation type_aliases[{alias!r}] = {canonical!r} but "
@@ -153,10 +157,7 @@ class TestShippedPluginAliases:
         assert len(plugin_names) >= 19, "builtin plugin glob came back short"
         for plugin_name in plugin_names:
             domain = _load_plugin(plugin_name)
-            templates = domain.get_templates()
-            slash_templates = [
-                t["name"] for t in templates["node_templates"] if t.get("name") and "/" in t["name"]
-            ]
+            slash_templates = [t for t in _type_names(domain) if "/" in t]
             assert slash_templates == [], (
                 f"plugin {plugin_name!r} has slash-named NodeTemplate(s): "
                 f"{slash_templates}. Split into distinct templates instead."
@@ -165,8 +166,7 @@ class TestShippedPluginAliases:
     def test_educational_split_templates_present(self) -> None:
         """Each former educational slash-template is now two distinct templates."""
         domain = _load_plugin("educational")
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         # Author/Educator → Author + Educator
         assert "Author" in node_names
         assert "Educator" in node_names
@@ -186,8 +186,7 @@ class TestShippedPluginAliases:
     def test_financial_split_templates_present(self) -> None:
         """Each former financial slash-template is now two distinct templates."""
         domain = _load_plugin("financial")
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         # Analyst/Investor → Analyst + Investor
         assert "Analyst" in node_names
         assert "Investor" in node_names
@@ -207,8 +206,7 @@ class TestShippedPluginAliases:
     def test_educational_canonical_targets_are_real_node_templates(self) -> None:
         domain = _load_plugin("educational")
         aliases = domain.get_type_aliases()
-        templates = domain.get_templates()
-        node_names = {t["name"] for t in templates["node_templates"] if t.get("name")}
+        node_names = _type_names(domain)
         for alias, canonical in aliases.items():
             assert canonical in node_names, (
                 f"educational type_aliases[{alias!r}] = {canonical!r} but "

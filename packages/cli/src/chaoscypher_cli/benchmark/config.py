@@ -26,6 +26,7 @@ import yaml
 from chaoscypher_cli.benchmark.composite import CompositeWeights
 from chaoscypher_cli.benchmark.discovery import user_benchmark_root
 from chaoscypher_cli.benchmark.models import ModelConfig
+from chaoscypher_core.benchmark.retrieval import DEFAULT_RETRIEVAL_MODE, validate_retrieval_mode
 
 
 # The name resolved when ``chaoscypher benchmark run`` is called with no positional argument.
@@ -71,6 +72,14 @@ class BenchmarkConfig:
             scores to an extractor in the composite. None when absent.
         weights: Composite Overall weights; None falls back to the defaults
             baked into :class:`CompositeWeights`.
+        retrieval: The chat stage's retrieval rung (``graphrag`` by default;
+            ``hybrid`` or ``naive`` for the leaderboard's retrieval
+            comparison). Rows record it; a baseline's dataset id carries it.
+        retrieval_pins: Directory of pinned retrievals the chat stage serves
+            instead of retrieving (see
+            :mod:`chaoscypher_core.benchmark.pins`): every chat model answers
+            from the same context. A relative path resolves against the
+            working directory. None retrieves live, as before.
     """
 
     name: str
@@ -87,6 +96,17 @@ class BenchmarkConfig:
     default_embedder: str | None = None
     default_chat: str | None = None
     weights: CompositeWeights | None = None
+    retrieval: str = DEFAULT_RETRIEVAL_MODE
+    retrieval_pins: str | None = None
+    chat_seed: int | None = None
+    """The chat and judge stages' seed when it differs from ``seed`` (which keys the extraction
+    and the graph cache): the adoption rule's seed band runs the baseline once more at another
+    chat seed over the same graph and pins (audit W2-7). None: the chat runs at ``seed``."""
+
+    @property
+    def chat_seed_or_seed(self) -> int:
+        """The seed the chat and judge stages decode with."""
+        return self.seed if self.chat_seed is None else self.chat_seed
 
 
 def builtin_config_root() -> Path:
@@ -277,6 +297,11 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
 
     defaults = raw.get("defaults") or {}
     weights_raw = raw.get("weights") or {}
+    try:
+        retrieval = validate_retrieval_mode(raw.get("retrieval", DEFAULT_RETRIEVAL_MODE))
+    except ValueError as exc:
+        msg = f"{path}: {exc}"
+        raise ValueError(msg) from exc
     weights = (
         CompositeWeights(
             extraction=float(weights_raw.get("extraction", 0.40)),
@@ -293,6 +318,7 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
         name=str(raw["name"]),
         description=str(raw.get("description", "")),
         seed=int(raw.get("seed", DEFAULT_SEED)),
+        chat_seed=int(raw["chat_seed"]) if raw.get("chat_seed") is not None else None,
         temperature=float(raw.get("temperature", DEFAULT_TEMPERATURE)),
         dataset_ids=[str(d) for d in raw_datasets],
         extractors=extractors,
@@ -304,6 +330,8 @@ def _parse_config(path: Path, *, source: ConfigSource) -> BenchmarkConfig:
         default_embedder=defaults.get("embedder"),
         default_chat=defaults.get("chat"),
         weights=weights,
+        retrieval=retrieval,
+        retrieval_pins=str(raw["retrieval_pins"]) if raw.get("retrieval_pins") else None,
     )
 
 

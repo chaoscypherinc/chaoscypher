@@ -39,7 +39,8 @@ curl -X POST http://localhost/api/v1/sources \
 | `file` | file | **Yes** | -- | Document file to upload |
 | `extract_entities` | bool | No | `true` | Run entity extraction after indexing |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
-| `domain` | string | No | `null` | Force extraction domain (e.g. `technical`, `generic`). Auto-detected if omitted. |
+| `packs` | string[] | No | `null` | The packs to extract with, on the floor every source has (repeat the form field for several: `-F packs=historical -F packs=literary`). Detected if omitted (with no `domain`). |
+| `domain` | string | No | `null` | One pack, the single-element form of `packs` (e.g. `technical`; `generic` is the floor alone, `__auto__` detects). Do not send both. |
 | `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, the source parks at `awaiting_confirmation` after indexing until confirmed via [`POST /sources/{id}/confirmation`](#confirm-domain-extraction-gate). |
 | `enable_normalization` | bool | No | auto | Normalize content on upload (encoding fixes, whitespace, OCR cleaning). Auto: on for prose files, off for structured formats (CSV, JSON, TSV, JSONL, NDJSON, XML); explicit `true`/`false` overrides. |
 | `enable_vision` | bool | No | auto-detect | Enable vision processing for images in PDFs and image files. Default: auto-detect based on vision model configuration. |
@@ -47,7 +48,7 @@ curl -X POST http://localhost/api/v1/sources \
 | `filtering_mode` | string | No | domain default | Strictness of post-extraction filters: `unfiltered`, `minimal`, `lenient`, `balanced`, `strict`, `maximum`. Omitted = the domain's default; an explicit value overrides. See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip upload if identical content already exists (by SHA-256 hash) |
 | `enable_direction_correction` | bool | No | `null` | When `true`, misdirected relationships are swapped to fix source/target order; when `false`, they are dropped. `null` = domain config / global default (`true`). |
-| `protect_orphans` | bool | No | `null` | When `true`, orphan entities (no relationships) are kept; when `false`, dropped before commit. `null` = domain config / global default (`false`). |
+| `protect_orphans` | bool | No | `null` | Orphan entities (no relationships) that carry a description or an evidence sentence are always committed, flagged `properties.orphan`. When `true`, the ones carrying neither are kept (flagged) too; when `false`, those are dropped before commit. `null` = domain config / global default (`false`). |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
@@ -107,13 +108,14 @@ curl -X POST http://localhost/api/v1/sources/batch \
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
 | `enable_normalization` | bool | No | auto | Normalize content on upload (auto: on for prose, off for CSV/JSON/TSV/JSONL/NDJSON/XML; explicit `true`/`false` overrides) |
 | `enable_vision` | bool | No | auto-detect | Enable vision processing for images in PDFs and image files |
-| `domain` | string | No | `null` | Force extraction domain |
+| `packs` | string[] | No | `null` | The packs to extract with (repeat the form field for several). Detected if omitted. |
+| `domain` | string | No | `null` | One pack, the single-element form of `packs` |
 | `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, each source parks at `awaiting_confirmation` after indexing until confirmed. |
 | `content_filtering` | bool | No | `true` | Filter non-essential content (TOC, legal, boilerplate) from entity extraction. Filtered content remains searchable via RAG. |
 | `filtering_mode` | string | No | domain default | Strictness of post-extraction filters (explicit value overrides the domain default). See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip files whose content already exists |
 | `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
-| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) the orphan entities that carry no description or evidence; an orphan that carries either is always kept, flagged. `null` = domain / global default. |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for these sources. `null` = domain / global default. |
 
@@ -175,13 +177,14 @@ curl -X POST http://localhost/api/v1/sources/url \
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
 | `enable_normalization` | bool | No | auto | Normalize content on upload (auto: on for prose, off for structured formats; explicit `true`/`false` overrides) |
 | `enable_vision` | bool | No | `true` | Enable vision processing for images in fetched HTML / PDFs |
-| `domain` | string | No | `null` | Force extraction domain |
+| `packs` | string[] | No | `null` | The packs to extract with (`[]` is the floor alone). Detected if omitted. |
+| `domain` | string | No | `null` | One pack, the single-element form of `packs` |
 | `auto_confirm` | bool | No | `false` | Bypass the domain-confirmation gate. When `false` and no `domain` is forced, the imported source parks at `awaiting_confirmation` after indexing until confirmed. |
 | `content_filtering` | bool | No | `true` | Filter non-essential content from entity extraction. Filtered content remains searchable via RAG. |
 | `filtering_mode` | string | No | domain default | Strictness of post-extraction filters (explicit value overrides the domain default). See [Filtering Modes](../filtering-modes.md). |
 | `skip_duplicates` | bool | No | `false` | Skip if identical content exists |
 | `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
-| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) the orphan entities that carry no description or evidence; an orphan that carries either is always kept, flagged. `null` = domain / global default. |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
@@ -370,8 +373,10 @@ curl -X DELETE http://localhost/api/v1/sources/src_abc123
 GET /api/v1/sources/domains
 ```
 
-Returns available extraction domains for dropdown selection. Includes built-in
-domains and any per-database custom domains.
+Returns available extraction domains for selection. Includes built-in domains
+and any per-database custom domains. Each carries its `role`: `floor` for the
+floor every source extracts with (`generic`), `pack` for a pack a source may
+add. Requests name packs only (`packs`); the floor is implied.
 
 ```bash
 curl http://localhost/api/v1/sources/domains
@@ -390,7 +395,8 @@ curl http://localhost/api/v1/sources/domains
       "builtin": true,
       "has_examples": false,
       "extraction_density": 1.0,
-      "prompt_tokens": 1200
+      "prompt_tokens": 1200,
+      "role": "floor"
     },
     {
       "name": "technical",
@@ -400,7 +406,8 @@ curl http://localhost/api/v1/sources/domains
       "builtin": true,
       "has_examples": true,
       "extraction_density": 1.4,
-      "prompt_tokens": 1800
+      "prompt_tokens": 1800,
+      "role": "pack"
     }
   ]
 }
@@ -467,12 +474,13 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/extraction \
 |-----------|------|----------|---------|-------------|
 | `source_id` | string (path) | **Yes** | -- | Source ID |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
-| `domain` | string | No | `null` | Force extraction domain. Auto-detected if omitted. |
+| `packs` | string[] | No | `null` | Force the packs (`[]` is the floor alone). Detected if omitted (with no `domain`). |
+| `domain` | string | No | `null` | One pack, the single-element form of `packs`. |
 | `filtering_mode` | string | No | persisted | Override the source's persisted `filtering_mode` **for this run only**. |
 | `force` | bool | No | `false` | Re-extract even if extraction results already exist |
 | `content_filtering` | bool | No | `true` | Filter non-essential content from entity extraction |
 | `enable_direction_correction` | bool | No | `null` | Swap (`true`) or drop (`false`) misdirected relationships. `null` = domain / global default. |
-| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) orphan entities. `null` = domain / global default. |
+| `protect_orphans` | bool | No | `null` | Keep (`true`) or drop (`false`) the orphan entities that carry no description or evidence; an orphan that carries either is always kept, flagged. `null` = domain / global default. |
 | `enable_inverse_relationships` | bool | No | `null` | When `false`, inverse edges are not created during commit. `null` = global default (`true`). |
 | `max_entity_degree_override` | int | No | `null` | Hard cap on relationships per entity for this source. `null` = domain / global default. |
 
@@ -554,11 +562,7 @@ curl http://localhost/api/v1/sources/src_abc123/extraction
   "extraction_depth": "full",
   "started_at": "2026-03-09T10:00:00",
   "completed_at": null,
-  "timing": {
-    "avg_duration_ms": 4200,
-    "min_duration_ms": 2100,
-    "max_duration_ms": 6800
-  },
+  "timing": null,
   "current_chunk": {
     "chunk_index": 6,
     "status": "running",
@@ -642,11 +646,12 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/confirmation \
 |-----------|------|----------|---------|-------------|
 | `source_id` | string (path) | **Yes** | -- | Source ID |
 | `analysis_depth` | string | No | `full` | Extraction depth: `full` or `quick` |
-| `domain` | string | No | `null` | Confirmed extraction domain. Defaults to the detected domain if omitted. |
+| `packs` | string[] | No | `null` | The confirmed packs (`[]` is the floor alone). Defaults to the proposed packs if omitted (with no `domain`). |
+| `domain` | string | No | `null` | One pack, the single-element form of `packs`. |
 | `filtering_mode` | string | No | persisted | Override the persisted `filtering_mode` for this run. |
 | `content_filtering` | bool | No | `null` | Tri-state: `null` leaves the persisted value as-is; `true`/`false` overrides it. |
 | `enable_direction_correction` | bool | No | `null` | Override relationship direction correction. |
-| `protect_orphans` | bool | No | `null` | Override orphan-entity protection. |
+| `protect_orphans` | bool | No | `null` | Override orphan-entity protection (whether the orphans carrying no description or evidence are kept). |
 | `enable_inverse_relationships` | bool | No | `null` | Override inverse-relationship generation. |
 | `max_entity_degree_override` | int | No | `null` | Per-source entity degree cap (must be `> 0`). |
 
@@ -727,7 +732,8 @@ curl -X POST http://localhost/api/v1/sources/src_abc123/reclassify \
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `source_id` | string (path) | **Yes** | Source ID |
-| `domain` | string | **Yes** | Domain name to use (e.g. `medical`, `legal`). See [`GET /sources/domains`](#list-extraction-domains). |
+| `packs` | string[] | One of the two | The packs to use (e.g. `["historical", "literary"]`; `[]` is the floor alone). See [`GET /sources/domains`](#list-extraction-domains). |
+| `domain` | string | One of the two | One pack (e.g. `medical`), the single-element form of `packs`. |
 
 **Response** `202 Accepted`
 
@@ -2283,7 +2289,8 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `extraction_depth` | string? | Extraction depth (`full` or `quick`) |
 | `extraction_entities_count` | int | Entities extracted |
 | `extraction_relationships_count` | int | Relationships extracted |
-| `extraction_domain` | string? | Domain used for extraction |
+| `extraction_domain` | string? | The packs' label: the packs sorted and joined with `+` (`literary`, `historical+literary`), `generic` for the floor alone |
+| `extraction_packs` | string[]? | The packs the source was extracted with (`[]` is the floor alone) |
 | `extraction_domain_auto` | bool | Whether domain was auto-detected |
 | `extraction_started_at` | datetime? | When extraction started |
 | `extraction_completed_at` | datetime? | When extraction finished |
@@ -2321,6 +2328,7 @@ all lifecycle fields across indexing, extraction, commit, and LLM metrics stages
 | `paused_at` | datetime? | When the source was paused |
 | `paused_reason` | string? | Why the source was paused |
 | `extraction_domain_icon` | string? | Icon name for the extraction domain |
+| `extraction_pack_icons` | object | Each extraction pack's MUI icon name, by pack (the label shows one per pack) |
 | `domain_version` | string? | Version of the domain used at extraction time |
 | `domain_changed_since_extraction` | bool | True when the domain plugin changed after this source was extracted |
 | `confirmation_required` | bool | True while the source is parked at the domain-confirmation gate |
@@ -2358,13 +2366,14 @@ The settings the user (or default) supplied at upload time, persisted on the sou
 |-------|------|-------------|
 | `auto_analyze` | bool | Auto-queue extraction after indexing finishes |
 | `extraction_depth` | string | `full` or `quick` |
-| `forced_domain` | string? | User-forced extraction domain, or `null` for auto-detect |
+| `forced_domain` | string? | The first forced pack, or `generic` for the floor alone (kept for one release); `null` for auto-detect |
+| `forced_packs` | string[]? | The forced packs (`[]` is the floor alone), or `null` for auto-detect |
 | `enable_normalization` | bool? | `null` = use file-type default; `true`/`false` = user override |
 | `enable_vision` | bool | Use the vision model on images and scanned PDFs |
 | `content_filtering` | bool | Apply domain content-exclusion rules during extraction |
 | `filtering_mode` | string | `unfiltered` / `minimal` / `lenient` / `balanced` / `strict` / `maximum` |
 | `enable_direction_correction` | bool? | `null` = domain/global default; `true` swaps misdirected relationships, `false` drops them |
-| `protect_orphans` | bool? | `null` = domain/global default; `true` keeps orphan entities, `false` drops them before commit |
+| `protect_orphans` | bool? | `null` = domain/global default; `true` keeps every orphan entity (flagged), `false` drops the orphans that carry no description or evidence before commit (the others are always kept, flagged) |
 | `enable_inverse_relationships` | bool? | `null` = global default (`true`); `false` skips inverse-edge creation at commit |
 | `max_entity_degree_override` | int? | Per-source cap on relationships per entity; `null` = domain/global default |
 
@@ -2395,7 +2404,7 @@ The record's lifetime: row INSERTed at stage open with `total` set and `processe
 
 ### QualityMetrics
 
-46 quality counters spanning every silent-drop / silent-merge / silent-skip site of the import pipeline, plus encoding and vector-search companion fields. Counters reset to zero on `Re-extract` (`force_re_extract`); the quality grade itself is not affected.
+The quality counters (one per `QualityCounter` member) spanning every silent-drop / silent-merge / silent-skip site of the import pipeline, plus encoding and vector-search companion fields. Counters reset to zero on `Re-extract` (`force_re_extract`); the quality grade itself is not affected.
 
 The counters are grouped by pipeline stage; every field, stage by stage, is listed in the [Quality Metrics API](quality-metrics.md).
 
@@ -2566,6 +2575,9 @@ Aggregate statistics computed via SQL aggregates across all extraction tasks.
 | `filtering_stage_summary` | object[]? | Per-stage filtering breakdown |
 | `system_prompt` | string? | System prompt used for extraction |
 | `extraction_rules_template` | string? | Extraction rules portion of the prompt |
+| `user_instructions` | string? | User-provided instructions appended to the Pass 1 entity prompt |
+| `user_instructions_template` | string? | The Pass 1 entity prompt template the instructions ride on |
+| `relationship_instructions` | string? | The Pass 2 relationship prompt template, shown next to `user_instructions` on the Processing tab |
 | `entity_templates` | string? | Entity template portion |
 | `relationship_templates` | string? | Relationship template portion |
 | `domain_guidance` | string? | Domain-specific guidance |

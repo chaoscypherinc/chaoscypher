@@ -13,7 +13,9 @@ must read them from the engine instance they already hold
 
 These tests inject a custom value through the engine settings and assert the
 production read honors it. Before the refactor they fail because the code
-ignores the engine value and reads the app singleton's default instead.
+ignores the engine value and reads the app singleton's default instead. The
+domain-detection sample no longer reads those knobs: since audit wave 3 the
+MCP queue samples a source the way the import path does (``source_domain_sample``).
 """
 
 from __future__ import annotations
@@ -23,14 +25,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
+from chaoscypher_core.services.sources.engine.extraction.domains import create_domain_sample_text
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import DomainRegistry
 
 
-def _make_engine(
-    *,
-    domain_detection_sample_count: int = 5,
-    domain_detection_sample_chars: int = 2000,
-) -> MagicMock:
-    """Build a mock engine whose settings carry custom domain-detection knobs."""
+def _make_engine() -> MagicMock:
+    """Build a mock engine whose settings carry what the orchestrator reads."""
     engine = MagicMock()
     engine.settings.current_database = "default"
     engine.settings.mcp.max_extraction_payload_bytes = 10 * 1024 * 1024
@@ -38,10 +38,6 @@ def _make_engine(
     engine.settings.chunking.target_group_tokens = 900
     engine.settings.chunking.group_overlap = 1
     engine.settings.analysis.quick_sample_size = 5
-    # The fields under test — explicitly set so a MagicMock auto-attr never
-    # masks a regression where the code reads the app singleton instead.
-    engine.settings.extraction.domain_detection_sample_count = domain_detection_sample_count
-    engine.settings.extraction.domain_detection_sample_chars = domain_detection_sample_chars
     engine.storage_adapter = MagicMock()
     engine.storage_adapter.start_stage = AsyncMock()
     engine.storage_adapter.tick_stage = AsyncMock()
@@ -55,18 +51,16 @@ def _make_engine(
 
 
 @pytest.mark.asyncio
-async def test_get_tasks_park_branch_samples_from_engine_settings() -> None:
-    """The park-gate detection proposal must sample using the engine's
-    ``extraction.domain_detection_sample_count`` / ``_sample_chars``.
+async def test_get_tasks_park_branch_samples_like_the_import_path() -> None:
+    """The park-gate detection proposal samples the source the way every path does.
 
-    With a custom count of 7 and 50 chars, ``list_chunks`` must be called with
-    ``limit=7`` and the sample text truncated to 50 chars — values that come
-    from ``engine.settings``, not the app-singleton defaults (5 / 2000).
+    ``source_domain_sample``: ``create_domain_sample_text`` over the source's
+    chunks for extraction, the import worker's sample. Until audit wave 3 the
+    MCP queue sliced the first ``domain_detection_sample_chars`` of the first
+    chunks, so a novel's opening 8,000 characters auto-detected as generic
+    where the import path read it as literary.
     """
-    engine = _make_engine(
-        domain_detection_sample_count=7,
-        domain_detection_sample_chars=50,
-    )
+    engine = _make_engine()
     engine.storage_adapter.get_source.return_value = {
         "id": "src_park",
         "filename": "doc.pdf",
@@ -76,10 +70,11 @@ async def test_get_tasks_park_branch_samples_from_engine_settings() -> None:
         "extraction_confirmed_at": None,
         "confirmation_required": True,
     }
-    long_content = "word " * 100  # 500 chars, well past the 50-char window
-    engine.storage_adapter.list_chunks.return_value = [
-        {"id": "c1", "chunk_index": 0, "content": long_content},
+    chunks = [
+        {"id": f"c{i}", "chunk_index": i, "content": f"chunk {i} " + "word " * 400}
+        for i in range(12)
     ]
+    engine.storage_adapter.get_chunks_for_extraction.return_value = chunks
 
     detection = {
         "detected_domain": "generic",
@@ -98,7 +93,8 @@ async def test_get_tasks_park_branch_samples_from_engine_settings() -> None:
 
     with (
         patch("chaoscypher_core.mcp.extraction.gate_decision", return_value="park"),
-        patch("chaoscypher_core.mcp.extraction.get_domain_registry"),
+        # The plan's stack reads the shipped floor (the detected domain is "generic").
+        patch("chaoscypher_core.mcp.extraction.get_domain_registry", return_value=DomainRegistry()),
         patch(
             "chaoscypher_core.mcp.extraction.detect_extraction_domain",
             return_value=detection,
@@ -111,29 +107,16 @@ async def test_get_tasks_park_branch_samples_from_engine_settings() -> None:
     ):
         await orchestrator.get_tasks("src_park")
 
-    # 1. list_chunks limit comes from engine settings (7), not the default 5.
-    list_kwargs = engine.storage_adapter.list_chunks.call_args.kwargs
-    assert list_kwargs["limit"] == 7, (
-        "park-branch detection must read domain_detection_sample_count from "
-        "engine.settings.extraction, not the app singleton"
-    )
-    # 2. sample_text truncated to 50 chars before detection.
+    engine.storage_adapter.list_chunks.assert_not_called()
     sample_text = mock_detect.call_args.kwargs["sample_text"]
-    assert len(sample_text) == 50, (
-        "sample_text must be sliced to domain_detection_sample_chars from "
-        f"engine.settings (50), got {len(sample_text)}"
-    )
+    assert sample_text == create_domain_sample_text(chunks, content_key="content")
+    assert "chunk 4 " in sample_text and "chunk 5 " in sample_text  # not just the opening
 
 
 @pytest.mark.asyncio
-async def test_get_tasks_autodetect_branch_samples_from_engine_settings() -> None:
-    """The auto-detect branch (no forced/stored domain, gate proceeds) must
-    also sample using the engine's domain-detection settings.
-    """
-    engine = _make_engine(
-        domain_detection_sample_count=3,
-        domain_detection_sample_chars=40,
-    )
+async def test_get_tasks_autodetect_branch_samples_like_the_import_path() -> None:
+    """The auto-detect branch (no forced/stored domain, gate proceeds) samples as the import path does."""
+    engine = _make_engine()
     engine.storage_adapter.get_source.return_value = {
         "id": "src_auto",
         "filename": "doc.pdf",
@@ -146,19 +129,17 @@ async def test_get_tasks_autodetect_branch_samples_from_engine_settings() -> Non
         "stage_progress": {},
     }
     engine.storage_adapter.transition_source_status.return_value = True
-    engine.storage_adapter.get_chunks_for_extraction.return_value = [
-        {"id": "c1", "chunk_index": 0, "content": "x"},
-    ]
-    long_content = "alpha " * 100
-    engine.storage_adapter.list_chunks.return_value = [
-        {"id": "c1", "chunk_index": 0, "content": long_content},
-    ]
+    chunks = [{"id": f"c{i}", "chunk_index": i, "content": f"alpha {i} " * 300} for i in range(9)]
+    engine.storage_adapter.get_chunks_for_extraction.return_value = chunks
 
     fake_domain = MagicMock(name="generic_domain")
     fake_domain.get_entity_exclusions.return_value = []
     fake_domain.get_strict_entity_types.return_value = False
 
     orchestrator = ExtractionOrchestrator(engine=engine)
+    # ``build_extraction_groups`` is patched to [] below; a source with no
+    # groups is now rejected after the CAS, and this test is about sampling.
+    orchestrator._get_group_indices = lambda _sid: {0}
 
     with (
         patch("chaoscypher_core.mcp.extraction.gate_decision", return_value="proceed"),
@@ -167,7 +148,8 @@ async def test_get_tasks_autodetect_branch_samples_from_engine_settings() -> Non
             return_value=[],
         ),
         patch("chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry"),
-        patch("chaoscypher_core.mcp.extraction.get_domain_registry"),
+        # The plan's stack reads the shipped floor (the detected domain is "generic").
+        patch("chaoscypher_core.mcp.extraction.get_domain_registry", return_value=DomainRegistry()),
         patch(
             "chaoscypher_core.mcp.extraction.detect_extraction_domain",
             return_value={
@@ -192,16 +174,9 @@ async def test_get_tasks_autodetect_branch_samples_from_engine_settings() -> Non
     ):
         await orchestrator.get_tasks("src_auto")
 
-    list_kwargs = engine.storage_adapter.list_chunks.call_args.kwargs
-    assert list_kwargs["limit"] == 3, (
-        "auto-detect branch must read domain_detection_sample_count from "
-        "engine.settings.extraction, not the app singleton"
-    )
+    engine.storage_adapter.list_chunks.assert_not_called()
     sample_text = mock_detect.call_args.kwargs["sample_text"]
-    assert len(sample_text) == 40, (
-        "sample_text must be sliced to domain_detection_sample_chars from "
-        f"engine.settings (40), got {len(sample_text)}"
-    )
+    assert sample_text == create_domain_sample_text(chunks, content_key="content")
 
 
 @pytest.mark.asyncio

@@ -19,10 +19,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from chaoscypher_core.benchmark.retrieval import DEFAULT_RETRIEVAL_MODE
+
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from chaoscypher_core.benchmark.retrieval import NaiveRetrieverFactory
     from chaoscypher_core.settings import EngineSettings
 
 
@@ -84,11 +87,18 @@ class SuiteContext:
         settings: The bridge's engine settings (``paths.data_dir`` locates packs).
         probe_pack_dir: The extraction probe fixture directory.
         reference: The reference pack the client asked for, or None.
+        retrieval: The chat suite's retrieval rung (see
+            :mod:`chaoscypher_core.benchmark.retrieval`).
+        naive_retriever: Builds the naive rung's index; provided by the CLI
+            package, which owns the llama-index dependency. None means a
+            naive run is refused.
     """
 
     settings: EngineSettings
     probe_pack_dir: Path
     reference: str | None = None
+    retrieval: str = DEFAULT_RETRIEVAL_MODE
+    naive_retriever: NaiveRetrieverFactory | None = None
 
 
 class BenchmarkSuite(Protocol):
@@ -104,6 +114,8 @@ class BenchmarkSuite(Protocol):
     """One sentence telling the client what shape its answer takes."""
     reference: str | None
     """The reference pack the suite reads, or None."""
+    retrieval: str | None
+    """The retrieval rung the suite answers under, or None for a suite without retrieval."""
 
     def run_info(self) -> dict[str, Any]:
         """Fields recorded on a new run's state (``dataset_id``, ``dataset_version``)."""

@@ -3,14 +3,14 @@
 
 import { useContext, useMemo } from 'react';
 import { useNavigate } from 'react-router';
-import { Box, ButtonBase, Typography, CircularProgress } from '@mui/material';
+import { Alert, Box, ButtonBase, Typography, CircularProgress } from '@mui/material';
 import { ChaosCypherPalette, ChaosCypherBackground } from '../theme/palette';
 import { UploadDialogContext } from '../contexts/UploadDialogContext';
 import DashboardGraph from './DashboardPage/DashboardGraph';
 import SystemHealthCluster from './DashboardPage/SystemHealthCluster';
 import StatsPanel from './DashboardPage/StatsPanel';
 import { useActivityLog } from './DashboardPage/useActivityLog';
-import { useCounts, useQualitySummary } from '../services/api/useDashboard';
+import { useCounts, useDatabaseNotice, useQualitySummary } from '../services/api/useDashboard';
 import type { DashboardStats } from './DashboardPage/types';
 import {
   computeAvgRelations,
@@ -53,6 +53,7 @@ export default function DashboardPage() {
   const uploadDialog = useContext(UploadDialogContext);
   const countsQuery = useCounts();
   const qualityQuery = useQualitySummary();
+  const notice = useDatabaseNotice().data;
 
   const { entries: activityEntries, isIdle, activeCount, progress, totalCostUsd } = useActivityLog(10);
 
@@ -139,6 +140,18 @@ export default function DashboardPage() {
           '& > *': { pointerEvents: 'auto' },
         }}
       >
+        {/* === Database notice (a database from before the core entity types) === */}
+        {notice && (
+          <Alert
+            severity="info"
+            variant="outlined"
+            role="status"
+            sx={{ mb: 2, maxWidth: 760, py: 0, bgcolor: 'rgba(5, 5, 10, 0.6)' }}
+          >
+            {notice}
+          </Alert>
+        )}
+
         {/* === TOP-RIGHT: System Health Cluster === */}
         <SystemHealthCluster
           isIdle={isIdle}

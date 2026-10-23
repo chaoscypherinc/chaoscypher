@@ -543,6 +543,32 @@ class TestResolveAll:
         # Second spec is skipped via the _resolved cache check.
         assert [p.name for p in result] == ["dup"]
 
+    @pytest.mark.asyncio
+    async def test_hub_manifest_local_path_dependency_rejected(self, tmp_path: Path) -> None:
+        """A hub package must not pull a local file into the composition.
+
+        A downloaded manifest dependency ``{"/abs/private.ccx": ""}`` renders
+        as a bare local-path spec; resolving it would merge the user's own
+        private package into the composed database.
+        """
+        resolver = PackageResolver(cache_dir=tmp_path / "cache")
+        private = tmp_path / "private.ccx"
+        private.write_bytes(_ccx_bytes(name="private", version="1.0.0"))
+
+        client = _fake_lexicon_client(
+            info_version="1.0.0",
+            archive=_ccx_bytes(name="evil", version="1.0.0", dependencies={str(private): ""}),
+        )
+        with (
+            _patch_lexicon(client),
+            patch.object(resolver_mod, "extract_archive"),
+            patch.object(resolver, "_resolve_local", AsyncMock()) as resolve_local,
+            pytest.raises(ResolverError, match="local-path dependency"),
+        ):
+            await resolver.resolve_all([PackageSpec.parse("evil:1.0.0")])
+
+        resolve_local.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # dependency version pinning

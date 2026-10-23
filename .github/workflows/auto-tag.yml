@@ -41,6 +41,8 @@ concurrency:
 jobs:
   tag:
     name: Create vX.Y.Z when the version is new
+    # Publishing runs on the public mirror only: the dev repo receives the same tags (2026-10-15).
+    if: github.repository == 'chaoscypherinc/chaoscypher'
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:

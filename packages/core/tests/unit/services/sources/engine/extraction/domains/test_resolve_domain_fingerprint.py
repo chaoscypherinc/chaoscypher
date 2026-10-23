@@ -9,10 +9,22 @@ from chaoscypher_core.services.sources.engine.extraction.domains.fingerprint imp
 )
 
 
+def _technical_version() -> str:
+    """The shipped technical plugin's version, read from its file (not pinned by hand)."""
+    import json
+
+    from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+        DomainRegistry,
+    )
+
+    path = DomainRegistry.builtin_plugin_dir() / "technical.jsonld"
+    return str(json.loads(path.read_text(encoding="utf-8"))["version"])
+
+
 def test_resolve_builtin_domain():
     clear_domain_registry_cache()
     version, content_hash = resolve_domain_fingerprint("technical", "default")
-    assert version == "1.9.0"  # use the real technical.jsonld version
+    assert version == _technical_version()
     assert content_hash is not None and len(content_hash) == 64
 
 

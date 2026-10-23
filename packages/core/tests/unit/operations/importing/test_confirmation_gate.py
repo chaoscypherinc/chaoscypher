@@ -757,3 +757,97 @@ class TestPreGateClaimAtomic:
         row = adapter.session.get(SourceRow, "src-atomic-1")
         assert row is not None
         assert row.forced_domain == "legal"
+
+
+# ---------------------------------------------------------------------------
+# Packs: the proposal stores them, a confirm forces a list, the gate reads it
+# ---------------------------------------------------------------------------
+
+from chaoscypher_core.operations.importing.confirmation_gate import (
+    awaits_detection,
+    proposal_from_detection,
+    proposal_packs,
+)
+
+
+class TestPacks:
+    """A source carries a list of packs through the gate (spec 2026-10-07 § 5)."""
+
+    def test_the_proposal_stores_the_packs_beside_the_first(self) -> None:
+        blob = proposal_from_detection(
+            {
+                "packs": ("historical", "literary"),
+                "detected_domain": "historical",
+                "ranking": [],
+                "confidence": 0.9,
+                "low_confidence": False,
+                "reason": "packs_above_floor",
+            }
+        )
+        assert blob["packs"] == ["historical", "literary"]
+        assert blob["detected_domain"] == "historical"
+        assert blob["reason"] == "packs_above_floor"
+        floor_only = proposal_from_detection({"packs": (), "low_confidence": True})
+        assert floor_only["packs"] == []
+        assert floor_only["detected_domain"] == "generic"
+
+    def test_a_proposal_stored_before_packs_reads_its_detected_domain(self) -> None:
+        assert proposal_packs({"detected_domain": "legal"}) == ["legal"]
+        assert proposal_packs({"detected_domain": "generic"}) == []
+        assert proposal_packs({}) is None
+        assert proposal_packs(None) is None
+
+    @pytest.mark.parametrize(
+        ("columns", "decision"),
+        [
+            ({"forced_packs": ["legal", "news"]}, "proceed"),
+            ({"forced_packs": []}, "proceed"),  # the floor alone is a choice
+            ({"forced_packs": None, "forced_domain": None}, "park"),
+            ({"forced_domain": "legal"}, "proceed"),  # a row written before the list
+        ],
+    )
+    def test_forced_packs_proceed(self, columns: dict[str, Any], decision: str) -> None:
+        src = {**_source(confirmation_required=True), **columns}
+        assert gate_decision(src) == decision
+        assert awaits_detection(src) is (decision == "park")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("chosen", "forced_packs", "forced_domain"),
+        [
+            (["literary", "historical"], ["literary", "historical"], "literary"),
+            ([], [], "generic"),  # the floor alone
+            ("legal", ["legal"], "legal"),  # the one-name form, never letters
+            (None, ["technical"], "technical"),  # the proposal's packs
+        ],
+    )
+    async def test_a_confirm_forces_a_list_parked_and_pre_gate(
+        self,
+        adapter: SqliteAdapter,
+        monkeypatch: pytest.MonkeyPatch,
+        chosen: Any,
+        forced_packs: list[str],
+        forced_domain: str,
+    ) -> None:
+        fake_queue = AsyncMock(return_value="task-p")
+        monkeypatch.setattr(
+            "chaoscypher_core.operations.importing.confirmation_gate.queue_import_analysis",
+            fake_queue,
+        )
+        _seed_awaiting(adapter, "src-packs-parked")
+        _seed_status(adapter, "src-packs-pre", status=SourceStatus.INDEXED)
+
+        assert await confirm_extraction(adapter, "src-packs-parked", chosen, {}) is True
+        assert await confirm_extraction(adapter, "src-packs-pre", chosen, {}) is True
+
+        adapter.session.expire_all()
+        for source_id in ("src-packs-parked", "src-packs-pre"):
+            row = adapter.get_source(source_id, _DB)
+            assert row is not None
+            assert row["forced_packs"] == forced_packs, source_id
+            assert row["forced_domain"] == forced_domain, source_id
+            assert gate_decision(row) == "proceed"
+        # The parked branch re-queues with the forced packs in the payload.
+        file_info = fake_queue.call_args.args[1]
+        assert file_info["forced_packs"] == forced_packs
+        assert file_info["forced_domain"] == forced_domain

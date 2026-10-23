@@ -19,6 +19,14 @@ CCX 3.0 record forms produced here (matching the ccx-format fixtures):
   "@type": "ccx:Chunk", "source": {"@id": <src-iri>}, ...}`` with EITHER a
   ``selector`` (TextPositionSelector offset, requires the source ``text``
   asset) OR inline ``content`` — never both.
+
+A source's provenance columns (:data:`SOURCE_PROVENANCE_TERMS`: its type and a
+memory's ``by``, scope and ``valid_from``), the relationship citations of its
+chunks (:data:`RELATIONSHIP_CITATION_KEY`) and the facts its memory closed
+(:data:`CLOSES_KEY`) ride in the same records, so a memory comes back as a
+memory: forgettable, dated, and holding the closures it made. A relation is
+named by its ends and predicate (:func:`edge_reference`), the terms of a
+``ccx:Relationship``, since a plain triple carries no ``@id`` of its own.
 """
 
 from __future__ import annotations
@@ -50,6 +58,24 @@ TEXT_ASSET_PENDING = "__ccx_full_text_asset__"
 
 # Application namespace for editor-side terms (templates -> context / SHACL).
 _CC_NAMESPACE = "https://chaoscypher.com/ns/"
+
+# A source's provenance columns (migration 0020 adds the memory three) and the
+# ``ccx:Source`` terms they travel as; the importer reads the same pairs back.
+SOURCE_PROVENANCE_TERMS: tuple[tuple[str, str], ...] = (
+    ("source_type", "sourceType"),
+    ("memory_by", "memoryBy"),
+    ("memory_scope", "memoryScope"),
+    ("valid_from", "validFrom"),
+)
+
+# Chunk term: the relationship citations a chunk holds (the evidence of an edge,
+# its cited sentences), each naming its relation by :func:`edge_reference`.
+RELATIONSHIP_CITATION_KEY = "cc:relationshipCitation"
+
+# Source term: the facts a memory closed (supersession, ``closed_by_source_id``),
+# each an :func:`edge_reference` plus the date it was closed at (``cc:validTo``).
+CLOSES_KEY = "cc:closes"
+VALID_TO_KEY = "cc:validTo"
 
 # Minimal property_type -> xsd datatype map for SHACL. Unknown types omit the
 # datatype constraint (kept minimal per the plan).
@@ -120,18 +146,22 @@ def edge_to_jsonld(
 ) -> tuple:
     """Map a GraphEdge dict to a triple tuple or a relationship resource.
 
-    A property-less edge is a plain triple and is returned as
+    A property-less edge whose template is named after its label (or whose
+    template is not exported) is a plain triple and is returned as
     ``("triple", subject_iri, predicate, {"@id": object_iri})`` so the
     caller can attach it to the subject node. An edge carrying
-    ``properties`` is reified into a relationship resource and returned as
-    ``("relationship", resource_dict)``.
+    ``properties``, or filed under a template named differently from its
+    label, is reified into a relationship resource and returned as
+    ``("relationship", resource_dict)`` — a bare triple cannot carry the
+    template reference, and the importer would otherwise re-file the edge
+    under a template named after the predicate.
 
     Args:
         edge: A GraphEdge dict (``id, ccx_iri?, label, template_id,
             source_node_id, target_node_id, properties``).
         nodes_iri: Map of local node id -> resolved node IRI.
-        templates_by_id: Reserved for future template-aware predicates;
-            the predicate is currently the edge ``label``.
+        templates_by_id: Map of template id -> exported template dict, used
+            to tell whether the edge's template matches its predicate.
 
     Returns:
         Either a ``("triple", s, p, o)`` 4-tuple or a
@@ -142,7 +172,10 @@ def edge_to_jsonld(
     object_iri = nodes_iri[edge["target_node_id"]]
     properties = edge.get("properties") or {}
 
-    if not properties:
+    template = templates_by_id.get(edge.get("template_id") or "")
+    template_matches = template is None or template.get("name") == predicate
+
+    if not properties and template_matches:
         return ("triple", subject_iri, predicate, {"@id": object_iri})
 
     return ("relationship", _relationship_resource(edge, subject_iri, object_iri))
@@ -209,6 +242,32 @@ def _attach_predicate(node_obj: dict, predicate: str, object_ref: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
+def edge_reference(edge: dict, nodes_iri: dict[str, str]) -> dict | None:
+    """Name a relation by its ends and predicate: the ``ccx:Relationship`` terms, no ``@id``.
+
+    A plain triple carries no ``@id`` of its own, so a record outside the
+    knowledge graph (a relationship citation, a closure) names the relation the
+    way the graph states it. ``None`` when an end is not among ``nodes_iri``
+    (the relation is not in the exported graph).
+
+    Args:
+        edge: A GraphEdge dict (``source_node_id, target_node_id, label``).
+        nodes_iri: Map of local node id -> resolved node IRI.
+
+    Returns:
+        ``{"ccx:subject": {"@id"}, "ccx:predicate", "ccx:object": {"@id"}}`` or ``None``.
+    """
+    subject_iri = nodes_iri.get(edge.get("source_node_id") or "")
+    object_iri = nodes_iri.get(edge.get("target_node_id") or "")
+    if subject_iri is None or object_iri is None:
+        return None
+    return {
+        "ccx:subject": {"@id": subject_iri},
+        "ccx:predicate": edge.get("label"),
+        "ccx:object": {"@id": object_iri},
+    }
+
+
 def build_knowledge_graph(
     nodes: list[dict],
     edges: list[dict],
@@ -236,6 +295,10 @@ def build_knowledge_graph(
     # so a repeated simple edge promotes to a list (existing behavior) rather
     # than being mistaken for a property collision.
     attached_predicates: dict[str, set[str]] = {}
+    # (subject, predicate, object) already emitted as a bare triple: a
+    # parallel edge with the same triple would collapse into the first on
+    # import (bare triples share a deterministic IRI), so it is reified.
+    attached_triples: set[tuple[str, str, str]] = set()
 
     for node in nodes:
         obj = node_to_jsonld(node, templates_by_id)
@@ -263,11 +326,13 @@ def build_knowledge_graph(
             # predicate we ourselves attached earlier is a repeat and is
             # promoted to a list by _attach_predicate.
             collides = predicate in subject_obj and predicate not in already
-            if collides or predicate in RESERVED_KEYS:
+            triple_key = (source_id, predicate, target_id)
+            if collides or predicate in RESERVED_KEYS or triple_key in attached_triples:
                 members.append(_relationship_resource(edge, subject_iri, nodes_iri[target_id]))
             else:
                 _attach_predicate(subject_obj, predicate, object_ref)
                 already.add(predicate)
+                attached_triples.add(triple_key)
         else:
             members.append(mapped[1])
 
@@ -321,6 +386,56 @@ def _citation_entity_iri(citation: dict) -> str | None:
     return None
 
 
+def _relationship_citation_to_jsonld(citation: dict, chunk_iris: dict[str, str]) -> dict:
+    """Map one relationship citation to its chunk term: the relation, the justification, the sentences.
+
+    ``citation`` is the exporter's ``{"edge": edge_reference, "justification",
+    "sentences"}``; each cited sentence keeps its text and chunk-local index and
+    names its chunk by IRI when that chunk is one of the source's (``chunk_iris``),
+    else it is read as the citation's own chunk on import.
+    """
+    mapped: dict[str, Any] = dict(citation["edge"])
+    if citation.get("justification"):
+        mapped["cc:justification"] = citation["justification"]
+    sentences: list[dict[str, Any]] = []
+    for sentence in citation.get("sentences") or []:
+        entry: dict[str, Any] = {
+            "text": sentence.get("text"),
+            "localIndex": sentence.get("local_index"),
+        }
+        sentence_chunk = chunk_iris.get(str(sentence.get("chunk_id") or ""))
+        if sentence_chunk is not None:
+            entry["chunk"] = {"@id": sentence_chunk}
+        sentences.append(entry)
+    if sentences:
+        mapped["cc:sentences"] = sentences
+    return mapped
+
+
+def _citation_terms(chunk: dict, chunk_iris: dict[str, str]) -> dict[str, Any]:
+    """A chunk's citation terms: its entity citations and its relationship citations, when any."""
+    terms: dict[str, Any] = {}
+    if chunk.get("citations"):
+        terms["ccx:citation"] = [_citation_to_jsonld(c) for c in chunk["citations"]]
+    if chunk.get("relationship_citations"):
+        terms[RELATIONSHIP_CITATION_KEY] = [
+            _relationship_citation_to_jsonld(c, chunk_iris) for c in chunk["relationship_citations"]
+        ]
+    return terms
+
+
+def _provenance_terms(source: dict) -> dict[str, Any]:
+    """A source's provenance terms (:data:`SOURCE_PROVENANCE_TERMS`) and the closures it made."""
+    terms: dict[str, Any] = {
+        term: str(source[column]) for column, term in SOURCE_PROVENANCE_TERMS if source.get(column)
+    }
+    if source.get("closes"):
+        terms[CLOSES_KEY] = [
+            {**closed["edge"], VALID_TO_KEY: closed["valid_to"]} for closed in source["closes"]
+        ]
+    return terms
+
+
 def chunk_iri(src_iri: str, chunk: dict[str, Any]) -> str:
     """Deterministic ``ccx:Chunk`` ``@id`` = source IRI + chunk-index fragment.
 
@@ -355,12 +470,17 @@ def source_records(
 
     Args:
         source: A SourceRow dict (``id, ccx_iri?, title?, full_text?,
-            extraction_mode?, extraction_domain?, tags?``). ``extraction_mode``
-            supplies ``extractedBy``; ``extraction_domain`` supplies
-            ``extractionDomain`` (the graph view's per-source icon); ``tags``
-            (a list of names) supplies ``keywords``.
+            extraction_mode?, extraction_domain?, extraction_packs?, tags?``).
+            ``extraction_mode`` supplies ``extractedBy``; ``extraction_domain``
+            supplies ``extractionDomain`` (the graph view's per-source icon);
+            ``extraction_packs`` supplies ``extractionPacks``; ``tags``
+            (a list of names) supplies ``keywords``; the
+            :data:`SOURCE_PROVENANCE_TERMS` columns their terms; ``closes``
+            (``[{"edge": edge_reference, "valid_to"}]``) supplies
+            :data:`CLOSES_KEY`.
         chunks: DocumentChunk dicts (``id, chunk_index, content,
-            char_start, char_end``, optional ``citations``).
+            char_start, char_end``, optional ``citations`` and
+            ``relationship_citations``).
         chunking_config: Provenance for the ``chunking`` field, or ``None``.
 
     Returns:
@@ -382,12 +502,19 @@ def source_records(
     extraction_domain = source.get("extraction_domain")
     if extraction_domain:
         src_rec["extractionDomain"] = extraction_domain
+    # The packs it was extracted with, in their stack order (the label above is
+    # sorted): the import restores them, and maps a bundle from before the
+    # core types with them (``importer.core_types``).
+    extraction_packs = source.get("extraction_packs")
+    if isinstance(extraction_packs, list):
+        src_rec["extractionPacks"] = list(extraction_packs)
     if source.get("tags"):
         # schema.org-aligned keyword list; round-trips a source's tags and feeds
         # the package-level manifest ``tags`` the hub search indexes.
         src_rec["keywords"] = list(source["tags"])
     if source.get("title"):
         src_rec["title"] = source["title"]
+    src_rec.update(_provenance_terms(source))
     if chunking_config:
         src_rec["chunking"] = chunking_config
 
@@ -396,6 +523,7 @@ def source_records(
         src_rec["text"] = TEXT_ASSET_PENDING
 
     records: list[dict] = [src_rec]
+    chunk_iris = {str(chunk.get("id")): chunk_iri(src_iri, chunk) for chunk in chunks}
 
     for chunk in chunks:
         chunk_rec: dict[str, Any] = {
@@ -420,10 +548,7 @@ def source_records(
             if content:
                 chunk_rec["content"] = content
 
-        citations = chunk.get("citations")
-        if citations:
-            chunk_rec["ccx:citation"] = [_citation_to_jsonld(c) for c in citations]
-
+        chunk_rec.update(_citation_terms(chunk, chunk_iris))
         records.append(chunk_rec)
 
     return records

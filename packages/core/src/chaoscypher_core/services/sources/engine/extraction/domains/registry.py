@@ -5,7 +5,7 @@
 
 Auto-discovers domain analyzers from:
 1. plugins/ directory - Built-in domains (shared across all databases)
-2. Per-database domains/ directory - Custom domains for each database
+2. {data_dir}/plugins/domains/ - user packs, shared by every database
 
 Domains are configured via JSON-LD files (domain.jsonld or domain.json).
 No Python code is required for custom domains.
@@ -19,8 +19,8 @@ Example:
     )
 
     registry = get_domain_registry(settings, database_name="research")
-    domain, confidence = registry.get_best_domain(text, filename, metadata)
-    guidance = domain.get_guidance()
+    proposal = registry.propose_packs(text, filename, metadata)
+    proposal.packs  # ("historical", "literary"): every source also has the floor
 
     # Or force a specific domain
     domain = registry.get_domain_by_name("technical")
@@ -29,18 +29,28 @@ Example:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 import structlog
 
 from chaoscypher_core.plugins import BaseRegistry, PluginMetadata
 from chaoscypher_core.services.sources.engine.extraction.domains.configurable import (
     ConfigurableDomain,
+    detection_base_score,
+    detection_max_confidence,
 )
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import FLOOR_NAME
 from chaoscypher_core.services.sources.engine.extraction.domains.fingerprint import (
     DomainFingerprint,
     compute_domain_content_hash,
+    stack_content_hash,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    MAX_PROPOSED_PACKS,
+    PACKS_SEPARATOR,
+    stored_name_packs,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.template_formatter import (
     format_domain_edge_templates,
@@ -50,6 +60,8 @@ from chaoscypher_core.services.sources.engine.extraction.utils.template_formatte
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.services.sources.engine.extraction.domains.base import (
         DomainAnalyzer,
     )
@@ -62,6 +74,37 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+FLOOR_ONLY_CONFIDENCE: Final[float] = 0.1
+"""The confidence detection reports when it proposes no pack (the floor alone)."""
+
+
+class RankedDomain(NamedTuple):
+    """One detection candidate: a pack and its raw score (uncapped)."""
+
+    domain: Any
+    score: float
+
+
+@dataclass(frozen=True)
+class PackProposal:
+    """What detection proposes for a source (:meth:`DomainRegistry.propose_packs`).
+
+    Attributes:
+        packs: The proposed packs, highest score first, at most
+            :data:`MAX_PROPOSED_PACKS`; ``()`` is the floor alone.
+        ranking: Every can-handle candidate, highest raw score first.
+        low_confidence: True when no pack cleared the evidence floor.
+        reason: ``no_pack_above_floor``, ``one_pack_above_floor``,
+            ``packs_within_margin`` (two packs, the lead under the margin)
+            or ``packs_above_floor``.
+    """
+
+    packs: tuple[str, ...]
+    ranking: list[RankedDomain]
+    low_confidence: bool
+    reason: str
+
+
 class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
     """Registry for domain analyzers with auto-discovery.
 
@@ -70,7 +113,7 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
 
     Scans two locations for domain folders:
     1. plugins/ - Built-in domains (shared across all databases)
-    2. data/databases/{db_name}/domains/ - Per-database custom domains
+    2. {data_dir}/plugins/domains/ - user packs (one directory, every database)
 
     Domains are configured via domain.jsonld or domain.json files.
 
@@ -81,17 +124,24 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
     """
 
     def __init__(
-        self, settings: EngineSettings | None = None, database_name: str = "default"
+        self,
+        settings: EngineSettings | None = None,
+        database_name: str = "default",
+        user_plugin_dirs: Sequence[Path] | None = None,
     ) -> None:
         """Initialize domain registry with auto-discovery.
 
         Args:
             settings: Application settings (optional).
             database_name: Database name for per-database domain lookup.
+            user_plugin_dirs: Further directories of user domain configs, scanned
+                after the settings' ``data/plugins/domains/`` (tests, tools).
         """
         # Domain-specific state
         self._configs: dict[str, dict[str, Any]] = {}  # name → config
         self._domain_info: dict[str, dict[str, Any]] = {}  # name → cached info for UI
+        self._load_errors: dict[str, str] = {}  # name → why its config was refused
+        self._user_plugin_dirs: tuple[Path, ...] = tuple(Path(p) for p in user_plugin_dirs or ())
 
         # Call parent init (triggers _discover)
         super().__init__(settings=settings, database_name=database_name)
@@ -108,16 +158,18 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
         Implements BaseRegistry._discover().
         """
         domains_dir = Path(__file__).parent
+        self._load_errors.clear()
 
         # Build search paths
         search_paths: list[tuple[str, Path]] = [
-            ("builtin", domains_dir / "plugins"),
+            ("builtin", self.builtin_plugin_dir()),
         ]
 
         # Add user plugins path if settings available
         user_plugins_path = self._get_user_plugins_path()
         if user_plugins_path:
             search_paths.append(("user", user_plugins_path))
+        search_paths.extend(("user", d) for d in self._user_plugin_dirs)
 
         logger.info(
             "domain_discovery_started",
@@ -141,6 +193,19 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
             domains_found=list(self._plugins.keys()),
             total_count=len(self._plugins),
         )
+
+    @classmethod
+    def builtin_plugin_dir(cls) -> Path:
+        """The directory of the shipped domain configs (the floor and the packs)."""
+        return Path(__file__).parent / "plugins"
+
+    def names(self) -> list[str]:
+        """The names of every registered domain, sorted."""
+        return sorted(self._plugins)
+
+    def load_errors(self) -> dict[str, str]:
+        """Why each refused domain config was refused, by its name (the file stem when unnamed)."""
+        return dict(self._load_errors)
 
     def _get_user_plugins_path(self) -> Path | None:
         """Get user plugins domains path from settings.
@@ -235,6 +300,7 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
         try:
             config = json.loads(content)
         except json.JSONDecodeError as exc:
+            self._load_errors[config_path.stem] = f"not JSON: {exc}"
             logger.warning(
                 "domain_schema_invalid",
                 file=str(config_path),
@@ -243,23 +309,43 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
                 error_message=str(exc),
             )
             return
+        name = str(config.get("name") or config_path.stem) if isinstance(config, dict) else ""
+        name = name or config_path.stem
 
         # Schema-validate the config shape before handing to ConfigurableDomain.
         from pydantic import ValidationError
 
         from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
             DomainConfigModel,
+            describe_validation_error,
         )
 
         try:
             DomainConfigModel.model_validate(config)
         except ValidationError as exc:
+            self._load_errors[name] = describe_validation_error(exc)
             logger.warning(
                 "domain_schema_invalid",
                 file=str(config_path),
                 path_type=path_type,
                 error="schema_validation",
-                error_message=str(exc),
+                error_message=self._load_errors[name],
+            )
+            return
+        floor_named = name.strip().lower() == FLOOR_NAME
+        if path_type != "builtin" and (config.get("role") == "floor" or floor_named):
+            # One floor: the shipped generic plugin. A user config only adds (a pack),
+            # under a name of its own: it never replaces the floor.
+            self._load_errors[name] = (
+                f"user domain {name!r} refused: only the built-in 'generic' is the floor, "
+                "and a user domain is a pack with a name of its own"
+            )
+            logger.warning(
+                "domain_schema_invalid",
+                file=str(config_path),
+                path_type=path_type,
+                error="user_floor",
+                error_message=self._load_errors[name],
             )
             return
 
@@ -286,6 +372,16 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
             "has_examples": bool(instance.get_examples()),
             "prompt_tokens": self._estimate_prompt_tokens(instance),
             "extraction_density": instance.get_extraction_density(),
+            # ``floor`` for the floor every source has, ``pack`` for one a
+            # source may add (the UI offers packs; the floor is implied).
+            "role": getattr(instance, "role", None) or "pack",
+            # A pack's subtypes as the UI shows them: the stored ``entity_subtype``
+            # value, the pack's name for it, its core type, and its own icon/colour
+            # (a node is drawn with its core type's template; a subtype may show its own icon).
+            "subtypes": [
+                {"key": s.key, "name": s.name, "of": s.of, "icon": s.icon, "color": s.color}
+                for s in instance.subtypes()
+            ],
         }
 
         logger.debug(
@@ -341,28 +437,57 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
 
     # --- Backward-compatible API ---
 
-    # Detection-confidence guardrail (set from the 2026-05-23 38-fixture audit):
-    # every correctly-detected fixture scored >= 1.02 on its right domain,
-    # so 1.0 is the highest absolute floor we can safely apply without losing
-    # any of the known-good detections (0.02 headroom). At 1.0 the floor
-    # catches 7 of 17 mismatches whose wrong winners scored < 1.0 and routes
-    # them to `generic` — better to use the broadest schema than to lock in
-    # a wrong-domain template set. The remaining 10 mismatches have wrong
-    # winners >= 1.0 (over-eager broad-vocab domains like `news`, `historical`,
-    # `political`); those need targeted keyword pruning in their JSON-LDs.
-    #
-    # A runner-up-gap rule was tried at 0.10 / 0.20 but killed 3-6
-    # narrow-margin correct detections (biographical, historical) for only
-    # marginal mismatch reduction, so we keep it disabled.
-    _DETECTION_ABSOLUTE_MIN: float = 1.0
+    # Auto-detection rule (2026-10-06, audit W2-5). A plugin's score is its
+    # ``base_score`` plus ``per_keyword_boost * weight`` for each distinct
+    # keyword present, plus extension/doc-type/pattern boosts, uncapped
+    # (configurable.py); the confidence reported is capped at the winner's
+    # ``max_confidence`` (``detection_max_confidence``). Raw scores rank the candidates, but a raw floor is not
+    # on any plugin's scale: the old ``_DETECTION_ABSOLUTE_MIN = 1.0`` sat
+    # above what the product's ~5-12k-char sample reaches (Book One: literary
+    # 0.74, the runner-up 0.46), so every auto-detect fell back to generic.
+    # The floor is now on the winner's own scale, its *evidence* (score minus
+    # its base score). Since packs (2026-10-08, spec § 5) detection proposes
+    # every pack over the floor, at most two: a near-tie proposes both, the
+    # higher first, instead of falling back to the floor alone.
+    _DETECTION_MIN_EVIDENCE: float = 0.30
+    """Least evidence (score above a pack's own base) a proposed pack needs: ~8 hits at the usual 0.04 boost.
 
-    def get_best_domain(
+    Book One's literary winner has +0.54; README-sized technical docs +0.35 to
+    +1.0; a short license or roadmap page +0.18 to +0.22 (falls to generic).
+    """
+
+    _DETECTION_MIN_MARGIN: float = 0.08
+    """The raw-score lead under which two proposed packs are a near-tie (reason ``packs_within_margin``).
+
+    Two keyword hits at the usual 0.04 boost. Before packs a lead under it
+    fell back to generic; now it only names the order.
+
+    The 2026-05-23 audit tried 0.10 / 0.20 and lost narrow correct
+    detections (biographical, historical); 0.08 keeps Book One (lead 0.28 on
+    the product sample) and sends a terms-of-service page where news leads
+    legal by 0.04 to generic.
+    """
+
+    def _detection_evidence(self, domain: Any, confidence: float) -> float:
+        """``confidence`` minus ``domain``'s own base score (what its keyword hits added)."""
+        return confidence - detection_base_score(self._configs.get(domain.name, {}))
+
+    def propose_packs(
         self,
         text: str,
         filename: str,
         metadata: dict[str, Any] | None = None,
-    ) -> tuple[Any, float]:
-        """Run all analyzers and return the best match.
+    ) -> PackProposal:
+        """Propose the packs a source should extract with, on the floor every source has.
+
+        Detection is a hint (spec 2026-10-07 § 5): every pack whose evidence
+        (score minus its own base score, :meth:`_detection_evidence`) is at
+        least :attr:`_DETECTION_MIN_EVIDENCE` is proposed, ordered by score
+        (:meth:`rank_domains`), at most :data:`MAX_PROPOSED_PACKS`. The
+        runner-up margin (:attr:`_DETECTION_MIN_MARGIN`) only names the
+        order (``reason``): two packs within it are both proposed, the higher
+        first, and it never empties the proposal. No pack above the floor is
+        the floor alone, ``low_confidence`` and reason ``no_pack_above_floor``.
 
         Args:
             text: Sample text from document.
@@ -370,50 +495,95 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
             metadata: Optional document metadata.
 
         Returns:
-            Tuple of (domain_instance, confidence).
-            Returns generic domain when no domain crosses the absolute floor
-            or when the top candidate is ambiguously close to the runner-up.
+            The :class:`PackProposal`; its ``ranking`` is every can-handle
+            candidate, highest raw score first.
         """
-        # Collect every can_handle=True candidate (generic excluded, sorted
-        # high-to-low) so we can apply the runner-up gap / absolute-floor rule
-        # below. rank_domains is the single source of this list.
-        candidates = self.rank_domains(text, filename, metadata)
-
-        fallback_reason: str | None = None
-        best_domain: Any = None
-        best_confidence: float = 0.0
-        if not candidates:
-            fallback_reason = "no_candidates_above_per_plugin_threshold"
+        ranking = [
+            RankedDomain(d, score) for d, score in self.rank_domains(text, filename, metadata)
+        ]
+        # Rounded: scores are sums of 0.04-style boosts, and float error must not
+        # decide a score that sits exactly on the floor.
+        above = [
+            r
+            for r in ranking
+            if round(self._detection_evidence(r.domain, r.score), 6) >= self._DETECTION_MIN_EVIDENCE
+        ][:MAX_PROPOSED_PACKS]
+        packs = tuple(str(r.domain.name) for r in above)
+        if not above:
+            reason = "no_pack_above_floor"
+        elif len(above) == 1:
+            reason = "one_pack_above_floor"
+        elif round(above[0].score - above[1].score, 6) < self._DETECTION_MIN_MARGIN:
+            reason = "packs_within_margin"
         else:
-            winner, winner_conf = candidates[0]
-            if winner_conf < self._DETECTION_ABSOLUTE_MIN:
-                fallback_reason = "winner_below_absolute_min"
-            else:
-                best_domain = winner
-                best_confidence = winner_conf
-
-        if fallback_reason is not None:
-            best_domain = self._plugins.get("generic")
-            best_confidence = 0.1
-            logger.debug(
-                "domain_detection_fell_back_to_generic",
-                reason=fallback_reason,
-                top_candidates=[(d.name, round(c, 3)) for d, c in candidates[:3]],
-                absolute_min=self._DETECTION_ABSOLUTE_MIN,
-            )
-
-        if best_domain is None:
-            logger.error("no_domains_available", message="No domains registered")
-            # Return a minimal fallback
-            return _MinimalFallbackDomain(), 0.0
-
+            reason = "packs_above_floor"
         logger.debug(
-            "domain_selected",
-            domain=best_domain.name,
-            confidence=best_confidence,
+            "domain_packs_proposed",
+            packs=list(packs),
+            reason=reason,
+            top_candidates=[(r.domain.name, round(r.score, 3)) for r in ranking[:3]],
+            min_evidence=self._DETECTION_MIN_EVIDENCE,
+            min_margin=self._DETECTION_MIN_MARGIN,
         )
+        return PackProposal(packs=packs, ranking=ranking, low_confidence=not packs, reason=reason)
 
-        return best_domain, best_confidence
+    def proposal_confidence(self, proposal: PackProposal) -> float:
+        """The confidence a proposal reports: its first pack's raw score capped at that pack's ``max_confidence``.
+
+        Ranked and judged on raw scores, reported capped (a whole novel scored
+        literary 1.62). The floor alone reports
+        :data:`FLOOR_ONLY_CONFIDENCE`.
+        """
+        first = self.first_proposed(proposal)
+        if first is None:
+            return FLOOR_ONLY_CONFIDENCE
+        return min(first.score, detection_max_confidence(self._configs.get(first.domain.name, {})))
+
+    @staticmethod
+    def first_proposed(proposal: PackProposal) -> RankedDomain | None:
+        """The ranking entry of the proposal's first pack, or None for the floor alone.
+
+        Not ``ranking[0]``: the top raw score can fall short of its own
+        evidence floor (a high base score) while the runner-up clears it, and
+        then the first proposed pack is the runner-up.
+        """
+        if not proposal.packs:
+            return None
+        return next((r for r in proposal.ranking if r.domain.name == proposal.packs[0]), None)
+
+    def get_best_domain(
+        self,
+        text: str,
+        filename: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[Any, float]:
+        """The first proposed pack and its confidence, or the floor at 0.1.
+
+        .. deprecated::
+            A thin wrapper over :meth:`propose_packs` kept for one release:
+            a source extracts with every proposed pack, so a caller that
+            reads one domain misses the second. Call :meth:`propose_packs`.
+
+        Args:
+            text: Sample text from document.
+            filename: Original filename.
+            metadata: Optional document metadata.
+
+        Returns:
+            Tuple of (domain_instance, confidence): ``packs[0]`` at
+            :meth:`proposal_confidence`, else the floor at
+            :data:`FLOOR_ONLY_CONFIDENCE` (a minimal stand-in at 0.0 when no
+            floor is registered).
+        """
+        proposal = self.propose_packs(text, filename, metadata)
+        first = self.first_proposed(proposal)
+        if first is not None:
+            return first.domain, self.proposal_confidence(proposal)
+        floor = self._plugins.get(FLOOR_NAME)
+        if floor is None:
+            logger.error("no_domains_available", message="No domains registered")
+            return _MinimalFallbackDomain(), 0.0
+        return floor, FLOOR_ONLY_CONFIDENCE
 
     def rank_domains(
         self,
@@ -423,13 +593,13 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
     ) -> list[tuple[Any, float]]:
         """Return all can_handle candidate domains, highest score first.
 
-        This is the candidate list that :meth:`get_best_domain` builds and then
-        reduces to a single winner. ``generic`` is excluded from the competition
-        (it is only the fallback), plugins reporting ``can_handle=False`` or
-        raising are skipped, and the list is sorted by descending confidence.
+        This is the candidate list :meth:`propose_packs` reads. The floor is
+        excluded from the competition (every source has it), plugins
+        reporting ``can_handle=False`` or raising are skipped, and the list
+        is sorted by descending confidence.
 
-        No absolute floor and no generic fallback are applied here — that
-        policy lives in :meth:`get_best_domain` and ``detect_extraction_domain``.
+        No evidence floor or proposal limit is applied here — that policy
+        lives in :meth:`propose_packs`.
         The list may be empty when no domain can handle the content.
 
         Args:
@@ -446,8 +616,8 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
 
         candidates: list[tuple[Any, float]] = []
         for name, domain in self._plugins.items():
-            if name == "generic":
-                continue
+            if name == FLOOR_NAME or getattr(domain, "role", None) == "floor":
+                continue  # the floor applies to every source; detection picks packs
             try:
                 can_handle, confidence = domain.can_analyze(text, filename, metadata)
                 if can_handle:
@@ -477,16 +647,33 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
         """Return the ``(version, content_hash)`` fingerprint for a domain.
 
         Reads the version from the loaded config and the content hash from
-        the per-domain info computed once at registration time. Returns
-        ``None`` when no domain of this name is registered (so callers can
-        treat "plugin gone" as not-stale).
+        the per-domain info computed once at registration time. A label of
+        several packs (``historical+literary``) gives their versions joined
+        with ``+`` and :func:`stack_content_hash` over their hashes. Returns
+        ``None`` when no domain of this name (or a member of the label) is
+        registered (so callers can treat "plugin gone" as not-stale).
         """
         info = self._domain_info.get(name)
-        if info is None:
+        if info is not None:
+            return DomainFingerprint(
+                version=self._configs.get(name, {}).get("version"),
+                content_hash=info["content_hash"],
+            )
+        # The packs' label (``historical+literary``): the members' versions and
+        # one hash over their hashes (``stack_content_hash``).
+        packs = sorted(set(stored_name_packs(name)))
+        if len(packs) < 2 or any(p not in self._domain_info for p in packs):
+            return None
+        content_hash = stack_content_hash(
+            {p: self._domain_info[p]["content_hash"] for p in packs}, packs
+        )
+        if content_hash is None:  # pragma: no cover - every member is known above
             return None
         return DomainFingerprint(
-            version=self._configs.get(name, {}).get("version"),
-            content_hash=info["content_hash"],
+            version=PACKS_SEPARATOR.join(
+                str(self._configs.get(p, {}).get("version")) for p in packs
+            ),
+            content_hash=content_hash,
         )
 
     def _estimate_prompt_tokens(self, domain: DomainAnalyzer) -> int:
@@ -504,11 +691,17 @@ class DomainRegistry(BaseRegistry["DomainAnalyzer"]):
         templates = domain.get_templates()
         examples = domain.get_examples()
 
-        node_fmt = format_domain_node_templates(templates)
+        # A pack has no node templates (the floor's core types are not its own): its
+        # subtype names are what it adds to the node lines.
+        node_fmt = format_domain_node_templates(templates) if templates["node_templates"] else ""
+        subtypes = getattr(domain, "subtypes", None)
+        subtype_chars = sum(len(s.name) + 2 for s in subtypes()) if callable(subtypes) else 0
         edge_fmt = format_domain_edge_templates(templates)
         examples_fmt = format_domain_examples(examples)
 
-        total_chars = len(guidance) + len(node_fmt) + len(edge_fmt) + len(examples_fmt)
+        total_chars = (
+            len(guidance) + len(node_fmt) + subtype_chars + len(edge_fmt) + len(examples_fmt)
+        )
         return total_chars // 4  # 4 chars ≈ 1 token
 
     def list_domain_info(self) -> list[dict[str, Any]]:
@@ -582,9 +775,37 @@ class _MinimalFallbackDomain:
         """Get title/honorific words to filter."""
         return []
 
-    def get_type_compatibility(self) -> dict[str, list[str]]:
-        """Get type compatibility groups."""
+    def get_feminine_titles(self) -> list[str]:
+        """No feminine titles of its own (the name rule's universal ones apply)."""
+        return []
+
+    def get_masculine_titles(self) -> list[str]:
+        """No masculine titles of its own."""
+        return []
+
+    def get_generation_words(self) -> dict[str, str]:
+        """No generation words of its own."""
         return {}
+
+    def get_name_forms(self) -> dict[str, list[dict[str, Any]]]:
+        """No name forms."""
+        return {}
+
+    def get_relation_vocabulary(self) -> dict[str, dict[str, list[str]]]:
+        """No relation vocabulary of its own (the universal one applies)."""
+        return {}
+
+    def get_vocabulary_exclusions(self) -> list[str]:
+        """No labels taken out of the universal vocabulary."""
+        return []
+
+    def get_role_words(self) -> list[str]:
+        """No role words of its own."""
+        return []
+
+    def get_title_equivalents(self) -> list[list[str]]:
+        """No title spellings of its own."""
+        return []
 
     def get_strict_entity_types(self) -> bool:
         """Get strict entity type enforcement."""

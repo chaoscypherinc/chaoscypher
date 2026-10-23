@@ -34,8 +34,8 @@ class _StubDomainResolver:
     def get_domain_title_words(self, _domain: str | None) -> set[str]:
         return set()
 
-    def get_domain_type_compatibility(self, _domain: str | None) -> dict[str, list[str]] | None:
-        return None
+    def get_domain_name_conventions(self, _domain: str | None) -> None:
+        return None  # the universal conventions
 
     def get_domain_symmetric_relationships(self, _domain: str | None) -> list[str] | None:
         return None

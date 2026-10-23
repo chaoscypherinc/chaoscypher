@@ -3,16 +3,18 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Custom linter for ChaosCypher CLAUDE.md rules.
 
-Enforces architectural rules that standard linters don't catch:
-- Data type boundaries (dict vs entity attribute access)
-- SQLAlchemy query performance (load_only in list methods)
-- Barrel pattern compliance (__all__ in __init__.py)
-- Factory function naming conventions
-- Session management patterns
-- Direct session.commit() in repository layers (use maybe_commit() or _maybe_commit())
+Enforces the architectural rules neither import-linter nor semgrep expresses
+cleanly (data-flow tracking, per-file allowlists with line-level opt-outs):
+- CC002 Data type boundaries (dict vs entity attribute access)
+- CC004 Barrel pattern compliance (__all__ in __init__.py)
+- CC011 Direct session.commit() / Session(...) in repository layers
+- CC018 Secret-carrying Pydantic field typed as str (use SecretStr)
+- CC044 Queue registration must match OPERATION_QUEUE_ROUTING
+- CC051 Session-routed write followed by an await without a commit
+The rules semgrep and import-linter took over are listed under --help.
 
 Usage:
-    python scripts/lint_claude_rules.py [--fix] [path...]
+    python scripts/lint_claude_rules.py [path...]
 
 Exit codes:
     0 = All checks passed
@@ -25,6 +27,35 @@ import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+
+# CC002: the methods a storage return may call as the dict or list it is (a `list_*` call returns a
+# list of dicts, so `rows.sort(...)` is list access, not entity access; 2026-10-11: `triggers.sort`
+# on a `self.storage.list_triggers()` result warned for a week). Everything else on such a
+# variable reads as an entity attribute.
+_CONTAINER_METHODS: frozenset[str] = frozenset(
+    {
+        # dict
+        "get",
+        "keys",
+        "values",
+        "items",
+        "update",
+        "pop",
+        "setdefault",
+        "copy",
+        "clear",
+        # list
+        "sort",
+        "append",
+        "extend",
+        "insert",
+        "remove",
+        "index",
+        "count",
+        "reverse",
+    }
+)
 
 
 @dataclass
@@ -105,7 +136,7 @@ class ClaudeRulesChecker(ast.NodeVisitor):
         if (
             isinstance(node.value, ast.Name)
             and node.value.id in self.storage_call_vars
-            and node.attr not in ("get", "keys", "values", "items", "update", "pop")
+            and node.attr not in _CONTAINER_METHODS
             and "tests" not in str(self.file_path)
         ):
             self.violations.append(
@@ -978,6 +1009,11 @@ or `make lint-claude`):
   CC040  ':memory:' SQLite URL in tests
   CC041  asyncio.run() in tests
   CC045  Bare stdlib raise in core/services or core/operations
+  CC046  Hardcoded asyncio.sleep(N) / time.sleep(N) in production code
+  CC047  Hardcoded timeout=N in httpx / requests / asyncio.wait_for
+  CC048  Hardcoded Field(max_length=N) on Pydantic models
+  CC049  Reference to a legacy extraction_chunks_* field
+  CC050  Reference to a legacy dropped vision column
         """,
     )
     parser.add_argument(

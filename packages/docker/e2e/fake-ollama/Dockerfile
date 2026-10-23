@@ -3,7 +3,7 @@
 # /api/embeddings — the surface cortex / neuron call when the
 # configured LLM provider is "ollama". Backed by deterministic
 # canned responses; see server.py.
-FROM python:3.14.3-slim
+FROM python:3.14.8-slim
 
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1

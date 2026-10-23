@@ -13,7 +13,7 @@ Chaos Cypher is configured through a YAML settings file and environment variable
 
 ## Strict configuration validation
 
-Unknown top-level keys in `settings.yaml` raise `ConfigError` at startup with a Levenshtein-based suggestion. For example, a typo like `embedding_settings:` instead of `embedding:` produces:
+Unknown top-level keys in `settings.yaml` raise `ConfigError` at startup with a closest-match suggestion. For example, a typo like `embedding_settings:` instead of `embedding:` produces:
 
 ```
 ConfigError: Unrecognized top-level setting(s) in /data/settings.yaml:
@@ -150,12 +150,42 @@ llm:
 
 ```yaml
 llm:
-  ai_temperature: 0.3           # Chat temperature (0.0-2.0)
-  extraction_temperature: 0.1   # Extraction temperature (lower = more deterministic)
+  ai_temperature: 0.0           # Chat temperature (0.0-2.0); 0 = the same answer to the same question
+  extraction_temperature: 0.0   # Extraction temperature; 0 = the same document gives the same graph
+  seed: 42                      # Sampling seed sent with every request (null: vary per request)
   ai_max_tokens: 65536          # Max output tokens
   ai_context_window: 8192       # Context window size
-  seed: null                    # Sampling seed; null = the provider picks one per request (Ollama only, hosted providers ignore it)
+chat:
+  regenerate_temperature: 0.7   # Regenerate decodes at max(ai_temperature, this), with a new seed
 ```
+
+Decoding is pinned by default: temperature 0 and a fixed seed for both chat and extraction. The
+same document always extracts to the same graph, and the same grounded question gets the same
+answer with the same citations, which is what makes re-imports, retries and caching free of
+surprises. Raise `ai_temperature` if you want variety in chat answers; extraction has no reason to
+sample. Only Ollama honours the seed today; hosted providers decode at the temperature alone.
+
+Regenerating an answer asks for a different one, so a regeneration decodes at
+`chat.regenerate_temperature` (or `ai_temperature`, whichever is higher) with a new seed for each
+regeneration. The first answer and every ordinary turn keep the pinned decoding. The regenerated
+message records the temperature and seed it was decoded with.
+
+```yaml
+cache:
+  dir: null                     # Where the cache files live; null = <data_dir>/cache/llm
+  completions:
+    enabled: true               # Serve and store pinned chat and extraction answers
+    max_bytes: 2147483648       # 2 GB; the least recently used entries go first past it
+  embeddings:
+    enabled: true               # Serve and store embedding vectors
+    max_bytes: 2147483648
+```
+
+The cache keeps pinned completions (temperature 0, plus a seed on Ollama) and every embedding, so
+the same input to the same model build is answered from disk the second time. Sampled decoding
+(a raised `ai_temperature`, a regeneration) is never cached, and a hosted provider's answer is
+cached as the first answer seen, flagged unseeded, since hosted models do not honour the seed. See
+[Cache](./cache.md).
 
 ### Spend Caps
 
@@ -275,7 +305,7 @@ source_processing:
   auto_extract_entities: true                    # Auto-start extraction after indexing
   source_processing_analysis_depth: full         # full | quick
   entity_deduplication_mode: semantic            # exact | semantic
-  entity_deduplication_similarity_threshold: 0.90
+  dedup_require_type_compatibility: true         # merge same-name entities of one core type only
   relationship_confidence_threshold: 0.5
 ```
 
@@ -287,14 +317,19 @@ source_processing:
 
 ## Extraction
 
-Extraction quality knobs — loop detection, semantic dedup thresholds, and relationship caps such as `max_relationship_ratio` — live in the separate `extraction` settings group (not under `source_processing`; writing them there fails strict validation):
+Extraction quality knobs — loop detection, semantic dedup thresholds, relationship caps such as `max_relationship_ratio`, and the size of the known-entities list each Pass 1 call is shown (`known_entities_limit`) — live in the separate `extraction` settings group (not under `source_processing`; writing them there fails strict validation):
 
 ```yaml
 extraction:
   loop_max_entity_count: 50        # Abort a chunk stream past this many entities
   semantic_dedup_threshold: 0.95   # Cosine-similarity bar for merging entities
   minimum_alias_length: 2          # Drop aliases shorter than this
+  known_entities_limit: 80         # Named entities so far shown to each Pass 1 call
 ```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `known_entities_limit` | `80` | How many of the source's named entities so far (name, type, aliases, ties) each [Pass 1](../architecture/extraction-pipeline/entity-extraction.md#per-chunk-2-pass-extraction) entity call is shown, ranked by how many earlier groups cite them, so a later passage's "the count" or "the regiment" resolves to the entity the earlier groups named. Range 0–400; `0` shows none and turns the crossed-name guards off (the two checks that drop an alias naming a different listed entity, and demote a listed name the passage's cited sentences do not support back to the phrase they write), and with them the relationship rule that flags an edge `known_endpoint_not_named` when a listed entity is written there only by a title or kinship word. |
 
 ### Filtering-mode knobs
 
@@ -448,7 +483,7 @@ These knobs are read by `packages/docker/docker-compose.yml` when starting the a
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CHAOSCYPHER_BIND` | `0.0.0.0` | Host interface the published ports bind to. Set `127.0.0.1` for loopback-only access. |
+| `CHAOSCYPHER_BIND` | `0.0.0.0` | Host interface the repo's `docker-compose.yml` binds the published ports to. Set `127.0.0.1` for loopback-only access; with a plain `docker run`, bind the port yourself (`-p 127.0.0.1:80:80`). |
 | `CHAOSCYPHER_ALLOWED_HOSTS` | (empty) | Comma-separated Host-header allow-list for LAN/proxy deployments. Needed when clients reach the app via a LAN hostname/IP so they aren't rejected with `421`. |
 | `HOST_PORT_HTTP` | `80` | Host port mapped to the container's HTTP port. |
 | `HOST_PORT_HTTPS` | `443` | Host port mapped to the container's HTTPS port. |
@@ -474,14 +509,14 @@ When enabled, the following rate limits apply:
 |------|------|------|-------|
 | Auth | `/api/v1/auth/login` (exact match only) | 5 r/m | 5 |
 | Setup | `/api/v1/auth/setup` (exact match only) | 3 r/m | 3 |
-| Uploads | `/api/v1/sources` | 10 r/s | 5 |
-| Mutations | POST/PUT/PATCH/DELETE on `/api/*` | 10 r/s | 20 (nodelay) |
+| Uploads | `/api/v1/sources` (and `/batch`, `/url`), `/api/v1/exports/import`, `/api/v1/lexicon/upload` | 10 r/s | 5 (fixed) |
+| Mutations | POST/PUT/PATCH/DELETE on all other `/api/*` paths | 10 r/s | 20 (nodelay) |
 | General API | `/` (catch-all) | 100 r/s | 50 |
 | Static assets | `/assets/` | No limit | — |
 
 The auth and setup zones are **per minute**, not per second: the renderer expresses the configured per-window budget as `r/m` (`login_max_requests` requests per `login_window_seconds`, defaulting to 5 per 60 s). Only the two exact-match locations above are limited — `/api/v1/auth/status` and `/api/v1/auth/logout` carry no `limit_req` directive.
 
-Rate limits are per client IP. These zones are also tunable under `rate_limit` in `settings.yaml` (e.g. `login_max_requests`, `api_general_max_requests`, `mutations_max_requests`, `mutations_burst`). Keep rate limiting on if you expose Chaos Cypher to the internet or untrusted networks.
+Rate limits are per client IP. These zones are also tunable under `rate_limit` in `settings.yaml` (e.g. `login_max_requests`, `api_general_max_requests`, `uploads_max_requests`, `mutations_max_requests`, `mutations_burst`). The upload endpoints are governed only by the Uploads zone — the Mutations settings do not apply to them — and their burst of 5 is not configurable. Keep rate limiting on if you expose Chaos Cypher to the internet or untrusted networks.
 
 ## Worker Configuration
 
@@ -504,14 +539,18 @@ operations_worker:
 Settings for the built-in [Model Context Protocol](https://modelcontextprotocol.io/) server that enables AI assistant integration.
 
 ```yaml
-MCP:
+mcp:
   mode: read              # "read" or "write"
+  profile: full           # "full" or "memory"
+  tools: []               # allowlist of tool names; empty serves the whole profile
   auto_extract: false     # Run entity extraction after document upload
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `mode` | `read` | Tool access level. `read` exposes 21 read tools (search/query and the self-benchmark tools). `write` exposes all 36 tools — adding 15 write-only tools for create, update, delete, document upload, and client-driven extraction. |
+| `mode` | `read` | Tool access level. `read` exposes 25 read tools (search/query and the self-benchmark tools). `write` exposes all 44 tools — adding 19 write-only tools for create, update, delete, document and site import, and client-driven extraction. |
+| `profile` | `full` | The served tool profile. `full` is every tool; `memory` is the five memory tools (`remember`, `recall`, `forget`, `list_memories`, `digest`), the short list an agent memory client needs. |
+| `tools` | `[]` | An allowlist of tool names narrowing the profile. Empty serves the whole profile; a name that is not a registered tool is a configuration error. |
 | `auto_extract` | `false` | Automatically run entity extraction after indexing documents uploaded via MCP. |
 
 See [MCP Server](../user-guide/mcp.md) for setup and usage details.
@@ -556,9 +595,11 @@ For a complete reference of all available settings and their defaults, see the s
 | **queue** | Valkey connection details |
 | **chunking** | Chunk sizes, overlap, boundary handling |
 | **search** | Vector search, re-ranking, similarity thresholds |
+| **graphrag** | GraphRAG search and chat-context levers, and the profiles that bind them to a chat model |
+| **graph** | Graph commit configuration, including the post-commit identity resolver |
 | **embedding** | Embedding provider, model, dimensions, max text length |
 | **source_processing** | Extraction behavior, deduplication, quality controls |
-| **extraction** | Extraction quality knobs — loop detection, dedup thresholds, relationship caps |
+| **extraction** | Extraction quality knobs — loop detection, dedup thresholds, relationship caps, the Pass 1 known-entities limit |
 | **export** | Package metadata for CCX exports |
 | **lexicon** | Lexicon Hub connection settings |
 | **paths** | Data directory structure |
@@ -573,10 +614,28 @@ For a complete reference of all available settings and their defaults, see the s
 | **backoff** | Exponential backoff configuration |
 | **analysis** | Graph analysis settings |
 | **chat_context** | Chat context window and history limits |
+| **cache** | LLM response and embedding caches: enabled flags, size caps, directory |
 | **chat** | Chat tool-loop limits (`max_tool_iterations`, `max_total_tool_calls`), tool approval mode/timeout, mutating-tool list |
 | **intervals** | Frontend/backend polling intervals, incl. `chat_approval_poll_ms` |
 | **services** | External service URLs |
 | **workers** | Worker concurrency and timeout defaults |
+| **priorities** | Queue priority levels (interactive, background, default) |
+| **queue_recovery** | Worker heartbeat TTLs and queue reconcile intervals |
+| **source_recovery** | Stalled-source detection, recovery attempts, orphan cleanup retention |
+| **backup** | Database backup toggle, interval, retention count, directory |
+| **database** | SQLite timeouts, cache, connection pool, commit retries |
+| **shutdown** | Graceful shutdown drain windows for workers, Cortex, and Docker |
+| **health_monitor** | Health checks, disk and error-rate thresholds, conditional auto-pause |
+| **tls** | Certificate directory/filenames and Nginx config paths (all-in-one container) |
+| **security** | HTTP boundary: `allowed_hosts` and `allow_external_access` |
+| **logs** | Logging service: known services, max log lines |
+| **workflows** | Workflow engine recursion depth and step retry delays |
+| **web** | Web-fetch timeouts, redirects, content-type detection, the User-Agent, and site-import politeness (crawl delay and its cap, concurrency, robots.txt, page and depth caps, the run length, the title length, the preview's time, sitemap and size budget) |
+| **graph_snapshot** | Graph snapshot staleness thresholds |
+| **pause** | Pause-operation limits |
+| **quality** | Quality dashboard tuning |
+| **cli** | CLI defaults: API port, Ollama timeouts, page sizes |
+| **benchmark** | Benchmark orchestration tunables |
 
 :::warning Security defaults
 

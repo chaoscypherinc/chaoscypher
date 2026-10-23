@@ -28,6 +28,7 @@ from chaoscypher_core.constants import (
     OP_IMPORT_ANALYSIS,
     OP_IMPORT_CCX,
     OP_IMPORT_COMMIT,
+    OP_IMPORT_SITE,
     OP_INDEX_DOCUMENT,
     OP_INDEX_IMPORTED_NODES,
     OP_INDEX_IMPORTED_SOURCE,
@@ -203,6 +204,7 @@ async def queue_import_commit(
     # ``commit_data`` is MB-scale for large documents, so the json.dumps
     # plus the TEXT UPDATE + COMMIT is the biggest write on this path.
     def _persist_commit_payload() -> None:
+        """Store the commit payload on the source row (run in a worker thread)."""
         adapter.set_source_commit_payload(file_id, commit_data, database_name)
 
     await asyncio.to_thread(_persist_commit_payload)
@@ -310,6 +312,48 @@ async def queue_fetch_url(
             operation_type=OP_FETCH_URL,
             extra_metadata=extra_metadata,
             origin_url=url,
+        ),
+    )
+
+
+async def queue_import_site(
+    site_id: str,
+    *,
+    refresh: bool,
+    database_name: str,
+    priority: int = 50,
+    extra_metadata: dict[str, Any] | None = None,
+) -> str:
+    """Queue a site import or refresh (``OP_IMPORT_SITE``) on the Operations queue.
+
+    The worker discovers the site's pages again and imports (or, on a
+    refresh, checks) each one through the URL import path. The payload is
+    the site id: the address, upload options, pages to leave out and resume
+    cursor live on the site row. A run that reaches ``web.site_run_max_seconds`` queues its own
+    continuation here.
+
+    Args:
+        site_id: The ``source_sites`` row to run.
+        refresh: A refresh of an imported site (changed pages re-imported,
+            unlisted ones marked gone) rather than its first import.
+        database_name: Target database — required for cancel-by-metadata
+            scoping.
+        priority: Task priority (0-100).
+        extra_metadata: Extra keys merged into task metadata.
+
+    Returns:
+        The queue task id.
+    """
+    return await queue_client.enqueue_task(
+        queue=QUEUE_OPERATIONS,
+        operation=OP_IMPORT_SITE,
+        data={"site_id": site_id, "refresh": refresh},
+        priority=priority,
+        metadata=_build_metadata(
+            database_name=database_name,
+            operation_type=OP_IMPORT_SITE,
+            extra_metadata=extra_metadata,
+            site_id=site_id,
         ),
     )
 

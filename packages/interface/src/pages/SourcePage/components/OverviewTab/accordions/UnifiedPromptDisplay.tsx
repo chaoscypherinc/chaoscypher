@@ -18,8 +18,9 @@ interface UnifiedPromptDisplayProps {
 }
 
 // Splits on the backend sentinel placeholders (ai_entities.py
-// PROMPT_CHUNK_TEXT_PLACEHOLDER / PROMPT_PASS1_ENTITIES_PLACEHOLDER) — the
-// "[[ ... ]]" runs that mark where the chunk's text / pass-1 entities are
+// PROMPT_CHUNK_TEXT_PLACEHOLDER / PROMPT_PASS1_ENTITIES_PLACEHOLDER /
+// PROMPT_KNOWN_ENTITIES_PLACEHOLDER) — the "[[ ... ]]" runs that mark where
+// the chunk's text / pass-1 entities / the group's known entities are
 // injected at runtime. Capturing group keeps the placeholders in the split
 // output (odd indices) so they can be highlighted.
 const PLACEHOLDER_SPLIT = /(\[\[ .*? \]\])/g;

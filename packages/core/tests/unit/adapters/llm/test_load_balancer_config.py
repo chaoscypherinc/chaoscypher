@@ -565,3 +565,187 @@ async def test_reload_config_forwards_seed_and_request_timeout() -> None:
     assert provider_configs[0]["seed"] == 7
     assert provider_configs[0]["llm_request_timeout"] == 123.0
     assert provider_configs[0]["base_url"] == "http://a:11434"
+
+
+# ---------------------------------------------------------------------------
+# Audit wave 5: a provider is rebuilt when the config it answers with moves
+# ---------------------------------------------------------------------------
+
+
+def _settings_with(**overrides: Any) -> SimpleNamespace:
+    """One instance on one URL, with the decoding/model fields overridden."""
+    settings = _fake_llm_settings(instances=[_instance_obj(id="a", base_url="http://a:11434")])
+    for key, value in overrides.items():
+        setattr(settings, key, value)
+    return settings
+
+
+def _recording_patches(built: list[dict[str, Any]]) -> Any:
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "chaoscypher_core.adapters.llm.providers.ollama_provider.OllamaProvider",
+            side_effect=lambda cfg: built.append(cfg) or MagicMock(config=cfg),
+        )
+    )
+    stack.enter_context(patch.object(lb_mod, "update_llm_semaphore_config", AsyncMock()))
+    stack.enter_context(
+        patch.object(lb_mod, "PrioritySemaphore", side_effect=lambda **kw: _fake_semaphore())
+    )
+    return stack
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {"ollama_chat_model": "gemma3:27b"},
+        {"seed": 43},
+        {"ai_temperature": 0.7},
+        {"ollama_num_batch": 256},
+    ],
+)
+async def test_reload_rebuilds_a_provider_whose_config_moved_on_the_same_url(
+    changed: dict[str, Any],
+) -> None:
+    """Until wave 5 only a URL change rebuilt it: the second config got the first's provider."""
+    bal = _bare_balancer()
+    built: list[dict[str, Any]] = []
+    with _recording_patches(built):
+        await bal.reload_config(_settings_with(seed=42, ai_temperature=0.0))
+        await bal.reload_config(_settings_with(**{"seed": 42, "ai_temperature": 0.0, **changed}))
+    assert len(built) == 2
+    key, value = next(iter(changed.items()))
+    assert bal._providers["a"].config.get(key) == value
+
+
+@pytest.mark.asyncio
+async def test_reload_keeps_a_provider_whose_config_did_not_move() -> None:
+    """The same settings, or only another instance count, keep the built provider."""
+    bal = _bare_balancer()
+    built: list[dict[str, Any]] = []
+    with _recording_patches(built):
+        await bal.reload_config(_settings_with(seed=42))
+        await bal.reload_config(_settings_with(seed=42))
+        two = _settings_with(seed=42)
+        two.ollama_instances = [
+            *two.ollama_instances,
+            _instance_obj(id="b", base_url="http://b:11434"),
+        ]
+        await bal.reload_config(two)
+    assert [cfg["base_url"] for cfg in built] == ["http://a:11434", "http://b:11434"]
+
+
+def _engine(llm: SimpleNamespace, *, completions_cache: bool = True) -> Any:
+    """Engine settings with this ``llm`` section and the completion cache on or off."""
+    from chaoscypher_core.settings import CacheSettings, CacheStoreSettings
+
+    cache = CacheSettings(completions=CacheStoreSettings(enabled=completions_cache))
+    return SimpleNamespace(llm=llm, cache=cache)
+
+
+def _factory_patches(bal: OllamaLoadBalancer, built: list[dict[str, Any]]) -> Any:
+    """Providers recorded, the shared balancer served, real per-instance semaphores."""
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(
+        patch(
+            "chaoscypher_core.adapters.llm.providers.ollama_provider.OllamaProvider",
+            side_effect=lambda cfg: built.append(cfg) or MagicMock(config=cfg),
+        )
+    )
+    stack.enter_context(patch.object(lb_mod, "update_llm_semaphore_config", AsyncMock()))
+    stack.enter_context(patch.object(lb_mod, "get_ollama_load_balancer", return_value=bal))
+    stack.enter_context(
+        patch("chaoscypher_core.adapters.llm.factory.get_ollama_load_balancer", return_value=bal)
+    )
+    return stack
+
+
+@pytest.mark.asyncio
+async def test_a_second_factory_on_the_shared_balancer_gets_its_own_providers() -> None:
+    """The real caller: two factories, one URL, two seeds; each acquires a provider built for it."""
+    from chaoscypher_core.adapters.llm.factory import ProviderFactory
+
+    bal = _bare_balancer()
+    built: list[dict[str, Any]] = []
+    first = ProviderFactory(_engine(_settings_with(seed=42)))
+    second = ProviderFactory(_engine(_settings_with(seed=43)))
+    with _factory_patches(bal, built):
+        async with first.acquire_instance() as (_, provider):
+            assert provider.config["seed"] == 42
+        async with second.acquire_instance() as (_, provider):
+            assert provider.config["seed"] == 43
+        # the first asks again: its seed, not the second's, and no rebuild either way
+        async with first.acquire_instance() as (_, provider):
+            assert provider.config["seed"] == 42
+        async with second.acquire_instance() as (_, provider):
+            assert provider.config["seed"] == 43
+    assert [cfg["seed"] for cfg in built] == [42, 43]
+
+
+@pytest.mark.asyncio
+async def test_two_configs_interleaved_never_get_each_others_provider() -> None:
+    """Audit wave 6: a reload landing between one factory's reload and its acquire.
+
+    The first factory loads the pool; a reload with the second config lands
+    (the shared pool now answers with seed 43); the first then acquires: it
+    still gets a provider built from its own settings. Concurrent turns of
+    both configs, interleaved on one instance's slot, each get their own.
+    """
+    from chaoscypher_core.adapters.llm.factory import ProviderFactory
+
+    bal = _bare_balancer()
+    built: list[dict[str, Any]] = []
+    first = ProviderFactory(_engine(_settings_with(seed=42)))
+    second = ProviderFactory(_engine(_settings_with(seed=43)))
+    seen: list[tuple[str, int]] = []
+
+    async def turn(name: str, factory: ProviderFactory) -> None:
+        async with factory.acquire_instance() as (_, provider):
+            seen.append((name, provider.config["seed"]))
+            await asyncio.sleep(0)
+
+    with _factory_patches(bal, built):
+        await first.get_load_balancer()
+        await bal.reload_config(second.settings.llm)  # the pool now answers with 43
+        assert bal._providers["a"].config["seed"] == 43
+        async with first.acquire_instance() as (_, provider):
+            assert provider.config["seed"] == 42
+        await asyncio.gather(
+            *(turn(n, f) for _ in range(3) for n, f in (("1", first), ("2", second)))
+        )
+    assert sorted(set(seen)) == [("1", 42), ("2", 43)]
+    assert len(seen) == 6
+
+
+@pytest.mark.asyncio
+async def test_the_factory_serves_balancer_providers_behind_its_own_completion_cache() -> None:
+    """Every acquired provider is wrapped by the acquiring factory's cache settings.
+
+    One wrapper per provider (its resolved model build is kept between turns),
+    the balancer's own providers stay bare (the pool is shared by factories
+    whose cache settings differ), and a factory with the cache off gets the
+    bare provider (Review Focus 5).
+    """
+    from chaoscypher_core.adapters.llm.factory import ProviderFactory
+    from chaoscypher_core.cache.chat import CachedChatProvider
+
+    bal = _bare_balancer()
+    built: list[dict[str, Any]] = []
+    cached = ProviderFactory(_engine(_settings_with(seed=42)))
+    bare = ProviderFactory(_engine(_settings_with(seed=42), completions_cache=False))
+    with _factory_patches(bal, built):
+        async with cached.acquire_instance() as (_, first):
+            assert isinstance(first, CachedChatProvider)
+            assert first.inner is bal._providers["a"]
+            assert first.config["seed"] == 42
+        async with cached.acquire_instance() as (_, again):
+            assert again is first
+        async with bare.acquire_instance() as (_, provider):
+            assert provider is bal._providers["a"]
+    assert not isinstance(bal._providers["a"], CachedChatProvider)
+    assert len(built) == 1

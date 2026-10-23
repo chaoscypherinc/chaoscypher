@@ -14,6 +14,7 @@ the CLI and survives across invocations.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ import pytest
 from chaoscypher_cli.sources.service import CLISourceProcessingService
 from chaoscypher_core.exceptions import LLMSpendCapExceededError
 from chaoscypher_core.services.llm.spend import _reset_tracker_for_tests
+from chaoscypher_core.settings import ExtractionSettings
 
 
 _EXTRACTOR_PATH = (
@@ -44,23 +46,19 @@ def _ctx(*, per_day: int | None, daily_already_spent: int) -> SimpleNamespace:
         database_name="default",
         settings=SimpleNamespace(
             llm=SimpleNamespace(max_tokens_per_source=None, max_tokens_per_day=per_day),
+            retries=SimpleNamespace(extraction_chunk_max=2),
+            extraction=SimpleNamespace(
+                known_entities_limit=ExtractionSettings().known_entities_limit
+            ),
         ),
     )
 
 
-async def _run_extract(service: CLISourceProcessingService) -> dict:
+async def _run_extract(service: CLISourceProcessingService, plan: Any) -> dict:
     return await service._extract_and_finalize(
         groups_to_process=[{"combined_content": "hello world"}],
         file_id="src1",
-        node_templates="",
-        edge_templates="",
-        entity_guidance=None,
-        relationship_guidance=None,
-        entity_examples=None,
-        relationship_examples=None,
-        entity_exclusions=None,
-        domain_extraction_limits=None,
-        filtering_mode=None,
+        plan=plan,
         metrics_collector=MagicMock(),
         file_record={},
         detected_domain_name=None,
@@ -71,7 +69,7 @@ async def _run_extract(service: CLISourceProcessingService) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_cli_extraction_blocked_when_daily_cap_reached() -> None:
+async def test_cli_extraction_blocked_when_daily_cap_reached(stub_extraction_plan: Any) -> None:
     """A daily cap already at the limit raises before the LLM extractor runs."""
     service = CLISourceProcessingService.__new__(CLISourceProcessingService)
     service.ctx = _ctx(per_day=1000, daily_already_spent=1000)
@@ -83,7 +81,7 @@ async def test_cli_extraction_blocked_when_daily_cap_reached() -> None:
         patch(_EXTRACTOR_PATH, MagicMock(return_value=extractor)),
         pytest.raises(LLMSpendCapExceededError) as exc,
     ):
-        await _run_extract(service)
+        await _run_extract(service, stub_extraction_plan)
 
     assert exc.value.scope == "day"
     # The cap fired BEFORE any LLM call — and is not swallowed by the

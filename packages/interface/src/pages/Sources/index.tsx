@@ -86,7 +86,7 @@ export default function SourcesPage() {
   const confirmMutation = useConfirmExtraction();
 
   // Data hook
-  const { sources, loading, error, domains, queueStats, extractionCapacity, qualityScores, refresh, clearError } = useSourcesData({
+  const { sources, sites, loading, error, domains, queueStats, extractionCapacity, qualityScores, refresh, clearError } = useSourcesData({
     stage: stageFilter,
     status: statusFilter,
     source_type: typeFilter,
@@ -210,19 +210,32 @@ export default function SourcesPage() {
     setBulkDeleting(true);
     setActionError(null);
 
+    // Every row gets its attempt: a failure part-way used to stop the loop
+    // and skip the refresh, so rows already deleted stayed listed and
+    // selected, and a retry 404'd on the first of them.
+    const failed: Array<{ source: UnifiedSource; err: unknown }> = [];
     try {
       for (const source of selectedSources) {
-        await sourcesApi.delete(source.id);
+        try {
+          await sourcesApi.delete(source.id);
+          selection.toggle(source.id);
+        } catch (err) {
+          failed.push({ source, err });
+        }
       }
-
-      selection.deselectAll();
-      setBulkDeleteDialogOpen(false);
-      await refresh();
-    } catch (err) {
-      logger.error('Bulk delete failed:', err);
-      setActionError('Bulk delete failed: ' + (getApiErrorMessage(err)));
+      if (failed.length > 0) {
+        logger.error('Bulk delete failed:', failed);
+        const names = failed.map((f) => f.source.title).join(', ');
+        setActionError(
+          `Bulk delete failed for ${failed.length} of ${selectedSources.length} (${names}): ` +
+            getApiErrorMessage(failed[0].err),
+        );
+      } else {
+        setBulkDeleteDialogOpen(false);
+      }
     } finally {
       setBulkDeleting(false);
+      await refresh();
     }
   }, [selection, sortedSources, refresh]);
 
@@ -464,6 +477,7 @@ export default function SourcesPage() {
       )}
       <SourcesTable
         sources={sortedSources}
+        sites={sites}
         selectedIds={selection.selectedIds}
         onSelectionChange={selection.toggle}
         onSelectAll={handleSelectAll}
@@ -486,16 +500,17 @@ export default function SourcesPage() {
         selectedFiles={uploadHook.selectedFiles}
         analysisDepth={uploadHook.analysisDepth}
         enableNormalization={uploadHook.enableNormalization}
-        selectedDomain={uploadHook.selectedDomain}
+        selectedPacks={uploadHook.selectedPacks}
         availableDomains={domains}
         onFilesSelected={uploadHook.handleFilesSelected}
         onAnalysisDepthChange={uploadHook.setAnalysisDepth}
         onNormalizationChange={uploadHook.setEnableNormalization}
-        onDomainChange={uploadHook.setSelectedDomain}
+        onPacksChange={uploadHook.setSelectedPacks}
         onConfirm={uploadHook.handleUploadConfirm}
         onClearSelection={uploadHook.clearSelection}
         onRemoveFile={uploadHook.removeFile}
         onUrlImport={uploadHook.handleUrlImport}
+        onSiteImport={uploadHook.handleSiteImport}
         importingUrl={uploadHook.importingUrl}
         extractEntities={uploadHook.extractEntities}
         onExtractEntitiesChange={uploadHook.setExtractEntities}

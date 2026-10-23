@@ -12,7 +12,7 @@ Example:
     )
 
     registry = get_domain_registry(settings, database_name="research")
-    domain, confidence = registry.get_best_domain(text, filename, metadata)
+    proposal = registry.propose_packs(text, filename, metadata)
 
     # Or force a specific domain
     domain = registry.get_domain("technical")

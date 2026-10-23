@@ -11,12 +11,27 @@ from unittest.mock import MagicMock
 import pytest
 
 from chaoscypher_core.exceptions import ExternalServiceError
+from chaoscypher_core.models import ReleasedRows
 from chaoscypher_cortex.features.sources.service import SourceService
+
+
+@pytest.fixture(autouse=True)
+def graph(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """The repository force_re_extract builds on the adapter's own session."""
+    repo = MagicMock()
+    repo.release_source.return_value = ReleasedRows(deleted_node_ids=frozenset({"n1"}))
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.management.re_extraction."
+        "get_transaction_graph_repository",
+        lambda adapter, _database_name: repo,
+    )
+    return repo
 
 
 @pytest.mark.asyncio
 async def test_force_re_extract_committed_resets_state(
     monkeypatch: pytest.MonkeyPatch,
+    graph: MagicMock,
 ) -> None:
     """force=True + COMMITTED status: graph artifacts deleted, source reset, analysis queued."""
     enqueued: list[dict[str, Any]] = []
@@ -42,11 +57,6 @@ async def test_force_re_extract_committed_resets_state(
 
     storage_adapter = MagicMock()
     graph_repository = MagicMock()
-    graph_repository.delete_source_artifacts.return_value = {
-        "nodes_deleted": 5,
-        "edges_deleted": 3,
-        "templates_deleted": 1,
-    }
 
     engine_service = MagicMock()
     engine_service.get_source.return_value = {
@@ -72,12 +82,7 @@ async def test_force_re_extract_committed_resets_state(
         force=True,
     )
 
-    # delete_source_artifacts must receive the adapter's session so all three
-    # SQL deletes share the adapter's transaction (real atomicity, not just
-    # documented atomicity).
-    graph_repository.delete_source_artifacts.assert_called_once_with(
-        "src_1", session=storage_adapter.session
-    )
+    graph.release_source.assert_called_once_with("src_1")
     storage_adapter.reset_for_re_extraction.assert_called_once_with(
         source_id="src_1",
         database_name="default",
@@ -87,7 +92,9 @@ async def test_force_re_extract_committed_resets_state(
 
 
 @pytest.mark.asyncio
-async def test_force_indexed_does_not_call_reset(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_force_indexed_does_not_call_reset(
+    monkeypatch: pytest.MonkeyPatch, graph: MagicMock
+) -> None:
     """force=True on INDEXED source skips the reset path (no commit state to clear)."""
     enqueued: list[dict[str, Any]] = []
 
@@ -134,13 +141,15 @@ async def test_force_indexed_does_not_call_reset(monkeypatch: pytest.MonkeyPatch
         force=True,
     )
 
-    graph_repository.delete_source_artifacts.assert_not_called()
+    graph.release_source.assert_not_called()
     storage_adapter.reset_for_re_extraction.assert_not_called()
     assert len(enqueued) == 1
 
 
 @pytest.mark.asyncio
-async def test_force_false_on_committed_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_force_false_on_committed_raises(
+    monkeypatch: pytest.MonkeyPatch, graph: MagicMock
+) -> None:
     """force=False on COMMITTED source raises ValidationError (existing behavior)."""
     from chaoscypher_core.exceptions import ValidationError
 
@@ -175,19 +184,20 @@ async def test_force_false_on_committed_raises(monkeypatch: pytest.MonkeyPatch) 
 @pytest.mark.asyncio
 async def test_provider_outage_does_not_destroy_the_committed_graph(
     monkeypatch: pytest.MonkeyPatch,
+    graph: MagicMock,
 ) -> None:
     """An unreachable LLM provider must leave the committed graph intact.
 
     Regression for a P1 (hunt queue, 2026-08-04). In ``trigger_extraction`` the
     LLM-provider preflight used to run *after* ``force_re_extract``.
-    ``force_re_extract`` deletes the source's nodes, edges and templates and
+    ``force_re_extract`` releases the source's nodes, edges and templates and
     commits -- its atomicity guarantee covers only its own two writes, not the
     caller's later failure points. So ``force=True`` on a COMMITTED source with
     no reachable provider destroyed the subgraph, then raised
     ``ExternalServiceError`` with nothing queued: the graph was gone and the
     response said extraction could not start.
 
-    The load-bearing assertion is ``delete_source_artifacts`` never being
+    The load-bearing assertion is ``release_source`` never being
     called. Asserting only that the call raises passes with the bug present --
     it raised either way.
     """
@@ -240,6 +250,6 @@ async def test_provider_outage_does_not_destroy_the_committed_graph(
             force=True,
         )
 
-    graph_repository.delete_source_artifacts.assert_not_called()
+    graph.release_source.assert_not_called()
     storage_adapter.reset_for_re_extraction.assert_not_called()
     assert enqueued == []

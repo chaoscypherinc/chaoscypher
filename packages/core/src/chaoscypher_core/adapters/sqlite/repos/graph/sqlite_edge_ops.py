@@ -4,20 +4,49 @@
 """Edge operations mixin for GraphRepository."""
 
 import hashlib
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from typing import Any
 
 import structlog
+from sqlalchemy import func, or_
 from sqlalchemy.orm import load_only
 from sqlmodel import col, delete, select
 
-from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, SourceRow
-from chaoscypher_core.adapters.sqlite.repos.graph.graph_mixin_base import GraphMixinBase
-from chaoscypher_core.adapters.sqlite.utils import entity_to_dict
+from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode
+from chaoscypher_core.adapters.sqlite.repos.graph.sqlite_membership_ops import (
+    MembershipOperationsMixin,
+)
+from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
+    attested_by,
+    in_source_scope,
+    visible,
+)
+from chaoscypher_core.adapters.sqlite.utils import (
+    entity_to_dict,
+    id_batches,
+    json_property_is_true,
+    json_property_path,
+)
 from chaoscypher_core.models import Edge, EdgeCreate, EdgeUpdate, EdgeWithNodes
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    INVERSE_OF_KEY,
+    PIPELINE_EDGE_FLAG_KEYS,
+)
 
 
 logger = structlog.get_logger(__name__)
+
+
+def _minimal_edge_properties(inverse_of: Any, flags: Sequence[Any]) -> dict[str, Any]:
+    """A minimal edge's ``properties``: its pipeline flags as ``True``, then a synthetic inverse's ``inverse_of``."""
+    properties: dict[str, Any] = {
+        key: True for key, on in zip(PIPELINE_EDGE_FLAG_KEYS, flags, strict=True) if on
+    }
+    if isinstance(inverse_of, str) and inverse_of:
+        properties[INVERSE_OF_KEY] = inverse_of
+    return properties
 
 
 def _stable_edge_id(
@@ -60,7 +89,34 @@ def _stable_edge_id(
     return f"edge_{digest}"
 
 
-class EdgeOperationsMixin(GraphMixinBase):
+# The columns an edge listing loads in full (every one: GraphEdge has no embedding to exclude),
+# shared by list_edges and list_edges_by_node so the two read the same rows the same way.
+_EDGE_COLUMNS = (
+    GraphEdge.id,
+    GraphEdge.database_name,
+    GraphEdge.graph_name,
+    GraphEdge.template_id,
+    GraphEdge.source_node_id,
+    GraphEdge.target_node_id,
+    GraphEdge.label,
+    GraphEdge.properties,
+    GraphEdge.source_id,
+    # migration 0020's validity window: _db_edge_to_model reads all three, so a
+    # projection without them lazy-loads each per edge (one SELECT per column per row).
+    GraphEdge.valid_from,
+    GraphEdge.valid_to,
+    GraphEdge.closed_by_source_id,
+    GraphEdge.created_at,
+    GraphEdge.updated_at,
+)
+
+
+def _iso_date(value: str | None) -> date | None:
+    """A stored ``YYYY-MM-DD`` as a date; None stays None."""
+    return date.fromisoformat(value) if value else None
+
+
+class EdgeOperationsMixin(MembershipOperationsMixin):
     """Mixin providing edge CRUD and batch operations for GraphRepository."""
 
     def create_edge(self, edge_create: EdgeCreate, custom_id: str | None = None) -> Edge:
@@ -80,6 +136,7 @@ class EdgeOperationsMixin(GraphMixinBase):
         )
 
         self.session.add(db_edge)
+        self.attest_edges([db_edge])
         self.session.maybe_commit()
         self.session.refresh(db_edge)
 
@@ -150,9 +207,12 @@ class EdgeOperationsMixin(GraphMixinBase):
             db_edge.properties = edge_create.properties or {}
             db_edge.source_node_id = edge_create.source_node_id
             db_edge.target_node_id = edge_create.target_node_id
+            db_edge.updated_at = datetime.now(UTC)
             if resolved_source_id is not None:
                 db_edge.source_id = resolved_source_id
-            db_edge.updated_at = datetime.now(UTC)
+                self.attest_edges([db_edge])
+            # no writer named: no membership touched (see upsert_node_by_ccx_iri);
+            # the importer's edges name none and get no membership
             self.session.add(db_edge)
             self.session.maybe_commit()
             self.session.refresh(db_edge)
@@ -173,6 +233,7 @@ class EdgeOperationsMixin(GraphMixinBase):
             ccx_iri=ccx_iri,
         )
         self.session.add(db_edge)
+        self.attest_edges([db_edge])
         self.session.maybe_commit()
         self.session.refresh(db_edge)
         created = entity_to_dict(db_edge)
@@ -191,6 +252,67 @@ class EdgeOperationsMixin(GraphMixinBase):
             return None
 
         return self._db_edge_to_model(db_edge)
+
+    def open_edges(self, node_id: str, label: str) -> list[Edge]:
+        """The edges from ``node_id`` with ``label`` whose ``valid_to`` is unset."""
+        statement = select(GraphEdge).where(
+            GraphEdge.database_name == self.database_name,
+            GraphEdge.source_node_id == node_id,
+            GraphEdge.label == label,
+            col(GraphEdge.valid_to).is_(None),
+        )
+        return [self._db_edge_to_model(e) for e in self.session.exec(statement).all()]
+
+    def edges_from(self, node_id: str, label: str) -> list[Edge]:
+        """Every edge from ``node_id`` with ``label``, open or closed."""
+        statement = select(GraphEdge).where(
+            GraphEdge.database_name == self.database_name,
+            GraphEdge.source_node_id == node_id,
+            GraphEdge.label == label,
+        )
+        return [self._db_edge_to_model(e) for e in self.session.exec(statement).all()]
+
+    def set_edge_validity(
+        self,
+        edge_id: str,
+        *,
+        valid_from: date | None,
+        valid_to: date | None,
+        closed_by_source_id: str | None,
+    ) -> None:
+        """Write an edge's validity window; joins the caller's transaction."""
+        db_edge = self.session.get(GraphEdge, edge_id)
+        if db_edge is None or db_edge.database_name != self.database_name:
+            return
+        db_edge.valid_from = valid_from.isoformat() if valid_from else None
+        db_edge.valid_to = valid_to.isoformat() if valid_to else None
+        db_edge.closed_by_source_id = closed_by_source_id
+        self.session.add(db_edge)
+        self.session.maybe_commit()
+
+    def edges_closed_by(self, source_id: str) -> list[Edge]:
+        """The edges ``source_id`` closed (``closed_by_source_id``)."""
+        statement = select(GraphEdge).where(
+            GraphEdge.database_name == self.database_name,
+            GraphEdge.closed_by_source_id == source_id,
+        )
+        return [self._db_edge_to_model(e) for e in self.session.exec(statement).all()]
+
+    def reopen_edges_closed_by(self, source_id: str) -> int:
+        """Reopen the edges ``source_id`` closed (``valid_to`` and ``closed_by_source_id`` unset); how many."""
+        rows = self.session.exec(
+            select(GraphEdge).where(
+                GraphEdge.database_name == self.database_name,
+                GraphEdge.closed_by_source_id == source_id,
+            )
+        ).all()
+        for row in rows:
+            row.valid_to = None
+            row.closed_by_source_id = None
+            self.session.add(row)
+        if rows:
+            self.session.flush()
+        return len(rows)
 
     def list_edges(
         self,
@@ -240,22 +362,7 @@ class EdgeOperationsMixin(GraphMixinBase):
                 )
             )
         else:
-            statement = statement.options(
-                load_only(
-                    GraphEdge.id,
-                    GraphEdge.database_name,
-                    GraphEdge.graph_name,
-                    GraphEdge.template_id,
-                    GraphEdge.source_node_id,
-                    GraphEdge.target_node_id,
-                    GraphEdge.label,
-                    GraphEdge.properties,
-                    GraphEdge.source_id,
-                    GraphEdge.created_at,
-                    GraphEdge.updated_at,
-                    # Note: GraphEdge has no embedding column to exclude
-                )
-            )
+            statement = statement.options(load_only(*_EDGE_COLUMNS))
 
         if source_node_id is not None:
             statement = statement.where(GraphEdge.source_node_id == source_node_id)
@@ -264,19 +371,10 @@ class EdgeOperationsMixin(GraphMixinBase):
             statement = statement.where(GraphEdge.target_node_id == target_node_id)
 
         if source_ids is not None:
-            statement = statement.where(col(GraphEdge.source_id).in_(source_ids))
+            statement = statement.where(attested_by(GraphEdge, source_ids))
 
-        # Filter by source enabled status
         if not include_disabled_sources:
-            # Include edges with NULL source_id (legacy/manual edges) OR enabled sources
-            # Join includes database_name to ensure we find the right Source record
-            statement = statement.outerjoin(
-                SourceRow,
-                (GraphEdge.source_id == SourceRow.id)
-                & (SourceRow.database_name == self.database_name),
-            ).where(
-                (GraphEdge.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            statement = self._from_enabled_sources(statement)
 
         statement = statement.order_by(GraphEdge.id).offset(skip).limit(limit)
         db_edges = self.session.exec(statement).all()
@@ -317,6 +415,92 @@ class EdgeOperationsMixin(GraphMixinBase):
             for e in edges
         ]
 
+    def _from_enabled_sources(self, statement: Any) -> Any:
+        """``statement`` narrowed to edges with no source (legacy, manual) or one an enabled source attests.
+
+        The shared predicate (:func:`.source_visibility.visible`): a merged edge
+        stays while any member source is on.
+        """
+        return statement.where(visible(GraphEdge))
+
+    def list_edges_by_node(
+        self,
+        node_ids: Sequence[str],
+        *,
+        outgoing: bool,
+        limit_per_node: int,
+        include_disabled_sources: bool = False,
+    ) -> dict[str, list[Edge]]:
+        """Each node's edges out of it (``outgoing``) or into it, as ``list_edges`` lists them.
+
+        For every id in ``node_ids``, exactly ``list_edges(source_node_id=id, limit=limit_per_node)``
+        (``target_node_id`` when not ``outgoing``): the same filter, the first ``limit_per_node``
+        edges by id, in id order, loaded in full. One windowed query per ``SQL_IN_BATCH`` ids
+        instead of one per node: the graph context listed edges node by node, 9,248 queries for
+        one retrieval sample run, 40% of its time (2026-10-16). Every id is a key, an edgeless
+        node's list empty.
+        """
+        key = GraphEdge.source_node_id if outgoing else GraphEdge.target_node_id
+        found: dict[str, list[Edge]] = {node_id: [] for node_id in node_ids}
+        for batch in id_batches(node_ids):
+            rank = func.row_number().over(partition_by=key, order_by=GraphEdge.id).label("rank")
+            ranked = select(GraphEdge.id.label("edge_id"), rank).where(
+                GraphEdge.database_name == self.database_name, col(key).in_(batch or [])
+            )
+            if not include_disabled_sources:
+                ranked = self._from_enabled_sources(ranked)
+            window = ranked.subquery()
+            statement = (
+                select(GraphEdge)
+                .join(window, col(GraphEdge.id) == window.c.edge_id)
+                .where(
+                    GraphEdge.database_name == self.database_name, window.c.rank <= limit_per_node
+                )
+                .options(load_only(*_EDGE_COLUMNS))
+                .order_by(key, GraphEdge.id)
+            )
+            for db_edge in self.session.exec(statement).all():
+                node_id = db_edge.source_node_id if outgoing else db_edge.target_node_id
+                found[node_id].append(self._db_edge_to_model(db_edge))
+        return found
+
+    def edges_with_true_properties(
+        self,
+        keys: Sequence[str],
+        carry: Sequence[str] = (),
+        ids: Sequence[str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """The edges whose properties hold JSON ``true`` under any of ``keys`` (the port's contract).
+
+        The edge counterpart of ``nodes_with_true_properties``: one query per
+        ``ids`` batch (or one scan of this database's edges when ``ids`` is
+        None) reading every key as a ``json_type(...) = 'true'`` column
+        (``json_property_is_true``) and only the ``carry`` values into
+        Python: ``true`` exactly, never the string ``"true"`` or the number 1.
+        """
+        if not keys:
+            return {}
+        flags = [json_property_is_true(GraphEdge.properties, key) for key in keys]
+        carried = [func.json_extract(GraphEdge.properties, json_property_path(c)) for c in carry]
+        out: dict[str, dict[str, Any]] = {}
+        for batch in id_batches(ids):
+            statement = select(GraphEdge.id, *flags, *carried).where(
+                GraphEdge.database_name == self.database_name, or_(*flags)
+            )
+            if batch is not None:
+                statement = statement.where(col(GraphEdge.id).in_(batch))
+            for edge_id, *values in self.session.execute(statement).all():
+                found: dict[str, Any] = {
+                    key: True for key, hit in zip(keys, values[: len(keys)], strict=True) if hit
+                }
+                found.update(
+                    (name, value)
+                    for name, value in zip(carry, values[len(keys) :], strict=True)
+                    if value is not None
+                )
+                out[str(edge_id)] = found
+        return out
+
     def list_edges_minimal(
         self,
         limit: int = 10000,
@@ -325,15 +509,23 @@ class EdgeOperationsMixin(GraphMixinBase):
     ) -> list[SimpleNamespace]:
         """List edges with minimal fields for analytics (fast).
 
-        Only loads source_node_id, target_node_id, label - excludes properties.
+        Only loads source_node_id, target_node_id, label - excludes properties,
+        but for the pipeline's edge flags (``name_identity.PIPELINE_EDGE_FLAG_KEYS``,
+        read in SQL) and a synthetic inverse's marker: ``properties`` holds
+        each flag the edge carries as ``True`` and, on an inverse edge,
+        ``inverse_of`` (``name_identity.INVERSE_OF_KEY``: the forward relation
+        it mirrors), and nothing else. So the walk weighs a capped edge
+        (``name_identity.edge_walk_weight``) and the graph-context walk folds
+        an inverse onto its forward twin (``graphrag_blocks.walk_chains``)
+        without loading the rest.
         Use this for analytics operations that don't need full edge data.
 
         Args:
             limit: Maximum number of results
             include_disabled_sources: If False (default), excludes edges from disabled sources
-            source_ids: When set, restricts to edges whose SOURCE node belongs
-                to one of the listed sources (source-less nodes are kept,
-                matching ``list_nodes_minimal``). Applied in SQL so the WHERE
+            source_ids: When set, restricts to edges whose SOURCE node a listed
+                source attests (source-less nodes are kept, matching
+                ``list_nodes_minimal``). Applied in SQL so the WHERE
                 runs before ``limit``; endpoint-level scope (both ends in the
                 loaded node set) remains the caller's responsibility.
 
@@ -341,55 +533,52 @@ class EdgeOperationsMixin(GraphMixinBase):
             List of SimpleNamespace objects with minimal edge data
 
         """
-        statement = (
-            select(GraphEdge)
-            .options(
-                load_only(
-                    GraphEdge.id,
-                    GraphEdge.source_node_id,
-                    GraphEdge.target_node_id,
-                    GraphEdge.label,
-                    GraphEdge.template_id,
-                )
-            )
-            .where(GraphEdge.database_name == self.database_name)
-        )
+        flag_columns = [
+            json_property_is_true(GraphEdge.properties, key).label(f"flag_{i}")
+            for i, key in enumerate(PIPELINE_EDGE_FLAG_KEYS)
+        ]
+        inverse_column = func.json_extract(
+            GraphEdge.properties, json_property_path(INVERSE_OF_KEY)
+        ).label("inverse_of")
+        # Plain column select: rows, not ORM entities, so a 200k-edge PPR load
+        # skips entity construction + identity-map registration per row.
+        statement = select(
+            GraphEdge.id,
+            GraphEdge.source_node_id,
+            GraphEdge.target_node_id,
+            GraphEdge.label,
+            GraphEdge.template_id,
+            inverse_column,
+            *flag_columns,
+        ).where(GraphEdge.database_name == self.database_name)
 
-        # Both the enabled filter and the source scope need the source-node
-        # join; add it once.
+        # Both the enabled filter and the source scope read the source node;
+        # join it once.
         if not include_disabled_sources or source_ids is not None:
-            # Join includes database_name to ensure we find the right Source record
-            statement = statement.join(
-                GraphNode, GraphEdge.source_node_id == GraphNode.id
-            ).outerjoin(
-                SourceRow,
-                (GraphNode.source_id == SourceRow.id)
-                & (SourceRow.database_name == self.database_name),
-            )
+            statement = statement.join(GraphNode, GraphEdge.source_node_id == GraphNode.id)
 
         # Filter by source enabled status via source node
         if not include_disabled_sources:
-            statement = statement.where(
-                (GraphNode.source_id.is_(None)) | (SourceRow.enabled == True)  # noqa: E712
-            )
+            statement = statement.where(visible(GraphNode))
 
         if source_ids is not None:
-            statement = statement.where(
-                (GraphNode.source_id.is_(None)) | (col(GraphNode.source_id).in_(source_ids))
-            )
+            statement = statement.where(in_source_scope(GraphNode, source_ids))
 
-        statement = statement.limit(limit)
-        db_edges = self.session.exec(statement).all()
+        # Ordered by id like list_edges: a LIMIT with no ORDER BY hands the query
+        # planner the choice of which rows to keep (audit wave 4).
+        statement = statement.order_by(GraphEdge.id).limit(limit)
+        rows = self.session.exec(statement).all()
 
         return [
             SimpleNamespace(
-                id=e.id,
-                source_node_id=e.source_node_id,
-                target_node_id=e.target_node_id,
-                label=e.label,
-                template_id=e.template_id,
+                id=row[0],
+                source_node_id=row[1],
+                target_node_id=row[2],
+                label=row[3],
+                template_id=row[4],
+                properties=_minimal_edge_properties(row[5], row[6:]),
             )
-            for e in db_edges
+            for row in rows
         ]
 
     def update_edge(self, edge_id: str, edge_update: EdgeUpdate) -> Edge | None:
@@ -494,6 +683,8 @@ class EdgeOperationsMixin(GraphMixinBase):
             self.session.add(db_edge)
             created_edges.append(db_edge)
 
+        self.attest_edges(created_edges)
+
         # Convert to models BEFORE commit — all fields are set from
         # constructor values and accessible without refresh. This avoids
         # N individual SELECT queries from session.refresh() per edge.
@@ -504,7 +695,9 @@ class EdgeOperationsMixin(GraphMixinBase):
         logger.info("edges_batch_created", count=len(result))
         return result
 
-    async def upsert_edges_batch(self, edge_creates: list[EdgeCreate]) -> tuple[list[Edge], int]:
+    async def upsert_edges_batch(
+        self, edge_creates: list[EdgeCreate], *, reattested: set[str] | None = None
+    ) -> tuple[list[Edge], int]:
         """Idempotently create graph edges keyed by content hash.
 
         Mirror of ``upsert_nodes_batch``: deterministic stable IDs
@@ -519,12 +712,16 @@ class EdgeOperationsMixin(GraphMixinBase):
 
         First-write-wins semantics: if the stable key already exists,
         the row is returned as-is; a re-run with different properties
-        does NOT overwrite.
+        does NOT overwrite. A reused row the incoming source does not
+        attest gets its membership back, as ``upsert_nodes_batch`` does
+        (``reattest_edges``), and its id joins ``reattested``.
 
         Args:
             edge_creates: List of EdgeCreate objects, each with
                 source_node_id / target_node_id already stable from
                 the prior upsert_nodes_batch call.
+            reattested: Filled with the ids of reused rows that gained the
+                incoming source's membership.
 
         Returns:
             Tuple of:
@@ -561,9 +758,11 @@ class EdgeOperationsMixin(GraphMixinBase):
         new_entities: list[GraphEdge] = []
         result_entities: list[GraphEdge] = []
         batch_seen: dict[str, GraphEdge] = {}
+        reused: list[tuple[str, EdgeCreate]] = []
         for stable_id, ec in zip(stable_ids, edge_creates, strict=True):
             if stable_id in existing_rows:
                 result_entities.append(existing_rows[stable_id])
+                reused.append((stable_id, ec))
                 continue
             if stable_id in batch_seen:
                 result_entities.append(batch_seen[stable_id])
@@ -586,7 +785,12 @@ class EdgeOperationsMixin(GraphMixinBase):
 
         inserted_count = len(new_entities)
 
+        gained = self.reattest_edges(reused)
+        if reattested is not None:
+            reattested.update(gained)
         if new_entities:
+            self.attest_edges(new_entities)
+        if new_entities or gained:
             self.session.maybe_commit()
 
         logger.info(
@@ -606,6 +810,10 @@ class EdgeOperationsMixin(GraphMixinBase):
             target_node_id=db_edge.target_node_id,
             label=db_edge.label,
             properties=db_edge.properties or {},
+            source_id=db_edge.source_id,
+            valid_from=_iso_date(db_edge.valid_from),
+            valid_to=_iso_date(db_edge.valid_to),
+            closed_by_source_id=db_edge.closed_by_source_id,
             created_at=db_edge.created_at,
             updated_at=db_edge.updated_at,
         )
@@ -623,5 +831,6 @@ class EdgeOperationsMixin(GraphMixinBase):
             target_node_id=db_edge.target_node_id,
             label=db_edge.label,
             properties={},  # Empty for performance
+            source_id=db_edge.source_id,
             # created_at and updated_at will use default_factory (datetime.now(UTC))
         )

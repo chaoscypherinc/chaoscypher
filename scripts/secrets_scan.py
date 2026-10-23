@@ -1,16 +1,22 @@
 # Copyright (C) 2024-2026 Chaos Cypher, Inc.
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Tree-wide secret scan with a sandbox-capable fallback.
+"""Tree-wide secret scan: every engine available, so all environments agree.
 
-Prefers the ``gitleaks`` binary — the same engine as the pre-commit hook and
-the ``gitleaks.yml`` workflow, honoring ``.gitleaks.toml``. Where the binary
-cannot exist (the cloud routine sandbox can neither download GitHub release
-assets nor bundle Go binaries — see ``internal/DEFERRED.md`` § Pending
-routine-sandbox gitleaks capability), it falls back to ``detect-secrets``
-over the tracked tree, compared against ``.secrets.baseline`` so audited
-false positives don't fail the gate.
+``detect-secrets`` (a dev dependency, so always present after ``uv sync``)
+always scans the tracked tree, compared against ``.secrets.baseline`` so
+audited false positives don't fail the gate. The ``gitleaks`` binary (the
+engine of the pre-commit hook and the ``gitleaks.yml`` workflow, honoring
+``.gitleaks.toml``) also runs wherever it is installed; a sandbox that can
+neither download GitHub release assets nor bundle Go binaries has only
+detect-secrets.
 
-Fallback exclusions mirror ``.gitleaks.toml``'s philosophy (narrow, shipped
+Both run because the two disagree. Until 2026-10-17 detect-secrets ran only
+where gitleaks was missing: the routine sandbox and the public export gate.
+A hex fixture it flags but gitleaks passes (#775) kept every routine sweep
+red for six nights and blocked the weekly public snapshot (#808), while the
+pre-push hook and GitHub CI, both on gitleaks, stayed green.
+
+detect-secrets exclusions mirror ``.gitleaks.toml``'s philosophy (narrow, shipped
 trees scanned in full): ``internal/`` (private, never shipped), lockfiles
 (registry hashes trip entropy detectors and churn on every bump), and the
 baseline itself.
@@ -180,8 +186,8 @@ def _preflight(refresh: bool) -> tuple[str, list[str]] | int:
     hook = shutil.which("detect-secrets-hook")
     if hook is None:
         print(
-            "secrets_scan: neither gitleaks nor detect-secrets-hook is "
-            "available — run `uv sync --all-packages --extra dev` first",
+            "secrets_scan: detect-secrets-hook is not available "
+            "— run `uv sync --all-packages --extra dev` first",
             file=sys.stderr,
         )
         return 2
@@ -195,7 +201,7 @@ def _preflight(refresh: bool) -> tuple[str, list[str]] | int:
     files = _tracked_files()
     mode = "refreshing baseline over" if refresh else "scanning"
     print(
-        f"secrets_scan: gitleaks unavailable, {mode} {len(files)} tracked "
+        f"secrets_scan: {mode} {len(files)} tracked "
         f"files with detect-secrets (baseline: {BASELINE.name})"
     )
     return hook, files
@@ -269,9 +275,10 @@ def main() -> int:
             return 2
         return _run_detect_secrets(refresh=True)
 
-    if shutil.which("gitleaks"):
-        return _run_gitleaks()
-    return _run_detect_secrets()
+    # The worst status wins: 2 (tooling) over 1 (findings) over 0 (clean).
+    codes = [_run_gitleaks()] if shutil.which("gitleaks") else []
+    codes.append(_run_detect_secrets())
+    return max(codes)
 
 
 if __name__ == "__main__":

@@ -23,11 +23,35 @@ from chaoscypher_core.operations.importing.confirmation_gate import (
     park_for_confirmation,
     proposal_from_detection,
 )
+from chaoscypher_core.services.graph.management.release import refresh_after_release
+from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+    source_domain_name,
+    source_packs,
+)
 from chaoscypher_core.services.sources.engine.extraction.domains import (
     get_domain_registry,
+    source_domain_sample,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    detected_packs_of,
+    first_domain_name,
+    forced_packs_of,
+    labels_of,
+    proposal_packs,
+    stored_packs,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+    ExtractionPlan,
+    build_extraction_plan,
 )
 from chaoscypher_core.services.sources.engine.extraction.orchestration import (
     detect_extraction_domain,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
+    PROMPT_CHUNK_TEXT_PLACEHOLDER,
+    PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+    AIEntityExtractor,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
     apply_properties_to_entities,
@@ -39,6 +63,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils.prompts import (
     SYSTEM_PROMPT,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+    format_numbered_sentences,
     split_into_sentences,
 )
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
@@ -46,165 +71,50 @@ from chaoscypher_core.services.stage_progress import StageName
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.bootstrap import Engine
-    from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
-        ExclusionRule,
-    )
 
 logger = structlog.get_logger(__name__)
 
 
 # ------------------------------------------------------------------ #
-#  Instruction builders for MCP sub-agents
+#  Instruction rendering for MCP sub-agents
 # ------------------------------------------------------------------ #
 
 
-def _build_entity_instructions(
-    node_templates_str: str,
-    entity_exclusions: list[ExclusionRule],
-    strict_types: bool,
-    entity_examples: str,
-) -> str:
-    """Build pre-formatted entity extraction instructions for MCP sub-agents.
+def _render_extraction_instructions(settings: Any, plan: ExtractionPlan) -> tuple[str, str]:
+    """Render the pass-1 and pass-2 prompts an MCP sub-agent extracts under.
 
-    Produces a complete, self-contained instruction block with entity types,
-    rules, guidelines, and examples baked in.  The consuming sub-agent only
-    needs to prepend numbered sentences from the chunk.
-
-    Args:
-        node_templates_str: Formatted node template list for the type field.
-        entity_exclusions: Domain-specific categories to skip.
-        strict_types: Whether to enforce strict type matching.
-        entity_examples: Formatted domain-specific extraction examples.
-
-    Returns:
-        Complete entity extraction instruction text.
-
-    """
-    parts = [
-        "Extract entities and their properties from the numbered sentences provided.",
-        "",
-        "OUTPUT FORMAT:",
-        "- E|name|type|aliases|confidence|sent_ref|description",
-        "- P|entity_index|key|value",
-        "",
-        "ENTITY TYPES:",
-        node_templates_str,
-    ]
-
-    if strict_types:
-        parts.append(
-            "\nSTRICT: Use ONLY the entity types listed above. "
-            "Do NOT invent new types. Skip entities that don't fit any listed type."
-        )
-
-    parts.extend(
-        [
-            "",
-            "RULES:",
-            "1. Output each entity's E| line followed immediately by its P| lines.",
-            "2. Only extract facts explicitly stated in the sentences — do NOT infer.",
-            "3. Every E| MUST include sent_ref (S# or S#-S#) pointing to supporting sentence(s).",
-            "4. P| entity_index is 0-based from your output order.",
-            "",
-            "GUIDELINES:",
-            "- Extract NAMED entities only — each MUST have a proper name or specific identifier",
-            "- NAME must be a real name from the text, NOT a description or invented phrase",
-            '  GOOD: "Prince Andrei", "Moscow", "Battle of Austerlitz"',
-            '  BAD: "The emotional state of X", "Feelings of sadness"',
-            "- DESCRIPTION: Rich, factual summary (2-3 sentences). Aim for 100+ characters.",
-            "- ALIASES: Only alternate PROPER NAMES (semicolon-separated). Aim for 2-4 for major entities.",
-            '  GOOD: "Andrei; Prince Andrew; Andrew Bolkonsky"',
-            '  BAD: "Nieces; The soldiers; Friend"',
-            "- PROPERTIES: Titles, roles, occupations, nationalities. Aim for 3-5 per major entity.",
-            "- Confidence: 1.0 explicit, 0.7-0.9 implied, 0.5-0.6 uncertain",
-            "- Do NOT extract pronouns, vague references, abstract concepts, emotions, or actions",
-            "- Expect 5-15 entities per chunk. More than 20 means over-extraction.",
-        ]
-    )
-
-    if entity_exclusions:
-        parts.append("\nSKIP these categories:")
-        parts.extend(f"- {rule.as_prompt_text()}" for rule in entity_exclusions)
-
-    if entity_examples:
-        parts.extend(["", f"DOMAIN EXAMPLES:\n{entity_examples}"])
-
-    parts.extend(
-        [
-            "",
-            "EXAMPLE (3 entities):",
-            "E|Prince Andrei|Character|Andrei; Prince Andrew|0.9|S1-S2|"
-            "Military officer and nobleman, eldest son of old Prince Bolkonsky.",
-            "P|0|title|Prince",
-            "P|0|occupation|Military Officer",
-            "E|Napoleon|Character|Emperor Napoleon|1.0|S3|"
-            "Emperor of France and military commander.",
-            "P|1|title|Emperor",
-            "E|Battle of Austerlitz|Event|Austerlitz|1.0|S4|"
-            "Major battle of the Napoleonic Wars in December 1805.",
-        ]
-    )
-
-    return "\n".join(parts)
-
-
-def _build_relationship_instructions(
-    edge_templates_str: str,
-    relationship_examples: str,
-) -> str:
-    """Build pre-formatted relationship extraction instructions for MCP sub-agents.
-
-    Produces a complete, self-contained instruction block with relationship
-    types, rules, and examples.  The consuming sub-agent provides numbered
-    sentences and a numbered entity list from their entity extraction pass.
+    The prompt inputs are the source's :class:`ExtractionPlan` chunk kwargs
+    (:func:`build_extraction_plan`, the one plan the queue, the CLI and the
+    standalone extractor run with), so an MCP client is prompted with what a
+    local model is prompted with. Both prompts come from
+    :class:`AIEntityExtractor`, the renderer local extraction sends, with the
+    chunk's numbered sentences and the pass-1 entity list left as
+    :data:`PROMPT_CHUNK_TEXT_PLACEHOLDER` and
+    :data:`PROMPT_PASS1_ENTITIES_PLACEHOLDER` (the templates extraction
+    metrics record, but with pass 1's KNOWN ENTITIES slot empty: this path
+    serves no block). Substituting a chunk's ``numbered_sentences`` (from
+    ``get_chunks``) for the chunk placeholder yields the exact pass-1 prompt
+    a local model receives for that chunk only when the local model is sent
+    no block: for the source's first group, or with
+    ``extraction.known_entities_limit`` 0. From the second group on a local
+    model's pass 1 carries the KNOWN ENTITIES block of the earlier groups,
+    and its records pass the list's alias and name guards; a sub-agent's do
+    neither, since the groups are extracted in any order here.
 
     Args:
-        edge_templates_str: Formatted edge template list for the type field.
-        relationship_examples: Formatted domain-specific relationship examples.
+        settings: ``EngineSettings`` the extractor is built with.
+        plan: The source's extraction plan.
 
     Returns:
-        Complete relationship extraction instruction text.
+        ``(entity_instructions, relationship_instructions)``.
 
     """
-    parts = [
-        "Extract relationships between the entities listed below, based on the numbered sentences.",
-        "",
-        "OUTPUT FORMAT:",
-        "- R|source_index|target_index|type|confidence|sent_ref|justification",
-        "",
-        "RELATIONSHIP TYPES:",
-        edge_templates_str,
-        "",
-        "RULES:",
-        "1. R| indices MUST be valid (0 to N-1 where N = entity count). No self-relationships.",
-        "2. Only extract facts explicitly stated — do NOT infer.",
-        "3. Every R| MUST include sent_ref pointing to sentence(s) containing BOTH entities.",
-        "4. ONLY use entities from the provided list. Skip relationships for missing entities.",
-        "",
-        "GUIDELINES:",
-        "- Extract ALL relationships stated or strongly implied — do not skip obvious connections",
-        "- Every entity should have at least one relationship. "
-        "Aim for at least N relationships for N entities.",
-        "- Prefer specific types (spouse_of, wrote, parent_of) over generic ones (related_to)",
-        "- JUSTIFICATION: One sentence (50-300 characters) quoting or paraphrasing "
-        "the cited sentence; evidence only, no deliberation or alternatives",
-    ]
-
-    if relationship_examples:
-        parts.extend(["", f"DOMAIN EXAMPLES:\n{relationship_examples}"])
-
-    parts.extend(
-        [
-            "",
-            "EXAMPLE:",
-            "R|0|2|participates_in|0.9|S4|Prince Andrei fought in the "
-            "Battle of Austerlitz as part of the Russian forces",
-            "R|1|2|commands|0.8|S4|Napoleon commanded the French forces to victory at Austerlitz",
-        ]
+    return AIEntityExtractor(settings=settings).render_plan_templates(
+        plan.chunk_kwargs, known_entities=""
     )
-
-    return "\n".join(parts)
 
 
 # ------------------------------------------------------------------ #
@@ -386,19 +296,25 @@ class ExtractionOrchestrator:
         self.engine = engine
         # source_id -> deque[float] of monotonic-clock submission timestamps
         self._submission_timestamps: dict[str, deque[float]] = {}
-        # source_id -> resolved FilteringConfig captured from the row's
-        # filtering_mode at get_tasks time (Workstream 3, Task 3.5). Read by
-        # finalize() so cross-chunk filtering and commit-side orphan-drop
-        # honour the upload-time preset rather than engine defaults.
-        self._filtering_configs: dict[str, Any] = {}
+        # source_id -> the source's ExtractionPlan (build_extraction_plan, the
+        # plan every extraction path runs with) decided at get_tasks time.
+        # Read by finalize() so the dedup threshold, cross-chunk filters and
+        # commit-side orphan-drop run with the domain's limits and the row's
+        # preset; rebuilt from the row when finalize lands in another process.
+        self._plans: dict[str, ExtractionPlan] = {}
         # source_id -> the source's derived chunk-group index set, memoized for
-        # the same get_tasks -> finalize span as _filtering_configs above.
+        # the same get_tasks -> finalize span as _plans above.
         # Pre-0030 this value lived on the source row as
         # ``extraction_chunk_indices``; re-deriving it means a full-source
         # chunk read, a content-exclusion pass over every chunk and a re-pack,
         # and ``submit_chunk`` probes it once per chunk group purely to test one
         # integer. Refreshed at get_tasks, evicted at finalize.
         self._group_indices: dict[str, set[int]] = {}
+        # Sources whose finalize has reached the commit phase (entity rows
+        # written, graph commit in flight). A failure before this point rolls
+        # the status back to mcp_extracting so a retry can win the CAS again;
+        # a failure after it is left at committing for the recovery path.
+        self._commit_phase: set[str] = set()
 
     # ------------------------------------------------------------------ #
     #  Helpers
@@ -464,15 +380,27 @@ class ExtractionOrchestrator:
         source = self.engine.storage_adapter.get_source(source_id, db)
         domain_name = None
         if source:
-            domain_name = source.get("forced_domain") or source.get("extraction_domain")
+            domain_name = source_domain_name(source)
 
         domain_obj = None
         if domain_name:
-            registry = get_domain_registry(database_name=db)
-            domain_obj = registry.get_domain(domain_name)
+            from chaoscypher_core.services.sources.engine.extraction.domains.stack import (
+                DomainStack,
+            )
 
-        # Apply content exclusion filtering
-        content_matchers = resolve_content_exclusions(domain_obj)
+            # The floor plus every pack the source names: every member's exclusions.
+            domain_obj = DomainStack.from_stored(
+                get_domain_registry(database_name=db), source_packs(source)
+            )
+
+        # Apply content exclusion filtering — honouring the row's
+        # ``content_filtering`` toggle the same way the pipeline's
+        # ``_apply_content_filtering`` does (``confirm_extraction`` persists
+        # it; without this check the MCP path ignored the override).
+        content_filtering_enabled = bool(source.get("content_filtering", True)) if source else True
+        content_matchers = (
+            resolve_content_exclusions(domain_obj) if content_filtering_enabled else []
+        )
         if content_matchers:
             all_chunks, filter_stats = filter_and_strip_chunks(all_chunks, content_matchers)
             logger.info(
@@ -550,28 +478,19 @@ class ExtractionOrchestrator:
         extraction_depth = source.get("extraction_depth", "full")
 
         if extraction_depth == "quick":
-            # Read from EngineSettings.analysis so MCP matches the Cortex
-            # ``import_service`` path — both surface ``analysis.quick_sample_size``
-            # from settings.yaml. Workstream 3, Task 3.5.
-            quick_sample_size = self.engine.settings.analysis.quick_sample_size
-            total = len(all_indices)
-            sample_size = min(quick_sample_size, total)
-            step = max(1, total // sample_size)
-            selected = sorted(all_indices)[::step][:sample_size]
-            return set(selected)
+            return self._sample_quick_indices(all_indices)
 
         return all_indices
 
-    def _build_file_info(self, source: dict[str, Any]) -> dict[str, Any]:
+    def _build_file_info(self, source: dict[str, Any], plan: ExtractionPlan) -> dict[str, Any]:
         """Build the file_info dict expected by commit_service.commit().
 
-        Includes ``filtering_mode`` so the commit-side orphan-drop honours the
-        row's filtering preset. Falls back to
-        ``"balanced"`` when the row was uploaded before the column existed —
-        the same default ``resolve_filtering_config`` uses.
+        Includes the plan's ``filtering_mode`` so the commit-side orphan-drop
+        honours the preset the extraction ran with.
 
         Args:
             source: Source dict from storage.
+            plan: The source's extraction plan.
 
         Returns:
             Dict with ``filename`` and ``filtering_mode`` keys.
@@ -579,54 +498,61 @@ class ExtractionOrchestrator:
         """
         return {
             "filename": source.get("filename", "unknown"),
-            "filtering_mode": source.get("filtering_mode") or "balanced",
+            "filtering_mode": plan.filtering_mode,
         }
 
-    def _build_edge_type_constraints(
-        self, domain_name: str | None
-    ) -> dict[str, dict[str, list[str]]] | None:
-        """Build edge_type_constraints from a resolved domain.
+    def _plan_for(self, source: dict[str, Any], packs: Sequence[str]) -> ExtractionPlan:
+        """The source's extraction plan: :func:`build_extraction_plan` over its stack and row.
 
-        Mirrors the worker path's ``_apply_post_dedup_filters`` logic in
-        ``operations/extraction/extraction_finalizer.py``: when a domain is
-        in scope, surface its ``get_edge_type_constraints()`` so the
-        cross-chunk type-constraint filter can run during finalize. Returns
-        ``None`` when the domain is missing, unresolvable, or yields no
-        constraints — matching how the worker path passes ``None`` to
-        skip the filter.
+        The stack is the floor plus the source's packs
+        (:meth:`DomainStack.from_stored`). A preset the row carries that
+        is no longer a valid mode (a legacy alias) falls back to the engine's
+        default preset, still through the plan, rather than failing the MCP
+        call.
 
         Args:
-            domain_name: Detected or forced domain name from the source row.
+            source: Source dict from storage.
+            packs: The row's forced or detected packs (``source_packs``);
+                ``()`` is the floor alone.
 
         Returns:
-            Edge-type-constraints mapping, or ``None`` when unavailable.
+            The plan the queue, the CLI and the standalone extractor would run with.
 
         """
-        if not domain_name:
-            return None
+        settings = self.engine.settings
+        stack = DomainStack.from_stored(get_domain_registry(database_name=self._get_db()), packs)
         try:
-            from chaoscypher_core.services.sources.engine.extraction.domains import (
-                get_domain_registry,
+            return build_extraction_plan(stack, settings, source_row=source)
+        except ValueError:
+            logger.warning(
+                "mcp_filtering_mode_invalid",
+                source_id=source.get("id"),
+                filtering_mode=source.get("filtering_mode"),
             )
-
-            registry = get_domain_registry(database_name=self._get_db())
-            domain = registry.get_domain(domain_name)
-        except Exception:  # registry lookup failures must not block finalize
-            logger.debug("mcp_domain_lookup_failed", domain=domain_name)
-            return None
-
-        if domain is None or not hasattr(domain, "get_edge_type_constraints"):
-            return None
-        try:
-            constraints: dict[str, dict[str, list[str]]] = domain.get_edge_type_constraints()
-        except Exception:
-            logger.debug("mcp_edge_type_constraints_unavailable", domain=domain_name)
-            return None
-        return constraints or None
+            return build_extraction_plan(
+                stack,
+                settings,
+                filtering_mode_override=str(settings.extraction.extraction_filtering_mode),
+                source_row=source,
+            )
 
     # ------------------------------------------------------------------ #
     #  Public API
     # ------------------------------------------------------------------ #
+
+    def _sample_quick_indices(self, all_indices: set[int]) -> set[int]:
+        """Evenly sample group indices for ``quick`` depth (same as the pipeline).
+
+        Reads ``EngineSettings.analysis.quick_sample_size`` so MCP matches the
+        Cortex ``import_service`` path. An empty index set returns empty — the
+        old inline copies divided by ``min(sample_size, 0)``.
+        """
+        total = len(all_indices)
+        if total == 0:
+            return set()
+        sample_size = min(self.engine.settings.analysis.quick_sample_size, total)
+        step = max(1, total // sample_size)
+        return set(sorted(all_indices)[::step][:sample_size])
 
     async def get_tasks(self, source_id: str, force: bool = False) -> dict[str, Any]:
         """Get extraction planning metadata for an indexed source.
@@ -642,7 +568,10 @@ class ExtractionOrchestrator:
         Returns:
             Dict with source_id, filename, status, total_chunks,
             system_prompt, entity_instructions, relationship_instructions,
-            and existing_templates.
+            prompt_placeholders and existing_templates. The two instruction
+            strings are the product's prompt templates; ``prompt_placeholders``
+            names the markers a client replaces with a chunk's
+            ``numbered_sentences`` and its pass-1 entity list.
 
         Raises:
             ValueError: If source not found or in invalid status.
@@ -676,16 +605,9 @@ class ExtractionOrchestrator:
             # client sees the recommended domain even while parked. ranking[0]
             # is the winner; low_confidence flags the generic-fallback case.
             registry = get_domain_registry(database_name=self._get_db())
-            extraction_settings = self.engine.settings.extraction
-            chunks = self.engine.storage_adapter.list_chunks(
-                database_name=self._get_db(),
-                source_id=source_id,
-                limit=extraction_settings.domain_detection_sample_count,
-                include_content=True,
+            sample_text = source_domain_sample(
+                self.engine.storage_adapter, source_id, self._get_db()
             )
-            sample_text = " ".join(c.get("content", "") for c in chunks)[
-                : extraction_settings.domain_detection_sample_chars
-            ]
             detection = detect_extraction_domain(
                 registry=registry,
                 forced_domain=None,
@@ -705,18 +627,20 @@ class ExtractionOrchestrator:
                 confidence=detection["confidence"],
                 low_confidence=detection.get("low_confidence", False),
             )
+            proposed = proposal_packs(proposal)
             return {
                 "source_id": source_id,
                 "filename": source.get("filename", ""),
                 "status": SourceStatus.AWAITING_CONFIRMATION,
+                "packs": proposed,
                 "detected_domain": proposal["detected_domain"],
                 "confidence": proposal["confidence"],
                 "ranking": proposal["ranking"],
                 "low_confidence": proposal["low_confidence"],
                 "next_steps": (
-                    f"Detection proposed domain "
-                    f'"{detection["detected_domain"]}". Call confirm_extraction '
-                    f'with file_id="{source_id}" (and an optional domain '
+                    f"Detection proposed the packs {proposed} (on the floor every "
+                    f"source has; [] is the floor alone). Call confirm_extraction "
+                    f'with file_id="{source_id}" (and an optional packs '
                     f"override) to start extraction, or add the document with "
                     f"auto_confirm=true to skip this gate."
                 ),
@@ -725,38 +649,6 @@ class ExtractionOrchestrator:
 
         # Read depth BEFORE any transition (start_extraction would overwrite it).
         extraction_depth = source.get("extraction_depth", "full")
-
-        # Resolve the source's persisted filtering_mode into a FilteringConfig
-        # so subsequent get_chunks / submit_chunk / finalize calls can apply
-        # the same cross-chunk filter behaviour Cortex does. Without this
-        # resolution, MCP-driven extractions silently fell back to defaults
-        # regardless of the upload-time filtering_mode setting. Workstream 3,
-        # Task 3.5.
-        from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
-            resolve_filtering_config,
-        )
-
-        _row_filtering_mode = source.get("filtering_mode")
-        # Only resolve when the row carries an explicit string mode. The
-        # engine-level default is also "balanced" (the same default
-        # ``resolve_filtering_config`` uses), so callers that didn't set a
-        # filtering_mode at upload time get the canonical default without
-        # needing to re-read engine settings here.
-        if isinstance(_row_filtering_mode, str) and _row_filtering_mode:
-            try:
-                self._filtering_configs[source_id] = resolve_filtering_config(
-                    mode=_row_filtering_mode
-                )
-            except ValueError:
-                # Best-effort: a malformed legacy mode persisted on the row
-                # falls back to the canonical default rather than poisoning
-                # the get_tasks path.
-                logger.warning(
-                    "mcp_filtering_mode_invalid",
-                    source_id=source_id,
-                    filtering_mode=_row_filtering_mode,
-                )
-                self._filtering_configs[source_id] = resolve_filtering_config()
 
         # Compare-and-swap the status transition so two concurrent callers
         # can't both win the race.
@@ -773,11 +665,19 @@ class ExtractionOrchestrator:
             # Atomically reset commit_complete, extraction_complete,
             # extraction_results, and graph artifacts inside a single
             # adapter.transaction(). Leaves the source at INDEXED.
-            force_re_extract(
+            released = force_re_extract(
                 source_id=source_id,
                 database_name=self._get_db(),
                 storage_adapter=self.engine.storage_adapter,
-                graph_repository=self.engine.graph_repository,
+                settings=self.engine.settings,
+            )
+            # Now: the reset commit counters make the next commit skip its cleanup.
+            await refresh_after_release(
+                self.engine.storage_adapter,
+                self._get_db(),
+                released,
+                embedder=self.engine.embedding_provider,
+                search=self.engine.search_repository,
             )
             ok = self.engine.storage_adapter.transition_source_status(
                 source_id,
@@ -810,22 +710,27 @@ class ExtractionOrchestrator:
             },
         )
 
-        # Count chunk groups and apply depth strategy. Re-derive on every
+        # Count chunk groups and apply the depth strategy. Re-derive on every
         # get_tasks: a force=True re-extract may follow a re-chunk, so the
-        # previous span's memo must not be reused.
+        # previous span's memo must not be reused. A source with no groups
+        # releases the claim and is rejected with the pipeline's message
+        # (``import_service``): previously the quick path divided by zero
+        # here and full depth handed out zero tasks, both leaving the source
+        # at mcp_extracting until the staleness window.
         self._group_indices.pop(source_id, None)
         all_group_indices = self._get_group_indices(source_id)
+        if not all_group_indices:
+            self.engine.storage_adapter.transition_source_status(
+                source_id,
+                from_status=SourceStatus.MCP_EXTRACTING,
+                to_status=SourceStatus.INDEXED,
+                database_name=self._get_db(),
+            )
+            msg = f"No extraction groups could be built for source {source_id}: it has no chunks."
+            raise ValueError(msg)
 
         if extraction_depth == "quick":
-            # Sample evenly-distributed groups (same as internal pipeline).
-            # Reads from EngineSettings.analysis so MCP matches the Cortex
-            # ``import_service`` path — Workstream 3, Task 3.5.
-            quick_sample_size = self.engine.settings.analysis.quick_sample_size
-            total = len(all_group_indices)
-            sample_size = min(quick_sample_size, total)
-            step = max(1, total // sample_size)
-            selected = sorted(all_group_indices)[::step][:sample_size]
-            active_group_indices = set(selected)
+            active_group_indices = self._sample_quick_indices(all_group_indices)
         else:
             active_group_indices = all_group_indices
 
@@ -842,23 +747,15 @@ class ExtractionOrchestrator:
             started_at=datetime.now(UTC),
         )
 
-        # Resolve domain: use forced > stored > auto-detect from chunk text
-        source_domain = source.get("forced_domain") or source.get("extraction_domain")
-        domain_obj = None
+        # Resolve the packs: forced > stored > auto-detect from chunk text
+        packs = source_packs(source)
 
-        if not source_domain:
-            # Auto-detect domain from chunk content
+        if source_domain_name(source) is None:
+            # The row names none: detect from chunk content
             registry = get_domain_registry(database_name=self._get_db())
-            extraction_settings = self.engine.settings.extraction
-            chunks = self.engine.storage_adapter.list_chunks(
-                database_name=self._get_db(),
-                source_id=source_id,
-                limit=extraction_settings.domain_detection_sample_count,
-                include_content=True,
+            sample_text = source_domain_sample(
+                self.engine.storage_adapter, source_id, self._get_db()
             )
-            sample_text = " ".join(c.get("content", "") for c in chunks)[
-                : extraction_settings.domain_detection_sample_chars
-            ]
 
             detection = detect_extraction_domain(
                 registry=registry,
@@ -866,52 +763,34 @@ class ExtractionOrchestrator:
                 sample_text=sample_text,
                 filename=source.get("filename", ""),
             )
-            source_domain = detection["detected_domain"]
-            domain_obj = detection["domain"]
+            packs = detected_packs_of(detection)
 
-            # Persist detected domain on the source record
+            # Persist the detected packs on the source record (the label rides along)
             self.engine.storage_adapter.update_source(
                 source_id,
                 {
-                    "extraction_domain": source_domain,
+                    "extraction_packs": list(packs),
                     "extraction_domain_auto": True,
                 },
             )
             logger.info(
                 "mcp_domain_auto_detected",
                 source_id=source_id,
-                domain=source_domain,
+                packs=list(packs),
                 confidence=detection["confidence"],
             )
-        else:
-            # Load domain object for a forced or previously-stored domain
-            registry = get_domain_registry(database_name=self._get_db())
-            domain_obj = registry.get_domain(source_domain)
+        source_domain = first_domain_name(packs)
 
-        # Format domain templates (falls back to generic if no domain)
-        from chaoscypher_core.services.sources.engine.extraction.orchestration import (
-            format_extraction_templates,
-        )
+        # The one extraction plan (shared with the queue, the CLI and the
+        # standalone extractor): prompt inputs, the stack's extraction limits
+        # and the row's preset. Cached so finalize runs with the same plan.
+        plan = self._plan_for(source, packs)
+        self._plans[source_id] = plan
 
-        formatted = format_extraction_templates(domain_obj)
-
-        # Get domain-specific configuration
-        entity_exclusions: list[ExclusionRule] = []
-        strict_types = False
-        if domain_obj:
-            entity_exclusions = domain_obj.get_entity_exclusions()
-            strict_types = domain_obj.get_strict_entity_types()
-
-        # Build pre-formatted instructions for MCP sub-agents
-        entity_instructions = _build_entity_instructions(
-            node_templates_str=formatted["node_templates"],
-            entity_exclusions=entity_exclusions,
-            strict_types=strict_types,
-            entity_examples=formatted.get("entity_examples", ""),
-        )
-        relationship_instructions = _build_relationship_instructions(
-            edge_templates_str=formatted["edge_templates"],
-            relationship_examples=formatted.get("relationship_examples", ""),
+        # Render both prompts through the product's extractor so an MCP
+        # client extracts under the same bytes a local model does.
+        entity_instructions, relationship_instructions = _render_extraction_instructions(
+            self.engine.settings, plan
         )
 
         # List existing graph templates for type reuse hints
@@ -930,7 +809,7 @@ class ExtractionOrchestrator:
             "mcp_extraction_tasks_prepared",
             source_id=source_id,
             total_chunks=total_chunks,
-            domain=source_domain,
+            packs=list(packs),
             node_template_count=len(node_templates),
             edge_template_count=len(edge_templates),
         )
@@ -943,9 +822,14 @@ class ExtractionOrchestrator:
             "chunk_indices": sorted(active_group_indices),
             "extraction_depth": extraction_depth,
             "domain": source_domain,
+            "packs": list(packs),
             "system_prompt": SYSTEM_PROMPT,
             "entity_instructions": entity_instructions,
             "relationship_instructions": relationship_instructions,
+            "prompt_placeholders": {
+                "chunk_text": PROMPT_CHUNK_TEXT_PLACEHOLDER,
+                "pass1_entities": PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+            },
             "existing_templates": existing_templates,
         }
 
@@ -962,7 +846,8 @@ class ExtractionOrchestrator:
 
         Returns:
             Dict with source_id and chunks list, each containing
-            index, text, sentences, and token_estimate.
+            index, text, sentences, numbered_sentences (the ``S1: ...``
+            block the prompts number) and token_estimate.
 
         """
         # Build groups via shared pipeline (fetch, filter, pack)
@@ -992,6 +877,7 @@ class ExtractionOrchestrator:
                     "index": idx,
                     "text": combined_text,
                     "sentences": sentences,
+                    "numbered_sentences": format_numbered_sentences(sentences),
                     "token_estimate": token_estimate,
                 }
             )
@@ -1090,8 +976,27 @@ class ExtractionOrchestrator:
                 ),
             }
 
-        # Validate chunk_group_index against expected set (handles quick-mode subsets)
+        # Only a source under MCP extraction takes submissions. Rows written
+        # against any other status (committed, or indexed after a UI reset)
+        # survive a non-force get_tasks and would be committed as if current.
         source = self._get_source(source_id)
+        current_status = source.get("status", "")
+        if current_status != SourceStatus.MCP_EXTRACTING:
+            logger.warning(
+                "mcp_submission_wrong_status",
+                source_id=source_id,
+                status=current_status,
+            )
+            return {
+                "success": False,
+                "error_code": "INVALID_STATUS",
+                "error": (
+                    f"Source '{source_id}' is '{current_status}', expected 'mcp_extracting' — "
+                    "call get_extraction_tasks first."
+                ),
+            }
+
+        # Validate chunk_group_index against expected set (handles quick-mode subsets)
         expected = self._get_expected_indices(source)
         if chunk_group_index not in expected:
             valid = sorted(expected) if expected else []
@@ -1286,9 +1191,42 @@ class ExtractionOrchestrator:
             )
             raise ValueError(msg)
 
-        # Load source
+        # Any failure before the commit phase rolls the CAS back so a retry
+        # can claim the source again (submissions are kept). Without this an
+        # embedding or dedup error stranded the source at 'committing', where
+        # the worker reconciler — seeing no commit payload and no entity rows
+        # — dispatched an empty import_commit and zero-graph-committed it.
+        # Failures after the commit phase stay at 'committing': the entity
+        # rows are written and recovery can rebuild the commit from them.
+        try:
+            return await self._finalize_claimed(source_id, model, db)
+        except Exception:
+            if source_id not in self._commit_phase:
+                self.engine.storage_adapter.transition_source_status(
+                    source_id,
+                    from_status=SourceStatus.COMMITTING,
+                    to_status=SourceStatus.MCP_EXTRACTING,
+                    database_name=db,
+                )
+                logger.warning("mcp_finalize_rolled_back", source_id=source_id)
+            raise
+        finally:
+            self._commit_phase.discard(source_id)
+
+    async def _finalize_claimed(self, source_id: str, model: str | None, db: str) -> dict[str, Any]:
+        """The body of :meth:`finalize`, run after the COMMITTING claim succeeds."""
+        # Load source. The effective domain is the forced one, else the
+        # detected one, as on the queue and CLI paths (``get_tasks`` persists
+        # ``extraction_domain`` only when it auto-detected).
         source = self._get_source(source_id)
-        source_domain = source.get("extraction_domain")
+        forced_packs = forced_packs_of(source)
+        detected_packs = stored_packs(
+            source, list_key="extraction_packs", name_key="extraction_domain"
+        )
+        # The one-name strings the finalize threads are the packs' labels.
+        forced_domain = labels_of(forced_packs)
+        source_domain = labels_of(detected_packs)
+        effective_domain = forced_domain or source_domain
 
         # Load all submissions ordered by chunk_group_index
         submissions = self.engine.storage_adapter.list_extraction_submissions(source_id, db)
@@ -1300,18 +1238,8 @@ class ExtractionOrchestrator:
         missing = sorted(expected_set - submitted_set)
 
         if missing:
-            # Roll the CAS back before raising — without this a premature
-            # finalize call strands the source at 'committing', where a
-            # retry can never win the MCP_EXTRACTING -> COMMITTING
-            # transition and no MCP-side recovery path exists (the worker
-            # reconciler only re-dispatches committing sources that carry a
-            # commit payload, which an MCP source at this point does not).
-            self.engine.storage_adapter.transition_source_status(
-                source_id,
-                from_status=SourceStatus.COMMITTING,
-                to_status=SourceStatus.MCP_EXTRACTING,
-                database_name=db,
-            )
+            # ``finalize`` rolls the CAS back on the way out (pre-commit
+            # failure) so a retry can win MCP_EXTRACTING -> COMMITTING again.
             msg = (
                 f"Incomplete: {len(submissions)}/{total_chunks} chunks submitted. "
                 f"Missing indices: {missing}"
@@ -1324,43 +1252,26 @@ class ExtractionOrchestrator:
             submission_count=len(submissions),
         )
 
-        # Resolve the FilteringConfig that should govern parsing and
-        # cross-chunk filters. Prefer the cached entry populated by
-        # ``get_tasks`` (same process, same lifecycle); fall back to
-        # re-resolving from the row when the finalize call lands in a
-        # different process than ``get_tasks`` — the cache is per-instance,
-        # so a fresh worker wouldn't see it. Workstream 3, Task 3.5; the
-        # ``minimum_alias_length`` thread closes a W4 review-gap where
-        # the slider was silently ignored on the MCP path.
-        cached_filtering_config = self._filtering_configs.get(source_id)
-        if cached_filtering_config is None:
-            from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
-                resolve_filtering_config,
-            )
+        # The source's extraction plan governs parsing, deduplication and the
+        # cross-chunk filters, as on every other path. Prefer the plan cached
+        # by ``get_tasks`` (same process, same lifecycle); rebuild it from the
+        # row when finalize lands in a different process (the cache is
+        # per-instance).
+        plan = self._plans.get(source_id) or self._plan_for(source, source_packs(source))
+        filtering_config = plan.filtering_config
+        minimum_alias_length = int(filtering_config.minimum_alias_length)
 
-            row_filtering_mode = source.get("filtering_mode") or "balanced"
-            try:
-                cached_filtering_config = resolve_filtering_config(mode=str(row_filtering_mode))
-            except ValueError:
-                # Malformed legacy mode — fall back to the canonical default
-                # rather than failing the commit on a value mismatch.
-                logger.warning(
-                    "mcp_finalize_filtering_mode_invalid",
-                    source_id=source_id,
-                    filtering_mode=row_filtering_mode,
-                )
-                cached_filtering_config = resolve_filtering_config()
-
-        minimum_alias_length = (
-            int(cached_filtering_config.minimum_alias_length)
-            if cached_filtering_config is not None
-            and getattr(cached_filtering_config, "minimum_alias_length", None) is not None
-            else 2
+        # Parse every submission, then aggregate through the shared Core
+        # aggregator, which also resolves each item's citation evidence: a
+        # submission's sent_refs number the sentences of its group's text
+        # (``fetch_chunks`` splits ``combined_content``), rebuilt here
+        # deterministically from the same pipeline.
+        from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+            aggregate_chunk_results,
         )
 
-        # Parse and aggregate all submissions
-        all_entities: list[dict[str, Any]] = []
-        all_relationships: list[dict[str, Any]] = []
+        groups_by_index = {g["group_index"]: g for g in self._build_source_groups(source_id)}
+        group_results: list[dict[str, Any]] = []
 
         for sub in submissions:
             # Parse via line parser
@@ -1375,24 +1286,37 @@ class ExtractionOrchestrator:
 
             chunk_idx = sub["chunk_group_index"]
 
-            # Annotate chunk_index for citation tracking
+            # Tag the extraction-group position (citations read the evidence
+            # resolved at aggregation, never this index).
             for entity in entities:
                 entity["chunk_index"] = chunk_idx
             for rel in relationships:
                 rel["chunk_index"] = chunk_idx
 
-            # Remap relationship indices: offset by current entity count
-            entity_offset = len(all_entities)
-            for rel in relationships:
-                source_val = rel.get("source")
-                target_val = rel.get("target")
-                if isinstance(source_val, int):
-                    rel["source"] = source_val + entity_offset
-                if isinstance(target_val, int):
-                    rel["target"] = target_val + entity_offset
+            group = groups_by_index.get(chunk_idx) or {}
+            group_results.append(
+                {
+                    "chunk_index": chunk_idx,
+                    "raw_entities": entities,
+                    "raw_relationships": relationships,
+                    "input_text": group.get("combined_content", ""),
+                    "small_chunk_ids": group.get("small_chunk_ids") or [],
+                }
+            )
 
-            all_entities.extend(entities)
-            all_relationships.extend(relationships)
+        aggregated = aggregate_chunk_results(
+            group_results,
+            chunks_by_id={
+                c["id"]: c
+                for c in self.engine.storage_adapter.get_chunks_for_extraction(
+                    source_id=source_id, database_name=db
+                )
+                or []
+                if c.get("id")
+            },
+        )
+        all_entities: list[dict[str, Any]] = aggregated["entities"]
+        all_relationships: list[dict[str, Any]] = aggregated["relationships"]
 
         logger.info(
             "mcp_submissions_parsed",
@@ -1402,16 +1326,7 @@ class ExtractionOrchestrator:
         )
 
         # Build file_info for commit service
-        file_info = self._build_file_info(source)
-
-        # Build edge_type_constraints from the detected/forced domain so the
-        # cross-chunk type-constraint filter can run when the resolved
-        # FilteringConfig has ``strict_edge_type_constraints`` set (worker
-        # path parity — see ``_apply_post_dedup_filters``). Use the effective
-        # domain (forced overrides detected) so a user-pinned domain still
-        # drives constraint resolution.
-        effective_domain_for_constraints = source.get("forced_domain") or source_domain
-        edge_type_constraints = self._build_edge_type_constraints(effective_domain_for_constraints)
+        file_info = self._build_file_info(source, plan)
 
         # Finalize via extraction service (dedup, normalize, embed, suggest)
         result = await self.engine.extraction_service.finalize_distributed_extraction(
@@ -1420,8 +1335,9 @@ class ExtractionOrchestrator:
             generate_embeddings=True,
             file_info=file_info,
             detected_domain=source_domain,
-            edge_type_constraints=edge_type_constraints,
-            filtering_config=cached_filtering_config,
+            forced_domain=forced_domain,
+            edge_type_constraints=plan.edge_type_constraints,
+            filtering_config=filtering_config,
         )
 
         # Persist the generated entity embeddings so the commit phase can
@@ -1453,7 +1369,6 @@ class ExtractionOrchestrator:
         # This enables quality scoring, UI display, and re-extraction.
         # Per-source entity / relationship rows now live in dedicated
         # tables (migration 0042); ``complete_extraction`` writes them.
-        forced_domain = source.get("forced_domain")
         result_metadata = result.get("metadata") if isinstance(result, dict) else None
         filtering_log = (
             result_metadata.get("filtering_log") if isinstance(result_metadata, dict) else None
@@ -1464,13 +1379,16 @@ class ExtractionOrchestrator:
             resolve_domain_fingerprint,
         )
 
-        _dom_version, _dom_hash = resolve_domain_fingerprint(source_domain, db)
+        _dom_version, _dom_hash = resolve_domain_fingerprint(effective_domain, db)
+        self._commit_phase.add(source_id)
         self.engine.storage_adapter.complete_extraction(
             source_id,
             entities=result.get("entities", []),
             relationships=result.get("relationships", []),
             detected_domain=source_domain,
             forced_domain=forced_domain,
+            forced_packs=forced_packs,
+            detected_packs=detected_packs,
             cross_chunk_filtering_log=filtering_log,
             domain_version=_dom_version,
             domain_content_hash=_dom_hash,
@@ -1504,7 +1422,7 @@ class ExtractionOrchestrator:
             source_id=source_id,
             entities=entities,
             relationships=relationships,
-            domain_name=source_domain,
+            domain_name=effective_domain,
             database_name=db,
             chunk_count=chunk_count,
         )
@@ -1518,12 +1436,12 @@ class ExtractionOrchestrator:
         # Clean up submissions
         deleted = self.engine.storage_adapter.delete_extraction_submissions(source_id, db)
 
-        # Evict the per-source FilteringConfig cache entry now that finalize
+        # Evict the per-source plan cache entry now that finalize
         # has consumed it. Without this the dict accumulates one entry per
         # finalized source for the lifetime of the orchestrator (and a
         # long-lived MCP server process), which is a slow leak we don't
         # need — the cache only exists to bridge get_tasks → finalize.
-        self._filtering_configs.pop(source_id, None)
+        self._plans.pop(source_id, None)
         # Same bound for the group-index memo, for the same reason.
         self._group_indices.pop(source_id, None)
         # Same lifetime bound for the rate-limit bucket: submissions are done

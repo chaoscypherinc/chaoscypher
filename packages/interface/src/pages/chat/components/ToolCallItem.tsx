@@ -6,10 +6,12 @@
  *
  * Renders as a row with a teal dot indicator, monospace tool name,
  * compact arguments, optional duration, and an expand arrow to reveal
- * the full JSON input/output.
+ * the full JSON input/output. A `graphrag_search` result that carries the
+ * question's shape also shows, above its raw output, the shape and the graph
+ * block that answered (the aggregate, walk and gap lines the model read).
  */
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Box,
   Typography,
@@ -18,6 +20,7 @@ import {
 import ExpandIcon from '@mui/icons-material/ExpandMore';
 import { CardColors, hexToRgba } from '../../../theme/cardStyles';
 import { ChatTheme } from '../../../theme/chatTheme';
+import { graphBlockLines, shapeCaption } from './graphBlocks';
 import type { ToolCall, ToolResultLike } from './message-utils';
 
 interface ToolCallItemProps {
@@ -37,6 +40,18 @@ interface ToolCallItemProps {
 
 export default function ToolCallItem({ toolName, compactArgs, call, matchingResult, isLast, durationMs }: ToolCallItemProps) {
   const [outputExpanded, setOutputExpanded] = useState(false);
+  const resultContent = matchingResult?.content;
+  // undefined when there is no content or it is not JSON (shown as its text)
+  const parsedResult = useMemo<unknown>(() => {
+    if (!resultContent) return undefined;
+    try {
+      return typeof resultContent === 'string' ? JSON.parse(resultContent) : resultContent;
+    } catch {
+      return undefined;
+    }
+  }, [resultContent]);
+  const caption = toolName === 'graphrag_search' ? shapeCaption(parsedResult) : null;
+  const graphLines = caption ? graphBlockLines(parsedResult) : [];
 
   return (
     <Box sx={{
@@ -142,6 +157,34 @@ export default function ToolCallItem({ toolName, compactArgs, call, matchingResu
               }
             })()}
           </pre>
+          {/* The question's shape and the graph block that answered it */}
+          {caption && (
+            <Box sx={{ mt: 0.5 }}>
+              <Typography
+                variant="caption"
+                sx={{ color: 'text.secondary', fontWeight: 600, display: 'block' }}
+              >
+                {caption}
+              </Typography>
+              {graphLines.map((line, index) => (
+                <Typography
+                  // lines are positional and may repeat
+                  key={index}
+                  variant="caption"
+                  sx={{
+                    color: 'text.secondary',
+                    fontFamily: 'monospace',
+                    fontSize: '0.7rem',
+                    display: 'block',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {line}
+                </Typography>
+              ))}
+            </Box>
+          )}
           {/* Raw output */}
           <Typography
             variant="caption"
@@ -156,14 +199,10 @@ export default function ToolCallItem({ toolName, compactArgs, call, matchingResu
           {matchingResult ? (
             <pre style={{ margin: 0, fontSize: '0.7rem', overflow: 'auto', maxHeight: '250px', backgroundColor: ChatTheme.tools.outputSuccessBg, padding: '4px', borderRadius: '4px' }}>
               {(() => {
-                const resultContent = matchingResult.content;
                 if (!resultContent) return 'No output';
-                try {
-                  const parsed = typeof resultContent === 'string' ? JSON.parse(resultContent) : resultContent;
-                  return JSON.stringify(parsed, null, 2);
-                } catch {
-                  return String(resultContent);
-                }
+                return parsedResult === undefined
+                  ? String(resultContent)
+                  : JSON.stringify(parsedResult, null, 2);
               })()}
             </pre>
           ) : (

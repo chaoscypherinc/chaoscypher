@@ -106,16 +106,16 @@ def template_handler_factory(tmp_path: Path):
 async def test_duplicate_node_template_names_collapse_to_one_row(
     template_handler_factory,
 ):
-    """If suggested_templates contains 'Character' three times, only one row is written."""
+    """If suggested_templates contains 'Person' three times, only one row is written."""
     handler, session, source_id = template_handler_factory()
 
     commit_data = {
         "create_templates": True,
         "suggested_templates": [
-            {"name": "Character", "description": "A person", "properties": []},
-            {"name": "Character", "description": "Different desc, same name", "properties": []},
-            {"name": "Character", "description": "Yet another", "properties": []},
-            {"name": "Place", "description": "A location", "properties": []},
+            {"name": "Person", "description": "A person", "properties": []},
+            {"name": "Person", "description": "Different desc, same name", "properties": []},
+            {"name": "Person", "description": "Yet another", "properties": []},
+            {"name": "Location", "description": "A location", "properties": []},
         ],
     }
 
@@ -130,7 +130,7 @@ async def test_duplicate_node_template_names_collapse_to_one_row(
         )
     ).all()
     names = sorted(r.name for r in rows)
-    assert names == ["Character", "Place"], f"expected one Character + one Place, got {names}"
+    assert names == ["Location", "Person"], f"expected one Person + one Location, got {names}"
     assert len(set(name_to_id.values())) == 2, (
         "name_to_id must point to exactly two distinct template IDs"
     )
@@ -159,13 +159,13 @@ async def test_recommit_does_not_duplicate_templates(
     commit_data = {
         "create_templates": True,
         "suggested_templates": [
-            {"name": "Character", "description": "A person", "properties": []},
-            {"name": "Character", "description": "A duplicate name", "properties": []},
-            {"name": "Place", "description": "A location", "properties": []},
+            {"name": "Person", "description": "A person", "properties": []},
+            {"name": "Person", "description": "A duplicate name", "properties": []},
+            {"name": "Location", "description": "A location", "properties": []},
         ],
     }
 
-    # First call: should create 2 rows (Character + Place)
+    # First call: should create 2 rows (Person + Location)
     result1 = await handler.create_suggested_templates(commit_data, source_id=source_id)
     _, name_to_id1, _, inserted1 = result1
     assert inserted1 == 2, f"first call: expected 2 insertions, got {inserted1}"
@@ -175,7 +175,7 @@ async def test_recommit_does_not_duplicate_templates(
     _, name_to_id2, _, inserted2 = result2
     assert inserted2 == 0, f"second call: expected 0 insertions (all reused), got {inserted2}"
 
-    # Exactly 2 rows must exist (Character + Place) — no duplicates
+    # Exactly 2 rows must exist (Person + Location) — no duplicates
     rows = session.exec(
         select(GraphTemplate).where(
             GraphTemplate.source_id == source_id,
@@ -183,16 +183,16 @@ async def test_recommit_does_not_duplicate_templates(
         )
     ).all()
     names = sorted(r.name for r in rows)
-    assert names == ["Character", "Place"], (
-        f"expected exactly one Character + one Place across two commits, got {names}"
+    assert names == ["Location", "Person"], (
+        f"expected exactly one Person + one Location across two commits, got {names}"
     )
 
     # Both calls must return the same IDs for the same names
     assert name_to_id1.get("character") == name_to_id2.get("character"), (
-        "Character template ID must be stable across re-commits"
+        "Person template ID must be stable across re-commits"
     )
     assert name_to_id1.get("place") == name_to_id2.get("place"), (
-        "Place template ID must be stable across re-commits"
+        "Location template ID must be stable across re-commits"
     )
 
 
@@ -238,7 +238,7 @@ async def test_create_templates_false_returns_empty(
     commit_data = {
         "create_templates": False,
         "suggested_templates": [
-            {"name": "Character", "description": "A person", "properties": []},
+            {"name": "Person", "description": "A person", "properties": []},
         ],
     }
 

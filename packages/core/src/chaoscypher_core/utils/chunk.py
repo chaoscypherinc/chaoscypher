@@ -20,6 +20,7 @@ Single source of truth for all document chunking.
 import re
 from bisect import bisect_right
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
@@ -337,6 +338,7 @@ class ChunkingService:
         analysis_depth: str = "full",
         file_info: dict[str, Any] | None = None,
         embedding_service: Any = None,
+        seed: Sequence[Mapping[str, Any]] = (),
     ) -> ExtractionResult:
         """Chunk text and extract entities in one call.
 
@@ -353,6 +355,8 @@ class ChunkingService:
                 ``self.settings`` so semantic dedup runs by default. Pass an
                 explicit instance to inject (e.g., for tests) or pass an
                 already-constructed provider to share state across calls.
+            seed: Records the KNOWN ENTITIES list starts with (the memory
+                path's graph nodes and speaker); empty for a document.
 
         Returns:
             ExtractionResult with ``entities``, ``relationships``, ``domain``,
@@ -389,6 +393,7 @@ class ChunkingService:
             settings=self.settings,
             embedding_service=embedding_service,
             file_info=file_info,
+            seed=seed,
         )
         return ExtractionResult(**raw)
 

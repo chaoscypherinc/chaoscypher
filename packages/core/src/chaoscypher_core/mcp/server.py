@@ -18,30 +18,47 @@ since it never touches the graph).
 
 import asyncio
 import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 from mcp.server import Server
-from mcp.types import TextContent, Tool
+from mcp.types import CallToolResult, TextContent, Tool
 
 from chaoscypher_core.mcp.benchmark import BenchmarkBridge
 from chaoscypher_core.mcp.bridge import MCPToolBridge
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
+from chaoscypher_core.mcp.indexing import index_source_text
 from chaoscypher_core.mcp.processor import DocumentProcessor
-from chaoscypher_core.mcp.tools import get_tools_for_mode
+from chaoscypher_core.mcp.sites import SITE_TOOLS, handle_site_tool
+from chaoscypher_core.mcp.tools import ToolDefinition, get_tools
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.operations.importing.confirmation_gate import confirm_extraction
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    first_domain_name,
+    packs_choice,
+    proposal_packs,
+    requested_packs,
+)
+from chaoscypher_core.services.sources.web import fetch_page, page_names
 from chaoscypher_core.services.workflows.tools.engine.executor import ToolExecutorService
 
 
 if TYPE_CHECKING:
+    from chaoscypher_core.benchmark.retrieval import NaiveRetrieverFactory
     from chaoscypher_core.bootstrap import Engine
+    from chaoscypher_core.settings import EngineSettings
 
 logger = structlog.get_logger(__name__)
 
+MEMORY_TOOLS = frozenset({"remember", "recall", "forget", "list_memories", "digest"})
+"""The memory tools the server dispatches to ``mcp.memory``."""
 
-def create_mcp_server(engine: Engine) -> Server:
+
+def create_mcp_server(
+    engine: Engine, *, naive_retriever: NaiveRetrieverFactory | None = None
+) -> Server:
     """Create a configured MCP Server from an Engine instance.
 
     Wires the ToolExecutorService with engine repositories, registers all
@@ -49,6 +66,9 @@ def create_mcp_server(engine: Engine) -> Server:
 
     Args:
         engine: Initialized Engine instance with all repos connected.
+        naive_retriever: The benchmark bridge's naive-rung index builder
+            (the CLI's ``chaoscypher mcp`` passes it; Core owns no
+            llama-index dependency).
 
     Returns:
         Configured MCP Server ready for transport binding.
@@ -57,9 +77,11 @@ def create_mcp_server(engine: Engine) -> Server:
     settings = engine.settings
     mode = settings.mcp.mode
 
-    # Build optional embedding callback
+    # Build optional embedding callback. With search.enable_vector_search off the server runs
+    # on keywords alone and never embeds a query (2026-10-20: until then the setting was read
+    # nowhere, and a keyword-only process still paid an embedding call per search).
     embedding_callback = None
-    if engine.embedding_service:
+    if engine.embedding_service and settings.search.enable_vector_search:
 
         async def _embed(text: str) -> Any:
             """Forward to the engine's embedding service for MCP tool callbacks."""
@@ -73,6 +95,9 @@ def create_mcp_server(engine: Engine) -> Server:
         search_repository=engine.search_repository,
         indexing_repository=engine.storage_adapter,
         embedding_callback=embedding_callback,
+        # the same switch: a node written through the tools gets a vector only when
+        # searches read vectors
+        embedding_provider=engine.embedding_provider if embedding_callback else None,
         engine_settings=settings,
         source_storage=engine.storage_adapter,
         scope={"database_name": settings.current_database},
@@ -102,11 +127,11 @@ def create_mcp_server(engine: Engine) -> Server:
 
     # Benchmark bridge: file-backed, never touches the graph, so it serves
     # read mode as well as write mode.
-    benchmark_bridge = BenchmarkBridge(settings)
+    benchmark_bridge = BenchmarkBridge(settings, naive_retriever=naive_retriever)
 
     # Build MCP Server
     server = Server("chaoscypher")
-    tool_defs = get_tools_for_mode(mode)
+    tool_defs = get_tools(mode, settings.mcp.profile, settings.mcp.tools)
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -121,24 +146,16 @@ def create_mcp_server(engine: Engine) -> Server:
         ]
 
     @server.call_tool()
-    async def call_tool(name: str, arguments: dict | None = None) -> list[TextContent]:
+    async def call_tool(
+        name: str, arguments: dict | None = None
+    ) -> list[TextContent] | CallToolResult:
         """Route a tool call to the appropriate handler."""
         args = arguments or {}
 
-        # Effective-mode gating (per-key downgrade). Allowlist, not denylist:
-        # bridge handlers that are absent from TOOL_DEFINITIONS (summarize,
-        # research_topic, ...) must not fall through to bridge.execute in
-        # read mode just because they carry no write_only flag.
         effective_mode = _extract_effective_mode(server, default=mode)
-        if effective_mode == "read":
-            read_tools = {t.name for t in get_tools_for_mode("read")}
-            if name not in read_tools:
-                result = {
-                    "success": False,
-                    "error_code": "NOT_AUTHORIZED",
-                    "error": f"Tool '{name}' requires write access",
-                }
-                return [TextContent(type="text", text=json.dumps(result, default=str))]
+        rejected = _gate_tool_call(name, effective_mode, tool_defs)
+        if rejected is not None:
+            return rejected
 
         # Handle MCP-only tools
         if name == "get_document_status":
@@ -146,6 +163,7 @@ def create_mcp_server(engine: Engine) -> Server:
         if name == "add_document":
             extract_entities = args.pop("extract_entities", settings.mcp.auto_extract)
             extraction_depth = args.pop("extraction_depth", "full")
+            packs = args.pop("packs", None)
             domain = args.pop("domain", None)
             # Tri-state: ``None`` defers to ``resolve_normalization_default``
             # at indexing time (prose → True, CSV/JSON/XML → False). Explicit
@@ -170,6 +188,7 @@ def create_mcp_server(engine: Engine) -> Server:
                 args,
                 extraction_depth=extraction_depth,
                 forced_domain=domain,
+                packs=packs,
                 enable_normalization=enable_normalization,
                 skip_duplicates=skip_duplicates,
                 wait=wait,
@@ -181,6 +200,8 @@ def create_mcp_server(engine: Engine) -> Server:
                 sandbox_dir=settings.paths.mcp_dir,
                 engine=engine,
             )
+        if name in MEMORY_TOOLS or name in SITE_TOOLS:
+            return await _handle_module_tool(name, engine, args, settings, tool_executor)
         if name == "wait_for_document":
             return await _handle_wait_for_document(doc_processor, index_only_processor, args)
         if name == "remove_document":
@@ -216,9 +237,13 @@ def create_mcp_server(engine: Engine) -> Server:
         if name in _benchmark_methods:
             return await _handle_benchmark_tool(_benchmark_methods[name], args)
 
-        # Delegate to ToolExecutorService via bridge
+        # Delegate to ToolExecutorService via bridge. The bridge's verdict rides on the wire:
+        # until 2026-10-20 a failed tool reached the client as a plain result (isError false).
         bridge_result = await bridge.execute(name, args)
-        return [TextContent(type="text", text=bridge_result.text)]
+        return CallToolResult(
+            content=[TextContent(type="text", text=bridge_result.text)],
+            isError=bridge_result.is_error,
+        )
 
     logger.info(
         "mcp_server_created",
@@ -226,6 +251,41 @@ def create_mcp_server(engine: Engine) -> Server:
         tool_count=len(tool_defs),
     )
     return server
+
+
+async def _handle_module_tool(
+    name: str,
+    engine: Engine,
+    args: dict[str, Any],
+    settings: EngineSettings,
+    tool_executor: ToolExecutorService,
+) -> CallToolResult:
+    """The tools with a handler module of their own: the sites (``mcp/sites.py``), the memory."""
+    if name in SITE_TOOLS:
+        answer, is_error = await handle_site_tool(engine, name, args)
+        return CallToolResult(content=[TextContent(type="text", text=answer)], isError=is_error)
+    return await _handle_memory_tool(name, engine, args, settings, tool_executor)
+
+
+async def _handle_memory_tool(
+    name: str,
+    engine: Engine,
+    args: dict[str, Any],
+    settings: EngineSettings,
+    tool_executor: ToolExecutorService,
+) -> CallToolResult:
+    """Dispatch one of :data:`MEMORY_TOOLS` to its handler in ``mcp.memory``."""
+    from chaoscypher_core.mcp import memory
+
+    if name == "remember":
+        return await memory.handle_remember(engine, args, settings)
+    if name == "recall":
+        return await memory.handle_recall(engine, args, settings, tool_executor)
+    if name == "forget":
+        return await memory.handle_forget(engine, args, settings)
+    if name == "list_memories":
+        return await memory.handle_list_memories(engine, args, settings)
+    return await memory.handle_digest(engine, args, settings)
 
 
 def _handle_document_status(
@@ -269,6 +329,7 @@ def _handle_document_status(
             "filename": s.get("filename", ""),
             "status": s.get("status", ""),
             "stage_progress": s.get("stage_progress", {}),
+            "packs": proposal_packs(proposal),
             "detected_domain": detected_domain,
             "confidence": proposal.get("confidence"),
             "low_confidence": proposal.get("low_confidence", False),
@@ -360,6 +421,7 @@ async def _handle_add_document(
     pipeline: Any = None,
     sandbox_dir: Path | None = None,
     engine: Any = None,
+    packs: list[str] | None = None,
 ) -> list[TextContent]:
     """Handle add_document tool call.
 
@@ -372,7 +434,8 @@ async def _handle_add_document(
         processor: DocumentProcessor instance (None in read mode).
         args: Tool call arguments (must include ``file_path`` or ``content``).
         extraction_depth: Entity extraction depth.
-        forced_domain: Optional domain override.
+        forced_domain: One pack to force (``domain``, the single-name form of
+            ``packs``; ``generic`` the floor alone, ``__auto__`` detects).
         enable_normalization: Whether to normalise text.
         skip_duplicates: Skip if content hash already exists.
         wait: Call pipeline inline and return when done.
@@ -393,8 +456,16 @@ async def _handle_add_document(
             the awaiting payload promptly instead of falling through to a
             misleading timeout. ``None`` skips the park-check (test paths
             that don't wire an engine).
+        packs: The packs to force (``[]`` the floor alone); None with no
+            ``forced_domain`` detects. Carried down the one-name pipeline as
+            the ordered choice (``packs_choice``), which the row write splits.
 
     """
+    try:
+        forced_domain = packs_choice(requested_packs(packs, forced_domain))
+    except ValueError as exc:
+        invalid = {"success": False, "error_code": "INVALID_PACKS", "error": str(exc)}
+        return [TextContent(type="text", text=json.dumps(invalid, default=str))]
     if processor is None or pipeline is None:
         result: dict[str, Any] = {
             "success": False,
@@ -468,19 +539,21 @@ async def _handle_add_document(
                                 if ranking
                                 else proposal.get("detected_domain", "")
                             )
+                            proposed = proposal_packs(proposal)
                             result = {
                                 "success": True,
                                 "source_id": file_id,
                                 "file_id": file_id,
                                 "status": SourceStatus.AWAITING_CONFIRMATION,
+                                "packs": proposed,
                                 "detected_domain": detected_domain,
                                 "confidence": proposal.get("confidence"),
                                 "low_confidence": proposal.get("low_confidence", False),
                                 "next_steps": (
-                                    f"Detection proposed domain "
-                                    f'"{detected_domain}". Call confirm_extraction '
-                                    f'with file_id="{file_id}" to start '
-                                    f"extraction, or re-add with "
+                                    f"Detection proposed the packs {proposed} "
+                                    f"(the floor alone when empty). Call "
+                                    f'confirm_extraction with file_id="{file_id}" '
+                                    f"to start extraction, or re-add with "
                                     f"auto_confirm=true to skip the gate."
                                 ),
                             }
@@ -606,20 +679,10 @@ async def _handle_remove_document(
         }
     else:
         try:
-            from chaoscypher_core.services.graph.management.source import (
-                SourceService,
-            )
+            from chaoscypher_core.mcp.memory import remove_source
 
-            sms = SourceService(
-                repository=engine.storage_adapter,
-                database_name=engine.settings.current_database,
-            )
-            deleted = sms.delete_source(
-                source_id,
-                graph_repo=engine.graph_repository,
-                search_repo=engine.search_repository,
-            )
-            result = {"success": deleted, "source_id": source_id}
+            deleted = await remove_source(engine, source_id)
+            result = {"success": deleted.deleted, "source_id": source_id}
             if not deleted:
                 result["error"] = "Source not found"
         except Exception as e:
@@ -648,7 +711,7 @@ async def _handle_confirm_extraction(
 ) -> list[TextContent]:
     """Handle confirm_extraction tool call.
 
-    Confirms (and optionally overrides) the domain for a source parked at
+    Confirms (and optionally overrides) the packs for a source parked at
     ``awaiting_confirmation`` and starts extraction. Delegates to the core
     ``confirm_extraction`` primitive, which CAS-transitions
     ``awaiting_confirmation -> indexed``, persists the chosen domain + option
@@ -661,14 +724,19 @@ async def _handle_confirm_extraction(
         result: dict[str, Any] = {"success": False, "error": "file_id is required"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
 
-    chosen_domain = args.get("domain")
+    # ``packs`` (a list), or ``domain`` as one element; neither accepts the proposal.
+    try:
+        chosen = requested_packs(args.get("packs"), args.get("domain"))
+    except ValueError as exc:
+        result = {"success": False, "error_code": "INVALID_PACKS", "error": str(exc)}
+        return [TextContent(type="text", text=json.dumps(result, default=str))]
     overrides = {k: args[k] for k in _CONFIRM_OVERRIDE_KEYS if k in args}
 
     try:
         ok = await confirm_extraction(
             engine.storage_adapter,
             file_id,
-            chosen_domain,
+            chosen,
             overrides,
         )
     except Exception as e:
@@ -691,10 +759,42 @@ async def _handle_confirm_extraction(
     result = {
         "success": True,
         "source_id": file_id,
-        "domain": chosen_domain,
+        "packs": list(chosen) if chosen is not None else None,
+        "domain": first_domain_name(chosen) if chosen is not None else None,
         "status": SourceStatus.INDEXED,
     }
     return [TextContent(type="text", text=json.dumps(result, default=str))]
+
+
+def _gate_tool_call(
+    name: str, effective_mode: str, tool_defs: Sequence[ToolDefinition]
+) -> list[TextContent] | None:
+    """Reject a call to a tool the server does not advertise in this mode.
+
+    Allowlist, not denylist, in both modes: the MCP SDK only warns about a
+    call to a tool that was never listed, so bridge handlers absent from
+    ``TOOL_DEFINITIONS`` (summarize, research_topic, ...) reached
+    ``bridge.execute`` — in read mode because they carry no ``write_only``
+    flag (fixed first), and in write mode because nothing checked the list
+    at all. Read mode answers ``NOT_AUTHORIZED`` (the tool may exist in write
+    mode); an unlisted name answers ``UNKNOWN_TOOL``. Both sets are read from the
+    served tuple (the profile and allowlist applied), never the global registry.
+    """
+    if effective_mode == "read" and name not in {t.name for t in tool_defs if not t.write_only}:
+        result = {
+            "success": False,
+            "error_code": "NOT_AUTHORIZED",
+            "error": f"Tool '{name}' requires write access",
+        }
+        return [TextContent(type="text", text=json.dumps(result, default=str))]
+    if name not in {t.name for t in tool_defs}:
+        result = {
+            "success": False,
+            "error_code": "UNKNOWN_TOOL",
+            "error": f"Unknown tool '{name}'",
+        }
+        return [TextContent(type="text", text=json.dumps(result, default=str))]
+    return None
 
 
 async def _handle_extraction_tool(
@@ -725,7 +825,16 @@ async def _handle_extraction_tool(
     try:
         result = await method(**args)
         return [TextContent(type="text", text=json.dumps(result, default=str))]
-    except (ValueError, KeyError):  # fmt: skip
+    except (ValueError, KeyError) as exc:  # fmt: skip
+        # The orchestrator's ValueError text is written for the client
+        # ("Incomplete: N/M chunks submitted …"); it is still replaced by the
+        # generic line here, but no longer silently — the server log keeps
+        # the real reason.
+        logger.warning(
+            "mcp_extraction_tool_failed",
+            tool=getattr(method, "__name__", str(method)),
+            error=str(exc),
+        )
         result = {"success": False, "error": "Tool execution failed"}
         return [TextContent(type="text", text=json.dumps(result, default=str))]
 
@@ -760,22 +869,12 @@ async def _fetch_url_source(engine: Engine, url: str) -> dict[str, Any]:
         ``file_size``, ``resolved_path``, ``source_type`` — or ``{"error": ...}``
         when the response was binary.
     """
-    from chaoscypher_core.adapters.web.search import WebScraper
-
-    # W9 (2026-05-08): URL imports use the unified allowlist + max_bytes. The
-    # MCP path ignores binary responses today (the loader registry would reject
-    # them via the ``.md`` extension below). Surface them as an explicit error
-    # so future work can decide between staging the bytes or refusing the URL.
-    mcp_batching = getattr(engine.settings, "batching", None)
-    mcp_allowlist = list(getattr(mcp_batching, "upload_content_type_allowlist", []) or [])
-    mcp_max_bytes_raw = getattr(mcp_batching, "max_upload_bytes", None)
-    mcp_max_bytes = int(mcp_max_bytes_raw) if isinstance(mcp_max_bytes_raw, int) else None
-    scraper = WebScraper(
-        allowlist=mcp_allowlist,
-        max_bytes=mcp_max_bytes,
-        web_settings=getattr(engine.settings, "web", None),
-    )
-    page = await scraper.extract_full_content(url, max_bytes=mcp_max_bytes)
+    # W9 (2026-05-08): URL imports use the unified allowlist + max_bytes, which
+    # the shared ``fetch_page`` reads from the engine settings. The MCP path
+    # ignores binary responses today (the loader registry would reject them via
+    # the ``.md`` extension below). Surface them as an explicit error so future
+    # work can decide between staging the bytes or refusing the URL.
+    page = await fetch_page(url, engine.settings)
     if page.is_binary:
         return {
             "error": (
@@ -784,16 +883,14 @@ async def _fetch_url_source(engine: Engine, url: str) -> dict[str, Any]:
             ),
         }
     text = page.content if page else ""
-    title = page.title or url
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)[
-        : engine.settings.paths.max_filename_length
-    ]
+    # The stored title and filename: the rule every URL import shares.
+    names = page_names(page.title, engine.settings, fallback_title=url)
     return {
         "text": text,
-        "title": title,
-        "filename": f"{safe_title}.md",
+        "title": names.title,
+        "filename": f"{names.stem}.md",
         "file_type": "md",
-        "file_size": len(text.encode("utf-8")),
+        "file_size": len(page.payload),
         "resolved_path": url,  # Store URL as filepath
         "source_type": "webpage",
     }
@@ -833,8 +930,10 @@ def _create_pipeline_callback(engine: Engine, *, extract_entities: bool = True) 
         """Process a single document through the configured pipeline.
 
         All file/DB operations are synchronous (fast, millisecond-level).
-        Embedding generation is async via httpx. No ``asyncio.to_thread``
-        calls — they deadlock under the MCP server's anyio event loop.
+        Embedding generation is async via httpx. ``asyncio.to_thread`` is safe
+        here (the URL fetch's extraction and the duplicate-hash read use it)
+        as long as no module is imported for the first time inside the thread:
+        that import-lock deadlock was the April 2026 hang (``mcp/sites.py``).
         """
         if extract_entities:
             # Full pipeline: load, chunk, index, extract, commit. Forward
@@ -893,14 +992,12 @@ async def _run_index_only_pipeline(
     source row so the later client-driven ``get_extraction_tasks`` gate sees
     the upload-time ``auto_confirm`` choice; this path itself never parks.
 
-    All file/DB operations are synchronous (millisecond-level); only embedding
-    generation is async. No ``asyncio.to_thread`` on the DB path — it deadlocks
-    under the MCP server's anyio event loop.
+    File metadata and DB operations are synchronous (millisecond-level); the
+    content read for the duplicate hash is offloaded with ``asyncio.to_thread``
+    because a file can be hundreds of MB, and embedding generation is async.
     """
     import hashlib
-    from pathlib import Path
 
-    from chaoscypher_core.services.sources.loaders.facade import Loaders
     from chaoscypher_core.utils import generate_id
 
     db_name = engine.settings.current_database
@@ -919,8 +1016,8 @@ async def _run_index_only_pipeline(
         resolved_path = url_source["resolved_path"]
         source_type = url_source["source_type"]
     else:
-        # Sync pathlib operations are intentional: asyncio.to_thread
-        # deadlocks under MCP server's anyio event loop (see docstring).
+        # Sync pathlib operations are intentional: stat/name/suffix are
+        # millisecond-level (see docstring).
         from chaoscypher_core.utils.safe_paths import resolve_within
 
         sandbox = engine.settings.paths.mcp_dir
@@ -940,7 +1037,7 @@ async def _run_index_only_pipeline(
         else:
             # Offload the blocking read — files can be hundreds of MB; a sync
             # read would block the MCP event loop for every concurrent call.
-            content_for_hash = await asyncio.to_thread(Path(file_path).read_bytes)
+            content_for_hash = await asyncio.to_thread(filepath.read_bytes)
         content_hash = hashlib.sha256(content_for_hash).hexdigest()
         existing = engine.storage_adapter.find_by_content_hash(db_name, content_hash)
         if existing:
@@ -981,59 +1078,23 @@ async def _run_index_only_pipeline(
         source_data["confirmation_required"] = not auto_confirm
     engine.storage_adapter.create_source(source_data)
 
-    # Use lifecycle methods (same as internal pipeline)
+    # Use lifecycle methods (same as internal pipeline). From here on a
+    # failure must mark the row failed — without ``fail_indexing`` a loader
+    # or embedding error left the source stuck at 'indexing' forever.
     engine.storage_adapter.start_indexing(file_id)
-
-    # Load text (files only — URL text already fetched above)
-    if not is_url:
-        text = Loaders.load_text(str(file_path), settings=engine.settings)
-
-    # Resolve the tri-state ``enable_normalization`` the same way the CLI
-    # (sources/service.py) and Cortex (indexing_handler.py) do — ``None``
-    # defers to ``resolve_normalization_default(filename)``, which returns True
-    # for prose and False for structured formats (CSV / TSV / JSON / JSONL /
-    # NDJSON / XML). Pre-fix the MCP default was hardcoded True, which
-    # corrupted structured uploads by stripping their whitespace as OCR noise.
-    if enable_normalization is None:
-        from chaoscypher_core.utils.normalization_default import (
-            resolve_normalization_default,
+    try:
+        return await index_source_text(
+            engine,
+            file_id=file_id,
+            file_path=file_path,
+            is_url=is_url,
+            text=text,
+            file_type=file_type,
+            enable_normalization=enable_normalization,
         )
-
-        enable_normalization = resolve_normalization_default(
-            filename=Path(file_path).name if file_path else ""
-        )
-
-    # Normalize content if enabled
-    if enable_normalization and text:
-        from chaoscypher_core.services.sources.normalizer.service import (
-            ContentNormalizerService,
-        )
-
-        normalizer = ContentNormalizerService(settings=engine.settings)
-        normalized = normalizer.normalize(content=text, content_type=file_type)
-        text = normalized.content
-
-    # Chunk
-    await engine.chunking_service.create_chunks(full_text=text, source_id=file_id)
-
-    # Index (generate embeddings)
-    index_result = await engine.indexing_service.create_index(source_id=file_id)
-
-    # Complete indexing with proper metadata
-    engine.storage_adapter.complete_indexing(
-        file_id,
-        chunks_count=index_result.get("chunks_count", 0),
-        embedding_model=index_result.get("embedding_model", ""),
-        embedding_dimensions=index_result.get("embedding_dimensions", 0),
-    )
-
-    return {
-        "source_id": file_id,
-        "status": SourceStatus.INDEXED,
-        "nodes": [],
-        "edges": [],
-        "templates": [],
-    }
+    except Exception as exc:
+        engine.storage_adapter.fail_indexing(file_id, f"{type(exc).__name__}: {exc}")
+        raise
 
 
 def _extract_effective_mode(server: Server, default: str) -> str:

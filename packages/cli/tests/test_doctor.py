@@ -38,7 +38,9 @@ def _fake_settings(**overrides: Any) -> SimpleNamespace:
         cli=SimpleNamespace(
             ollama_connect_timeout_seconds=1.0,
             health_check_workers=2,
+            api_port=8081,
         ),
+        ports=SimpleNamespace(web_ui_api=8080),
     )
     for key, value in overrides.items():
         setattr(base, key, value)

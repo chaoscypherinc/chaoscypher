@@ -101,7 +101,7 @@ curl "http://localhost:8080/api/v1/search?q=neural+networks&search_type=hybrid"
 
 ### Keyword Search
 
-Traditional full-text search using SQLite FTS. The FTS index only covers graph node labels and properties — it never indexes document chunk text, so keyword search results are always graph nodes, never chunks.
+Traditional full-text search using SQLite FTS. Keyword mode searches the node index only (labels and properties), so its results are always graph nodes. A second full-text index covers document chunk text; hybrid search uses it.
 
 Best for: finding specific terms, names, or exact phrases in your knowledge graph's entities.
 
@@ -113,7 +113,7 @@ Best for: conceptual queries, finding related content, when you don't know the e
 
 ### Hybrid Search
 
-Runs keyword and semantic search together and merges the results — semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included, and each result keeps the higher of its two scores. Because the keyword arm only searches graph nodes (see Keyword Search above), any chunk result in hybrid search always comes from the semantic arm. Very short queries (under 3 characters) use keyword search only.
+Runs keyword and semantic search together over both nodes and chunks and fuses the two rankings by reciprocal rank (rank, not score, is merged, because BM25 and cosine scores are on different scales; the top of each arm scores 1.0). Semantic matches must exceed the minimum similarity threshold (default: 0.55) to be included. Very short queries (under 3 characters) use keyword search only.
 
 Best for: general-purpose search that combines both approaches.
 
@@ -198,18 +198,55 @@ search:
 
 ### GraphRAG Tuning
 
-Six parameters in the `graphrag` section of `settings.yaml` control the GraphRAG pipeline. The defaults were chosen from the GraphRAG literature and testing across database sizes — most users never need to change them.
+The parameters in the `graphrag` section of `settings.yaml` control the GraphRAG pipeline. The defaults were chosen from the GraphRAG literature and testing across database sizes — most users never need to change them.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `seed_similarity_threshold` | `0.3` | Minimum cosine similarity for a graph entity to qualify as a PageRank seed. Lower values cast a wider net but may introduce noise. |
 | `ppr_top_k` | `20` | Number of top-scoring entities from Personalized PageRank to include in graph context. Higher values give the LLM more structural context at the cost of token budget. |
 | `ppr_damping` | `0.85` | PageRank damping factor. Higher means more exploration away from seeds; lower keeps results closer to directly matched entities. |
-| `max_triples` | `200` | Maximum relationship triples included in the graph context summary. Capped to avoid flooding the LLM context window. |
+| `max_triples` | `40` | Maximum relationship triples included in the graph context. Was 200 until 2026-10-02: a block of every edge of the top nodes was found to be ignored by chat models. |
+| `include_unevidenced_edges` | `false` | Let relationships no cited sentence states (kept by the extraction flagged `unevidenced`, see [Entity Extraction](../architecture/extraction-pipeline/entity-extraction.md#a-relationship-without-evidence-is-kept-flagged)) into the graph context: PageRank, the seed paths and the relationship lines, ranked after every evidenced line before the `max_triples` cap. Off, the chat reads only relationships a sentence of the source states. Switch it in **Settings → General → Chat context** ("Use unevidenced relationships in chat context"). A benchmark lever like the others (recorded in each row's run settings, settable with `SWEEP_SET`). |
+| `triple_selection` | `connected` | Which edges become relationship lines: `connected` keeps edges between the top PageRank entities or touching a seed entity, ranked by PageRank; `all_edges` is every edge in node order. |
+| `entity_descriptions` | `true` | Each entity line carries its extracted description (`name: description`), kept to `entity_description_chars` (400) at a sentence boundary, a sentence dropped only when every content word of it is in a kept one (`clean_descriptions`, `true`; the drops are counted in `retrieval_stats.descriptions_dropped`). Was 160 characters cut mid-word until 2026-10-09. |
+| `seed_paths` | `true` | Lists the relation chains (one or two hops) between the seed entities the query matched; `paths_to_top` (`false`) would add chains from each seed to the other top entities. |
+| `explain_lines` | `true` | One sentence telling the model what the graph lines are. |
+| `graph_block_last` | `true` | Documents first, graph lines after them. |
+| `question_gate` | `true` | Only entities and relationships sharing a significant word with the query are kept; seeds and their edges always stay. |
+| `keyword_seeds` | `true` | A name or alias the query spells out seeds PageRank by keyword match, ahead of the vector matches. |
+| `rank_chunks_by_seeds` | `true` | Chunks are ordered by how many seed entities they mention. |
+| `ask_for_citations` | `true` | The benchmark's grounded-chat prompt asks for the app's `[[cite:Cn:Sm|filename]]` markers, as the app's system prompt does. |
 | `vector_overfetch_multiplier` | `3` | When searching for seed entities, fetch this multiple of the seed limit from the vector index to account for non-entity results that need filtering. |
 | `max_graph_nodes` | `50000` | Safety limit. If the graph exceeds this, PageRank is skipped (too expensive) and search falls back to vector-only mode. |
+| `question_aware_descriptions` | `true` | Within `entity_description_chars`, the description sentences that share a word with the question come first (in stored order), then the rest. |
+| `question_parts` | `false` | A two-part question (", and what did he say?") is searched whole and part by part in the chunk index, the hits interleaved so each part keeps its share; a one-part question is searched once. |
+
+The graph context's text summary (the triple list a tool result carries) is
+budgeted to about 4,000 characters and cut **by rank**: its lines are ordered
+by standing (a line between named entities before one touching a reference
+such as "the count", connected before orphan, evidenced before unevidenced;
+the selection order kept within each), whole lines are kept from the top, and
+the rest are counted (`... (N more triples omitted)`). Until October 2026 the
+cut took the first 4,000 bytes of the selection order.
 
 One related cap lives outside the `graphrag` section: `batching.graphrag_edge_query_limit` (default `50`) limits how many edges per direction are loaded for each top-ranked entity when assembling the graph context.
+
+#### Question shapes
+
+Before it assembles the graph context, GraphRAG decides the question's *shape*: `lookup` (a fact about one thing), `aggregate` (everyone or everything sharing a relation: a list), `path` (how two named things are connected) or `global` (the big picture). The shape sets the budget and the graph block, never whether the graph is used: an aggregate question gets the named entity's relations grouped by label, each row with the sentence that states it; a path question gets the shortest relation chains between the two entities over the whole graph, each hop with its sentence, or a line saying none was found. In this release a global question runs the lookup assembly with the global shape's levers (the community block comes later).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `router` | `rules` | How the shape is decided. `rules` (the default) decides from the question's named entities and cue words ("connected", "every", "themes", ...) and treats what it cannot decide as a lookup: no extra model call, no added latency. `rules_then_llm` asks the chat model one short extra question (a JSON answer, temperature 0) only when the rules do not decide. `llm` always asks the model; `off` treats every question as a lookup. |
+| `shape_levers` | aggregate and path: `{vector_reserve: 4, evidence_chunks: 6}`; global: `{vector_reserve: 4, evidence_chunks: 2}` | Lever values applied on top of the settings for one shape. A bundle may set any lever read after the shape is known (not the seed or PageRank settings, not `router`). |
+| `evidence_chunks` | `0` | Chunks the graph block cites (an aggregate row's or a walk hop's sentence) that enter the chunk budget by right, so every `[C3:S2]` marker on a graph line resolves. The shipped `shape_levers` raise it for aggregate and path questions. |
+| `max_hops` | `3` | The longest relation chain a path question's walk may have (1 to 4). |
+| `max_walks` | `6` | The walks a path question lists in all, across its pairs of named entities: each pair's shortest first. A walk is a shortest chain or one a relation longer, never longer. |
+| `aggregate_per_label` | `12` | The rows an aggregate block lists per relation before it says how many more there are. |
+
+The quoted sentences of the aggregate and walk lines are document text: the model reads them inside the same untrusted-document fence as the chunks.
+
+The default router adds no latency. Set `router: rules_then_llm` to let the chat model decide the questions the rules cannot, at one short extra model call each.
 
 ### Re-ranking
 

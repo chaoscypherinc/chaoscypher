@@ -21,7 +21,7 @@ from typing import Any
 import structlog
 
 from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
-from chaoscypher_core.repo_factories import get_graph_repository
+from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
 
 logger = structlog.get_logger(__name__)
@@ -81,12 +81,7 @@ class GraphCleanupService:
         adapter = get_sqlite_adapter(database_name=self.database_name)
         try:
             with adapter.transaction():
-                if adapter.session is None:
-                    msg = "Adapter session is None inside transaction()"
-                    raise RuntimeError(  # nosemgrep: cc-045-bare-stdlib-raise-in-core - programmer error: adapter invariant violation, not a user-visible failure
-                        msg
-                    )
-                repo = get_graph_repository(adapter.session, self.database_name)
+                repo = get_transaction_graph_repository(adapter, self.database_name)
 
                 # 1. Orphaned edges (source_node_id or target_node_id missing)
                 orphaned_edge_ids = set(

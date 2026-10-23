@@ -10,12 +10,13 @@
   "@type": "ExtractionDomain",
   "@id": "domain:design",
   "name": "design",
-  "version": "1.10.0",
+  "version": "2.0.0",
   "description": "UI/UX design books, design systems documentation, typography, color theory, accessibility guidelines, visual design principles, and interaction design references",
+  "role": "pack",
+  "extends": "core",
   "author": "ChaosCypher Team",
   "builtin": true,
   "extraction_density": 1.2,
-  "strict_entity_types": true,
   "type_aliases": {
     "UI Designer": "Designer",
     "UX Designer": "Designer",
@@ -353,672 +354,499 @@
     }
   },
   "entity_guidance": "ENTITY EXTRACTION RULES:\n- Extract named designers, named design systems (Material Design, HIG, Fluent), named tools (Figma, Sketch)\n- Extract reusable components by canonical name (Button, Modal, Card) — capture the variant or state as a property, not as a separate type\n- Extract design principles and heuristics as their own entities with a quoted statement when available\n- Extract typefaces by family name (Inter, Helvetica, Roboto); attach foundry and classification as properties\n- Extract color palettes by name; extract individual colors with their hex value as a property\n- Extract accessibility guidelines with WCAG level (A / AA / AAA) and success criterion when stated\n- Extract user research methods by name (card sorting, A/B test, usability test, heuristic evaluation)\n\nDO NOT EXTRACT:\n- Generic component references without a system or designer context: 'a button', 'the modal'\n- Bare CSS values without context: '16px', '#fff', '100%'\n- Figure / chapter cross-references: 'fig. 1', 'see chapter 3'\n- Sample copy / placeholder text: 'Lorem ipsum'",
-  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- AUTHORSHIP: Use designed_by for designer-to-component, created_by for designer-to-system\n- SYSTEM MEMBERSHIP: Use part_of_system for component-to-design-system, defines for system-to-color-palette/typeface\n- INFLUENCE: Use inspired_by between design systems (often symmetric), influenced_by between designers\n- COMPLIANCE: Use complies_with for component-to-accessibility-guideline, follows_principle for component-to-principle\n- TOOL USE: Use uses_tool for designer-to-tool, supports for tool-to-system\n- EVALUATION: Use evaluated_by for component-to-research-method, violates_heuristic for issue-to-heuristic\n- COLOR: Use pairs_with for symmetric color-to-color relationships (complementary, analogous)\n\nUNIVERSAL RULES (apply to every relationship):\n- DIRECTIONALITY: each predicate has a listed source→target direction. Don't reverse it, even when the relation could be read either way.\n- NO HALLUCINATED PREDICATES: only emit relationship types listed in the templates above. Do NOT invent new ones — pick the closest listed predicate instead.\n- SPECIFICITY: prefer specific named predicates over generic ones like 'related_to', 'associated_with', or 'interacts_with'.",
-  "templates": {
-    "node_templates": [
+  "relationship_guidance": "RELATIONSHIP EXTRACTION RULES:\n- AUTHORSHIP: Use designed_by for designer-to-component, created_by for designer-to-system\n- SYSTEM MEMBERSHIP: Use part_of_system for component-to-design-system, defines for system-to-color-palette/typeface\n- INFLUENCE: Use inspired_by between design systems (often symmetric), influenced_by between designers\n- COMPLIANCE: Use complies_with for component-to-accessibility-guideline, follows_principle for component-to-principle\n- TOOL USE: Use uses_tool for designer-to-tool, supports for tool-to-system\n- EVALUATION: Use evaluated_by for component-to-research-method, violates_heuristic for issue-to-heuristic\n- COLOR: Use pairs_with for symmetric color-to-color relationships (complementary, analogous)\n",
+  "subtypes": [
+    {
+      "name": "Designer",
+      "of": "Person",
+      "description": "A named designer, design author, or UX thinker (e.g., Don Norman, Dieter Rams, Jakob Nielsen)",
+      "properties": [
+        {
+          "name": "specialty",
+          "display_name": "Specialty",
+          "property_type": "text"
+        },
+        {
+          "name": "affiliation",
+          "display_name": "Affiliation",
+          "property_type": "text"
+        }
+      ],
+      "names_a_person": true,
+      "icon": "Brush",
+      "color": "#d6418a",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "designer",
+        "UX designer",
+        "UI designer",
+        "product designer",
+        "visual designer",
+        "interaction designer",
+        "design author",
+        "design researcher"
+      ]
+    },
+    {
+      "name": "Design System",
+      "of": "Work",
+      "description": "A named design system or design language (Material Design, Apple HIG, Fluent, Carbon, Polaris, Tailwind, Bootstrap)",
+      "properties": [
+        {
+          "name": "maintainer",
+          "display_name": "Maintainer",
+          "property_type": "text"
+        },
+        {
+          "name": "platform",
+          "display_name": "Platform",
+          "property_type": "text"
+        },
+        {
+          "name": "version",
+          "display_name": "Version",
+          "property_type": "text"
+        }
+      ],
+      "icon": "GridView",
+      "color": "#d64141",
+      "quality_score": 25,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "design system",
+        "design language",
+        "component library",
+        "pattern library",
+        "style guide",
+        "design framework",
+        "UI kit"
+      ]
+    },
+    {
+      "name": "Component",
+      "of": "Object",
+      "description": "A reusable UI component (Button, Card, Modal, Dropdown, Navigation, Tooltip)",
+      "properties": [
+        {
+          "name": "variant",
+          "display_name": "Variant",
+          "property_type": "text"
+        },
+        {
+          "name": "state",
+          "display_name": "State",
+          "property_type": "text"
+        },
+        {
+          "name": "category",
+          "display_name": "Category",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Widgets",
+      "color": "#d67141",
+      "quality_score": 22,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "component",
+        "button",
+        "card",
+        "modal",
+        "dialog",
+        "tooltip",
+        "dropdown",
+        "menu",
+        "navigation",
+        "tab",
+        "input",
+        "form field"
+      ]
+    },
+    {
+      "name": "Design Principle",
+      "of": "Concept",
+      "description": "A named design principle (Don't Make Me Think, KISS, mobile-first, progressive disclosure)",
+      "properties": [
+        {
+          "name": "statement",
+          "display_name": "Statement",
+          "property_type": "text"
+        },
+        {
+          "name": "attributed_to",
+          "display_name": "Attributed To",
+          "property_type": "text"
+        }
+      ],
+      "icon": "EmojiObjects",
+      "color": "#d6b241",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "design principle",
+        "principle",
+        "guideline",
+        "rule of thumb",
+        "best practice",
+        "design rule"
+      ]
+    },
+    {
+      "name": "Heuristic",
+      "of": "Concept",
+      "description": "A usability heuristic (Nielsen's 10, Shneiderman's 8 Golden Rules)",
+      "properties": [
+        {
+          "name": "rank",
+          "display_name": "Rank or Number",
+          "property_type": "text"
+        },
+        {
+          "name": "category",
+          "display_name": "Category",
+          "property_type": "text"
+        }
+      ],
+      "icon": "RuleFolder",
+      "color": "#bbd641",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "heuristic",
+        "usability heuristic",
+        "Nielsen's heuristic",
+        "golden rule",
+        "evaluation criterion"
+      ]
+    },
+    {
+      "name": "Design Pattern",
+      "of": "Concept",
+      "description": "A reusable UI/UX design pattern (master-detail, infinite scroll, optimistic UI, skeleton screen, empty state)",
+      "properties": [
+        {
+          "name": "problem",
+          "display_name": "Problem Addressed",
+          "property_type": "text"
+        },
+        {
+          "name": "category",
+          "display_name": "Category",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Pattern",
+      "color": "#7bd641",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "design pattern",
+        "UI pattern",
+        "UX pattern",
+        "interaction pattern",
+        "navigation pattern",
+        "form pattern"
+      ]
+    },
+    {
+      "name": "Tool",
+      "of": "Object",
+      "description": "A design tool or software (Figma, Sketch, Adobe XD, Photoshop, Illustrator, InVision, Framer)",
+      "properties": [
+        {
+          "name": "category",
+          "display_name": "Category",
+          "property_type": "text"
+        },
+        {
+          "name": "vendor",
+          "display_name": "Vendor",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Build",
+      "color": "#41d65d",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "tool",
+        "design tool",
+        "prototyping tool",
+        "vector tool",
+        "image editor",
+        "design software"
+      ]
+    },
+    {
+      "name": "Typeface",
+      "of": "Work",
+      "description": "A typeface or font family (Inter, Helvetica, Roboto, Georgia, San Francisco)",
+      "properties": [
+        {
+          "name": "classification",
+          "display_name": "Classification",
+          "property_type": "text"
+        },
+        {
+          "name": "foundry",
+          "display_name": "Foundry",
+          "property_type": "text"
+        },
+        {
+          "name": "designer",
+          "display_name": "Designer",
+          "property_type": "text"
+        }
+      ],
+      "icon": "TextFields",
+      "color": "#41d6b3",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "typeface",
+        "font family",
+        "font",
+        "type family"
+      ]
+    },
+    {
+      "name": "Color Palette",
+      "of": "Work",
+      "description": "A named color palette or color scheme",
+      "properties": [
+        {
+          "name": "scheme_type",
+          "display_name": "Scheme Type",
+          "property_type": "text"
+        },
+        {
+          "name": "context",
+          "display_name": "Context",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Palette",
+      "color": "#41a5d6",
+      "quality_score": 20,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "color palette",
+        "palette",
+        "color scheme",
+        "color system",
+        "swatch set"
+      ]
+    },
+    {
+      "name": "Color",
+      "of": "Concept",
+      "description": "A specific named color or color token (Primary Blue, Material Indigo 500, Tailwind Sky-500)",
+      "properties": [
+        {
+          "name": "hex",
+          "display_name": "Hex Value",
+          "property_type": "text"
+        },
+        {
+          "name": "rgb",
+          "display_name": "RGB",
+          "property_type": "text"
+        },
+        {
+          "name": "role",
+          "display_name": "Role",
+          "property_type": "text"
+        }
+      ],
+      "icon": "ColorLens",
+      "color": "#9d41d6",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "color",
+        "hue",
+        "shade",
+        "tint",
+        "tone",
+        "color token"
+      ]
+    },
+    {
+      "name": "Grid System",
+      "of": "Concept",
+      "description": "A layout grid system (12-column grid, 8px baseline grid, modular scale)",
+      "properties": [
+        {
+          "name": "columns",
+          "display_name": "Columns",
+          "property_type": "text"
+        },
+        {
+          "name": "base_unit",
+          "display_name": "Base Unit",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Grid3x3",
+      "color": "#d641d0",
+      "quality_score": 18,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "grid",
+        "grid system",
+        "layout grid",
+        "baseline grid",
+        "column grid",
+        "modular scale"
+      ]
+    },
+    {
+      "name": "Accessibility Guideline",
+      "of": "Work",
+      "description": "An accessibility standard or success criterion (WCAG 2.1 AA, Section 508)",
+      "properties": [
+        {
+          "name": "level",
+          "display_name": "Conformance Level",
+          "property_type": "text"
+        },
+        {
+          "name": "criterion_id",
+          "display_name": "Criterion ID",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Accessible",
+      "color": "#41d648",
+      "quality_score": 22,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "accessibility guideline",
+        "WCAG",
+        "Section 508",
+        "EN 301 549",
+        "success criterion",
+        "conformance criterion",
+        "ARIA practice"
+      ]
+    },
+    {
+      "name": "User Research Method",
+      "of": "Concept",
+      "description": "A user research or evaluation method (heuristic evaluation, usability testing, A/B test, card sorting, tree test, diary study)",
+      "properties": [
+        {
+          "name": "stage",
+          "display_name": "Research Stage",
+          "property_type": "text"
+        },
+        {
+          "name": "fidelity",
+          "display_name": "Fidelity",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Science",
+      "color": "#d6418f",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "user research",
+        "usability testing",
+        "heuristic evaluation",
+        "A/B test",
+        "card sorting",
+        "tree test",
+        "diary study",
+        "contextual inquiry",
+        "user interview",
+        "survey"
+      ]
+    },
+    {
+      "name": "Persona",
+      "of": "Person",
+      "description": "A user persona representing a target audience or user archetype",
+      "properties": [
+        {
+          "name": "goals",
+          "display_name": "Goals",
+          "property_type": "text"
+        },
+        {
+          "name": "pain_points",
+          "display_name": "Pain Points",
+          "property_type": "text"
+        }
+      ],
+      "icon": "PersonOutline",
+      "color": "#cc3267",
+      "quality_score": 18,
+      "requires_named_referent": true,
+      "rescue_keywords": [
+        "persona",
+        "user persona",
+        "user archetype",
+        "target user",
+        "user profile"
+      ]
+    },
+    {
+      "name": "Mockup",
+      "of": "Work",
+      "description": "A wireframe, mockup, or prototype artifact",
+      "properties": [
+        {
+          "name": "fidelity",
+          "display_name": "Fidelity",
+          "property_type": "text"
+        },
+        {
+          "name": "stage",
+          "display_name": "Stage",
+          "property_type": "text"
+        }
+      ],
+      "icon": "Wallpaper",
+      "color": "#cc326f",
+      "quality_score": 15,
+      "requires_named_referent": false,
+      "rescue_keywords": [
+        "wireframe",
+        "mockup",
+        "prototype",
+        "low-fidelity",
+        "high-fidelity",
+        "lo-fi",
+        "hi-fi",
+        "click-through",
+        "interactive prototype"
+      ]
+    }
+  ],
+  "core_properties": {
+    "Organization": [
       {
-        "@type": "NodeTemplate",
-        "id": "design_template_designer",
-        "name": "Designer",
-        "description": "A named designer, design author, or UX thinker (e.g., Don Norman, Dieter Rams, Jakob Nielsen)",
-        "icon": "Brush",
-        "color": "#d6418a",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "designer",
-          "UX designer",
-          "UI designer",
-          "product designer",
-          "visual designer",
-          "interaction designer",
-          "design author",
-          "design researcher"
-        ],
-        "properties": [
-          {
-            "name": "specialty",
-            "display_name": "Specialty",
-            "property_type": "text",
-            "absorbs_types": [
-              "Specialty",
-              "Design Discipline"
-            ]
-          },
-          {
-            "name": "affiliation",
-            "display_name": "Affiliation",
-            "property_type": "text",
-            "absorbs_types": [
-              "Affiliation"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_organization",
-        "name": "Organization",
-        "description": "A design studio, agency, company, school, or standards body that creates or maintains design work (e.g., IDEO, Bauhaus, Adobe, Pentagram, W3C)",
-        "icon": "Business",
-        "color": "#bc41d6",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "organizations",
-        "normalization_keywords": [
-          "studio",
-          "design studio",
-          "agency",
-          "design agency",
-          "company",
-          "design firm",
-          "design school",
-          "organization"
-        ],
-        "properties": [
-          {
-            "name": "org_type",
-            "display_name": "Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Organization Type"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_system",
-        "name": "Design System",
-        "description": "A named design system or design language (Material Design, Apple HIG, Fluent, Carbon, Polaris, Tailwind, Bootstrap)",
-        "icon": "GridView",
-        "color": "#d64141",
-        "requires_named_referent": true,
-        "quality_score": 25,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "design system",
-          "design language",
-          "component library",
-          "pattern library",
-          "style guide",
-          "design framework",
-          "UI kit"
-        ],
-        "properties": [
-          {
-            "name": "maintainer",
-            "display_name": "Maintainer",
-            "property_type": "text",
-            "absorbs_types": [
-              "Maintainer",
-              "Owner",
-              "Author Organization"
-            ]
-          },
-          {
-            "name": "platform",
-            "display_name": "Platform",
-            "property_type": "text",
-            "absorbs_types": [
-              "Platform",
-              "Target Platform"
-            ]
-          },
-          {
-            "name": "version",
-            "display_name": "Version",
-            "property_type": "text",
-            "absorbs_types": [
-              "Version",
-              "Release"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_component",
-        "name": "Component",
-        "description": "A reusable UI component (Button, Card, Modal, Dropdown, Navigation, Tooltip)",
-        "icon": "Widgets",
-        "color": "#d67141",
-        "requires_named_referent": false,
-        "quality_score": 22,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "component",
-          "button",
-          "card",
-          "modal",
-          "dialog",
-          "tooltip",
-          "dropdown",
-          "menu",
-          "navigation",
-          "tab",
-          "input",
-          "form field"
-        ],
-        "properties": [
-          {
-            "name": "variant",
-            "display_name": "Variant",
-            "property_type": "text",
-            "absorbs_types": [
-              "Variant",
-              "Component Variant",
-              "Style"
-            ]
-          },
-          {
-            "name": "state",
-            "display_name": "State",
-            "property_type": "text",
-            "absorbs_types": [
-              "State",
-              "Component State"
-            ]
-          },
-          {
-            "name": "category",
-            "display_name": "Category",
-            "property_type": "text",
-            "absorbs_types": [
-              "Category",
-              "Component Category"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_principle",
-        "name": "Design Principle",
-        "description": "A named design principle (Don't Make Me Think, KISS, mobile-first, progressive disclosure)",
-        "icon": "EmojiObjects",
-        "color": "#d6b241",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "design principle",
-          "principle",
-          "guideline",
-          "rule of thumb",
-          "best practice",
-          "design rule"
-        ],
-        "properties": [
-          {
-            "name": "statement",
-            "display_name": "Statement",
-            "property_type": "text",
-            "absorbs_types": [
-              "Statement",
-              "Principle Statement"
-            ]
-          },
-          {
-            "name": "attributed_to",
-            "display_name": "Attributed To",
-            "property_type": "text",
-            "absorbs_types": [
-              "Attributed To",
-              "Author"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_heuristic",
-        "name": "Heuristic",
-        "description": "A usability heuristic (Nielsen's 10, Shneiderman's 8 Golden Rules)",
-        "icon": "RuleFolder",
-        "color": "#bbd641",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "heuristic",
-          "usability heuristic",
-          "Nielsen's heuristic",
-          "golden rule",
-          "evaluation criterion"
-        ],
-        "properties": [
-          {
-            "name": "rank",
-            "display_name": "Rank or Number",
-            "property_type": "text",
-            "absorbs_types": [
-              "Rank",
-              "Number"
-            ]
-          },
-          {
-            "name": "category",
-            "display_name": "Category",
-            "property_type": "text",
-            "absorbs_types": [
-              "Category"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_pattern",
-        "name": "Design Pattern",
-        "description": "A reusable UI/UX design pattern (master-detail, infinite scroll, optimistic UI, skeleton screen, empty state)",
-        "icon": "Pattern",
-        "color": "#7bd641",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "design pattern",
-          "UI pattern",
-          "UX pattern",
-          "interaction pattern",
-          "navigation pattern",
-          "form pattern"
-        ],
-        "properties": [
-          {
-            "name": "problem",
-            "display_name": "Problem Addressed",
-            "property_type": "text",
-            "absorbs_types": [
-              "Problem",
-              "Problem Addressed"
-            ]
-          },
-          {
-            "name": "category",
-            "display_name": "Category",
-            "property_type": "text",
-            "absorbs_types": [
-              "Pattern Category"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_tool",
-        "name": "Tool",
-        "description": "A design tool or software (Figma, Sketch, Adobe XD, Photoshop, Illustrator, InVision, Framer)",
-        "icon": "Build",
-        "color": "#41d65d",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "tool",
-          "design tool",
-          "prototyping tool",
-          "vector tool",
-          "image editor",
-          "design software"
-        ],
-        "properties": [
-          {
-            "name": "category",
-            "display_name": "Category",
-            "property_type": "text",
-            "absorbs_types": [
-              "Tool Category"
-            ]
-          },
-          {
-            "name": "vendor",
-            "display_name": "Vendor",
-            "property_type": "text",
-            "absorbs_types": [
-              "Vendor",
-              "Maker"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_typeface",
-        "name": "Typeface",
-        "description": "A typeface or font family (Inter, Helvetica, Roboto, Georgia, San Francisco)",
-        "icon": "TextFields",
-        "color": "#41d6b3",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "typeface",
-          "font family",
-          "font",
-          "type family"
-        ],
-        "properties": [
-          {
-            "name": "classification",
-            "display_name": "Classification",
-            "property_type": "text",
-            "absorbs_types": [
-              "Classification",
-              "Type Classification"
-            ]
-          },
-          {
-            "name": "foundry",
-            "display_name": "Foundry",
-            "property_type": "text",
-            "absorbs_types": [
-              "Foundry",
-              "Type Foundry"
-            ]
-          },
-          {
-            "name": "designer",
-            "display_name": "Designer",
-            "property_type": "text",
-            "absorbs_types": [
-              "Type Designer"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_palette",
-        "name": "Color Palette",
-        "description": "A named color palette or color scheme",
-        "icon": "Palette",
-        "color": "#41a5d6",
-        "requires_named_referent": true,
-        "quality_score": 20,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "color palette",
-          "palette",
-          "color scheme",
-          "color system",
-          "swatch set"
-        ],
-        "properties": [
-          {
-            "name": "scheme_type",
-            "display_name": "Scheme Type",
-            "property_type": "text",
-            "absorbs_types": [
-              "Scheme Type",
-              "Color Scheme Type"
-            ]
-          },
-          {
-            "name": "context",
-            "display_name": "Context",
-            "property_type": "text",
-            "absorbs_types": [
-              "Context",
-              "Use Context"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_color",
-        "name": "Color",
-        "description": "A specific named color or color token (Primary Blue, Material Indigo 500, Tailwind Sky-500)",
-        "icon": "ColorLens",
-        "color": "#9d41d6",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "objects",
-        "normalization_keywords": [
-          "color",
-          "hue",
-          "shade",
-          "tint",
-          "tone",
-          "color token"
-        ],
-        "properties": [
-          {
-            "name": "hex",
-            "display_name": "Hex Value",
-            "property_type": "text",
-            "absorbs_types": [
-              "Hex",
-              "Hex Value",
-              "Hex Code"
-            ]
-          },
-          {
-            "name": "rgb",
-            "display_name": "RGB",
-            "property_type": "text",
-            "absorbs_types": [
-              "RGB",
-              "RGB Value"
-            ]
-          },
-          {
-            "name": "role",
-            "display_name": "Role",
-            "property_type": "text",
-            "absorbs_types": [
-              "Color Role",
-              "Semantic Role"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_grid",
-        "name": "Grid System",
-        "description": "A layout grid system (12-column grid, 8px baseline grid, modular scale)",
-        "icon": "Grid3x3",
-        "color": "#d641d0",
-        "requires_named_referent": false,
-        "quality_score": 18,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "grid",
-          "grid system",
-          "layout grid",
-          "baseline grid",
-          "column grid",
-          "modular scale"
-        ],
-        "properties": [
-          {
-            "name": "columns",
-            "display_name": "Columns",
-            "property_type": "text",
-            "absorbs_types": [
-              "Columns",
-              "Column Count"
-            ]
-          },
-          {
-            "name": "base_unit",
-            "display_name": "Base Unit",
-            "property_type": "text",
-            "absorbs_types": [
-              "Base Unit",
-              "Spacing Unit"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_accessibility_guideline",
-        "name": "Accessibility Guideline",
-        "description": "An accessibility standard or success criterion (WCAG 2.1 AA, Section 508)",
-        "icon": "Accessible",
-        "color": "#41d648",
-        "requires_named_referent": true,
-        "quality_score": 22,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "accessibility guideline",
-          "WCAG",
-          "Section 508",
-          "EN 301 549",
-          "success criterion",
-          "conformance criterion",
-          "ARIA practice"
-        ],
-        "properties": [
-          {
-            "name": "level",
-            "display_name": "Conformance Level",
-            "property_type": "text",
-            "absorbs_types": [
-              "Level",
-              "Conformance Level",
-              "WCAG Level"
-            ]
-          },
-          {
-            "name": "criterion_id",
-            "display_name": "Criterion ID",
-            "property_type": "text",
-            "absorbs_types": [
-              "Criterion ID",
-              "Success Criterion"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_research_method",
-        "name": "User Research Method",
-        "description": "A user research or evaluation method (heuristic evaluation, usability testing, A/B test, card sorting, tree test, diary study)",
-        "icon": "Science",
-        "color": "#d6418f",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "concepts",
-        "normalization_keywords": [
-          "user research",
-          "usability testing",
-          "heuristic evaluation",
-          "A/B test",
-          "card sorting",
-          "tree test",
-          "diary study",
-          "contextual inquiry",
-          "user interview",
-          "survey"
-        ],
-        "properties": [
-          {
-            "name": "stage",
-            "display_name": "Research Stage",
-            "property_type": "text",
-            "absorbs_types": [
-              "Stage",
-              "Research Stage"
-            ]
-          },
-          {
-            "name": "fidelity",
-            "display_name": "Fidelity",
-            "property_type": "text",
-            "absorbs_types": [
-              "Fidelity"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_persona",
-        "name": "Persona",
-        "description": "A user persona representing a target audience or user archetype",
-        "icon": "PersonOutline",
-        "color": "#cc3267",
-        "requires_named_referent": true,
-        "quality_score": 18,
-        "compatibility_group": "people",
-        "normalization_keywords": [
-          "persona",
-          "user persona",
-          "user archetype",
-          "target user",
-          "user profile"
-        ],
-        "properties": [
-          {
-            "name": "goals",
-            "display_name": "Goals",
-            "property_type": "text",
-            "absorbs_types": [
-              "Goals",
-              "User Goals"
-            ]
-          },
-          {
-            "name": "pain_points",
-            "display_name": "Pain Points",
-            "property_type": "text",
-            "absorbs_types": [
-              "Pain Points",
-              "Frustrations"
-            ]
-          }
-        ]
-      },
-      {
-        "@type": "NodeTemplate",
-        "id": "design_template_mockup",
-        "name": "Mockup",
-        "description": "A wireframe, mockup, or prototype artifact",
-        "icon": "Wallpaper",
-        "color": "#cc326f",
-        "requires_named_referent": false,
-        "quality_score": 15,
-        "compatibility_group": "documents",
-        "normalization_keywords": [
-          "wireframe",
-          "mockup",
-          "prototype",
-          "low-fidelity",
-          "high-fidelity",
-          "lo-fi",
-          "hi-fi",
-          "click-through",
-          "interactive prototype"
-        ],
-        "properties": [
-          {
-            "name": "fidelity",
-            "display_name": "Fidelity",
-            "property_type": "text",
-            "absorbs_types": [
-              "Fidelity",
-              "Mockup Fidelity"
-            ]
-          },
-          {
-            "name": "stage",
-            "display_name": "Stage",
-            "property_type": "text",
-            "absorbs_types": [
-              "Stage",
-              "Prototype Stage"
-            ]
-          }
-        ]
+        "name": "org_type",
+        "display_name": "Type",
+        "property_type": "text"
       }
-    ],
+    ]
+  },
+  "core_rescue_keywords": {
+    "Organization": [
+      "studio",
+      "design studio",
+      "agency",
+      "design agency",
+      "company",
+      "design firm",
+      "design school",
+      "organization"
+    ]
+  },
+  "templates": {
     "edge_templates": [
       {
         "@type": "EdgeTemplate",
@@ -1029,41 +857,14 @@
         "color": "#cc4e32",
         "quality_score": 25,
         "source_types": [
-          "Component",
-          "Design System",
-          "Mockup",
-          "Typeface",
-          "Color Palette",
-          "Design Pattern",
-          "Grid System"
+          "Object",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Designer"
-        ]
-      },
-      {
-        "@type": "EdgeTemplate",
-        "id": "design_edge_created_by",
-        "name": "created_by",
-        "description": "Design artifact (system, palette, pattern, principle, heuristic, typeface, tool, mockup, grid) was created or is maintained by a designer or organization",
-        "icon": "AccountTree",
-        "color": "#cc7632",
-        "quality_score": 25,
-        "source_types": [
-          "Design System",
-          "Color Palette",
-          "Design Pattern",
-          "Design Principle",
-          "Heuristic",
-          "Typeface",
-          "Tool",
-          "Mockup",
-          "Grid System"
+          "Person"
         ],
-        "target_types": [
-          "Designer",
-          "Organization"
-        ]
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1074,17 +875,15 @@
         "color": "#cc9e32",
         "quality_score": 25,
         "source_types": [
-          "Component",
-          "Color Palette",
-          "Typeface",
-          "Color",
-          "Grid System",
-          "Design Pattern",
-          "Design Principle"
+          "Object",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Design System"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true,
+        "two_endpoints_only_reason": "unmeasured"
       },
       {
         "@type": "EdgeTemplate",
@@ -1095,17 +894,14 @@
         "color": "#ccc632",
         "quality_score": 22,
         "source_types": [
-          "Design System"
+          "Work"
         ],
         "target_types": [
-          "Color Palette",
-          "Typeface",
-          "Grid System",
-          "Component",
-          "Color",
-          "Design Pattern",
-          "Design Principle"
-        ]
+          "Work",
+          "Concept",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1116,17 +912,15 @@
         "color": "#a9cc32",
         "quality_score": 22,
         "source_types": [
-          "Component",
-          "Design System",
-          "Design Pattern",
-          "Mockup",
-          "Color Palette",
-          "Grid System",
-          "Designer"
+          "Object",
+          "Work",
+          "Concept",
+          "Person"
         ],
         "target_types": [
-          "Design Principle"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1137,16 +931,14 @@
         "color": "#81cc32",
         "quality_score": 22,
         "source_types": [
-          "Component",
-          "Design Pattern",
-          "Mockup",
-          "Design System",
-          "Color Palette",
-          "Grid System"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Heuristic"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1158,16 +950,14 @@
         "inverse": "evaluated_against",
         "quality_score": 22,
         "source_types": [
-          "Component",
-          "Design Pattern",
-          "Mockup",
-          "Design System",
-          "Color Palette",
-          "Grid System"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Heuristic"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1179,16 +969,14 @@
         "inverse": "satisfies_heuristic",
         "quality_score": 22,
         "source_types": [
-          "Heuristic"
+          "Concept"
         ],
         "target_types": [
-          "Component",
-          "Design Pattern",
-          "Mockup",
-          "Design System",
-          "Color Palette",
-          "Grid System"
-        ]
+          "Object",
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1199,18 +987,14 @@
         "color": "#32cc5b",
         "quality_score": 25,
         "source_types": [
-          "Component",
-          "Design System",
-          "Color Palette",
-          "Color",
-          "Typeface",
-          "Design Pattern",
-          "Mockup",
-          "Tool"
+          "Object",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Accessibility Guideline"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1221,13 +1005,14 @@
         "color": "#32cc83",
         "quality_score": 15,
         "source_types": [
-          "Designer",
-          "Design System",
-          "User Research Method"
+          "Person",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Tool"
-        ]
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1238,17 +1023,14 @@
         "color": "#32ccab",
         "quality_score": 18,
         "source_types": [
-          "Tool"
+          "Object"
         ],
         "target_types": [
-          "Design System",
-          "Component",
-          "Color Palette",
-          "Typeface",
-          "Grid System",
-          "Accessibility Guideline",
-          "User Research Method"
-        ]
+          "Work",
+          "Object",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1260,25 +1042,18 @@
         "symmetric": true,
         "quality_score": 18,
         "source_types": [
-          "Design System",
-          "Design Pattern",
-          "Designer",
-          "Component",
-          "Design Principle",
-          "Typeface",
-          "Color Palette",
-          "Mockup"
+          "Work",
+          "Concept",
+          "Person",
+          "Object"
         ],
         "target_types": [
-          "Design System",
-          "Design Pattern",
-          "Designer",
-          "Component",
-          "Design Principle",
-          "Typeface",
-          "Color Palette",
-          "Mockup"
-        ]
+          "Work",
+          "Concept",
+          "Person",
+          "Object"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1290,19 +1065,16 @@
         "inverse": "influenced",
         "quality_score": 15,
         "source_types": [
-          "Designer",
-          "Design System",
-          "Design Pattern",
-          "Design Principle",
-          "Heuristic"
+          "Person",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Designer",
-          "Design System",
-          "Design Pattern",
-          "Design Principle",
-          "Heuristic"
-        ]
+          "Person",
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1314,19 +1086,16 @@
         "inverse": "influenced_by",
         "quality_score": 15,
         "source_types": [
-          "Designer",
-          "Design System",
-          "Design Pattern",
-          "Design Principle",
-          "Heuristic"
+          "Person",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "Designer",
-          "Design System",
-          "Design Pattern",
-          "Design Principle",
-          "Heuristic"
-        ]
+          "Person",
+          "Work",
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1338,15 +1107,14 @@
         "symmetric": true,
         "quality_score": 15,
         "source_types": [
-          "Color",
-          "Color Palette",
-          "Typeface"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Color",
-          "Color Palette",
-          "Typeface"
-        ]
+          "Concept",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1357,18 +1125,14 @@
         "color": "#4132cc",
         "quality_score": 15,
         "source_types": [
-          "Component",
-          "Design Pattern",
-          "Design System",
-          "Mockup",
-          "Color Palette",
-          "Typeface",
-          "Tool",
-          "User Research Method"
+          "Object",
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Persona"
-        ]
+          "Person"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1379,17 +1143,14 @@
         "color": "#6932cc",
         "quality_score": 18,
         "source_types": [
-          "Component",
-          "Mockup",
-          "Design Pattern",
-          "Design System",
-          "Color Palette",
-          "Typeface",
-          "Grid System"
+          "Object",
+          "Work",
+          "Concept"
         ],
         "target_types": [
-          "User Research Method"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1400,15 +1161,13 @@
         "color": "#9132cc",
         "quality_score": 22,
         "source_types": [
-          "Design Principle",
-          "Heuristic",
-          "Design Pattern",
-          "Design System",
-          "User Research Method"
+          "Concept",
+          "Work"
         ],
         "target_types": [
-          "Designer"
-        ]
+          "Person"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1419,15 +1178,15 @@
         "color": "#b932cc",
         "quality_score": 18,
         "source_types": [
-          "Design System",
-          "Mockup",
-          "Component",
-          "Design Pattern",
-          "Designer"
+          "Work",
+          "Object",
+          "Concept",
+          "Person"
         ],
         "target_types": [
-          "Grid System"
-        ]
+          "Concept"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1438,16 +1197,15 @@
         "color": "#cc32b7",
         "quality_score": 18,
         "source_types": [
-          "Design System",
-          "Component",
-          "Mockup",
-          "Design Pattern",
-          "Color Palette",
-          "Designer"
+          "Work",
+          "Object",
+          "Concept",
+          "Person"
         ],
         "target_types": [
-          "Typeface"
-        ]
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1459,21 +1217,16 @@
         "inverse": "replaced_by",
         "quality_score": 15,
         "source_types": [
-          "Design Pattern",
-          "Component",
-          "Design System",
-          "Tool",
-          "Typeface",
-          "User Research Method"
+          "Concept",
+          "Object",
+          "Work"
         ],
         "target_types": [
-          "Design Pattern",
-          "Component",
-          "Design System",
-          "Tool",
-          "Typeface",
-          "User Research Method"
-        ]
+          "Concept",
+          "Object",
+          "Work"
+        ],
+        "two_endpoints_only": true
       },
       {
         "@type": "EdgeTemplate",
@@ -1485,21 +1238,16 @@
         "inverse": "replaces",
         "quality_score": 15,
         "source_types": [
-          "Design Pattern",
-          "Component",
-          "Design System",
-          "Tool",
-          "Typeface",
-          "User Research Method"
+          "Concept",
+          "Object",
+          "Work"
         ],
         "target_types": [
-          "Design Pattern",
-          "Component",
-          "Design System",
-          "Tool",
-          "Typeface",
-          "User Research Method"
-        ]
+          "Concept",
+          "Object",
+          "Work"
+        ],
+        "two_endpoints_only": true
       }
     ]
   },
@@ -1562,25 +1310,48 @@
     ],
     "entity_examples": [
       {
-        "type": "Heuristic",
-        "examples": [
-          "Visibility of system status",
-          "Match between system and the real world",
-          "User control and freedom",
-          "Consistency and standards",
-          "Error prevention"
-        ]
+        "line": "E|Visibility of system status|Concept||1.0|S1|A Heuristic.",
+        "note": "subtype Heuristic"
       },
       {
-        "type": "Design System",
-        "examples": [
-          "Material Design",
-          "Apple Human Interface Guidelines",
-          "Fluent Design",
-          "Carbon Design System",
-          "Polaris",
-          "Atlassian Design System"
-        ]
+        "line": "E|Match between system and the real world|Concept||1.0|S1|A Heuristic.",
+        "note": "subtype Heuristic"
+      },
+      {
+        "line": "E|User control and freedom|Concept||1.0|S1|A Heuristic.",
+        "note": "subtype Heuristic"
+      },
+      {
+        "line": "E|Consistency and standards|Concept||1.0|S1|A Heuristic.",
+        "note": "subtype Heuristic"
+      },
+      {
+        "line": "E|Error prevention|Concept||1.0|S1|A Heuristic.",
+        "note": "subtype Heuristic"
+      },
+      {
+        "line": "E|Material Design|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
+      },
+      {
+        "line": "E|Apple Human Interface Guidelines|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
+      },
+      {
+        "line": "E|Fluent Design|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
+      },
+      {
+        "line": "E|Carbon Design System|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
+      },
+      {
+        "line": "E|Polaris|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
+      },
+      {
+        "line": "E|Atlassian Design System|Work||1.0|S1|A Design System.",
+        "note": "subtype Design System"
       }
     ]
   },
@@ -1604,8 +1375,6 @@
     "art director"
   ],
   "extraction_limits": {
-    "max_entity_degree": 25,
-    "max_same_source_type": 10,
     "max_relationship_ratio": 8.0,
     "loop_max_entity_count": 40
   },

@@ -86,6 +86,10 @@ class TestRequeueExtractionTask:
         assert updates["hierarchical_group_id"] == "grp-5"
         assert updates["status"] == "pending"
         assert updates["queue_task_id"] is None
+        # An interrupted chunk, not a failed try: the decoding ladder's rung (the task's
+        # ``decode_fallback``) is left as it was (audit wave 6).
+        assert updates["error_type"] == "interrupted"
+        assert "decode_fallback" not in updates
 
         # The service was constructed with the adapter as source_repository.
         mock_cls.assert_called_once_with(source_repository=mock_adapter)

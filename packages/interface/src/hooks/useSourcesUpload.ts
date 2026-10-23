@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { sourcesApi, getRecommendedNormalization } from '../services/api/sources';
+import { buildUrlImportOptions } from '../services/api/sourceProcessing';
+import { SITES_QUERY_KEY, sitesApi } from '../services/api/sites';
 import { getApiErrorMessage, isAbortError } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { useAppConfig } from '../contexts/useAppConfig';
@@ -40,7 +43,8 @@ interface UseSourcesUploadReturn {
   analysisDepth: 'quick' | 'full';
   enableNormalization: boolean;
   enableVision: boolean;
-  selectedDomain: string;
+  /** The chosen packs; `null` leaves them to detection (`[]` = the floor alone). */
+  selectedPacks: string[] | null;
   filteringMode: string;
   contentFiltering: boolean;
   skipDuplicates: boolean;
@@ -48,13 +52,15 @@ interface UseSourcesUploadReturn {
   setAnalysisDepth: (value: 'quick' | 'full') => void;
   setEnableNormalization: (value: boolean) => void;
   setEnableVision: (value: boolean) => void;
-  setSelectedDomain: (value: string) => void;
+  setSelectedPacks: (packs: string[] | null) => void;
   setFilteringMode: (value: string) => void;
   setContentFiltering: (value: boolean) => void;
   setSkipDuplicates: (value: boolean) => void;
   handleFilesSelected: (files: File[]) => void;
   handleUploadConfirm: () => Promise<void>;
   handleUrlImport: (url: string) => Promise<void>;
+  /** Import a site: every page its discovery finds but the `exclude`d ones. */
+  handleSiteImport: (url: string, exclude: string[]) => Promise<void>;
   cancelUpload: () => void;
   clearSelection: () => void;
   removeFile: (index: number) => void;
@@ -74,6 +80,7 @@ export function useSourcesUpload(
   onInfo?: OnInfo,
 ): UseSourcesUploadReturn {
   const { batch_max_upload_bytes: maxUploadBytes } = useAppConfig();
+  const queryClient = useQueryClient();
   const wizard = useUploadWizard();
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -91,7 +98,7 @@ export function useSourcesUpload(
   const [analysisDepth, setAnalysisDepth] = useState<'quick' | 'full'>('full');
   const [enableNormalization, setEnableNormalization] = useState(true);
   const [enableVision, setEnableVision] = useState(true);
-  const [selectedDomain, setSelectedDomain] = useState<string>('__auto__');
+  const [selectedPacks, setSelectedPacks] = useState<string[] | null>(null);
   const [filteringMode, setFilteringMode] = useState<string>('');
   const [contentFiltering, setContentFiltering] = useState(true);
   const [skipDuplicates, setSkipDuplicates] = useState(false);
@@ -154,9 +161,6 @@ export function useSourcesUpload(
       setUploading(true);
       setUploadProgress(0);
 
-      // Convert __auto__ to undefined for auto-detect
-      const domainToUse = selectedDomain === '__auto__' ? undefined : selectedDomain;
-
       if (selectedFiles.length === 1) {
         // Single file → the upfront domain-confirmation wizard owns the upload.
         // It POSTs /sources (engaging detection for auto-domain, or sending
@@ -175,7 +179,7 @@ export function useSourcesUpload(
           filteringMode,
           contentFiltering,
           skipDuplicates,
-          domain: selectedDomain,
+          packs: selectedPacks,
           signal: controller.signal,
         });
 
@@ -214,7 +218,7 @@ export function useSourcesUpload(
           extractEntities,
           analysisDepth,
           enableNormalization,
-          domainToUse,
+          selectedPacks,
           enableVision,
           filteringMode || undefined,
           contentFiltering,
@@ -261,7 +265,7 @@ export function useSourcesUpload(
     }
   }, [
     selectedFiles,
-    selectedDomain,
+    selectedPacks,
     extractEntities,
     analysisDepth,
     enableNormalization,
@@ -281,36 +285,18 @@ export function useSourcesUpload(
     try {
       setImportingUrl(true);
 
-      // Convert __auto__ to undefined for auto-detect
-      const domainToUse = selectedDomain === '__auto__' ? undefined : selectedDomain;
-
-      const result = await sourcesApi.importUrl(
+      // The fetch is queued: the worker creates the source (or skips a
+      // duplicate) when it runs, and the sources list shows the outcome.
+      await sourcesApi.importUrl(
         url,
         extractEntities,
         analysisDepth,
         enableNormalization,
-        domainToUse,
+        selectedPacks,
         filteringMode || undefined,
         contentFiltering,
         skipDuplicates,
       );
-
-      if (result.skipped_duplicate) {
-        if (result.existing_status === 'error') {
-          onError(
-            `That URL was previously imported but errored. Open the existing source to retry.`,
-            { sourceId: result.id, action: 'retry' },
-          );
-        } else {
-          const status = result.existing_status ?? 'unknown';
-          onInfo?.(
-            `That URL matches an existing source (${status}); import skipped.`,
-            { sourceId: result.id },
-          );
-        }
-        await onUploadComplete();
-        return;
-      }
 
       // Reload sources list
       await onUploadComplete();
@@ -321,7 +307,7 @@ export function useSourcesUpload(
       setImportingUrl(false);
     }
   }, [
-    selectedDomain,
+    selectedPacks,
     extractEntities,
     analysisDepth,
     enableNormalization,
@@ -330,13 +316,54 @@ export function useSourcesUpload(
     skipDuplicates,
     onUploadComplete,
     onError,
+  ]);
+
+  const handleSiteImport = useCallback(async (url: string, exclude: string[]) => {
+    try {
+      setImportingUrl(true);
+      await sitesApi.create(url, exclude, {
+        ...buildUrlImportOptions({
+          extractEntities,
+          analysisDepth,
+          enableNormalization,
+          enableVision,
+          packs: selectedPacks,
+          filteringMode,
+          contentFiltering,
+          skipDuplicates,
+        }),
+        // A site is many pages: each extracts with the packs detected for it
+        // (or the ones chosen here) instead of waiting for a confirmation.
+        auto_confirm: true,
+      });
+      await queryClient.invalidateQueries({ queryKey: SITES_QUERY_KEY });
+      onInfo?.(`Importing the site at ${url}; its pages appear under one row in Sources.`);
+      await onUploadComplete();
+    } catch (err) {
+      logger.error('Site import failed:', err);
+      onError('Site import failed: ' + getApiErrorMessage(err));
+    } finally {
+      setImportingUrl(false);
+    }
+  }, [
+    selectedPacks,
+    extractEntities,
+    analysisDepth,
+    enableNormalization,
+    enableVision,
+    filteringMode,
+    contentFiltering,
+    skipDuplicates,
+    queryClient,
+    onUploadComplete,
+    onError,
     onInfo,
   ]);
 
   const clearSelection = useCallback(() => {
     setSelectedFiles([]);
     setEnableNormalization(true);
-    setSelectedDomain('__auto__');
+    setSelectedPacks(null);
   }, []);
 
   return {
@@ -348,7 +375,7 @@ export function useSourcesUpload(
     analysisDepth,
     enableNormalization,
     enableVision,
-    selectedDomain,
+    selectedPacks,
     filteringMode,
     contentFiltering,
     skipDuplicates,
@@ -356,13 +383,14 @@ export function useSourcesUpload(
     setAnalysisDepth,
     setEnableNormalization,
     setEnableVision,
-    setSelectedDomain,
+    setSelectedPacks,
     setFilteringMode,
     setContentFiltering,
     setSkipDuplicates,
     handleFilesSelected,
     handleUploadConfirm,
     handleUrlImport,
+    handleSiteImport,
     cancelUpload,
     clearSelection,
     removeFile,

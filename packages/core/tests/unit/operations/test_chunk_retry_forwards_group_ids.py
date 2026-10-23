@@ -110,3 +110,58 @@ async def test_retryable_error_retry_forwards_none_group_ids_when_absent() -> No
     assert "small_chunk_ids" in kwargs
     assert kwargs["hierarchical_group_id"] is None
     assert kwargs["small_chunk_ids"] is None
+
+
+def _assert_repointed_to(adapter: MagicMock, new_queue_task_id: str) -> None:
+    """The retry clears the stale pointer, then repoints it at the new task."""
+    calls = adapter.update_chunk_task.call_args_list
+    assert calls[0].args[0] == "ct1"
+    assert calls[0].args[1]["status"] == "queued"
+    assert calls[0].args[1]["queue_task_id"] is None
+    assert calls[-1].args[0] == "ct1"
+    repoint = calls[-1].args[1]
+    assert repoint["queue_task_id"] == new_queue_task_id
+    assert repoint["queued_at"] is not None
+    # Pointer-only write: must not flip a row the new delivery already claimed.
+    assert "status" not in repoint
+
+
+@pytest.mark.asyncio
+async def test_retryable_error_retry_repoints_queue_task_id() -> None:
+    """The retryable-error requeue stamps the NEW queue task id on the row."""
+    service = ChunkExtractionOperationsService()
+    service.queue_extract_chunk = AsyncMock(return_value="task_2")
+    adapter = _make_adapter(retry_count=0)
+
+    await service._handle_chunk_failure(
+        adapter=adapter,
+        exc=LLMServiceError(provider="ollama", model="qwen3", reason="transient"),
+        chunk_task_id="ct1",
+        job_id="j1",
+        database_name="default",
+        chunk_index=7,
+        settings=_make_settings(max_retries=3),
+        data={},
+    )
+
+    _assert_repointed_to(adapter, "task_2")
+
+
+@pytest.mark.asyncio
+async def test_cancellation_retry_repoints_queue_task_id() -> None:
+    """The cancellation requeue stamps the NEW queue task id on the row."""
+    service = ChunkExtractionOperationsService()
+    service.queue_extract_chunk = AsyncMock(return_value="task_3")
+    adapter = _make_adapter(retry_count=0)
+
+    await service._handle_chunk_cancellation(
+        adapter=adapter,
+        data={},
+        chunk_task_id="ct1",
+        job_id="j1",
+        database_name="default",
+        chunk_index=7,
+        settings=_make_settings(max_retries=3),
+    )
+
+    _assert_repointed_to(adapter, "task_3")

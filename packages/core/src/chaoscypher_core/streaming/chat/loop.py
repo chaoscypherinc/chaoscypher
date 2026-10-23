@@ -22,12 +22,15 @@ a transient-error retry idempotent.
 """
 
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
+from chaoscypher_core.streaming.chat.repetition import RepetitionGuard, trim_repeats
 from chaoscypher_core.utils.logging.app_config import get_logger
+from chaoscypher_core.utils.stream_errors import error_from_stream_chunk, stream_error_event
 
 
 if TYPE_CHECKING:
@@ -167,6 +170,11 @@ class ChatLoopDeps:
     spend_guard: SpendGuard | None = None
     cancel_check: CancelCheck | None = None
     tools: list[dict[str, Any]] | None = None
+    decoding_attempt: int = 0
+    """Which deliberate re-ask of this turn this is: 0 the first answer, ``n`` the n-th
+    regenerate. The turn asks with :func:`~chaoscypher_core.utils.decoding.turn_decoding`'s
+    seed and, on a regenerate, its raised temperature (``chat.regenerate_temperature``; audit
+    wave 5: under pinned decoding a regenerate returned the same answer)."""
 
 
 @dataclass
@@ -182,6 +190,8 @@ class ChatLoopResult:
     warnings: list[dict[str, str]] = field(default_factory=list)
     pending_messages: list[dict[str, Any]] = field(default_factory=list)
     tool_timings: list[dict[str, Any]] = field(default_factory=list)
+    decoding: dict[str, Any] = field(default_factory=dict)
+    """The seed the turn asked with and its attempt (``{"seed", "attempt"}``), recorded on the answer."""
 
 
 @dataclass
@@ -204,6 +214,7 @@ async def consume_llm_stream(
     llm_result: Any,
     sink: ChatEventSink,
     chat_id: str,
+    guard: RepetitionGuard | None = None,
 ) -> tuple[str, str | None, list[Any] | None, bool, dict[str, Any] | None]:
     """Consume an LLM streaming response and forward events to the sink.
 
@@ -214,6 +225,10 @@ async def consume_llm_stream(
         llm_result: Async iterator of LLM response chunks.
         sink: Event destination.
         chat_id: Chat ID for logging.
+        guard: A :class:`RepetitionGuard` fed every thinking and content
+            delta; when it trips the stream is closed and the done chunk is
+            ``{"finish_reason": "loop", "loop_phase": "thinking" | "content",
+            "loop_reason": ...}``, with the content's repeated tail trimmed.
 
     Returns:
         Tuple of (accumulated_content, thinking, tool_calls, stream_error,
@@ -226,6 +241,7 @@ async def consume_llm_stream(
     tool_calls: list[Any] | None = None
     stream_error = False
     done_chunk: dict[str, Any] | None = None
+    thinking_seen = 0
 
     try:
         async for chunk in llm_result:
@@ -234,6 +250,10 @@ async def consume_llm_stream(
             if chunk_type == "content":
                 delta = chunk.get("delta", "")
                 accumulated_content = chunk.get("accumulated", accumulated_content)
+                if guard is not None and guard.feed(delta):
+                    accumulated_content = trim_repeats(accumulated_content, guard.max_consecutive)
+                    done_chunk = _loop_done("content", guard, accumulated_content, chat_id)
+                    break
                 await sink.emit(
                     "content",
                     {"delta": delta, "accumulated": accumulated_content},
@@ -241,21 +261,24 @@ async def consume_llm_stream(
 
             elif chunk_type == "thinking_delta":
                 thinking = chunk.get("accumulated", "")
+                if guard is not None and guard.feed((thinking or "")[thinking_seen:]):
+                    done_chunk = _loop_done("thinking", guard, accumulated_content, chat_id)
+                    break
+                thinking_seen = len(thinking or "")
                 await sink.emit("thinking_delta", {"thinking": thinking})
 
             elif chunk_type == "error":
-                error_msg = chunk.get("error", "Unknown LLM error")
-                error_code = chunk.get("error_code", "LLM_ERROR")
+                # the one stream classifier (audit wave 5): the event carries its
+                # verdict, so every reader retries the failure the same way
+                error = error_from_stream_chunk(chunk)
                 logger.error(
                     "chat_completion_stream_error",
                     chat_id=chat_id,
-                    error=error_msg,
-                    error_code=error_code,
+                    error=error.message,
+                    error_code=error.code,
+                    is_retryable=error.is_retryable,
                 )
-                await sink.emit(
-                    "error",
-                    {"error": error_msg, "error_code": error_code},
-                )
+                await sink.emit("error", stream_error_event(error))
                 stream_error = True
                 break
 
@@ -276,6 +299,175 @@ async def consume_llm_stream(
             await llm_result.aclose()
 
     return accumulated_content, thinking, tool_calls, stream_error, done_chunk
+
+
+def _loop_done(phase: str, guard: RepetitionGuard, content: str, chat_id: str) -> dict[str, Any]:
+    """The done chunk a stream the guard stopped ends with."""
+    logger.warning(
+        "chat_stream_loop_detected",
+        chat_id=chat_id,
+        phase=phase,
+        reason=guard.reason,
+        content_length=len(content),
+    )
+    return {
+        "type": "done",
+        "content": content,
+        "finish_reason": "loop",
+        "loop_phase": phase,
+        "loop_reason": guard.reason,
+    }
+
+
+def _as_stream(response: Any) -> Any:
+    """The chunk iterator of a streamed chat call.
+
+    A raw provider returns the async iterator; :class:`LLMProvider` wraps it in
+    an ``LLMChatResponse`` (``is_stream``, ``stream``), which the benchmark's
+    chat stage gets. Both are accepted (2026-10-05: the first guard-check run
+    errored on all 120 questions on the wrapped shape).
+    """
+    if getattr(response, "is_stream", False) and getattr(response, "stream", None) is not None:
+        return response.stream
+    return response
+
+
+def repetition_guard(settings: Any) -> RepetitionGuard:
+    """A fresh guard with the chat settings' thresholds (defaults when they are missing)."""
+    chat = getattr(settings, "chat", None)
+    return RepetitionGuard(
+        max_consecutive=int(getattr(chat, "loop_max_consecutive_lines", 8)),
+        max_occurrences=int(getattr(chat, "loop_max_line_occurrences", 25)),
+    )
+
+
+_THINK_OPEN = re.compile(r"^\s*<think(?:ing)?>", re.IGNORECASE)
+"""Reasoning streamed as answer text: the content opens with a think tag (stripped only at the end)."""
+
+
+def reasoning_in_content(content: str) -> bool:
+    """Whether the streamed answer text is the model's reasoning: it opens with ``<think>``."""
+    return bool(_THINK_OPEN.match(content or ""))
+
+
+def _thinking_loop(
+    done: dict[str, Any] | None,
+    content: str,
+    thinking: str | None,
+    *,
+    enable_thinking: bool,
+    reasoning_as_content: bool,
+) -> bool:
+    """Whether a stopped stream looped in the model's reasoning, wherever the reasoning streamed.
+
+    A thinking-phase loop before any answer text, or a content-phase loop
+    whose content is reasoning: it opens with ``<think>``, or the caller knows
+    the model declares thinking but streams it as content
+    (``reasoning_as_content``) and no thinking arrived on the thinking channel.
+    """
+    if done is None or done.get("finish_reason") != "loop" or not enable_thinking:
+        return False
+    if done.get("loop_phase") == "thinking":
+        return not content.strip()
+    if done.get("loop_phase") != "content":
+        return False
+    return reasoning_in_content(content) or (reasoning_as_content and not (thinking or "").strip())
+
+
+async def guarded_chat(
+    provider: Any,
+    messages: list[Any],
+    *,
+    sink: ChatEventSink,
+    chat_id: str,
+    settings: Any,
+    enable_thinking: bool,
+    tools: list[Any] | None = None,
+    max_tokens: int | None = None,
+    reasoning_as_content: bool = False,
+) -> tuple[str, str | None, list[Any] | None, bool, dict[str, Any] | None]:
+    """One streamed chat call under the repetition guard, with its retry policy.
+
+    The one entry the product's chat loop and the benchmark's chat stage share
+    (both ran the same models into the same loops). A loop in the model's
+    reasoning is asked again once with thinking off: the loops live in the
+    thinking. That is a thinking-phase loop before any answer text, and since
+    2026-10-06 also a content-phase loop whose content is reasoning (it opens
+    with ``<think>``, or ``reasoning_as_content`` says the model streams its
+    thinking as content and none came on the thinking channel): models whose
+    reasoning lands in the content got ``finish_reason: "loop"`` and no retry
+    (audit H10). A loop in the answer text keeps the text before it; a second
+    loop on the retry is kept as it stands.
+
+    The done chunk of a stopped stream carries ``finish_reason: "loop"``,
+    ``loop_phase``, ``loop_reason`` and ``thinking_chars`` (the reasoning
+    streamed before the trip, so a trip can be audited). After a retry it
+    carries ``loop_retried`` and ``thinking_retried`` (the answer was produced
+    with thinking off) and the first attempt's loop as ``first_loop``
+    (``phase``, ``reason``, ``thinking_chars``). ``max_tokens`` caps the
+    output of both calls (the provider's ``num_predict``); None leaves the
+    provider's own cap.
+    """
+    extra: dict[str, Any] = {} if max_tokens is None else {"max_tokens": max_tokens}
+    guard = repetition_guard(settings)
+    result = await consume_llm_stream(
+        _as_stream(
+            await provider.chat(
+                messages=messages,
+                tools=tools,
+                stream=True,
+                enable_thinking=enable_thinking,
+                **extra,
+            )
+        ),
+        sink,
+        chat_id,
+        guard,
+    )
+    content, thinking, _, _, done = result
+    if done is not None and done.get("finish_reason") == "loop":
+        done["thinking_chars"] = _reasoning_chars(content, thinking)
+    if _thinking_loop(
+        done,
+        content,
+        thinking,
+        enable_thinking=enable_thinking,
+        reasoning_as_content=reasoning_as_content,
+    ):
+        assert done is not None  # _thinking_loop checked it
+        logger.info(
+            "chat_stream_loop_retry_without_thinking",
+            chat_id=chat_id,
+            phase=done.get("loop_phase"),
+            reason=done.get("loop_reason"),
+        )
+        retry = await consume_llm_stream(
+            _as_stream(
+                await provider.chat(
+                    messages=messages, tools=tools, stream=True, enable_thinking=False, **extra
+                )
+            ),
+            sink,
+            chat_id,
+            repetition_guard(settings),
+        )
+        retried = dict(retry[4] or {})
+        retried["loop_retried"] = True
+        retried["thinking_retried"] = True
+        retried["first_loop"] = {
+            "phase": done.get("loop_phase"),
+            "reason": done.get("loop_reason"),
+            "thinking_chars": done.get("thinking_chars", 0),
+        }
+        return retry[0], retry[1], retry[2], retry[3], retried
+    return result
+
+
+def _reasoning_chars(content: str, thinking: str | None) -> int:
+    """How much reasoning streamed before a trip: the thinking channel, or a ``<think>`` content block."""
+    if thinking:
+        return len(thinking)
+    return len(content) if reasoning_in_content(content) else 0
 
 
 # ---------------------------------------------------------------------------
@@ -299,6 +491,24 @@ async def run_chat_tool_loop(
         rows for the caller to persist on success.
 
     """
+    from chaoscypher_core.utils.decoding import decoding_override, turn_decoding
+
+    llm = deps.settings.llm
+    chat = getattr(deps.settings, "chat", None)
+    decoding = turn_decoding(
+        base_seed=getattr(llm, "seed", None),
+        configured_temperature=getattr(llm, "ai_temperature", None),
+        regenerate_temperature=float(getattr(chat, "regenerate_temperature", 0.0) or 0.0),
+        attempt=deps.decoding_attempt,
+    )
+    with decoding_override(decoding):
+        result = await _run_turn(messages_for_llm, deps)
+    result.decoding = decoding.record()
+    return result
+
+
+async def _run_turn(messages_for_llm: list[dict[str, Any]], deps: ChatLoopDeps) -> ChatLoopResult:
+    """The body of :func:`run_chat_tool_loop`, run under the turn's seed."""
     from chaoscypher_core.streaming.chat.messages import detect_truncation_warnings
 
     result = ChatLoopResult()
@@ -320,16 +530,16 @@ async def run_chat_tool_loop(
         result.cancelled = True
         return result
 
-    llm_result = await deps.provider.chat(
-        messages=messages_for_llm,
-        tools=deps.tools,
-        stream=True,
-        enable_thinking=deps.settings.llm.thinking_for_chat,
-    )
     logger.info("chat_completion_llm_call_initiated", chat_id=deps.chat_id)
 
-    content, thinking, tool_calls, stream_error, done_chunk = await consume_llm_stream(
-        llm_result, deps.sink, deps.chat_id
+    content, thinking, tool_calls, stream_error, done_chunk = await guarded_chat(
+        deps.provider,
+        messages_for_llm,
+        sink=deps.sink,
+        chat_id=deps.chat_id,
+        settings=deps.settings,
+        enable_thinking=deps.settings.llm.thinking_for_chat,
+        tools=deps.tools,
     )
 
     if stream_error:
@@ -1144,7 +1354,18 @@ async def _execute_tool(
 
     # Execute tool with timing
     tool_start = time.monotonic()
-    result = await deps.tool_executor.execute_tool(tool_name, arguments)
+    # Dispatch only tools the model was actually offered: the executor's
+    # registry is far wider than ``deps.tools`` (e.g. ``delete_template``),
+    # and the name here is model-controlled (prompt-injectable via retrieved
+    # text). ``None`` means no advertised list was supplied — no allowlist.
+    advertised = (
+        None if deps.tools is None else {t.get("function", {}).get("name") for t in deps.tools}
+    )
+    if advertised is not None and tool_name not in advertised:
+        logger.warning("chat_completion_tool_not_advertised", chat_id=chat_id, tool_name=tool_name)
+        result = {"error": f"Unknown tool: {tool_name}"}
+    else:
+        result = await deps.tool_executor.execute_tool(tool_name, arguments)
     duration_ms = round((time.monotonic() - tool_start) * 1000)
 
     # default=str: a handler returning a non-JSON-serializable value
@@ -1185,11 +1406,15 @@ async def _execute_tool(
         )
     )
 
-    # Append tool result to LLM message history
+    # Append tool result to LLM message history. A handler that rendered its
+    # result (graphrag_search's ``context_text``) is read by the model as that
+    # text, the same text the benchmark prompts with; the JSON above stays
+    # what the UI and the stored message carry.
+    rendered = result.get("context_text") if isinstance(result, dict) else None
     messages_for_llm.append(
         {
             "role": "tool",
-            "content": result_json,
+            "content": rendered if isinstance(rendered, str) and rendered else result_json,
             "tool_call_id": tool_call_id,
             "name": tool_name,
         }

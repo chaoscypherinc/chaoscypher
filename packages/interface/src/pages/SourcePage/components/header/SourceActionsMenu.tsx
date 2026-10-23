@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import AutorenewIcon from '@mui/icons-material/Autorenew';
+import ExtensionIcon from '@mui/icons-material/Extension';
 import ChatIcon from '@mui/icons-material/Chat';
 import CheckIcon from '@mui/icons-material/Check';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -57,6 +58,8 @@ interface SourceActionsMenuProps {
    * statuses.
    */
   onReextract?: () => void;
+  /** Open the pack settings (indexed or committed sources): a change re-extracts. */
+  onChangePacks?: () => void;
 }
 
 /**
@@ -77,6 +80,7 @@ export function SourceActionsMenu({
   onRetry,
   onReExtract,
   onReextract,
+  onChangePacks,
 }: SourceActionsMenuProps) {
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
   const [reExtractConfirmOpen, setReExtractConfirmOpen] = useState(false);
@@ -91,6 +95,9 @@ export function SourceActionsMenu({
     canReextract ||
     (onReExtract !== undefined &&
       (source.status === 'indexed' || source.status === 'committed'));
+  // reclassify accepts an indexed source (never extracted) or a committed one (reset first)
+  const showChangePacks =
+    onChangePacks !== undefined && (source.status === 'indexed' || source.status === 'committed');
   const hasConditionalItems =
     isSourceCommitted(source) || isSourceIndexed(source) || isSourceProcessing(source) || !!source.is_paused || source.status === 'error';
 
@@ -155,6 +162,12 @@ export function SourceActionsMenu({
                   ? 'Re-extract (replaces graph data)'
                   : 'Re-extract'}
             </ListItemText>
+          </MenuItem>
+        )}
+        {showChangePacks && (
+          <MenuItem onClick={() => { onChangePacks!(); close(); }}>
+            <ListItemIcon><ExtensionIcon fontSize="small" /></ListItemIcon>
+            <ListItemText>Change packs…</ListItemText>
           </MenuItem>
         )}
         {source.is_paused && onResume && (

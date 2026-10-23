@@ -398,13 +398,13 @@ class LLMProvider:
             msg = "Streaming not supported via load balancer - use standard provider path"
             raise ValueError(msg)
 
-        load_balancer = await self._provider_factory.get_load_balancer()
-
         # Determine priority from kwargs
         high_priority = kwargs.pop("high_priority", False)
 
         try:
-            async with load_balancer.acquire_instance(high_priority=high_priority) as (
+            # the provider built from this factory's settings, whatever config
+            # the shared pool was last loaded with (audit wave 6)
+            async with self._provider_factory.acquire_instance(high_priority=high_priority) as (
                 instance_id,
                 chat_provider,
             ):

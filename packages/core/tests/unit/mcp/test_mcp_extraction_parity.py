@@ -26,6 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_core.mcp.extraction import ExtractionOrchestrator
+from chaoscypher_core.services.sources.engine.extraction.extraction_plan import ExtractionPlan
+from chaoscypher_core.settings import EngineSettings
 from tests.unit.mcp.conftest import install_chunk_indices_shortcut
 
 
@@ -43,6 +45,9 @@ def _make_engine(
     engine.settings.chunking.target_group_tokens = target_group_tokens
     engine.settings.chunking.group_overlap = group_overlap
     engine.settings.analysis.quick_sample_size = quick_sample_size
+    # The extraction plan reads these sections: the real defaults.
+    engine.settings.llm = EngineSettings().llm
+    engine.settings.extraction = EngineSettings().extraction
     engine.storage_adapter = MagicMock()
     engine.graph_repository = MagicMock()
     engine.graph_repository.list_templates.return_value = []
@@ -114,12 +119,13 @@ async def test_get_tasks_reads_filtering_mode_from_source_row() -> None:
     """``get_tasks`` must read ``filtering_mode`` from the source row.
 
     Pre-fix behaviour: MCP ignored ``filtering_mode`` entirely. The fix is to
-    persist a resolved ``FilteringConfig`` on the orchestrator so the
-    downstream ``finalize`` step can apply the same filters Cortex does.
+    persist the source's ``ExtractionPlan`` (its resolved ``FilteringConfig``
+    included) on the orchestrator so the downstream ``finalize`` step can
+    apply the same filters Cortex does.
 
     This test mocks the dependencies ``get_tasks`` needs to run end-to-end
     so it can assert the resolved config landed in
-    ``orchestrator._filtering_configs[source_id]`` — the behaviour that
+    ``orchestrator._plans[source_id]`` — the behaviour that
     matters — rather than papering over a heavily-mocked failure with a
     blanket ``try/except`` and asserting on call args.
     """
@@ -148,6 +154,9 @@ async def test_get_tasks_reads_filtering_mode_from_source_row() -> None:
 
     orchestrator = ExtractionOrchestrator(engine=engine)
     install_chunk_indices_shortcut(orchestrator)
+    # One real group: a source with no groups is rejected before the
+    # filtering-config read this test asserts on.
+    orchestrator._get_group_indices = lambda _sid: {0}
 
     sentinel = MagicMock(name="strict_config")
 
@@ -191,10 +200,12 @@ async def test_get_tasks_reads_filtering_mode_from_source_row() -> None:
 
     # Behaviour assertion: the resolved config landed in the per-source
     # cache so ``finalize`` can apply the same filters Cortex would.
-    assert orchestrator._filtering_configs["src_001"] is sentinel, (
+    plan = orchestrator._plans["src_001"]
+    assert plan.filtering_config is sentinel, (
         "MCP get_tasks must persist the row's filtering_mode resolution "
-        "into ``_filtering_configs`` so finalize can honour the upload-time preset"
+        "into ``_plans`` so finalize can honour the upload-time preset"
     )
+    assert plan.filtering_mode == "strict"
 
 
 @pytest.mark.asyncio
@@ -252,9 +263,13 @@ async def test_finalize_threads_cached_filtering_config_and_file_info() -> None:
     orchestrator = ExtractionOrchestrator(engine=engine)
     install_chunk_indices_shortcut(orchestrator)
 
-    # Seed the per-source FilteringConfig cache the way ``get_tasks`` would.
-    sentinel_filtering_config = MagicMock(name="cached_strict_config")
-    orchestrator._filtering_configs["src_002"] = sentinel_filtering_config
+    # Seed the per-source plan cache the way ``get_tasks`` would.
+    sentinel_filtering_config = MagicMock(name="cached_strict_config", minimum_alias_length=2)
+    orchestrator._plans["src_002"] = ExtractionPlan(
+        chunk_kwargs={"filtering_mode": "strict"},
+        filtering_config=sentinel_filtering_config,
+        edge_type_constraints=None,
+    )
 
     # The orchestrator avoids importing the domain registry when the source
     # has no domain (extraction_domain is None and forced_domain is None),
@@ -331,11 +346,11 @@ async def test_finalize_falls_back_to_row_when_cache_misses() -> None:
 
     orchestrator = ExtractionOrchestrator(engine=engine)
     install_chunk_indices_shortcut(orchestrator)
-    # Deliberately do not seed orchestrator._filtering_configs — simulate the
+    # Deliberately do not seed orchestrator._plans — simulate the
     # cross-process / fresh-instance case.
-    assert "src_003" not in orchestrator._filtering_configs
+    assert "src_003" not in orchestrator._plans
 
-    sentinel = MagicMock(name="re_resolved_strict")
+    sentinel = MagicMock(name="re_resolved_strict", minimum_alias_length=2)
     with (
         patch(
             "chaoscypher_core.services.sources.engine.extraction.utils.filtering_config.resolve_filtering_config",
@@ -424,7 +439,7 @@ async def test_finalize_threads_minimum_alias_length_into_parser() -> None:
     # Cache miss path — finalize must re-resolve from the row's
     # filtering_mode='maximum' and pass minimum_alias_length=3 through to
     # parse_extraction_output.
-    assert "src_alias" not in orchestrator._filtering_configs
+    assert "src_alias" not in orchestrator._plans
 
     with patch(
         "chaoscypher_core.services.sources.engine.extraction.orchestration.cache_quality_scores"
@@ -537,3 +552,81 @@ async def test_finalize_persists_entity_embeddings_for_commit() -> None:
         "the final entity list must be passed so embeddings join by entity_id"
     )
     assert captured["source_id"] == "src_emb"
+
+
+@pytest.mark.asyncio
+async def test_finalize_alias_length_matches_the_queue_path_under_a_moved_slider() -> None:
+    """A pack's alias length moves with the slider on the MCP finalize as on the queue path.
+
+    The pack tunes ``minimum_alias_length`` to 4 and the source row says
+    ``unfiltered`` (1). The queue's chunk loop resolves its alias length from
+    the plan's chunk kwargs; the MCP finalize reads the plan's FilteringConfig.
+    Both must read the one effective value (1), so a 1-char alias survives on
+    both paths (before the plan applied the slider rule, MCP kept the pack's 4).
+    """
+    from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+    from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
+        AIEntityExtractor,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.line_parser import (
+        parse_extraction_output,
+    )
+
+    line = "E|OpenAI|Organization|X; AI; LLM; GPT4|0.9|S1|An AI lab"
+    engine = _make_engine()
+    engine.storage_adapter.transition_source_status.return_value = True
+    source = {
+        "id": "src_pack_alias",
+        "filename": "doc.pdf",
+        "status": "mcp_extracting",
+        "filtering_mode": "unfiltered",
+        "extraction_depth": "full",
+        "extraction_domain": None,
+        "forced_domain": None,
+        "_test_expected_chunk_indices": [0],
+        "chunk_count": 1,
+    }
+    engine.storage_adapter.get_source.return_value = source
+    engine.storage_adapter.list_extraction_submissions.return_value = [
+        {"chunk_group_index": 0, "entities_text": line, "relationships_text": ""}
+    ]
+    engine.storage_adapter.delete_extraction_submissions.return_value = 1
+    engine.extraction_service.finalize_distributed_extraction = AsyncMock(
+        return_value={
+            "entities": [],
+            "relationships": [],
+            "suggested_templates": [],
+            "suggested_edge_templates": [],
+            "metadata": {"total_entities": 0, "total_relationships": 0},
+        }
+    )
+    engine.commit_service.commit = AsyncMock(
+        return_value={"created_nodes": [], "created_edges": [], "created_templates": []}
+    )
+    orchestrator = ExtractionOrchestrator(engine=engine)
+    install_chunk_indices_shortcut(orchestrator)
+
+    with (
+        patch.object(DomainStack, "limits", lambda _self: {"minimum_alias_length": 4}),
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.orchestration.cache_quality_scores"
+        ),
+    ):
+        plan = orchestrator._plan_for(source, ())
+        await orchestrator.finalize("src_pack_alias")
+
+    queue_limits = AIEntityExtractor(settings=EngineSettings()).resolve_harvest_limits(
+        domain_extraction_limits=plan.chunk_kwargs["domain_extraction_limits"],
+        filtering_mode=plan.chunk_kwargs["filtering_mode"],
+    )
+    queue_entities, _, _ = parse_extraction_output(
+        entities_str=line,
+        relationships_str="",
+        minimum_alias_length=queue_limits.min_alias_length,
+    )
+    mcp_entities = engine.extraction_service.finalize_distributed_extraction.await_args.kwargs[
+        "raw_entities"
+    ]
+    assert queue_limits.min_alias_length == 1
+    assert mcp_entities[0].get("aliases") == queue_entities[0].get("aliases")
+    assert "X" in mcp_entities[0].get("aliases", [])

@@ -444,10 +444,37 @@ def test_delete_source_files_removes_absolute_staged_dir(
     tmp_path: Path,
 ) -> None:
     """An absolute staged-file path still removes its parent directory."""
-    staged_dir = tmp_path / "sources" / "src_abc"
+    staged_dir = Path(adapter.db_path).parent / "sources" / "src_abc"
     staged_dir.mkdir(parents=True)
     (staged_dir / "doc.txt").write_text("staged content")
 
     adapter.delete_source_files(str(staged_dir / "doc.txt"))
 
     assert not staged_dir.exists(), "an absolute staged dir should be removed"
+
+
+def test_delete_source_files_never_removes_dir_outside_staging_root(
+    adapter: SqliteAdapter,
+    tmp_path: Path,
+) -> None:
+    """A source referencing a file in place (MCP sandbox) must not rmtree its parent.
+
+    Regression: MCP ``add_document`` (index-only) stores the client's own
+    sandbox file as an absolute ``filepath``; deleting the source rmtree'd
+    the sandbox root and every sibling file in it.
+    """
+    sandbox = tmp_path / "mcp"
+    sandbox.mkdir()
+    (sandbox / "paper.pdf").write_text("ingested")
+    (sandbox / "other.pdf").write_text("unrelated user file")
+    staging_root = Path(adapter.db_path).parent / "sources"
+    staging_root.mkdir()
+    (staging_root / "keep.txt").write_text("keep")
+
+    adapter.delete_source_files(str(sandbox / "paper.pdf"))
+    # A file directly in the staging root must not take the root with it.
+    adapter.delete_source_files(str(staging_root / "keep.txt"))
+
+    assert (sandbox / "other.pdf").exists(), "sibling sandbox file was deleted"
+    assert (sandbox / "paper.pdf").exists()
+    assert (staging_root / "keep.txt").exists(), "staging root itself was deleted"

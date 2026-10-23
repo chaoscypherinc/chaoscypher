@@ -180,6 +180,8 @@ def test_get_node_with_edges_returns_incoming_and_outgoing() -> None:
     assert result.total_incoming == 1
     assert [e.id for e in result.outgoing_edges] == ["e1", "e2"]
     assert [e.id for e in result.incoming_edges] == ["e3"]
+    # The embedding vector is never loaded into a grounding (LLM-context) payload.
+    repo.get_node.assert_called_once_with("center", include_embedding=False)
 
 
 # ---------------------------------------------------------------------------

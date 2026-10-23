@@ -128,11 +128,13 @@ class TestProcessDocumentReturnType:
             patch.object(
                 engine.indexing_service, "create_index", new_callable=AsyncMock
             ) as mock_index,
-            patch.object(
-                engine.chunking_service, "process", new_callable=AsyncMock
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.extractor."
+                "extract_entities_from_groups",
+                new_callable=AsyncMock,
             ) as mock_process,
         ):
-            from chaoscypher_core.models import ChunksResult, ExtractionResult
+            from chaoscypher_core.models import ChunksResult
 
             mock_index.return_value = {
                 "chunks_count": 0,
@@ -148,12 +150,12 @@ class TestProcessDocumentReturnType:
                 total_original_groups=0,
             )
 
-            mock_process.return_value = ExtractionResult(
-                entities=[],
-                relationships=[],
-                domain="generic",
-                domain_confidence=0.0,
-            )
+            mock_process.return_value = {
+                "entities": [],
+                "relationships": [],
+                "domain": "generic",
+                "domain_confidence": 0.0,
+            }
 
             # Mock lazy properties
             engine._extraction_service = MagicMock()
@@ -192,8 +194,6 @@ class TestProcessDocumentConfirmationGate:
     @staticmethod
     def _mock_pipeline_stages(engine):
         """Patch the embedding/LLM stages, leaving chunking + the gate real."""
-        from chaoscypher_core.models import ExtractionResult
-
         index_patch = patch.object(
             engine.indexing_service,
             "create_index",
@@ -204,16 +204,16 @@ class TestProcessDocumentConfirmationGate:
                 "embedding_dimensions": 1,
             },
         )
-        process_patch = patch.object(
-            engine.chunking_service,
-            "process",
+        process_patch = patch(
+            "chaoscypher_core.services.sources.engine.extraction.extractor."
+            "extract_entities_from_groups",
             new_callable=AsyncMock,
-            return_value=ExtractionResult(
-                entities=[],
-                relationships=[],
-                domain="generic",
-                domain_confidence=0.0,
-            ),
+            return_value={
+                "entities": [],
+                "relationships": [],
+                "domain": "generic",
+                "domain_confidence": 0.0,
+            },
         )
         return index_patch, process_patch
 
@@ -291,9 +291,10 @@ class TestProcessDocumentConfirmationGate:
         assert result.nodes == ["n1"]
         assert result.edges == ["e1"]
 
-        # No SourceRow was created by the non-gated path (unchanged behaviour).
+        # The row exists (the chunk rows' foreign key needs it) and never parked.
         row = engine.storage_adapter.get_source("extract-me", engine.settings.current_database)
-        assert row is None
+        assert row is not None
+        assert row["confirmation_required"] is False
 
     @pytest.mark.asyncio
     async def test_forced_domain_suppresses_park(self, engine):

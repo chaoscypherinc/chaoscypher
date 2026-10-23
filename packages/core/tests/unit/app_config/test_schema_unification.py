@@ -52,13 +52,13 @@ def test_extraction_union_settable_from_yaml(tmp_path):
         {
             "extraction": {
                 # previously app-only:
-                "domain_detection_sample_count": 9,
+                "entity_desc_min_length": 9,
                 # previously engine-only (NOT yaml-settable before Tier 2):
                 "quality_issue_threshold": 0.7,
             }
         },
     )
-    assert s.extraction.domain_detection_sample_count == 9
+    assert s.extraction.entity_desc_min_length == 9
     assert s.extraction.quality_issue_threshold == 0.7
 
 
@@ -78,7 +78,7 @@ def test_union_defaults_unchanged():
     """Spot-pin defaults from BOTH sides of each union."""
     e = ExtractionSettings()
     assert e.quality_issue_threshold == 0.3  # core side
-    assert e.domain_detection_sample_count == 5  # app side
+    assert e.entity_desc_min_length == 10  # app side
     d = DatabaseSettings()
     assert d.pool_size == 20 and d.strict_schema_drift is True
     b = BatchingSettings()

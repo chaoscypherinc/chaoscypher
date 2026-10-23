@@ -16,16 +16,24 @@ import zipfile
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: TC003 - used at runtime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from chaoscypher_core.app_config import _DEFAULT_SECRET_KEYS, mask_secret_value
+from chaoscypher_core.app_config import (
+    _DEFAULT_SECRET_KEYS,
+    mask_secret_value,
+    mask_settings_dict,
+)
 from chaoscypher_core.services.diagnostics.models import (
     DiagnosticDatabaseStats,
     DiagnosticReport,
     SystemInfo,
 )
+
+
+if TYPE_CHECKING:
+    from chaoscypher_core.app_config import Settings
 
 
 logger = structlog.get_logger(__name__)
@@ -70,6 +78,16 @@ def _scrub_log_line(line: str) -> str:
     for pat in _SECRET_PATTERNS:
         line = pat.sub(r"\1***", line)
     return line
+
+
+def bundle_settings(settings: Settings) -> dict[str, Any]:
+    """The masked settings dict every diagnostic bundle carries.
+
+    One definition for the web export and ``chaoscypher diagnostics``, so
+    the two bundles hold the same configuration. ``export_bundle`` masks it
+    again by key name.
+    """
+    return mask_settings_dict(settings.model_dump())
 
 
 class DiagnosticCollector:

@@ -22,10 +22,11 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_core.services.sources.engine.extraction.utils.type_normalizer import (
-    apply_type_aliases,
+    canonicalize_entity_types,
     filter_structural_entities,
     normalize_entity_types,
 )
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import TypeVocabulary
 
 
 if TYPE_CHECKING:
@@ -60,6 +61,10 @@ def get_domain_structural_filters(
     """
     if domain is None:
         return set(), set()
+    stack_filters = getattr(domain, "structural_filters", None)
+    if callable(stack_filters):  # a DomainStack: every member's flags
+        structural, generic = stack_filters()
+        return set(structural), set(generic)
 
     # ConfigurableDomain stashes the raw JSON-LD on ``config``; reach in
     # rather than adding a public getter, since this is the only caller
@@ -91,61 +96,43 @@ def apply_domain_type_aliases(
     entities: list[dict[str, Any]],
     domain: Any | None,
 ) -> int:
-    """Apply the domain's ``type_aliases`` map to a list of entities.
+    """Rewrite entity types to the domain's core types and subtypes (its aliases, its subtypes, the table).
 
-    Shared wrapper used by all three finalize sites (standalone
-    ``extract_entities_from_groups``, ``ExtractionService.finalize_distributed_extraction``,
-    and the Neuron worker's ``_finalize_extraction_inner``). Resolves the
-    alias mapping from the domain, then delegates to
-    ``apply_type_aliases`` for the in-place rewrite. Must run BEFORE
-    dedup and BEFORE the relationship-type constraint validator so:
+    The one wiring of the finalize sites (``ExtractionService.finalize_distributed_extraction``
+    and the Neuron worker's ``_finalize_extraction_inner``; the standalone
+    ``extract_entities_from_groups`` passes the plan's aliases to
+    ``apply_type_aliases``, the same rewrite): the domain's
+    :class:`~chaoscypher_core.services.sources.engine.extraction.utils.type_rescue.TypeVocabulary`
+    (``from_domain``: its ``type_aliases``, its subtypes when it is a pack)
+    through ``canonicalize_entity_types``. Must run BEFORE dedup and BEFORE
+    the relationship-type constraint validator so:
 
-    * dedup sees canonical types and merges name variants split across
-      alias types (e.g. ``Historical Figure: Pierre`` +
-      ``Character: Pierre`` collapse to one node);
-    * the type validator sees canonical endpoints and applies edge
-      templates against the canonical type list.
+    * dedup sees core types and merges name variants split across alias
+      types (``Historical Figure: Pierre`` + ``Character: Pierre`` are both
+      Person/character);
+    * the type validator compares the edge templates' core types.
 
-    Defensive throughout: a ``None`` domain, a domain without
-    ``get_type_aliases``, an empty alias map, or a raising accessor all
-    fall through as a no-op. Finalization is critical — an aliasing bug
-    must not block commit.
+    Defensive throughout: a ``None`` domain, a domain without the accessors,
+    or a raising accessor contribute nothing (the mapping table still
+    applies). Finalization is critical: an aliasing bug must not block commit.
 
     Args:
-        entities: Entity dicts (modified in-place when aliases apply).
+        entities: Entity dicts (modified in-place).
         domain: Resolved domain object, or ``None``.
 
     Returns:
-        Count of entities whose type was rewritten. Zero on any
-        defensive fallthrough.
+        Count of entities whose type was rewritten.
     """
-    if not entities or domain is None:
+    if not entities:
         return 0
-
-    accessor = getattr(domain, "get_type_aliases", None)
-    if not callable(accessor):
-        return 0
-
-    try:
-        aliases = accessor()
-    except Exception:
-        logger.warning(
-            "type_aliases_accessor_raised",
-            domain=getattr(domain, "name", "unknown"),
-            exc_info=True,
-        )
-        return 0
-
-    if not isinstance(aliases, dict) or not aliases:
-        return 0
-
-    rewritten = apply_type_aliases(entities, aliases)
+    vocabulary = TypeVocabulary.from_domain(domain)
+    rewritten = canonicalize_entity_types(entities, vocabulary)
     if rewritten:
         logger.info(
             "type_aliases_applied_in_finalize",
             domain=getattr(domain, "name", "unknown"),
             rewritten=rewritten,
-            alias_count=len(aliases),
+            alias_count=len(vocabulary.aliases),
         )
     return rewritten
 

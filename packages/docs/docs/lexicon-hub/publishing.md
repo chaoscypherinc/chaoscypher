@@ -32,7 +32,7 @@ chaoscypher graph package export --output my-knowledge.ccx
 
 # Export only templates (share your schema)
 chaoscypher graph package export --output my-templates.ccx \
-  --no-knowledge --no-workflows
+  --no-knowledge --no-workflows --no-sources --no-lenses
 
 # Export only knowledge (share your data)
 chaoscypher graph package export --output my-data.ccx \

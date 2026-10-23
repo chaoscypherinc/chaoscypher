@@ -20,16 +20,18 @@ from chaoscypher_core.adapters.llm.providers.base import (
     message_text,
     normalize_finish_reason,
 )
-from chaoscypher_core.adapters.llm.providers.error_classifier import (
-    ProviderErrorPatterns,
-    classify_provider_error,
-)
 from chaoscypher_core.adapters.llm.utils import (
     convert_to_langchain_messages,
     format_tool_calls_response,
 )
 from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.plugins.base import PluginMetadata
+from chaoscypher_core.utils.decoding import effective_temperature
+from chaoscypher_core.utils.stream_errors import (
+    ProviderErrorPatterns,
+    classify_provider_error,
+    error_chunk,
+)
 
 
 if TYPE_CHECKING:
@@ -156,6 +158,8 @@ class AnthropicProvider(BaseLLMProvider):
         max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Send chat request to Anthropic using LangChain."""
+        # a regenerate raises the temperature of the calls that name none (decoding_override)
+        temperature = effective_temperature(temperature)
         # Convert messages to LangChain format
         lc_messages = convert_to_langchain_messages(messages)
 
@@ -376,12 +380,7 @@ class AnthropicProvider(BaseLLMProvider):
                 error_message=str(e),
                 error_code=e.code,
             )
-            yield {
-                "type": "error",
-                "error": e.message,
-                "error_code": e.code,
-                "error_details": e.details,
-            }
+            yield error_chunk(e)
         except Exception as e:
             logger.exception(
                 "anthropic_streaming_failed",
@@ -391,9 +390,4 @@ class AnthropicProvider(BaseLLMProvider):
                 error_message=str(e),
             )
             classified = _classify_anthropic_error(e, self.chat_model)
-            yield {
-                "type": "error",
-                "error": classified.message,
-                "error_code": classified.code,
-                "error_details": classified.details,
-            }
+            yield error_chunk(classified)

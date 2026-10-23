@@ -167,6 +167,22 @@ Returns:
 |---|---|---|
 | `domain_name` | `str \| None` |  |
 
+#### `get_domain_name_conventions(domain_name: str | None) -> NameConventions | None`
+
+Public entry point for the name rule's conventions of a domain.
+
+Args:
+    domain_name: Name of the domain (e.g., 'literary', 'historical')
+
+Returns:
+    The conventions of the domain's stack, the floor's tables with the
+    pack's (`domain_resolver.name_conventions_of_packs`), or None
+    when the registry cannot be read.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `domain_name` | `str \| None` |  |
+
 #### `get_domain_normalization_rules(domain_name: str | None) -> dict[str, list[str]]`
 
 Public entry point for getting domain type-normalization rules.
@@ -190,10 +206,12 @@ Returns:
 Public entry point for getting domain symmetric relationship types.
 
 Symmetric relationships are bidirectional — (A, B) and (B, A) are
-semantically identical and collapsed during deduplication.
+semantically identical and collapsed during deduplication. The
+floor's and the pack's (`DomainStack.symmetric_relationships`).
 
 Args:
-    domain_name: Name of the domain (e.g., 'literary', 'historical')
+    domain_name: Name of the domain (e.g., 'literary', 'historical');
+        None is the floor alone.
 
 Returns:
     List of symmetric relationship type names, or empty list.
@@ -211,20 +229,6 @@ Args:
 
 Returns:
     Frozenset of lowercase title words, or None if unavailable.
-
-| Parameter | Type | Description |
-|---|---|---|
-| `domain_name` | `str \| None` |  |
-
-#### `get_domain_type_compatibility(domain_name: str | None) -> dict[str, list[str]] | None`
-
-Public entry point for getting domain type compatibility groups.
-
-Args:
-    domain_name: Name of the domain (e.g., 'literary', 'technical')
-
-Returns:
-    Dictionary of compatibility groups, or None if unavailable.
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -355,10 +359,13 @@ Returns:
     Configured IndexingService.
 
 Example:
-    from chaoscypher_core import IndexingService, SqliteAdapter, EngineSettings
 
-    adapter = SqliteAdapter("app.db", "default")
-    service = IndexingService.from_adapter(adapter, EngineSettings())
+```
+from chaoscypher_core import IndexingService, SqliteAdapter, EngineSettings
+
+adapter = SqliteAdapter("app.db", "default")
+service = IndexingService.from_adapter(adapter, EngineSettings())
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -377,8 +384,11 @@ Returns:
     Configured IndexingService.
 
 Example:
-    service = IndexingService.from_engine(engine)
-    result = await service.create_index(source_id)
+
+```
+service = IndexingService.from_engine(engine)
+result = await service.create_index(source_id)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -389,6 +399,18 @@ Example:
 - `embedding_service`
 - `repository`
 - `settings`
+
+### `chunk_embedding_text(chunk: dict[str, Any]) -> str`
+
+The text a chunk's vector is embedded from: its stored content.
+
+One definition for every path that embeds a chunk (indexing a source,
+re-indexing, the benchmark's re-index), so they cannot embed different
+text; the benchmark's index recipe hashes its output.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `chunk` | `dict[str, Any]` |  |
 
 ## `chaoscypher_core.services.search.engine.search`
 
@@ -433,14 +455,17 @@ Raises:
         not been called).
 
 Example:
-    from chaoscypher_core import SearchService, SqliteAdapter, EngineSettings
-    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
 
-    adapter = SqliteAdapter("app.db", "default")
-    search_repo = SearchRepository(db_engine, 1024, "model-name")
-    service = SearchService.from_adapter(
-        adapter, EngineSettings(), search_repository=search_repo,
-    )
+```
+from chaoscypher_core import SearchService, SqliteAdapter, EngineSettings
+from chaoscypher_core.adapters.sqlite.repos import SearchRepository
+
+adapter = SqliteAdapter("app.db", "default")
+search_repo = SearchRepository(db_engine, 1024, "model-name")
+service = SearchService.from_adapter(
+    adapter, EngineSettings(), search_repository=search_repo,
+)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -644,10 +669,13 @@ Returns:
     Configured NodeService.
 
 Example:
-    from chaoscypher_core import NodeService, SqliteAdapter, EngineSettings
 
-    adapter = SqliteAdapter("app.db", "default")
-    service = NodeService.from_adapter(adapter, EngineSettings())
+```
+from chaoscypher_core import NodeService, SqliteAdapter, EngineSettings
+
+adapter = SqliteAdapter("app.db", "default")
+service = NodeService.from_adapter(adapter, EngineSettings())
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1023,6 +1051,19 @@ and relationships into permanent graph nodes and edges.
 
 Extracted from commit_service.py for SRP compliance.
 
+### `class OrphanCommit`
+
+What the commit's orphan rule (`flag_orphan_entities`) leaves to commit.
+
+**Bases:** `NamedTuple`
+
+**Attributes:**
+
+- `dropped`: `int` — Orphans dropped for carrying nothing (the `evidence_less_entities_dropped` counter).
+- `entities`: `list[dict]` — The entities to commit, in extraction order, every orphan kept flagged (`ORPHAN_KEY`).
+- `flagged`: `int` — Orphans kept with the flag (the `orphan_entities_filtered` counter).
+- `relationships`: `list[dict]` — The relationships, remapped onto `entities`' positions.
+
 ### `class SourceCommitService`
 
 Orchestrates the source processing commit process.
@@ -1117,71 +1158,86 @@ Combined protocol for SourceCommitService — covers CRUD and citations.
 
 **Bases:** `SourceStorageProtocol, CitationStorageProtocol, Protocol`
 
-### `drop_orphan_entities(entities: list[dict], relationships: list[dict], *, enabled: bool) -> tuple[list[dict], list[dict], int]`
+### `entity_citation_chunks(entity: dict[str, Any]) -> list[str]`
 
-Filter entities not referenced by any relationship, when enabled.
-
-Honors `FilteringConfig.protect_orphans`. Returns
-`(kept_entities, remapped_relationships, dropped_count)`
-preserving input order.
-
-The upstream extraction pipeline emits relationships keyed by
-integer indices into the `entities` list — each relationship
-has `source: int` and `target: int` whose values position into
-`entities`. The downstream consumers in this commit pipeline
-(`commit/relation.py:157` and `commit/service.py:1120`) resolve
-endpoints via those indices, so this filter — which runs *before*
-node creation, when no entity IDs exist yet — must use the same
-contract.
-
-When the filter drops entity at index `k`, every entity after it
-shifts down by one. Without remapping, relationships into kept-but-
-shifted entities silently disappear at commit time (the index they
-reference is now out of range, or — worse — points at the wrong
-surviving entity). The fix borrows
-`EntityProcessor.remap_relationship_indices` (the canonical remap
-pattern already used by dedup and type-rescue).
-
-Malformed endpoints (non-integer `source`/`target`) are dropped
-by `remap_relationship_indices` so a typo in one relationship
-cannot poison the surviving edge set.
+Every distinct chunk `entity` is cited in: its `cited_chunk_id`, then its evidence chunks.
 
 Args:
-    entities: Entities pending commit (in extraction order — index
-        position is the join key).
-    relationships: Relationships pending commit, keyed by integer
-        `source`/`target` indices into `entities`.
-    enabled: When False, returns `(entities, relationships, 0)`
-        unchanged.
+    entity: An extracted (possibly deduplicated) entity dict.
 
 Returns:
-    Tuple of `(kept_entities, remapped_relationships, dropped_count)`.
-    `dropped_count` is the number of orphan entities removed; it
-    feeds the `ORPHAN_ENTITIES_FILTERED` quality counter at the
-    caller. Relationships into removed entities are filtered out by
-    the canonical remap helper (so the returned list is always a
-    subset of the input list).
+    Chunk ids in first-cited order, without repeats; empty when the
+    entity names no chunk.
+
+| Parameter | Type | Description |
+|---|---|---|
+| `entity` | `dict[str, Any]` |  |
+
+### `flag_orphan_entities(entities: list[dict], relationships: list[dict], *, keep_evidence_less: bool) -> OrphanCommit`
+
+Keep every orphan that carries evidence, flagged; drop only the ones carrying nothing.
+
+Keep, flag, never delete (2026-10-07): an orphan is an entity no
+relationship references. Until then the commit deleted every orphan when
+`FilteringConfig.protect_orphans` was off (every preset but
+`minimal`/`unfiltered`), description and all: 20 to 36 entities per
+Book One run, among them "Márya Lvóvna Karágina" with the fact that she
+is Julie's mother (benchmark q035, q128), because the relationship pass
+happened not to write her edge. Now an orphan that carries evidence
+(`chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner.carries_evidence`:
+a description or an evidence sentence) is committed with
+`properties.orphan: true`
+(`chaoscypher_core.services.sources.engine.deduplication.name_identity.ORPHAN_KEY`),
+and only one carrying neither is dropped, unless `keep_evidence_less`
+(`protect_orphans`) keeps it too, flagged. The consumers decide:
+retrieval ranks a flagged node after the connected ones
+(`graphrag_handlers._by_standing`), the graph view groups it, the
+resolver may connect it later. The flag is the commit's: a connected
+entity loses a stale `True`.
+
+The extraction emits relationships keyed by integer indices into
+`entities` (`source`/`target`), and the commit's consumers
+(`commit/relation.py` and the citation helpers) resolve endpoints by
+those positions, so a dropped entity's successors shift down: the
+relationships are remapped by the canonical
+`EntityProcessor.remap_relationship_indices` (an edge into a kept but
+shifted entity would otherwise vanish or hit the wrong one). Malformed
+endpoints (non-integer `source`/`target`) are dropped by that remap
+when anything is dropped, and count as no reference.
+
+Args:
+    entities: Entities pending commit (in extraction order: the position
+        is the join key).
+    relationships: Relationships pending commit, keyed by integer
+        `source`/`target` indices into `entities`.
+    keep_evidence_less: Keep (flagged) an orphan that carries nothing
+        too (`FilteringConfig.protect_orphans`).
+
+Returns:
+    `OrphanCommit`: the kept entities (input order), the remapped
+    relationships (always a subset of the input), and the flagged and
+    dropped orphan counts.
 
 | Parameter | Type | Description |
 |---|---|---|
 | `entities` | `list[dict]` |  |
 | `relationships` | `list[dict]` |  |
-| `enabled` | `bool` |  |
+| `keep_evidence_less` | `bool` |  |
 
 ### `normalize_relationship_endpoints(entities: list[dict], relationships: list[dict]) -> list[dict]`
 
 Convert string entity-id `source`/`target` endpoints to integer indices.
 
-The commit contract (`drop_orphan_entities` and `relation.py`'s
+The commit contract (`flag_orphan_entities` and `relation.py`'s
 `_resolve_node_ids` index path) expects each relationship's `source` /
 `target` to be an INTEGER index into `entities`. The in-memory
 finalizer path honors that. But the relational-store reload path —
 `list_source_relationships` → `_relationship_row_to_dict` (migration
 0042) — projects `source`/`target` as STRING entity IDs
 (`source_entity_id` / `target_entity_id`). Feeding those straight to
-commit made the integer check in `drop_orphan_entities` fail for every
-relationship, so the referenced set was empty and 100% of entities were
-dropped as false orphans (empty graph for every committed source via the
+commit made the integer check in the orphan filter (now
+`flag_orphan_entities`) fail for every relationship, so the referenced
+set was empty and 100% of entities were dropped as false orphans (empty graph for every committed source via the
 CLI `source add` and recovery re-commit paths).
 
 This maps id-keyed endpoints to the entity's position in `entities`.
@@ -1308,7 +1364,7 @@ Get all small chunks for a source (for RAG indexing).
 |---|---|---|
 | `source_id` | `str` |  |
 
-#### `process(text: str, *, analysis_depth: str = 'full', file_info: dict[str, Any] | None = None, embedding_service: Any = None) -> ExtractionResult`
+#### `process(text: str, *, analysis_depth: str = 'full', file_info: dict[str, Any] | None = None, embedding_service: Any = None, seed: Sequence[Mapping[str, Any]] = ()) -> ExtractionResult`
 
 Chunk text and extract entities in one call.
 
@@ -1325,6 +1381,8 @@ Args:
         `self.settings` so semantic dedup runs by default. Pass an
         explicit instance to inject (e.g., for tests) or pass an
         already-constructed provider to share state across calls.
+    seed: Records the KNOWN ENTITIES list starts with (the memory
+        path's graph nodes and speaker); empty for a document.
 
 Returns:
     ExtractionResult with `entities`, `relationships`, `domain`,
@@ -1332,9 +1390,12 @@ Returns:
     `model_dump_json()` for JSON output.
 
 Example:
-    >>> service = ChunkingService(settings=EngineSettings())
-    >>> result = await service.process("Your document text here...")
-    >>> print(result.model_dump_json(indent=2))
+
+```
+>>> service = ChunkingService(settings=EngineSettings())
+>>> result = await service.process("Your document text here...")
+>>> print(result.model_dump_json(indent=2))
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1342,6 +1403,7 @@ Example:
 | `analysis_depth` | `str` |  |
 | `file_info` | `dict[str, Any] \| None` |  |
 | `embedding_service` | `Any` |  |
+| `seed` | `Sequence[Mapping[str, Any]]` |  |
 
 #### `store_chunks(chunks_result: Any, database_name: str | None = None) -> None`
 
@@ -1537,12 +1599,15 @@ Synchronous wrappers (for scripts, notebooks, non-async contexts):
     add_document_sync, add_documents_sync, process_document_sync
 
 Example:
-    # Minimal — database name + optional inline configuration
-    with Engine(database="demo", provider="openai", api_key="sk-...") as engine:
-        alice = engine.add_node("Person", "Alice")
-        bob = engine.add_node("Person", "Bob")
-        engine.add_edge("knows", alice, bob)
-        results = engine.search_sync("people")
+
+```
+# Minimal — database name + optional inline configuration
+with Engine(database="demo", provider="openai", api_key="sk-...") as engine:
+    alice = engine.add_node("Person", "Alice")
+    bob = engine.add_node("Person", "Bob")
+    engine.add_edge("knows", alice, bob)
+    results = engine.search_sync("people")
+```
 
 **Methods:**
 
@@ -1573,9 +1638,12 @@ Returns:
     is `awaiting_confirmation` and no entities were extracted.
 
 Example:
-    with Engine("./data/databases/demo") as engine:
-        result = await engine.add_document("paper.pdf")
-        print(f"Created \{len(result.nodes)\} nodes")
+
+```
+with Engine("./data/databases/demo") as engine:
+    result = await engine.add_document("paper.pdf")
+    print(f"Created {len(result.nodes)} nodes")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1600,9 +1668,12 @@ Returns:
     ProcessingResult with source_id and created entity IDs.
 
 Example:
-    with Engine(database="demo") as engine:
-        result = engine.add_document_sync("paper.pdf")
-        print(f"Created \{len(result.nodes)\} nodes")
+
+```
+with Engine(database="demo") as engine:
+    result = engine.add_document_sync("paper.pdf")
+    print(f"Created {len(result.nodes)} nodes")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1627,8 +1698,11 @@ Returns:
     List of ProcessingResult models, one per document.
 
 Example:
-    results = await engine.add_documents("papers/*.pdf")
-    print(f"Processed \{len(results)\} documents")
+
+```
+results = await engine.add_documents("papers/*.pdf")
+print(f"Processed {len(results)} documents")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1647,9 +1721,12 @@ Returns:
     List of ProcessingResult models, one per document.
 
 Example:
-    with Engine(database="demo") as engine:
-        results = engine.add_documents_sync(["doc1.pdf", "doc2.pdf"])
-        print(f"Processed \{len(results)\} documents")
+
+```
+with Engine(database="demo") as engine:
+    results = engine.add_documents_sync(["doc1.pdf", "doc2.pdf"])
+    print(f"Processed {len(results)} documents")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1676,8 +1753,11 @@ Returns:
     Created Edge model with attribute access.
 
 Example:
-    engine.add_edge("knows", alice, bob)
-    engine.add_edge("works_at", alice, "node_id_123", label="employed by")
+
+```
+engine.add_edge("knows", alice, bob)
+engine.add_edge("works_at", alice, "node_id_123", label="employed by")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1706,8 +1786,11 @@ Returns:
     Created Node model with attribute access.
 
 Example:
-    alice = engine.add_node("Person", "Alice", properties=\{"role": "Engineer"\})
-    print(alice.id, alice.label)
+
+```
+alice = engine.add_node("Person", "Alice", properties={"role": "Engineer"})
+print(alice.id, alice.label)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1766,8 +1849,11 @@ Returns:
     LLMChatResponse with content, tool_calls, usage, and provider info.
 
 Example:
-    response = await engine.chat("What is a knowledge graph?")
-    print(response.content)
+
+```
+response = await engine.chat("What is a knowledge graph?")
+print(response.content)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1788,9 +1874,12 @@ Returns:
     LLMChatResponse with content, tool_calls, usage, and provider info.
 
 Example:
-    with Engine(database="demo") as engine:
-        response = engine.chat_sync("What is a knowledge graph?")
-        print(response.content)
+
+```
+with Engine(database="demo") as engine:
+    response = engine.chat_sync("What is a knowledge graph?")
+    print(response.content)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1809,9 +1898,12 @@ Returns:
     HealthReport with chat and embedding health results.
 
 Example:
-    health = await engine.check_health()
-    if health.chat.status == "healthy":
-        print(f"Chat OK (\{health.chat.response_time_ms\}ms)")
+
+```
+health = await engine.check_health()
+if health.chat.status == "healthy":
+    print(f"Chat OK ({health.chat.response_time_ms}ms)")
+```
 
 #### `chunk_document(text: str, *, source_id: str | None = None, analysis_depth: AnalysisDepth = 'full') -> ChunkingResult`
 
@@ -1830,8 +1922,11 @@ Returns:
     ChunkingResult with source_id, chunk counts, and analysis depth.
 
 Example:
-    chunks = await engine.chunk_document(text)
-    index = await engine.index_source(chunks.source_id)
+
+```
+chunks = await engine.chunk_document(text)
+index = await engine.index_source(chunks.source_id)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1865,9 +1960,12 @@ Returns:
     ProcessingResult with lists of created node, edge, and template IDs.
 
 Example:
-    chunks = await engine.chunk_document(text)
-    await engine.index_source(chunks.source_id)
-    result = await engine.commit(chunks.source_id)
+
+```
+chunks = await engine.chunk_document(text)
+await engine.index_source(chunks.source_id)
+result = await engine.commit(chunks.source_id)
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -1969,8 +2067,11 @@ Returns:
     EmbedResult with embedding vector, provider, and usage.
 
 Example:
-    result = await engine.embed("quantum entanglement")
-    print(f"Dimensions: \{len(result.embedding)\}")
+
+```
+result = await engine.embed("quantum entanglement")
+print(f"Dimensions: {len(result.embedding)}")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -2132,7 +2233,7 @@ Returns:
 | `page` | `int` |  |
 | `page_size` | `int` |  |
 
-#### `process_document(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None) -> ProcessingResult`
+#### `process_document(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None, auto_confirm: bool = True, forced_domain: str | None = None, seed: Sequence[Mapping[str, Any]] = (), source_type: str = 'file', source_fields: Mapping[str, Any] | None = None, extract: bool = True) -> ProcessingResult`
 
 Process a document through the full extraction pipeline.
 
@@ -2161,6 +2262,15 @@ Args:
         the index and extraction stages.
     forced_domain: Explicit human domain choice. When set, the gate
         always proceeds (a forced domain is never parked).
+    seed: Records the extraction's KNOWN ENTITIES list starts with
+        (`mcp.memory_seed.seed_records`: the graph's nodes the text
+        names and the speaker). Empty, the default, for a document.
+    source_type: The source row's type; `"memory"` for a memory.
+    source_fields: Further columns of the source row (a memory's
+        `memory_by`, `memory_scope`, `valid_from`).
+    extract: False stops after indexing: the chunks are stored and
+        searchable, nothing is extracted or committed, and the result's
+        `status` is `indexed` (the no-extraction-model path).
 
 Returns:
     ProcessingResult model with `source_id`, `nodes`, `edges`,
@@ -2170,17 +2280,20 @@ Returns:
     are empty (extraction did not run).
 
 Example:
-    with Engine("./data/databases/demo", initialize_db=True) as engine:
-        result = await engine.process_document(text, filename="paper.pdf")
-        print(f"Created \{len(result.nodes)\} nodes")
 
-        # With progress tracking:
-        def on_progress(stage, result):
-            print(f"[\{stage\}] done")
+```
+with Engine("./data/databases/demo", initialize_db=True) as engine:
+    result = await engine.process_document(text, filename="paper.pdf")
+    print(f"Created {len(result.nodes)} nodes")
 
-        result = await engine.process_document(
-            text, filename="paper.pdf", on_progress=on_progress
-        )
+    # With progress tracking:
+    def on_progress(stage, result):
+        print(f"[{stage}] done")
+
+    result = await engine.process_document(
+        text, filename="paper.pdf", on_progress=on_progress
+    )
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -2191,6 +2304,10 @@ Example:
 | `on_progress` | `ProgressCallback \| None` |  |
 | `auto_confirm` | `bool` |  |
 | `forced_domain` | `str \| None` |  |
+| `seed` | `Sequence[Mapping[str, Any]]` |  |
+| `source_type` | `str` |  |
+| `source_fields` | `Mapping[str, Any] \| None` |  |
+| `extract` | `bool` |  |
 
 #### `process_document_sync(text: str, *, source_id: str | None = None, filename: str = 'document.txt', analysis_depth: AnalysisDepth = 'full', on_progress: ProgressCallback | None = None) -> ProcessingResult`
 
@@ -2242,9 +2359,12 @@ Returns:
     List of EngineSearchResult models sorted by relevance score.
 
 Example:
-    results = await engine.search("quantum entanglement")
-    for r in results:
-        print(f"\{r.label\} (\{r.score:.2f\})")
+
+```
+results = await engine.search("quantum entanglement")
+for r in results:
+    print(f"{r.label} ({r.score:.2f})")
+```
 
 | Parameter | Type | Description |
 |---|---|---|
@@ -2268,10 +2388,13 @@ Returns:
     List of EngineSearchResult models sorted by relevance score.
 
 Example:
-    with Engine(database="demo") as engine:
-        results = engine.search_sync("quantum entanglement")
-        for r in results:
-            print(f"\{r.label\} (\{r.score:.2f\})")
+
+```
+with Engine(database="demo") as engine:
+    results = engine.search_sync("quantum entanglement")
+    for r in results:
+        print(f"{r.label} ({r.score:.2f})")
+```
 
 | Parameter | Type | Description |
 |---|---|---|

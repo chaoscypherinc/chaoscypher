@@ -9,6 +9,10 @@ never touches SQLModel entities (keeps the port boundary clean).
 
 This module lives under ``adapters/sqlite/repos/`` because it issues
 raw SQLAlchemy / SQLModel queries directly against the SQLite schema.
+
+A node belongs to every source that attests it (its ``graph_node_sources``
+rows, #795 D7), not only to its home ``source_id``: a merged node counts once
+under each member and once in a total.
 The service layer depends on
 :class:`chaoscypher_core.ports.storage_graph_snapshot.GraphBreakdownQueryProtocol`
 and wires the concrete repo via
@@ -19,10 +23,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from sqlalchemy import and_
 from sqlalchemy.orm import aliased, load_only
 from sqlmodel import col, func, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphEdge, GraphNode, GraphTemplate, SourceRow
+from chaoscypher_core.adapters.sqlite.repos.source_visibility import (
+    attestations,
+    attested,
+    attested_by,
+)
 
 
 if TYPE_CHECKING:
@@ -161,7 +171,7 @@ class GraphBreakdownQueryRepository:
         database_name: str,
         source_ids: list[str],
     ) -> int:
-        """Total node count across all ``source_ids`` in ``database_name``.
+        """Distinct nodes any of ``source_ids`` attests in ``database_name`` (a merged node once).
 
         Args:
             database_name: Database filter.
@@ -177,7 +187,7 @@ class GraphBreakdownQueryRepository:
         stmt = (
             select(func.count(GraphNode.id))  # type: ignore[arg-type]
             .where(GraphNode.database_name == database_name)
-            .where(col(GraphNode.source_id).in_(source_ids))
+            .where(attested_by(GraphNode, source_ids))
         )
         result = self._session.exec(stmt).one()
         return int(result) if result is not None else 0
@@ -203,14 +213,15 @@ class GraphBreakdownQueryRepository:
         return int(result) if result is not None else 0
 
     def count_source_attributed_nodes(self, database_name: str) -> int:
-        """Node count restricted to rows that carry a ``source_id``.
+        """Node count restricted to rows some source attests.
 
-        The snapshot's persisted ``total_nodes`` is built by summing
-        ``count_nodes_per_source``, which drops rows whose ``source_id`` is
-        NULL. Comparing that total against :meth:`count_all_nodes` — which
-        applies no source filter — makes the drift formula subtract two
-        different row sets, so a single manual/legacy node pins the snapshot
-        permanently stale. This is the like-for-like live counterpart.
+        The snapshot's persisted ``total_nodes`` is :meth:`count_nodes` over
+        every source, which drops rows no source attests (NULL or ``''``
+        ``source_id``, no membership). Comparing that total against
+        :meth:`count_all_nodes` — which applies no source filter — makes the
+        drift formula subtract two different row sets, so a single
+        manual/legacy node pins the snapshot permanently stale. This is the
+        like-for-like live counterpart.
 
         Args:
             database_name: Database filter.
@@ -222,7 +233,7 @@ class GraphBreakdownQueryRepository:
         # mypy can't see SQLModel column attrs as ColumnElement here.
         stmt = select(func.count(GraphNode.id)).where(  # type: ignore[arg-type]
             GraphNode.database_name == database_name,
-            col(GraphNode.source_id).is_not(None),
+            attested(GraphNode),
         )
         result = self._session.exec(stmt).one()
         return int(result) if result is not None else 0
@@ -232,7 +243,7 @@ class GraphBreakdownQueryRepository:
         database_name: str,
         source_ids: list[str],
     ) -> int:
-        """Count edges where both endpoints belong to ``source_ids``.
+        """Count edges both of whose endpoints a source of ``source_ids`` attests.
 
         Args:
             database_name: Database filter.
@@ -244,8 +255,8 @@ class GraphBreakdownQueryRepository:
         """
         if not source_ids:
             return 0
-        SrcNode = aliased(GraphNode)  # noqa: N806
-        TgtNode = aliased(GraphNode)  # noqa: N806
+        SrcNode = aliased(GraphNode, name="src_node")  # noqa: N806
+        TgtNode = aliased(GraphNode, name="tgt_node")  # noqa: N806
 
         # mypy can't see SQLModel column attrs as ColumnElement here.
         stmt = (
@@ -253,8 +264,8 @@ class GraphBreakdownQueryRepository:
             .join(SrcNode, GraphEdge.source_node_id == SrcNode.id)  # type: ignore[arg-type]
             .join(TgtNode, GraphEdge.target_node_id == TgtNode.id)  # type: ignore[arg-type]
             .where(GraphEdge.database_name == database_name)
-            .where(col(SrcNode.source_id).in_(source_ids))
-            .where(col(TgtNode.source_id).in_(source_ids))
+            .where(attested_by(SrcNode, source_ids))
+            .where(attested_by(TgtNode, source_ids))
         )
         result = self._session.exec(stmt).one()
         return int(result) if result is not None else 0
@@ -264,7 +275,7 @@ class GraphBreakdownQueryRepository:
         database_name: str,
         source_ids: list[str],
     ) -> dict[str, int]:
-        """Count graph nodes per source_id.
+        """Count graph nodes per attesting source: a merged node once under each member.
 
         Args:
             database_name: Database filter.
@@ -276,12 +287,14 @@ class GraphBreakdownQueryRepository:
         """
         if not source_ids:
             return {}
+        att = attestations(GraphNode)
         # mypy can't see SQLModel column attrs as ColumnElement here.
         stmt = (
-            select(GraphNode.source_id, func.count(GraphNode.id).label("cnt"))  # type: ignore[arg-type]
+            select(att.c.source_id, func.count(GraphNode.id).label("cnt"))  # type: ignore[arg-type]
+            .join(att, att.c.item_id == GraphNode.id)
             .where(GraphNode.database_name == database_name)
-            .where(col(GraphNode.source_id).in_(source_ids))
-            .group_by(GraphNode.source_id)
+            .where(att.c.source_id.in_(source_ids))
+            .group_by(att.c.source_id)
         )
         rows = self._session.exec(stmt).all()
         return {row[0]: row[1] for row in rows if row[0] is not None}
@@ -291,7 +304,7 @@ class GraphBreakdownQueryRepository:
         database_name: str,
         source_ids: list[str],
     ) -> dict[str, int]:
-        """Count internal edges per source (both endpoints share the same source_id).
+        """Count internal edges per source (the source attests both endpoints).
 
         Args:
             database_name: Database filter.
@@ -303,18 +316,23 @@ class GraphBreakdownQueryRepository:
         """
         if not source_ids:
             return {}
-        SrcNode = aliased(GraphNode)  # noqa: N806
-        TgtNode = aliased(GraphNode)  # noqa: N806
+        src = attestations(GraphNode, "src_att")
+        tgt = attestations(GraphNode, "tgt_att")
 
         # mypy can't see SQLModel column attrs as ColumnElement here.
         stmt = (
-            select(SrcNode.source_id, func.count(GraphEdge.id).label("cnt"))  # type: ignore[arg-type]
-            .join(SrcNode, GraphEdge.source_node_id == SrcNode.id)  # type: ignore[arg-type]
-            .join(TgtNode, GraphEdge.target_node_id == TgtNode.id)  # type: ignore[arg-type]
+            select(src.c.source_id, func.count(GraphEdge.id).label("cnt"))  # type: ignore[arg-type]
+            .join(src, GraphEdge.source_node_id == src.c.item_id)  # type: ignore[arg-type]
+            .join(
+                tgt,
+                and_(
+                    col(GraphEdge.target_node_id) == tgt.c.item_id,
+                    tgt.c.source_id == src.c.source_id,
+                ),
+            )
             .where(GraphEdge.database_name == database_name)
-            .where(col(SrcNode.source_id).in_(source_ids))
-            .where(SrcNode.source_id == TgtNode.source_id)
-            .group_by(SrcNode.source_id)
+            .where(src.c.source_id.in_(source_ids))
+            .group_by(src.c.source_id)
         )
         rows = self._session.exec(stmt).all()
         return {row[0]: row[1] for row in rows if row[0] is not None}
@@ -324,7 +342,7 @@ class GraphBreakdownQueryRepository:
         database_name: str,
         source_ids: list[str],
     ) -> dict[str, dict[str, int]]:
-        """Count entities by template_id, grouped by source_id.
+        """Count entities by template_id, grouped by attesting source (a merged node under each member).
 
         Args:
             database_name: Database filter.
@@ -336,16 +354,18 @@ class GraphBreakdownQueryRepository:
         """
         if not source_ids:
             return {}
+        att = attestations(GraphNode)
         # mypy can't see SQLModel column attrs as ColumnElement here.
         stmt = (
             select(
-                GraphNode.source_id,
+                att.c.source_id,
                 GraphNode.template_id,
                 func.count(GraphNode.id).label("cnt"),  # type: ignore[arg-type]
             )
+            .join(att, att.c.item_id == GraphNode.id)
             .where(GraphNode.database_name == database_name)
-            .where(col(GraphNode.source_id).in_(source_ids))
-            .group_by(GraphNode.source_id, GraphNode.template_id)
+            .where(att.c.source_id.in_(source_ids))
+            .group_by(att.c.source_id, GraphNode.template_id)
         )
         rows = self._session.exec(stmt).all()
         result: dict[str, dict[str, int]] = {}

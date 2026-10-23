@@ -38,6 +38,20 @@ describe('FileInfoTooltip domain provenance', () => {
     expect(screen.getByText(/changed since extraction/i)).toBeInTheDocument();
   });
 
+  it('names the chosen packs: a list, the floor alone, or auto-detect', () => {
+    const opts = makeSource().upload_options!;
+    const { rerender } = render(
+      <FileInfoTooltip
+        source={makeSource({ upload_options: { ...opts, forced_packs: ['literary', 'historical'] } })}
+      />,
+    );
+    expect(screen.getByText(/Packs: Literary \+ Historical/)).toBeInTheDocument();
+    rerender(<FileInfoTooltip source={makeSource({ upload_options: { ...opts, forced_packs: [] } })} />);
+    expect(screen.getByText(/Packs: Floor only/)).toBeInTheDocument();
+    rerender(<FileInfoTooltip source={makeSource()} />);
+    expect(screen.getByText(/Packs: Auto-detect/)).toBeInTheDocument();
+  });
+
   it('omits version and warning when absent', () => {
     render(<FileInfoTooltip source={makeSource()} />);
     expect(screen.queryByText(/changed since extraction/i)).not.toBeInTheDocument();

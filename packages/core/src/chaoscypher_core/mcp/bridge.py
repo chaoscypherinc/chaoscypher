@@ -52,7 +52,12 @@ class MCPToolBridge:
         """
         try:
             result = await self.executor.execute_tool(tool_name, arguments)
-            is_error = not result.get("success", True)
+            # ``ToolExecutorService`` reports its own failures as
+            # ``{"error": ...}`` with no ``success`` key (unknown tool,
+            # invalid parameters), so a missing key is not a success.
+            is_error = result.get("success") is False or (
+                "error" in result and "success" not in result
+            )
             return BridgeResult(
                 text=json.dumps(result, default=str),
                 is_error=is_error,

@@ -18,11 +18,7 @@ import chaoscypher_core.adapters.sqlite.models  # noqa: F401 — register metada
 from chaoscypher_core.adapters.sqlite.engine import evict_engine
 from chaoscypher_core.database.migrations.runner import downgrade_to, upgrade_to
 
-
-def _columns(db_path: Path, table: str) -> set[str]:
-    """Return the column names of ``table`` via PRAGMA table_info."""
-    with sqlite3.connect(str(db_path)) as conn:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+from ._schema import table_columns
 
 
 def test_0006_adds_loader_epub_chapters_skipped(tmp_path: Path) -> None:
@@ -31,7 +27,7 @@ def test_0006_adds_loader_epub_chapters_skipped(tmp_path: Path) -> None:
     sqlite3.connect(str(db)).close()
     try:
         upgrade_to(db, "0006")
-        assert "loader_epub_chapters_skipped" in _columns(db, "sources"), (
+        assert "loader_epub_chapters_skipped" in table_columns(db, "sources"), (
             "loader_epub_chapters_skipped missing from sources after upgrade to 0006"
         )
     finally:
@@ -50,14 +46,9 @@ def test_0006_column_is_not_null_without_server_default(tmp_path: Path) -> None:
     sqlite3.connect(str(db)).close()
     try:
         upgrade_to(db, "0006")
-        with sqlite3.connect(str(db)) as conn:
-            row = next(
-                r
-                for r in conn.execute("PRAGMA table_info(sources)").fetchall()
-                if r[1] == "loader_epub_chapters_skipped"
-            )
-        _, _, _, notnull, dflt_value, _ = row
-        assert notnull == 1, "loader_epub_chapters_skipped must be NOT NULL"
+        column = table_columns(db, "sources")["loader_epub_chapters_skipped"]
+        notnull, dflt_value = column.notnull, column.default
+        assert notnull, "loader_epub_chapters_skipped must be NOT NULL"
         assert dflt_value is None, (
             "server_default must be dropped after the backfill step so the "
             "schema matches SQLModel.metadata (test_no_undeclared_changes)"
@@ -73,7 +64,7 @@ def test_0006_downgrade_removes_column(tmp_path: Path) -> None:
     try:
         upgrade_to(db, "0006")
         downgrade_to(db, "0005")
-        assert "loader_epub_chapters_skipped" not in _columns(db, "sources"), (
+        assert "loader_epub_chapters_skipped" not in table_columns(db, "sources"), (
             "loader_epub_chapters_skipped still present after downgrade to 0005"
         )
     finally:

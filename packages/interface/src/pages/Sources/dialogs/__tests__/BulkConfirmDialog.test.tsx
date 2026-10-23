@@ -67,8 +67,8 @@ describe('<BulkConfirmDialog />', () => {
     );
     expect(screen.getByText('alpha.pdf')).toBeInTheDocument();
     expect(screen.getByText('beta.pdf')).toBeInTheDocument();
-    expect(screen.getByText('science')).toBeInTheDocument();
-    expect(screen.getByText('legal')).toBeInTheDocument();
+    expect(screen.getByText('Science')).toBeInTheDocument();
+    expect(screen.getByText('Legal')).toBeInTheDocument();
   });
 
   it('confirms all confident sources with their recommended (ranking[0]) domain', () => {
@@ -86,8 +86,8 @@ describe('<BulkConfirmDialog />', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /confirm all/i }));
     expect(onConfirmAll).toHaveBeenCalledWith([
-      { source_id: 'a', domain: 'science' },
-      { source_id: 'b', domain: 'legal' },
+      { source_id: 'a', packs: ['science'] },
+      { source_id: 'b', packs: ['legal'] },
     ]);
   });
 
@@ -143,8 +143,8 @@ describe('<BulkConfirmDialog />', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: /confirm 2 detected/i }));
     expect(onConfirmAll).toHaveBeenCalledWith([
-      { source_id: 'a', domain: 'science' },
-      { source_id: 'b', domain: 'legal' },
+      { source_id: 'a', packs: ['science'] },
+      { source_id: 'b', packs: ['legal'] },
     ]);
     // Ensure the low-confidence source_id is NOT in the payload.
     const [payload] = onConfirmAll.mock.calls[0] as [Array<{ source_id: string }>];
@@ -165,7 +165,7 @@ describe('<BulkConfirmDialog />', () => {
       { wrapper: makeWrapper() },
     );
     fireEvent.click(screen.getByRole('button', { name: /confirm 1 detected/i }));
-    expect(onConfirmAll).toHaveBeenCalledWith([{ source_id: 'a', domain: 'science' }]);
+    expect(onConfirmAll).toHaveBeenCalledWith([{ source_id: 'a', packs: ['science'] }]);
     const [payload] = onConfirmAll.mock.calls[0] as [Array<{ source_id: string }>];
     expect(payload.some((item) => item.source_id === 'd')).toBe(false);
   });

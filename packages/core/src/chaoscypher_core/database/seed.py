@@ -22,8 +22,8 @@ from chaoscypher_core.adapters.sqlite.models import (
     WorkflowStatistics,
     WorkflowStep,
 )
-from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+from chaoscypher_core.repo_factories import get_transaction_graph_repository
 from chaoscypher_core.services.workflows.tools.engine import ToolRegistry
 from chaoscypher_core.templates.default_templates import get_all_default_templates
 
@@ -404,9 +404,7 @@ def seed_default_templates(database_name: str) -> None:
         adapter = get_sqlite_adapter(database_name=database_name)
         try:
             with adapter.transaction():
-                session = adapter.session
-                assert session is not None
-                graph_repo = GraphRepository(session, database_name)
+                graph_repo = get_transaction_graph_repository(adapter, database_name)
 
                 # Ensure default templates exist (idempotent)
                 logger.info("seed_templates_ensuring_defaults")

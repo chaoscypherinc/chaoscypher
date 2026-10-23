@@ -10,8 +10,7 @@ The JSON-LD format provides:
 - Keyword-based content detection with weighted groups
 - Regex pattern matching for additional signals
 - Domain-specific LLM guidance
-- Entity and relationship templates
-- Type normalization rules
+- Entity and relationship templates (the floor) or subtypes and extra labels (a pack)
 
 Example JSON-LD structure:
     {
@@ -22,22 +21,32 @@ Example JSON-LD structure:
             "keywords": {"code": {"terms": ["def ", "class "], "weight": 1.0}},
             "confidence": {"base_score": 0.3, "per_keyword_boost": 0.05}
         },
-        "guidance": "...",
-        "templates": {...},
-        "normalization_rules": {...}
+        "role": "pack",
+        "extends": "core",
+        "entity_guidance": "...",
+        "subtypes": [{"name": "Character", "of": "Person", "description": "..."}],
+        "templates": {"edge_templates": [...]}
     }
+
+Since 2026-10-07 (spec "additive domains") a config is the one floor
+(``generic``: the core types and labels) or a pack that only adds to it.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import structlog
 
 from chaoscypher_core.plugins import PluginMetadata, metadata_from_dict
 from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
     ExclusionRule,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+    FLOOR_LIMITS,
+    subtype_key,
 )
 from chaoscypher_core.services.sources.engine.extraction.safe_user_regex import (
     PatternTooLongError,
@@ -53,6 +62,117 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+IDENTITY_TABLES = (
+    "title_words",
+    "feminine_titles",
+    "masculine_titles",
+    "generation_words",
+    "name_forms",
+    "title_equivalents",
+    "relation_vocabulary",
+    "role_words",
+)
+"""The naming and relation tables a domain may declare (the name rule, the evidence validator).
+
+A table a domain leaves out is the universal one (``NameConventions.build``);
+:meth:`ConfigurableDomain.get_identity_tables` returns the declared ones.
+"""
+
+DEFAULT_DETECTION_BASE_SCORE = 0.1
+"""The score a domain starts from before any keyword, extension or pattern hit."""
+
+
+def detection_base_score(config: dict[str, Any]) -> float:
+    """The base score a domain config's detection starts from (no evidence yet).
+
+    The one reading of ``detection.confidence.base_score``: :meth:`ConfigurableDomain.can_analyze`
+    starts every score here, and the registry's detection floor measures a
+    winner's evidence as its score minus this value.
+    """
+    confidence = (config.get("detection") or {}).get("confidence") or {}
+    return float(confidence.get("base_score", DEFAULT_DETECTION_BASE_SCORE))
+
+
+DEFAULT_DETECTION_MAX_CONFIDENCE = 1.0
+"""The most confidence a detection reports when a domain declares no ``max_confidence``."""
+
+
+def detection_max_confidence(config: dict[str, Any]) -> float:
+    """The most confidence a domain config's detection reports (``detection.confidence.max_confidence``).
+
+    Raw scores rank the candidates and decide the evidence floor and the
+    runner-up margin (they are not on any common scale and grow with the
+    sample: Book One whole scores literary 1.62); the confidence a detection
+    reports is capped here (``DomainRegistry.get_best_domain``), so a
+    confidence is never above 1 and never above what the domain declares.
+    """
+    confidence = (config.get("detection") or {}).get("confidence") or {}
+    declared = float(confidence.get("max_confidence", DEFAULT_DETECTION_MAX_CONFIDENCE))
+    return min(declared, DEFAULT_DETECTION_MAX_CONFIDENCE)
+
+
+KEYWORD_INFLECTIONS = (
+    "s", "es", "d", "ed", "ing", "er", "ers", "or", "ors", "al", "ally", "ic", "ical", "ian",
+    "ians", "ly", "ism", "ist", "ists", "ity", "ment", "ments", "ion", "ions", "ual",
+)  # fmt: skip
+"""Endings a detection keyword may carry and still be the keyword ("exploit" in "exploited")."""
+
+_INFLECTION = "(?:" + "|".join(sorted(KEYWORD_INFLECTIONS, key=len, reverse=True)) + ")?"
+
+
+def keyword_pattern(term: str) -> re.Pattern[str]:
+    """How a detection keyword matches: as a word or an inflection of it, never inside another word.
+
+    Until 2026-10-06 a term of four letters or more matched anywhere
+    (``nist`` in "minister", ``verse`` in "conversation", ``import`` in
+    "important", ``plea`` in "pleasure"), so a novel scored as
+    cybersecurity, technical or investigation prose (audit wave 3). Now:
+
+    * a term written in capitals (``MORI``, ``FLIR``, ``NIST``) is an
+      acronym: matched case-sensitively, as a whole word (a plural ``s``
+      allowed), so "Morio" and "flirt" are not markings;
+    * a short term (under four letters) matches as a whole word, any case;
+    * any other term matches as a whole word, any case, with one of the
+      :data:`KEYWORD_INFLECTIONS` (its last letter may double: "wiretapping"),
+      so "teach" counts in "teaching" and "spirit" in "spiritual", and
+      "import" not in "important".
+    """
+    stripped = term.strip()
+    escaped = re.escape(stripped)
+    letters = [c for c in stripped if c.isalpha()]
+    if len(letters) >= 2 and all(c.isupper() for c in letters):
+        return re.compile(rf"(?<!\w){escaped}s?(?!\w)")
+    if len(stripped) < 4 and stripped.isalpha():
+        return re.compile(rf"\b{escaped}\b", re.IGNORECASE)
+    start = r"\b" if stripped[:1].isalnum() else ""
+    if not stripped[-1:].isalnum():
+        return re.compile(rf"{start}{escaped}", re.IGNORECASE)
+    double = re.escape(stripped[-1]) + "?" if stripped[-1].isalpha() else ""
+    return re.compile(rf"{start}{escaped}{double}{_INFLECTION}\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class SubtypeSpec:
+    """A pack's subtype of a core type, as :meth:`ConfigurableDomain.subtypes_of` returns it."""
+
+    name: str
+    """The name the pack shows ('Military Unit')."""
+    of: str
+    """The core type it is a kind of ('Organization')."""
+    description: str = ""
+    properties: tuple[dict[str, Any], ...] = field(default=())
+    names_a_person: bool = False
+    icon: str | None = None
+    color: str | None = None
+    rescue_keywords: tuple[str, ...] = ()
+    """Words that rescue a written type to this subtype (the old template's ``normalization_keywords``)."""
+
+    @property
+    def key(self) -> str:
+        """The ``entity_subtype`` value a node of this subtype stores ('military_unit')."""
+        return subtype_key(self.name)
 
 
 class ConfigurableDomain:
@@ -78,7 +198,7 @@ class ConfigurableDomain:
         self.settings = settings
         self._compiled_patterns: list[tuple[SafeUserRegex, float]] = []
         self._compile_patterns()
-        self._keyword_groups: list[tuple[list[str], list[re.Pattern[str]], float]] = []
+        self._keyword_groups: list[tuple[list[re.Pattern[str]], float]] = []
         self._preprocess_keywords()
         self._validate_content_exclusions()
 
@@ -116,32 +236,15 @@ class ConfigurableDomain:
                     )
 
     def _preprocess_keywords(self) -> None:
-        """Separate short terms from long terms and precompile word-boundary regexes.
-
-        Short alphabetic terms (< 4 chars) are matched with word boundaries
-        to prevent false positives from substring matching (e.g. "li" in "helium").
-        Longer terms use simple substring matching as before.
-        """
+        """Precompile each keyword as a word match (:func:`keyword_pattern`), grouped with its weight."""
         detection = self.config.get("detection", {})
         keywords_config = detection.get("keywords", {})
 
         for group_spec in keywords_config.values():
             terms = group_spec.get("terms", [])
             weight = group_spec.get("weight", 1.0)
-
-            long_terms: list[str] = []
-            short_patterns: list[re.Pattern[str]] = []
-
-            for term in terms:
-                term_stripped = term.strip()
-                if len(term_stripped) < 4 and term_stripped.isalpha():
-                    short_patterns.append(
-                        re.compile(rf"\b{re.escape(term_stripped)}\b", re.IGNORECASE)
-                    )
-                else:
-                    long_terms.append(term_stripped.lower())
-
-            self._keyword_groups.append((long_terms, short_patterns, weight))
+            patterns = [keyword_pattern(t) for t in terms if t.strip()]
+            self._keyword_groups.append((patterns, weight))
 
     def _validate_content_exclusions(self) -> None:
         """Validate ``content_exclusions`` against the registry and regex engine.
@@ -205,6 +308,64 @@ class ConfigurableDomain:
         return cast("str", self.config.get("description", ""))
 
     @property
+    def role(self) -> Literal["floor", "pack"] | None:
+        """``"floor"`` for the generic floor, ``"pack"`` for a pack; None for an unvalidated config."""
+        role = self.config.get("role")
+        return cast("Literal['floor', 'pack']", role) if role in ("floor", "pack") else None
+
+    @property
+    def extends(self) -> str | None:
+        """What a pack extends (``"core"``); None for the floor."""
+        extends = self.config.get("extends")
+        return str(extends) if extends else None
+
+    def subtypes(self) -> list[SubtypeSpec]:
+        """Every subtype the pack declares, in config order (empty for the floor)."""
+        out: list[SubtypeSpec] = []
+        for raw in self.config.get("subtypes") or []:
+            if not isinstance(raw, dict) or not raw.get("name") or not raw.get("of"):
+                continue
+            out.append(
+                SubtypeSpec(
+                    name=str(raw["name"]),
+                    of=str(raw["of"]),
+                    description=str(raw.get("description", "")),
+                    properties=tuple(dict(p) for p in raw.get("properties") or []),
+                    names_a_person=raw.get("names_a_person") is True,
+                    icon=raw.get("icon"),
+                    color=raw.get("color"),
+                    rescue_keywords=tuple(str(k) for k in raw.get("rescue_keywords") or ()),
+                )
+            )
+        return out
+
+    def subtypes_of(self, core_type: str) -> list[SubtypeSpec]:
+        """The pack's subtypes of ``core_type`` (``Person`` -> Character, Author, ...), in config order."""
+        return [s for s in self.subtypes() if s.of == core_type]
+
+    def core_properties(self, core_type: str) -> list[dict[str, Any]]:
+        """The properties a pack adds to ``core_type`` itself (``core_properties``), in config order."""
+        raw = (self.config.get("core_properties") or {}).get(core_type) or []
+        return [dict(p) for p in raw if isinstance(p, dict)]
+
+    def core_rescue_keywords(self) -> dict[str, list[str]]:
+        """The words a pack rescues a written type to a core type itself by (``core_rescue_keywords``)."""
+        raw = self.config.get("core_rescue_keywords") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(core): [str(k) for k in kws]
+            for core, kws in raw.items()
+            if isinstance(kws, list) and kws
+        }
+
+    def extra_edge_templates(self) -> list[dict[str, Any]]:
+        """The edge templates a pack adds to the floor's (cleaned as :meth:`get_templates`); none for the floor."""
+        if self.role == "floor":
+            return []
+        return self.get_templates()["edge_templates"]
+
+    @property
     def metadata(self) -> PluginMetadata:
         """Get plugin metadata from JSON-LD config.
 
@@ -246,21 +407,20 @@ class ConfigurableDomain:
         confidence_config = detection.get("confidence", {})
 
         # Start with base score
-        base_score = confidence_config.get("base_score", 0.1)
+        base_score = detection_base_score(self.config)
         per_keyword_boost = confidence_config.get("per_keyword_boost", 0.05)
         extension_boost = confidence_config.get("extension_boost", 0.1)
         doc_type_boost = confidence_config.get("doc_type_boost", 0.2)
         pattern_boost = confidence_config.get("pattern_boost", 0.15)
         min_threshold = confidence_config.get("min_threshold", 0.4)
-        # NOTE: max_confidence cap removed - raw scores provide better domain ranking
+        # Raw, uncapped: the registry ranks by it and caps what it reports
+        # (``detection_max_confidence``).
 
-        text_lower = text.lower()
         confidence = base_score
 
-        # Count keyword matches with weights
-        for long_terms, short_patterns, weight in self._keyword_groups:
-            matches = sum(1 for term in long_terms if term in text_lower)
-            matches += sum(1 for pat in short_patterns if pat.search(text))
+        # Count keyword matches with weights (each distinct term once, as a word)
+        for patterns, weight in self._keyword_groups:
+            matches = sum(1 for pat in patterns if pat.search(text))
             confidence += matches * per_keyword_boost * weight
 
         # Check file extensions
@@ -287,12 +447,15 @@ class ConfigurableDomain:
         return can_handle, confidence
 
     def get_guidance(self) -> str:
-        """Return domain-specific extraction guidance.
+        """Return domain-specific extraction guidance (the entity guidance).
+
+        The legacy single ``guidance`` key was removed (spec 2026-10-07 § 3):
+        a config writes ``entity_guidance`` and ``relationship_guidance``.
 
         Returns:
-            LLM guidance text from config.
+            The entity guidance, or an empty string.
         """
-        return cast("str", self.config.get("guidance", ""))
+        return self.get_entity_guidance() or ""
 
     def get_entity_guidance(self) -> str | None:
         """Get entity-specific extraction guidance.
@@ -301,16 +464,10 @@ class ConfigurableDomain:
         vs relationship extraction.
 
         Returns:
-            Entity-specific guidance if configured, otherwise falls back
-            to the general 'guidance' field. Returns None if neither exists.
+            Entity-specific guidance if configured, otherwise None.
         """
-        # Prefer entity_guidance if configured
         entity_guidance = self.config.get("entity_guidance")
-        if entity_guidance:
-            return cast("str", entity_guidance)
-        # Fall back to general guidance for backwards compatibility
-        guidance = self.config.get("guidance")
-        return cast("str", guidance) if guidance else None
+        return cast("str", entity_guidance) if entity_guidance else None
 
     def get_relationship_guidance(self) -> str | None:
         """Get relationship-specific extraction guidance.
@@ -320,19 +477,17 @@ class ConfigurableDomain:
         are provided as context.
 
         Returns:
-            Relationship-specific guidance if configured, otherwise falls back
-            to the general 'guidance' field. Returns None if neither exists.
+            Relationship-specific guidance if configured, otherwise None.
         """
-        # Prefer relationship_guidance if configured
         relationship_guidance = self.config.get("relationship_guidance")
-        if relationship_guidance:
-            return cast("str", relationship_guidance)
-        # Fall back to general guidance for backwards compatibility
-        guidance = self.config.get("guidance")
-        return cast("str", guidance) if guidance else None
+        return cast("str", relationship_guidance) if relationship_guidance else None
 
     def get_templates(self) -> dict[str, list[dict[str, Any]]]:
         """Return domain-specific entity and edge templates.
+
+        The floor returns the core types and the core labels; a pack has no
+        node templates (its subtypes are :meth:`subtypes_of`) and returns
+        ``{"node_templates": [], "edge_templates": <the labels it adds>}``.
 
         Returns:
             Templates dict with node_templates and edge_templates lists.
@@ -419,10 +574,11 @@ class ConfigurableDomain:
     def get_type_aliases(self) -> dict[str, str]:
         """Return a mapping of alias entity type names to canonical names.
 
-        Domains may declare a ``type_aliases`` block at the top level of
-        their ``.jsonld`` config to collapse near-duplicate node templates
-        into a single canonical type while preserving the original under
-        the entity's ``entity_subtype`` property. See
+        A pack may declare a ``type_aliases`` block at the top level of its
+        ``.jsonld`` config mapping a written type name to one of its
+        subtypes or to a core type (a pack has no node templates of its
+        own); the written name is preserved under the entity's
+        ``entity_subtype`` property. See
         ``chaoscypher_core.services.sources.engine.extraction.utils.type_normalizer.apply_type_aliases``
         for the rewrite semantics.
 
@@ -469,6 +625,9 @@ class ConfigurableDomain:
         Returns:
             Dictionary with keys:
             - ``entity_scores``: ``{type_name: score}`` for node templates
+              (the floor's core types; a pack has none)
+            - ``subtype_scores``: ``{entity_subtype: score}`` for a pack's
+              subtypes (keyed by the stored value, ``subtype_key``)
             - ``relationship_scores``: ``{type_name: score}`` for edge templates
             - ``default_entity_score``: Fallback score for unknown entity types
             - ``default_relationship_score``: Fallback score for unknown rel types
@@ -484,6 +643,11 @@ class ConfigurableDomain:
             if name and score is not None:
                 entity_scores[name] = score
 
+        subtype_scores: dict[str, int] = {}
+        for sub in self.config.get("subtypes") or []:
+            if isinstance(sub, dict) and sub.get("name") and sub.get("quality_score") is not None:
+                subtype_scores[subtype_key(str(sub["name"]))] = sub["quality_score"]
+
         relationship_scores: dict[str, int] = {}
         for tmpl in templates.get("edge_templates", []):
             name = tmpl.get("name")
@@ -493,6 +657,7 @@ class ConfigurableDomain:
 
         result: dict[str, Any] = {
             "entity_scores": entity_scores,
+            "subtype_scores": subtype_scores,
             "relationship_scores": relationship_scores,
             "default_entity_score": scoring_defaults.get("default_entity_score", 18),
             "default_relationship_score": scoring_defaults.get("default_relationship_score", 15),
@@ -508,6 +673,205 @@ class ConfigurableDomain:
             List of lowercase title words from config.
         """
         return cast("list[str]", self.config.get("title_words", []))
+
+    def get_feminine_titles(self) -> list[str]:
+        """Return the titles that say a woman (``feminine_titles``), for the name rule.
+
+        Returns:
+            Title words from config; empty when the domain declares none (the
+            name rule then uses its universal ones).
+        """
+        return [str(w) for w in self.config.get("feminine_titles") or []]
+
+    def get_masculine_titles(self) -> list[str]:
+        """Return the titles that say a man (``masculine_titles``), for the name rule.
+
+        Returns:
+            Title words from config; empty when the domain declares none.
+        """
+        return [str(w) for w in self.config.get("masculine_titles") or []]
+
+    def get_generation_words(self) -> dict[str, str]:
+        """Return the words that say which generation a name means (``generation_words``).
+
+        Example JSON-LD::
+
+            {"generation_words": {"old": "elder", "young": "younger"}}
+
+        Returns:
+            Mapping of word to generation label; empty when none are declared.
+        """
+        raw = self.config.get("generation_words") or {}
+        return {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+
+    def get_name_forms(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the name-form endings by language (``name_forms``), for the name rule.
+
+        Each form is ``{"ending", "stem", "gender"}``: ``ending`` is replaced
+        by ``stem`` to give the family stem both forms share, and ``gender``
+        (``"f"``, ``"m"`` or null) is what the ending says of the bearer.
+
+        Example JSON-LD::
+
+            {"name_forms": {"ru": [{"ending": "ova", "stem": "ov", "gender": "f"}]}}
+
+        Returns:
+            Mapping of language code to its forms; empty when none are declared.
+        """
+        raw = self.config.get("name_forms") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {str(lang): [dict(f) for f in forms or []] for lang, forms in raw.items()}
+
+    def get_role_words(self) -> list[str]:
+        """Return the words naming a role one person has to another (``role_words``), for the name rule.
+
+        With the ``relation_vocabulary`` words they make a possessive name a
+        descriptor (``Count Rostóv's valet``), never a name of the person it
+        mentions (``name_identity.descriptor_possessor``).
+
+        Returns:
+            Role words from config; empty when the domain declares none.
+        """
+        return [str(w) for w in self.config.get("role_words") or []]
+
+    def get_title_equivalents(self) -> list[list[str]]:
+        """Return groups of spellings of one title (``title_equivalents``), for the name rule.
+
+        Example JSON-LD::
+
+            {"title_equivalents": [["mme", "madame"], ["mlle", "mademoiselle"]]}
+
+        Returns:
+            The groups; empty when the domain declares none.
+        """
+        raw = self.config.get("title_equivalents") or []
+        return [[str(t) for t in group] for group in raw if isinstance(group, list)]
+
+    def get_relation_vocabulary(self) -> dict[str, dict[str, list[str]]]:
+        """Return the words that state each relation (``relation_vocabulary``).
+
+        Each entry names a relation and lists the edge labels that state it
+        and the words prose uses for it ("sister" for ``sibling_of``); the
+        evidence validator's one-endpoint rule and the graph scan read it
+        (``relation_vocabulary.RelationVocabulary``).
+
+        Example JSON-LD::
+
+            {"relation_vocabulary": {
+                "sibling": {"labels": ["sibling_of"], "words": ["brother", "sister"]}}}
+
+        Returns:
+            Mapping of relation name to ``{"labels": [...], "words": [...]}``;
+            empty when none is declared.
+        """
+        raw = self.config.get("relation_vocabulary") or {}
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(name): {
+                "labels": [str(x) for x in (entry or {}).get("labels") or []],
+                "words": [str(x) for x in (entry or {}).get("words") or []],
+            }
+            for name, entry in raw.items()
+        }
+
+    def get_person_types(self) -> list[str]:
+        """Return the node templates and subtypes marked ``"names_a_person": true``, in config order.
+
+        Only a person's name can name its bearer through someone else's
+        (``Natásha's mother``): the name rule reads a possessive as a
+        descriptor for these types (and the universal core type ``Person``,
+        which every entity of a Person subtype is: ``NameConventions.is_person``
+        reads the core type), and as part of the name for every other
+        (``Caesar's Commentaries``, a work).
+
+        Returns:
+            Node template and subtype names; empty when none is marked.
+        """
+        templates = (self.config.get("templates") or {}).get("node_templates") or []
+        marked = [*templates, *(self.config.get("subtypes") or [])]
+        return [
+            str(t["name"])
+            for t in marked
+            if isinstance(t, dict) and t.get("name") and t.get("names_a_person") is True
+        ]
+
+    def get_two_endpoint_relations(self) -> list[str]:
+        """Return the edge templates marked ``"two_endpoints_only": true``, in template order.
+
+        The evidence validator never supports one of them on one named
+        endpoint, whatever the universal vocabulary says (a financial
+        ``parent_of`` is a parent company, not a parent). Every edge template
+        of a shipped domain is either stated by the domain's relation
+        vocabulary or marked so (a guard test holds the two in step).
+
+        Returns:
+            Edge template names; empty when none is marked.
+        """
+        templates = (self.config.get("templates") or {}).get("edge_templates") or []
+        return [
+            str(t["name"])
+            for t in templates
+            if isinstance(t, dict) and t.get("name") and t.get("two_endpoints_only") is True
+        ]
+
+    def get_two_endpoint_reasons(self) -> dict[str, str]:
+        """Return each two-endpoints-only edge template's ``two_endpoints_only_reason``.
+
+        Why the template needs both endpoints named although its label
+        carries a word prose may use for the relation
+        (``relation_vocabulary.label_evidence_words``): a shared reason by
+        name (``relation_vocabulary.TWO_ENDPOINTS_REASONS``) or one of its
+        own. A guard test requires it on every such template of every
+        registered domain (audit wave 6: ``rivals`` and ``member_of`` were
+        marked for want of a vocabulary entry, and true edges dropped).
+
+        Returns:
+            Template name -> reason, for the templates that give one.
+        """
+        templates = (self.config.get("templates") or {}).get("edge_templates") or []
+        return {
+            str(t["name"]): str(t["two_endpoints_only_reason"])
+            for t in templates
+            if isinstance(t, dict) and t.get("name") and t.get("two_endpoints_only_reason")
+        }
+
+    def get_vocabulary_exclusions(self) -> list[str]:
+        """Return the edge labels the relation vocabulary does not state here.
+
+        The two-endpoints-only edge templates (:meth:`get_two_endpoint_relations`);
+        the older top-level ``vocabulary_exclusions`` key was removed (spec
+        2026-10-07 § 3).
+
+        Returns:
+            Edge labels; empty when the domain declares none.
+        """
+        return self.get_two_endpoint_relations()
+
+    def get_identity_tables(self) -> dict[str, Any]:
+        """Return the declared naming and relation tables, for the content fingerprint.
+
+        Only the tables the domain declares (a domain with none returns an
+        empty dict, so its fingerprint is what it was before these tables).
+
+        Returns:
+            ``title_words``, ``feminine_titles``, ``masculine_titles``,
+            ``generation_words``, ``name_forms``, ``relation_vocabulary``,
+            ``role_words`` and ``title_equivalents``, each when non-empty.
+        """
+        readers: dict[str, Any] = {
+            "title_words": lambda: sorted(self.get_title_words()),
+            "feminine_titles": lambda: sorted(self.get_feminine_titles()),
+            "masculine_titles": lambda: sorted(self.get_masculine_titles()),
+            "generation_words": self.get_generation_words,
+            "name_forms": self.get_name_forms,
+            "title_equivalents": lambda: sorted(sorted(g) for g in self.get_title_equivalents()),
+            "relation_vocabulary": self.get_relation_vocabulary,
+            "role_words": lambda: sorted(self.get_role_words()),
+        }
+        tables = {name: readers[name]() for name in IDENTITY_TABLES}
+        return {k: v for k, v in tables.items() if v}
 
     def get_inverse_relationships(self) -> dict[str, str]:
         """Return inverse relationship mapping for this domain.
@@ -597,26 +961,6 @@ class ConfigurableDomain:
         raw = self.config.get("entity_exclusions", [])
         return [ExclusionRule.model_validate(r) for r in raw]
 
-    def get_type_compatibility(self) -> dict[str, list[str]]:
-        """Return domain-specific type compatibility groups for deduplication.
-
-        Builds the group mapping from ``compatibility_group`` fields on
-        individual node templates. Templates sharing the same group name
-        are collected into a single list.
-
-        Returns:
-            Mapping of group name to list of compatible type names.
-            Empty dict if no templates carry this field.
-        """
-        templates = self.config.get("templates", {})
-        groups: dict[str, list[str]] = {}
-        for tmpl in templates.get("node_templates", []):
-            name = tmpl.get("name")
-            group = tmpl.get("compatibility_group")
-            if name and group:
-                groups.setdefault(group, []).append(name)
-        return groups
-
     def get_strict_entity_types(self) -> bool:
         """Return whether entity type enforcement is enabled for this domain.
 
@@ -641,11 +985,17 @@ class ConfigurableDomain:
         These limits are enforced in code after LLM extraction. Global
         settings act as fallbacks when a domain doesn't specify limits.
 
+        The floor's limits are :data:`core_types.FLOOR_LIMITS` (one source the
+        schema compares a pack's against); a pack's are its own, which the
+        schema keeps at or above the floor's.
+
         Returns:
             Dictionary of ``FilteringConfig`` field overrides. The preset
             selector lives on ``get_filtering_mode()`` — never inlined here.
             Empty dict uses global defaults.
         """
+        if self.role == "floor":
+            return dict(FLOOR_LIMITS)
         return cast("dict[str, float | int]", dict(self.config.get("extraction_limits", {})))
 
     def get_filtering_mode(self) -> str | None:
@@ -654,17 +1004,14 @@ class ConfigurableDomain:
         return cast("str | None", mode) if mode else None
 
     def get_evidence_validation_mode(self) -> str | None:
-        """Return the evidence validation mode for this domain.
+        """Return None: a domain no longer overrides the evidence validation mode.
 
-        Allows domains to override the global ``evidence_validation_mode``
-        setting on a per-domain basis.
-
-        Returns:
-            ``"strict"``, ``"standard"``, ``"relaxed"``, or ``None`` to use
-            the global default from ``ExtractionSettings``.
+        The top-level ``evidence_validation_mode`` key was removed (spec
+        2026-10-07 § 3); the global ``ExtractionSettings`` value applies (and a
+        preset may still set it through ``extraction_limits``). Kept for the
+        ``DomainAnalyzer`` protocol.
         """
-        mode = self.config.get("evidence_validation_mode")
-        return cast("str | None", mode)
+        return None
 
     def get_property_type_mapping(self) -> dict[str, dict[str, str]]:
         """Return property-type mapping for the type rescue system.
@@ -727,29 +1074,6 @@ class ConfigurableDomain:
         """
         return cast("dict[str, Any]", self.config.get("content_exclusions", {}))
 
-    def get_system_prompt_override(self) -> str | None:
-        """Return the per-domain system-prompt override if configured.
-
-        Allows a domain JSONLD config to replace the global
-        ``ExtractionSettings.system_prompt`` for all extraction calls
-        on this domain.  ``None`` means "no override — use the global default".
-
-        Example JSONLD::
-
-            {
-              "extraction_overrides": {
-                "system_prompt": "You are a biomedical entity extractor. ..."
-              }
-            }
-
-        Returns:
-            Replacement system prompt string, or ``None`` when absent.
-        """
-        overrides = self.config.get("extraction_overrides")
-        if not isinstance(overrides, dict):
-            return None
-        return cast("str | None", overrides.get("system_prompt"))
-
 
 def load_domain_config(path: Path) -> dict[str, Any]:
     """Load domain configuration from JSON-LD or JSON file.
@@ -770,4 +1094,12 @@ def load_domain_config(path: Path) -> dict[str, Any]:
     return cast("dict[str, Any]", json.loads(content))
 
 
-__all__ = ["ConfigurableDomain", "load_domain_config"]
+__all__ = [
+    "DEFAULT_DETECTION_BASE_SCORE",
+    "DEFAULT_DETECTION_MAX_CONFIDENCE",
+    "ConfigurableDomain",
+    "SubtypeSpec",
+    "detection_base_score",
+    "detection_max_confidence",
+    "load_domain_config",
+]

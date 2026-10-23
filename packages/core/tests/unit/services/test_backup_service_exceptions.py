@@ -315,3 +315,47 @@ class TestGetBackupPathFileNotFound:
         assert exc.code == "NOT_FOUND"
         assert exc.resource_type == "Backup"
         assert exc.identifier == "ghost.db"
+
+
+@pytest.mark.unit
+class TestInterruptedBackupLeavesNoListedFile:
+    """A failed ``VACUUM INTO`` must not leave a listable ``app_*.db``.
+
+    Its leftover target is an empty database: listed newest it evicted a
+    good backup from retention and passed restore's validation.
+    """
+
+    def test_interrupted_vacuum_leaves_nothing_listed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        service = _make_service(tmp_path)
+        db_path = tmp_path / "databases" / "mydb" / "app.db"
+        _seed_db(db_path)
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.executemany("INSERT INTO t DEFAULT VALUES", [()] * 2000)
+        conn.close()
+        real_connect = sqlite3.connect
+
+        def interrupting_connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+            conn = real_connect(*args, **kwargs)  # type: ignore[arg-type]
+            steps = iter(range(100))
+            # Abort mid-copy: after the target file exists, before it is filled.
+            conn.set_progress_handler(lambda: next(steps, None) is None, 1)
+            return conn
+
+        monkeypatch.setattr(sqlite3, "connect", interrupting_connect)
+        with pytest.raises(sqlite3.OperationalError):
+            service.create_backup("mydb")
+        monkeypatch.setattr(sqlite3, "connect", real_connect)
+
+        assert service.list_backups("mydb") == []
+        assert list((tmp_path / "backups" / "mydb").iterdir()) == []
+
+    def test_successful_backup_is_listed(self, tmp_path: Path) -> None:
+        service = _make_service(tmp_path)
+        _seed_db(tmp_path / "databases" / "mydb" / "app.db")
+
+        created = service.create_backup("mydb")
+
+        assert [b["filename"] for b in service.list_backups("mydb")] == [created["filename"]]
+        assert [p.name for p in (tmp_path / "backups" / "mydb").iterdir()] == [created["filename"]]

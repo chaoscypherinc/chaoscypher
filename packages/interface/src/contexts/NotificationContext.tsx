@@ -28,7 +28,7 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     setOpen(true);
   }, []);
 
-  const handleClose = useCallback((_?: React.SyntheticEvent | Event, reason?: string) => {
+  const handleClose = useCallback((_?: React.SyntheticEvent | Event | null, reason?: string) => {
     if (reason === 'clickaway') return;
     setOpen(false);
   }, []);
@@ -73,4 +73,3 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     </NotificationContext.Provider>
   );
 }
-

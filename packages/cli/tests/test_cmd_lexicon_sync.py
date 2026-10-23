@@ -21,6 +21,7 @@ network/filesystem I/O mocked.  The test matrix is:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -538,6 +539,11 @@ class TestPullCommand:
         assert result.exit_code == 0, result.output
         mock_extract.assert_called_once()
         assert "Extracting" in result.output
+        # The load hint must name the .ccx archive: the importer cannot read
+        # the extracted directory.
+        # (Rich hard-wraps the long tmp path, so join lines before matching.)
+        flat = result.output.replace("\n", "")
+        assert re.search(r"package load \S+\.ccx(\s|$)", flat), result.output
 
     def test_pull_client_error_exits_1(self, tmp_path: Path) -> None:
         runner = CliRunner()

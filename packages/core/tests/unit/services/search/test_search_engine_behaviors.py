@@ -218,7 +218,7 @@ class TestHydrateChunks:
     def test_enriches_filename_from_source(self) -> None:
         svc = _make_search_service()
         svc.indexing_repository.get_chunks_by_ids_batch.return_value = [_chunk("c1")]
-        svc.source_repository.get_source.return_value = {"filename": "doc.pdf"}
+        svc.source_repository.get_source_filenames_by_ids.return_value = {"src-1": "doc.pdf"}
         result = svc._hydrate_chunks(["c1"], None)
         assert result["c1"]["filename"] == "doc.pdf"
 
@@ -235,24 +235,25 @@ class TestHydrateChunks:
         ]
         result = svc._hydrate_chunks(["c1"], None)
         assert result["c1"]["filename"] == "Unknown"
-        svc.source_repository.get_source.assert_not_called()
+        svc.source_repository.get_source_filenames_by_ids.assert_not_called()
 
     def test_filters_disabled_source(self) -> None:
         svc = _make_search_service()
         svc.indexing_repository.get_chunks_by_ids_batch.return_value = [
             _chunk("c1", source_id="disabled")
         ]
-        svc.source_repository.get_source.return_value = {"filename": "doc.pdf"}
+        svc.source_repository.get_source_filenames_by_ids.return_value = {"disabled": "doc.pdf"}
         result = svc._hydrate_chunks(["c1"], {"enabled"})
         assert result == {}
 
     def test_batches_chunk_fetch_and_dedupes_source_lookups(self) -> None:
-        """One batch SELECT for the page, one get_source per DISTINCT source.
+        """One batch SELECT for the page, one narrow filename SELECT per database.
 
         Pins the N+1 fix: hydration used to issue get_chunk_by_id plus
-        get_source once PER CHUNK on every search request, while the
-        sibling _hydrate_nodes batched. Three chunks across two sources
-        must cost exactly one chunk fetch and two source fetches.
+        get_source once PER CHUNK, then one full get_source (~160 columns +
+        a stage-progress query) per DISTINCT source, to read a filename.
+        Three chunks across two sources must cost one chunk fetch, one
+        filename fetch, and no get_source at all.
         """
         svc = _make_search_service()
         svc.indexing_repository.get_chunks_by_ids_batch.return_value = [
@@ -260,7 +261,9 @@ class TestHydrateChunks:
             _chunk("c2", source_id="src-a"),
             _chunk("c3", source_id="src-b"),
         ]
-        svc.source_repository.get_source.side_effect = lambda sid, db: {"filename": f"{sid}.pdf"}
+        svc.source_repository.get_source_filenames_by_ids.side_effect = lambda ids, db: {
+            sid: f"{sid}.pdf" for sid in ids
+        }
 
         result = svc._hydrate_chunks(["c1", "c2", "c3"], None)
 
@@ -268,7 +271,16 @@ class TestHydrateChunks:
         assert result["c1"]["filename"] == "src-a.pdf"
         assert result["c3"]["filename"] == "src-b.pdf"
         svc.indexing_repository.get_chunks_by_ids_batch.assert_called_once_with(["c1", "c2", "c3"])
-        assert svc.source_repository.get_source.call_count == 2
+        svc.source_repository.get_source_filenames_by_ids.assert_called_once_with(
+            ["src-a", "src-b"], "default"
+        )
+        svc.source_repository.get_source.assert_not_called()
+
+    def test_source_row_missing_uses_unknown(self) -> None:
+        svc = _make_search_service()
+        svc.indexing_repository.get_chunks_by_ids_batch.return_value = [_chunk("c1")]
+        svc.source_repository.get_source_filenames_by_ids.return_value = {}
+        assert svc._hydrate_chunks(["c1"], None)["c1"]["filename"] == "Unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +296,7 @@ class TestBuildSearchResults:
         svc.graph_repository.get_nodes_batch.return_value = [_node("n1")]
         svc.graph_repository.count_edges_per_node.return_value = {"n1": 3}
         svc.indexing_repository.get_chunks_by_ids_batch.return_value = [_chunk("cuid")]
-        svc.source_repository.get_source.return_value = {"filename": "f.pdf"}
+        svc.source_repository.get_source_filenames_by_ids.return_value = {"src-1": "f.pdf"}
 
         results = [
             ("chunk:cuid", 0.9),
@@ -562,6 +574,65 @@ class TestRebuildWithRegeneration:
         assert out["regeneration_errors"] == 1
 
     @pytest.mark.asyncio
+    async def test_reindex_flag_kept_when_a_source_reembed_fails(self) -> None:
+        """A failed source re-embed must leave needs_full_reindex set.
+
+        The flag is the only record that stored vectors predate the current
+        embedding model; clearing it after a failure sends every later
+        rebuild down the fast path with old-model vectors.
+        """
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.side_effect = lambda *a, **kw: (
+            ([{"id": "s1", "filename": "a"}], 1)
+            if kw.get("status") is SourceStatus.COMMITTED
+            else ([], 0)
+        )
+        svc.graph_repository.list_nodes.return_value = []
+        svc.search_repository.reindex_all_nodes.return_value = None
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock(side_effect=RuntimeError("provider down"))
+        indexing_service.embedding_service = None
+
+        await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        svc.search_repository.clear_reindex_flag.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reindex_flag_kept_when_a_node_wave_fails(self) -> None:
+        """A failed node re-embed wave must leave needs_full_reindex set."""
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = ([], 0)
+        svc.graph_repository.list_nodes.return_value = [_node("n1")]
+        svc.search_repository.reindex_all_nodes.return_value = None
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        indexing_service.embedding_service = _batch_embedding_service(
+            error=RuntimeError("provider down")
+        )
+
+        await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        svc.search_repository.clear_reindex_flag.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reindex_flag_cleared_after_clean_regeneration(self) -> None:
+        svc = _make_search_service()
+        svc.sources_repository.list_sources.return_value = ([], 0)
+        svc.graph_repository.list_nodes.return_value = [_node("n1")]
+        svc.search_repository.reindex_all_nodes.return_value = None
+        svc.graph_repository.update_node_embeddings_batch.return_value = 1
+
+        indexing_service = MagicMock()
+        indexing_service.create_index = AsyncMock()
+        indexing_service.embedding_service = _batch_embedding_service([[0.1, 0.2]])
+
+        await svc.rebuild_with_regeneration(indexing_service=indexing_service)
+
+        svc.search_repository.clear_reindex_flag.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_node_reembed_loop_runs_with_embedding_service(self) -> None:
         svc = _make_search_service()
 
@@ -569,7 +640,13 @@ class TestRebuildWithRegeneration:
         svc.sources_repository.list_sources.return_value = ([], 0)
 
         node = _node("n1", source_document_id=None)
-        node.properties = {"name": "Alice", "age": 30}  # only str values joined
+        node.properties = {
+            "name": "Alice",
+            "age": 30,
+            "aliases": ["Al"],
+            "definition": "a test node",
+            "source_document_name": "x.txt",
+        }
         svc.graph_repository.list_nodes.return_value = [node]
         svc.search_repository.reindex_all_nodes.return_value = None
         svc.graph_repository.update_node_embeddings_batch.return_value = 1
@@ -585,7 +662,10 @@ class TestRebuildWithRegeneration:
             {"n1": [0.1, 0.2]}
         )
         svc.graph_repository.update_node.assert_not_called()
-        embedding_service.batch_embed.assert_awaited_once_with(["label-n1 Alice"])
+        # the node's import text (node_embedding_text): aliases kept, bookkeeping left out
+        embedding_service.batch_embed.assert_awaited_once_with(
+            ["label-n1 | Also known as: Al | a test node | Alice | 30"]
+        )
         assert out["regenerated"] is True
 
     @pytest.mark.asyncio

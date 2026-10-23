@@ -156,6 +156,10 @@ services:
         max-size: "50m"
         max-file: "3"
     restart: unless-stopped
+    # Cortex drains in-flight requests for cortex_shutdown_grace_seconds (30s
+    # default); Docker's own 10s default would SIGKILL it mid-drain. Same knob
+    # and default as the all-in-one compose.
+    stop_grace_period: ${CHAOSCYPHER_STOP_GRACE_PERIOD:-60s}
 
   # Interface service (Web UI)
   interface:
@@ -168,9 +172,9 @@ services:
     cap_drop:
       - ALL
     ports:
-      - "127.0.0.1:${INTERFACE_HOST_PORT:-3000}:8080"  # Localhost only (match cortex binding)
+      - "127.0.0.1:${INTERFACE_HOST_PORT:-3000}:8080"  # Localhost only — the single published port; cortex is reachable only through this proxy
     # Note: No VITE_API_URL needed — Vite vars are baked at build time.
-    # API routing is handled by the nginx proxy config (nginx.conf → proxy_pass to cortex).
+    # API routing is handled by the nginx proxy config (config/multi-interface-nginx.conf → proxy_pass to cortex).
     volumes:
       - edge-auth-data:/run/chaoscypher-edge:ro
     environment:

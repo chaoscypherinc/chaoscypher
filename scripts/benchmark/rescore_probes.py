@@ -4,7 +4,7 @@
 """Re-score a saved probe-benchmark run against the current probe fixture.
 
 Usage (from the repo root):
-    uv run python scripts/benchmark/rescore_probes.py [--reparse] <results.json> <out.json> [SECTION]
+    uv run python scripts/benchmark/rescore_probes.py [--reparse] [--queries FILE] [--allow-mixed] <results.json> <out.json> [SECTION]
 
 A sweep loads the probe fixture once at launch, so a checker fix or a re-tier
 made while it runs is not reflected in its verdicts. Rows carry the raw
@@ -19,6 +19,26 @@ saved ``raw_llm_response`` with the current line parser and entity filters
 without re-running the models. The raw text is the two passes joined by
 ``format_raw_harvest_response``; a record whose text does not split back
 into exactly two passes keeps its saved entities.
+
+Every rescored row is stamped with the scorer's ``scorer_recipe`` (a hash of
+its verdicts on fixed samples) next to ``scorer_version``, and the script
+prints the version and recipe of the chat scorer it rescored with, so a
+rescore names the behaviour it applied rather than only the hand-bumped
+number (scorer v5 drifted under one number; 2026-10-06 audit, H3).
+
+A chat row is rescored against the question file it was asked: the row's
+``extras["queries_file"]`` (a holdout set), else its dataset's own fixture.
+Rows of one file that asked different question files are refused, and so is
+a row none of whose answers is a question of the file it is rescored with:
+until 2026-10-06 (audit wave 2) a holdout row was rescored against the main
+fixture, every verdict read "missing" and the script printed "0 changed".
+``--queries FILE`` names the file for holdout rows from before the field.
+
+Rows of one file that record different question-file contents
+(``extras["queries_sha256"]``, audit wave 3: the file's name alone hid a
+fixture edit between two runs) are refused unless ``--allow-mixed``; a
+rescored chat row records the content it was rescored with as
+``extras["rescored_queries_sha256"]`` next to the one it was asked.
 """
 
 import asyncio
@@ -33,7 +53,7 @@ import structlog
 from chaoscypher_cli.benchmark.discovery import discover_datasets
 from chaoscypher_cli.benchmark.probe_dataset import ProbeDataset, completion_counters
 from chaoscypher_cli.benchmark.results import dump_results, load_results
-from chaoscypher_cli.benchmark.scorers.probes import rescore
+from chaoscypher_cli.benchmark.scorers.probes import PROBE_SCORER_VERSION, rescore
 
 
 _PASS1_HEADER = "=== PASS 1 (Entities) ===\n"
@@ -79,7 +99,6 @@ async def reparse_record(rec: dict[str, Any], probe: Any, extractor: Any, limits
         edge_templates_formatted="",
         limits=limits,
         entity_exclusions=[ExclusionRule(**e) for e in probe.entity_exclusions] or None,
-        strict_entity_types=probe.strict_types,
         valid_entity_type_names=set(probe.entity_types) or None,
     )
     rec["entities"] = parsed.entities
@@ -126,7 +145,13 @@ def main() -> None:
     """Rescore every row of the results file and write the updated copy."""
     args = sys.argv[1:]
     do_reparse = "--reparse" in args
-    args = [a for a in args if a != "--reparse"]
+    allow_mixed = "--allow-mixed" in args
+    args = [a for a in args if a not in ("--reparse", "--allow-mixed")]
+    override: Path | None = None
+    if "--queries" in args:
+        at = args.index("--queries")
+        override = Path(args[at + 1])
+        args = args[:at] + args[at + 2 :]
     src, out = Path(args[0]), Path(args[1])
     section = args[2] if len(args) > 2 else None
     dataset = next(d for d in discover_datasets() if isinstance(d, ProbeDataset))
@@ -137,10 +162,21 @@ def main() -> None:
         structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.ERROR))
         asyncio.run(reparse_rows(rows, {p.id: p for p in dataset.probes}))
     changed = 0
+    chat_recipes: set[str] = set()
+    chat_rows = [r for r in rows if r.dataset_kind == "chat" and (r.extras or {}).get("per_query")]
+    mixed = mixed_question_contents(chat_rows)
+    if mixed:
+        if not allow_mixed:
+            msg = f"{mixed}; rescore each set on its own, or pass --allow-mixed"
+            raise SystemExit(msg)
+        print(f"WARNING (--allow-mixed) {mixed}")
+    chat_questions = _chat_questions(chat_rows, override)
     for row in rows:
         extras = row.extras or {}
         if row.dataset_kind == "chat" and extras.get("per_query"):
-            changed += _rescore_chat(row)
+            changed += _rescore_chat(row, *chat_questions(row))
+            if _is_probe_scored(row):
+                chat_recipes.add(f"v{row.scorer_version} recipe {row.scorer_recipe}")
             continue
         if not extras.get("probes"):
             continue
@@ -162,9 +198,33 @@ def main() -> None:
             print(f"{row.model_label}: {', '.join(flips)}")
         row.metrics = result.metrics
         row.headline_score = result.headline_score
+        row.scorer_version = PROBE_SCORER_VERSION
+        row.scorer_recipe = result.metrics.get("scorer_recipe")
         row.chunks_truncated, row.chunks_aborted_by_loop = completion_counters(extras["probes"])
     dump_results(rows, out)
     print(f"rescored {len(rows)} rows ({changed} changed) -> {out}")
+    if chat_recipes:
+        # the behaviour that produced the new verdicts, not only the hand-bumped number
+        print(f"chat probe scorer: {', '.join(sorted(chat_recipes))}")
+
+
+def mixed_question_contents(rows: list[Any]) -> str | None:
+    """Why the chat rows were asked different question-file contents; None when they were not.
+
+    Compares the recorded ``extras["queries_sha256"]`` of the rows that record
+    one (:func:`~chaoscypher_core.benchmark.results.recorded_queries_sha256`).
+    """
+    from chaoscypher_core.benchmark.results import recorded_queries_sha256
+
+    seen: dict[str, list[str]] = {}
+    for row in rows:
+        digest = recorded_queries_sha256(row)
+        if digest is not None:
+            seen.setdefault(digest, []).append(row.model_label)
+    if len(seen) < 2:
+        return None
+    detail = "; ".join(f"{d[:12]}: {len(m)} row(s)" for d, m in sorted(seen.items()))
+    return f"rows asked different question-file contents ({detail})"
 
 
 def _is_probe_scored(row: Any) -> bool:
@@ -183,23 +243,77 @@ def _is_probe_scored(row: Any) -> bool:
     )
 
 
-def _rescore_chat(row: Any) -> int:
+def _chat_questions(rows: list[Any], override: Path | None) -> Any:
+    """``row -> (questions, source, path)`` for the chat rows: the one question file they were asked.
+
+    The file is each row's ``extras["queries_file"]`` when it is not the
+    dataset's own (a holdout set), ``override`` for rows that record none,
+    else the dataset fixture.
+
+    Raises:
+        SystemExit: When the rows asked different question files.
+    """
+    from chaoscypher_cli.benchmark.chat_dataset import dataset_queries_path
+    from chaoscypher_cli.benchmark.discovery import load_dataset_bundle
+    from chaoscypher_core.benchmark.queries import load_queries
+    from chaoscypher_core.benchmark.results import (
+        QuestionFileMismatchError,
+        common_queries_file,
+        row_corpus_id,
+    )
+
+    try:
+        shared = common_queries_file(rows, dataset_queries_path, override=override)
+    except QuestionFileMismatchError as exc:
+        raise SystemExit(str(exc)) from exc
+    loaded = load_queries(shared) if shared is not None else None
+
+    def questions(row: Any) -> tuple[Any, str, Path | None]:
+        """The question set, its name and its file for one row."""
+        if loaded is not None:
+            return loaded, str(shared), shared
+        corpus_id = row_corpus_id(row)
+        bundle = load_dataset_bundle(corpus_id)
+        return bundle.queries, f"the {corpus_id} fixture", getattr(bundle, "queries_path", None)
+
+    return questions
+
+
+def _rescore_chat(
+    row: Any,
+    queries: Any = None,
+    source: str = "the dataset fixture",
+    queries_path: Path | None = None,
+) -> int:
     """Re-apply the chat probe checks to a saved chat row; 1 if a verdict flipped.
 
     Judge-scored rows are left untouched: probe metrics would silently
-    replace the judge's.
+    replace the judge's. ``queries`` is the question set the row was asked
+    (:func:`_chat_questions`); without it, the dataset's own. ``queries_path``
+    is its file, whose content hash the row records as ``rescored_queries_sha256``.
+
+    Raises:
+        SystemExit: When none of the row's answers is a question of ``queries``.
     """
     if not _is_probe_scored(row):
         print(f"{row.model_label}: judge-scored chat row, not rescored")
         return 0
     from chaoscypher_cli.benchmark.dataset import RawOutput
     from chaoscypher_cli.benchmark.discovery import load_dataset_bundle
-    from chaoscypher_cli.benchmark.scorers.chat_probes import ChatProbeScorer
+    from chaoscypher_cli.benchmark.scorers.chat_probes import (
+        CHAT_PROBE_SCORER_VERSION,
+        ChatProbeScorer,
+    )
+    from chaoscypher_core.benchmark.chat_run import queries_file_sha256
+    from chaoscypher_core.benchmark.results import unanswered_message
 
-    corpus_id = row.dataset_id.split("__chat__")[0]
-    queries = load_dataset_bundle(corpus_id).queries
+    if queries is None:
+        queries = load_dataset_bundle(row.dataset_id.split("__chat__")[0]).queries
     if queries is None:
         return 0
+    refusal = unanswered_message(row, {q.id for q in queries.queries}, source)
+    if refusal:
+        raise SystemExit(refusal)
     raw = RawOutput(
         entities=[],
         relationships=[],
@@ -220,6 +334,14 @@ def _rescore_chat(row: Any) -> int:
         print(f"{row.model_label}: {', '.join(flips)}")
     row.metrics = result.metrics
     row.headline_score = result.headline_score
+    row.scorer_version = CHAT_PROBE_SCORER_VERSION
+    row.scorer_recipe = result.metrics.get("scorer_recipe")
+    # the content the verdicts were scored with: hashed when it was parsed (audit wave 4)
+    rescored_with = getattr(queries, "sha256", None) or (
+        queries_file_sha256(queries_path) if queries_path is not None else None
+    )
+    if rescored_with is not None:
+        row.extras = {**(row.extras or {}), "rescored_queries_sha256": rescored_with}
     return 1 if flips else 0
 
 

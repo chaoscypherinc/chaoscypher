@@ -183,7 +183,7 @@ def indexing_repo() -> MagicMock:
     """Mock indexing repository."""
     repo = MagicMock()
     repo.get_chunks_by_ids_batch.return_value = []
-    repo.get_source.return_value = None
+    repo.get_source_filenames_by_ids.return_value = {}
     return repo
 
 
@@ -344,6 +344,24 @@ class TestSearchNodes:
 
         assert result["count"] == 1
         assert result["nodes"][0]["id"] == "n1"
+
+    @pytest.mark.asyncio
+    async def test_source_scope_keeps_a_merged_node(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+        embedding_callback: AsyncMock,
+    ) -> None:
+        """A node homed elsewhere that the scoped source also attests is kept (#795, D7)."""
+        merged = make_node("n1", "Alice", source_id="src_blocked")
+        merged.member_source_ids = ["src_allowed", "src_blocked"]
+        search_repo.hybrid_search = AsyncMock(return_value=[("n1", 0.9)])
+        graph_repo.get_nodes_batch.return_value = [merged]
+
+        handler = _make_handler(graph_repo, search_repo, embedding_callback=embedding_callback)
+        result = await handler.search_nodes("test", source_ids=["src_allowed"])
+
+        assert [n["id"] for n in result["nodes"]] == ["n1"]
 
     @pytest.mark.asyncio
     async def test_empty_results(
@@ -794,11 +812,11 @@ class TestSearchChunks:
         embedding_callback: AsyncMock,
         search_settings: SearchSettings,
     ) -> None:
-        """Source filename is resolved via indexing.get_source for citations."""
+        """Source filename is resolved via indexing.get_source_filenames_by_ids for citations."""
         chunk = make_chunk("c1", "Content.", source_id="src1")
         search_repo.hybrid_search = AsyncMock(return_value=[("chunk:c1", 0.9)])
         indexing_repo.get_chunks_by_ids_batch.side_effect = batch_lookup(chunk)
-        indexing_repo.get_source.return_value = {"filename": "document.pdf"}
+        indexing_repo.get_source_filenames_by_ids.return_value = {"src1": "document.pdf"}
 
         with (
             patch(f"{_CHUNK_HYDRATION_MODULE}.format_chunk_content") as mock_format,
@@ -817,7 +835,9 @@ class TestSearchChunks:
             result = await handler.search_chunks("test")
 
         assert result["chunks"][0]["filename"] == "document.pdf"
-        indexing_repo.get_source.assert_called_once()
+        # One narrow read for the page's sources, under the chunk's database.
+        indexing_repo.get_source_filenames_by_ids.assert_called_once()
+        assert indexing_repo.get_source_filenames_by_ids.call_args.args[0] == ["src1"]
 
 
 # ===========================================================================
@@ -960,6 +980,22 @@ class TestGetNode:
         assert "not accessible" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_source_scope_admits_a_merged_node(
+        self,
+        graph_repo: MagicMock,
+        search_repo: MagicMock,
+    ) -> None:
+        """A node homed elsewhere that the scoped source also attests is accessible (#795, D7)."""
+        merged = make_node("n1", "Alice", source_id="other_src")
+        merged.member_source_ids = ["allowed_src", "other_src"]
+        graph_repo.get_node.return_value = merged
+
+        handler = _make_handler(graph_repo, search_repo)
+        result = await handler.get_node(node_id="n1", source_ids=["allowed_src"])
+
+        assert result["success"] is True
+
+    @pytest.mark.asyncio
     async def test_datetime_converted_to_iso(
         self,
         graph_repo: MagicMock,
@@ -1014,6 +1050,7 @@ class TestCreateNode:
         """Creates a node and returns success with node details."""
         created_node = make_node("n_new", "New Node", "person", properties={"age": 25})
         graph_repo.create_node.return_value = created_node
+        graph_repo.get_template.return_value = SimpleNamespace(id="person", name="person")
 
         handler = _make_handler(graph_repo, search_repo)
         result = await handler.create_node(
@@ -1036,6 +1073,7 @@ class TestCreateNode:
         """Creates a node with empty properties dict."""
         created_node = make_node("n_new", "Simple Node", "thing", properties={})
         graph_repo.create_node.return_value = created_node
+        graph_repo.get_template.return_value = SimpleNamespace(id="thing", name="thing")
 
         handler = _make_handler(graph_repo, search_repo)
         result = await handler.create_node(template_id="thing", label="Simple Node", properties={})
@@ -1051,6 +1089,7 @@ class TestCreateNode:
     ) -> None:
         """Exception during creation is caught by @tool_handler decorator."""
         graph_repo.create_node.side_effect = RuntimeError("DB error")
+        graph_repo.get_template.return_value = SimpleNamespace(id="person", name="person")
 
         handler = _make_handler(graph_repo, search_repo)
         result = await handler.create_node(template_id="person", label="Fail", properties={})

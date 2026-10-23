@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
     from chaoscypher_core.adapters.sqlite.repos import GraphRepository
     from chaoscypher_core.app_config import Settings
@@ -37,6 +39,17 @@ from chaoscypher_core.constants import (
 from chaoscypher_core.queue import queue_client
 from chaoscypher_core.services.events import event_bus
 from chaoscypher_core.services.sources import source_heartbeat
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    forced_packs_of,
+    job_pack_labels,
+    stored_packs,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
+    TYPE_MISMATCH_STAGE_COUNT,
+    UNMATCHED_LABEL_STAGE_COUNT,
+    capped_relationships,
+    type_constraint_flags,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -321,8 +334,13 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
         adapter.update_step_progress(source_id, 1, 1, "Finalizing extraction results")
 
         job_record = adapter.get_extraction_job(job_id)
-        detected_domain = job_record.get("detected_domain") if job_record else None
-        forced_domain = job_record.get("forced_domain") if job_record else None
+        # The job's packs as the one-name strings the finalize threads (their
+        # labels: a single pack's is its name), and as lists for the source row.
+        forced_domain, detected_domain = job_pack_labels(job_record)
+        forced_packs = forced_packs_of(job_record)
+        detected_packs = stored_packs(
+            job_record, list_key="detected_packs", name_key="detected_domain"
+        )
 
         # Guard against race: the atomic job counter (completed_chunks) can
         # reach terminal while individual ChunkExtractionTask rows are still
@@ -466,6 +484,8 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                         relationships=[],
                         forced_domain=forced_domain,
                         detected_domain=detected_domain,
+                        forced_packs=forced_packs,
+                        detected_packs=detected_packs,
                         domain_version=_dom_version,
                         domain_content_hash=_dom_hash,
                     )
@@ -480,15 +500,8 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 database_name,
                 [],
                 [],
-                {
-                    "entities": [],
-                    "relationships": [],
-                    "suggested_templates": [],
-                    "suggested_edge_templates": [],
-                    "inverse_relationships": {},
-                },
+                {},  # no templates, no relationship rules: build_commit_payload's empty values
                 settings,
-                chunk_sentences=None,
             )
 
             await trigger_next_waiting_extraction(adapter, database_name, settings)
@@ -516,8 +529,18 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 logger=logger,
             )
 
-        # Step 1: Aggregate chunk results (shared Core logic)
-        aggregated = aggregate_chunk_results(completed_tasks)
+        # Step 1: Aggregate chunk results (shared Core logic). Aggregation
+        # also resolves each item's citation evidence against the group's
+        # small chunks, so the stored chunks are handed in by id.
+        source_chunks = await asyncio.to_thread(
+            adapter.get_chunks_for_extraction,
+            source_id=source_id,
+            database_name=database_name,
+        )
+        aggregated = aggregate_chunk_results(
+            completed_tasks,
+            chunks_by_id={c["id"]: c for c in source_chunks or [] if c.get("id")},
+        )
 
         logger.info(
             "finalize_aggregation_complete",
@@ -547,9 +570,6 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 counter=QualityCounter.AGGREGATOR_RELATIONSHIPS_DROPPED,
                 n=agg_dropped,
             )
-
-        # Step 1b: Resolve chunk sentences
-        chunk_sentences = _resolve_chunk_sentences(aggregated)
 
         # Step 2: Deduplication (code-only, no LLM calls during finalization)
         from chaoscypher_core.services.quality.counters import (
@@ -687,8 +707,11 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
         # Workstream 2 (2026-05-08): surface relationship drops from the
         # cross-chunk filters as row-level counters. Counters:
         #   * INVALID        — index validation + dedup (malformed indices)
-        #   * TYPE_UNMATCHED — type-constraint drops (strict mode only)
-        #   * CAPPED         — degree / total-count limit enforcement
+        #   * TYPE_UNMATCHED — the edges the strict type check kept flagged since
+        #                      2026-10-08 (before, the ones it dropped): the sum of
+        #                      UNMATCHED_LABEL_KEPT and TYPE_MISMATCH_KEPT
+        #   * CAPPED         — degree / total-count limit enforcement (kept flagged
+        #                      ``capped`` since 2026-10-07: nothing is dropped)
         #   * DIRECTION_CORRECTED — source<->target swaps (always; not a drop)
         # ``relationship_type_constraint`` is carved out of INVALID into its own
         # counter so operators can distinguish schema violations from type mismatches.
@@ -708,22 +731,19 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                 for s in stages
                 if s.get("stage") in invalid_stages
             )
-            type_unmatched_count = sum(
-                int(s.get("removed_count", 0) or 0)
-                for s in stages
-                if s.get("stage") == "relationship_type_constraint"
-            )
-            capped_count = sum(
-                int(s.get("removed_count", 0) or 0)
-                for s in stages
-                if s.get("stage") == "relationship_limit_enforcement"
-            )
+            # Since 2026-10-08 the type check drops nothing: the counters count the
+            # edges it kept flagged ``unmatched_label`` or ``type_mismatch``.
+            type_flags = type_constraint_flags(stages)
+            type_unmatched_count = sum(type_flags.values())
+            # Since 2026-10-07 the caps drop nothing: the counter counts the edges
+            # each cap kept flagged ``capped``.
+            capped_count = capped_relationships(stages)
             direction_corrected_count = sum(
                 int(s.get("removed_count", 0) or 0)
                 for s in stages
                 if s.get("stage") == "relationship_direction_corrected"
             )
-            # _fuzzy_type_match audit (2026-05-20): rescue counters. Each
+            # Type-constraint check counters (audit 2026-05-20). Each
             # stage carries the rescue count as its ``removed_count`` field
             # — not a removal, the stage name disambiguates (same pattern
             # as relationship_direction_corrected above).
@@ -753,6 +773,24 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
                     counter=QualityCounter.RELATIONSHIPS_DROPPED_TYPE_UNMATCHED,
                     n=type_unmatched_count,
                 )
+            for counter, n in (
+                (
+                    QualityCounter.RELATIONSHIPS_UNMATCHED_LABEL_KEPT,
+                    type_flags[UNMATCHED_LABEL_STAGE_COUNT],
+                ),
+                (
+                    QualityCounter.RELATIONSHIPS_TYPE_MISMATCH_KEPT,
+                    type_flags[TYPE_MISMATCH_STAGE_COUNT],
+                ),
+            ):
+                if n > 0:
+                    await increment_quality_counter(
+                        adapter=adapter,
+                        source_id=source_id,
+                        database_name=database_name,
+                        counter=counter,
+                        n=n,
+                    )
             if capped_count > 0:
                 await increment_quality_counter(
                     adapter=adapter,
@@ -863,11 +901,12 @@ async def _finalize_extraction_inner(  # noqa: C901, PLR0912 - finalizer orchest
             generate_embeddings=generate_embeddings,
             detected_domain=detected_domain,
             forced_domain=forced_domain,
+            forced_packs=forced_packs,
+            detected_packs=detected_packs,
             entities=deduplicated,
             relationships=remapped,
             cached_embeddings=cached_embeddings,
             completed_chunks=len(completed_tasks),
-            chunk_sentences=chunk_sentences,
             cross_chunk_filtering_log=dedup_filtering_log,
         )
 
@@ -955,8 +994,9 @@ async def _complete_finalization(
     relationships: list[dict[str, Any]],
     cached_embeddings: list[Any],
     completed_chunks: int,
-    chunk_sentences: list[list[str]] | None = None,
     cross_chunk_filtering_log: dict[str, Any] | None = None,
+    forced_packs: Sequence[str] | None = None,
+    detected_packs: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Shared completion steps: normalize, suggest templates, embed, commit.
 
@@ -973,14 +1013,15 @@ async def _complete_finalization(
         source_id: Source file ID.
         database_name: Database context.
         generate_embeddings: Whether to generate entity embeddings.
-        detected_domain: Auto-detected domain name.
-        forced_domain: User-forced domain override.
+        detected_domain: The detected packs' label (one pack's is its name).
+        forced_domain: The forced packs' label, or None when detected.
         entities: Final deduplicated entities.
         relationships: Final relationships.
         cached_embeddings: Cached embeddings from semantic dedup.
         completed_chunks: Number of completed chunk tasks.
-        chunk_sentences: Per-chunk sentence lists for evidence-based citations.
         cross_chunk_filtering_log: Cross-chunk pipeline filtering diagnostics.
+        forced_packs: The forced packs as a list, for the source row.
+        detected_packs: The detected packs as a list, for the source row.
 
     Returns:
         Result dictionary with final extraction statistics.
@@ -1114,6 +1155,8 @@ async def _complete_finalization(
                 relationships=remapped_relationships,
                 detected_domain=detected_domain,
                 forced_domain=forced_domain,
+                forced_packs=forced_packs,
+                detected_packs=detected_packs,
                 cross_chunk_filtering_log=filtering_log_metadata,
                 domain_version=_dom_version,
                 domain_content_hash=_dom_hash,
@@ -1131,7 +1174,6 @@ async def _complete_finalization(
         remapped_relationships,
         extraction_results,
         settings,
-        chunk_sentences=chunk_sentences,
     )
 
     logger.info(
@@ -1198,8 +1240,8 @@ def _resolve_finalizer_filtering_config(
     import json as _json
 
     from chaoscypher_core.exceptions import DataIntegrityError
-    from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
-        resolve_filtering_config,
+    from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+        plan_filtering_config_from_config,
     )
 
     extraction_config: dict[str, Any] = {}
@@ -1224,19 +1266,10 @@ def _resolve_finalizer_filtering_config(
                 )
                 raise DataIntegrityError(msg, details={"job_id": job_record.get("id")}) from exc
 
-    extraction_limits = extraction_config.get("extraction_limits") or {}
-    # The preset selector lives at its own top-level key on the job's
-    # extraction_config JSON — sibling to ``extraction_limits``, never
-    # inlined. Old in-flight job rows that pre-date this split do not
-    # exist (clean break, queue drained before deploy).
-    filtering_mode = str(
-        extraction_config.get("filtering_mode")
-        or engine_settings.extraction.extraction_filtering_mode
-    )
-    return resolve_filtering_config(
-        mode=filtering_mode,
-        domain_overrides=dict(extraction_limits) if extraction_limits else None,
-    )
+    # The one FilteringConfig resolution of the shared extraction plan, read
+    # back from the job's extraction_config (preset selector at its own
+    # ``filtering_mode`` key, overrides at ``extraction_limits``).
+    return plan_filtering_config_from_config(extraction_config, engine_settings)
 
 
 def _apply_post_dedup_filters(
@@ -1343,27 +1376,6 @@ def _apply_post_dedup_filters(
             )
 
     return entities, filtered_relationships, merged_log, filtering_config
-
-
-def _resolve_chunk_sentences(
-    aggregated: dict[str, Any],
-) -> list[list[str]] | None:
-    """Resolve pre-computed chunk sentences from aggregated results.
-
-    Sentences are always populated upstream in ai_entities.py via
-    split_into_sentences(chunk_content) and stored on each chunk task. This
-    function just returns them if all chunks have them populated.
-
-    Args:
-        aggregated: Aggregated chunk results dict.
-
-    Returns:
-        List of per-chunk sentence lists, or None if any chunk is missing them.
-    """
-    raw_chunk_sentences: list[list[str] | None] = aggregated.get("chunk_sentences") or []
-    if raw_chunk_sentences and all(s is not None for s in raw_chunk_sentences):
-        return raw_chunk_sentences  # type: ignore[return-value]
-    return None
 
 
 async def _handle_finalize_cancellation(
@@ -1564,7 +1576,6 @@ async def _queue_commit_phase(
     remapped_relationships: list[dict[str, Any]],
     extraction_results: dict[str, Any],
     settings: Settings,
-    chunk_sentences: list[list[str]] | None = None,
 ) -> None:
     """Fetch complete file info and enqueue the commit operation.
 
@@ -1576,7 +1587,6 @@ async def _queue_commit_phase(
         remapped_relationships: Final relationship list.
         extraction_results: Full extraction results dict.
         settings: Application settings.
-        chunk_sentences: Per-chunk sentence lists for evidence-based citations.
     """
     # Offloaded to a worker thread so SafeSession._retry_delay
     # ``time.sleep`` calls during SQLITE_BUSY contention do not block
@@ -1597,19 +1607,14 @@ async def _queue_commit_phase(
     from chaoscypher_core.operations.queue_utils import (
         queue_import_commit,
     )
+    from chaoscypher_core.services.sources.engine.commit.payload import build_commit_payload
 
-    commit_data: dict[str, Any] = {
-        "entities": matched_entities,
-        "relationships": remapped_relationships,
-        "suggested_templates": extraction_results.get("suggested_templates", []),
-        "suggested_edge_templates": extraction_results.get("suggested_edge_templates", []),
-        "inverse_relationships": extraction_results.get("inverse_relationships", {}),
-        "create_templates": True,
-        "auto_enable": settings.auto_enable,
-    }
-    if chunk_sentences:
-        commit_data["chunk_sentences"] = chunk_sentences
-
+    commit_data = build_commit_payload(
+        entities=matched_entities,
+        relationships=remapped_relationships,
+        extraction_results=extraction_results,
+        auto_enable=settings.auto_enable,
+    )
     await queue_import_commit(
         file_id=source_id,
         commit_data=commit_data,

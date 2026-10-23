@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from chaoscypher_core.adapters.embedding.gemini_provider import GeminiEmbeddingProvider
+from chaoscypher_core.adapters.embedding.vectors import normalize_vector
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
 
@@ -53,7 +54,9 @@ class TestGeminiEmbeddingProvider:
 
         assert isinstance(result, EmbedResult)
         assert len(result.embedding) == 4
-        assert result.embedding == [0.1, 0.2, 0.3, 0.4]
+        assert result.embedding == pytest.approx(
+            normalize_vector([0.1, 0.2, 0.3, 0.4])
+        )  # unit length
         assert result.provider == "gemini"
 
     @pytest.mark.asyncio
@@ -84,8 +87,12 @@ class TestGeminiEmbeddingProvider:
         assert isinstance(result, BatchEmbedResult)
         assert result.total == 2
         assert len(result.embeddings) == 2
-        assert result.embeddings[0] == [0.1, 0.2, 0.3, 0.4]
-        assert result.embeddings[1] == [0.5, 0.6, 0.7, 0.8]
+        assert result.embeddings[0] == pytest.approx(
+            normalize_vector([0.1, 0.2, 0.3, 0.4])
+        )  # unit length
+        assert result.embeddings[1] == pytest.approx(
+            normalize_vector([0.5, 0.6, 0.7, 0.8])
+        )  # unit length
         assert result.provider == "gemini"
 
     @pytest.mark.asyncio

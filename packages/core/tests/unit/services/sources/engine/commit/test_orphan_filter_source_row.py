@@ -12,6 +12,12 @@ fell through to the engine default (``balanced``, orphans dropped) — a
 ``protect_orphans=True``, lost its orphan entities at commit even though the
 extraction finalizer honoured the row. These tests drive ``commit()`` with the
 real ``get_file`` dict, exactly as ``_queue_commit_phase`` does.
+
+Keep, flag, never delete (2026-10-07): the row's choice now decides only the
+orphans that carry nothing (``Bob`` here); an orphan that carries evidence is
+committed under every preset, flagged ``properties.orphan``
+(``flag_orphan_entities``). ``orphan_entities_filtered`` counts the orphans
+kept flagged, ``evidence_less_entities_dropped`` the ones dropped.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from sqlmodel import func, select
 
 from chaoscypher_core.adapters.sqlite.models import GraphNode
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import ORPHAN_KEY
 
 
 if TYPE_CHECKING:
@@ -95,7 +102,9 @@ def _seed_extracted_source(adapter: SqliteAdapter, source_id: str, **row_overrid
     )
 
 
-async def _commit_with_real_file_info(adapter: SqliteAdapter, source_id: str) -> None:
+async def _commit_with_real_file_info(
+    adapter: SqliteAdapter, source_id: str, commit_data: dict[str, Any] | None = None
+) -> None:
     """Commit the way the finalizer does: ``file_info`` is the ``get_file`` projection."""
     file_info = adapter.get_file(source_id, adapter.database_name)
     assert file_info is not None
@@ -104,7 +113,7 @@ async def _commit_with_real_file_info(adapter: SqliteAdapter, source_id: str) ->
     assert "protect_orphans" not in file_info
     await _build_commit_service(adapter).commit(
         file_id=source_id,
-        commit_data=_COMMIT_DATA_WITH_ORPHAN,
+        commit_data=commit_data or _COMMIT_DATA_WITH_ORPHAN,
         file_info=file_info,
     )
 
@@ -116,10 +125,21 @@ def _node_count(adapter: SqliteAdapter, source_id: str) -> int:
     ).one()
 
 
-def _orphans_filtered(adapter: SqliteAdapter, source_id: str) -> int:
+def _orphan_counters(adapter: SqliteAdapter, source_id: str) -> tuple[int, int]:
+    """``(orphans kept flagged, evidence-less orphans dropped)`` on the source row."""
     source = adapter.get_source(source_id, adapter.database_name)
     assert source is not None
-    return int(source.get("orphan_entities_filtered") or 0)
+    return (
+        int(source.get("orphan_entities_filtered") or 0),
+        int(source.get("evidence_less_entities_dropped") or 0),
+    )
+
+
+def _flagged_labels(adapter: SqliteAdapter, source_id: str) -> list[str]:
+    """The labels of the source's nodes stored with the orphan flag."""
+    assert adapter.session is not None
+    nodes = adapter.session.exec(select(GraphNode).where(GraphNode.source_id == source_id)).all()
+    return sorted(n.label for n in nodes if (n.properties or {}).get(ORPHAN_KEY) is True)
 
 
 @pytest.mark.asyncio
@@ -134,7 +154,8 @@ async def test_row_filtering_mode_protects_orphans_at_commit(
     await _commit_with_real_file_info(adapter, source_id)
 
     assert _node_count(adapter, source_id) == 3
-    assert _orphans_filtered(adapter, source_id) == 0
+    assert _orphan_counters(adapter, source_id) == (1, 0)
+    assert _flagged_labels(adapter, source_id) == ["Bob"]
 
 
 @pytest.mark.asyncio
@@ -149,14 +170,15 @@ async def test_row_protect_orphans_beats_preset_at_commit(
     await _commit_with_real_file_info(adapter, source_id)
 
     assert _node_count(adapter, source_id) == 3
-    assert _orphans_filtered(adapter, source_id) == 0
+    assert _orphan_counters(adapter, source_id) == (1, 0)
+    assert _flagged_labels(adapter, source_id) == ["Bob"]
 
 
 @pytest.mark.asyncio
 async def test_default_row_still_drops_orphans_at_commit(
     adapter_with_default_templates: SqliteAdapter,
 ) -> None:
-    """Control: the default row (``balanced``, NULL override) keeps dropping orphans."""
+    """Control: the default row (``balanced``, NULL override) drops an orphan carrying nothing."""
     adapter = adapter_with_default_templates
     source_id = "src_default"
     _seed_extracted_source(adapter, source_id)
@@ -164,7 +186,47 @@ async def test_default_row_still_drops_orphans_at_commit(
     await _commit_with_real_file_info(adapter, source_id)
 
     assert _node_count(adapter, source_id) == 2
-    assert _orphans_filtered(adapter, source_id) == 1
+    assert _orphan_counters(adapter, source_id) == (0, 1)
+    assert _flagged_labels(adapter, source_id) == []
+
+
+@pytest.mark.asyncio
+async def test_default_row_keeps_an_orphan_that_carries_evidence_flagged(
+    adapter_with_default_templates: SqliteAdapter,
+) -> None:
+    """The default row commits an edgeless entity with a description or an evidence sentence.
+
+    Until 2026-10-07 the commit deleted it, description and all ("Márya
+    Lvóvna Karágina", Julie's mother, on the v4b generic arm); now it is a
+    node flagged ``orphan``, and only ``Bob``, carrying nothing, is dropped.
+    """
+    adapter = adapter_with_default_templates
+    source_id = "src_evidence"
+    _seed_extracted_source(adapter, source_id)
+    commit_data = {
+        **_COMMIT_DATA_WITH_ORPHAN,
+        "entities": [
+            *_COMMIT_DATA_WITH_ORPHAN["entities"],
+            {
+                "name": "Márya Lvóvna Karágina",
+                "type": "Person",
+                "description": "Julie's mother, a tall, stout, proud-looking woman.",
+                "properties": {},
+            },
+            {
+                "name": "the footman",
+                "type": "Person",
+                "properties": {},
+                "evidence": [{"chunk_id": "c1", "text": "announced the countess' footman."}],
+            },
+        ],
+    }
+
+    await _commit_with_real_file_info(adapter, source_id, commit_data)
+
+    assert _node_count(adapter, source_id) == 4
+    assert _orphan_counters(adapter, source_id) == (2, 1)
+    assert _flagged_labels(adapter, source_id) == ["Márya Lvóvna Karágina", "the footman"]
 
 
 @pytest.mark.asyncio
@@ -185,4 +247,4 @@ async def test_payload_filtering_mode_still_wins_over_row(
     )
 
     assert _node_count(adapter, source_id) == 2
-    assert _orphans_filtered(adapter, source_id) == 1
+    assert _orphan_counters(adapter, source_id) == (0, 1)

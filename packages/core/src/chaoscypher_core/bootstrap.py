@@ -31,7 +31,7 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -206,7 +206,8 @@ class Engine:
         # Import heavy dependencies only when creating engine
         # This keeps module load time fast
         from chaoscypher_core.adapters.sqlite import SqliteAdapter
-        from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
+        from chaoscypher_core.adapters.sqlite.repos import SearchRepository
+        from chaoscypher_core.repo_factories import get_graph_repository
         from chaoscypher_core.services import EdgeService, NodeService, TemplateService
         from chaoscypher_core.services.search.engine.index import IndexingService
         from chaoscypher_core.services.search.engine.search import SearchService
@@ -293,9 +294,8 @@ class Engine:
         # Initialize repositories
         from chaoscypher_core.adapters.sqlite.session import get_session
 
-        app_db_path = str(data_dir / "app.db")
-        self._graph_session = get_session(app_db_path)
-        self.graph_repository = GraphRepository(self._graph_session, self.database_name)
+        self._graph_session = get_session(db_path)
+        self.graph_repository = get_graph_repository(self._graph_session, self.database_name)
         from chaoscypher_core.adapters.sqlite.engine import get_engine as get_db_engine
 
         app_db_engine = get_db_engine(Path(data_dir) / "app.db")
@@ -512,11 +512,6 @@ class Engine:
             SourceCommitService instance wired with engine dependencies.
         """
         if self._commit_service is None:
-            from chaoscypher_core.adapters.sqlite.repos import GraphRepository
-            from chaoscypher_core.services.sources.engine.commit.service import (
-                SourceCommitService,
-            )
-
             # Build a transient ``GraphRepository`` bound to the storage
             # adapter's SafeSession so commit's storage-side writes (start_commit,
             # complete_commit, source row updates) participate in the SAME
@@ -536,9 +531,13 @@ class Engine:
             # doesn't trip this because each task builds a fresh Engine per
             # dispatch — but in-process consumers keep the Engine alive across
             # stages, and that's where the dual-session race lives.
-            commit_graph_repository = GraphRepository(
-                self.storage_adapter.session,  # type: ignore[arg-type]
-                self.database_name,
+            from chaoscypher_core.repo_factories import get_transaction_graph_repository
+            from chaoscypher_core.services.sources.engine.commit.service import (
+                SourceCommitService,
+            )
+
+            commit_graph_repository = get_transaction_graph_repository(
+                self.storage_adapter, self.database_name
             )
 
             self._commit_service = SourceCommitService(
@@ -1250,6 +1249,8 @@ class Engine:
         analysis_depth: AnalysisDepth,
         confirmation_required: bool,
         forced_domain: str | None,
+        source_type: str = "file",
+        source_fields: Mapping[str, Any] | None = None,
     ) -> None:
         """Persist a SourceRow so the confirmation gate has state to read/write.
 
@@ -1267,6 +1268,9 @@ class Engine:
             confirmation_required: Persisted gate flag (True parks an
                 auto-detected source; gate_decision short-circuits otherwise).
             forced_domain: Explicit domain choice (suppresses parking).
+            source_type: The row's ``source_type`` (``"memory"`` for a memory).
+            source_fields: Further columns written on the row (a memory's
+                ``memory_by``, ``memory_scope``, ``valid_from``).
         """
         from chaoscypher_core.models import SourceStatus
 
@@ -1286,9 +1290,10 @@ class Engine:
             "filepath": filename,
             "file_type": (filename.rsplit(".", 1)[-1] if "." in filename else "txt"),
             "status": SourceStatus.PENDING,
-            "source_type": "file",
+            "source_type": source_type,
             "extraction_depth": analysis_depth,
             "confirmation_required": confirmation_required,
+            **dict(source_fields or {}),
         }
         if forced_domain:
             source_data["forced_domain"] = forced_domain
@@ -1332,6 +1337,9 @@ class Engine:
 
         # Fast heuristic detection so the parked source carries a recommended
         # domain for the human to confirm. Mirrors the MCP get_tasks proposal.
+        from chaoscypher_core.services.sources.engine.extraction.domains import (
+            source_domain_sample,
+        )
         from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
             get_domain_registry,
         )
@@ -1340,16 +1348,9 @@ class Engine:
         )
 
         registry = get_domain_registry(self.settings, database_name=db_name)
-        extraction_settings = self.settings.extraction
-        chunks = self.storage_adapter.list_chunks(
-            database_name=db_name,
-            source_id=source_id,
-            limit=extraction_settings.domain_detection_sample_count,
-            include_content=True,
-        )
-        sample_text = " ".join(c.get("content", "") for c in chunks)[
-            : extraction_settings.domain_detection_sample_chars
-        ]
+        # The one sampler every detecting path uses (audit wave 3): a raw
+        # first-N-characters slice read only the opening and fell to generic.
+        sample_text = source_domain_sample(self.storage_adapter, source_id, db_name)
         detection = detect_extraction_domain(
             registry=registry,
             forced_domain=None,
@@ -1380,6 +1381,10 @@ class Engine:
         on_progress: ProgressCallback | None = None,
         auto_confirm: bool = True,
         forced_domain: str | None = None,
+        seed: Sequence[Mapping[str, Any]] = (),
+        source_type: str = "file",
+        source_fields: Mapping[str, Any] | None = None,
+        extract: bool = True,
     ) -> ProcessingResult:
         """Process a document through the full extraction pipeline.
 
@@ -1408,6 +1413,15 @@ class Engine:
                 the index and extraction stages.
             forced_domain: Explicit human domain choice. When set, the gate
                 always proceeds (a forced domain is never parked).
+            seed: Records the extraction's KNOWN ENTITIES list starts with
+                (``mcp.memory_seed.seed_records``: the graph's nodes the text
+                names and the speaker). Empty, the default, for a document.
+            source_type: The source row's type; ``"memory"`` for a memory.
+            source_fields: Further columns of the source row (a memory's
+                ``memory_by``, ``memory_scope``, ``valid_from``).
+            extract: False stops after indexing: the chunks are stored and
+                searchable, nothing is extracted or committed, and the result's
+                ``status`` is ``indexed`` (the no-extraction-model path).
 
         Returns:
             ProcessingResult model with ``source_id``, ``nodes``, ``edges``,
@@ -1442,18 +1456,20 @@ class Engine:
         # here and the gate read below short-circuits to 'proceed' —
         # byte-for-byte the pre-gate behaviour for SDK callers.
         confirmation_required = (not auto_confirm) and (forced_domain is None)
-        if confirmation_required:
-            # The gate writes status=awaiting_confirmation onto a persisted
-            # SourceRow, so the row must exist before extraction. Create it
-            # ahead of chunking (also satisfies the document_chunks FK), the
-            # same ordering the MCP index-only pipeline uses.
-            self._ensure_source_row(
-                source_id=source_id,
-                filename=filename,
-                analysis_depth=analysis_depth,
-                confirmation_required=True,
-                forced_domain=forced_domain,
-            )
+        # The source row, ahead of chunking: the chunk rows carry a foreign key
+        # to it (enforced on every connection), the gate writes
+        # status=awaiting_confirmation onto it, and a memory's fields live on
+        # it. Until 2026-10-20 the ungated SDK path wrote no row and could only
+        # store chunks with chunking mocked.
+        self._ensure_source_row(
+            source_id=source_id,
+            filename=filename,
+            analysis_depth=analysis_depth,
+            confirmation_required=confirmation_required,
+            forced_domain=forced_domain,
+            source_type=source_type,
+            source_fields=source_fields,
+        )
 
         logger.info(
             "process_document_started",
@@ -1481,6 +1497,16 @@ class Engine:
         indexing_model = self._to_model(IndexingResult, index_result)
         if on_progress:
             on_progress("indexing", indexing_model)
+        self.storage_adapter.complete_indexing(
+            source_id,
+            chunks_count=index_result.get("chunks_count", 0),
+            embedding_model=index_result.get("embedding_model", ""),
+            embedding_dimensions=index_result.get("embedding_dimensions", 0),
+        )
+        if not extract:
+            from chaoscypher_core.models import ProcessingResult, SourceStatus
+
+            return ProcessingResult(source_id=source_id, status=SourceStatus.INDEXED)
 
         # --- Confirmation gate ------------------------------------------- #
         # Evaluate from PERSISTED SourceRow state (the same brain the worker,
@@ -1498,8 +1524,34 @@ class Engine:
         # ----------------------------------------------------------------- #
 
         # Stage 3: Extract entities (chunk + LLM extraction)
-        raw_result = await self.chunking_service.process(
-            text, analysis_depth=analysis_depth, file_info={"filename": filename}
+        # The groups stage 1 stored, so the citations name the stored chunks
+        # (until 2026-10-20 ``chunking_service.process`` re-chunked the text
+        # and stored the copy under the source id "standalone"). A sampled
+        # depth re-chunks without storing: the sample is extraction's alone.
+        # The forced domain reaches detection through ``file_info`` (only the
+        # gate read it before), and the embedder is the engine's own.
+        from chaoscypher_core.models import ExtractionResult as ExtResult
+        from chaoscypher_core.services.sources.engine.extraction.extractor import (
+            extract_entities_from_groups,
+        )
+
+        file_info: dict[str, Any] = {"filename": filename}
+        if forced_domain:
+            file_info["forced_domain"] = forced_domain
+        chunked = chunks_result
+        if analysis_depth != "full":
+            chunked = await self.chunking_service.create_chunks(
+                full_text=text, source_id=source_id, analysis_depth=analysis_depth, store=False
+            )
+        raw_result = ExtResult(
+            **await extract_entities_from_groups(
+                hierarchical_groups=chunked.hierarchical_groups,
+                settings=self.settings,
+                embedding_service=self.embedding_service,
+                file_info=file_info,
+                seed=seed,
+                small_chunks=chunks_result.small_chunks,
+            )
         )
 
         # Stage 4: Finalize (deduplicate, normalize, suggest templates)
@@ -1509,8 +1561,6 @@ class Engine:
             generate_embeddings=True,
             detected_domain=raw_result.domain,
         )
-        from chaoscypher_core.models import ExtractionResult as ExtResult
-
         # Pick only model-defined fields: ``finalize_distributed_extraction``
         # also returns extras (e.g. ``suggested_templates``) that ExtractionResult
         # forbids.

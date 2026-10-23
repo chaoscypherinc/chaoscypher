@@ -12,8 +12,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 
@@ -41,6 +44,7 @@ class SourceStorageProtocol(Protocol):
         staging_dir: str = "",
         extraction_depth: str = "full",
         forced_domain: str | None = None,
+        forced_packs: Sequence[str] | None = None,
         origin_url: str | None = None,
         source_type_override: str | None = None,
         title_override: str | None = None,
@@ -51,12 +55,13 @@ class SourceStorageProtocol(Protocol):
         enable_normalization: bool | None = None,
         enable_vision: bool = True,
         content_filtering: bool = True,
-        filtering_mode: str = "balanced",
+        filtering_mode: str = SOURCE_ROW_FILTERING_MODE,
         enable_direction_correction: bool | None = None,
         protect_orphans: bool | None = None,
         enable_inverse_relationships: bool | None = None,
         max_entity_degree_override: int | None = None,
         confirmation_required: bool = False,
+        site_id: str | None = None,
     ) -> dict[str, Any]:
         """Upload file and create source record.
 
@@ -92,6 +97,12 @@ class SourceStorageProtocol(Protocol):
               (``get_source_commit_payload`` / ``get_source_full_text``).
 
         """
+        ...
+
+    def get_source_filenames_by_ids(
+        self, source_ids: list[str], database_name: str
+    ) -> dict[str, str]:
+        """Map source id -> ``filename`` in one narrow query (missing ids absent)."""
         ...
 
     def get_source_full_text(self, source_id: str, database_name: str) -> str | None:
@@ -248,6 +259,8 @@ class SourceStorageProtocol(Protocol):
         enabled: str | None = None,
         search: str | None = None,
         tag_id: str | None = None,
+        site_id: str | None = None,
+        in_site: bool | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """List sources with filtering and pagination.
 
@@ -259,6 +272,9 @@ class SourceStorageProtocol(Protocol):
             enabled: Filter by enabled status ('enabled' or 'disabled')
             search: Search in title/origin_url
             tag_id: Filter by tag assignment
+            site_id: Only the pages of this imported site
+            in_site: True: only pages of imported sites; False: only sources
+                outside any site
 
         Returns:
             Tuple of (sources list, total count).  Each source dict
@@ -335,6 +351,8 @@ class SourceStorageProtocol(Protocol):
         relationships: list[dict[str, Any]],
         detected_domain: str | None = None,
         forced_domain: str | None = None,
+        forced_packs: Sequence[str] | None = None,
+        detected_packs: Sequence[str] | None = None,
         domain_version: str | None = None,
         domain_content_hash: str | None = None,
         cross_chunk_filtering_log: dict[str, Any] | None = None,
@@ -346,8 +364,13 @@ class SourceStorageProtocol(Protocol):
             entities: Deduplicated entity dicts.
             relationships: Relationship dicts with integer ``source`` /
                 ``target`` indices into ``entities``.
-            detected_domain: Auto-detected domain name (if not forced).
-            forced_domain: User-selected domain name (if specified).
+            detected_domain: The old one-name form of ``detected_packs``.
+            forced_domain: The old one-name form of ``forced_packs``.
+            forced_packs: The packs the user forced (``[]`` the floor alone;
+                None when detection decided).
+            detected_packs: The packs detection proposed. The source records
+                ``extraction_packs`` (the forced, else the detected) and their
+                label in ``extraction_domain``.
             domain_version: Plugin version this source extracted under.
             domain_content_hash: sha256 of the plugin content at extraction time.
             cross_chunk_filtering_log: Cross-chunk filtering log dict

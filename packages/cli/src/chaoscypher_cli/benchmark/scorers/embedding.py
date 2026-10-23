@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from chaoscypher_cli.benchmark.results import ScoreResult
+from chaoscypher_core.benchmark.queries import BOARD_BANDS
 
 
 if TYPE_CHECKING:
@@ -31,7 +32,9 @@ class EmbeddingRetrievalScorer:
                 list of dicts with keys ``query_id``, ``band``, ``ranks``, and
                 ``skipped``.
             fixture: The ``LabeledQuerySet`` used to produce ``output``; used
-                only to compute ``queries_total`` (non-out_of_scope count).
+                only to compute ``queries_total`` (the board bands' in-scope
+                count: not out_of_scope, not the chat comparison's
+                graph_advantage band, which the dataset skips too).
 
         Returns:
             A :class:`~chaoscypher_cli.benchmark.results.ScoreResult` whose
@@ -45,7 +48,9 @@ class EmbeddingRetrievalScorer:
         pairs = 0
         scored = 0
         unresolved = 0
-        total = sum(1 for q in fixture.queries if q.band != "out_of_scope")
+        total = sum(
+            1 for q in fixture.queries if q.band in BOARD_BANDS and q.band != "out_of_scope"
+        )
         per_band_pairs: dict[str, list[float]] = defaultdict(list)
         per_band_r1: dict[str, list[int]] = defaultdict(list)
         per_band_r3: dict[str, list[int]] = defaultdict(list)

@@ -9,8 +9,9 @@ Each migration file declares two module-level constants:
 - ``CC_DESCRIPTION``: human-readable one-liner surfaced to operators
 
 The startup runner reads these via :func:`read_migration_info` and
-routes migrations accordingly — tier-1 auto-applies silently, tier-2
-stops the worker and prompts the operator.
+routes migrations accordingly (``startup.py``): ``safe_auto`` and
+``needs_confirmation`` apply behind a verified backup; ``manual`` waits in
+maintenance mode unless ``auto_apply_destructive`` is on.
 """
 
 from __future__ import annotations
@@ -31,11 +32,12 @@ class MigrationTier(StrEnum):
       user-meaningful information.
     * ``needs_confirmation`` — loses user-meaningful data (e.g., merging
       duplicate named entities) or has a destructive repair step the user
-      should be able to acknowledge. With the default
-      ``auto_apply_destructive`` setting these auto-apply at startup behind
-      a verified backup (recorded so they can be rolled back); when an
-      operator opts out, they surface through the maintenance-mode UI with
-      a plain-language summary and an Apply button.
+      should be able to acknowledge. These auto-apply at startup behind a
+      verified backup (recorded as a data-changing upgrade so they can be
+      rolled back), whatever ``auto_apply_destructive`` says: the startup
+      runner (``startup._plan_apply``) gates only ``manual`` migrations.
+      With no room for the backup nothing applies and the database waits
+      in maintenance mode.
     * ``manual`` — the most destructive class (e.g., dropping a column,
       forcing re-extraction). With the default ``auto_apply_destructive``
       setting these also auto-apply behind a verified backup; when an

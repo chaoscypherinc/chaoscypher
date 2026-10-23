@@ -11,12 +11,19 @@ and a manual trigger all evaluate the gate identically.
 - ``gate_decision``  — pure read over persisted fields → 'proceed' | 'park'.
 - ``park_for_confirmation`` — single atomic SourceRow write parking the source.
 - ``confirm_extraction`` — state-aware: CAS awaiting_confirmation → indexed then
-  re-queue (parked), record forced_domain + extraction_confirmed_at without a
+  re-queue (parked), record the forced packs + extraction_confirmed_at without a
   status change (pre-gate), or reject (past-gate / already-confirmed / errored).
+
+A source carries a list of packs (spec 2026-10-07 § 5): the proposal stores
+``packs`` beside ``detected_domain`` (their first, or ``generic``), and a
+confirm forces a list (``forced_packs``, with ``forced_domain`` written from
+it by ``pack_columns``). ``[]`` forced is the floor alone, a choice; None is
+"not chosen".
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,6 +32,13 @@ import structlog
 from chaoscypher_core.adapters.sqlite.models import SourceRow
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.operations.queue_utils import queue_import_analysis
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    first_domain_name,
+    forced_packs_of,
+    pack_columns,
+    packs_of_name,
+    proposal_packs,
+)
 
 
 logger = structlog.get_logger(__name__)
@@ -43,7 +57,7 @@ def _claim_pre_gate_confirmation(adapter: Any, file_id: str, values: dict[str, A
     conflict. This is the timestamp-column analogue of
     ``transition_source_status`` (which can only CAS the status column).
 
-    ``values`` (forced_domain + override columns) rides in the SAME
+    ``values`` (the forced packs + override columns) rides in the SAME
     statement and commit as the timestamp: a consumer that snapshots the
     row after the claim commit is visible must already see the user's
     domain choice — a second decision-commit would open a window where
@@ -72,13 +86,26 @@ def _claim_pre_gate_confirmation(adapter: Any, file_id: str, values: dict[str, A
 
 
 def proposal_from_detection(result: dict[str, Any]) -> dict[str, Any]:
-    """Build the persisted detection_proposal blob from a detect_extraction_domain result."""
+    """Build the persisted detection_proposal blob from a detect_extraction_domain result.
+
+    ``packs`` is the proposed list (``[]`` the floor alone);
+    ``detected_domain`` stays as its first, or ``generic``, for readers of
+    the one-name blob.
+    """
+    packs = proposal_packs(result) or []
     return {
         "ranking": result.get("ranking", []),
         "confidence": result.get("confidence"),
-        "detected_domain": result.get("detected_domain"),
+        "packs": packs,
+        "detected_domain": result.get("detected_domain") or first_domain_name(packs),
         "low_confidence": result.get("low_confidence", False),
+        "reason": result.get("reason"),
     }
+
+
+def awaits_detection(source: dict[str, Any] | None) -> bool:
+    """Whether a source is gate-eligible: it asked for confirmation and forces no packs."""
+    return bool(source and source.get("confirmation_required") and forced_packs_of(source) is None)
 
 
 # Statuses strictly past INDEXED in the lifecycle: a re-dispatch of a source
@@ -124,7 +151,7 @@ def gate_decision(source: dict[str, Any], *, bypass: bool = False) -> str:
     upload-time ``auto_confirm`` choice).
 
     Args:
-        source: Source dict (forced_domain, confirmation_required,
+        source: Source dict (forced_packs / forced_domain, confirmation_required,
             extraction_confirmed_at, status).
         bypass: Live per-request bypass; True => proceed unconditionally.
 
@@ -138,8 +165,8 @@ def gate_decision(source: dict[str, Any], *, bypass: bool = False) -> str:
         return "proceed"
     if source.get("status") in _PAST_INDEXED:
         return "proceed"
-    # A forced/overridden domain is an explicit human choice => proceed.
-    if source.get("forced_domain"):
+    # Forced packs (the floor alone included) are an explicit human choice => proceed.
+    if forced_packs_of(source) is not None:
         return "proceed"
     # Auto domain: park only when the upload requested confirmation.
     if source.get("confirmation_required"):
@@ -243,25 +270,40 @@ _OVERRIDE_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _decision_columns(row: SourceRow, chosen_packs: Sequence[str] | str | None) -> dict[str, Any]:
+    """The forced-pack columns of a confirm: the chosen packs, else the proposal's.
+
+    A string is the one-name form (a pack's name or the packs' label), never
+    a sequence of one-letter names.
+    """
+    if isinstance(chosen_packs, str):
+        chosen_packs = packs_of_name(chosen_packs)
+    packs = (
+        list(chosen_packs) if chosen_packs is not None else proposal_packs(row.detection_proposal)
+    )
+    return pack_columns({"forced_packs": packs})
+
+
 def _apply_decision(
     row: SourceRow,
-    chosen_domain: str | None,
+    chosen_packs: Sequence[str] | str | None,
     overrides: dict[str, Any],
-) -> str | None:
-    """Persist the human's domain choice + non-None overrides onto the row.
+) -> list[str] | None:
+    """Persist the human's pack choice + non-None overrides onto the row.
 
     Used by the parked (CAS-win) confirm branch; the pre-gate branch writes
     the same decision inside its atomic claim UPDATE instead. Sets
-    ``forced_domain`` (chosen, or the proposal's detected_domain as fallback),
-    applies only present non-None overrides, and stamps ``extraction_confirmed_at``
-    write-once. Does NOT change ``status`` and does NOT commit — the caller owns
-    the commit + (for the parked branch only) the re-queue.
+    ``forced_packs`` (chosen, or the proposal's packs as fallback) and the old
+    ``forced_domain`` from it, applies only present non-None overrides, and
+    stamps ``extraction_confirmed_at`` write-once. Does NOT change ``status``
+    and does NOT commit — the caller owns the commit + (for the parked branch
+    only) the re-queue.
 
-    Returns the resolved forced domain.
+    Returns the resolved forced packs.
     """
-    proposal = row.detection_proposal or {}
-    forced = chosen_domain or proposal.get("detected_domain")
-    row.forced_domain = forced
+    columns = _decision_columns(row, chosen_packs)
+    row.forced_packs = columns["forced_packs"]
+    row.forced_domain = columns["forced_domain"]
 
     for key in _OVERRIDE_COLUMNS:
         # A None value means "leave the column as-is / use the persisted
@@ -277,13 +319,14 @@ def _apply_decision(
     if row.extraction_confirmed_at is None:
         row.extraction_confirmed_at = datetime.now(UTC)
 
+    forced: list[str] | None = columns["forced_packs"]
     return forced
 
 
 async def confirm_extraction(
     adapter: Any,
     file_id: str,
-    chosen_domain: str | None,
+    chosen_packs: Sequence[str] | str | None,
     overrides: dict[str, Any],
 ) -> bool:
     """Record a confirm decision, branching on where the source is in the pipeline.
@@ -294,7 +337,7 @@ async def confirm_extraction(
     Three buckets:
 
     - **``AWAITING_CONFIRMATION``** (gate already parked it): CAS
-      ``awaiting_confirmation → indexed``, persist ``forced_domain`` + overrides
+      ``awaiting_confirmation → indexed``, persist the forced packs + overrides
       + write-once ``extraction_confirmed_at``, then ``queue_import_analysis``
       (queue_utils.py:109) AFTER the status is INDEXED so the busy-slot waiting
       requeue (``get_oldest_waiting_extraction``, source_files_indexing.py:1048,
@@ -303,7 +346,7 @@ async def confirm_extraction(
     - **Pre-gate** (``pending`` / ``indexing`` / ``vision_pending`` / ``indexed``,
       not yet confirmed): record the decision WITHOUT changing status and WITHOUT
       re-queueing. The analysis stage runs on its own; ``gate_decision`` then
-      PROCEEDS because forced_domain + extraction_confirmed_at are now set (no
+      PROCEEDS because the forced packs + extraction_confirmed_at are now set (no
       park). → True.
     - **Past the gate** (``extracting`` / ``mcp_extracting`` / ``extracted`` /
       ``committing`` / ``committed``), already confirmed, errored, or missing:
@@ -312,8 +355,11 @@ async def confirm_extraction(
     Args:
         adapter: SqliteAdapter (source repository).
         file_id: Source ID to confirm.
-        chosen_domain: Domain to force (the confirmed/overridden domain). When
-            None, the proposal's detected_domain is used as the forced choice.
+        chosen_packs: The packs to force (the confirmed/overridden choice;
+            ``[]`` is the floor alone). When None, the proposal's packs are
+            the forced choice. A string is the one-name form (a pack's
+            name, ``generic`` for the floor alone). A surface reads its
+            ``packs`` / ``domain`` field with ``requested_packs``.
         overrides: Extraction-option overrides mirroring TriggerExtractionRequest
             (analysis_depth, filtering_mode, content_filtering,
             enable_direction_correction, protect_orphans,
@@ -361,7 +407,7 @@ async def confirm_extraction(
             logger.warning("confirm_extraction_row_vanished", source_id=file_id)
             return False
 
-        forced = _apply_decision(row, chosen_domain, overrides)
+        forced = _apply_decision(row, chosen_packs, overrides)
         adapter.session.add(row)
         adapter._maybe_commit()  # noqa: SLF001 - gate primitives compose the same session path as the adapter
 
@@ -369,7 +415,7 @@ async def confirm_extraction(
         file_info: dict[str, Any] = {
             "filename": row.filename,
             "filepath": row.filepath,
-            "forced_domain": forced,
+            **pack_columns({"forced_packs": forced}),
             "metadata": {},
         }
         await queue_import_analysis(
@@ -381,7 +427,7 @@ async def confirm_extraction(
         logger.info(
             "source_confirmed_for_extraction",
             source_id=file_id,
-            forced_domain=forced,
+            forced_packs=forced,
             analysis_depth=analysis_depth,
         )
         return True
@@ -391,14 +437,13 @@ async def confirm_extraction(
     # forced/confirmed fields are set. Write-once is enforced by an atomic SQL
     # claim on the timestamp column (see _claim_pre_gate_confirmation) — the ORM
     # row in hand may be a stale read when two confirms race, so it must never
-    # be the guard. The decision (forced_domain + non-None overrides) rides in
+    # be the guard. The decision (forced packs + non-None overrides) rides in
     # the SAME claim statement: gate_decision short-circuits on the timestamp
     # alone, so a two-commit write let an OP_IMPORT_ANALYSIS snapshot between
     # the commits extract under the auto-detected domain instead of the user's.
     # A lost claim falls through to bucket 3 (already confirmed).
     if status in _PRE_GATE and row.extraction_confirmed_at is None:
-        forced = chosen_domain or (row.detection_proposal or {}).get("detected_domain")
-        claim_values: dict[str, Any] = {"forced_domain": forced}
+        claim_values: dict[str, Any] = _decision_columns(row, chosen_packs)
         for key in _OVERRIDE_COLUMNS:
             # None means "leave the column as-is" — same guard as _apply_decision.
             if key in overrides and overrides[key] is not None:
@@ -410,7 +455,7 @@ async def confirm_extraction(
                 "source_confirmed_pre_gate",
                 source_id=file_id,
                 status=status,
-                forced_domain=forced,
+                forced_packs=claim_values["forced_packs"],
             )
             return True
         logger.info("confirm_extraction_lost_pre_gate_claim", source_id=file_id)
@@ -425,6 +470,6 @@ async def confirm_extraction(
     msg = (
         f"Source '{file_id}' status is '{status}'"
         f"{' and already confirmed' if row.extraction_confirmed_at is not None else ''}; "
-        "too late to change the extraction domain"
+        "too late to change the extraction packs"
     )
     raise ConflictError(msg)

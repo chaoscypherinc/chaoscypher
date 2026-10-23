@@ -65,9 +65,29 @@ class TestBridgeExecute:
 
     @pytest.mark.asyncio
     async def test_unknown_tool_returns_error(self, bridge, mock_executor):
-        mock_executor.execute_tool.side_effect = KeyError("not_a_tool")
+        """The real executor answers ``{"error": ...}`` with no ``success`` key.
+
+        The old check (``not result.get("success", True)``) read that as a
+        success; the old test mocked a KeyError the executor never raises.
+        """
+        mock_executor.execute_tool.return_value = {"error": "Unknown tool: not_a_tool"}
         result = await bridge.execute("not_a_tool", {})
         assert result.is_error is True
+        assert "Unknown tool" in result.text
+
+    @pytest.mark.asyncio
+    async def test_invalid_parameters_shape_is_an_error(self, bridge, mock_executor):
+        mock_executor.execute_tool.return_value = {"error": "Invalid parameters for search_nodes"}
+        result = await bridge.execute("search_nodes", {})
+        assert result.is_error is True
+
+    @pytest.mark.asyncio
+    async def test_payload_with_error_key_but_success_true_is_not_an_error(
+        self, bridge, mock_executor
+    ):
+        mock_executor.execute_tool.return_value = {"success": True, "error": None}
+        result = await bridge.execute("search_nodes", {"query": "x"})
+        assert result.is_error is False
 
 
 class TestGetSummaryContext:

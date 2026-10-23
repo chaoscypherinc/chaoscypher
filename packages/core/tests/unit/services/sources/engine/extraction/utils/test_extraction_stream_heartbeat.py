@@ -75,6 +75,21 @@ async def test_on_chunk_fires_for_every_content_chunk() -> None:
 
 
 @pytest.mark.asyncio
+async def test_async_on_chunk_is_awaited() -> None:
+    """An async callback is awaited, so callers can offload blocking writes."""
+    deltas = ["E|Alice|Character|||S1|first\n", "E|Bob|Character|||S1|second\n"]
+    completed = 0
+
+    async def _on_chunk() -> None:
+        nonlocal completed
+        completed += 1
+
+    await _consume_extraction_stream(_content_stream(deltas), _detector(), on_chunk=_on_chunk)
+
+    assert completed == len(deltas)
+
+
+@pytest.mark.asyncio
 async def test_on_chunk_optional_back_compat() -> None:
     """Omitting on_chunk leaves the stream consumer unchanged."""
     deltas = ["E|X|Type|||S1|x\n"]
@@ -182,12 +197,14 @@ async def test_extract_relationships_forwards_on_stream_progress() -> None:
         max_tokens: int | None = None,
         max_entity_count_override: int | None = None,
         on_stream_progress: object = None,
+        known_entity_count: int = 0,
     ) -> Any:
         from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
             CallLLMResult,
         )
 
         captured["on_stream_progress"] = on_stream_progress
+        captured["known_entity_count"] = known_entity_count
         return CallLLMResult(
             content="",
             input_tokens=0,
@@ -218,9 +235,11 @@ async def test_extract_relationships_forwards_on_stream_progress() -> None:
         entities=[{"name": "Alice", "type": "Person", "aliases": []}],
         numbered_text="S1: Alice met Bob.",
         sentences=["Alice met Bob."],
-        edge_templates_formatted="",
-        relationship_guidance=None,
-        relationship_examples=None,
+        prompt_inputs={
+            "edge_templates_formatted": "",
+            "relationship_guidance": None,
+            "relationship_examples": None,
+        },
         extraction_cfg=extraction_cfg,
         filtering_config=filtering_config,
         evidence_stats={},
@@ -232,3 +251,6 @@ async def test_extract_relationships_forwards_on_stream_progress() -> None:
     )
 
     assert captured["on_stream_progress"] is _sentinel
+    # Pass 2 streams only ``R|`` lines: the detector must know pass 1's count
+    # or it checks none of them (section-audit 2026-10-12).
+    assert captured["known_entity_count"] == 1

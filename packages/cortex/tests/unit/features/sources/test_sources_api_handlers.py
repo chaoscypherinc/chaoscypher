@@ -108,6 +108,7 @@ class TestListSourcesHandler:
             enabled=None,
             search=None,
             tag_id=None,
+            in_site=None,
         )
 
         service.list_sources_enriched.assert_called_once_with(
@@ -118,6 +119,7 @@ class TestListSourcesHandler:
             enabled=None,
             search=None,
             tag_id=None,
+            in_site=None,
         )
         assert isinstance(result, PaginatedSourcesResponse)
         assert len(result.data) == 2
@@ -144,6 +146,7 @@ class TestListSourcesHandler:
             enabled="enabled",
             search="neural",
             tag_id="tag-1",
+            in_site=False,
         )
 
         service.list_sources_enriched.assert_called_once_with(
@@ -154,6 +157,7 @@ class TestListSourcesHandler:
             enabled="enabled",
             search="neural",
             tag_id="tag-1",
+            in_site=False,
         )
         assert result.pagination.total_pages == 3
         assert result.pagination.has_prev is True

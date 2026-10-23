@@ -27,7 +27,6 @@ loads.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -82,6 +81,18 @@ def _make_db(databases_dir: Path, name: str, size: int = 4096) -> Path:
     db_path.mkdir(parents=True, exist_ok=True)
     (db_path / "app.db").write_bytes(b"x" * size)
     return db_path
+
+
+def _case_variant(databases_dir: Path, variant: str, target: str) -> None:
+    """Make ``variant`` open the ``target`` db dir, as a case-folding FS does.
+
+    On Windows (and macOS APFS) ``Default`` already resolves to ``default``.
+    Elsewhere a symlink emulates that folding so the guard runs on every
+    platform rather than only where ``Path`` equality already folds case.
+    """
+    alias = databases_dir / variant
+    if not alias.exists():
+        alias.symlink_to(databases_dir / target, target_is_directory=True)
 
 
 def _patch_current_db(module: str, name: str) -> Any:
@@ -559,12 +570,12 @@ class TestDelete:
         assert "Invalid database name" in result.output
         assert (databases_dir / "victim").exists()
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive filesystem guard")
     def test_delete_default_guarded_case_insensitively(self, tmp_path: Path) -> None:
-        """'Default' resolves to the same dir as 'default' on Windows — guarded."""
+        """'Default' resolves to the same dir as 'default' on case-folding FSes — guarded."""
         runner = CliRunner()
         databases_dir = tmp_path / "databases"
         _make_db(databases_dir, "default")
+        _case_variant(databases_dir, "Default", "default")
 
         with _patch_current_db("delete", "other"):
             with patch(
@@ -577,12 +588,12 @@ class TestDelete:
         assert "Cannot delete the 'default' database" in result.output
         assert (databases_dir / "default").exists()
 
-    @pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive filesystem guard")
     def test_delete_current_guarded_case_insensitively(self, tmp_path: Path) -> None:
-        """'Active' resolves to the same dir as current 'active' on Windows — guarded."""
+        """'Active' resolves to the current 'active' dir on case-folding FSes — guarded."""
         runner = CliRunner()
         databases_dir = tmp_path / "databases"
         _make_db(databases_dir, "active")
+        _case_variant(databases_dir, "Active", "active")
 
         with _patch_current_db("delete", "active"):
             with patch(

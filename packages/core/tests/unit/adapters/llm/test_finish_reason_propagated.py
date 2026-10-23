@@ -203,6 +203,44 @@ async def test_ollama_done_chunk_carries_finish_reason() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ollama_usage_survives_the_trailing_empty_chunk() -> None:
+    """langchain-ollama 1.1 yields one empty chunk after the one with the counts (2026-10-05)."""
+    from chaoscypher_core.adapters.llm.providers.ollama_provider import OllamaProvider
+
+    fake = _FakeChatModel(
+        [
+            _FakeStreamChunk(content="hello"),
+            _FakeStreamChunk(
+                content="",
+                response_metadata={
+                    "done_reason": "length",
+                    "eval_count": 190,
+                    "prompt_eval_count": 16,
+                },
+            ),
+            _FakeStreamChunk(content=""),
+        ]
+    )
+    with patch(
+        "chaoscypher_core.adapters.llm.providers.ollama_provider.ChatOllama",
+        return_value=fake,
+    ):
+        provider = OllamaProvider(
+            {
+                **_BASE_CONFIG,
+                "base_url": "http://localhost:11434",
+                "ollama_chat_model": "qwen3:0.6b",
+                "stream_chunk_timeout": 30.0,
+                "ollama_health_check_timeout": 5.0,
+                "ollama_recovery_delay": 0.0,
+            }
+        )
+        done = await _collect_done(provider)
+    assert done["finish_reason"] == "length"
+    assert done["usage"]["completion_tokens"] == 190 and done["usage"]["prompt_tokens"] == 16
+
+
+@pytest.mark.asyncio
 async def test_gemini_done_chunk_carries_finish_reason() -> None:
     from chaoscypher_core.adapters.llm.providers.gemini_provider import GeminiProvider
 

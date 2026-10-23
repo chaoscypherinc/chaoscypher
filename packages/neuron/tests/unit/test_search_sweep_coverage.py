@@ -115,6 +115,13 @@ def _make_chunk(adapter: SqliteAdapter, chunk_id: str, source_id: str) -> Docume
     return chunk
 
 
+def _source_status(adapter: SqliteAdapter, source_id: str) -> str | None:
+    """Read a source's vector_indexing_status fresh from the database."""
+    adapter.session.expire_all()
+    row = adapter.session.get(SourceRow, source_id)
+    return None if row is None else row.vector_indexing_status
+
+
 def _seed_source(adapter: SqliteAdapter, source_id: str, status: str) -> None:
     """Insert a SourceRow with a specified vector_indexing_status."""
     adapter.session.add(
@@ -234,6 +241,56 @@ def test_sweep_drains_node_when_target_gone(tmp_path: Path) -> None:
         assert remaining is None, "Stale node pending row should be deleted"
         assert stats["pending_drained"] == 1
         assert stats["pending_failed"] == 0
+        # The drained row was the source's last one: it recovers to 'indexed'.
+        assert _source_status(adapter, "gone-src-1") == "indexed"
+    finally:
+        adapter.disconnect()
+
+
+@pytest.mark.parametrize(
+    ("status", "sibling", "expected"),
+    [
+        # A terminal 'failed' is sticky on the target-gone path too.
+        ("failed", False, "failed"),
+        # A surviving sibling row keeps the source 'degraded'.
+        ("degraded", True, "degraded"),
+    ],
+)
+def test_sweep_target_gone_keeps_status_until_recovered(
+    tmp_path: Path, status: str, sibling: bool, expected: str
+) -> None:
+    """The target-gone drain flips to 'indexed' only when the source recovered."""
+    from chaoscypher_neuron.search_sweep import sweep_search_indexes
+
+    adapter, search_repo = _make_db(tmp_path)
+    try:
+        _seed_source(adapter, "gone-src-2", status=status)
+        adapter.session.add(
+            PendingSearchIndex(
+                id="node:missing-node-2",
+                kind="node",
+                item_id="missing-node-2",  # no matching GraphNode
+                source_id="gone-src-2",
+                attempts=0,
+            )
+        )
+        if sibling:
+            # An unknown kind fails without exhausting, so the row survives.
+            adapter.session.add(
+                PendingSearchIndex(
+                    id="weird:sibling",
+                    kind="weird",
+                    item_id="sibling",
+                    source_id="gone-src-2",
+                    attempts=0,
+                )
+            )
+        adapter.session.commit()
+
+        sweep_search_indexes(adapter, search_repo, max_attempts=5)
+
+        assert adapter.session.get(PendingSearchIndex, "node:missing-node-2") is None
+        assert _source_status(adapter, "gone-src-2") == expected
     finally:
         adapter.disconnect()
 

@@ -301,7 +301,10 @@ class VisionOperationsService:
         # 2. Render / read image bytes.
         try:
             image_bytes = await asyncio.to_thread(
-                _render_image_bytes, row, dpi=settings.llm.vision_image_dpi
+                _render_image_bytes,
+                row,
+                dpi=settings.llm.vision_image_dpi,
+                max_pixels=settings.llm.vision_max_render_pixels,
             )
         except Exception as exc:
             logger.warning(

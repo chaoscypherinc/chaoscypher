@@ -51,21 +51,11 @@ def delete(file_id: str, force: bool, database: str) -> None:
                 console.print("[yellow]Cancelled.[/yellow]")
                 return
 
-        # Same cascade as the API path: SQL cascade + orphaned graph nodes in
+        # Same cascade as the API path: graph release + SQL cascade in
         # one transaction, then vector rows, staged file, and vision images.
-        from chaoscypher_core.services.graph.management.source import SourceService
+        from chaoscypher_cli.sources.deletion import delete_source_cascade
 
-        service = SourceService(
-            repository=ctx.storage_adapter,
-            database_name=ctx.database_name,
-            settings=ctx.settings,
-        )
-        deleted = service.delete_source(
-            file_id,
-            graph_repo=ctx.graph_repository,
-            search_repo=ctx.search_repository,
-        )
-        if not deleted:
+        if not delete_source_cascade(ctx, file_id):
             console.print(f"[red]File not found:[/red] {file_id}")
             sys.exit(1)
 

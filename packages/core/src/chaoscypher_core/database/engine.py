@@ -203,6 +203,12 @@ def init_database(
 
             seed_default_data(database_name)
             logger.info("database_initialized_successfully", database_name=database_name)
+
+            # A database from before the core entity types is not migrated in
+            # place: say so once (export, update, import), rewrite nothing.
+            from chaoscypher_core.database.core_types_guard import pre_core_types_notice
+
+            pre_core_types_notice(engine, database_name)
         finally:
             unlock_file(lock_handle)
 

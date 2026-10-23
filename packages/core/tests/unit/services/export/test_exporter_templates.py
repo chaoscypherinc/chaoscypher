@@ -182,14 +182,18 @@ async def test_round_trip_keeps_nodes_typed(
     assert stats.nodes_imported == 2, stats.errors
     template_names = {tmpl.id: tmpl.name for tmpl in dest_repo.list_templates()}
     nodes = {node.label: node for node in dest_repo.list_nodes(limit=10)}
-    # Both survive: the (system) template binding AND the specific type.
+    # A graph from before the core types imports onto them (2026-10-08): the
+    # old per-type template is re-pointed to the core type's, and the specific
+    # type survives as the node's subtype.
     assert {label: template_names.get(n.template_id) for label, n in nodes.items()} == {
-        "Cortex": "Component",
-        "Valkey": "Component",
+        "Cortex": "Object",
+        "Valkey": "Object",
     }
-    assert {label: n.entity_type for label, n in nodes.items()} == {
-        "Cortex": "Service",
-        "Valkey": "Package",
+    assert {
+        label: (n.entity_type, n.properties.get("entity_subtype")) for label, n in nodes.items()
+    } == {
+        "Cortex": ("Object", "service"),
+        "Valkey": ("Object", "package"),
     }
 
 

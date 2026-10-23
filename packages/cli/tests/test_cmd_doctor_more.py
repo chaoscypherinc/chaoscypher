@@ -33,6 +33,8 @@ def _fake_settings(
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
     timeout: float = 2.0,
     workers: int = 2,
+    api_port: int = 8081,
+    web_ui_api: int = 8080,
 ) -> Any:
     """Build a SimpleNamespace shaped like the app settings ``doctor`` reads.
 
@@ -50,7 +52,9 @@ def _fake_settings(
         cli=SimpleNamespace(
             ollama_connect_timeout_seconds=timeout,
             health_check_workers=workers,
+            api_port=api_port,
         ),
+        ports=SimpleNamespace(web_ui_api=web_ui_api),
     )
 
 
@@ -81,6 +85,9 @@ def _invoke_doctor(
     chat_model: str = "qwen3:30b-instruct",
     extraction_model: str = "qwen3:30b-instruct",
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+    api_port: int = 8081,
+    web_ui_api: int = 8080,
+    cortex_candidates_seen: list[list[str]] | None = None,
     tmp_path: Any = None,
 ) -> Any:
     """Helper: patch all doctor probes and invoke the doctor command."""
@@ -97,12 +104,20 @@ def _invoke_doctor(
             chat_model=chat_model,
             extraction_model=extraction_model,
             embedding_model=embedding_model,
+            api_port=api_port,
+            web_ui_api=web_ui_api,
         ),
     )
     monkeypatch.setattr(doctor_module, "check_ollama", lambda _url: ollama_result)
     monkeypatch.setattr(doctor_module, "connect_context_stats", lambda: db_result)
     monkeypatch.setattr(doctor_module, "check_lexicon_hub", lambda _url, _timeout: hub_result)
-    monkeypatch.setattr(doctor_module, "check_cortex", lambda _candidates, _timeout: cortex_result)
+
+    def _check_cortex(candidates: list[str], _timeout: float) -> tuple[bool, str | None]:
+        if cortex_candidates_seen is not None:
+            cortex_candidates_seen.append(candidates)
+        return cortex_result
+
+    monkeypatch.setattr(doctor_module, "check_cortex", _check_cortex)
 
     # Stale-file probe is a real os-path check; stub it out so doctor output
     # is deterministic regardless of the host config dir.
@@ -358,10 +373,29 @@ class TestDoctorHubCortexBranches:
     def test_cortex_reachable_shows_running_at(self, monkeypatch: pytest.MonkeyPatch) -> None:
         result = _invoke_doctor(
             monkeypatch,
-            cortex_result=(True, "http://127.0.0.1:8000"),
+            cortex_result=(True, "http://127.0.0.1:8081"),
         )
         assert "Running at" in result.output
-        assert "http://127.0.0.1:8000" in result.output
+        assert "http://127.0.0.1:8081" in result.output
+
+    def test_cortex_candidates_follow_the_launcher_port_settings(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Doctor probes the ports `serve` (cli.api_port) and `cc-cortex` bind.
+
+        The "start with `chaoscypher serve`" hint is only honest if the port
+        serve binds is one doctor checks.
+        """
+        seen: list[list[str]] = []
+        _invoke_doctor(monkeypatch, api_port=9101, web_ui_api=9102, cortex_candidates_seen=seen)
+        assert seen == [["http://127.0.0.1:9101", "http://127.0.0.1:9102"]]
+
+    def test_cortex_candidates_deduplicate_a_shared_port(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[list[str]] = []
+        _invoke_doctor(monkeypatch, api_port=9101, web_ui_api=9101, cortex_candidates_seen=seen)
+        assert seen == [["http://127.0.0.1:9101"]]
 
 
 class TestDoctorConfigFileBranches:

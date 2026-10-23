@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from chaoscypher_core.ports.embedding import EmbeddingProviderProtocol
     from chaoscypher_core.services.graph.management.edge import EdgeService
     from chaoscypher_core.services.graph.management.node import NodeService
+    from chaoscypher_core.services.graph.management.release import LazyEmbedder
     from chaoscypher_core.services.graph.management.template import TemplateService
     from chaoscypher_core.services.workflows.management import WorkflowService
 
@@ -692,6 +693,19 @@ def _make_pass_context() -> Any:
 
 # Create the pass_context decorator
 pass_context = _make_pass_context()
+
+
+def cli_release_embedder(ctx: CLIContext) -> LazyEmbedder:
+    """The CLI's embedding provider, lent to a post-release refresh and built only when needed.
+
+    ``ctx.embedding_service`` raises for a cloud provider with no API key; the
+    refresh builds it only when a node went stale and treats a failure as its
+    logged, non-fatal one, so a committed delete or reset never reports an
+    error. Lent, not owned: the context keeps (and later reuses) the provider.
+    """
+    from chaoscypher_core.services.graph.management.release import LazyEmbedder
+
+    return LazyEmbedder(build=lambda: ctx.embedding_service, owned=False)
 
 
 def refresh_llm_state() -> None:

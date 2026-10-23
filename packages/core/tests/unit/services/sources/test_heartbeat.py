@@ -179,10 +179,13 @@ async def test_beats_never_run_on_the_handler_scoped_session(tmp_path) -> None:
 
         def __init__(self) -> None:
             self.beat_sessions: list[object] = []
+            self.background_beat = threading.Event()
 
         def update_source_last_activity(self, **kwargs: object) -> None:
             self.beat_sessions.append(inner.session)
             inner.update_source_last_activity(**kwargs)  # type: ignore[arg-type]
+            if len(self.beat_sessions) >= 2:  # the entry beat, then a loop beat
+                self.background_beat.set()
 
         def session_scope(self):
             return inner.session_scope()
@@ -196,7 +199,9 @@ async def test_beats_never_run_on_the_handler_scoped_session(tmp_path) -> None:
                 database_name="default",
                 interval_seconds=0.02,
             ):
-                await asyncio.sleep(0.07)
+                # Wait on the loop beat, not a fixed sleep: CI load varies.
+                # The beat runs in a worker thread, hence a threading.Event.
+                assert await asyncio.to_thread(probe.background_beat.wait, 5.0)
     finally:
         inner.disconnect()
 

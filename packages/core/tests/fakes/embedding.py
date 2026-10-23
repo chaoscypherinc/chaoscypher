@@ -15,6 +15,8 @@ Docker-driven e2e run.
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult, TokenUsage
@@ -95,7 +97,9 @@ class FakeEmbeddingProvider:
         local provider does the same cast — see
         ``adapters/embedding/local_provider.py``).
         """
-        seed = hash(text) & 0xFFFFFFFF
+        # sha256, not hash(): Python salts str hashes per process, so vectors differed across
+        # workers and seeds (a different Note surfaced under PYTHONHASHSEED=2, 2026-10-20)
+        seed = int.from_bytes(hashlib.sha256(text.encode("utf-8")).digest()[:4], "big")
         rng = np.random.default_rng(seed)
         vector: list[float] = rng.standard_normal(self.dimensions).astype(np.float32).tolist()
         return vector

@@ -320,6 +320,9 @@ def test_ollama_provider_passes_timeout_via_client_kwargs() -> None:
     [
         (ConnectionError("Connection refused"), False),
         (httpx.ConnectError("All connection attempts failed"), False),
+        # the connection dropped mid-answer (a host waking from suspend, 2026-10-04): transient too
+        (httpx.ReadError(""), False),
+        (httpx.RemoteProtocolError("Server disconnected without sending a response."), False),
         (httpx.ReadTimeout("timed out"), True),
         (TimeoutError(), True),
     ],

@@ -5,7 +5,7 @@
  * General Settings Tab
  *
  * Top-level application settings including dark mode, auto-enable,
- * import/export, and TLS configuration.
+ * import/export, network access, the LLM caches, and TLS configuration.
  */
 
 import { RefObject, useState } from 'react';
@@ -38,6 +38,8 @@ import AccountAccordion from './AccountAccordion';
 import ApiKeysAccordion from './ApiKeysAccordion';
 import ImportExportSection from './ImportExportSection';
 import NetworkAccessAccordion from './NetworkAccessAccordion';
+import CacheAccordion from './CacheAccordion';
+import GraphRagAccordion from './GraphRagAccordion';
 
 interface GeneralSettingsTabProps {
   settings: Settings;
@@ -171,6 +173,10 @@ export default function GeneralSettingsTab({
 
         {/* Network access — host allow-list + external-access toggle */}
         <NetworkAccessAccordion settings={settings} setSettings={setSettings} />
+
+        {/* LLM response + embedding caches — saved through their own endpoint */}
+        <CacheAccordion />
+        <GraphRagAccordion />
 
         {/* TLS Settings (auth-enabled only) */}
         <TLSAccordion />

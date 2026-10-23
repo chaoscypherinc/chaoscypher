@@ -76,6 +76,13 @@ def pad_with_filler(passage: str, target_chars: int) -> str:
     return out + "\n"
 
 
+PROBES_DEFAULT_PACKS: tuple[str, ...] = ("literary",)
+"""The packs a probes manifest that names none is rendered with (the probe passages are literary).
+
+A probes manifest names its packs as a dataset manifest does
+(:func:`~chaoscypher_core.benchmark.packs.manifest_packs`); the CLI's probe
+dataset and the MCP probe suite both read it with this default."""
+
 _VALID_TIERS = frozenset({"easy", "medium", "hard"})
 
 

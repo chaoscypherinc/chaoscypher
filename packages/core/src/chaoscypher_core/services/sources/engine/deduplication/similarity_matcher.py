@@ -4,14 +4,16 @@
 """Similarity matching and comparison logic for entity deduplication.
 
 Provides functions for comparing entity names and computing adjusted
-similarity scores. Handles alias matching bonuses, hierarchical name
-containment checks, and significant word extraction with title-word
-filtering.
+similarity scores for the semantic (embedding) pass: name normalisation,
+alias matching bonuses and type compatibility (core types, :func:`core_type_key`). Whether two names are one
+entity by name alone is decided by
+:mod:`~chaoscypher_core.services.sources.engine.deduplication.name_identity`.
 
 SRP: Single responsibility for entity similarity comparison.
 """
 
 import unicodedata
+from functools import lru_cache
 from typing import Any
 
 import structlog
@@ -19,86 +21,61 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-# Types treated as generic/untyped — always compatible with any other type.
-_GENERIC_TYPES = frozenset(
-    {
-        "unknown",
-        "thing",
-        "entity",
-        "item",
-        "object",
-        "concept",
-        "",
-    }
-)
 
+@lru_cache(maxsize=4096)
+def core_type_key(entity_type: str | None) -> str:
+    """The type ``entity_type`` is compared as wherever two types are compared: its core type.
 
-def normalize_compatibility_map(
-    compatibility_map: dict[str, list[str]] | None,
-) -> dict[str, frozenset[str]] | None:
-    """Pre-normalize a compatibility map for repeated lookups.
-
-    Converts each group's type list to a lowercase frozenset so that
-    ``are_types_compatible`` can skip per-call normalization when called
-    in tight loops.
-
-    Args:
-        compatibility_map: Raw compatibility groups, e.g.
-            ``{"Person": ["Character", "Individual"]}``.
-
-    Returns:
-        Normalized map with frozenset values, or None if input is None/empty.
-
+    The one reading of a written type by the dedup type gate
+    (:func:`are_types_compatible`), the semantic partition, the hierarchical
+    grouping, the name rule's person test (``NameConventions.is_person``) and
+    the typed ``NameIndex`` (spec 2026-10-07 § 6). A core type is itself in
+    any case (``person`` is ``Person``); an old template name is its mapping
+    table row's core type (``core_types.core_type_of``, the plain row: an old
+    snapshot's ``Character`` is ``Person``); a written ``Core/subtype`` is its
+    written core type (what the evidence filter reads ahead of the type
+    rescue, which places the subtype); a name the table does not know
+    compares as itself, folded (``UNKNOWN`` is ``unknown``), and no type is
+    the empty string. Until 2026-10-07 a type was compared as its own string,
+    with a domain's ``compatibility_group`` map and a list of generic types
+    (``Concept``, ``Object``, ``unknown``: compatible with every type) beside it.
     """
-    if not compatibility_map:
-        return None
-    return {gid: frozenset(t.lower() for t in group) for gid, group in compatibility_map.items()}
+    # Lazy: the extraction package imports this one at load time.
+    from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+        core_type_of,
+        split_qualified_type,
+    )
+
+    name = " ".join((entity_type or "").strip().split())
+    if not name:
+        return ""
+    qualified = split_qualified_type(name)
+    if qualified is not None:  # Person/character, before the type rescue places it
+        return qualified[0]
+    try:
+        return core_type_of(name)[0]
+    except KeyError:
+        return name.lower()
 
 
-def are_types_compatible(
-    type_a: str,
-    type_b: str,
-    compatibility_map: dict[str, list[str]] | None = None,
-    *,
-    _normalized_map: dict[str, frozenset[str]] | None = None,
-) -> bool:
-    """Check whether two entity types are compatible for merging.
+def are_types_compatible(type_a: str, type_b: str) -> bool:
+    """Whether two entity types may be one entity: their core types are one (:func:`core_type_key`).
 
-    Two types are compatible if:
-    1. They are identical (case-insensitive), OR
-    2. Either type is a generic placeholder, OR
-    3. Both appear in the same group in the compatibility map.
+    ``Person`` and ``person`` are compatible, and so are two subtypes'
+    old template names of one core type (``Character`` and ``Author``, both
+    Person); ``Person`` and ``Location`` never are, nor ``Concept`` and
+    ``Person`` (a core type is no generic placeholder). A merge keeps the
+    core type and unions the subtypes (``EntityProcessor.merge_entities``).
 
     Args:
         type_a: First entity type.
         type_b: Second entity type.
-        compatibility_map: Optional custom groups, e.g.
-            ``{"Person": ["Character", "Individual"]}``.
-        _normalized_map: Pre-normalized map from
-            ``normalize_compatibility_map()``. When provided, takes
-            precedence over ``compatibility_map`` and avoids per-call
-            normalization overhead.
 
     Returns:
         True if the types are compatible for merging.
 
     """
-    a = type_a.strip().lower()
-    b = type_b.strip().lower()
-
-    if a == b:
-        return True
-    if a in _GENERIC_TYPES or b in _GENERIC_TYPES:
-        return True
-
-    resolved = _normalized_map or (
-        normalize_compatibility_map(compatibility_map) if compatibility_map else None
-    )
-    if resolved:
-        for group_lower in resolved.values():
-            if a in group_lower and b in group_lower:
-                return True
-    return False
+    return core_type_key(type_a) == core_type_key(type_b)
 
 
 def normalize_name_key(name: str) -> str:
@@ -111,6 +88,7 @@ def normalize_name_key(name: str) -> str:
         "Anna Pavlovna Scherer" -> "anna pavlovna scherer"
         "Francois" -> "francois"
         "naive" -> "naive"
+        "Duc d\u2019Enghien" -> "duc d'enghien" (a typographic apostrophe is one)
 
     Args:
         name: Entity name to normalize.
@@ -122,7 +100,8 @@ def normalize_name_key(name: str) -> str:
     stripped = "".join(
         c for c in unicodedata.normalize("NFD", name) if unicodedata.category(c) != "Mn"
     )
-    return stripped.strip().lower()
+    # One apostrophe: U+2019 is written as ' ("Duc d'Enghien" either way; audit wave 5).
+    return stripped.replace("\u2019", "'").strip().lower()
 
 
 def calculate_entity_similarity(
@@ -132,13 +111,21 @@ def calculate_entity_similarity(
     *,
     precomputed_a: tuple[str, frozenset[str]] | None = None,
     precomputed_b: tuple[str, frozenset[str]] | None = None,
+    alias_evidence: tuple[bool, bool] | None = None,
 ) -> float:
     """Calculate total entity similarity with name and alias matching bonus.
 
     Adds bonus points when:
     - Both entities have the same normalized name (strongest signal)
-    - One entity's name appears in the other's aliases
-    - Both entities share common aliases
+    - One entity's name is an alias the other was given, and that alias is
+      the name rule's alias evidence (``NameIndex.alias_evidence``)
+
+    Two entities sharing an alias get nothing for it: an alias two names
+    carry says which family, not whom (``Kurágin`` on Anatole and on
+    Vasíli), the rule the exact dedup keys by. Until 2026-10-06 that overlap
+    added 0.10 and a name in the other's aliases 0.15 with no guard, so a
+    father and son or a count and countess merged on a shared surname at a
+    cosine of 0.86 (audit W4-3).
 
     Args:
         entity_a: First entity dictionary.
@@ -146,9 +133,13 @@ def calculate_entity_similarity(
         embedding_similarity: Base cosine similarity from embeddings.
         precomputed_a: Optional pre-normalized (name_key, alias_keys) for
             entity_a to avoid redundant normalize_name_key() calls in tight
-            loops. When None, computed on the fly.
+            loops. When None, computed on the fly from its given aliases.
         precomputed_b: Optional pre-normalized (name_key, alias_keys) for
             entity_b.
+        alias_evidence: ``(a's name in b's aliases is evidence, b's name in
+            a's aliases is evidence)`` as the caller's name index judged it
+            over every entity; when None, judged over the two entities alone
+            under the universal naming conventions.
 
     Returns:
         Adjusted similarity score (capped at 1.0).
@@ -156,32 +147,22 @@ def calculate_entity_similarity(
     """
     bonus = 0.0
 
-    # Use precomputed values or normalize on the fly
-    if precomputed_a is not None:
-        name_a, aliases_a = precomputed_a
-    else:
-        name_a = normalize_name_key(entity_a.get("name") or entity_a.get("label", ""))
-        aliases_a = frozenset(normalize_name_key(a) for a in entity_a.get("aliases", []) if a)
-
-    if precomputed_b is not None:
-        name_b, aliases_b = precomputed_b
-    else:
-        name_b = normalize_name_key(entity_b.get("name") or entity_b.get("label", ""))
-        aliases_b = frozenset(normalize_name_key(a) for a in entity_b.get("aliases", []) if a)
+    name_a, aliases_a = precomputed_a or _name_keys(entity_a)
+    name_b, aliases_b = precomputed_b or _name_keys(entity_b)
 
     # Exact name match: strongest indicator (same entity, different types/descriptions)
     if name_a and name_b and name_a == name_b:
         bonus += 0.20
 
-    # Name matches alias: strong indicator of same entity
-    if name_a and name_a in aliases_b:
+    a_in_b = bool(name_a) and name_a in aliases_b
+    b_in_a = bool(name_b) and name_b in aliases_a
+    if (a_in_b or b_in_a) and alias_evidence is None:
+        alias_evidence = _pair_alias_evidence(entity_a, entity_b)
+    # Name matches an alias the other was given: evidence only when the name rule says so.
+    if a_in_b and alias_evidence is not None and alias_evidence[0]:
         bonus += 0.15
-    if name_b and name_b in aliases_a:
+    if b_in_a and alias_evidence is not None and alias_evidence[1]:
         bonus += 0.15
-
-    # Aliases overlap: also a strong indicator
-    if aliases_a and aliases_b and (aliases_a & aliases_b):
-        bonus += 0.10
 
     if bonus > 0:
         logger.debug(
@@ -196,112 +177,26 @@ def calculate_entity_similarity(
     return min(1.0, embedding_similarity + bonus)
 
 
-def extract_significant_words(name: str, title_words: frozenset[str]) -> set[str]:
-    """Extract significant words from a name, ignoring titles and honorifics.
-
-    Args:
-        name: Entity name.
-        title_words: Set of title/honorific words to exclude.
-
-    Returns:
-        Set of significant lowercase words.
-
-    """
-    # Strip diacritics, tokenize and lowercase - replace common separators with spaces
-    words = set()
-    diacritics_stripped = normalize_name_key(name)
-    normalized = (
-        diacritics_stripped.replace(".", " ").replace(",", " ").replace("/", " ").replace("-", " ")
+def _name_keys(entity: dict[str, Any]) -> tuple[str, frozenset[str]]:
+    """An entity's normalized name and given aliases (``aliases_given`` when a merge recorded it)."""
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        GIVEN_ALIASES_KEY,
     )
-    for word in normalized.split():
-        stripped = word.strip()
-        if stripped and stripped not in title_words and len(stripped) > 1:
-            words.add(stripped)
-    return words
+
+    raw = entity.get(GIVEN_ALIASES_KEY)
+    aliases = raw if isinstance(raw, list) else entity.get("aliases") or []
+    return (
+        normalize_name_key(entity.get("name") or entity.get("label", "")),
+        frozenset(normalize_name_key(str(a)) for a in aliases if a),
+    )
 
 
-def _is_word_boundary_match(short: str, long: str) -> bool:
-    """Check if short name appears at a word boundary in long name.
+def _pair_alias_evidence(entity_a: dict[str, Any], entity_b: dict[str, Any]) -> tuple[bool, bool]:
+    """``(b gave a's name, a gave b's name)`` as alias evidence over the two entities alone."""
+    from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+        NameIndex,
+        name_record,
+    )
 
-    Returns True if short appears as a complete word (not a substring of a
-    longer word) in the long name.
-
-    Args:
-        short: Shorter normalized name to find.
-        long: Longer normalized name to search in.
-
-    Returns:
-        True if short appears at a word boundary in long.
-
-    """
-    pos = long.find(short)
-    if pos == -1:
-        return False
-    end = pos + len(short)
-    # Check left boundary: start of string or preceded by space/separator
-    left_ok = pos == 0 or not long[pos - 1].isalnum()
-    # Check right boundary: end of string or followed by space/separator
-    right_ok = end == len(long) or not long[end].isalnum()
-    return left_ok and right_ok
-
-
-def should_merge_names(  # noqa: PLR0911
-    idx_a: int,
-    name_a: str,
-    words_a: set[str],
-    idx_b: int,
-    name_b: str,
-    words_b: set[str],
-) -> tuple[bool, int]:
-    """Determine if two entity names should be merged.
-
-    Merge criteria with guards against false positives:
-    1. Strict containment: one name fully contains the other as a substring,
-       BUT the match must occur at a word boundary to prevent false positives
-       like "mary" matching inside "marya" or "prince" inside "princess".
-    2. Word-set containment: one name's significant words are a complete
-       subset of the other's, AND the shorter set must cover at least 40%
-       of the longer set's words.
-
-    Args:
-        idx_a: Index of first entity.
-        name_a: Name of first entity.
-        words_a: Significant words from first entity.
-        idx_b: Index of second entity.
-        name_b: Name of second entity.
-        words_b: Significant words from second entity.
-
-    Returns:
-        Tuple of (should_merge, canonical_idx):
-            - should_merge: True if entities should be merged.
-            - canonical_idx: Index of the entity to keep as canonical
-              (longer/more complete).
-
-    """
-    name_a_lower = normalize_name_key(name_a)
-    name_b_lower = normalize_name_key(name_b)
-
-    # Strict containment check (one name is substring of the other)
-    a_in_b = name_a_lower in name_b_lower and name_a_lower != name_b_lower
-    b_in_a = name_b_lower in name_a_lower and name_a_lower != name_b_lower
-
-    if a_in_b:
-        if not _is_word_boundary_match(name_a_lower, name_b_lower):
-            return False, -1
-        return True, idx_b  # B is canonical (longer)
-
-    if b_in_a:
-        if not _is_word_boundary_match(name_b_lower, name_a_lower):
-            return False, -1
-        return True, idx_a  # A is canonical (longer)
-
-    # Word-set containment check
-    if not words_a or not words_b:
-        return False, -1
-
-    if words_a.issubset(words_b) and len(words_a) / len(words_b) >= 0.4:
-        return True, idx_b  # B has more words (more complete)
-    if words_b.issubset(words_a) and len(words_b) / len(words_a) >= 0.4:
-        return True, idx_a  # A has more words (more complete)
-
-    return False, -1
+    index = NameIndex([name_record(entity_a), name_record(entity_b)], typed=False)
+    return index.alias_evidence_between(1, 0), index.alias_evidence_between(0, 1)

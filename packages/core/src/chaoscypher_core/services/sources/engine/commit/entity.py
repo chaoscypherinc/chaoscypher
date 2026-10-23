@@ -18,6 +18,14 @@ from chaoscypher_core.models import (
     Node,
     NodeCreate,
 )
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    GIVEN_ALIASES_KEY,
+    NAME_RECORD_KEYS,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+    SUBTYPES_PROPERTY,
+    core_typed,
+)
 from chaoscypher_core.settings import GraphSettings
 
 
@@ -97,14 +105,23 @@ class EntityCommitHandler:
         nodes_to_create = []
         entity_data_list = []
         all_entity_template_ids: list[str] = []
+        # Index once: ``all_templates`` holds every node template in the
+        # database (per-source ids, so it grows with the library) and the
+        # property lookup below runs once per entity.
+        templates_by_id = {t.id: t for t in all_templates}
 
         for entity in entities:
             # Skip if explicitly marked as not-create
             if entity.get("action") and entity.get("action") != "create":
                 continue
 
-            # Handle both nested and flat entity formats
-            entity_data = entity.get("entity_data", entity)
+            # Handle both nested and flat entity formats. graph_nodes.entity_type
+            # stores the core type (spec 2026-10-07 § 6), placed once
+            # (``core_typed``): an old per-type name (``Character``) is its core
+            # type with the subtype in ``entity_subtype``; a type no core type
+            # answers is kept as ``Concept`` flagged ``unplaced_type`` (the type
+            # rescue's rule), so the template match below reads the core type.
+            entity_data = core_typed(entity.get("entity_data", entity))
             entity_name = entity_data.get("name", "Untitled")
 
             # Resolve template
@@ -123,24 +140,26 @@ class EntityCommitHandler:
 
             # Build properties
             properties = self._build_entity_properties(
-                entity_data, entity_name, template_id, all_templates, file_info, file_id
+                entity_data, entity_name, template_id, templates_by_id, file_info, file_id
             )
 
             # Get embedding for this entity if available.
             # Join by the stable ``entity_id`` (stamped by ``normalize_entities``
             # and persisted alongside every stored vector) rather than by list
-            # position: ``drop_orphan_entities`` compacts the entity list before
+            # position: ``flag_orphan_entities`` compacts the entity list before
             # this runs, so a positional join would assign every survivor after a
             # dropped orphan a DIFFERENT entity's vector. Fall back to the entity
             # dict itself — deduplication persists embeddings directly on entities
             # so they survive index-changing pipeline steps (hierarchical merge).
-            embedding = embeddings_map.get(entity_data.get("id")) or entity_data.get("embedding")
+            entity_id = entity_data.get("id")
+            embedding = (
+                embeddings_map.get(entity_id) if entity_id is not None else None
+            ) or entity_data.get("embedding")
 
-            # Capture the raw extracted entity type so it lands on
-            # graph_nodes.entity_type without going through the
-            # source_citations.entity_label↔graph_nodes.label join.
-            # ``type`` is the canonical field on raw extraction output
-            # (see RawEntity in operations/extraction/schemas.py).
+            # The placed core type, read off the extracted ``type`` (RawEntity)
+            # without going through the source_citations.entity_label↔
+            # graph_nodes.label join; the pack subtype stays in the properties
+            # (``entity_subtype``, and a merge's ``entity_subtypes``).
             entity_type = entity_data.get("type")
 
             nodes_to_create.append(
@@ -166,7 +185,7 @@ class EntityCommitHandler:
         """Load embeddings map for entities, keyed by stable ``entity_id``.
 
         Keying by ``entity_id`` (not the stored positional ``entity_index``)
-        keeps the join correct after ``drop_orphan_entities`` compacts and
+        keeps the join correct after ``flag_orphan_entities`` compacts and
         re-indexes the entity list. Rows without an ``entity_id`` are skipped
         (a missing embedding is safe; a mis-joined one silently corrupts the
         vector index).
@@ -233,7 +252,7 @@ class EntityCommitHandler:
         entity_data: dict,
         entity_name: str,
         template_id: str,
-        all_templates: list[Any],
+        templates_by_id: dict[str, Any],
         file_info: Any,
         file_id: str,
     ) -> dict[str, Any]:
@@ -243,7 +262,7 @@ class EntityCommitHandler:
             entity_data: Entity data dict
             entity_name: Entity name
             template_id: Resolved template ID
-            all_templates: All available templates
+            templates_by_id: All available templates keyed by template ID
             file_info: Import file info
             file_id: Import file ID
 
@@ -260,18 +279,21 @@ class EntityCommitHandler:
         aliases = entity_data.get("aliases", [])
         if aliases and isinstance(aliases, list) and len(aliases) > 0:
             properties["aliases"] = aliases
-
-        # Store descriptors if extracted (contextual descriptions, not used for dedup)
-        descriptors = entity_data.get("descriptors", [])
-        if descriptors and isinstance(descriptors, list) and len(descriptors) > 0:
-            properties["descriptors"] = descriptors
+        # What the name rule reads besides the name and aliases (``NAME_RECORD_KEYS``): which
+        # aliases were given under this name (the resolver's alias evidence; an empty list
+        # says none was), the names a merge folded in (the resolver guards the node by them),
+        # the spellings the corpus writes (its survivor ranking) and the descriptors.
+        for key in NAME_RECORD_KEYS:
+            value = entity_data.get(key)
+            if isinstance(value, list) and (value or key == GIVEN_ALIASES_KEY):
+                properties[key] = list(value)
 
         # Normalize property values
         self._normalize_properties(properties)
 
         # Ensure required properties
         self._ensure_required_properties(
-            properties, entity_data, entity_name, template_id, all_templates
+            properties, entity_data, entity_name, template_id, templates_by_id
         )
 
         # Add source tracking
@@ -290,7 +312,14 @@ class EntityCommitHandler:
 
         """
         # Properties to keep as lists (used by search/alias resolution)
-        preserve_as_list = {"aliases", "nicknames", "tags", "also_known_as", "descriptors"}
+        preserve_as_list = {
+            "aliases",
+            *NAME_RECORD_KEYS,
+            "nicknames",
+            "tags",
+            "also_known_as",
+            SUBTYPES_PROPERTY,  # a merge's subtypes (Person/character + Person/author)
+        }
 
         for key, value in list(properties.items()):
             if isinstance(value, list):
@@ -308,7 +337,7 @@ class EntityCommitHandler:
         entity_data: dict,
         entity_name: str,
         template_id: str,
-        all_templates: list[Any],
+        templates_by_id: dict[str, Any],
     ) -> None:
         """Ensure required properties are present for the template.
 
@@ -317,7 +346,7 @@ class EntityCommitHandler:
             entity_data: Entity data dict
             entity_name: Entity name
             template_id: Template ID
-            all_templates: All available templates
+            templates_by_id: All available templates keyed by template ID
 
         """
         # Ensure 'definition' for system_template_item
@@ -328,7 +357,7 @@ class EntityCommitHandler:
             properties["definition"] = context or f"Entity: {entity_name}"
 
         # Get template for property checks
-        template = next((t for t in all_templates if t.id == template_id), None)
+        template = templates_by_id.get(template_id)
         if not template or not template.properties:
             return
 
@@ -371,12 +400,16 @@ class EntityCommitHandler:
         self,
         nodes_to_create: list[NodeCreate],
         entity_data_list: list[dict],
+        *,
+        reattested: set[str] | None = None,
     ) -> tuple[list[str], dict[int, str], dict[str, str], dict[int, Node], int]:
         """Batch create nodes and build index/name mappings.
 
         Args:
             nodes_to_create: List of NodeCreate objects
             entity_data_list: List of entity data
+            reattested: Filled with the reused node ids this source attests
+                again (``upsert_nodes_batch(reattested=)``), for the rebuild.
 
         Returns:
             Tuple of:
@@ -406,7 +439,7 @@ class EntityCommitHandler:
         # reuses existing rows instead of creating duplicates. This
         # is the resumability entry point on the node side.
         batch_created_nodes, inserted_count = await self.graph_repository.upsert_nodes_batch(
-            nodes_to_create
+            nodes_to_create, reattested=reattested
         )
 
         for idx, node in enumerate(batch_created_nodes):

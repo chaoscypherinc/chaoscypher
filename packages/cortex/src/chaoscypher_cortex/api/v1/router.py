@@ -15,6 +15,7 @@ from fastapi import APIRouter
 # /api/v1/auth (nginx hits /api/v1/auth/verify for auth_request).
 from chaoscypher_cortex.features.admin_plugins.api import router as admin_plugins_router
 from chaoscypher_cortex.features.backup.api import router as backup_router
+from chaoscypher_cortex.features.cache.api import router as cache_router
 from chaoscypher_cortex.features.chats.api import router as conversations_router
 from chaoscypher_cortex.features.counts.api import router as counts_router
 from chaoscypher_cortex.features.dashboard import router as dashboard_router
@@ -53,6 +54,7 @@ from chaoscypher_cortex.features.sources.chunks_api import router as sources_chu
 from chaoscypher_cortex.features.sources.extraction_api import (
     router as sources_extraction_router,
 )
+from chaoscypher_cortex.features.sources.sites_api import router as source_sites_router
 from chaoscypher_cortex.features.sources.tags_api import router as source_tags_router
 from chaoscypher_cortex.features.sources.vision_pages_api import (
     router as sources_vision_pages_router,
@@ -122,6 +124,7 @@ def create_api_router() -> APIRouter:
     api.include_router(search_router, prefix="/search", tags=["search"])
     api.include_router(settings_router, prefix="/settings", tags=["settings"])
     api.include_router(ollama_models_router, prefix="/settings/ollama", tags=["settings"])
+    api.include_router(cache_router, prefix="/cache", tags=["cache"])
     api.include_router(databases_router, prefix="/databases", tags=["databases"])
     api.include_router(queue_router, prefix="/queue", tags=["queue"])
     api.include_router(export_router, prefix="/exports", tags=["export"])
@@ -129,6 +132,8 @@ def create_api_router() -> APIRouter:
     # NOTE: source_tags_router MUST come before sources_router to avoid path conflict
     # (sources_router has /{source_id} which would otherwise match "/tags" as source_id)
     api.include_router(source_tags_router, prefix="/sources/tags", tags=["sources"])
+    # Same reason: /sources/sites before sources_router's /{source_id}.
+    api.include_router(source_sites_router, prefix="/sources/sites", tags=["sources"])
     # Pause/resume endpoints. Mounted BEFORE sources_router so the
     # literal /sources/pause and /sources/resume bulk endpoints match
     # before sources_router's /{source_id} patterns.

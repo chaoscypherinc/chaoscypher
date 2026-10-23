@@ -114,19 +114,11 @@ def register_quality_score_handler(
                 return ("skipped", None)
 
             domain = source.get("extraction_domain")
-            quality_config = {}
-            if domain:
-                try:
-                    from chaoscypher_core.services.sources.engine.extraction.domains import (
-                        get_domain_registry,
-                    )
+            from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+                quality_config_of,
+            )
 
-                    registry = get_domain_registry(database_name=database_name)
-                    analyzer = registry.get_domain(domain)
-                    if analyzer and hasattr(analyzer, "get_quality_scoring"):
-                        quality_config = analyzer.get_quality_scoring()
-                except Exception:
-                    logger.debug("domain_quality_scoring_lookup_failed", domain=domain)
+            quality_config = quality_config_of(domain, database_name=database_name)
 
             # Canonical chunk-mention map (handles the table rows'
             # ``source_chunk_indices`` key as well as the legacy aliases).

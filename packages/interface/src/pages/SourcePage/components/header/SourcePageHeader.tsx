@@ -1,15 +1,14 @@
 // Copyright (C) 2024-2026 Chaos Cypher, Inc.
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import React from 'react';
 import { Box, Chip, IconButton, Tooltip, Typography } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PauseIcon from '@mui/icons-material/Pause';
 import type { Source } from '../../../../types';
 import { isSourceCommitted } from '../../../../types';
-import { getMuiIcon } from '../../../../utils/icons';
 import { DomainColors } from '../../../../theme/colors';
 import { deriveMergedChipState } from '../../../../components/sources/mergedChipState';
+import { PacksChip } from '../../../../components/sources/PacksChip';
 import { InlineTagEditor } from '../InlineTagEditor';
 import { FileInfoTooltip } from './FileInfoTooltip';
 import { SourceActionsMenu } from './SourceActionsMenu';
@@ -33,6 +32,8 @@ interface SourcePageHeaderProps {
    * extraction and re-runs the LLM.
    */
   onReextract?: () => void;
+  /** Open the source's pack settings (re-extracts under the packs chosen there). */
+  onChangePacks?: () => void;
 }
 
 /**
@@ -53,12 +54,8 @@ export function SourcePageHeader({
   onRetry,
   onReExtract,
   onReextract,
+  onChangePacks,
 }: SourcePageHeaderProps) {
-  const domainIconElement = source.extraction_domain
-    ? React.createElement(getMuiIcon(source.extraction_domain_icon), {
-        sx: { fontSize: 16, color: `${source.extraction_domain_auto ? DomainColors.auto : DomainColors.manual} !important` },
-      })
-    : null;
   const domainColor = source.extraction_domain_auto
     ? DomainColors.auto
     : DomainColors.manual;
@@ -120,24 +117,16 @@ export function SourcePageHeader({
             color={getStatusColor(source.status)}
           />
         )}
-        {source.extraction_domain && domainIconElement && (
+        {source.extraction_domain && (
           <Tooltip arrow title={<FileInfoTooltip source={source} />}>
-            <Chip
-              icon={domainIconElement}
-              label={`${source.extraction_domain.charAt(0).toUpperCase() + source.extraction_domain.slice(1)}${source.extraction_domain_auto ? '' : ' (Custom)'}`}
-              size="small"
-              variant="outlined"
-              sx={{
-                height: 24,
-                fontSize: '0.75rem',
-                fontWeight: 500,
-                bgcolor: 'transparent',
-                borderColor: domainColor,
-                color: domainColor,
-                '& .MuiChip-label': { px: 1.5 },
-                '& .MuiChip-icon': { ml: 0.75 },
-              }}
-            />
+            {/* span: the chip may render nothing, and a Tooltip needs one child */}
+            <span>
+              <PacksChip
+                source={source}
+                color={domainColor}
+                suffix={source.extraction_domain_auto ? '' : ' (Custom)'}
+              />
+            </span>
           </Tooltip>
         )}
         <Tooltip arrow title={<FileInfoTooltip source={source} />}>
@@ -172,6 +161,7 @@ export function SourcePageHeader({
           onRetry={onRetry}
           onReExtract={onReExtract}
           onReextract={onReextract}
+          onChangePacks={onChangePacks}
         />
       </Box>
     </Box>

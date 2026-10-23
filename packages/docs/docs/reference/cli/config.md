@@ -452,10 +452,10 @@ Run `chaoscypher setup` once (or set the values you need with `config set`), the
 Settings are resolved in the following order (later sources override earlier ones):
 
 1. **Built-in defaults** -- hardcoded in the application
-2. **Environment-variable fallbacks** -- well-known names like `LEXICON_URL` and `OPENAI_API_KEY` supply the default when the key is absent from `settings.yaml`
+2. **Environment-variable fallbacks** -- well-known names like `OPENAI_API_KEY` supply the default when the key is absent from `settings.yaml`
 3. **`settings.yaml`** -- the unified config file in the data directory; an explicit file value wins over the env-var fallback
 
-Two kinds of variables sit outside this order: `CHAOSCYPHER_DATABASE` genuinely overrides `current_database` when the CLI resolves which database to use, and the `CHAOSCYPHER_*_DIR` path variables effectively override everything because they decide which `settings.yaml` is loaded in the first place.
+Some variables sit outside this order: the Lexicon variables (`LEXICON_URL`, `CHAOSCYPHER_LEXICON_TIMEOUT`) override `settings.yaml`, so `config set lexicon.url …` has no effect while one is exported; `CHAOSCYPHER_DATABASE` genuinely overrides `current_database` when the CLI resolves which database to use, and the `CHAOSCYPHER_*_DIR` path variables effectively override everything because they decide which `settings.yaml` is loaded in the first place.
 
 ## Environment Variables
 
@@ -463,8 +463,8 @@ Most of these variables act as **fallback defaults** — they apply only when th
 
 | Variable | Applies to | Behavior |
 |----------|-----------|----------|
-| `LEXICON_URL` | `lexicon.url` | Fallback default |
-| `CHAOSCYPHER_LEXICON_TIMEOUT` | `lexicon.timeout` | Fallback default |
+| `LEXICON_URL` | `lexicon.url` | **True override** — outranks `settings.yaml` |
+| `CHAOSCYPHER_LEXICON_TIMEOUT` | `lexicon.timeout` | **True override** — outranks `settings.yaml` |
 | `CHAOSCYPHER_LLM_PROVIDER` | `llm.chat_provider` | Fallback default |
 | `OPENAI_API_KEY` | `llm.openai_api_key` | Fallback default |
 | `ANTHROPIC_API_KEY` | `llm.anthropic_api_key` | Fallback default |

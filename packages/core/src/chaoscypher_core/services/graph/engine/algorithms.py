@@ -93,14 +93,20 @@ def calculate_pagerank(
             iteration.
         personalization: Optional mapping of node ID to non-negative seed
             weight. Weights are normalized to sum to 1.0 internally. Node IDs
-            not present in the graph are silently ignored. When ``None``,
-            standard uniform teleportation is used.
+            not present in the graph are ignored. When ``None``, standard
+            uniform teleportation is used. When given but no ID is a node of
+            the graph with a positive weight, the run is the uniform one too:
+            that is logged (``pagerank_personalization_empty``) and reported
+            as ``personalized: False``, so a caller asking for a personalised
+            ranking can tell it did not get one.
 
     Returns:
         Dict with keys:
             - ``pagerank_scores``: Mapping of node ID to final score.
             - ``top_nodes``: List of up to 20 highest-scoring node dicts,
               each containing ``id``, ``label``, and ``pagerank``.
+            - ``personalized``: Whether the teleport distribution was the
+              given seeds (False for a uniform run, asked for or not).
             - ``iterations``: The configured ``max_iterations`` value.
               rustworkx does not expose the actual number of power-iteration
               steps taken before convergence, so this reports the cap, not
@@ -108,7 +114,7 @@ def calculate_pagerank(
 
     """
     if not nodes:
-        return {"pagerank_scores": {}, "top_nodes": [], "iterations": 0}
+        return {"pagerank_scores": {}, "top_nodes": [], "iterations": 0, "personalized": False}
 
     digraph, id_to_idx, idx_to_id = build_digraph(nodes, edges)
 
@@ -122,11 +128,19 @@ def calculate_pagerank(
         }
         if valid_seeds:
             rx_personalization = valid_seeds
+        else:
+            logger.warning(
+                "pagerank_personalization_empty",
+                requested=len(personalization),
+                fallback="uniform",
+            )
 
     # rustworkx pagerank returns CentralityMapping {node_idx: score}
+    # Each edge walks at its payload weight (``build_digraph``: a capped edge at a tenth).
     scores = rx.pagerank(
         digraph,
         alpha=damping,
+        weight_fn=float,
         max_iter=max_iterations,
         tol=tolerance,
         personalization=rx_personalization,
@@ -152,6 +166,7 @@ def calculate_pagerank(
     return {
         "pagerank_scores": pagerank,
         "top_nodes": ranked_nodes[:20],
+        "personalized": rx_personalization is not None,
         "iterations": max_iterations,  # rustworkx doesn't expose iteration count
     }
 

@@ -10,7 +10,8 @@ the state is global to the database, not per-migration.
 Consumed by:
 
 - The tier-aware startup runner (writes ``ready=False`` + blocked_on
-  when it finds pending NEEDS_CONFIRMATION migrations).
+  when a pending MANUAL migration is gated, the backup cannot be taken,
+  or an apply fails).
 - The Cortex upgrade-gate middleware (returns 503 on /api/* unless ready).
 - The Neuron worker's upgrade gate (sleep-loops while ready=False).
 - The Cortex ``/upgrade`` API and Interface maintenance page.
@@ -67,9 +68,7 @@ def _ensure_columns(conn: Connection) -> None:
     """Add new columns to a pre-existing upgrade-state table (idempotent)."""
     existing = {
         row[1]
-        for row in conn.exec_driver_sql(
-            "PRAGMA table_info(chaoscypher_upgrade_state)"
-        ).fetchall()
+        for row in conn.exec_driver_sql("PRAGMA table_info(chaoscypher_upgrade_state)").fetchall()
     }
     if "last_applied" not in existing:
         conn.exec_driver_sql(
@@ -200,17 +199,12 @@ def describe_apply_failure(exc: Exception, *, last_backup: str | None) -> str:
             f"interrupted partway. {recovery} If it recurs, the database may need to "
             f"be re-created. (Underlying error: {err})"
         )
-    return (
-        f"The database upgrade failed before completing. {recovery} "
-        f"(Underlying error: {err})"
-    )
+    return f"The database upgrade failed before completing. {recovery} (Underlying error: {err})"
 
 
 def clear_upgrade_state(db_path: Path) -> None:
     """Mark the DB ready, clear blocked_on and message."""
-    set_upgrade_state(
-        db_path, ready=True, blocked_on=[], last_backup=None, message=""
-    )
+    set_upgrade_state(db_path, ready=True, blocked_on=[], last_backup=None, message="")
 
 
 def record_successful_upgrade(

@@ -84,7 +84,10 @@ class TestFromEngineFactories:
         from chaoscypher_core import SourceCommitService
 
         service = SourceCommitService.from_engine(engine)
-        assert service.graph_repository is engine.graph_repository
+        # on the storage adapter's session, not the Engine's own graph session: the
+        # commit's graph and storage writes (and the re-commit release) share one transaction
+        assert service.graph_repository.session is engine.storage_adapter.session
+        assert service.graph_repository.database_name == engine.graph_repository.database_name
         assert service.search_repository is engine.search_repository
         assert service.source_repository is engine.storage_adapter
 

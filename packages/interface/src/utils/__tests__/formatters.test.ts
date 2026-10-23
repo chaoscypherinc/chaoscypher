@@ -118,6 +118,12 @@ describe('formatDuration', () => {
     expect(formatDuration(5400)).toBe('1h 30m');
     expect(formatDuration(7322)).toBe('2h 2m');
   });
+
+  it('keeps the seconds in the hour range when asked', () => {
+    expect(formatDuration(7322, { withSeconds: true })).toBe('2h 2m 2s');
+    expect(formatDuration(90, { withSeconds: true })).toBe('1m 30s');
+    expect(formatDuration(5, { withSeconds: true })).toBe('5s');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -417,6 +423,15 @@ describe('formatRelativeDate', () => {
     vi.setSystemTime(NOW);
     expect(formatRelativeDate(dateAgo(365 * 86_400_000))).toBe('1y ago');
     expect(formatRelativeDate(dateAgo(730 * 86_400_000))).toBe('2y ago');
+  });
+
+  it('labels future dates as "in …" instead of "just now"', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    expect(formatRelativeDate(dateAgo(-30_000))).toBe('just now');
+    expect(formatRelativeDate(dateAgo(-5 * 60_000))).toBe('in 5m');
+    expect(formatRelativeDate(dateAgo(-3 * 86_400_000))).toBe('in 3d');
+    expect(formatRelativeDate(dateAgo(-400 * 86_400_000))).toBe('in 1y');
   });
 });
 

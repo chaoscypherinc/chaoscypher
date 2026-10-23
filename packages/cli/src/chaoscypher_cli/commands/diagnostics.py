@@ -13,6 +13,7 @@ Example:
 """
 
 from pathlib import Path
+from typing import Any
 
 import click
 from rich.console import Console
@@ -50,7 +51,7 @@ def diagnostics(output: str | None, database: str | None) -> None:
     """
     from datetime import UTC, datetime
 
-    from chaoscypher_core.services.diagnostics import DiagnosticCollector
+    from chaoscypher_core.services.diagnostics import DiagnosticCollector, bundle_settings
 
     console.print()
     console.print("  [bold]Chaos Cypher Diagnostics[/bold]")
@@ -88,6 +89,15 @@ def diagnostics(output: str | None, database: str | None) -> None:
     except Exception:
         console.print("  [yellow]![/yellow] Could not load CLI config, using defaults")
 
+    settings_dict: dict[str, Any] | None = None
+    try:
+        from chaoscypher_core.app_config import get_settings
+
+        settings_dict = bundle_settings(get_settings())
+        console.print("  [green]✓[/green] Settings included (secrets masked)")
+    except Exception:
+        console.print("  [yellow]![/yellow] Could not load settings, bundle omits them")
+
     collector = DiagnosticCollector(db_path=db_path, log_dir=log_dir)
 
     if output:
@@ -97,7 +107,7 @@ def diagnostics(output: str | None, database: str | None) -> None:
         output_path = Path(f"chaoscypher-diagnostics-{timestamp}.zip")
 
     console.print("  [dim]Collecting diagnostics...[/dim]")
-    result = collector.export_bundle(output_path)
+    result = collector.export_bundle(output_path, settings=settings_dict)
 
     size_kb = result.stat().st_size / 1024
     console.print(f"  [green]✓[/green] Bundle saved: {result} ({size_kb:.0f} KB)")

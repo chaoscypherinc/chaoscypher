@@ -78,7 +78,7 @@ Chaos Cypher is a **single-user self-hosted product**. The main performance leve
       mem_limit: 12g   # example for a 16 GB host
   ```
 - **Valkey AOF persistence.** The queue uses Valkey (Redis-compatible) with AOF enabled. On a write-heavy import workload, place the data directory on an SSD.
-- **Mutation rate limit.** nginx throttles mutating requests (POST/PUT/PATCH/DELETE on `/api/*`) to 10 r/s per IP with a burst of 20. Scripted clients that submit rapidly (bulk imports, automation) can hit `503`s — raise `rate_limit.mutations_max_requests` / `rate_limit.mutations_burst` in `settings.yaml` and restart the container. See [rate limiting](./configuration.md#rate-limiting).
+- **Mutation and upload rate limits.** nginx throttles mutating requests (POST/PUT/PATCH/DELETE on `/api/*`) to 10 r/s per IP with a burst of 20. Scripted clients that submit rapidly (automation) can hit `503`s — raise `rate_limit.mutations_max_requests` / `rate_limit.mutations_burst` in `settings.yaml` and restart the container. Source uploads, `.ccx` imports and Lexicon publishes are throttled by the separate uploads zone instead (10 r/s, fixed burst of 5): for bulk imports raise `rate_limit.uploads_max_requests` — the mutations settings have no effect on those endpoints. See [rate limiting](./configuration.md#rate-limiting).
 - **There is no horizontal scaling path** for this edition. All components (Cortex API, Neuron worker, Valkey, SQLite) run inside one container. If you hit hard CPU limits, the answer is a bigger host, not more replicas.
 
 ## Log rotation

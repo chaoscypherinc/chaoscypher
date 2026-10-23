@@ -14,6 +14,7 @@ import pytest
 
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.services.sources.loaders.xlsx_loader import XLSXLoader
+from chaoscypher_core.settings import EngineSettings, LoaderSettings, PathSettings
 
 
 FIXTURE = Path(__file__).parent.parent.parent.parent.parent / "fixtures" / "loaders" / "sample.xlsx"
@@ -76,3 +77,60 @@ def test_xlsx_loader_wraps_invalid_file_in_validation_error(tmp_path: Path) -> N
     assert "fake.xlsx" in err.message
     assert "not a valid" in err.message
     assert exc_info.value.__cause__ is not None
+
+
+def _shared_string_workbook(path: Path, *, rows: int, cols: int, cell: str) -> None:
+    """Write a workbook whose every cell holds the same (shared) string."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    for _ in range(rows):
+        ws.append([cell] * cols)
+    wb.save(path)
+
+
+def _loader_settings(data_dir: Path, **loader_kwargs: object) -> EngineSettings:
+    return EngineSettings(
+        paths=PathSettings(data_dir=str(data_dir)), loader=LoaderSettings(**loader_kwargs)
+    )
+
+
+def test_xlsx_loader_rejects_shared_string_amplification(tmp_path: Path) -> None:
+    """Shared strings amplify past the on-disk size check; the char cap stops it.
+
+    2 rows x 50 cells of one 1,000-char string is a few KB on disk but
+    flattens to ~100,000 characters. The cap fires mid-row (per cell),
+    before the whole row is joined.
+    """
+    workbook = tmp_path / "amplified.xlsx"
+    _shared_string_workbook(workbook, rows=2, cols=50, cell="A" * 1_000)
+    loader = XLSXLoader(_loader_settings(tmp_path, xlsx_max_content_chars=10_000))
+
+    with pytest.raises(ValidationError) as exc_info:
+        loader.load_document(str(workbook))
+
+    assert exc_info.value.field == "content"
+    assert "amplified.xlsx" in exc_info.value.message
+    assert "xlsx_max_content_chars" in exc_info.value.message
+
+
+def test_xlsx_loader_loads_workbook_under_char_cap(tmp_path: Path) -> None:
+    workbook = tmp_path / "small.xlsx"
+    _shared_string_workbook(workbook, rows=2, cols=5, cell="cell")
+    loader = XLSXLoader(_loader_settings(tmp_path, xlsx_max_content_chars=10_000))
+
+    docs = loader.load_document(str(workbook))
+
+    assert "cell | cell | cell | cell | cell" in docs[0]["content"]
+
+
+def test_xlsx_loader_char_cap_disabled_by_none(tmp_path: Path) -> None:
+    workbook = tmp_path / "big.xlsx"
+    _shared_string_workbook(workbook, rows=2, cols=50, cell="A" * 1_000)
+    loader = XLSXLoader(_loader_settings(tmp_path, xlsx_max_content_chars=None))
+
+    docs = loader.load_document(str(workbook))
+
+    assert len(docs[0]["content"]) > 100_000

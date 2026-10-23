@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, get_tools_for_mode
+from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, get_tools
 
 
 BENCHMARK_TOOLS = {
@@ -39,7 +39,7 @@ VALID_ARGS = {
 def test_benchmark_tools_are_declared_and_available_in_read_mode() -> None:
     """They never touch the graph, so read-mode servers offer them too."""
     by_name = {t.name: t for t in TOOL_DEFINITIONS}
-    read_names = {t.name for t in get_tools_for_mode("read")}
+    read_names = {t.name for t in get_tools("read")}
     for name in BENCHMARK_TOOLS:
         assert name in by_name, name
         assert by_name[name].write_only is False
@@ -70,19 +70,26 @@ def test_start_schema_offers_every_registered_suite_and_a_reference() -> None:
     assert "chat" in SUITES
     assert "reference" in schema["properties"]
     assert "reference" not in schema["required"]
+    # the retrieval rung is an optional argument too, offered as the registry's modes
+    from chaoscypher_core.benchmark.retrieval import RETRIEVAL_MODES
+
+    assert schema["properties"]["retrieval"]["enum"] == list(RETRIEVAL_MODES)
+    assert "retrieval" not in schema["required"]
 
 
 def test_benchmark_tool_count_is_unchanged() -> None:
-    """Suites are an argument, not new tools: five benchmark tools, 36 in all."""
+    """Suites are an argument, not new tools: five benchmark tools among the registry's."""
     names = [t.name for t in TOOL_DEFINITIONS]
     assert sum(1 for n in names if n in BENCHMARK_TOOLS) == 5
-    assert len(names) == 36
+    assert len(names) == 44
 
 
 def _engine(mode: str) -> MagicMock:
     """A mock engine good enough for create_mcp_server."""
     engine = MagicMock()
     engine.settings.mcp.mode = mode
+    engine.settings.mcp.profile = "full"
+    engine.settings.mcp.tools = []
     engine.settings.mcp.auto_extract = False
     engine.settings.mcp.completed_history_limit = 20
     engine.settings.current_database = "default"

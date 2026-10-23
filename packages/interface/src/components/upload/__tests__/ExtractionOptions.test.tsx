@@ -45,6 +45,14 @@ describe('<ExtractionOptions />', () => {
     }
   }
 
+  it('in confirm scope renders only the controls the confirm endpoint accepts', () => {
+    renderExpanded({ scope: 'confirm' });
+    expect(screen.queryByText('PROCESSING')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/extract entities/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/quick analysis/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/content filtering/i)).toBeInTheDocument();
+  });
+
   it('groups the toggles under EXTRACTION then PROCESSING labels', () => {
     renderExpanded();
     const extraction = screen.getByText('EXTRACTION');

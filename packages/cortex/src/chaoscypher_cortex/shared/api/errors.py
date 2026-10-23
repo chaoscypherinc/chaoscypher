@@ -11,7 +11,7 @@ Includes exception handlers for domain exceptions.
 from typing import Any
 
 import structlog
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from starlette import status
 
@@ -114,6 +114,38 @@ def create_error_response(
         status_code=status_code,
         detail=ErrorDetail(code=error_code, message=public_message).model_dump(),
     )
+
+
+async def read_capped_upload(file: UploadFile, max_bytes: int, what: str) -> bytes:
+    """Read an uploaded file whole, or raise 413 once it exceeds ``max_bytes``.
+
+    The one size cap for handlers that buffer an upload: it reads at most
+    ``max_bytes + 1`` bytes (never the whole stream, so an oversized body
+    costs bounded memory) and rejects anything past the cap. Routes in the
+    body-size middleware's ``_UPLOAD_PATHS`` rely on it as their only
+    server-side limit.
+
+    Args:
+        file: The uploaded file.
+        max_bytes: Largest accepted size in bytes.
+        what: Human name for the error message (e.g. ``"Package file"``).
+
+    Returns:
+        The file's bytes.
+
+    Raises:
+        HTTPException: 413 ``PAYLOAD_TOO_LARGE`` when the file exceeds the cap.
+    """
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=ErrorDetail(
+                code="PAYLOAD_TOO_LARGE",
+                message=f"{what} too large (max {max_bytes // 1024 // 1024} MB)",
+            ).model_dump(),
+        )
+    return content
 
 
 def resource_not_found_error(resource_type: str, resource_id: str) -> HTTPException:

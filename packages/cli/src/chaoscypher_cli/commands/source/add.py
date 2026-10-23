@@ -20,6 +20,7 @@ Example:
     chaoscypher source add document.pdf --index-only                # Stop after indexing
     chaoscypher source add if_abc123                                # Resume by file ID
     chaoscypher source add --resume                                 # Interactive resume picker
+    chaoscypher source add https://docs.example.com --site          # Every page of a docs site
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any, get_args
 
 import click
 
-from chaoscypher_cli.sources.domains import ADD_DOMAIN_CHOICES
+from chaoscypher_cli.sources.domains import ADD_DOMAIN_CHOICES, chosen_packs, pack_option
 from chaoscypher_core.exceptions import ChaosCypherException
 from chaoscypher_core.models import SourceStatus
 from chaoscypher_core.ports.types import FilteringMode
@@ -209,6 +210,66 @@ def _expand_inputs(
     return items
 
 
+def _extraction_gate(
+    skip_extract: bool, index_only: bool, quiet: bool, console: Any
+) -> bool | None:
+    """Ask about the LLM when extraction will run.
+
+    Returns:
+        The ``skip_extract`` to run with (True when the user chose to go on
+        without extraction), or ``None`` when the user cancelled.
+    """
+    if skip_extract or index_only:
+        return skip_extract
+    from chaoscypher_cli.utils.llm_check import check_llm_or_skip
+
+    proceed, should_skip = check_llm_or_skip("entity extraction")
+    if not proceed:
+        console.print("[dim]Cancelled.[/dim]")
+        return None
+    if should_skip:
+        if not quiet:
+            console.print("[dim]Continuing without entity extraction.[/dim]\n")
+        return True
+    return False
+
+
+def _add_site(
+    ctx: CLIContext,
+    inputs: tuple[str, ...],
+    options: Any,
+    *,
+    yes: bool,
+    quiet: bool,
+    console: Any,
+) -> None:
+    """``source add URL --site``: import every page of the docs site at the one URL given.
+
+    Exits 1 when the address is refused, nothing is found, or a page fails.
+    """
+    import dataclasses
+    import sys
+
+    from chaoscypher_cli.sources import CLISourceProcessingService
+    from chaoscypher_cli.sources.sites import add_site
+
+    if len(inputs) != 1 or not _is_url(inputs[0]):
+        console.print("[red]--site takes one site address (http:// or https://).[/red]")
+        sys.exit(1)
+    gated = _extraction_gate(options.skip_extract, options.index_only, quiet, console)
+    if gated is None:
+        return
+    options = dataclasses.replace(options, skip_extract=gated)
+
+    def _confirm(question: str) -> bool:
+        return yes or click.confirm(question, default=True)
+
+    with CLISourceProcessingService(ctx) as service:
+        code = add_site(service, console, inputs[0], options, confirm=_confirm)
+    if code:
+        sys.exit(code)
+
+
 def _result_to_dict(result: PipelineResult) -> dict[str, Any]:
     """Convert a PipelineResult to a JSON-serializable dict.
 
@@ -324,12 +385,16 @@ def _show_batch_summary(
         "structured formats)."
     ),
 )
-@click.option("--quick", is_flag=True, help="Fast extraction (3 groups max, ~30 seconds)")
 @click.option(
-    "--domain",
-    type=click.Choice(list(ADD_DOMAIN_CHOICES)),
-    default="auto",
-    help="Domain for extraction: auto (detect automatically), or specific domain",
+    "--quick",
+    is_flag=True,
+    help="Fast extraction: samples analysis.quick_sample_size chunk groups (default 5)",
+)
+@pack_option(
+    ADD_DOMAIN_CHOICES,
+    "Pack to extract with, on the floor every source has (repeatable: "
+    "--pack historical --pack literary; --domain is an alias). "
+    "auto (default) detects; generic is the floor alone.",
 )
 @click.option(
     "--filtering-mode",
@@ -364,6 +429,21 @@ def _show_batch_summary(
     default=False,
     help="Skip the domain confirmation gate and extract with the auto-detected domain.",
 )
+@click.option(
+    "--site",
+    "as_site",
+    is_flag=True,
+    help=(
+        "Import every page of the docs site at the URL as one site (found by its "
+        "llms.txt, its sitemap, or a crawl of its links); see 'source site'."
+    ),
+)
+@click.option(
+    "--yes",
+    "yes",
+    is_flag=True,
+    help="With --site: import without asking, once it has shown what it found.",
+)
 def add(
     files_or_ids: tuple[str, ...],
     resume: bool,
@@ -375,7 +455,7 @@ def add(
     skip_embeddings: bool,
     normalize: bool | None,
     quick: bool,
-    domain: str,
+    packs: tuple[str, ...],
     filtering_mode: FilteringMode | None,
     database: str,
     quiet: bool,
@@ -385,6 +465,8 @@ def add(
     content_filtering: bool,
     skip_duplicates: bool,
     no_confirm: bool,
+    as_site: bool,
+    yes: bool,
 ) -> None:
     """Add and process sources through the processing pipeline.
 
@@ -398,6 +480,9 @@ def add(
 
     By default, runs the full pipeline: upload -> index -> extract -> commit.
     URLs are fetched, converted to markdown, and processed like files.
+    With --site, the one URL names a docs site: every page it lists (its
+    llms.txt, its sitemap, or a crawl of its links) becomes its own source
+    under one site, after it shows how many it found.
 
     \b
     Examples:
@@ -406,9 +491,11 @@ def add(
         chaoscypher source add ./documents/                         # All in directory
         chaoscypher source add https://example.com/article          # URL import
         chaoscypher source add document.pdf --quick                 # Fast extraction
+        chaoscypher source add novel.txt --pack historical --pack literary  # Two packs
         chaoscypher source add document.pdf --skip-duplicates       # Skip if already uploaded
         chaoscypher source add if_abc123def456                     # Resume by ID
         chaoscypher source add --resume                            # Interactive
+        chaoscypher source add https://docs.example.com --site     # A whole docs site
     """  # noqa: D301
     # Defer heavy imports to runtime (not completion time)
     import sys
@@ -418,10 +505,34 @@ def add(
     from chaoscypher_cli.context import get_context
     from chaoscypher_cli.sources import CLISourceProcessingService, SourcePipeline
 
+    # One name for the pipeline: a pack, the packs' label, generic or auto.
+    domain = chosen_packs(packs) or "auto"
+
     console = Console()
 
     try:
         ctx = get_context(database_name=database)
+
+        if as_site:
+            from chaoscypher_cli.sources.sites import SitePageOptions
+
+            site_options = SitePageOptions(
+                skip_index=skip_index,
+                skip_extract=skip_extract,
+                skip_commit=skip_commit,
+                skip_embeddings=skip_embeddings,
+                index_only=index_only,
+                extract_only=extract_only,
+                extraction_depth="quick" if quick else "full",
+                domain=domain,
+                filtering_mode=filtering_mode,
+                enable_normalization=normalize,
+                enable_vision=vision,
+                content_filtering=content_filtering,
+                skip_duplicates=skip_duplicates,
+            )
+            _add_site(ctx, files_or_ids, site_options, yes=yes, quiet=quiet, console=console)
+            return
 
         # Build items list from any input mode
         items: list[dict[str, Any]] = []
@@ -441,7 +552,7 @@ def add(
                     confirm_cmd,
                     source_id=file_id,
                     confirm_all=False,
-                    domain=None,
+                    packs=(),
                     # None = keep the depth persisted on the row; only an
                     # explicit --quick here overrides it.
                     depth="quick" if quick else None,
@@ -496,17 +607,10 @@ def add(
                 _validate_file(items[0]["path"], ctx.settings, console)
 
         # Check LLM configuration if extraction is enabled
-        if not skip_extract and not index_only:
-            from chaoscypher_cli.utils.llm_check import check_llm_or_skip
-
-            proceed, should_skip = check_llm_or_skip("entity extraction")
-            if not proceed:
-                console.print("[dim]Cancelled.[/dim]")
-                return
-            if should_skip:
-                skip_extract = True
-                if not quiet:
-                    console.print("[dim]Continuing without entity extraction.[/dim]\n")
+        gated = _extraction_gate(skip_extract, index_only, quiet, console)
+        if gated is None:
+            return
+        skip_extract = gated
 
         # Process each item
         results: list[PipelineResult] = []

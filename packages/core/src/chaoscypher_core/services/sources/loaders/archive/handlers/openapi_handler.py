@@ -76,6 +76,11 @@ class OpenAPIHandler:
         priority=5,
     )
 
+    # Characters debited from the schema-expansion budget per visited node:
+    # covers each node's fixed text (the depth marker is the longest, 26
+    # chars; ``object {`` / ``}`` / ``, `` separators, ``array of ``).
+    _NODE_CHARGE: ClassVar[int] = 32
+
     # Files to check for OpenAPI specs
     SPEC_FILENAMES: ClassVar[list[str]] = [
         "openapi.json",
@@ -101,6 +106,7 @@ class OpenAPIHandler:
             settings: Engine settings for configuration.
         """
         self.settings = settings
+        self._spec_schema_budget: list[int] | None = None
 
     def can_handle(self, extracted_dir: Path) -> int:
         """Check for OpenAPI/Swagger specification.
@@ -219,7 +225,13 @@ class OpenAPIHandler:
             try:
                 spec = self._parse_spec(spec_path)
                 resolved_spec = self._resolve_refs(spec)
-                documents = self._chunk_by_operation(resolved_spec, spec_path, extracted_dir)
+                # One character budget per spec file: per-schema budgets alone
+                # would still scale with the number of $ref sites in the file.
+                self._spec_schema_budget = [self._get_max_schema_chars()]
+                try:
+                    documents = self._chunk_by_operation(resolved_spec, spec_path, extracted_dir)
+                finally:
+                    self._spec_schema_budget = None
 
                 # Propagate the encoding used to load the spec into every
                 # chunk's metadata so the indexing handler can record it on
@@ -1023,19 +1035,46 @@ class OpenAPIHandler:
                     return int(depth)
         return 4
 
+    def _get_max_schema_chars(self) -> int:
+        """Get the configured per-spec schema expansion character budget.
+
+        Returns:
+            ``loader.openapi_max_schema_chars`` from settings, or the
+            ``LoaderSettings`` default when no settings are attached.
+        """
+        loader = getattr(self.settings, "loader", None) if self.settings is not None else None
+        chars = getattr(loader, "openapi_max_schema_chars", None)
+        if chars is None:
+            from chaoscypher_core.settings import LoaderSettings
+
+            chars = LoaderSettings.model_fields["openapi_max_schema_chars"].default
+        return int(chars)
+
+    @staticmethod
+    def _charge(budget: list[int], text: str) -> str:
+        """Debit ``text``'s length from ``budget`` and return ``text`` unchanged."""
+        budget[0] -= len(text)
+        return text
+
     def _expand_schema(  # noqa: PLR0911 - schema walker: one return per JSON Schema shape (ref/oneOf/anyOf/allOf/array/object/enum/scalar)
         self,
         schema: Any,
         *,
         depth: int = 0,
         max_depth: int,
+        budget: list[int] | None = None,
     ) -> str:
         """Recursively expand a JSON Schema object into a human-readable string.
 
         Handles ``oneOf``, ``anyOf``, ``allOf``, array ``items``,
         ``properties``, ``enum``, and scalar types. Recursion is capped at
         ``max_depth`` to avoid infinite expansion on deeply nested or circular
-        schemas.
+        schemas, and the text expanded across one spec file is capped by
+        ``loader.openapi_max_schema_chars``: depth alone does not bound
+        output, because a self-referencing object with W properties expands
+        to W**max_depth nodes. Every node is debited ``_NODE_CHARGE`` for its
+        fixed text (markers, ``object {}``, separators) plus the variable text
+        it emits itself (property names, enum lists, types).
 
         ``schema`` is typed as ``Any`` so the defensive ``isinstance(schema,
         dict)`` guard below remains live: malformed specs can pass scalars
@@ -1046,10 +1085,20 @@ class OpenAPIHandler:
             schema: JSON Schema dict to expand. Non-dicts return ``"any"``.
             depth: Current recursion depth (starts at 0).
             max_depth: Maximum allowed recursion depth.
+            budget: Remaining character budget (a one-element list so
+                recursive calls can decrement it). Top-level callers omit it and share
+                the current spec's budget, or get a fresh one outside
+                :meth:`process`.
 
         Returns:
             Human-readable type description string.
         """
+        if budget is None:
+            budget = self._spec_schema_budget or [self._get_max_schema_chars()]
+        if budget[0] <= 0:
+            return "<schema (expansion budget reached)>"
+        budget[0] -= self._NODE_CHARGE
+
         if not isinstance(schema, dict):
             return "any"
 
@@ -1068,27 +1117,30 @@ class OpenAPIHandler:
             raise OperationError(msg, operation="archive_load")
 
         if "oneOf" in schema:
-            parts = [
-                self._expand_schema(s, depth=depth + 1, max_depth=max_depth)
-                for s in schema["oneOf"]
-                if isinstance(s, dict)
-            ]
+            parts = self._expand_each(
+                [s for s in schema["oneOf"] if isinstance(s, dict)],
+                depth=depth,
+                max_depth=max_depth,
+                budget=budget,
+            )
             return "one of: " + ", ".join(parts) if parts else "one of: (empty)"
 
         if "anyOf" in schema:
-            parts = [
-                self._expand_schema(s, depth=depth + 1, max_depth=max_depth)
-                for s in schema["anyOf"]
-                if isinstance(s, dict)
-            ]
+            parts = self._expand_each(
+                [s for s in schema["anyOf"] if isinstance(s, dict)],
+                depth=depth,
+                max_depth=max_depth,
+                budget=budget,
+            )
             return "any of: " + ", ".join(parts) if parts else "any of: (empty)"
 
         if "allOf" in schema:
-            parts = [
-                self._expand_schema(s, depth=depth + 1, max_depth=max_depth)
-                for s in schema["allOf"]
-                if isinstance(s, dict)
-            ]
+            parts = self._expand_each(
+                [s for s in schema["allOf"] if isinstance(s, dict)],
+                depth=depth,
+                max_depth=max_depth,
+                budget=budget,
+            )
             return "all of: " + ", ".join(parts) if parts else "all of: (empty)"
 
         schema_type = schema.get("type")
@@ -1099,29 +1151,70 @@ class OpenAPIHandler:
                 items if isinstance(items, dict) else {},
                 depth=depth + 1,
                 max_depth=max_depth,
+                budget=budget,
             )
             return f"array of {items_str}"
 
         if schema_type == "object":
             props = schema.get("properties", {})
             if props and isinstance(props, dict):
-                prop_strs = [
-                    f"{prop_name}: {self._expand_schema(prop_schema if isinstance(prop_schema, dict) else {}, depth=depth + 1, max_depth=max_depth)}"
-                    for prop_name, prop_schema in props.items()
-                ]
+                prop_strs = self._expand_each(
+                    [ps if isinstance(ps, dict) else {} for ps in props.values()],
+                    depth=depth,
+                    max_depth=max_depth,
+                    budget=budget,
+                    names=list(props),
+                )
                 return "object {" + ", ".join(prop_strs) + "}"
             return "object"
 
         if "enum" in schema:
             enum_values = schema["enum"]
             type_prefix = f"{schema_type} " if schema_type else ""
-            return f"{type_prefix}(one of: {enum_values})"
+            return self._charge(budget, f"{type_prefix}(one of: {enum_values})")
 
         if schema_type:
             fmt = schema.get("format")
-            return f"{schema_type}({fmt})" if fmt else str(schema_type)
+            return self._charge(budget, f"{schema_type}({fmt})" if fmt else str(schema_type))
 
         return "any"
+
+    def _expand_each(
+        self,
+        schemas: list[dict[str, Any]],
+        *,
+        depth: int,
+        max_depth: int,
+        budget: list[int],
+        names: list[str] | None = None,
+    ) -> list[str]:
+        """Expand sibling sub-schemas one level down, stopping when the budget runs out.
+
+        Siblings left unexpanded collapse into ONE budget marker, so an
+        exhausted budget cannot still emit a marker per remaining property.
+
+        Args:
+            schemas: Sibling sub-schemas (``oneOf`` members or property schemas).
+            depth: Depth of the parent schema.
+            max_depth: Maximum allowed recursion depth.
+            budget: The parent expansion's shared character budget.
+            names: Property names to prefix as ``name: ...``, aligned with
+                ``schemas``; None for unnamed members.
+
+        Returns:
+            One expanded string per sibling, truncated by the budget.
+        """
+        parts: list[str] = []
+        for index, sub_schema in enumerate(schemas):
+            if budget[0] <= 0:
+                parts.append("<schema (expansion budget reached)>")
+                break
+            prefix = self._charge(budget, f"{names[index]}: ") if names is not None else ""
+            expanded = self._expand_schema(
+                sub_schema, depth=depth + 1, max_depth=max_depth, budget=budget
+            )
+            parts.append(prefix + expanded)
+        return parts
 
     # ---------------------------------------------------------------------------
     # Existing formatters (updated to use _expand_schema)

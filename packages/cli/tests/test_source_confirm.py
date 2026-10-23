@@ -58,7 +58,7 @@ def test_confirm_accepts_recommended_domain_and_extracts() -> None:
     svc.ctx.storage_adapter.update_file.assert_any_call(
         "if_awaitsrc1234"[:15],
         database_name="default",
-        updates={"forced_domain": "technical", "status": "indexed"},
+        updates={"forced_packs": ["technical"], "status": "indexed"},
     )
     svc.extract_entities.assert_called_once()
 
@@ -77,7 +77,7 @@ def test_confirm_override_domain() -> None:
     svc.ctx.storage_adapter.update_file.assert_any_call(
         "if_awaitsrc1234"[:15],
         database_name="default",
-        updates={"forced_domain": "legal", "status": "indexed"},
+        updates={"forced_packs": ["legal"], "status": "indexed"},
     )
 
 

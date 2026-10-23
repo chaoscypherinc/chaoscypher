@@ -161,6 +161,23 @@ describe('useSourceDetail (TanStack Query)', () => {
     expect(countGetCalls('/sources/s1')).toBe(afterPoll);
   });
 
+  it('retrySource and reextractSource reject when the API fails, so the page cannot toast success', async () => {
+    mockedApiClient.get.mockImplementation((url: string) => {
+      if (url === '/sources/s1') {
+        return Promise.resolve({ data: makeSource({ status: 'error' }) });
+      }
+      return Promise.resolve({ data: {} });
+    });
+    mockedApiClient.post.mockRejectedValue({ response: { status: 409, data: { detail: 'busy' } } });
+    const { result } = renderHook(() => useSourceDetail('s1', navigate), { wrapper: wrap });
+    await waitFor(() => expect(result.current.source).not.toBeNull());
+
+    await expect(result.current.retrySource()).rejects.toBeTruthy();
+    await waitFor(() => expect(result.current.actionError).toMatch(/retry failed/i));
+    await expect(result.current.reextractSource()).rejects.toBeTruthy();
+    await waitFor(() => expect(result.current.actionError).toMatch(/re-extraction failed/i));
+  });
+
   it('toggleEnabled PATCHes the source and updates the cached value', async () => {
     mockedApiClient.get.mockImplementation((url: string) => {
       if (url === '/sources/s1') {

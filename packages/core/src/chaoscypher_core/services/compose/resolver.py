@@ -216,6 +216,16 @@ class PackageResolver:
                 if include_dependencies and resolved.dependencies:
                     for dep_name in resolved.dependencies:
                         dep_spec = PackageSpec.parse(dep_name)
+                        # A downloaded hub manifest is untrusted: a local-path
+                        # dependency would pull arbitrary files from this
+                        # machine into the composed database.
+                        if dep_spec.is_local and not resolved.spec.is_local:
+                            msg = (
+                                f"Hub package {resolved.name!r} declares a local-path "
+                                f"dependency {dep_name!r}; hub packages may only "
+                                "depend on hub packages"
+                            )
+                            raise ResolverError(msg, package=resolved.name)
                         dep_key = self._get_cache_key(dep_spec)
                         if dep_key not in self._resolved:
                             to_resolve.append(dep_spec)

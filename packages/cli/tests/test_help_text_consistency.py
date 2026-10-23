@@ -59,6 +59,7 @@ TOP_LEVEL_COMMANDS: list[str] = [
     "health",
     "lexicon",
     "mcp",
+    "memory",
     "mount",
     "pull",
     "push",
@@ -345,4 +346,50 @@ def test_no_help_screen_leaks_click_paragraph_escape(
         "These --help screens leak a literal '\\b' sequence. Fix the "
         "command docstring: drop its raw-string (r) prefix so Python emits "
         "the real backspace byte Click uses to suppress paragraph reflow.\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Every `chaoscypher config set <key>` hint names a real settings key.
+#
+# `source extract`'s no-LLM hint told users to run `config set llm.provider`,
+# a key `LLMSettings` (``extra="forbid"``) does not have, so the one actionable
+# line printed on that error path was itself a validation error. This walks
+# every hint in the package source against the real `Settings` model.
+# ---------------------------------------------------------------------------
+
+_CONFIG_SET_HINT = re.compile(r"\bchaoscypher config set ([A-Za-z_][\w.]*)")
+
+
+def _settings_key_exists(key: str) -> bool:
+    from pydantic import BaseModel
+
+    from chaoscypher_core.app_config import Settings
+
+    model: Any = Settings
+    for part in key.split("."):
+        if not (isinstance(model, type) and issubclass(model, BaseModel)):
+            return False
+        field = model.model_fields.get(part)
+        if field is None:
+            return False
+        model = field.annotation
+    return True
+
+
+def test_config_set_hints_name_real_settings_keys() -> None:
+    import chaoscypher_cli
+
+    src_root = Path(chaoscypher_cli.__file__).resolve().parent
+    hints: list[tuple[str, str]] = []
+    for py_file in sorted(src_root.rglob("*.py")):
+        for lineno, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), start=1):
+            for key in _CONFIG_SET_HINT.findall(line):
+                hints.append((f"{py_file.relative_to(src_root)}:{lineno}", key))
+
+    assert hints, "pattern found no `chaoscypher config set` hints — the scan is broken"
+    offenders = [f"{where}: {key}" for where, key in hints if not _settings_key_exists(key)]
+    assert not offenders, (
+        "`chaoscypher config set` hints naming a key the settings schema "
+        "rejects:\n" + "\n".join(offenders)
     )

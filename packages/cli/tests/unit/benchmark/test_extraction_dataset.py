@@ -23,7 +23,7 @@ def test_extraction_dataset_satisfies_protocol(tmp_path: Path):
         id="t",
         version="1.0",
         corpus_path=corpus,
-        domain="literary",
+        packs=("literary",),
     )
     assert isinstance(ds, BenchmarkDataset)
     assert ds.kind == "extraction"
@@ -36,7 +36,7 @@ def test_extraction_dataset_loads_corpus(tmp_path: Path):
     corpus = tmp_path / "corpus.txt"
     text = "Pierre Bezukhov visited Moscow in 1812."
     corpus.write_text(text)
-    ds = ExtractionDataset(id="t", version="1.0", corpus_path=corpus, domain="literary")
+    ds = ExtractionDataset(id="t", version="1.0", corpus_path=corpus, packs=("literary",))
     assert ds.corpus_text == text
 
 
@@ -46,7 +46,7 @@ def test_extraction_dataset_missing_corpus_raises(tmp_path: Path):
             id="t",
             version="1.0",
             corpus_path=tmp_path / "missing.txt",
-            domain="literary",
+            packs=("literary",),
         )
 
 
@@ -54,7 +54,7 @@ def test_extraction_dataset_keep_db_defaults_to_false(tmp_path: Path):
     """Default behavior cleans up temp DBs."""
     corpus = tmp_path / "corpus.txt"
     corpus.write_text("x")
-    ds = ExtractionDataset(id="t", version="1.0", corpus_path=corpus, domain="literary")
+    ds = ExtractionDataset(id="t", version="1.0", corpus_path=corpus, packs=("literary",))
     assert ds.keep_db is False
 
 
@@ -66,7 +66,7 @@ def test_extraction_dataset_keep_db_can_be_enabled(tmp_path: Path):
         id="t",
         version="1.0",
         corpus_path=corpus,
-        domain="literary",
+        packs=("literary",),
         keep_db=True,
     )
     assert ds.keep_db is True
@@ -80,7 +80,7 @@ def test_extraction_dataset_source_set_user(tmp_path: Path):
         id="t",
         version="1.0",
         corpus_path=corpus,
-        domain="literary",
+        packs=("literary",),
         source="user",
     )
     assert ds.source == "user"
@@ -90,7 +90,7 @@ def test_extraction_dataset_source_set_user(tmp_path: Path):
 async def test_extraction_run_enables_normalization(tmp_path: Path):
     corpus = tmp_path / "c.txt"
     corpus.write_text("Some text about people and places.", encoding="utf-8")
-    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, domain="literary")
+    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, packs=("literary",))
 
     captured: dict = {}
 
@@ -144,7 +144,7 @@ async def test_extraction_run_reports_truncation_on_pipeline_failure(tmp_path: P
     """
     corpus = tmp_path / "c.txt"
     corpus.write_text("Some text.", encoding="utf-8")
-    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, domain="literary")
+    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, packs=("literary",))
 
     class _Failed:
         success = False
@@ -177,7 +177,7 @@ async def test_thinking_probe_targets_configured_ollama(tmp_path: Path):
     """
     corpus = tmp_path / "c.txt"
     corpus.write_text("Some text.", encoding="utf-8")
-    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, domain="literary")
+    ds = ExtractionDataset(id="c", version="1.0", corpus_path=corpus, packs=("literary",))
 
     class _Result:
         success = True

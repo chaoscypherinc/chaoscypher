@@ -118,6 +118,34 @@ class TestReloadLlmProvider:
         assert ctx["llm_service"] is mock_new_service
 
     @pytest.mark.asyncio
+    async def test_the_handlers_re_register_with_the_fresh_graphrag_settings(self) -> None:
+        """A graphrag change on disk reaches the re-registered handlers (the chat reads ctx["settings"]).
+
+        The chat-context switch (``graphrag.include_unevidenced_edges``) is read by
+        the chat handler from the settings it was registered with; the reload puts
+        the fresh settings in the context before it re-registers the handlers.
+        """
+        ctx = _make_worker_context()
+        ctx["settings"].graphrag.include_unevidenced_edges = False
+        fresh = MagicMock()
+        ctx["config_manager"].get_settings.return_value = fresh
+        fresh.llm = ctx["settings"].llm
+        fresh.embedding = ctx["settings"].embedding
+        fresh.search = ctx["settings"].search
+        fresh.current_database = "test_db"
+        fresh.graphrag.include_unevidenced_edges = True
+        seen: list[bool] = []
+
+        with _patch_reload_deps() as patches:
+            patches["llm_setup"].side_effect = lambda c: seen.append(
+                c["settings"].graphrag.include_unevidenced_edges
+            )
+            assert await reload_llm_provider(ctx) is True
+
+        assert seen == [True]
+        assert ctx["settings"] is fresh
+
+    @pytest.mark.asyncio
     async def test_reload_skips_when_no_config_manager(self) -> None:
         """reload_llm_provider returns early if config_manager is missing."""
         ctx = _make_worker_context()
@@ -402,15 +430,19 @@ class TestMessageVersioning:
             root.setLevel(old_level)
 
     @pytest.mark.asyncio
-    async def test_subscriber_parses_v1_llm_settings_updated(self) -> None:
-        """Subscriber calls reload_llm_provider for a v1:llm_settings_updated message."""
+    @pytest.mark.parametrize(
+        "message",
+        [b"v1:llm_settings_updated", b"v1:settings_updated:graphrag", b"v1:cache_settings_updated"],
+    )
+    async def test_subscriber_parses_v1_llm_settings_updated(self, message: bytes) -> None:
+        """Subscriber reloads for a settings change: llm, and a graphrag or cache section change."""
         from chaoscypher_neuron.settings_sync import listen_for_settings_changes
 
         ctx = _make_worker_context()
 
         messages = [
             {"type": "subscribe", "data": 1},
-            {"type": "message", "data": b"v1:llm_settings_updated"},
+            {"type": "message", "data": message},
         ]
 
         async def _gen():

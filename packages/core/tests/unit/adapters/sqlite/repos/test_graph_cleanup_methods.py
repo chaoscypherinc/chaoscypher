@@ -215,8 +215,13 @@ def test_find_orphaned_templates_by_source(adapter: SqliteAdapter, repo: GraphRe
     _seed_template(adapter, "tpl-good", source_id="s1")
     _disable_fk(adapter)
     _seed_template(adapter, "tpl-orphan", source_id="missing")
+    # System template whose source is gone: excluded by the is_system guard alone.
+    _seed_template(adapter, "tpl-system-sourced", is_system=True, source_id="missing")
     _enable_fk(adapter)
     _seed_template(adapter, "tpl-system", is_system=True)  # never orphaned
+    # Hand-created template (no source, not system): excluded by the source_id
+    # guard alone, so "Clean up orphans" never deletes user-created templates.
+    _seed_template(adapter, "tpl-manual")
     orphans = repo.find_orphaned_templates_by_source(database_name="test")
     assert orphans == ["tpl-orphan"]
 
@@ -272,3 +277,34 @@ def test_remove_corrupt_nodes_scans_all_pages() -> None:
         call("bad-template"),
         call("bad-label"),
     ]
+
+
+def test_a_node_another_source_attests_is_never_an_orphan(
+    adapter: SqliteAdapter, repo: GraphRepository
+) -> None:
+    """#795: the home naming a missing source is not the node's attestation.
+
+    A merged node homed at a source row that is gone, still attested by s1, is s1's: the
+    orphan sweep (reachable from Cortex's maintenance) must not delete it.
+    """
+    _seed_source(adapter, "s1")
+    _disable_fk(adapter)
+    _seed_node(adapter, "n-merged", source_id="missing")
+    _seed_node(adapter, "n-orphan", source_id="missing")
+    _enable_fk(adapter)
+    repo.record_node_sources([("n-merged", "s1", {"label": "label-n-merged"})])
+    adapter.session.commit()
+    assert repo.find_orphaned_nodes_by_source(database_name="test") == ["n-orphan"]
+
+
+def test_a_template_a_row_still_uses_is_never_an_orphan(
+    adapter: SqliteAdapter, repo: GraphRepository
+) -> None:
+    """Its users keep it (D6); deleting it would also fail on their RESTRICT foreign key."""
+    _seed_source(adapter, "s1")
+    _disable_fk(adapter)
+    _seed_template(adapter, "tpl-orphan", source_id="missing")
+    _seed_template(adapter, "tpl-used", source_id="missing")
+    _enable_fk(adapter)
+    _seed_node(adapter, "n1", template_id="tpl-used", source_id="s1")
+    assert repo.find_orphaned_templates_by_source(database_name="test") == ["tpl-orphan"]

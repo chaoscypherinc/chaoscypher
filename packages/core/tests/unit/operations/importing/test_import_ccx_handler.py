@@ -167,4 +167,58 @@ async def test_handle_import_ccx_reports_counts_and_conformance(
     assert "core" in result["conformance_classes"]
     assert "sources" in result["conformance_classes"]
     assert result["checksum_verified"] is True
+    # Already on the core types (Person): the import maps nothing.
+    assert result["core_types_mapped"] == {}
     assert result["errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_import_ccx_handler_queues_indexing_for_knowledge_only_package(
+    sqlite_adapter: SqliteAdapter,
+) -> None:
+    """A package with no sources still gets its nodes queued for search indexing."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from chaoscypher_core.operations.importing import import_service as import_service_module
+    from chaoscypher_core.operations.importing.import_service import ImportOperationsService
+
+    _seed(sqlite_adapter)
+    assert sqlite_adapter.session is not None
+    exporter = CcxExporter(
+        graph_repository=GraphRepository(sqlite_adapter.session, "default"),
+        sources_repository=sqlite_adapter,
+        settings=build_engine_settings(get_settings()),
+        workflow_db=None,
+    )
+    data_bytes = exporter.export(include_embeddings=False, include_sources=False)
+
+    target_db = "imported_knowledge_only"
+    service = ImportOperationsService(
+        graph_repository=GraphRepository(sqlite_adapter.session, target_db),
+        config_manager=MagicMock(),
+        source_manager=MagicMock(),
+        trigger_service=None,
+        llm_service=MagicMock(),
+        source_repository=sqlite_adapter,
+        chunking_service=MagicMock(),
+        indexing_service=MagicMock(),
+    )
+    queue_source = AsyncMock()
+    queue_nodes = AsyncMock()
+    with (
+        patch.object(import_service_module, "_queue_index_imported_source", queue_source),
+        patch.object(import_service_module, "_queue_index_imported_nodes", queue_nodes),
+    ):
+        result = await service._import_ccx_handler(
+            data={"file_content": base64.b64encode(data_bytes).decode("ascii")},
+            metadata={"database_name": target_db},
+        )
+
+    assert result["success"] is True
+    assert result["imported_source_ids"] == []
+    queue_source.assert_not_awaited()
+    queue_nodes.assert_awaited_once()
+    queued_ids = queue_nodes.await_args.args[0]
+    assert sorted(queued_ids) == sorted(result["imported_node_ids"])
+    assert len(queued_ids) == 2
+    assert queue_nodes.await_args.kwargs["database_name"] == target_db

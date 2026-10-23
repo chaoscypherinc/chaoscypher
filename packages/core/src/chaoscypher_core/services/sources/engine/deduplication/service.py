@@ -12,6 +12,7 @@ SRP: Single responsibility for entity processing orchestration.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -24,42 +25,301 @@ if TYPE_CHECKING:
     )
 
 from chaoscypher_core.services.quality.counters import QualityCounter, increment_quality_counter
+from chaoscypher_core.services.sources.engine.deduplication import name_identity
 from chaoscypher_core.services.sources.engine.deduplication.embedding_generator import (
     MAX_EMBEDDING_TEXT_LENGTH,
     entity_to_embedding_text,
     generate_entity_embeddings,
     l2_normalize_embeddings,
 )
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    ATTESTED_NAMES_KEY,
+    DESCRIPTOR_REFERENCE_KEY,
+    EDGE_FLAG_REASON_KEYS,
+    GIVEN_ALIASES_KEY,
+    JUSTIFICATIONS_KEY,
+    MERGED_NAMES_KEY,
+    NODE_DESCRIPTION_KEYS,
+    PIPELINE_EDGE_FLAG_KEYS,
+    UNANIMOUS_FLAG_KEYS,
+    UNPLACED_TYPE_KEY,
+    NameConventions,
+    NameIndex,
+    as_conventions,
+    edge_justifications,
+    is_unevidenced_record,
+    name_record,
+    pipeline_flag,
+    plan_name_pairs,
+    record_attested_names,
+    record_given_aliases,
+    record_merged_names,
+    record_order_key,
+    survivor_candidate,
+)
 from chaoscypher_core.services.sources.engine.deduplication.similarity_matcher import (
     are_types_compatible,
     calculate_entity_similarity,
-    extract_significant_words,
-    normalize_compatibility_map,
+    core_type_key,
     normalize_name_key,
-    should_merge_names,
 )
 
 
 logger = structlog.get_logger(__name__)
 
-# Minimal universal title words for callers without domain context
-_DEFAULT_TITLE_WORDS: frozenset[str] = frozenset(
-    {
-        "mr",
-        "mrs",
-        "ms",
-        "miss",
-        "dr",
-        "sir",
-        "dame",
-        "madam",
-        "the",
-        "of",
-        "de",
-        "von",
-        "van",
-    }
-)
+
+def given_aliases(entity: dict[str, Any]) -> list[str]:
+    """The aliases given ``entity`` (or a node's properties) under its own name.
+
+    See :data:`GIVEN_ALIASES_KEY` and ``name_identity.record_given_aliases``
+    (the one reading): without the key, every alias is given.
+    """
+    return record_given_aliases(entity)
+
+
+def ordered_union[T](*groups: Iterable[T] | None) -> list[T]:
+    """Every item of ``groups`` once, in first-seen order.
+
+    The merge's union of aliases and descriptors: a ``set`` union's order
+    follows the string hash seed, and these lists reach the stored node and
+    the "Also known as:" embedding text, so two identical extractions gave
+    different vectors (16 of v3's 97 entities between two seeds, audit W4-4).
+    """
+    return list(dict.fromkeys(item for group in groups for item in group or ()))
+
+
+def _subtypes_of(properties: Any) -> list[str]:
+    """The subtypes a record's properties carry: ``entity_subtype``, then ``entity_subtypes``."""
+    from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+        subtype_key,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+        SUBTYPE_PROPERTY,
+        SUBTYPES_PROPERTY,
+    )
+
+    if not isinstance(properties, dict):
+        return []
+    many = properties.get(SUBTYPES_PROPERTY)
+    written = [properties.get(SUBTYPE_PROPERTY), *(many if isinstance(many, list) else ())]
+    return [subtype_key(str(s)) for s in written if s and str(s).strip()]
+
+
+def merge_subtypes(merged: dict[str, Any], kept: Any, duplicate: Any) -> None:
+    """Give ``merged`` (the properties of ``duplicate`` merged into ``kept``'s) both records' subtypes, in place.
+
+    A merge keeps the core type (spec 2026-10-07 § 6): ``entity_subtype``
+    is the kept record's (the survivor's), else the duplicate's; when the
+    two carry different subtypes, every one is kept, sorted, under
+    ``entity_subtypes`` (``Person``/``character`` and ``Person``/``author``
+    under one name are one Person with both). Equal subtypes, or none,
+    leave the properties as they are. The one subtype policy of the
+    pre-commit merge (:meth:`EntityProcessor.merge_entities`, which passes
+    only the sides of the merged core type) and the resolver's
+    (:func:`merge_node_properties`).
+    """
+    from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+        SUBTYPE_PROPERTY,
+        SUBTYPES_PROPERTY,
+    )
+
+    sides = [_subtypes_of(kept), _subtypes_of(duplicate)]
+    if not any(sides) and not _subtypes_of(merged):
+        return
+    merged.pop(SUBTYPE_PROPERTY, None)
+    merged.pop(SUBTYPES_PROPERTY, None)
+    every = sorted({s for side in sides for s in side})
+    primary = next((side[0] for side in sides if side), None)
+    if primary:
+        merged[SUBTYPE_PROPERTY] = primary
+    if len(every) > 1:
+        merged[SUBTYPES_PROPERTY] = every
+
+
+def publish_given_aliases(entities: list[dict[str, Any]]) -> None:
+    """Write :data:`GIVEN_ALIASES_KEY` onto every entity, in place, for the commit to store.
+
+    The given aliases an entity still carries (a cleaner may have removed
+    some from ``aliases`` since), in their given order.
+    """
+    for entity in entities:
+        kept = {normalize_name_key(a) for a in entity.get("aliases") or [] if a}
+        entity[GIVEN_ALIASES_KEY] = [
+            a for a in given_aliases(entity) if normalize_name_key(a) in kept
+        ]
+
+
+def publish_text_referents(entities: list[dict[str, Any]], conventions: NameConventions) -> None:
+    """Give each bare-title mention the one name its own sentences write with its title, in place.
+
+    ``the Emperor`` cited on "... said the Emperor Alexander ..." is given
+    ``Emperor Alexander`` as an alias (given and attested: its own text writes
+    it), so the name rule reads it as any alias (``NameIndex.referent``). The
+    decision is ``name_identity.text_referent_names``; its sentences are the
+    mention's own ``evidence`` (stamped at aggregation from the group the
+    model read). Run before the exact deduplication, on single mentions.
+    """
+    for entity in entities:
+        label = str(entity.get("name") or "")
+        if name_identity.reference_key(label, conventions, entity.get("type")) is None:
+            continue
+        texts = [
+            str(ev.get("text") or "") for ev in entity.get("evidence") or [] if isinstance(ev, dict)
+        ]
+        # through the module: the registered guard (``name_guards``) replaces it here too
+        names = name_identity.text_referent_names(label, texts, conventions)
+        aliases = list(entity.get("aliases") or [])
+        known = {normalize_name_key(a) for a in aliases if a}
+        for name in names:
+            if normalize_name_key(name) in known:
+                continue
+            given = given_aliases(entity)
+            aliases.append(name)
+            entity["aliases"] = aliases
+            if GIVEN_ALIASES_KEY in entity:
+                entity[GIVEN_ALIASES_KEY] = [*given, name]
+            entity[ATTESTED_NAMES_KEY] = sorted({*record_attested_names(entity), name})
+
+
+def publish_descriptor_references(
+    entities: list[dict[str, Any]], conventions: NameConventions
+) -> None:
+    """Flag every entity labelled by a reference (``DESCRIPTOR_REFERENCE_KEY``), in place.
+
+    From the final label (``name_identity.labelled_by_reference``): a reference
+    no name identified keeps a node of its own, flagged for a later fold; a
+    named entity carries no flag, whatever it absorbed. Every type is read
+    since 2026-10-07 (``the army``, ``the government``, ``the village``: a
+    group, place or event written without a proper name), typed by the
+    rescue's core type. Run when deduplication ends.
+    """
+    for entity in entities:
+        props = entity.get("properties")
+        if name_identity.labelled_by_reference(
+            str(entity.get("name") or ""), conventions, entity.get("type")
+        ):
+            entity["properties"] = {**(props or {}), DESCRIPTOR_REFERENCE_KEY: True}
+        elif isinstance(props, dict) and DESCRIPTOR_REFERENCE_KEY in props:
+            entity["properties"] = {k: v for k, v in props.items() if k != DESCRIPTOR_REFERENCE_KEY}
+
+
+def _unplaced(entity: Mapping[str, Any]) -> bool:
+    """Whether ``entity`` was kept typed Concept because no core type answered to its written type."""
+    return pipeline_flag(entity.get("properties"), UNPLACED_TYPE_KEY)
+
+
+def merge_unanimous_flags(
+    merged: dict[str, Any],
+    kept: Mapping[str, Any],
+    duplicate: Mapping[str, Any],
+    keys: Sequence[str] = UNANIMOUS_FLAG_KEYS,
+) -> None:
+    """Each flag in ``keys`` survives a merge only when both records carry it, in place.
+
+    The one flag-merge rule, for nodes and edges: a flag says what the
+    pipeline doubted about one copy, and a copy it did not doubt answers for
+    the merged one. Nodes (``UNANIMOUS_FLAG_KEYS``, the default): the orphan
+    flag (the resolver moves every edge of the dropped node onto the kept
+    one, ``resolution.apply``, so the merged node is edgeless only when both
+    were), and the plausibility, unplaced-type, unevidenced and
+    excluded-name flags (a name another mention wrote plausibly, a type
+    another mention placed, a mention its sentence names, or a name no
+    exclusion lists, is no longer in doubt). Edges (``PIPELINE_EDGE_FLAG_KEYS``, :func:`merge_edge_properties`):
+    one copy a sentence states makes the fact evidenced, one copy within the
+    caps makes it uncapped. A value of the text's under a flag's key
+    (``"yes"``) is no flag and is kept in the flag's place
+    (``name_identity.pipeline_flag``). The node flags' companions (the score,
+    the written type) stay as data.
+    """
+    for key in keys:
+        if merged.get(key) is not True or (
+            pipeline_flag(kept, key) and pipeline_flag(duplicate, key)
+        ):
+            continue
+        text_value = next(
+            (p[key] for p in (kept, duplicate) if p.get(key) not in (None, True)),
+            None,
+        )
+        if text_value is None:
+            del merged[key]
+        else:
+            merged[key] = text_value
+
+
+def merge_node_properties(kept: dict[str, Any], duplicate: dict[str, Any]) -> dict[str, Any]:
+    """Fold ``duplicate``'s properties into ``kept``'s under the deduplication policy.
+
+    The one property-merge policy: the pre-commit deduplication
+    (:meth:`EntityProcessor.merge_entities`) and the post-commit identity
+    resolver (``services.graph.resolution``) both use it, so a merged node
+    looks the same whichever pass merged it.
+    """
+    processor = EntityProcessor()
+    merged = processor._merge_properties(kept, duplicate)  # noqa: SLF001
+    # A description has its own policy (the longer, or both when they differ), under every key
+    # a stored node keeps one; the generic rule would keep the longer and lose the other.
+    for key in NODE_DESCRIPTION_KEYS:
+        kept_desc, dup_desc = str(kept.get(key) or ""), str(duplicate.get(key) or "")
+        if kept_desc or dup_desc:
+            merged[key] = processor._merge_descriptions(kept_desc, dup_desc)  # noqa: SLF001
+    merge_subtypes(merged, kept, duplicate)
+    return merged
+
+
+EDGE_EVIDENCE_FIELDS: tuple[str, ...] = ("justification", "sent_ref", "chunk_index")
+"""The edge properties that say where its fact is written: they travel together between copies."""
+
+
+def merge_edge_properties(
+    kept: Mapping[str, Any],
+    duplicate: Mapping[str, Any],
+    *,
+    keep_justifications: bool = True,
+) -> dict[str, Any]:
+    """One edge from two copies of one fact: the edge counterpart of :func:`merge_node_properties`.
+
+    Keep, flag, never delete (2026-10-07). The merged edge is ``kept``'s
+    properties, with three rules:
+
+    - every edge flag (``PIPELINE_EDGE_FLAG_KEYS``: capped, unevidenced,
+      unmatched label, type mismatch) stays only when both copies carry it
+      (:func:`merge_unanimous_flags`, the nodes' rule): one copy a sentence
+      states makes the fact evidenced, one within the caps makes it uncapped;
+      a flag's reason (``EDGE_FLAG_REASON_KEYS``: ``evidence_reason``,
+      ``type_mismatch_reason``) goes with its flag, while the label the model
+      wrote (``written_label``) is data and stays;
+    - when ``kept`` is the unevidenced copy and ``duplicate`` the evidenced
+      one, the evidenced copy's sentence (:data:`EDGE_EVIDENCE_FIELDS`:
+      justification, ``sent_ref``, ``chunk_index``) leads;
+    - with ``keep_justifications`` the other copy's justification is kept in
+      ``JUSTIFICATIONS_KEY`` (the edge's own first, each text once), so no
+      evidence sentence is lost when the copy is dropped (the identity
+      resolver's merge). The commit passes False: every copy of a fact keeps
+      its justification on its own relationship citation there.
+
+    Used by the commit (the copies of a fact the stable edge id stores once:
+    ``RelationshipCommitHandler``) and the identity resolver (an edge a
+    merge moves onto a node that already has it: ``resolution.apply``).
+    """
+    merged = dict(kept)
+    kept_flagged, duplicate_flagged = is_unevidenced_record(kept), is_unevidenced_record(duplicate)
+    lead: Mapping[str, Any] = duplicate if kept_flagged and not duplicate_flagged else kept
+    if lead is duplicate:
+        for key in EDGE_EVIDENCE_FIELDS:
+            if key in duplicate:
+                merged[key] = duplicate[key]
+            else:
+                merged.pop(key, None)
+    merge_unanimous_flags(merged, kept, duplicate, PIPELINE_EDGE_FLAG_KEYS)
+    for flag, reason in EDGE_FLAG_REASON_KEYS.items():
+        if not pipeline_flag(merged, flag):
+            merged.pop(reason, None)
+    if keep_justifications:
+        other = kept if lead is duplicate else duplicate
+        texts = list(dict.fromkeys([*edge_justifications(lead), *edge_justifications(other)]))
+        if len(texts) > 1:
+            merged[JUSTIFICATIONS_KEY] = texts
+    return merged
 
 
 class EntityProcessor:
@@ -72,7 +332,11 @@ class EntityProcessor:
 
     Args:
         title_words: Domain-specific title/honorific words to filter
-            during deduplication. Defaults to a minimal universal set.
+            during deduplication, the convenience form of
+            ``name_conventions`` (every other table universal).
+        name_conventions: The source domain's naming tables
+            (``domain_resolver.domain_name_conventions``); the universal
+            ones when neither this nor ``title_words`` is given.
         max_description_length: Max characters for merged descriptions to
             prevent runaway growth during deduplication. Defaults to 8000.
         dedup_type_partition_cutoff: Minimum entity count to trigger
@@ -93,12 +357,15 @@ class EntityProcessor:
         dedup_type_partition_cutoff: int = 50,
         dedup_no_overlap_boost: float = 0.08,
         dedup_borderline_penalty: float = 0.05,
+        *,
+        name_conventions: NameConventions | None = None,
     ) -> None:
         """Initialize entity processor.
 
         Args:
             title_words: Domain-specific title/honorific words to filter
-                during deduplication. Defaults to a minimal universal set.
+                during deduplication (the convenience form of
+                ``name_conventions``). Defaults to a minimal universal set.
             max_description_length: Max characters for merged entity
                 descriptions. Callers pass settings.source_processing.entity_max_description_length.
             dedup_type_partition_cutoff: Entity count above which type-partitioned
@@ -110,8 +377,12 @@ class EntityProcessor:
             dedup_borderline_penalty: Confidence penalty applied to entities
                 merged within 0.10 of the similarity threshold.
                 Callers pass settings.extraction.dedup_borderline_penalty.
+            name_conventions: The source domain's naming tables (title words,
+                gendered titles, generation words, name forms); wins over
+                ``title_words``, which may not be given with it.
         """
-        self._title_words = title_words if title_words is not None else _DEFAULT_TITLE_WORDS
+        self._names = as_conventions(name_conventions, title_words)
+        self._title_words = self._names.titles
         self._max_description_length = max_description_length
         self._dedup_type_partition_cutoff = dedup_type_partition_cutoff
         self._dedup_no_overlap_boost = dedup_no_overlap_boost
@@ -123,7 +394,6 @@ class EntityProcessor:
         embedding_service: Any,
         similarity_threshold: float = 0.95,
         require_type_compatibility: bool = False,
-        type_compatibility_map: dict[str, list[str]] | None = None,
         filtering_log: FilteringLog | None = None,
         *,
         adapter: Any = None,
@@ -141,8 +411,7 @@ class EntityProcessor:
             embedding_service: Embedding provider implementing EmbeddingProviderProtocol.
             similarity_threshold: Cosine similarity threshold (0.0-1.0).
             require_type_compatibility: When True, skip merging entities
-                with incompatible types.
-            type_compatibility_map: Custom type compatibility groups.
+                of different core types (:func:`are_types_compatible`).
             filtering_log: Optional log collector for pipeline diagnostics.
             adapter: Optional storage adapter for quality counter writes.
                 When ``None``, counter increments are skipped.
@@ -193,7 +462,6 @@ class EntityProcessor:
                 embeddings_normalized,
                 similarity_threshold,
                 require_type_compatibility=require_type_compatibility,
-                type_compatibility_map=type_compatibility_map,
             )
 
             logger.info("returning_embeddings_for_reuse", embedding_count=len(unique_embeddings))
@@ -236,6 +504,7 @@ class EntityProcessor:
                     input_count=len(entities),
                     removed_count=removed_count,
                     items=removed_items,
+                    counts={"merges": removed_count, "groups": len(merged_into)},
                 )
 
             return unique_entities, index_mapping, unique_embeddings
@@ -253,7 +522,6 @@ class EntityProcessor:
             unique_entities_res, index_mapping_res = self.deduplicate_entities_with_mapping(
                 entities,
                 require_type_compatibility=require_type_compatibility,
-                type_compatibility_map=type_compatibility_map,
                 filtering_log=filtering_log,
             )
             return unique_entities_res, index_mapping_res, []  # Empty embeddings list
@@ -265,12 +533,11 @@ class EntityProcessor:
         embeddings_normalized: np.ndarray[Any, np.dtype[np.floating[Any]]],
         similarity_threshold: float,
         require_type_compatibility: bool = False,
-        type_compatibility_map: dict[str, list[str]] | None = None,
     ) -> tuple[list[dict[str, Any]], list[list[float]], dict[int, int | None]]:
         """Identify and merge semantic duplicates using precomputed embeddings.
 
-        When type compatibility is required, partitions entities by compatible
-        type groups and only computes similarity within each group. This reduces
+        When type compatibility is required, partitions entities by core type
+        and only computes similarity within each group. This reduces
         comparisons by 80-90% for typical documents with many entity types.
 
         Args:
@@ -279,8 +546,7 @@ class EntityProcessor:
             embeddings_normalized: L2-normalized embedding matrix.
             similarity_threshold: Minimum adjusted similarity to merge.
             require_type_compatibility: When True, skip merging entities
-                with incompatible types.
-            type_compatibility_map: Custom type compatibility groups.
+                of different core types.
 
         Returns:
             Tuple of (unique_entities, unique_embeddings, index_mapping).
@@ -288,7 +554,7 @@ class EntityProcessor:
         """
         # Build type-compatible comparison groups to avoid O(n^2) full matrix
         if require_type_compatibility and len(entities) >= self._dedup_type_partition_cutoff:
-            comparison_groups = self._build_type_groups(entities, type_compatibility_map)
+            comparison_groups = self._build_type_groups(entities)
             logger.info(
                 "semantic_dedup_partitioned",
                 entity_count=len(entities),
@@ -299,16 +565,24 @@ class EntityProcessor:
             # Single group containing all indices
             comparison_groups = [list(range(len(entities)))]
 
-        # Pre-normalize compatibility map once for the inner loop
-        normalized_compat = normalize_compatibility_map(type_compatibility_map)
-
         # Pre-normalize all entity names/aliases ONCE to avoid redundant
         # normalize_name_key() calls in the O(n^2) comparison loop.
         precomputed_names: list[tuple[str, frozenset[str]]] = []
         for entity in entities:
             name_key = normalize_name_key(entity.get("name") or entity.get("label", ""))
-            alias_keys = frozenset(normalize_name_key(a) for a in entity.get("aliases", []) if a)
+            alias_keys = frozenset(normalize_name_key(a) for a in given_aliases(entity) if a)
             precomputed_names.append((name_key, alias_keys))
+
+        # The name rule's guards over every entity, as the exact step reads them: a
+        # pair (or a running cluster and a candidate) the names do not allow to merge
+        # (``NameIndex.allows_merge``) is never merged, however close the vectors
+        # (audit W4-3: father and son, a count and a countess, merged on a shared
+        # alias at a cosine of 0.86; wave 5: the withholding guards too).
+        names_index = NameIndex(
+            [name_record(e) for e in entities], conventions=self._names, typed=False
+        )
+        cluster: dict[int, list[int]] = {}
+        penalty: dict[int, float] = {}
 
         unique_entities: list[dict[str, Any]] = []
         unique_embeddings: list[list[float]] = []
@@ -329,6 +603,7 @@ class EntityProcessor:
                 unique_embeddings.append(embeddings[i])
                 index_mapping[i] = new_idx
                 seen_indices.add(i)
+                cluster[new_idx] = [i]
 
                 # Only compare against entities in the same type group
                 candidates = [j for j in group_indices if j > i and j not in seen_indices]
@@ -349,13 +624,20 @@ class EntityProcessor:
 
                     base_sim = float(similarities_subset[pos])
 
-                    # Calculate adjusted similarity with precomputed name keys
+                    # Calculate adjusted similarity with precomputed name keys; a name
+                    # in the other's given aliases earns its bonus only as alias evidence.
+                    name_i, aliases_i = precomputed_names[i]
+                    name_j, aliases_j = precomputed_names[j]
                     adjusted_similarity = calculate_entity_similarity(
                         entity,
                         entities[j],
                         base_sim,
                         precomputed_a=precomputed_names[i],
                         precomputed_b=precomputed_names[j],
+                        alias_evidence=(
+                            name_i in aliases_j and names_index.alias_evidence_between(j, i),
+                            name_j in aliases_i and names_index.alias_evidence_between(i, j),
+                        ),
                     )
 
                     # Log near-threshold similarities for debugging
@@ -390,9 +672,7 @@ class EntityProcessor:
                         # Type compatibility check (redundant when partitioned,
                         # but kept for correctness when not partitioned)
                         if require_type_compatibility and not are_types_compatible(
-                            entity.get("type", ""),
-                            entities[j].get("type", ""),
-                            _normalized_map=normalized_compat,
+                            entity.get("type", ""), entities[j].get("type", "")
                         ):
                             logger.debug(
                                 "semantic_merge_skipped_type_incompatible",
@@ -403,9 +683,21 @@ class EntityProcessor:
                                 similarity=round(adjusted_similarity, 3),
                             )
                             continue
+                        # The one merge predicate the exact steps call too: the
+                        # group check and the guards a join needs (audit wave 5:
+                        # at a cosine of 0.98 a father merged into his son).
+                        if not names_index.allows_merge(cluster[new_idx], [j]):
+                            logger.debug(
+                                "semantic_merge_skipped_names_apart",
+                                entity1_name=entity.get("name"),
+                                entity2_name=entities[j].get("name"),
+                                base_similarity=round(base_sim, 3),
+                            )
+                            continue
                         # Mark as duplicate - map to the first occurrence
                         index_mapping[j] = new_idx
                         seen_indices.add(j)
+                        cluster[new_idx].append(j)
                         # Merge entities: combine aliases, keep best data
                         # Apply confidence penalty for borderline merges
                         confidence_penalty = (
@@ -413,8 +705,12 @@ class EntityProcessor:
                             if adjusted_similarity - similarity_threshold < 0.10
                             else 0.0
                         )
+                        penalty[j] = confidence_penalty
+                        # Fold into the running merge, not the original: a
+                        # three-way cluster keeps every member's aliases,
+                        # chunks and evidence.
                         merged = self.merge_entities(
-                            entity,
+                            unique_entities[new_idx],
                             entities[j],
                             confidence_penalty=confidence_penalty,
                         )
@@ -428,6 +724,24 @@ class EntityProcessor:
                             merged_aliases=merged.get("aliases", []),
                         )
 
+        # Each cluster keeps the label the one survivor ranking picks, never the first
+        # mention's (``name_identity.pick_survivor``, the exact and hierarchical steps'
+        # and the resolver's): fold every other member into it, in cluster order.
+        for new_idx, members in cluster.items():
+            if len(members) < 2:
+                continue
+            survivor = members[self._survivor(entities, members)]
+            if survivor == members[0]:
+                continue
+            merged = entities[survivor].copy()
+            for m in members:
+                if m != survivor:
+                    # the pair's penalty is symmetric: the head joins at the survivor's
+                    cost = penalty.get(m if m != members[0] else survivor, 0.0)
+                    merged = self.merge_entities(merged, entities[m], confidence_penalty=cost)
+            unique_entities[new_idx] = merged
+            unique_embeddings[new_idx] = embeddings[survivor]
+
         removed_count = len(entities) - len(unique_entities)
         self._log_deduplication_summary(
             max_similarities, removed_count, len(unique_entities), similarity_threshold
@@ -435,47 +749,41 @@ class EntityProcessor:
 
         return unique_entities, unique_embeddings, index_mapping
 
-    @staticmethod
-    def _build_type_groups(
-        entities: list[dict[str, Any]],
-        type_compatibility_map: dict[str, list[str]] | None = None,
-    ) -> list[list[int]]:
-        """Partition entity indices into groups of compatible types.
+    def _survivor(self, entities: list[dict[str, Any]], members: list[int]) -> int:
+        """The position in ``members`` of the one that keeps the label (``name_identity.pick_survivor``).
 
-        Entities with compatible types (same type, generic type, or in the same
-        compatibility group) are placed together. Each entity appears in exactly
-        one group.
+        Each member's support is the mentions behind it (``record_support``:
+        one for a mention, its extraction groups for a merged entity), so the
+        exact, semantic and hierarchical steps rank by the same count and
+        ``pick_survivor`` sums it over every member written under one name.
+        Until 2026-10-07 support was how many members wrote the same label,
+        one for every member after the exact step. A tie left after every
+        rank goes to the label itself, only to make the order total.
+        """
+        # Read through the module, so the registered guard (``name_guards``) replaces it here too.
+        from chaoscypher_core.services.sources.engine.deduplication import name_identity
+
+        return name_identity.pick_survivor(
+            [survivor_candidate(entities[m]) for m in members], self._names
+        )
+
+    @staticmethod
+    def _build_type_groups(entities: list[dict[str, Any]]) -> list[list[int]]:
+        """Partition entity indices by core type (:func:`core_type_key`), each entity in one group.
+
+        The core type is the group (spec 2026-10-07 § 6): until 2026-10-07 a
+        domain's ``compatibility_group`` map joined type names here.
 
         Args:
             entities: Entity list.
-            type_compatibility_map: Custom type compatibility groups.
 
         Returns:
-            List of index lists, one per compatible type group.
+            List of index lists, one per core type, in first-seen order.
 
         """
-        # Assign each entity to a canonical type key
         type_to_indices: dict[str, list[int]] = {}
         for idx, entity in enumerate(entities):
-            entity_type = (entity.get("type") or "unknown").strip().lower()
-            type_to_indices.setdefault(entity_type, []).append(idx)
-
-        # Merge groups that are compatible according to the map
-        if type_compatibility_map:
-            # Build a union-find of type names
-            canonical: dict[str, str] = {}
-            for group_types in type_compatibility_map.values():
-                group_lower = [t.lower() for t in group_types]
-                root = group_lower[0]
-                for t in group_lower:
-                    canonical[t] = root
-
-            merged_groups: dict[str, list[int]] = {}
-            for entity_type, indices in type_to_indices.items():
-                root = canonical.get(entity_type, entity_type)
-                merged_groups.setdefault(root, []).extend(indices)
-            return list(merged_groups.values())
-
+            type_to_indices.setdefault(core_type_key(entity.get("type")), []).append(idx)
         return list(type_to_indices.values())
 
     @staticmethod
@@ -524,15 +832,15 @@ class EntityProcessor:
         self,
         entities: list[dict],
         require_type_compatibility: bool = False,
-        type_compatibility_map: dict[str, list[str]] | None = None,
         filtering_log: FilteringLog | None = None,
     ) -> tuple[list[dict[str, Any]], dict[int, int | None]]:
         """Remove duplicate entities and return index mapping for relationship remapping.
 
         Deduplication is NAME-ONLY (case-insensitive, trimmed) by default. When
-        ``require_type_compatibility`` is True, same-name entities with
-        incompatible types are kept separate (e.g. "Paris" the Person vs
-        "Paris" the Location).
+        ``require_type_compatibility`` is True, same-name entities of
+        different core types are kept separate (e.g. "Paris" the Person vs
+        "Paris" the Location); two subtypes of one core type are one entity
+        (``Character`` and ``Author``, both Person).
 
         When duplicates are found, entities are FULLY MERGED using merge_entities()
         to preserve all metadata (properties, descriptions, aliases, etc.) from
@@ -541,8 +849,7 @@ class EntityProcessor:
         Args:
             entities: List of entity dictionaries.
             require_type_compatibility: When True, only merge same-name
-                entities whose types are compatible.
-            type_compatibility_map: Custom type compatibility groups.
+                entities of one core type (:func:`are_types_compatible`).
             filtering_log: Optional log collector for pipeline diagnostics.
 
         Returns:
@@ -553,111 +860,160 @@ class EntityProcessor:
                   if removed).
 
         """
-        # Pre-normalize compatibility map once for the loop
-        normalized_compat = normalize_compatibility_map(type_compatibility_map)
+        entities = list(entities)  # an anonymous reference's evidence is narrowed on a copy
 
-        seen: dict[str, int] = {}  # name_key or alias_key -> unique_entities index
-        seen_name_keys: set[str] = set()  # tracks which keys are entity names (not aliases)
-        unique_entities: list[dict[str, Any]] = []
-        index_mapping: dict[int, int | None] = {}  # old_index -> new_index
-        merge_count = 0
+        # Two steps, each a grouping of the whole input so that the order of
+        # the mentions never decides it (audit wave 5: a name joined by alias
+        # evidence was never registered as a key, so the same names in another
+        # order gave another grouping, 110 to 119 groups over 20 shuffles of
+        # v3). First, identical names are one entity (under the type switch,
+        # per compatible type). Then an alias given under one name that is
+        # another group's name joins the two when it is the name rule's alias
+        # evidence over every entity of the input (``NameIndex.alias_evidence``:
+        # "Kurágin" given to Anatole and to Vasíli keys neither, "the prince" is
+        # never a key) and the names allow the merge (``NameIndex.allows_merge``,
+        # the one predicate every merge step calls). Alias-to-alias is not
+        # evidence; an alias picked up by absorbing a differently-named entity
+        # is never a key (``given_aliases``).
+        #
+        # A mention written under a reference ("the count", "Emperor": ``reference_key``)
+        # is not keyed by its spelling. One a name of its own identifies (``referent``) is
+        # keyed alone and joins that name by its alias; an anonymous one is keyed by
+        # what it refers by, so "Emperor" and "the Emperor" are one, and an identified
+        # "the Emperor" never takes the anonymous ones with it (2026-10-07). A label of
+        # another type that names no one is keyed the same way (the type switch decides;
+        # the v4 generic arm wrote one "the count" with an empty type column).
+        # The referent is read typed (a person is named by a person's name: an event called
+        # "Name day of Nataly" is no holder of the name "the countess" was given).
+        records = [name_record(e) for e in entities]
+        names_index = NameIndex(records, conventions=self._names, typed=False)
+        referents: NameIndex | None = None
+        keys = [normalize_name_key(str(e.get("name") or e.get("label") or "")) for e in entities]
+        for idx in range(len(entities)):
+            if not keys[idx]:
+                continue
+            reference = names_index.reference(idx)
+            if reference is not None:
+                referents = referents or NameIndex(records, conventions=self._names)
+                if referents.referent(idx) is not None:
+                    keys[idx] = f"\x00{idx}"
+                    continue
+                # An anonymous mention's names identified no one: they are no evidence once
+                # it joins the others written alike, or one mention's alias would carry
+                # them all into a name (the v4 generic "the countess", given "Mamma").
+                given = given_aliases(entities[idx])
+                kept = [a for a in given if name_identity.reference_key(a, self._names)]
+                if kept != given:
+                    entities[idx] = {**entities[idx], GIVEN_ALIASES_KEY: kept}
+            nameless = reference or name_identity.reference_key(
+                str(entities[idx].get("name") or entities[idx].get("label") or ""), self._names
+            )
+            if nameless:
+                keys[idx] = nameless
+        parent = list(range(len(entities)))
 
-        for old_idx, entity in enumerate(entities):
-            # Create unique key from name (type-agnostic)
-            name = entity.get("name") or entity.get("label", "")
-            name_key = normalize_name_key(name) if name else ""
+        def _root(x: int) -> int:
+            """Union-find root of ``x`` with path halving."""
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
 
-            # Collect normalized alias keys for this entity
-            entity_aliases = entity.get("aliases") or []
-            alias_keys = []
-            for alias in entity_aliases:
-                if alias:
-                    ak = normalize_name_key(alias)
-                    if ak and ak != name_key:
-                        alias_keys.append(ak)
+        def _union(a: int, b: int) -> None:
+            """Join the groups of ``a`` and ``b`` (the lower index roots the group)."""
+            ra, rb = _root(a), _root(b)
+            if ra != rb:
+                parent[max(ra, rb)] = min(ra, rb)
 
-            # Check for match: name in seen (catches name→name and name→alias),
-            # then aliases against name keys only (catches alias→name, NOT alias→alias)
-            match_idx: int | None = None
-            if name_key and name_key in seen:
-                match_idx = seen[name_key]
-            else:
-                # Check if any of this entity's aliases match an existing entity's NAME
-                for ak in alias_keys:
-                    if ak in seen_name_keys:
-                        match_idx = seen[ak]
-                        logger.info(
-                            "alias_matched_existing_entity",
-                            new_entity=name,
-                            matched_alias=ak,
-                            matched_entity=unique_entities[match_idx].get("name"),
-                        )
-                        break
+        def _members(x: int) -> list[int]:
+            """Every input entity in ``x``'s group, in input order."""
+            r = _root(x)
+            return [i for i in range(len(entities)) if keys[i] and _root(i) == r]
 
-            if match_idx is not None:
-                # Type compatibility check (same logic as before)
-                if require_type_compatibility:
-                    existing_type = unique_entities[match_idx].get("type", "")
-                    new_type = entity.get("type", "")
-                    if not are_types_compatible(
-                        existing_type, new_type, _normalized_map=normalized_compat
+        def _compatible(a: int, b: int) -> bool:
+            """``a`` and ``b`` may be one entity under the type switch."""
+            return not require_type_compatibility or are_types_compatible(
+                entities[a].get("type", ""), entities[b].get("type", "")
+            )
+
+        by_key: dict[str, list[int]] = {}
+        for idx, key in enumerate(keys):
+            if key:
+                by_key.setdefault(key, []).append(idx)
+        for members in by_key.values():
+            # A mention whose written type no core type answered to (``unplaced_type``,
+            # kept as a Concept: keep, flag, never delete) is one with the same name's
+            # typed mentions when they are of one core type: its Concept is no type.
+            typed = {
+                core_type_key(entities[m].get("type"))
+                for m in members
+                if not _unplaced(entities[m])
+            }
+            wild = len(typed) <= 1
+            for pos, a in enumerate(members):
+                for b in members[pos + 1 :]:
+                    if _compatible(a, b) or (
+                        wild and (_unplaced(entities[a]) or _unplaced(entities[b]))
                     ):
-                        type_key = f"{name_key}::{new_type.strip().lower()}"
-                        if type_key not in seen:
-                            new_idx = len(unique_entities)
-                            unique_entities.append(entity.copy())
-                            seen[type_key] = new_idx
-                            index_mapping[old_idx] = new_idx
-                            # Register aliases for the new separate entity
-                            for ak in alias_keys:
-                                if ak not in seen:
-                                    seen[ak] = new_idx
-                            logger.info(
-                                "type_incompatible_entity_kept_separate",
-                                name=name,
-                                existing_type=existing_type,
-                                new_type=new_type,
-                            )
-                            continue
-                        merge_idx = seen[type_key]
-                        unique_entities[merge_idx] = self.merge_entities(
-                            unique_entities[merge_idx], entity
+                        _union(a, b)
+                    else:
+                        logger.info(
+                            "type_incompatible_entity_kept_separate",
+                            name=entities[b].get("name"),
+                            existing_type=entities[a].get("type", ""),
+                            new_type=entities[b].get("type", ""),
                         )
-                        index_mapping[old_idx] = merge_idx
-                        merge_count += 1
-                        continue
 
-                # Duplicate found: merge into the matched entity
-                index_mapping[old_idx] = match_idx
-                first_entity = unique_entities[match_idx]
-                merged = self.merge_entities(first_entity, entity)
-                unique_entities[match_idx] = merged
-                merge_count += 1
+        links: list[tuple[tuple[Any, ...], int, str, int]] = []
+        for giver, entity in enumerate(entities):
+            if not keys[giver]:
+                continue
+            for alias in given_aliases(entity):
+                alias_key = normalize_name_key(alias) if alias else ""
+                if not alias_key or alias_key == keys[giver]:
+                    continue
+                for named in by_key.get(alias_key, ()):
+                    order = (
+                        record_order_key(names_index.records[giver]),
+                        alias_key,
+                        record_order_key(names_index.records[named]),
+                    )
+                    links.append((order, giver, alias, named))
+        for _order, giver, alias, named in sorted(links, key=lambda link: link[0]):
+            if _root(giver) == _root(named) or not _compatible(giver, named):
+                continue
+            if names_index.alias_evidence(giver, alias, named) and names_index.allows_merge(
+                _members(giver), _members(named)
+            ):
+                logger.info(
+                    "alias_matched_existing_entity",
+                    new_entity=entities[giver].get("name"),
+                    matched_alias=normalize_name_key(alias),
+                    matched_entity=entities[named].get("name"),
+                )
+                _union(giver, named)
 
-                # Register any new aliases from the merged entity
-                merged_aliases = merged.get("aliases") or []
-                merged_name_key = normalize_name_key(merged.get("name") or "")
-                for alias in merged_aliases:
-                    if alias:
-                        ak = normalize_name_key(alias)
-                        if ak and ak != merged_name_key and ak not in seen:
-                            seen[ak] = match_idx
+        groups: dict[int, list[int]] = {}
+        for idx in range(len(entities)):
+            if keys[idx]:
+                groups.setdefault(_root(idx), []).append(idx)
 
-            elif name_key:
-                # First occurrence: register name and aliases
-                new_idx = len(unique_entities)
-                unique_entities.append(entity.copy())
-                seen[name_key] = new_idx
-                seen_name_keys.add(name_key)
-                index_mapping[old_idx] = new_idx
-
-                # Register alias keys (skip if they collide with a different entity's key)
-                for ak in alias_keys:
-                    if ak not in seen:
-                        seen[ak] = new_idx
-            else:
-                # Empty name: mark as removed (no mapping)
-                index_mapping[old_idx] = None
+        unique_entities: list[dict[str, Any]] = []
+        index_mapping: dict[int, int | None] = dict.fromkeys(range(len(entities)))
+        merge_count = 0
+        for root in sorted(groups):
+            members = groups[root]
+            # The one survivor ranking (``name_identity.pick_survivor``): never the order.
+            survivor = members[self._survivor(entities, members)]
+            merged = entities[survivor].copy()
+            for idx in members:
+                if idx != survivor:
+                    merged = self.merge_entities(merged, entities[idx])
+                    merge_count += 1
+            new_idx = len(unique_entities)
+            unique_entities.append(merged)
+            for idx in members:
+                index_mapping[idx] = new_idx
 
         removed_count = len(entities) - len(unique_entities)
         if removed_count > 0:
@@ -697,6 +1053,7 @@ class EntityProcessor:
                 input_count=len(entities),
                 removed_count=removed_count,
                 items=removed_items,
+                counts={"merges": removed_count, "groups": len(merged_into)},
             )
 
         return unique_entities, index_mapping
@@ -829,7 +1186,11 @@ class EntityProcessor:
         - Properties: Deep merge, keeping more informative values for conflicts
         - Description: Combine if substantially different, otherwise keep longer
         - Confidence: Keep higher value, minus optional penalty
-        - Type: Prefer type from higher-confidence entity
+        - Type: the kept entity's core type; another core type only from a
+          higher-confidence duplicate (which only an untyped merge allows)
+        - Subtypes: the kept entity's ``entity_subtype``; two different
+          subtypes of the core type are both kept, sorted, in
+          ``entity_subtypes`` (:func:`merge_subtypes`)
         - source_chunk_indices: Accumulate all chunk indices for provenance
 
         Args:
@@ -854,8 +1215,7 @@ class EntityProcessor:
         provenance: dict[str, list] = {}
 
         # === ALIASES: Union of all aliases ===
-        kept_aliases = set(kept.get("aliases", []) or [])
-        dup_aliases = set(duplicate.get("aliases", []) or [])
+        dup_aliases = list(duplicate.get("aliases", []) or [])
         dup_name = duplicate.get("name") or duplicate.get("label", "")
         kept_name = (kept.get("name") or kept.get("label", "")).lower()
 
@@ -872,16 +1232,40 @@ class EntityProcessor:
                 # Phase 6: record skipped title-word alias in provenance
                 provenance.setdefault("aliases_skipped", []).append(dup_name)
             else:
-                dup_aliases.add(dup_name)
+                dup_aliases.append(dup_name)
 
-        merged["aliases"] = list(kept_aliases | dup_aliases)
+        merged["aliases"] = ordered_union(kept.get("aliases"), dup_aliases)
+        # The names folded in: never alias evidence, but the name rule's guards read them,
+        # so a later pass never joins this entity to a name one of them is kept apart from.
+        # A one-word bare title ("Emperor") is one of them (keep, flag, never delete,
+        # 2026-10-07): too generic to be an alias key, but a name the entity was written by.
+        folded_in = [dup_name] if dup_name and dup_name.lower() != kept_name else []
+        merged_names = ordered_union(
+            record_merged_names(kept), folded_in, record_merged_names(duplicate)
+        )
+        if merged_names:
+            merged[MERGED_NAMES_KEY] = merged_names
+        attested = sorted(record_attested_names(kept) | record_attested_names(duplicate))
+        if attested:
+            merged[ATTESTED_NAMES_KEY] = attested
+
+        # Given aliases: the kept entity's, plus the duplicate's only when it
+        # carries the same name (aliases given under that name). A merged-in
+        # different name and its aliases are aliases now, but not evidence.
+        kept_given = given_aliases(kept)
+        if normalize_name_key(dup_name or "") == normalize_name_key(kept_name):
+            known = {normalize_name_key(a) for a in kept_given}
+            for alias in given_aliases(duplicate):
+                key = normalize_name_key(alias)
+                if key and key not in known:
+                    known.add(key)
+                    kept_given.append(alias)
+        merged[GIVEN_ALIASES_KEY] = kept_given
 
         # === DESCRIPTORS: Union of descriptive phrases ===
-        kept_descriptors = set(kept.get("descriptors", []) or [])
-        dup_descriptors = set(duplicate.get("descriptors", []) or [])
-        merged_descriptors = kept_descriptors | dup_descriptors
+        merged_descriptors = ordered_union(kept.get("descriptors"), duplicate.get("descriptors"))
         if merged_descriptors:
-            merged["descriptors"] = list(merged_descriptors)
+            merged["descriptors"] = merged_descriptors
 
         # === PROPERTIES: Deep merge (critical for preserving extracted attributes) ===
         kept_props = kept.get("properties", {}) or {}
@@ -900,12 +1284,12 @@ class EntityProcessor:
 
             # Log property merge details for debugging
             if dup_props:
-                new_keys = set(dup_props.keys()) - set(kept_props.keys())
+                new_keys = [k for k in dup_props if k not in kept_props]
                 if new_keys:
                     logger.debug(
                         "properties_merged_new_keys",
                         entity=kept_name,
-                        new_keys=list(new_keys),
+                        new_keys=new_keys,
                     )
 
         # === CONFIDENCE: Keep higher, apply optional penalty ===
@@ -923,19 +1307,49 @@ class EntityProcessor:
         dup_desc = duplicate.get("description", "") or ""
         merged["description"] = self._merge_descriptions(kept_desc, dup_desc)
 
-        # === TYPE: Prefer from higher-confidence entity ===
-        if dup_conf > kept_conf and duplicate.get("type"):
-            old_type = kept.get("type")
-            new_type = duplicate["type"]
-            if old_type != new_type:
-                merged["type"] = new_type
-                logger.debug(
-                    "type_updated_from_higher_confidence",
-                    entity=kept_name,
-                    old_type=old_type,
-                    new_type=new_type,
-                    confidence_diff=round(dup_conf - kept_conf, 3),
-                )
+        # === TYPE: the core type stays; another only from a more confident duplicate ===
+        # Lazy: the extraction package imports this module at load time.
+        from chaoscypher_core.services.sources.engine.extraction.utils.constants import (
+            UNKNOWN_ENTITY_TYPE,
+        )
+
+        # The parser's placeholder for an empty type column is no type: a stated one wins
+        # (2026-10-07: the v4 generic "the count" holding the Archives fact was UNKNOWN, and
+        # the four mentions merged under it were no person, so no reference).
+        # An unplaced mention's Concept (``unplaced_type``: no core type answered to its
+        # written type) is no type either: a stated one wins, and it never replaces one.
+        placeholder = kept.get("type") in (None, "", UNKNOWN_ENTITY_TYPE) or _unplaced(kept)
+        stated = duplicate.get("type") not in (None, "", UNKNOWN_ENTITY_TYPE) and not _unplaced(
+            duplicate
+        )
+        if placeholder and stated:
+            merged["type"] = duplicate["type"]
+        elif (
+            dup_conf > kept_conf
+            and stated
+            and not are_types_compatible(kept.get("type") or "", duplicate["type"])
+        ):
+            # Two core types merge only without the type switch; a subtype of the
+            # kept core type never replaces it (a merge keeps the core type).
+            merged["type"] = duplicate["type"]
+            logger.debug(
+                "type_updated_from_higher_confidence",
+                entity=kept_name,
+                old_type=kept.get("type"),
+                new_type=duplicate["type"],
+                confidence_diff=round(dup_conf - kept_conf, 3),
+            )
+        # === SUBTYPES: the kept one, and both when two of the merged core type differ ===
+        core = core_type_key(merged.get("type"))
+        same_core = [
+            (side.get("properties") or {}) if core_type_key(side.get("type")) == core else {}
+            for side in (kept, duplicate)
+        ]
+        if merged.get("properties") or any(same_core):
+            subtyped = dict(merged.get("properties") or {})
+            merge_subtypes(subtyped, *same_core)
+            if subtyped or "properties" in merged:
+                merged["properties"] = subtyped
 
         # === SOURCE CHUNKS: Accumulate all chunk indices for provenance ===
         kept_chunks = list(kept.get("source_chunk_indices", []) or [])
@@ -946,7 +1360,7 @@ class EntityProcessor:
         if not dup_chunks and duplicate.get("chunk_index") is not None:
             dup_chunks = [duplicate["chunk_index"]]
 
-        all_chunks = list(set(kept_chunks + dup_chunks))
+        all_chunks = ordered_union(kept_chunks, dup_chunks)
         if all_chunks:
             # Coerce to int — LLMs may emit chunk indices as strings
             int_chunks = []
@@ -959,6 +1373,19 @@ class EntityProcessor:
                 merged["source_chunk_indices"] = sorted(int_chunks)
                 if merged.get("chunk_index") is None:
                     merged["chunk_index"] = min(int_chunks)
+
+        # === EVIDENCE: Union of cited sentences (citation provenance) ===
+        # The kept entity's ``cited_chunk_id`` stays; its evidence list grows
+        # by every sentence the merged-in duplicate was cited by.
+        if kept.get("evidence") or duplicate.get("evidence"):
+            # Lazy: the extraction package imports this module at load time.
+            from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+                merge_evidence,
+            )
+
+            merged["evidence"] = merge_evidence(kept.get("evidence"), duplicate.get("evidence"))
+            if not merged.get("cited_chunk_id") and duplicate.get("cited_chunk_id"):
+                merged["cited_chunk_id"] = duplicate["cited_chunk_id"]
 
         # Phase 6 (2026-05-08): write provenance.  Accumulate with any history
         # already present (entity may have been merged multiple times).
@@ -1004,8 +1431,9 @@ class EntityProcessor:
             Merged properties dictionary with data from both sources.
 
         """
-        # Start with duplicate's properties (lower priority)
-        merged = dict(dup_props)
+        # Start with duplicate's properties (lower priority); the reference flag is the kept
+        # record's own (a named survivor that absorbed "the count" is no reference).
+        merged = {k: v for k, v in dup_props.items() if k != DESCRIPTOR_REFERENCE_KEY}
 
         # Merge in kept's properties (higher priority for conflicts)
         for key, kept_value in kept_props.items():
@@ -1056,6 +1484,7 @@ class EntityProcessor:
                 else:
                     merged[key] = kept_value
 
+        merge_unanimous_flags(merged, kept_props, dup_props)
         return merged
 
     def _merge_descriptions(self, desc1: str, desc2: str) -> str:  # noqa: PLR0911
@@ -1149,20 +1578,27 @@ class EntityProcessor:
         self,
         entities: list[dict],
         relationships: list[dict],
+        filtering_log: FilteringLog | None = None,
     ) -> tuple[list[dict], list[dict], dict[int, int | None]]:
-        """Merge entities where one name is contained within another of the same type.
+        """Merge entities of one core type whose names are one entity by the shared name rule.
 
-        Handles progressive name resolution across chunks:
-        - "Count" + "Count Bob" + "Count Bob Smith" -> "Count Bob Smith"
-        - "Anna" + "Anna Pavlovna" -> "Anna Pavlovna"
-        - "Prince Andrew" + "Andrew Bolkonsky" -> merged (shared "Andrew")
-
-        Only merges entities of the SAME TYPE to avoid false positives.
+        The rule is :func:`~chaoscypher_core.services.sources.engine.deduplication.name_identity.plan_name_pairs`,
+        the one the post-commit identity resolver uses, with this processor's
+        title words: same naming words, an alias given under one name that
+        is the other, or a name that is the other with words left out and
+        nothing added (``Mlle Schérer`` into ``Anna Pávlovna Schérer``;
+        ``Anna`` + ``Anna Pavlovna`` + ``Anna Pavlovna Scherer`` into the
+        last). A short name that fits two different fuller names (``Count
+        Bezúkhov`` beside ``Pierre Bezúkhov`` and ``Cyril Vladímirovich
+        Bezúkhov``) stays apart, and a shared word with words added on both
+        sides is never a merge. Each group folds into its fullest name.
 
         Args:
             entities: List of entity dictionaries.
             relationships: List of relationship dictionaries with source/target
                 indices.
+            filtering_log: Optional log collector: a ``hierarchical_name_merge``
+                stage with the merges and groups made.
 
         Returns:
             Tuple of (merged_entities, updated_relationships, index_mapping):
@@ -1174,79 +1610,57 @@ class EntityProcessor:
         if not entities:
             return [], relationships, {}
 
-        # Group entities by type
-        type_groups: dict[str, list[tuple[int, dict]]] = {}
+        # Group entities by core type: the name rule joins names of one core type only.
+        type_groups: dict[str, list[int]] = {}
         for idx, entity in enumerate(entities):
-            entity_type = entity.get("type", "Unknown")
-            if entity_type not in type_groups:
-                type_groups[entity_type] = []
-            type_groups[entity_type].append((idx, entity))
+            type_groups.setdefault(core_type_key(entity.get("type", "Unknown")), []).append(idx)
 
-        # Track which entities to merge: canonical_idx -> list of indices to merge into it
-        merge_map: dict[int, list[int]] = {}
-        merged_into: dict[int, int] = {}  # idx -> canonical_idx
+        def _label(idx: int) -> str:
+            """The entity's name as compared."""
+            return (entities[idx].get("name") or entities[idx].get("label") or "").strip()
 
-        for entity_type, indexed_entities in type_groups.items():
-            if len(indexed_entities) < 2:
+        # Union every pair the shared name rule joins (alias given under the
+        # name, or a name that is the other with words left out and nothing
+        # added -- withheld when the short name fits two different fuller
+        # names); each group folds into its best-ranked member.
+        parent = list(range(len(entities)))
+
+        def _find(x: int) -> int:
+            """Union-find root of ``x`` with path halving."""
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for entity_type, members in type_groups.items():
+            if len(members) < 2:
                 continue
+            records = [name_record(entities[idx]) for idx in members]
+            for i, j, evidence in plan_name_pairs(records, conventions=self._names):
+                a, b = members[i], members[j]
+                ra, rb = _find(a), _find(b)
+                if ra != rb:
+                    parent[rb] = ra
+                logger.info(
+                    "hierarchical_merge_candidate",
+                    name_a=_label(a),
+                    name_b=_label(b),
+                    entity_type=entity_type,
+                    evidence=evidence.kind,
+                    why=evidence.why,
+                )
 
-            # Find merge candidates within this type group
-            for i, (idx_a, entity_a) in enumerate(indexed_entities):
-                if idx_a in merged_into:
-                    continue
-
-                name_a = (entity_a.get("name") or entity_a.get("label", "")).strip()
-                if not name_a:
-                    continue
-
-                words_a = extract_significant_words(name_a, self._title_words)
-                if not words_a:
-                    continue
-
-                for _j, (idx_b, entity_b) in enumerate(indexed_entities[i + 1 :], start=i + 1):
-                    if idx_b in merged_into:
-                        continue
-
-                    name_b = (entity_b.get("name") or entity_b.get("label", "")).strip()
-                    if not name_b:
-                        continue
-
-                    words_b = extract_significant_words(name_b, self._title_words)
-                    if not words_b:
-                        continue
-
-                    # Check for merge candidates
-                    merge_result, canonical_idx = should_merge_names(
-                        idx_a,
-                        name_a,
-                        words_a,
-                        idx_b,
-                        name_b,
-                        words_b,
-                    )
-
-                    if merge_result:
-                        non_canonical_idx = idx_b if canonical_idx == idx_a else idx_a
-
-                        # Check if canonical already has a merge group
-                        if canonical_idx in merge_map:
-                            merge_map[canonical_idx].append(non_canonical_idx)
-                        elif canonical_idx in merged_into:
-                            # Canonical was already merged into something else
-                            actual_canonical = merged_into[canonical_idx]
-                            merge_map[actual_canonical].append(non_canonical_idx)
-                            canonical_idx = actual_canonical
-                        else:
-                            merge_map[canonical_idx] = [non_canonical_idx]
-
-                        merged_into[non_canonical_idx] = canonical_idx
-
-                        logger.info(
-                            "hierarchical_merge_candidate",
-                            canonical_name=entities[canonical_idx].get("name"),
-                            merged_name=entities[non_canonical_idx].get("name"),
-                            entity_type=entity_type,
-                        )
+        groups: dict[int, list[int]] = {}
+        for idx in range(len(entities)):
+            groups.setdefault(_find(idx), []).append(idx)
+        merged_into: dict[int, int] = {}  # idx -> canonical_idx
+        for members in groups.values():
+            if len(members) < 2:
+                continue
+            canonical = members[self._survivor(entities, members)]
+            for idx in members:
+                if idx != canonical:
+                    merged_into[idx] = canonical
 
         if not merged_into:
             # No merges needed
@@ -1257,10 +1671,11 @@ class EntityProcessor:
         # into; a node absent from `merged_into` is a survivor (root). Following
         # the chain to a fixpoint is essential: an entity can be canonical for a
         # shorter name yet later merged into a more complete one (e.g. "Smith" ->
-        # "Bob Smith" -> "Bob Smith Jr"). Resolving by root guarantees every such
+        # "Bob Smith" -> "Bob Alan Smith"). Resolving by root guarantees every such
         # intermediate node still lands in `index_mapping`, so neither it nor the
         # relationships touching it are silently dropped.
         def _resolve_root(idx: int) -> int:
+            """Follow ``merged_into`` to the final canonical index (cycle-safe)."""
             seen: set[int] = set()
             while idx in merged_into and idx not in seen:
                 seen.add(idx)
@@ -1300,6 +1715,29 @@ class EntityProcessor:
             merged_count=len(merged_entities),
             merges_performed=len(merged_into),
         )
+        if filtering_log is not None:
+            from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
+                FilteredItem,
+            )
+
+            filtering_log.add_stage(
+                "hierarchical_name_merge",
+                input_count=len(entities),
+                removed_count=len(merged_into),
+                items=[
+                    FilteredItem(
+                        item_type="entity",
+                        name=_label(idx),
+                        entity_type=str(entities[idx].get("type") or "?"),
+                        reason=f"Name rule — merged into '{_label(canonical)}'",
+                    )
+                    for idx, canonical in merged_into.items()
+                ],
+                counts={
+                    "merges": len(merged_into),
+                    "groups": sum(1 for m in root_members.values() if len(m) > 1),
+                },
+            )
 
         return merged_entities, remapped_relationships, index_mapping
 

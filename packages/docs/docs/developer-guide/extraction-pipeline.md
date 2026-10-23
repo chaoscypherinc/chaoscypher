@@ -239,13 +239,13 @@ The `extraction_filtering_mode` setting selects a preset that controls all quali
 | Preset | Best For | Summary |
 |--------|----------|---------|
 | `maximum` | Highest-precision extraction | All filters on, strict evidence, tighter plausibility threshold |
-| `strict` | Factual/structured content | Strict evidence + type constraints, drop on mismatches |
+| `strict` | Factual/structured content | Strict evidence + type constraints, flag mismatches |
 | `balanced` (default) | General content | All filters active with fall-throughs |
 | `lenient` | Literary/story content | Narrative evidence for pronoun-heavy prose, lower plausibility |
 | `minimal` | Noisy/broad content (news) | Most filters disabled, elevated limits |
 | `unfiltered` | Debugging/downstream filtering | Data integrity only (dedup + index validation) |
 
-Built-in domains map to presets automatically — 9 use `balanced`, 6 use `strict`, 3 use `lenient`, and 1 uses `minimal` (19 total). Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are rejected with a `ValueError` — use one of the six canonical presets.
+Each built-in pack names its preset in its `extraction_filtering_mode` key (the per-pack table is in [Building Domains](./building-domains.md)); a pack that names none, such as `literary`, takes the floor's `balanced`. Legacy preset names (`standard`, `precise`, `narrative`, `permissive`, `raw`) are rejected with a `ValueError` — use one of the six canonical presets.
 
 The mode can be set at three levels (each overriding the previous): global default, domain config (`extraction_filtering_mode` field), or per-source override via the API, CLI, or UI.
 
@@ -264,13 +264,13 @@ Each filtering mode preset includes an evidence validation strategy. Four underl
 
 The `unfiltered` preset disables evidence validation entirely.
 
-Domains can still override the evidence mode independently via `evidence_validation_mode` if the preset's default does not fit.
+The evidence mode comes from the preset or from the global `evidence_validation_mode` extraction setting; a pack cannot set it (`evidence_validation_mode` is a removed key and a pack carrying it is refused at load), though it may tune other filter values through `extraction_limits`.
 
 ### Fuzzy Relationship Type Matching
 
 LLMs frequently produce slight variations of the intended relationship type names (e.g., `"located_in"` vs `"located_at"`). The pipeline uses three-tier fuzzy matching (exact, substring, word overlap) to map LLM output to domain edge templates. The behavior when no match is found depends on the filtering mode:
 
-- **`maximum` and `strict`** — unmatched types and source/target entity type mismatches cause the relationship to be dropped
+- **`maximum` and `strict`** — an unmatched type is kept as `related_to`, flagged `unmatched_label`, and a source/target entity type mismatch is kept flagged `type_mismatch` (until October 2026 both were dropped; an extraction plan runs the check strict whatever the preset)
 - **`balanced`, `lenient`, `minimal`** — unmatched types and mismatches fall through and are kept
 - **`unfiltered`** — type matching is not applied
 
@@ -278,9 +278,9 @@ Domains can override this behavior independently via `strict_edge_type_constrain
 
 ### Relationship Safety-Net Limits
 
-Relationship limits (`max_entity_degree`, `max_same_source_type`, `max_relationship_ratio`) act as safety nets rather than primary quality filters. The defaults vary by filtering mode preset — `balanced` uses generous values (25, 12, 8.0), while `strict` uses tighter values, and `minimal` elevates them further. Primary quality comes from evidence validation, type constraints, and deduplication.
+Relationship limits (`max_entity_degree`, `max_same_source_type`, `max_relationship_ratio`) act as safety nets rather than primary quality filters. The ratio cap comes from the preset; the floor's `FLOOR_LIMITS` (`max_entity_degree` 80, `max_same_source_type` 20, in `extraction/domains/core_types.py`) are applied on top of every preset and a pack can only raise them. Primary quality comes from evidence validation, type constraints, and deduplication.
 
-The `minimal` and `unfiltered` presets enable **orphan protection**: relationships are kept despite caps when either endpoint has fewer than 2 edges, and orphan entities survive commit. All other presets (`balanced`, `lenient`, `strict`, `maximum`) enforce caps unconditionally and drop orphan entities before commit.
+The `minimal` and `unfiltered` presets enable **orphan protection**: relationships are kept despite caps when either endpoint has fewer than 2 edges, and every orphan entity survives commit. All other presets (`balanced`, `lenient`, `strict`, `maximum`) enforce caps unconditionally and drop, before commit, only the orphan entities that carry neither a description nor an evidence sentence. Under every preset an orphan that carries either is committed with `properties.orphan: true` (keep, flag, never delete; see [Commit](../architecture/extraction-pipeline/commit.md#orphan-entities-keep-flag-never-delete)).
 
 Domains can override specific limits via `extraction_limits` without changing the rest of the preset's behavior.
 

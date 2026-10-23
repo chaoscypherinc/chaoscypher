@@ -4,7 +4,7 @@
 """Source Citations Mixin for SqliteAdapter.
 
 Handles entity citation and relationship citation operations,
-source statistics, orphan detection, and bulk clear.
+source statistics, and bulk clear.
 Part of the unified SourceStorageProtocol implementation.
 """
 
@@ -31,6 +31,27 @@ from chaoscypher_core.utils.id import generate_id
 logger = structlog.get_logger(__name__)
 
 
+def _cited_sentences(row: RelationshipCitation) -> list[dict[str, Any]]:
+    """The cited sentences a relationship citation row stores, or ``[]``; malformed metadata is logged."""
+    meta = row.citation_metadata
+    if meta is None:
+        return []
+    raw = meta.get("sentences") if isinstance(meta, dict) else None
+    if isinstance(meta, dict) and raw is None:
+        return []
+    sentences: list[dict[str, Any]] = []
+    if isinstance(meta, dict) and isinstance(raw, list):
+        sentences = [s for s in raw if isinstance(s, dict)]
+        if len(sentences) == len(raw):
+            return sentences
+    logger.warning(
+        "relationship_citation_sentences_malformed",
+        citation_id=row.id,
+        edge_id=row.edge_id,
+    )
+    return sentences
+
+
 class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
     """Mixin providing citation operations for SQLite storage.
 
@@ -38,7 +59,6 @@ class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
     - Entity citation CRUD (create, batch create, list, filter)
     - Relationship citation CRUD (batch create, list)
     - Source statistics aggregation
-    - Orphan detection for entity cleanup
     - Bulk clear operations
 
     Note: This mixin contributes to the unified SourceStorageProtocol.
@@ -163,7 +183,13 @@ class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
         entity_uris: list[str],
         source_ids: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return SourceCitation records for multiple entity URIs.
+        """Return SourceCitation records for multiple entity URIs, in no promised order.
+
+        The rows come back as SQLite's ``IN`` lookup walks the
+        ``entity_uri`` index (by entity id, then by row), never in the order
+        of ``entity_uris``: a caller that ranks by the lookup order re-orders
+        the rows itself (the GraphRAG provenance arm does; until 2026-10-06
+        it took this order, and ranked its chunks by node id, audit wave 4).
 
         Args:
             database_name: Database to query.
@@ -171,7 +197,7 @@ class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
             source_ids: Optional source scope filter.
 
         Returns:
-            List of citation dicts.
+            List of citation dicts, each with its ``entity_uri`` and ``chunk_id``.
 
         """
         self._ensure_connected()
@@ -205,6 +231,50 @@ class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
 
         results = self.session.exec(stmt).all()
         return self._entities_to_dicts(results)
+
+    def get_relationship_citations_batch(
+        self,
+        database_name: str,
+        edge_ids: list[str],
+        source_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The stored evidence of edges, by edge id (see the port's docstring).
+
+        A ``citation_metadata`` that is not a dict, or whose ``sentences`` is
+        not a list, keeps its row with ``sentences == []``; entries of the list
+        that are not dicts are left out. Both are logged
+        (``relationship_citation_sentences_malformed``), never dropped silently.
+        """
+        self._ensure_connected()
+
+        if not edge_ids:
+            return []
+
+        stmt = (
+            select(RelationshipCitation)
+            .where(
+                RelationshipCitation.database_name == database_name,
+                RelationshipCitation.edge_id.in_(edge_ids),
+            )
+            .order_by(
+                RelationshipCitation.edge_id,
+                RelationshipCitation.chunk_id,
+                RelationshipCitation.id,
+            )
+        )
+        if source_ids:
+            stmt = stmt.where(RelationshipCitation.source_id.in_(source_ids))
+
+        return [
+            {
+                "edge_id": row.edge_id,
+                "chunk_id": row.chunk_id,
+                "source_id": row.source_id,
+                "justification": row.justification,
+                "sentences": _cited_sentences(row),
+            }
+            for row in self.session.exec(stmt).all()
+        ]
 
     def get_citations_by_entity(
         self, entity_uri: str, offset: int = 0, limit: int = 50
@@ -655,51 +725,6 @@ class SourceCitationsMixin(SqliteMixinBase, CitationStorageProtocol):
             delete(RelationshipCitation).where(RelationshipCitation.source_id == source_id)
         )
         self._maybe_commit()
-
-    # ================================
-    # Orphan Detection (for entity cleanup)
-    # ================================
-
-    def get_orphaned_entity_uris(self, source_id: str) -> list[str]:
-        """Get entity URIs that will be orphaned when source is deleted.
-
-        Returns URIs where this source is the ONLY remaining citation.
-        Entities with citations from other sources are excluded.
-
-        Args:
-            source_id: Source UUID to check
-
-        Returns:
-            List of entity URIs that would become orphans
-
-        """
-        self._ensure_connected()
-
-        # Step 1: Get all entity URIs cited by this source
-        cited_by_source_stmt = (
-            select(SourceCitation.entity_uri)
-            .where(SourceCitation.source_id == source_id)
-            .distinct()
-        )
-        cited_by_source = set(self.session.exec(cited_by_source_stmt).all())
-
-        if not cited_by_source:
-            return []
-
-        # Step 2: Get entity URIs that have citations from OTHER sources
-        cited_by_others_stmt = (
-            select(SourceCitation.entity_uri)
-            .where(
-                SourceCitation.source_id != source_id,
-                SourceCitation.entity_uri.in_(cited_by_source),
-            )
-            .distinct()
-        )
-        cited_by_others = set(self.session.exec(cited_by_others_stmt).all())
-
-        # Step 3: Return the difference (orphans = cited by source - cited by others)
-        orphaned = cited_by_source - cited_by_others
-        return list(orphaned)
 
     def get_entity_uris_for_sources(self, source_ids: list[str]) -> list[str]:
         """Get all entity URIs cited by the given sources.

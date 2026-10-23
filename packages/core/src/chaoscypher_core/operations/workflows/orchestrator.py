@@ -42,6 +42,41 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# How often a running execution re-reads its own row to notice a user cancel.
+# Cortex's cancel stamps the row ``cancelled``; that row is the one signal
+# shared by queue-dispatched, trigger-dispatched and nested runs.
+CANCEL_POLL_INTERVAL_SECS = 2.0
+
+
+async def _invoke_until_cancelled(
+    compiled: Any,
+    initial_state: WorkflowState,
+    execution_repo: WorkflowExecutionRepository,
+    execution_id: str,
+) -> Any | None:
+    """Run the compiled graph, stopping it if the execution row turns ``cancelled``.
+
+    Returns:
+        The final LangGraph state, or None when the user cancelled the run.
+        An outer cancel (worker drain / task timeout) propagates as usual.
+
+    """
+    invoke = asyncio.ensure_future(compiled.ainvoke(cast("Any", initial_state)))
+    try:
+        while True:
+            done, _ = await asyncio.wait({invoke}, timeout=CANCEL_POLL_INTERVAL_SECS)
+            if done:
+                return invoke.result()
+            status = await asyncio.to_thread(execution_repo.get_status, execution_id)
+            if status == WorkflowExecutionStatus.CANCELLED:
+                invoke.cancel()
+                await asyncio.gather(invoke, return_exceptions=True)
+                return None
+    finally:
+        if not invoke.done():
+            invoke.cancel()
+            await asyncio.gather(invoke, return_exceptions=True)
+
 
 async def _ensure_execution_record(
     execution_repo: WorkflowExecutionRepository,
@@ -344,8 +379,26 @@ async def execute_workflow_task(
         )
 
         start_time = datetime.now(UTC)
-    except BaseException:
-        exec_adapter.disconnect()
+    except BaseException as e:
+        # A caller-supplied ``execution_id`` names a row the API already
+        # created ``pending``. Nothing else ever writes it, and a pending
+        # row trips the ``allow_parallel_execution=False`` busy gate on
+        # every later run, so record the failure before re-raising.
+        try:
+            if execution_id and isinstance(e, Exception | asyncio.CancelledError):
+                await asyncio.to_thread(
+                    WorkflowExecutionRepository(exec_adapter).finalize_execution,
+                    execution_id,
+                    status=WorkflowExecutionStatus.FAILED,
+                    outputs=None,
+                    error_message=str(e) or type(e).__name__,
+                    failed_step_id=None,
+                    duration_ms=0,
+                )
+        except Exception:
+            logger.exception("workflow_pre_execution_finalize_failed", execution_id=execution_id)
+        finally:
+            exec_adapter.disconnect()
         raise
 
     try:
@@ -354,11 +407,24 @@ async def execute_workflow_task(
         # we offload via ``asyncio.to_thread`` to keep
         # ``SafeSession._retry_delay`` ``time.sleep`` calls off the
         # event loop (2026-05-23 perf fix).
-        await asyncio.to_thread(
+        claimed = await asyncio.to_thread(
             execution_repo.update_status,
             execution_id,
             WorkflowExecutionStatus.RUNNING,
         )
+        if not claimed:
+            # Cancelled (or otherwise terminal) between enqueue and pickup.
+            logger.info(
+                "workflow_execution_skipped_not_runnable",
+                workflow_id=workflow_id,
+                execution_id=execution_id,
+            )
+            return {
+                "success": False,
+                "outputs": {},
+                "execution_id": execution_id,
+                "error": "Execution was cancelled before it started",
+            }
 
         # 6. Build LangGraph using refactored builder
         # (workflow_with_steps already created above for validation)
@@ -416,7 +482,21 @@ async def execute_workflow_task(
             execution_id=execution_id,
             step_count=len(steps),
         )
-        final_state = await compiled.ainvoke(cast("Any", initial_state))
+        final_state = await _invoke_until_cancelled(
+            compiled, initial_state, execution_repo, execution_id
+        )
+        if final_state is None:
+            logger.info(
+                "workflow_execution_cancelled_by_user",
+                workflow_id=workflow_id,
+                execution_id=execution_id,
+            )
+            return {
+                "success": False,
+                "outputs": {},
+                "execution_id": execution_id,
+                "error": "Execution cancelled",
+            }
 
         # 10. Calculate duration
         duration_ms = int((datetime.now(UTC) - start_time).total_seconds() * 1000)

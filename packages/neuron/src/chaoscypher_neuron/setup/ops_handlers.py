@@ -65,6 +65,40 @@ def _register_fetch_url_handler(source_processing_service: object) -> None:
     queue_client.register_handlers(QUEUE_OPERATIONS, {OP_FETCH_URL: _fetch_url_handler})
 
 
+def _register_import_site_handler(
+    source_processing_service: object,
+    search_repository: object,
+    engine_settings: object,
+) -> None:
+    """Register the OP_IMPORT_SITE handler bound to the worker's services.
+
+    The site import imports each page through the URL import path (the
+    source processing service) and, on a refresh, re-imports a changed page
+    through the source's graph release (the search index and the engine
+    settings).
+    """
+    from chaoscypher_core.constants import OP_IMPORT_SITE, QUEUE_OPERATIONS
+    from chaoscypher_core.operations.sources.site_import_handler import handle_import_site
+    from chaoscypher_core.queue import queue_client
+
+    async def _import_site_handler(
+        data: dict,
+        metadata: dict | None = None,
+        task_id: str | None = None,
+    ) -> dict:
+        """Queue handler bridging OP_IMPORT_SITE to the site import."""
+        return await handle_import_site(
+            data,
+            source_processing_service=source_processing_service,  # type: ignore[arg-type]
+            search_repository=search_repository,  # type: ignore[arg-type]
+            engine_settings=engine_settings,  # type: ignore[arg-type]
+            metadata=metadata,
+            task_id=task_id,
+        )
+
+    queue_client.register_handlers(QUEUE_OPERATIONS, {OP_IMPORT_SITE: _import_site_handler})
+
+
 def build_import_handler_specs(
     import_service: object = None,
 ) -> dict[str, HandlerSpec]:
@@ -321,6 +355,9 @@ async def setup_operations_handlers(ctx: WorkerContext) -> None:  # noqa: PLR091
     # /sources/url enqueues OP_FETCH_URL so the route can return 202
     # instead of holding the connection open through the WebScraper fetch.
     _register_fetch_url_handler(source_processing_service)
+    # /sources/sites enqueues OP_IMPORT_SITE: discovery, then each page
+    # through the URL import path.
+    _register_import_site_handler(source_processing_service, search_repository, engine_settings)
 
     # Register reset + cleanup handlers (2026-04-18 decision 3: heavy
     # resets moved from sync-blocking API to queue + 202).

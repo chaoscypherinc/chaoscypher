@@ -39,7 +39,7 @@ dependencies = [
     "structlog>=25.5.0,<26",
     "pydantic>=2.12.0,<3",
     "platformdirs>=4.9.0,<5",
-    "mcp>=1.28.1,<2",
+    "mcp>=1.30.0,<2",
     "ccx-format[embeddings]>=0.1.0,<0.2",
 
     # Search & indexing
@@ -56,7 +56,7 @@ dependencies = [
     # Note: google-generativeai version controlled by langchain-google-genai
 
     # Document processing
-    "pypdf>=6.19.0,<7",            # floor lifted for CVE-2026-102993..103000
+    "pypdf>=6.21.1,<7",            # floor lifted for CVE-2026-113786..113795
     "pypdfium2>=5.7.0,<6",
     "beautifulsoup4>=4.12,<5",      # MIT; HTML/EPUB loaders + archive Sphinx handler
     "docutils>=0.20,<1",            # BSD; RST loader (parse validation)
@@ -65,7 +65,7 @@ dependencies = [
     "python-pptx>=0.6,<1",          # MIT; PPTX loader
 
     # Media processing (audio/video transcription)
-    "Pillow>=12.2.0,<13",
+    "Pillow>=13.0.0,<14",           # floor lifted for CVE-2026-112393..112899
     "faster-whisper>=1.2.0,<2",
 
     # Content normalization & cleaning
@@ -173,6 +173,10 @@ anthropic = "chaoscypher_core.adapters.llm.providers.anthropic_provider:Anthropi
 gemini = "chaoscypher_core.adapters.llm.providers.gemini_provider:GeminiProvider"
 
 [tool.pytest.ini_options]
+# The root pyproject declares this too; pytest reads only the configfile of its rootdir, and a
+# run whose paths all sit under packages/core (one file, or two files from here) resolves here
+# and lost it: every async test failed with "async def functions are not natively supported".
+asyncio_mode = "auto"
 pythonpath = ["src"]
 
 [tool.setuptools.packages.find]

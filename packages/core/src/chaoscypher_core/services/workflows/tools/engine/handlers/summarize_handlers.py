@@ -23,6 +23,10 @@ from chaoscypher_core.services.workflows.tools.engine.chunk_hydration import (
     UNTRUSTED_FENCE_OPEN,
     neutralize_untrusted_fence,
 )
+from chaoscypher_core.services.workflows.tools.engine.handlers.question_shape import (
+    ChatCallback,
+    reply_content,
+)
 from chaoscypher_core.utils.tokens import estimate_tokens
 
 
@@ -54,7 +58,7 @@ class SummarizeToolHandlers:
         search_repository: Any,
         *,
         settings: EngineSettings,
-        llm_chat_callback: Callable | None = None,
+        llm_chat_callback: ChatCallback | None = None,
         embedding_callback: Callable | None = None,
         scope: dict[str, Any] | None = None,
     ) -> None:
@@ -171,8 +175,10 @@ class SummarizeToolHandlers:
 
         labels = np.zeros(n, dtype=int)
         for _ in range(max_iter):
-            # Assign each point to nearest centroid
-            dists = np.linalg.norm(embeddings[:, None] - centroids[None, :], axis=2)
+            # Assign each point to nearest centroid. Squared distance up to a
+            # per-row constant (||a||^2 - 2a.b + ||b||^2, dropping ||a||^2) keeps
+            # the work at (n, k) instead of broadcasting a dense (n, k, dim) tensor.
+            dists = (centroids * centroids).sum(axis=1)[None, :] - 2.0 * (embeddings @ centroids.T)
             new_labels = np.argmin(dists, axis=1)
             if np.array_equal(new_labels, labels):
                 break
@@ -471,9 +477,7 @@ class SummarizeToolHandlers:
                 }
 
             messages = self._build_prompt(query, selected, multi_source)
-            llm_result = await self.llm_chat_callback(messages)
-
-            summary = llm_result.get("content", "")
+            summary = reply_content(await self.llm_chat_callback(messages))
 
             sources_used = sorted({c.get("source_id", "") for c in selected})
 

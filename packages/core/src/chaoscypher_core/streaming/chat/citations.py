@@ -103,12 +103,19 @@ _ENTITY_DIRECT_FIELDS = (
 # Verified against the actual tool handlers (node/edge/analytics/graphrag):
 # every container that carries node-like dicts must be listed, or chips for
 # entities mentioned only there get no hover details (2026-06-10 audit).
+# graphrag_search's blocks (aggregates → groups → rows, walks → hops) are
+# listed so a node dict there is read; today their rows and hops carry an
+# edge id and the endpoints' labels, no node ``id``, and an aggregate's
+# entity is one of the seed_entities, whose record is the chip's.
 _ENTITY_RECURSE_KEYS = frozenset(
     (
+        "aggregates",  # graphrag_search: aggregate blocks
         "communities",  # analyze_graph_structure
         "context",
         "edges",
         "graph_context",  # graphrag_search
+        "groups",  # graphrag_search aggregate block: one group per relation
+        "hops",  # graphrag_search walk
         "incoming",
         "incoming_edges",  # get_node_context
         "isolated_nodes",  # analyze_graph_structure
@@ -121,6 +128,7 @@ _ENTITY_RECURSE_KEYS = frozenset(
         "related_node",  # get_node_edges
         "relationships",
         "results",
+        "rows",  # graphrag_search aggregate group
         "sample_members",  # analyze_graph_structure communities
         "seed_entities",  # graphrag_search
         "similar_nodes",  # find_similar_nodes
@@ -130,6 +138,7 @@ _ENTITY_RECURSE_KEYS = frozenset(
         "target",  # get_node_context edge rows (nested node dict)
         "target_node",
         "top_nodes",  # analyze_graph_structure
+        "walks",  # graphrag_search: walk blocks
     )
 )
 

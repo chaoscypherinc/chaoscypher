@@ -97,7 +97,7 @@ def test_band_values_match_literal():
 
     expected = set(get_args(Band))
     assert expected == BAND_VALUES
-    assert len(BAND_VALUES) == 5
+    assert len(BAND_VALUES) == 6
 
 
 def test_version_coerces_to_string(tmp_path):

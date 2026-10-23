@@ -81,7 +81,9 @@ class DiagnosticsService:
 
         # Enrich with container-specific data
         queue_stats = await self._collect_queue_stats()
-        service_status = self._collect_service_status()
+        # Supervisord XML-RPC is blocking socket I/O — keep it off the event loop,
+        # as the logs API does for the same call.
+        service_status = await asyncio.to_thread(self._collect_service_status)
 
         # Write the bundle off the event loop — export_bundle walks the DB,
         # reads logs, and writes a ZIP (all blocking disk I/O). On failure,

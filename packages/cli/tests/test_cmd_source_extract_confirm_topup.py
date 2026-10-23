@@ -34,6 +34,7 @@ from click.testing import CliRunner
 
 from chaoscypher_cli.commands.source.confirm import confirm_cmd
 from chaoscypher_cli.commands.source.extract import extract_cmd
+from chaoscypher_core.models import ReleasedRows
 
 
 # ---------------------------------------------------------------------------
@@ -107,11 +108,10 @@ class TestExtractVerboseResetOutput:
     def test_verbose_reset_message_printed(self) -> None:
         runner = CliRunner()
         svc = _make_service("committed")
-        svc.reset_for_re_extraction.return_value = {
-            "nodes_deleted": 7,
-            "edges_deleted": 3,
-            "templates_deleted": 0,
-        }
+        svc.reset_for_re_extraction.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(f"n{i}" for i in range(7)),
+            deleted_edge_ids=frozenset(f"e{i}" for i in range(3)),
+        )
         svc.ctx.storage_adapter.get_file.return_value = _make_source("indexed")
 
         with patch("chaoscypher_cli.context.get_context", return_value=MagicMock()):
@@ -125,11 +125,10 @@ class TestExtractVerboseResetOutput:
     def test_verbose_reset_shows_node_edge_counts(self) -> None:
         runner = CliRunner()
         svc = _make_service("committed")
-        svc.reset_for_re_extraction.return_value = {
-            "nodes_deleted": 7,
-            "edges_deleted": 3,
-            "templates_deleted": 0,
-        }
+        svc.reset_for_re_extraction.return_value = ReleasedRows(
+            deleted_node_ids=frozenset(f"n{i}" for i in range(7)),
+            deleted_edge_ids=frozenset(f"e{i}" for i in range(3)),
+        )
         svc.ctx.storage_adapter.get_file.return_value = _make_source("indexed")
 
         with patch("chaoscypher_cli.context.get_context", return_value=MagicMock()):
@@ -283,7 +282,7 @@ class TestExtractDomainOption:
         svc.ctx.storage_adapter.update_file.assert_any_call(
             "if_testsrc12345",
             database_name=svc.ctx.database_name,
-            updates={"forced_domain": "legal"},
+            updates={"forced_packs": ["legal"]},
         )
 
 
@@ -565,11 +564,11 @@ class TestConfirmNoRankingFallback:
                 result = runner.invoke(confirm_cmd, ["if_awaitsrc1234", "--yes", "--quiet"])
 
         assert result.exit_code == 0, result.output
-        # "medical" should have been persisted as forced_domain
+        # "medical" should have been persisted as the forced packs
         svc.ctx.storage_adapter.update_file.assert_any_call(
             "if_awaitsrc1234",
             database_name="default",
-            updates={"forced_domain": "medical", "status": "indexed"},
+            updates={"forced_packs": ["medical"], "status": "indexed"},
         )
 
 

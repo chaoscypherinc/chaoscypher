@@ -20,6 +20,7 @@ import pytest
 from chaoscypher_core.benchmark.probes import prepare_probe_passage, probe_node_templates
 from chaoscypher_core.benchmark.results import load_results
 from chaoscypher_core.mcp.benchmark import PROBE_SEED, BenchmarkBridge
+from chaoscypher_core.mcp.benchmark.errors import ERR_UNKNOWN_TASK
 from chaoscypher_core.settings import EngineSettings, PathSettings
 
 
@@ -133,14 +134,14 @@ async def _answer_t1(b: BenchmarkBridge, run_id: str, probe_id: str) -> dict[str
 
 @pytest.mark.asyncio
 async def test_start_on_the_shipped_fixture_sizes_each_suite(tmp_path: Path) -> None:
-    """The shipped fixture has 65 isolated probes and 21 carrier probes."""
+    """The shipped fixture has 65 isolated probes and 39 carrier probes (three variants skipped)."""
     b = BenchmarkBridge(_settings(tmp_path))
     sizes = {}
     for suite in ("probes", "probes-carrier", "probes-all"):
         res = await b.start(suite, "claude-code", "test-model")
         assert res["success"], res
         sizes[suite] = res["total"]
-    assert sizes == {"probes": 65, "probes-carrier": 21, "probes-all": 86}
+    assert sizes == {"probes": 65, "probes-carrier": 39, "probes-all": 104}
 
 
 @pytest.mark.asyncio
@@ -160,9 +161,10 @@ async def test_full_run_scores_each_probe_and_writes_a_harness_track_results_fil
     assert len(_state(bridge, run_id)["stages"]["T1-easy"]["pass1_entities"]) == 2
     nxt = res["next"]
     assert nxt["probe_id"] == "T1-easy" and nxt["stage"] == "relationships"
-    # Pass 2 lists the entities parsed from the submitted pass-1 answer.
-    assert "0: Kutuzov (Character)" in nxt["user_prompt"]
-    assert "1: Bagration (Character)" in nxt["user_prompt"]
+    # Pass 2 lists the entities parsed from the submitted pass-1 answer, by the
+    # core type the type rescue gave them (a Character is a Person).
+    assert "0: Kutuzov (Person)" in nxt["user_prompt"]
+    assert "1: Bagration (Person)" in nxt["user_prompt"]
 
     res = await bridge.submit(run_id, "T1-easy", "relationships", _RELATIONSHIPS)
     assert res["success"], res
@@ -375,9 +377,7 @@ async def test_record_matches_what_extract_single_chunk_produces(
     bridge: BenchmarkBridge,
 ) -> None:
     """Same answers in, same record out as the local runner's LLM path."""
-    from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
-        CallLLMResult,
-    )
+    from chaoscypher_core.testing.extraction_llm import ScriptedExtractionLLM
 
     suite = bridge.suite("probes-carrier")
     probe = suite._load_fixture()[1]["T1-easy-carrier"]
@@ -391,22 +391,10 @@ async def test_record_matches_what_extract_single_chunk_produces(
     rec = state["records"]["T1-easy-carrier"]
     assert len(rec["entities"]) == 2 and len(rec["relationships"]) == 1
 
-    prompts_seen: list[str] = []
-    answers = iter([ents, rels])
+    llm = ScriptedExtractionLLM(pass1_answers=[ents], pass2_answers=[rels])
+    prompts_seen = llm.prompts
     extractor = suite._get_extractor()
-
-    async def _fake_call_llm(prompt: str, **_: Any) -> CallLLMResult:
-        """Return the canned answers in pass order and record the prompts."""
-        prompts_seen.append(prompt)
-        return CallLLMResult(
-            content=next(answers),
-            input_tokens=1,
-            output_tokens=1,
-            finish_reason="stop",
-            aborted_by_loop=False,
-        )
-
-    extractor.call_llm = _fake_call_llm  # type: ignore[method-assign]
+    extractor.call_llm = llm  # type: ignore[method-assign]
     templates = suite._get_templates()
     entities, relationships, _in, _out, metrics = await extractor.extract_single_chunk(
         chunk_content=passage,
@@ -450,6 +438,24 @@ async def test_a_runaway_answer_is_cut_by_the_loop_detector(bridge: BenchmarkBri
     rec = state["records"]["T1-easy"]
     assert rec["aborted_by_loop"] is True
     assert rec["finish_reason"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_pass_is_recorded_as_cut_off(bridge: BenchmarkBridge) -> None:
+    """truncated=true becomes finish_reason 'length', which the completion gate fails.
+
+    The suite used to ignore the flag, so a cut-off answer whose surviving
+    lines happened to be right scored as complete.
+    """
+    run_id = (await bridge.start("probes", "claude-code", "m"))["run_id"]
+    await bridge.submit(run_id, "T1-easy", "entities", _ENTITIES, truncated=True)
+    await bridge.submit(run_id, "T1-easy", "relationships", _RELATIONSHIPS)
+    verdict = _verdict(bridge, run_id, "T1-easy")
+    assert verdict["passed"] is False
+    assert any("did not complete" in d for d in verdict["details"])
+    rec = _state(bridge, run_id)["records"]["T1-easy"]
+    assert rec["finish_reason"] == "length"
+    assert rec["aborted_by_loop"] is False
 
 
 @pytest.mark.asyncio
@@ -607,3 +613,31 @@ async def test_no_probe_payload_carries_the_fixture_or_a_verdict(
         "answer_format",
         "remaining",
     }
+
+
+@pytest.mark.asyncio
+async def test_client_sessions_per_task_are_counted_on_the_row(bridge: BenchmarkBridge) -> None:
+    """The driver reports each client session; finish writes the tasks that took more than one.
+
+    A session that answers in text without calling submit leaves the task
+    pending and the driver runs another; the row must say so (2026-10-01:
+    Sonnet 5.5 took three sessions on E4-easy-carrier and the board could not
+    tell). Not a client tool: the model never sees it.
+    """
+    started = await bridge.start("probes", "claude-code", "claude-test")
+    run_id = started["run_id"]
+    for _ in range(3):
+        res = await bridge.record_session(run_id, "T1-easy")
+        assert res["success"], res
+    assert res["sessions"] == 3
+    await _answer_t1(bridge, run_id, "T1-easy")
+    assert (await bridge.record_session(run_id, "T2-hard"))["sessions"] == 1
+    await bridge.submit(run_id, "T2-hard", "entities", "", empty_answer=True)
+    assert (await bridge.record_session(run_id, "nope"))["error_code"] == ERR_UNKNOWN_TASK
+
+    done = await bridge.finish(run_id)
+    assert done["success"], done
+    run = load_results(Path(done["results_path"]))[0].extras["run"]
+    assert run["sessions"] == {"T1-easy": 3}
+    assert run["extra_sessions"] == 2
+    assert (await bridge.record_session(run_id, "T1-easy"))["error_code"] == "RUN_FINISHED"

@@ -60,14 +60,14 @@ def test_discover_manifest_not_mapping_raises_type_error(tmp_path: Path) -> None
         discover_datasets(builtin_root=builtin, user_root=tmp_path / "_none")
 
 
-def test_discover_extraction_missing_domain_field(tmp_path: Path) -> None:
+def test_discover_extraction_missing_packs_field(tmp_path: Path) -> None:
     builtin = tmp_path / "builtin"
     pdir = builtin / "p1"
     _write_manifest(
         pdir,
         "id: p1\nkind: extraction\nversion: '1.0'\ncorpus_path: x.txt\n",
     )
-    with pytest.raises(ValueError, match="extraction dataset missing 'domain'"):
+    with pytest.raises(ValueError, match="extraction dataset missing 'packs'"):
         discover_datasets(builtin_root=builtin, user_root=tmp_path / "_none")
 
 
@@ -114,9 +114,9 @@ def test_bundle_missing_extraction_field(tmp_path: Path) -> None:
     root = tmp_path / "datasets"
     _write_manifest(
         root / "demo",
-        "id: demo\nkind: extraction\nversion: '1.0'\ncorpus_path: x.txt\n",  # no domain
+        "id: demo\nkind: extraction\nversion: '1.0'\ncorpus_path: x.txt\n",  # no packs, no domain
     )
-    with pytest.raises(ValueError, match="extraction dataset missing 'domain'"):
+    with pytest.raises(ValueError, match="extraction dataset missing 'packs'"):
         load_dataset_bundle("demo", user_root=root, builtin_root=tmp_path / "_none")
 
 

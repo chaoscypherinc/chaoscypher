@@ -36,6 +36,8 @@ import { SourcePageHeader } from './components/header/SourcePageHeader';
 import { McpExtractionBanner } from './components/banners/McpExtractionBanner';
 import { ProcessingBanner } from './components/banners/ProcessingBanner';
 import { DeleteSourceDialog } from './components/DeleteSourceDialog';
+import { SourcePacksDialog } from './components/header/SourcePacksDialog';
+import { useExtractionDomains } from '../../services/api/useSources';
 import { RecoveryEventsPanel } from './components/RecoveryEventsPanel';
 
 export default function SourcePage() {
@@ -69,8 +71,11 @@ export default function SourcePage() {
     retrySource,
     reExtract,
     reextractSource,
+    reclassifyPacks,
     refetch,
   } = useSourceDetail(id, navigate);
+  const { data: availableDomains = [] } = useExtractionDomains();
+  const [packsDialogOpen, setPacksDialogOpen] = useState(false);
 
   const { pauseSource, resumeSource } = useSourcePause(refetch);
   const { warnThreshold: recoveryWarnThreshold, maxAttempts: recoveryMaxAttempts } =
@@ -123,6 +128,18 @@ export default function SourcePage() {
     });
   };
 
+  const handleChangePacks = async (packs: string[]): Promise<void> => {
+    await runAction('packs', async () => {
+      try {
+        await reclassifyPacks(packs);
+        setPacksDialogOpen(false);
+        notify('Source queued for re-extraction with the new packs', 'success');
+      } catch {
+        // actionError is set inside reclassifyPacks; the dialog stays open.
+      }
+    });
+  };
+
   // Tab state — start on the Chunks tab (index 1) when the URL deep-links
   // into it on first mount.
   const [tab, setTab] = useState(deepLinksToChunks ? 1 : 0);
@@ -168,6 +185,11 @@ export default function SourcePage() {
   // came pre-formed in the CCX package and live in the graph). Cut the
   // confusing empty tab; the imported banner below points to the Graph view.
   const showExtractionTab = isSourceExtracted(source) && !isImported;
+  // The open tab can disappear under the user (Re-extract or Change packs
+  // from the Extraction tab makes the source un-extracted): a Tabs value
+  // with no matching Tab rendered nothing. Fall back to the overview.
+  const activeTab =
+    (tab === 2 && !showExtractionTab) || (tab === 1 && !showChunksTab) ? 0 : tab;
 
   return (
     <Box>
@@ -184,6 +206,15 @@ export default function SourcePage() {
         onRetry={handleRetry}
         onReExtract={reExtract}
         onReextract={handleReextract}
+        onChangePacks={() => setPacksDialogOpen(true)}
+      />
+      <SourcePacksDialog
+        open={packsDialogOpen}
+        source={source}
+        availableDomains={availableDomains}
+        submitting={pendingAction === 'packs'}
+        onClose={() => setPacksDialogOpen(false)}
+        onConfirm={(packs) => void handleChangePacks(packs)}
       />
       {/* In-flight mutation indicator (F12). Thin progress bar above the
           banners so users see immediate feedback after clicking retry /
@@ -293,7 +324,7 @@ export default function SourcePage() {
       )}
       {/* Tabs */}
       <Box sx={{ mb: 2, borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}>
-        <Tabs value={tab} onChange={(_, newValue) => setTab(newValue)} sx={ghostTabsSx}>
+        <Tabs value={activeTab} onChange={(_, newValue) => setTab(newValue)} sx={ghostTabsSx}>
           <Tab icon={<DashboardIcon sx={{ fontSize: 18 }} />} iconPosition="start" label="Overview" />
           <Tab
             icon={<ViewListIcon sx={{ fontSize: 18 }} />}
@@ -311,17 +342,17 @@ export default function SourcePage() {
         </Tabs>
       </Box>
       {/* Tab Content */}
-      {tab === 0 && (
+      {activeTab === 0 && (
         <OverviewTab
           source={source}
           stats={stats}
           onNavigateToExtraction={showExtractionTab ? () => setTab(2) : undefined}
         />
       )}
-      {tab === 1 && showChunksTab && (
+      {activeTab === 1 && (
         <ChunksTab source={source} highlightChunkId={highlightChunkId} />
       )}
-      {tab === 2 && showExtractionTab && (
+      {activeTab === 2 && (
         <ExtractionTab
           sourceId={source.id}
           entitiesCount={source.extraction_entities_count}

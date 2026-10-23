@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from chaoscypher_cli.benchmark.dataset import DatasetSource, RawOutput
+from chaoscypher_cli.benchmark.determinism import pin_llm_determinism
 from chaoscypher_cli.benchmark.scorers.v7 import V7ExtractionScorer
 
 
@@ -52,7 +53,10 @@ class ExtractionDataset:
         version: Dataset version from manifest.yaml; bumps when corpus or
             domain template changes.
         corpus_path: Absolute path to the corpus text file.
-        domain: Domain name passed to extraction (e.g. "literary").
+        packs: The packs the corpus is extracted with, on the floor every
+            extraction gets (``()`` for the floor alone; the manifest's
+            ``packs``, or its ``domain`` as one element:
+            :func:`~chaoscypher_core.benchmark.packs.manifest_packs`).
         source: Where this dataset was discovered ("builtin" | "user").
             Surfaced in the leaderboard so reviewers can tell what's
             reproducible from the package alone vs what required user setup.
@@ -67,7 +71,7 @@ class ExtractionDataset:
     id: str
     version: str
     corpus_path: Path
-    domain: str
+    packs: tuple[str, ...]
     source: DatasetSource = "builtin"
     thinking: bool = False
     seed: int = 42
@@ -87,6 +91,12 @@ class ExtractionDataset:
     # embedding and chat stages read is a real graph. Until 2026-09-25 those
     # stages ran against an uncommitted snapshot: zero nodes, zero retrieval.
     commit_graph: bool = False
+    dedup_embedder: str | None = None
+    """``provider/model`` the extraction's semantic entity merges use, or ``"exact"``.
+
+    Set by the orchestrator from its graph cache so the merges match the
+    cache key; None leaves the settings' embedder in place.
+    """
     thinking_honoured: bool | None = field(default=None, init=False)
     """Whether the model actually honoured the requested thinking mode.
 
@@ -99,10 +109,25 @@ class ExtractionDataset:
     fixture: Any = field(default=None, init=False)
 
     def __post_init__(self) -> None:
-        """Validate corpus_path exists at construction time."""
+        """Validate corpus_path exists at construction time; the packs sorted, each once."""
+        from chaoscypher_core.benchmark.packs import normalized_packs
+
         if not self.corpus_path.exists():
             msg = f"corpus not found: {self.corpus_path}"
             raise FileNotFoundError(msg)
+        self.packs = normalized_packs(self.packs, where=f"dataset {self.id}")
+
+    @property
+    def domain(self) -> str:
+        """The first pack, or ``generic`` for the floor alone: the shim for one-domain callers.
+
+        The identity the graph cache and the pack manifests record is
+        :func:`~chaoscypher_core.benchmark.packs.packs_label` of :attr:`packs`;
+        the extraction itself runs with every pack (``pipeline.run(packs=...)``).
+        """
+        from chaoscypher_core.benchmark.packs import first_domain_name
+
+        return first_domain_name(self.packs)
 
     @property
     def corpus_text(self) -> str:
@@ -187,7 +212,9 @@ class ExtractionDataset:
                     index_only=False,
                     extract_only=True,
                     extraction_depth="full",
-                    domain=self.domain,
+                    # The floor plus the dataset's packs (``()`` the floor alone);
+                    # the pipeline refuses a name that is not a registered pack.
+                    packs=self.packs,
                     filtering_mode=None,
                     quiet=True,
                     verbose=False,
@@ -365,10 +392,14 @@ class ExtractionDataset:
     def _build_temp_context(self, model: ModelConfig) -> CLIContext:
         """Construct an isolated CLI context configured to use ``model``.
 
-        Sets `CHAOSCYPHER_LLM_PROVIDER` so the EngineSettings default factory
-        picks the right provider, builds a fresh CLIContext (bypassing the
-        get_context singleton) with a per-run temp database, then mutates
-        the connected settings to override the provider-specific model name.
+        Sets `CHAOSCYPHER_LLM_PROVIDER` while the context is built, so the
+        EngineSettings default factory picks the right provider, and restores
+        the previous value afterwards: left set, it changed the provider of
+        every later EngineSettings in the process (a test that ran after a
+        benchmark test built a provider named 'mystery', 2026-10-16). Builds a
+        fresh CLIContext (bypassing the get_context singleton) with a per-run
+        temp database, then mutates the connected settings to override the
+        provider-specific model name.
         """
         from chaoscypher_cli.context import CLIContext
 
@@ -378,12 +409,18 @@ class ExtractionDataset:
         db_name = f"benchmark_{self.id}_{safe_model}_{os.getpid()}"
 
         # The chat_provider field reads CHAOSCYPHER_LLM_PROVIDER at default
-        # construction. Set it before instantiating CLIContext so the
-        # settings pick it up.
+        # construction: set it while CLIContext builds and connects, then put
+        # the process's value back.
+        previous = os.environ.get("CHAOSCYPHER_LLM_PROVIDER")
         os.environ["CHAOSCYPHER_LLM_PROVIDER"] = model.provider
-
-        ctx = CLIContext(database_name=db_name)
-        ctx.connect()
+        try:
+            ctx = CLIContext(database_name=db_name)
+            ctx.connect()
+        finally:
+            if previous is None:
+                os.environ.pop("CHAOSCYPHER_LLM_PROVIDER", None)
+            else:
+                os.environ["CHAOSCYPHER_LLM_PROVIDER"] = previous
 
         # After connect, override the provider-specific chat/extraction model.
         chat_field, extraction_field = _PROVIDER_MODEL_FIELDS.get(model.provider, ("", ""))
@@ -392,25 +429,17 @@ class ExtractionDataset:
         if extraction_field:
             setattr(ctx.settings.llm, extraction_field, model.model)
 
-        # Pin determinism. Assign by real field name and fail loudly when the
-        # settings schema moves: these were previously guarded by hasattr on
-        # field names that do not exist ("temperature", "seed"), so every run
-        # silently used product defaults while the result rows claimed
-        # temperature 0 and a fixed seed.
-        pins: tuple[tuple[str, object], ...] = (
-            ("extraction_temperature", self.temperature),
-            ("ai_temperature", self.temperature),
-            ("seed", self.seed),
-            ("thinking_for_extraction", self.thinking),
+        # Pin determinism (benchmark/determinism.py: one helper for every stage,
+        # by real field name, loud when the schema moves).
+        pin_llm_determinism(
+            ctx.settings.llm, seed=self.seed, temperature=self.temperature, thinking=self.thinking
         )
-        for field_name, value in pins:
-            if not hasattr(ctx.settings.llm, field_name):
-                msg = (
-                    f"LLMSettings has no field {field_name!r}; the benchmark cannot "
-                    f"pin run configuration and its results would be unreproducible."
-                )
-                raise AttributeError(msg)
-            setattr(ctx.settings.llm, field_name, value)
+
+        if self.dedup_embedder and self.dedup_embedder != "exact":
+            provider_name, _, model_name = self.dedup_embedder.partition("/")
+            ctx.settings.embedding.provider = provider_name
+            ctx.settings.embedding.model = model_name
+            ctx._embedding_provider = None  # noqa: SLF001 - rebuild from the pinned embedder
 
         # Force LLM provider to be re-initialized on next access in case
         # CLIContext cached a provider built from the pre-mutation settings.

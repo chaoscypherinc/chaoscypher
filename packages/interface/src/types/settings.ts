@@ -200,6 +200,50 @@ export interface Settings {
     allowed_hosts: string[];
     allow_external_access: boolean;
   };
+
+  // LLM response and embedding caches (core CacheSettings). Read-only here:
+  // the Cache accordion changes them through PATCH /cache.
+  cache?: {
+    dir: string | null;
+    completions: CacheStoreSettings;
+    embeddings: CacheStoreSettings;
+  };
+
+  // GraphRAG retrieval (core GraphRAGSettings). The GraphRAG accordion changes
+  // the user-facing switches through PATCH /settings; the rest are levers the
+  // benchmark sweeps.
+  graphrag?: {
+    /** Let relationships no cited sentence states into the chat context. Default false. */
+    include_unevidenced_edges?: boolean;
+    /** How graphrag_search decides a question's shape. */
+    router?: 'off' | 'rules' | 'llm' | 'rules_then_llm';
+    /** Lever values applied on top of the model's profile, per question shape (aggregate, path, global). */
+    shape_levers?: Record<string, Record<string, unknown>>;
+    /** Chunks the graph block cites that enter the chunk budget by right. */
+    evidence_chunks?: number;
+    /** Longest relation chain a walk between two named entities may have (1 to 4). */
+    max_hops?: number;
+    /** Walks a path question lists in all, across its pairs of named entities (default 6). */
+    max_walks?: number;
+    /** Rows an aggregate block lists per relation label before it counts the rest. */
+    aggregate_per_label?: number;
+    /** Put the description sentences that share a word with the question first. */
+    question_aware_descriptions?: boolean;
+    /** Search the chunk index for each part of a two-part question as well as the whole. */
+    question_parts?: boolean;
+    /** Characters kept of an entity description. */
+    entity_description_chars?: number;
+    /** Descriptions drop repeated sentences and end at a sentence boundary. */
+    clean_descriptions?: boolean;
+    [lever: string]: unknown;
+  };
+}
+
+/** One cache's settings (core CacheStoreSettings). */
+export interface CacheStoreSettings {
+  enabled: boolean;
+  max_bytes: number;
+  require_hit: boolean;
 }
 
 // ========================================

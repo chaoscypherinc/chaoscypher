@@ -26,6 +26,7 @@ from chaoscypher_core.services.sources.engine.extraction.utils import (
 from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
     AIEntityExtractor,
 )
+from chaoscypher_core.settings import ExtractionSettings
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +47,10 @@ def _make_extractor(monkeypatch: pytest.MonkeyPatch) -> AIEntityExtractor:
     # extract_from_chunks before extract_single_chunk is called.
     settings_mock = MagicMock()
     settings_mock.llm.extraction_examples_enabled = False
+    settings_mock.extraction.extraction_filtering_mode = "balanced"
+    settings_mock.extraction.enable_direction_correction = True
+    settings_mock.extraction.protect_orphans = False
+    settings_mock.extraction.known_entities_limit = ExtractionSettings().known_entities_limit
     extractor.settings = settings_mock  # type: ignore[attr-defined]
 
     # Stub detect_domain to return a minimal domain object
@@ -64,9 +69,7 @@ def _make_extractor(monkeypatch: pytest.MonkeyPatch) -> AIEntityExtractor:
     domain_mock.get_strict_entity_types.return_value = False
     domain_mock.get_evidence_validation_mode.return_value = None
 
-    monkeypatch.setattr(ai_entities, "detect_domain", lambda *_a, **_kw: (domain_mock, 1.0))
-    monkeypatch.setattr(ai_entities, "format_domain_node_templates", lambda *_a, **_kw: "")
-    monkeypatch.setattr(ai_entities, "format_domain_edge_templates", lambda *_a, **_kw: "")
+    monkeypatch.setattr(ai_entities, "detect_domain", lambda *_a, **_kw: (domain_mock, 1.0, ()))
     monkeypatch.setattr(ai_entities, "calculate_density_stats", lambda *_a, **_kw: {})
     monkeypatch.setattr(ai_entities, "_merge_within_task_relationships", lambda rels: rels)
 

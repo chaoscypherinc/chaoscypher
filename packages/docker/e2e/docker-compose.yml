@@ -121,7 +121,7 @@ services:
     command: >
       pytest e2e/
       -v --tb=short
-      -m "e2e and not resume and not cli"
+      -m "e2e and not resume and not cli and not browser and not migrations"
       --html=test-reports/api-report.html --self-contained-html
       --junit-xml=test-reports/api-junit.xml
       --json-report --json-report-file=test-reports/api-report.json

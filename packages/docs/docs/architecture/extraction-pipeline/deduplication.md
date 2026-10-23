@@ -51,7 +51,7 @@ Structural entity types can be customized per domain via domain configuration. W
 
 :::note[Domain Override]
 
-Domains can disable structural filtering entirely by setting `filter_structural_entities: false` in their `extraction_limits` configuration.
+A pack can disable structural filtering entirely by setting `enable_structural_filter: false` in its `extraction_limits` (the `FilteringConfig` field name; any other key is silently ignored).
 
 :::
 
@@ -65,7 +65,7 @@ The first deduplication pass uses **case-insensitive, diacritics-stripped name m
 
 1. Each entity's name is normalized via `normalize_name_key()`: Unicode NFD decomposition strips diacritics (e.g., "François" and "Francois" both become `"francois"`), then lowercased and trimmed.
 2. Entities with the same normalized name key are merged.
-3. When `require_type_compatibility` is enabled, same-name entities with incompatible types are kept separate (e.g., "Paris" the Person vs. "Paris" the Location use a type-qualified key `paris::location`).
+3. When `require_type_compatibility` is enabled (the default, `source_processing.dedup_require_type_compatibility`), same-name entities of different core types are kept separate (e.g., "Paris" the Person vs. "Paris" the Location). Two subtypes of one core type are one entity: "Leo Tolstoy" typed Person / `character` in one chunk and Person / `author` in another merge into one Person.
 
 ```mermaid
 flowchart LR
@@ -87,11 +87,14 @@ In addition to direct name matching, exact dedup performs **alias-aware matching
 
 Alias-to-alias matching is intentionally excluded to avoid false-positive merges between entities that share a common but ambiguous alias. Type compatibility checks still apply to all alias-based matches.
 
-**Type compatibility** is determined by `are_types_compatible()` in `similarity_matcher.py`:
+**Type compatibility** is determined by `are_types_compatible()` in `similarity_matcher.py`: two types are compatible when their **core types** are the same (`core_type_key()`).
 
-- Identical types (case-insensitive) are always compatible.
-- Generic placeholder types (`unknown`, `thing`, `entity`, `item`, `object`, `concept`, empty string) are compatible with any type.
-- Domain-provided compatibility groups allow custom groupings (e.g., `{"Person": ["Character", "Individual"]}`).
+- A core type is itself, in any case (`person` is Person).
+- An old template name, as an older graph or snapshot may carry, is its mapping-table row's core type (`Character` is Person, `Literary Work` is Work), so it still deduplicates with the core type.
+- A name the table does not know is compared as itself.
+- No type is generic: Concept and Object are core types like the others and never match a different one. The domain `compatibility_group` map and the `source_processing.dedup_type_compatibility_map` setting are removed (an old settings file that still carries the key loads, with a warning).
+
+**Subtypes on a merge:** the merged entity keeps its core type. Its `entity_subtype` is the survivor's; when the merged mentions carried different subtypes, all of them are kept, sorted, in `entity_subtypes` (e.g. `["author", "character"]`). Equal subtypes leave the properties unchanged. The post-commit identity resolver merges node properties under the same rule.
 
 **Implementation:** `EntityProcessor.deduplicate_entities_with_mapping()` in `deduplication/service.py`
 
@@ -120,8 +123,9 @@ Raw cosine similarity is adjusted with **name and alias matching bonuses**:
 | Signal | Bonus |
 |--------|-------|
 | Exact normalized name match | +0.20 |
-| One entity's name appears in the other's aliases | +0.15 (per direction) |
-| Shared aliases between entities | +0.10 |
+| One entity's name is an alias the other was given, and the name rule judges that alias to be evidence (`NameIndex.alias_evidence`) | +0.15 (per direction) |
+
+An alias two entities merely share earns nothing: two names given the same alias are not one entity (the +0.10 shared-alias bonus was removed on 2026-10-06).
 
 The adjusted similarity is capped at 1.0.
 
@@ -146,7 +150,7 @@ Key design decisions:
 
 - **No-name-overlap guard:** When entities have no name/alias overlap at all (bonus is zero), the threshold is boosted by +0.08. This prevents merging semantically similar but distinct entities (e.g., two Italian cities whose embeddings are naturally close).
 - **Confidence penalty:** Borderline merges (adjusted similarity within 0.10 of the threshold) receive a 0.05 confidence penalty on the merged entity.
-- **Type partitioning:** When `require_type_compatibility` is enabled and there are more than 50 entities, the algorithm partitions entities into type-compatible groups before computing similarity. This reduces comparisons by 80-90% for typical documents with many entity types.
+- **Type partitioning:** When `require_type_compatibility` is enabled and there are more than 50 entities, the algorithm partitions entities by core type before computing similarity. This reduces comparisons by 80-90% for typical documents with many entity types.
 
 The similarity threshold is configurable via `extraction.semantic_dedup_threshold` (default `0.95`) and can be overridden per domain via `extraction_limits.semantic_dedup_threshold`. Filtering presets pin the effective value per mode (`unfiltered` 0.99 → `maximum` 0.85; the default `balanced` preset runs at 0.90) — see the Filtering Modes reference.
 
@@ -156,14 +160,11 @@ The similarity threshold is configurable via `extraction.semantic_dedup_threshol
 
 ## Stage 4: Hierarchical Name Resolution
 
-After semantic dedup, a **name containment pass** merges entities where one name is a more complete form of another within the same type group.
+After semantic dedup, a **name containment pass** merges entities where one name is a more complete form of another within the same core type.
 
 This handles progressive name resolution across chunks, where early chapters may reference "Anna" and later chapters use "Anna Pavlovna" or "Anna Pavlovna Scherer".
 
-**Merge criteria (with false-positive guards):**
-
-1. **Strict containment:** One name fully contains the other as a substring, but the match must occur at a **word boundary** to prevent false positives like "Mary" matching inside "Marya" or "Prince" inside "Princess".
-2. **Word-set containment:** One name's significant words (excluding title words like "Mr", "Dr", "Sir", "von") are a complete subset of the other's, and the shorter set covers at least 40% of the longer set's words.
+**Merge criteria:** the shared name rule, `plan_name_pairs()` in `deduplication/name_identity.py` — the same rule the post-commit identity resolver uses — joins two names of one core type when they have the same naming words, when an alias given under one name is the other, or when one name is the other with words left out and nothing added (title words such as "Mr", "Dr", "Sir", "von" are the processor's and do not count). Pairwise evidence must also survive the guards that need every record (one holder, alias keys, no fuller holder); joins are made strongest first, and a join that would put two records the rule keeps apart into one group is not made, so two orderings of the same mentions give one grouping.
 
 The entity with the **longer/more complete name** is always kept as canonical. The shorter name becomes an alias on the merged entity.
 
@@ -173,7 +174,7 @@ The entity with the **longer/more complete name** is always kept as canonical. T
       aliases: ["Count", "Count Pierre"]
 ```
 
-**Implementation:** `EntityProcessor.resolve_hierarchical_names()` in `deduplication/service.py`, `should_merge_names()` in `similarity_matcher.py`
+**Implementation:** `EntityProcessor.resolve_hierarchical_names()` in `deduplication/service.py`, `plan_name_pairs()` in `deduplication/name_identity.py`
 
 ## Stage 5: Relationship Dedup
 
@@ -250,36 +251,39 @@ in `deduplication/service.py`. They are now configurable in settings:
 | `extraction.dedup_type_partition_cutoff` | `50` | Minimum entity count before type-partitioned similarity computation is used |
 | `source_processing.entity_max_description_length` | `8000` | Maximum character length for merged entity descriptions |
 
-The name/alias similarity bonuses (+0.20 exact-name match, +0.15 name-in-aliases per direction, +0.10 shared alias) are fixed constants in `similarity_matcher.py`, not settings.
+The name/alias similarity bonuses (+0.20 exact-name match, +0.15 name-in-aliases per direction when the alias is evidence) are fixed constants in `similarity_matcher.py`, not settings.
 
 ## Type Rescue System
 
-Before deduplication, entities with invalid types (types not recognized by the active domain) go through a **three-tier rescue system** rather than being blindly dropped:
+Before deduplication, every entity is typed as a core type (Person, Organization, Location, Event, Work, Concept, Object, Group), with a pack's subtype as the `entity_subtype` property. An entity whose type is not a core type goes through these tiers in order:
 
 | Tier | Action | Example |
 |------|--------|---------|
-| **1. Junk filter** | Drop obviously invalid entities | Empty names, `name == type`, single stop words |
-| **2. Property absorption** | Convert property-like entities into properties on their target entity | "Personality Trait" entity becomes a `personality_trait` property on the connected Person entity |
-| **3. Type remapping** | Remap invalid type to a valid domain type using description keywords | Entity typed as "Occupation" remapped to "Role" via normalization rules |
+| **Junk filter** | Drop obviously invalid entities | Empty names, `name == type`, single stop words |
+| **Mapping** | A pack alias, a mapping-table row or a pack subtype gives the core type and subtype | `Character` → Person / `character` |
+| **Property absorption** | Convert property-like entities into properties on their target entity | A type a template's `absorbs_types` lists becomes that property on the connected entity |
+| **Pack keywords** | The selected packs' `rescue_keywords` and `core_rescue_keywords`, as whole words in the description, then in the written name | Under literary, `Countess` → Person / `character` |
+| **Keywords** | The floor's normalization keywords, the same way | Entity typed `Noble Family` → Group |
+| **Reference person** | An untyped reference whose own words name a person | `the count` with a description → Person |
 
-Entities that survive tier 3 are remapped and kept. Entities that cannot be rescued are dropped. The key advantage over blind filtering is that tier 3 preserves all relationships the entity had.
+The junk and absorption tiers run only when `enable_type_rescue` is on (off for the `minimal` and `unfiltered` presets); the rest always run. Entities that no tier types are kept as a `Concept` flagged `unplaced_type` (the written type under `written_type`) and counted under `unknown_type` in the filtering log (until October 2026 they were dropped). A retyped entity keeps every relationship it had and records the written type as `type_rescued_from`.
 
-**Implementation:** `extraction/utils/type_rescue.py` -- `rescue_invalid_entity_types()`
+**Implementation:** `extraction/utils/type_rescue.py` -- `rescue_type()`, `rescue_invalid_entity_types()`
 
 ## Type Normalization
 
-After deduplication, domain-specific **type normalization rules** fix entities that were assigned generic fallback types by the LLM when a more specific type is identifiable from the description:
+After deduplication, the floor's **normalization keywords** retype entities that carry a generic fallback type when the description names a core type (whole words only):
 
 ```python
-# Example: Domain rules for a technical codebase
-rules = {"Class": ["a class", "class that", "class definition"]}
+# The floor's keyword rules (abridged)
+rules = {"Location": ["city", "place"], "Work": ["book", "report"]}
 
-# Entity with generic type but specific description
-{"name": "Mailbox", "type": "Item", "description": "A class in mailbox module"}
+# Entity with a generic type but a telling description
+{"name": "Mailbox", "type": "Thing", "description": "A report on the mailbox module"}
 # Normalized to:
-{"name": "Mailbox", "type": "Class", "type_normalized_from": "Item"}
+{"name": "Mailbox", "type": "Work", "type_normalized_from": "Thing"}
 ```
 
-Only entities with generic types (`Item`, `Unknown`, `Thing`, `Object`, `Entity`, `Concept`) are candidates for normalization. The original type is preserved in `type_normalized_from` for traceability.
+Only entities with generic types (`UNKNOWN`, `Unknown`, `Thing`, `Entity`) are candidates for normalization. A core type is never retyped. The original type is preserved in `type_normalized_from` for traceability.
 
 **Implementation:** `extraction/utils/type_normalizer.py` -- `normalize_entity_types()`

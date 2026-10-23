@@ -279,3 +279,38 @@ def test_full_config_loads(tmp_path):
     assert len(cfg.embedders) == 1
     assert len(cfg.chats) == 1
     assert cfg.judge.model == "claude-opus-4-7"
+
+
+def test_retrieval_defaults_to_graphrag_and_rejects_an_unknown_rung(tmp_path: Path):
+    """``retrieval:`` picks the chat stage's rung; the modes are the retrieval module's."""
+    root = tmp_path / "config"
+    _write_config(root, "modes")
+    cfg = load_config("modes", builtin_root=tmp_path / "none", user_root=root)
+    assert cfg.retrieval == "graphrag"
+
+    path = root / "modes.yaml"
+    path.write_text(path.read_text(encoding="utf-8") + "retrieval: naive\n", encoding="utf-8")
+    assert load_config("modes", builtin_root=tmp_path / "none", user_root=root).retrieval == "naive"
+
+    path.write_text(path.read_text(encoding="utf-8").replace("naive", "plain"), encoding="utf-8")
+    with pytest.raises(ValueError, match="graphrag, hybrid, naive"):
+        load_config("modes", builtin_root=tmp_path / "none", user_root=root)
+
+
+def test_retrieval_pins_is_an_optional_directory(tmp_path: Path):
+    """``retrieval_pins:`` points the chat stage at pinned retrievals; absent, it retrieves live."""
+    root = tmp_path / "config"
+    _write_config(root, "pinned")
+    assert (
+        load_config("pinned", builtin_root=tmp_path / "none", user_root=root).retrieval_pins is None
+    )
+    path = root / "pinned.yaml"
+    path.write_text(
+        path.read_text(encoding="utf-8") + "retrieval_pins: some/pins\n", encoding="utf-8"
+    )
+    cfg = load_config("pinned", builtin_root=tmp_path / "none", user_root=root)
+    assert cfg.retrieval_pins == "some/pins"
+
+
+def test_the_shipped_chat_config_names_the_graphrag_rung():
+    assert load_config("chat-probes").retrieval == "graphrag"

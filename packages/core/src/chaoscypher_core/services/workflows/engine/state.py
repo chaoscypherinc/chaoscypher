@@ -10,7 +10,7 @@ Type-safe state transformations for both backend and CLI.
 from datetime import UTC, datetime
 from typing import Annotated, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _take_last[T](_left: T, right: T) -> T:
@@ -102,10 +102,7 @@ class WorkflowState(BaseModel):
     started_at: Annotated[datetime, _take_last] = Field(default_factory=lambda: datetime.now(UTC))
     completed_at: Annotated[datetime | None, _take_last] = None
 
-    class Config:
-        """Pydantic model configuration."""
-
-        arbitrary_types_allowed = True  # Allow injected services
+    model_config = ConfigDict(arbitrary_types_allowed=True)  # Allow injected services
 
 
 __all__ = ["WorkflowState"]

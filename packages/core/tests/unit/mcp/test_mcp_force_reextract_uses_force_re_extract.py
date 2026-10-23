@@ -69,11 +69,6 @@ def mock_engine() -> MagicMock:
     # Graph repository
     engine.graph_repository = MagicMock()
     engine.graph_repository.list_templates.return_value = []
-    engine.graph_repository.delete_source_artifacts.return_value = {
-        "nodes_deleted": 0,
-        "edges_deleted": 0,
-        "templates_deleted": 0,
-    }
 
     return engine
 
@@ -101,7 +96,6 @@ async def test_force_true_calls_force_re_extract(
     guard and brick the source.
     """
     storage_adapter = mock_engine.storage_adapter
-    graph_repository = mock_engine.graph_repository
 
     with patch("chaoscypher_core.mcp.extraction.force_re_extract") as mock_force_re_extract:
         # Downstream methods (get_chunks_for_extraction, etc.) may not be fully
@@ -116,7 +110,7 @@ async def test_force_true_calls_force_re_extract(
             source_id="src_committed",
             database_name="default",
             storage_adapter=storage_adapter,
-            graph_repository=graph_repository,
+            settings=mock_engine.settings,
         )
 
 
@@ -147,3 +141,34 @@ async def test_force_true_cas_transitions_from_indexed(
             to_status=SourceStatus.MCP_EXTRACTING,
             database_name="default",
         )
+
+
+@pytest.mark.asyncio
+async def test_force_true_refreshes_the_release_at_re_extract_time(
+    orchestrator: ExtractionOrchestrator,
+    mock_engine: MagicMock,
+) -> None:
+    """The reset commit counters make the next commit skip its cleanup: refresh now (#795)."""
+    from unittest.mock import AsyncMock
+
+    from chaoscypher_core.models import ReleasedRows
+
+    released = ReleasedRows(stale_node_ids=frozenset({"kept"}))
+    with (
+        patch("chaoscypher_core.mcp.extraction.force_re_extract", return_value=released),
+        patch(
+            "chaoscypher_core.mcp.extraction.refresh_after_release", new_callable=AsyncMock
+        ) as refresh,
+    ):
+        try:
+            await orchestrator.get_tasks("src_committed", force=True)
+        except Exception:
+            pass
+
+    refresh.assert_awaited_once_with(
+        mock_engine.storage_adapter,
+        "default",
+        released,
+        embedder=mock_engine.embedding_provider,
+        search=mock_engine.search_repository,
+    )

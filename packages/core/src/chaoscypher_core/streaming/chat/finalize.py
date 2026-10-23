@@ -35,8 +35,38 @@ class FinalizedAnswer:
     all_tool_calls: list[Any] = field(default_factory=list)
 
 
+DECODING_METADATA_KEY = "decoding"
+"""The assistant message's record of the seed it was asked with and its attempt
+(:attr:`~chaoscypher_core.streaming.chat.loop.ChatLoopResult.decoding`)."""
+
+
+def next_regeneration_attempt(messages: list[dict[str, Any]], last_user_id: str) -> int:
+    """The decoding attempt a regenerate of the answer after ``last_user_id`` asks with.
+
+    One past the attempt the answer being dropped recorded
+    (``extra_metadata["decoding"]["attempt"]``); an answer that recorded none
+    (written before audit wave 5, or no answer at all) was attempt 0. Each
+    regenerate therefore asks with a new seed
+    (:func:`~chaoscypher_core.utils.decoding.resample_decoding`).
+    """
+    after = False
+    attempt = 0
+    for message in messages:
+        if message.get("id") == last_user_id:
+            after = True
+            continue
+        if after and message.get("role") == "assistant":
+            record = (message.get("extra_metadata") or {}).get(DECODING_METADATA_KEY) or {}
+            recorded = record.get("attempt")
+            if isinstance(recorded, int) and not isinstance(recorded, bool):
+                attempt = max(attempt, recorded)
+    return attempt + 1
+
+
 def build_optional_payload(
-    answer: FinalizedAnswer, warnings: list[dict[str, str]] | None
+    answer: FinalizedAnswer,
+    warnings: list[dict[str, str]] | None,
+    decoding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the optional keys shared by extra_metadata and the done event.
 
@@ -46,12 +76,16 @@ def build_optional_payload(
     Args:
         answer: The finalized answer.
         warnings: Truncation warnings collected across the turn.
+        decoding: The seed and attempt the turn asked with (the loop result's
+            ``decoding``), which the next regenerate counts from.
 
     Returns:
         Dict with only the present optional entries.
 
     """
     payload: dict[str, Any] = {}
+    if decoding:
+        payload[DECODING_METADATA_KEY] = dict(decoding)
     if answer.thinking:
         payload["thinking"] = answer.thinking
     if answer.all_tool_calls:
@@ -68,10 +102,51 @@ def build_optional_payload(
     return payload
 
 
+def _tool_call_id(message: dict[str, Any]) -> str:
+    """A tool message's call id: top-level in the model's history, in ``extra_metadata`` on a built message."""
+    return str(
+        message.get("tool_call_id")
+        or (message.get("extra_metadata") or {}).get("tool_call_id")
+        or ""
+    )
+
+
+def tool_result_messages(
+    messages_for_llm: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """The tool messages the citation and entity enrichers read, each as its result's JSON.
+
+    The model's history (``messages_for_llm``) holds what the model read: a
+    handler that rendered its result (``graphrag_search``'s ``context_text``)
+    is text there, which the enrichers' ``json.loads`` cannot read, and a
+    long result may have been compacted. ``tool_results`` are this turn's
+    tool messages as the loop buffered them (``ChatLoopResult.pending_messages``,
+    ``role == "tool"``: the result's JSON). When given, they stand in for
+    the history's messages of the same tool call; an earlier turn's tool
+    messages (stored JSON) stay, ahead of this turn's.
+
+    Args:
+        messages_for_llm: Full message history.
+        tool_results: This turn's tool messages carrying their result JSON;
+            None reads the history alone.
+
+    Returns:
+        The tool messages, history order, this turn's last.
+
+    """
+    history = [m for m in messages_for_llm if m.get("role") == "tool"]
+    if tool_results is None:
+        return history
+    replaced = {_tool_call_id(m) for m in tool_results} - {""}
+    return [m for m in history if _tool_call_id(m) not in replaced] + list(tool_results)
+
+
 def finalize_chat_content(
     content: str,
     thinking: str | None,
     messages_for_llm: list[dict[str, Any]],
+    tool_results: list[dict[str, Any]] | None = None,
 ) -> FinalizedAnswer:
     """Clean a raw chat answer and extract its structured references.
 
@@ -82,6 +157,9 @@ def finalize_chat_content(
         messages_for_llm: Full message history; tool messages carry the chunk
             JSON the citation enrichers match against, and assistant messages
             carry the executed tool calls.
+        tool_results: This turn's tool messages with their result JSON (the
+            loop's ``pending_messages`` of role ``tool``); they stand in for
+            the history's rendered copies (:func:`tool_result_messages`).
 
     Returns:
         The finalized answer. Empty/blank content becomes the apology
@@ -118,9 +196,9 @@ def finalize_chat_content(
         thinking = extract_thinking_from_tags(content) if content else None
 
     # ---- Citation post-processing ------------------------------------------
-    # Tool messages in ``messages_for_llm`` carry the original chunk JSON the
-    # LLM consumed; the citation injectors match quoted prose back to them.
-    tool_results = [m for m in messages_for_llm if m.get("role") == "tool"]
+    # The tool messages as JSON (the chunks and graph entities the model was
+    # given); the citation injectors match quoted prose back to them.
+    tool_results = tool_result_messages(messages_for_llm, tool_results)
 
     if tool_results and clean_content:
         clean_content = normalize_chunk_references(clean_content, tool_results)
@@ -189,6 +267,7 @@ async def validate_finalized_answer(
     messages_for_llm: list[dict[str, Any]],
     settings: Any,
     chat_id: str,
+    tool_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     """Run post-response validation when enabled.
 
@@ -205,6 +284,8 @@ async def validate_finalized_answer(
         settings: Application settings; None or partially-mocked objects
             skip validation.
         chat_id: Chat ID for logging.
+        tool_results: This turn's tool messages with their result JSON, as
+            :func:`finalize_chat_content` takes them.
 
     Returns:
         Validation result dict, or None when skipped/disabled.
@@ -214,7 +295,7 @@ async def validate_finalized_answer(
         enabled = bool(settings and settings.chat_context.enable_response_validation is True)
     except AttributeError:
         return None
-    tool_results = [m for m in messages_for_llm if m.get("role") == "tool"]
+    tool_results = tool_result_messages(messages_for_llm, tool_results)
     if not (enabled and tool_results):
         return None
 
@@ -246,8 +327,11 @@ async def validate_finalized_answer(
 
 
 __all__ = [
+    "DECODING_METADATA_KEY",
     "FinalizedAnswer",
     "build_optional_payload",
     "finalize_chat_content",
+    "next_regeneration_attempt",
+    "tool_result_messages",
     "validate_finalized_answer",
 ]

@@ -17,6 +17,8 @@ from typing import Any
 import rustworkx as rx
 import structlog
 
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import edge_walk_weight
+
 
 logger = structlog.get_logger(__name__)
 
@@ -64,10 +66,14 @@ def build_digraph(
 ) -> tuple[rx.PyDiGraph, dict[str, int], dict[int, str]]:
     """Build a directed rustworkx graph from nodes and edges.
 
+    Each edge's payload is the weight it walks at
+    (``name_identity.edge_walk_weight`` of its ``properties``: a capped edge a
+    tenth of an edge's), which PageRank reads (``calculate_pagerank``).
+
     Args:
         nodes: List of node objects with ``.id`` and ``.label`` attributes.
         edges: List of edge objects with ``.source_node_id`` and
-            ``.target_node_id`` attributes.
+            ``.target_node_id`` attributes (and ``.properties``, when loaded).
 
     Returns:
         Tuple of (digraph, id_to_idx, idx_to_id) where id_to_idx maps node
@@ -88,7 +94,8 @@ def build_digraph(
     for edge in edges:
         src, tgt = edge.source_node_id, edge.target_node_id
         if src in id_to_idx and tgt in id_to_idx:
-            digraph.add_edge(id_to_idx[src], id_to_idx[tgt], None)
+            weight = edge_walk_weight(getattr(edge, "properties", None))
+            digraph.add_edge(id_to_idx[src], id_to_idx[tgt], weight)
 
     return digraph, id_to_idx, idx_to_id
 

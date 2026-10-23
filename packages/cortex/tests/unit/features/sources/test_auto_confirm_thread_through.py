@@ -58,7 +58,7 @@ async def test_upload_single_forwards_auto_confirm() -> None:
         extract_entities=True,
         analysis_depth="full",
         enable_normalization=None,
-        forced_domain=None,
+        forced_packs=None,
         skip_duplicates=False,
         enable_vision=None,
         content_filtering=True,
@@ -82,7 +82,7 @@ async def test_upload_batch_forwards_auto_confirm() -> None:
         extract_entities=True,
         analysis_depth="full",
         enable_normalization=None,
-        forced_domain=None,
+        forced_packs=None,
         skip_duplicates=False,
         enable_vision=None,
         content_filtering=True,
@@ -100,6 +100,8 @@ async def test_upload_batch_forwards_auto_confirm() -> None:
         (True, None, False),  # auto domain, bypass set -> no confirmation
         (False, "medical", False),  # forced domain -> never requires confirmation
         (True, "medical", False),
+        (False, "generic", False),  # the floor alone, chosen -> no confirmation
+        (False, "__auto__", True),  # the auto sentinel forces nothing
     ],
 )
 async def test_core_upload_file_persists_confirmation_required(

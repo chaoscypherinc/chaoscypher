@@ -11,6 +11,8 @@ decision within the timeout means denial.
 
 from __future__ import annotations
 
+from fakeredis import aioredis
+
 from chaoscypher_core.streaming.chat.approval_broker import (
     PENDING_SENTINEL,
     ValkeyApprovalBroker,
@@ -174,3 +176,49 @@ async def test_wait_without_client_fails_closed() -> None:
     broker = ValkeyApprovalBroker(client_getter=lambda: None)
     decision = await broker.wait("c1", "tc-7", timeout_s=0.2)
     assert decision == "timeout"
+
+
+# ---------------------------------------------------------------------------
+# Real Lua: the fake above never executes ``_RESOLVE_CAS_SCRIPT``; fakeredis
+# runs it through lupa, so these pin the script's own semantics.
+# ---------------------------------------------------------------------------
+
+
+async def test_resolve_cas_script_first_decision_wins_and_keeps_ttl() -> None:
+    valkey = aioredis.FakeRedis(decode_responses=True)
+    key = _approval_key("c1", "tc-lua")
+    await valkey.set(key, PENDING_SENTINEL, ex=600)
+
+    assert await resolve_tool_approval("c1", "tc-lua", "approve", client=valkey) is True
+    assert await resolve_tool_approval("c1", "tc-lua", "reject", client=valkey) is False
+    assert await resolve_tool_approval("c1", "tc-ghost", "approve", client=valkey) is False
+
+    assert await valkey.get(key) == "approve"
+    assert await valkey.ttl(key) > 0
+
+
+async def test_wait_timeout_claim_blocks_late_decision() -> None:
+    valkey = aioredis.FakeRedis()
+    key = _approval_key("c1", "tc-claim")
+    await valkey.set(key, PENDING_SENTINEL, ex=600)
+
+    assert await _broker(valkey).wait("c1", "tc-claim", timeout_s=0) == "timeout"  # type: ignore[arg-type]
+
+    assert await valkey.get(key) == b"timeout"
+    assert await resolve_tool_approval("c1", "tc-claim", "approve", client=valkey) is False
+
+
+async def test_wait_honours_decision_that_won_the_cas_at_the_deadline() -> None:
+    """A decision landing after the last poll but before the timeout claim.
+
+    The endpoint's CAS won and answered 204, so the waiter's own claim
+    misses; denying the tool then would contradict the accepted decision.
+    ``timeout_s=0`` skips the poll loop, modelling exactly that window.
+    """
+    valkey = aioredis.FakeRedis()
+    key = _approval_key("c1", "tc-buzzer")
+    await valkey.set(key, PENDING_SENTINEL, ex=600)
+    assert await resolve_tool_approval("c1", "tc-buzzer", "approve", client=valkey) is True
+
+    assert await _broker(valkey).wait("c1", "tc-buzzer", timeout_s=0) == "approve"  # type: ignore[arg-type]
+    assert await valkey.exists(key) == 0

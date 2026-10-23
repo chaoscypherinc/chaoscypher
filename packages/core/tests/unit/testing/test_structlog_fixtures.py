@@ -100,6 +100,7 @@ def test_structlog_for_caplog_clears_lazy_proxy_cache_on_teardown() -> None:
     # walker can find it the same way it would find a module-level
     # ``logger = structlog.get_logger(__name__)``.
     fake_module_name = "test_structlog_fixtures_path_b_probe"
+    session_config = structlog.get_config()
     fake_module = types.ModuleType(fake_module_name)
     fake_module.logger = proxy  # type: ignore[attr-defined]
     sys.modules[fake_module_name] = fake_module
@@ -132,4 +133,17 @@ def test_structlog_for_caplog_clears_lazy_proxy_cache_on_teardown() -> None:
         )
     finally:
         sys.modules.pop(fake_module_name, None)
-        structlog.reset_defaults()
+        structlog.configure(**session_config)  # the session's, not structlog's factory defaults
+
+
+def test_the_session_renders_logged_exceptions_as_plain_tracebacks() -> None:
+    """A rich traceback (pygments, every frame's locals) cost a recipe test 106 of its 120 s."""
+    import structlog
+
+    renderers = [
+        p
+        for p in structlog.get_config()["processors"]
+        if isinstance(p, structlog.dev.ConsoleRenderer)
+    ]
+    assert renderers, "the session still renders through a ConsoleRenderer"
+    assert all(r.exception_formatter is structlog.dev.plain_traceback for r in renderers)

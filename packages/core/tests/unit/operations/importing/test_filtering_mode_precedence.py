@@ -18,55 +18,18 @@ from typing import Any
 
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.operations.importing.import_service import _build_extraction_config
-
-
-class _Domain:
-    """Domain stub that contributes no filtering mode of its own.
-
-    ``get_filtering_mode`` returns ``None`` deliberately: the cascade consults
-    the domain *after* both the payload and the row, so a domain-level value
-    here would mask exactly what these tests are pinning. A ``MagicMock`` is
-    unusable for the same reason -- every attribute exists and every call
-    returns a truthy mock, which would satisfy the cascade at the first step.
-    """
-
-    def get_entity_types(self) -> list[str]:
-        return []
-
-    def get_relationship_types(self) -> list[str]:
-        return []
-
-    def get_edge_type_constraints(self) -> dict[str, dict[str, list[str]]]:
-        return {}
-
-    def get_templates(self) -> dict[str, Any]:
-        return {"node_templates": [], "edge_templates": []}
-
-    def get_entity_exclusions(self) -> list[str]:
-        return []
-
-    def get_strict_entity_types(self) -> list[str]:
-        return []
-
-    def get_extraction_limits(self) -> dict[str, Any]:
-        return {}
-
-    def get_evidence_validation_mode(self) -> str | None:
-        return None
-
-    def get_examples(self) -> list[Any]:
-        return []
-
-    def get_filtering_mode(self) -> str | None:
-        return None
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import DomainRegistry
+from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
 
 
 def _mode_for(file_info: dict[str, Any], source_row: dict[str, Any] | None) -> str | None:
-    """Resolve the effective filtering mode the extractor would receive."""
+    """Resolve the effective filtering mode the extractor would receive (the floor alone).
+
+    The stack's own preset is consulted *after* both the payload and the row,
+    so none of these cases reaches it.
+    """
     raw = _build_extraction_config(
-        domain=_Domain(),
-        entity_guidance=None,
-        relationship_guidance=None,
+        stack=DomainStack.resolve(DomainRegistry(), []),
         settings=get_settings(),
         file_info=file_info,
         source_row=source_row,
@@ -96,15 +59,15 @@ def test_absent_payload_mode_falls_through_to_the_row() -> None:
     """
     mode = _mode_for(
         file_info={"filtering_mode": None},
-        source_row={"filtering_mode": "aggressive"},
+        source_row={"filtering_mode": "lenient"},
     )
-    assert mode == "aggressive"
+    assert mode == "lenient"
 
 
 def test_missing_payload_key_falls_through_to_the_row() -> None:
     """A payload with no ``filtering_mode`` key at all behaves the same."""
-    mode = _mode_for(file_info={}, source_row={"filtering_mode": "aggressive"})
-    assert mode == "aggressive"
+    mode = _mode_for(file_info={}, source_row={"filtering_mode": "lenient"})
+    assert mode == "lenient"
 
 
 def test_empty_string_payload_mode_is_not_treated_as_an_override() -> None:

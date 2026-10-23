@@ -60,7 +60,6 @@ from chaoscypher_core.services.sources.engine.extraction.utils.quality_analyzer 
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
     format_numbered_sentences,
-    get_referenced_sentences,
     parse_sent_ref,
     split_into_sentences,
 )
@@ -105,7 +104,6 @@ __all__ = [
     "format_domain_node_templates",
     "format_numbered_sentences",
     "get_domain_structural_filters",
-    "get_referenced_sentences",
     "normalize_entity_types",
     "parse_entity_line",
     "parse_extraction_output",

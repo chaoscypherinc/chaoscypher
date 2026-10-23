@@ -66,7 +66,7 @@ async def test_confirm_endpoint_delegates_and_returns_envelope() -> None:
     service.confirm_extraction.assert_awaited_once()
     kwargs = service.confirm_extraction.call_args.kwargs
     assert kwargs["source_id"] == "src_1"
-    assert kwargs["domain"] == "medical"
+    assert kwargs["packs"] == ("medical",)  # ``domain`` read as one element
 
 
 @pytest.mark.asyncio
@@ -87,7 +87,7 @@ async def test_service_confirm_wins_cas_and_queues() -> None:
     mock_confirm.assert_awaited_once()
     call = mock_confirm.call_args.kwargs
     assert call["file_id"] == "src_1"
-    assert call["chosen_domain"] == "medical"
+    assert call["chosen_packs"] == ("medical",)
 
 
 @pytest.mark.asyncio

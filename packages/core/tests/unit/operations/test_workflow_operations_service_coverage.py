@@ -64,6 +64,7 @@ def _patch_workflow_handler(
     orchestrator_result: dict[str, Any] | None = None,
     orchestrator_exc: Exception | None = None,
     existing_execution: dict[str, Any] | None = None,
+    repo: MagicMock | None = None,
 ) -> tuple[list[Any], MagicMock, MagicMock]:
     """Patch the lazy imports inside _workflow_handler.
 
@@ -72,8 +73,9 @@ def _patch_workflow_handler(
     mock_adapter = MagicMock()
     mock_get_adapter = MagicMock(return_value=mock_adapter)
 
-    repo = MagicMock()
-    repo.get_execution.return_value = existing_execution
+    if repo is None:
+        repo = MagicMock()
+        repo.get_execution.return_value = existing_execution
     mock_repo_cls = MagicMock(return_value=repo)
 
     if orchestrator_exc is not None:
@@ -254,7 +256,7 @@ class TestWorkflowHandlerIdempotency:
     async def test_non_terminal_execution_proceeds(self) -> None:
         service = _make_service()
         cms, _bus, mock_exec_task = _patch_workflow_handler(
-            existing_execution={"status": "running"},
+            existing_execution={"status": "pending"},
             orchestrator_result={"success": True, "outputs": {}},
         )
         with ExitStack() as stack:
@@ -269,6 +271,47 @@ class TestWorkflowHandlerIdempotency:
             )
         mock_exec_task.assert_awaited_once()
         assert result["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_running_row_on_pickup_is_failed_not_replayed(self) -> None:
+        """A crash redelivery must not re-run steps whose side effects landed.
+
+        Drain and timeout finalize the row FAILED themselves, so a RUNNING row
+        at pickup means the previous attempt died mid-run (OOM, SIGKILL).
+        """
+        service = _make_service()
+        repo = MagicMock()
+        repo.get_execution.side_effect = [
+            {"status": "running"},
+            {"status": "failed", "outputs": None, "error": None},
+        ]
+        cms, _bus, mock_exec_task = _patch_workflow_handler(repo=repo)
+        with ExitStack() as stack:
+            for cm in cms:
+                stack.enter_context(cm)
+            result = await service._workflow_handler(
+                data={"workflow_id": "wf8", "inputs": {}, "execution_id": "exec-4"},
+            )
+        mock_exec_task.assert_not_awaited()
+        repo.finalize_execution.assert_called_once()
+        assert repo.finalize_execution.call_args.kwargs["status"] == "failed"
+        assert result["skipped"] == "already_terminal"
+        assert result["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_skips_when_execution_cancelled(self) -> None:
+        service = _make_service()
+        cms, _bus, mock_exec_task = _patch_workflow_handler(
+            existing_execution={"status": "cancelled", "outputs": None},
+        )
+        with ExitStack() as stack:
+            for cm in cms:
+                stack.enter_context(cm)
+            result = await service._workflow_handler(
+                data={"workflow_id": "wf9", "inputs": {}, "execution_id": "exec-5"},
+            )
+        mock_exec_task.assert_not_awaited()
+        assert result["skipped"] == "already_terminal"
 
 
 def _patch_step_handler(

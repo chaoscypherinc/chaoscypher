@@ -13,7 +13,7 @@ import pytest
 from chaoscypher_core.mcp.tools import (
     TOOL_DEFINITIONS,
     get_maintenance_tools,
-    get_tools_for_mode,
+    get_tools,
 )
 
 
@@ -33,7 +33,7 @@ def test_maintenance_tools_excluded_from_normal_toolset() -> None:
     assert "apply_upgrade" not in normal
     # ...and not surfaced by either access mode.
     for mode in ("read", "write"):
-        mode_names = {t.name for t in get_tools_for_mode(mode)}
+        mode_names = {t.name for t in get_tools(mode)}
         assert "upgrade_status" not in mode_names
         assert "apply_upgrade" not in mode_names
 

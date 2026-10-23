@@ -18,11 +18,13 @@ ChaosCypher is a full-stack GraphRAG / knowledge graph platform. The public repo
 ## Working rules
 
 1. Search before adding new helpers or patterns. Prefer existing utilities and package-local conventions.
-2. Keep package boundaries clean: Core should not depend on Cortex/Neuron/CLI, and app packages should depend on Core through explicit interfaces.
-3. Add or update tests for behavior changes.
-4. Keep public docs and examples runnable from the public tree.
-5. Do not commit secrets, local data, benchmark outputs, or generated caches.
-6. Use Conventional Commits: `type(scope): subject`.
+2. Fix the class of problem, not just the instance. This applies to any issue you find, anywhere: product code, benchmarks, tests, scripts, settings, configuration, constants, schemas, prompts or docs. Fix the root cause rather than the symptom, make the fix structural so the same mistake cannot quietly happen again (a shared definition, a guard test, a check that fails loudly), then search the whole codebase for other instances of the same kind and fix them too; record any you cannot fix. The most common case is one fact in two places: when the same logic, value, setting, definition or copy of a file lives in more than one place, or is kept in step by hand, make a single source that everything uses, pin it with a test that exercises the real callers, and derive versions or fingerprints from the code instead of bumping them by hand.
+3. Share it before the third copy. If you are about to do the same thing a third time, whether logic, a query, a prompt fragment, a setting, a constant, a validation, a test fixture or a script step, stop and build it once as a shared function, setting, module or tool that every use calls, with a test, instead of writing the third copy. Then move the earlier copies onto it. Two similar copies are a warning; a third is the point where they start to drift apart, because the next fix lands in one copy and not the others.
+4. Keep package boundaries clean: Core should not depend on Cortex/Neuron/CLI, and app packages should depend on Core through explicit interfaces.
+5. Add or update tests for behavior changes.
+6. Keep public docs and examples runnable from the public tree.
+7. Do not commit secrets, local data, benchmark outputs, or generated caches.
+8. Use Conventional Commits: `type(scope): subject`.
 
 ## Common commands
 

@@ -205,7 +205,9 @@ class CcxExporter:
             # and never emits empty Source/Lens/Workflow stats members).
             source_records: list[dict[str, Any]] = []
             if include_sources and self.sources is not None:
-                source_records = self._collect_source_records(source_ids)
+                source_records = self._collect_source_records(
+                    source_ids, self._edge_references(knowledge_nodes, knowledge_edges)
+                )
                 self._add_sources(builder, source_records)
                 # Fold the in-scope sources' tags into the package-level manifest
                 # tags (the hub's search facet) on top of the configured defaults.
@@ -453,7 +455,65 @@ class CcxExporter:
             page += 1
         return by_chunk
 
-    def _collect_source_records(self, source_ids: list[str] | None) -> list[dict[str, Any]]:
+    @staticmethod
+    def _edge_references(
+        knowledge_nodes: list[dict[str, Any]], knowledge_edges: list[dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Each exported edge's :func:`ccx_mapping.edge_reference`, by local edge id."""
+        nodes_iri = {node["id"]: ccx_identity.resolve_iri("node", node) for node in knowledge_nodes}
+        refs: dict[str, dict[str, Any]] = {}
+        for edge in knowledge_edges:
+            ref = ccx_mapping.edge_reference(edge, nodes_iri)
+            if ref is not None:
+                refs[str(edge["id"])] = ref
+        return refs
+
+    def _collect_relationship_citations(
+        self, source_id: str, edge_refs: dict[str, dict[str, Any]]
+    ) -> dict[str, list[dict[str, Any]]]:
+        """A source's citations of the exported edges it attests, by chunk id, each naming its edge.
+
+        Read over the edges the source is a member of (its commit wrote their
+        citations), a page of ids per read, so a whole-graph export never asks
+        for every edge at once.
+        """
+        by_chunk: dict[str, list[dict[str, Any]]] = {}
+        if not edge_refs:
+            return by_chunk
+        attested = [e for e in self.graph.member_edge_ids(source_id) if e in edge_refs]
+        for start in range(0, len(attested), _SOURCE_PAGE_SIZE):
+            rows = self.sources.get_relationship_citations_batch(
+                self.settings.current_database,
+                attested[start : start + _SOURCE_PAGE_SIZE],
+                source_ids=[source_id],
+            )
+            for row in rows:
+                by_chunk.setdefault(str(row["chunk_id"]), []).append(
+                    {
+                        "edge": edge_refs[str(row["edge_id"])],
+                        "justification": row.get("justification"),
+                        "sentences": row.get("sentences") or [],
+                    }
+                )
+        return by_chunk
+
+    def _closures(
+        self, source_id: str, edge_refs: dict[str, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """The exported edges ``source_id`` closed, each with the date it closed it at."""
+        if not edge_refs:
+            return []
+        return [
+            {"edge": edge_refs[edge.id], "valid_to": edge.valid_to.isoformat()}
+            for edge in self.graph.edges_closed_by(source_id)
+            if edge.id in edge_refs and edge.valid_to is not None
+        ]
+
+    def _collect_source_records(
+        self,
+        source_ids: list[str] | None,
+        edge_refs: dict[str, dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Read each in-scope source once, with its chunks + citations attached.
 
         Returns a list of ``{"source": <source dict>, "chunks": [...]}`` items.
@@ -461,7 +521,14 @@ class CcxExporter:
         the same gathered data drives BOTH ``sources.jsonl`` assembly
         (:meth:`_add_sources`) and the cached ``SourceStats``
         (:meth:`_source_stats`) without re-reading the source store.
+
+        ``edge_refs`` (the exported edges, :meth:`_edge_references`) adds each
+        chunk's ``relationship_citations`` of those edges and each source's
+        ``closes``: the evidence and memberships of the relations, and the facts
+        a memory closed, so an imported memory reads, forgets and supersedes as
+        the exported one did.
         """
+        edge_refs = edge_refs or {}
         records: list[dict[str, Any]] = []
         sources = self._list_sources(source_ids)
         # Attach tag NAMES so they ride along as ccx:Source ``keywords`` and
@@ -474,10 +541,16 @@ class CcxExporter:
             source["tags"] = [t["name"] for t in tags_by_source.get(source_id, [])]
             chunks = self._collect_chunks(source_id)
             citations_by_chunk = self._collect_citations_by_chunk(source_id)
+            relationship_citations = self._collect_relationship_citations(source_id, edge_refs)
             for chunk in chunks:
                 chunk_citations = citations_by_chunk.get(chunk["id"])
                 if chunk_citations:
                     chunk["citations"] = chunk_citations
+                if relationship_citations.get(chunk["id"]):
+                    chunk["relationship_citations"] = relationship_citations[chunk["id"]]
+            closes = self._closures(source_id, edge_refs)
+            if closes:
+                source["closes"] = closes
             records.append({"source": source, "chunks": chunks})
         return records
 

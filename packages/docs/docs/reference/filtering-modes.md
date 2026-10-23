@@ -41,6 +41,22 @@ merging two entities; lower means more aggressive merging.
 `minimum_alias_length` drops short aliases like "AI" or "ML" in stricter
 modes to keep the alias index focused on full names.
 
+### Domain packs and the slider
+
+A domain pack may tune `loop_max_entity_count` (and `minimum_alias_length`)
+for its kind of text; the slider still moves it. At the default `balanced`
+the pack's value applies as tuned. A looser mode raises it to at least that
+mode's value, a stricter mode lowers it to at most that mode's value, so it
+never moves against your choice. A preset the pack names itself (used only
+where no mode was chosen and no source row exists, as in the library's
+standalone extraction) is not a slider move: there the pack's values apply as
+tuned. The pack's other `extraction_limits` apply on top of any preset. The
+technical pack's cap of 30, for example:
+
+| | 0 unfiltered | 1 minimal | 2 lenient | 3 balanced | 4 strict | 5 maximum |
+|--|--------------|-----------|-----------|------------|----------|-----------|
+| technical pack's cap | 200 | 100 | 75 | 30 | 30 | 25 |
+
 ## The six modes
 
 ### 0 — Unfiltered
@@ -82,7 +98,9 @@ for narrative text where the AI has to do a lot of pronoun resolution.
   non-named).
 - Structural filtering turned on (drops "Chapter 1" / "Section A" style
   noise).
-- Orphan filtering turned on (drops entities with no relationships).
+- Orphan filtering turned on: an entity with no relationships is kept,
+  flagged as unconnected, when it carries a description or an evidence
+  sentence; only one carrying neither is dropped.
 
 **Use for:** novels, biographies, narrative non-fiction, journals.
 
@@ -96,13 +114,16 @@ kind of document this is, just work."
 
 ### 4 — Strict
 
-Tightens type constraints and visual-content plausibility. Drops
+Tightens type constraints and visual-content plausibility. Flags
 relationships that don't match the active domain's edge templates.
 
 **What changes vs. balanced:**
 
 - Strict edge-type constraints: relationships whose source/target types
-  don't fit the domain's allowed edge templates are dropped.
+  don't fit the domain's allowed edge templates are kept flagged
+  `type_mismatch`, and a label no template answers to is kept as
+  `related_to` flagged `unmatched_label` (until October 2026 both were
+  dropped; every extraction plan runs the check strict).
 - Visual content plausibility factor raised from 0.5 to 1.0.
 - Per-entity relationship caps tightened (max degree 20, max
   same-source-type 10, max ratio 6.0).
@@ -130,6 +151,30 @@ miss some real content to get there.
 **Use for:** building a curated knowledge graph, executive briefings,
 fact-checking corpora, high-precision search.
 
+## Keep, flag, never delete
+
+A mode decides how strict each filter is; since October 2026 no filter
+throws away a record that carries evidence (a description or an evidence
+sentence). It keeps the record with a flag, and the consumers decide
+(chat retrieval ranks a flagged record after the others; the graph canvas
+groups flagged nodes in its "Unresolved" region and draws flagged edges
+thin). What each filter does now:
+
+| Filter | Before | Now |
+|---|---|---|
+| Plausibility score | dropped a name below the bar | keeps one that carries evidence, flagged `low_plausibility` with its score; drops one carrying nothing |
+| Type rescue | dropped an entity no core type answered to | keeps it as a `Concept`, flagged `unplaced_type`, the written type beside it |
+| Relationship caps (same source and type, degree, total) | dropped the edges past a cap | keeps every edge, flagging the ones past a cap `capped` (they walk at a tenth of an edge's weight and do not count toward later caps) |
+| Exclusion examples and plausibility, for a reference | kept a *person* written by a title or description (`the count`) | keeps a reference of any type (`the army`, `the government`, `the village`), flagged `descriptor_reference` |
+| Orphan filter at commit | dropped an edgeless entity | keeps one that carries evidence, flagged `orphan` |
+| Evidence filter, for an entity | dropped one its cited sentence does not name | keeps one that carries a description, flagged `unevidenced` with the reason; drops one carrying nothing |
+| Exclusion examples, for a name | dropped a non-person excluded name | keeps one that carries evidence, flagged `excluded_name` with the rule; drops one carrying nothing |
+| Strict edge-type constraints | dropped an edge whose label matched no template, or whose endpoints the template refused | keeps it, as `related_to` flagged `unmatched_label` (the written label beside it), or flagged `type_mismatch` with the reason |
+| Alias cleaner | deleted an alias sharing no word with the name | keeps an alias its text writes (`Lise`, `Annette`, `Moskva`); moves an unwritten one to `descriptors` |
+
+The thresholds the modes set still decide *which* records are flagged.
+The counters below count the flags where nothing is dropped.
+
 ## How filtering mode interacts with re-extract
 
 Filtering mode is a property of the source, persisted at upload time. The
@@ -153,7 +198,14 @@ token-costing re-extraction under the stored mode.
 
 ## What about my counters?
 
-Every filter that drops content increments a counter on the source's
-data quality panel (see [Quality Analysis](../user-guide/quality.md)).
+Every filter that drops content, or keeps it flagged, increments a counter
+on the source's data quality panel (see [Quality Analysis](../user-guide/quality.md)):
+`plausibility_entities_flagged`, `unplaced_type_entities_flagged`,
+`entities_unevidenced_kept`, `excluded_entities_kept`,
+`relationships_unevidenced_kept`, `relationships_unmatched_label_kept`,
+`relationships_type_mismatch_kept`, `orphan_entities_filtered` (orphans
+kept), `relationships_dropped_capped` (edges past a cap, kept) and
+`relationships_dropped_type_unmatched` (edges the strict type check kept
+flagged) count records kept with a flag.
 After a re-extract, those counters reset to zero and accumulate fresh
 stats so you can see exactly what the new mode did differently.

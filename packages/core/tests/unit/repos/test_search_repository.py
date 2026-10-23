@@ -278,8 +278,12 @@ class TestPerTypeVectorDispatch:
         )
 
     def test_mixed_item_type_query_merges_top_k_across_tables(self, search_repo):
-        """item_type=None returns the global top-k across all per-type tables."""
-        # Identical embedding in all three tables — global top-3 must include one of each.
+        """item_type=None returns the global top-k across the node and chunk tables.
+
+        Templates are searched only by name (audit R4: relation-type templates
+        took GraphRAG seed slots when a search without a type covered them).
+        """
+        # Identical embedding in all three tables.
         search_repo.index_embeddings_batch([("node-1", [1.0, 0.0, 0.0, 0.0])], item_type="node")
         search_repo.index_embeddings_batch([("chunk:c1", [1.0, 0.0, 0.0, 0.0])], item_type="chunk")
         search_repo.index_template("tmpl-1", [1.0, 0.0, 0.0, 0.0])
@@ -287,11 +291,11 @@ class TestPerTypeVectorDispatch:
         results = search_repo.vector_search([1.0, 0.0, 0.0, 0.0], k=10)
         ids = {item_id for item_id, _ in results}
 
-        assert "node-1" in ids
-        assert "chunk:c1" in ids
+        assert ids == {"node-1", "chunk:c1"}
         # template_semantic_search prefixes with ``template:`` so the raw
         # vector_search() returns the prefixed ID.
-        assert "template:tmpl-1" in ids
+        templates = search_repo.vector_search([1.0, 0.0, 0.0, 0.0], k=10, item_type="template")
+        assert [item_id for item_id, _ in templates] == ["template:tmpl-1"]
 
     def test_mixed_item_type_top_k_sorted_descending(self, search_repo):
         """Merged results across per-type tables come back sorted by similarity."""

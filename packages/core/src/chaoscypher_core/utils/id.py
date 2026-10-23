@@ -34,3 +34,16 @@ def generate_id(prefix: str | None = None) -> str:
     """
     uid = str(uuid.uuid4())
     return f"{prefix}_{uid}" if prefix else uid
+
+
+def generate_hex_id() -> str:
+    """Generate a bare 32-character hex UUID v4, with no prefix and no dashes.
+
+    For ids whose prefixes are shown to people: a memory's id is its forget
+    handle's source (``mcp/memory.py`` ``memory_handle``), so it has to be
+    plain hex with no shared ``source_`` lead.
+
+    Returns:
+        str: 32 lowercase hex characters.
+    """
+    return uuid.uuid4().hex

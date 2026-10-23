@@ -4,9 +4,17 @@
 import { Box, Divider, Typography } from '@mui/material';
 import type { Source } from '../../../../types';
 import { formatFileSize, formatDate } from '../../../../utils/formatters';
+import { packsLabel } from '../../../../utils/packs';
 
 interface FileInfoTooltipProps {
   source: Source;
+}
+
+/** The packs chosen at upload: `forced_packs` (`[]` = floor only), else the old one-name column, else auto. */
+function describeChosenPacks(opts: NonNullable<Source['upload_options']>): string {
+  if (Array.isArray(opts.forced_packs)) return packsLabel(opts.forced_packs);
+  if (opts.forced_domain === 'generic') return packsLabel([]);
+  return opts.forced_domain ? packsLabel([opts.forced_domain]) : 'Auto-detect';
 }
 
 function describeNormalization(value: boolean | null | undefined): string {
@@ -85,12 +93,12 @@ export function FileInfoTooltip({ source }: FileInfoTooltipProps) {
             </Typography>
             <Typography variant="caption">Depth: {opts.extraction_depth}</Typography>
             <Typography variant="caption">
-              Domain: {opts.forced_domain ?? 'Auto-detect'}
+              Packs: {describeChosenPacks(opts)}
               {source.domain_version ? ` · v${source.domain_version}` : ''}
             </Typography>
             {source.domain_changed_since_extraction && (
               <Typography variant="caption" sx={{ color: 'warning.main' }}>
-                ⚠ plugin changed since extraction
+                ⚠ a pack changed since extraction
               </Typography>
             )}
             <Typography variant="caption">

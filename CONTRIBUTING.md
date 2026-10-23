@@ -4,7 +4,7 @@ Thank you for your interest in contributing to ChaosCypher! This document covers
 
 ## Quick links
 
-- **Architecture + AI contributor guide:** `CLAUDE.md`
+- **Architecture:** `packages/core/README.md` · **AI contributor guide:** `CLAUDE.md`
 - **Project overview:** `README.md`
 - **Public docs:** `packages/docs/`
 - **Security:** `SECURITY.md`
@@ -198,7 +198,7 @@ Before adding a rule, inspect nearby existing rules and tests for path patterns,
 
 ## Code style
 
-- Follow the patterns documented in `CLAUDE.md`.
+- Follow the working rules in `CLAUDE.md` and the Core architecture in `packages/core/README.md`.
 - **Python:** `snake_case` functions, `PascalCase` classes. Google-style docstrings on every module, class, function and method — single-underscore ones included (`make docstrings` enforces 100%).
 - **TypeScript:** `camelCase` functions, `PascalCase` types. Props typed via `interface`.
 - **SPDX license headers** on all source files.

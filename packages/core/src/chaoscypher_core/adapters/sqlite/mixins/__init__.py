@@ -22,6 +22,7 @@ Protocol-specific mixins for SQLite storage adapter:
 - LLMMetricsMixin: LLM call metrics storage operations
 - ExtractionSubmissionsMixin: MCP extraction partial result storage operations
 - VisionPagesMixin: Per-page vision processing operations
+- SourceSitesMixin: Imported docs sites and their pages (migration 0021)
 """
 
 from chaoscypher_core.adapters.sqlite.mixins.chats import ChatsMixin
@@ -42,6 +43,7 @@ from chaoscypher_core.adapters.sqlite.mixins.source_files_indexing import Source
 from chaoscypher_core.adapters.sqlite.mixins.source_recovery_events import (
     SourceRecoveryEventsMixin,
 )
+from chaoscypher_core.adapters.sqlite.mixins.source_sites import SourceSitesMixin
 from chaoscypher_core.adapters.sqlite.mixins.sources import SourcesMixin
 from chaoscypher_core.adapters.sqlite.mixins.sources_chunks import SourceChunksMixin
 from chaoscypher_core.adapters.sqlite.mixins.sources_citations import SourceCitationsMixin
@@ -68,6 +70,7 @@ __all__ = [
     "SourceIndexingMixin",
     "SourceLifecycleMixin",
     "SourceRecoveryEventsMixin",
+    "SourceSitesMixin",
     "SourceTagsMixin",
     "SourcesMixin",
     "StageProgressMixin",

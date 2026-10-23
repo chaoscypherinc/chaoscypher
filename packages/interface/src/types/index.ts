@@ -4,6 +4,7 @@
 // Barrel re-exports - import from domain files for clarity
 export * from './graph';
 export * from './source';
+export * from './site';
 export * from './chat';
 export * from './settings';
 export * from './search';

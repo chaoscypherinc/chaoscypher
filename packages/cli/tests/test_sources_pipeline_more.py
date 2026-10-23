@@ -418,7 +418,7 @@ class TestGateBeforeExtract:
         assert result.detected_domain == "legal"
         service.ctx.storage_adapter.update_file.assert_called_once()
         _, kwargs = service.ctx.storage_adapter.update_file.call_args
-        assert kwargs["updates"]["forced_domain"] == "legal"
+        assert kwargs["updates"]["forced_packs"] == ["legal"]
         assert kwargs["updates"]["confirmation_required"] is False
 
     def test_tty_prompt_cancel_sets_cancelled(self) -> None:
@@ -1126,3 +1126,67 @@ def test_format_stage_line(
         assert detail in line
     if elapsed is not None:
         assert f"{elapsed:.1f}s" in line
+
+
+# ----------------------------------------------------------------------------
+# run(packs=...): every name a registered pack, carried as the packs' label
+# ----------------------------------------------------------------------------
+
+
+class TestRunPacks:
+    """``SourcePipeline.run(packs=...)`` checks the packs with ``DomainStack.resolve``."""
+
+    @pytest.mark.parametrize(
+        ("packs", "domain", "match"),
+        [
+            (["nonexistent"], None, "not a registered pack"),
+            (["literary"], "legal", "not both"),
+            (["a+b"], None, "cannot contain"),
+        ],
+    )
+    def test_a_bad_choice_fails_before_anything_runs(
+        self, packs: list[str], domain: str | None, match: str
+    ) -> None:
+        from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+            DomainRegistry,
+        )
+
+        service = _make_service()
+        pipeline, _ = _make_pipeline(service)
+        with (
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
+                return_value=DomainRegistry(),
+            ),
+            patch.object(pipeline, "_run_quiet") as run_quiet,
+        ):
+            result = pipeline.run(file_path=None, packs=packs, domain=domain, quiet=True)
+        assert result.success is False
+        assert result.error is not None and match in result.error
+        run_quiet.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("packs", "label"),
+        [
+            ([], "generic"),
+            (["literary"], "literary"),
+            (["literary", "historical"], "literary+historical"),
+        ],
+    )
+    def test_the_packs_ride_down_as_their_label(self, packs: list[str], label: str) -> None:
+        from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+            DomainRegistry,
+        )
+
+        service = _make_service()
+        pipeline, _ = _make_pipeline(service)
+        done = PipelineResult(file_id="f", filename="f", success=True, status="committed")
+        with (
+            patch(
+                "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
+                return_value=DomainRegistry(),
+            ),
+            patch.object(pipeline, "_run_quiet", return_value=done) as run_quiet,
+        ):
+            pipeline.run(file_path=None, file_id="f", packs=packs, quiet=True)
+        assert run_quiet.call_args.kwargs["domain"] == label

@@ -199,3 +199,50 @@ async def test_health_predicate_matches_gate_predicate() -> None:
         else:
             with pytest.raises(LLMNotVerifiedError):
                 await require_llm_verified(settings)
+
+
+@pytest.mark.asyncio
+async def test_ollama_instances_are_probed_concurrently(monkeypatch) -> None:
+    """One slow instance must not stack its timeout in front of the others.
+
+    The gate runs on every chat send and import, so the probes have to run
+    concurrently. The first instance's handler only answers once the second
+    instance's request has arrived; a serial loop never sends the second
+    request, so the first one times out and its models are lost.
+    """
+    import asyncio
+
+    import httpx
+
+    from chaoscypher_core.services.llm import health as health_mod
+
+    second_arrived = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "gpu-a":
+            try:
+                await asyncio.wait_for(second_arrived.wait(), timeout=1.0)
+            except TimeoutError as exc:
+                raise httpx.ReadTimeout("slow instance", request=request) from exc
+            return httpx.Response(200, json={"models": [{"name": "model-a:latest"}]})
+        second_arrived.set()
+        return httpx.Response(200, json={"models": [{"name": "model-b:latest"}]})
+
+    real_client = httpx.AsyncClient
+
+    def client_factory(**kwargs: object) -> httpx.AsyncClient:
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(health_mod.httpx, "AsyncClient", client_factory)
+    settings = _make_settings(
+        llm={
+            "ollama_instances": [
+                {"id": "a", "name": "A", "base_url": "http://gpu-a:11434"},
+                {"id": "b", "name": "B", "base_url": "http://gpu-b:11434"},
+            ]
+        }
+    )
+
+    pulled = await health_mod._ollama_pulled_models(settings)
+
+    assert pulled == {"model-a:latest", "model-b:latest"}

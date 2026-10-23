@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 from chaoscypher_core.adapters.embedding.ollama_provider import OllamaEmbeddingProvider
+from chaoscypher_core.adapters.embedding.vectors import normalize_vector
 from chaoscypher_core.exceptions import LLMError
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
@@ -55,7 +56,8 @@ class TestOllamaEmbeddingProvider:
 
         assert isinstance(result, EmbedResult)
         assert len(result.embedding) == 4
-        assert result.embedding == [0.1, 0.2, 0.3, 0.4]
+        # cut to vector_dimensions and re-normalised to unit length
+        assert result.embedding == pytest.approx(normalize_vector([0.1, 0.2, 0.3, 0.4]))
         assert result.provider == "ollama"
 
     @pytest.mark.asyncio
@@ -88,7 +90,7 @@ class TestOllamaEmbeddingProvider:
         assert result.total == 2
         assert len(result.embeddings) == 2
         assert len(result.embeddings[0]) == 4
-        assert result.embeddings[0] == [0.1, 0.2, 0.3, 0.4]
+        assert result.embeddings[0] == pytest.approx(normalize_vector([0.1, 0.2, 0.3, 0.4]))
         assert result.provider == "ollama"
 
     @pytest.mark.asyncio
@@ -114,7 +116,8 @@ class TestOllamaEmbeddingProvider:
             result = await provider.embed("test")
 
         assert len(result.embedding) == 4
-        assert result.embedding == [0.0, 1.0, 2.0, 3.0]
+        assert result.embedding == pytest.approx(normalize_vector([0.0, 1.0, 2.0, 3.0]))
+        assert provider.native_dimensions == 100
 
     @pytest.mark.asyncio
     async def test_check_health_healthy(self, provider: OllamaEmbeddingProvider) -> None:
@@ -298,5 +301,5 @@ class TestOllamaEmbeddingProvider:
             result = await provider.embed("test")
 
         assert isinstance(result, EmbedResult)
-        assert result.embedding == [0.1, 0.2, 0.3, 0.4]
+        assert result.embedding == pytest.approx(normalize_vector([0.1, 0.2, 0.3, 0.4]))
         assert mock_client.post.call_count == 2

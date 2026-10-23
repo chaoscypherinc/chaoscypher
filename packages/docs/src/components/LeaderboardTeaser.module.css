@@ -137,6 +137,14 @@
   color: var(--cc-text-primary);
 }
 
+/* the interval's half-width, small and muted after the percent */
+.ci {
+  margin-left: 0.25rem;
+  font-size: 0.7em;
+  font-weight: 400;
+  color: var(--cc-text-muted);
+}
+
 .bar {
   flex: 1;
   height: 6px;

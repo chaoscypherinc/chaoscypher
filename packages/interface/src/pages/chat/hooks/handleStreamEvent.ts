@@ -278,6 +278,7 @@ export function handleStreamEvent(
     // stays open server-side (up to 5 min) until a decision arrives.
     case 'tool_approval_required': {
       const pending: PendingToolApproval = {
+        chat_id: chatId,
         tool_call_id: (data.tool_call_id as string) || '',
         tool_name: (data.tool_name as string) || '(unknown tool)',
         arguments: (data.arguments as Record<string, unknown>) || {},

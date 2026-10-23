@@ -23,6 +23,7 @@ from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.operations.importing.imported_source_handler import (
     handle_index_imported_nodes,
     handle_index_imported_source,
+    node_ids_outside_sources,
 )
 
 
@@ -139,6 +140,72 @@ async def test_nodes_with_valid_vectors_are_not_reembedded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_vector_pushes_queue_sweep_retry_and_degrade() -> None:
+    """A failed node/chunk vector push must not finalize as ``indexed``.
+
+    The search sweep only repairs rows in ``pending_search_index``, so the
+    handler must enqueue them (and mark ``degraded``) — otherwise the source
+    is permanently missing from semantic search behind a green badge.
+    """
+    dim = get_settings().search.vector_dimensions
+    node = _node("n1", embedding=[0.5] * dim)
+    adapter, graph_repo, indexing_service, search_repo = _service_with(
+        nodes=[node], vectors=[[0.1] * dim]
+    )
+    search_repo.index_nodes_batch.side_effect = RuntimeError("database is locked")
+    search_repo.index_embeddings_batch.side_effect = RuntimeError("database is locked")
+
+    result = await handle_index_imported_source(
+        data={"source_id": "src1"},
+        source_repository=adapter,
+        graph_repository=graph_repo,
+        indexing_service=indexing_service,
+        search_repository=search_repo,
+        metadata={"database_name": "default"},
+    )
+
+    assert result["success"] is True
+    adapter.enqueue_pending_search_index.assert_called_once_with(
+        rows=[
+            {"item_id": "n1", "kind": "node", "source_id": "src1"},
+            {"item_id": "src1", "kind": "chunk", "source_id": "src1"},
+        ]
+    )
+    statuses = [
+        c.kwargs["updates"]["vector_indexing_status"]
+        for c in adapter.update_source_columns.call_args_list
+        if "vector_indexing_status" in c.kwargs["updates"]
+    ]
+    assert statuses == ["degraded"]
+
+
+@pytest.mark.asyncio
+async def test_successful_vector_pushes_queue_nothing() -> None:
+    """The happy path writes no retry rows and finalizes ``indexed``."""
+    dim = get_settings().search.vector_dimensions
+    adapter, graph_repo, indexing_service, search_repo = _service_with(
+        nodes=[_node("n1", embedding=[0.5] * dim)], vectors=[[0.1] * dim]
+    )
+
+    await handle_index_imported_source(
+        data={"source_id": "src1"},
+        source_repository=adapter,
+        graph_repository=graph_repo,
+        indexing_service=indexing_service,
+        search_repository=search_repo,
+        metadata={"database_name": "default"},
+    )
+
+    adapter.enqueue_pending_search_index.assert_not_called()
+    statuses = [
+        c.kwargs["updates"]["vector_indexing_status"]
+        for c in adapter.update_source_columns.call_args_list
+        if "vector_indexing_status" in c.kwargs["updates"]
+    ]
+    assert statuses == ["indexed"]
+
+
+@pytest.mark.asyncio
 async def test_handle_index_imported_source_requires_source_id() -> None:
     """A missing/non-string source_id is a ValidationError on ``source_id``."""
     with pytest.raises(ValidationError) as exc_info:
@@ -234,3 +301,20 @@ async def test_handle_index_imported_nodes_empty_is_noop_success() -> None:
     )
     assert result == {"success": True, "nodes_indexed": 0, "nodes_embedded": 0}
     graph_repo.get_nodes_batch.assert_not_called()
+
+
+def test_nodes_outside_sources_reads_membership() -> None:
+    """A node a listed source attests is that source's, wherever it is homed (#795, D7)."""
+    nodes = [
+        SimpleNamespace(id="merged", source_id="other", member_source_ids=["mine", "other"]),
+        SimpleNamespace(id="homed", source_id="mine", member_source_ids=["mine"]),
+        SimpleNamespace(id="foreign", source_id="other", member_source_ids=["other"]),
+        SimpleNamespace(id="unsourced", source_id=None, member_source_ids=[]),
+    ]
+    repo = MagicMock()
+    repo.get_nodes_batch.return_value = nodes
+
+    assert node_ids_outside_sources(repo, [n.id for n in nodes], ["mine"]) == [
+        "foreign",
+        "unsourced",
+    ]

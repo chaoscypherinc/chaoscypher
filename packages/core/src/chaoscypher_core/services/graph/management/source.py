@@ -11,19 +11,20 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
+from chaoscypher_core.models import SourceDeletion
 from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
     from typing import Protocol
 
-    from chaoscypher_core.adapters.sqlite.repos import GraphRepository, SearchRepository
+    from chaoscypher_core.adapters.sqlite.adapter import SqliteAdapter
+    from chaoscypher_core.adapters.sqlite.repos import SearchRepository
     from chaoscypher_core.ports.retry import RetryPolicyPort
     from chaoscypher_core.ports.storage_chunks import ChunkStorageProtocol
     from chaoscypher_core.ports.storage_citations import CitationStorageProtocol
     from chaoscypher_core.ports.storage_source_tags import SourceTagStorageProtocol
     from chaoscypher_core.ports.storage_sources import SourceStorageProtocol
-    from chaoscypher_core.ports.transactional import TransactionalAdapterProtocol
     from chaoscypher_core.settings import EngineSettings
 
     class SourcesProtocol(
@@ -37,6 +38,40 @@ if TYPE_CHECKING:
 
 
 logger = structlog.get_logger(__name__)
+
+
+def source_chunk_ids(repository: Any, source_id: str, settings: EngineSettings | None) -> list[str]:
+    """The ids of a source's chunks (up to ``batching.chunk_fetch_limit``), read before they go.
+
+    The source delete and a site page's re-import read them first, then drop
+    the chunks' vectors from the search index with :func:`remove_chunk_vectors`.
+    """
+    from chaoscypher_core.settings import BatchingSettings
+
+    batching = settings.batching if settings is not None else BatchingSettings()
+    chunks, _total = repository.get_chunks_by_source(
+        source_id, page=1, page_size=batching.chunk_fetch_limit
+    )
+    return [c["id"] for c in chunks]
+
+
+def remove_chunk_vectors(search_repo: Any, source_id: str, chunk_ids: list[str]) -> None:
+    """Drop a source's old chunk vectors from the search index; best-effort, logged.
+
+    Left behind, a dead chunk id matches nothing but still takes a slot in a
+    nearest-neighbour search's top k.
+    """
+    if not chunk_ids:
+        return
+    try:
+        removed = search_repo.remove_embeddings_batch(
+            [f"chunk:{cid}" for cid in chunk_ids], "chunk"
+        )
+        logger.info("chunk_embeddings_cleaned", source_id=source_id, chunks_removed=removed)
+    except Exception:
+        logger.warning(
+            "chunk_embeddings_cleanup_failed", source_id=source_id, chunk_count=len(chunk_ids)
+        )
 
 
 class SourceService:
@@ -72,6 +107,11 @@ class SourceService:
         self._settings = settings
         self._retry_policy: RetryPolicyPort = retry_policy or DbLockRetryPolicy()
 
+    @property
+    def settings(self) -> EngineSettings | None:
+        """The engine settings this service was built with (the graph's naming conventions)."""
+        return self._settings
+
     # ================================
     # Source Operations
     # ================================
@@ -89,6 +129,8 @@ class SourceService:
         enabled: str | None = None,
         search: str | None = None,
         tag_id: str | None = None,
+        site_id: str | None = None,
+        in_site: bool | None = None,
     ) -> dict[str, Any]:
         """List sources with filtering and pagination.
 
@@ -100,6 +142,9 @@ class SourceService:
             enabled: Filter by enabled status ('enabled' or 'disabled')
             search: Search query
             tag_id: Filter by tag
+            site_id: Only the pages of this imported site
+            in_site: True: only pages of imported sites; False: only sources
+                outside any site
 
         Returns:
             Dict with keys:
@@ -117,6 +162,8 @@ class SourceService:
             enabled=enabled,
             search=search,
             tag_id=tag_id,
+            site_id=site_id,
+            in_site=in_site,
         )
 
         return {"sources": sources, "total": total, "page": page, "page_size": page_size}
@@ -224,20 +271,26 @@ class SourceService:
     def delete_source(
         self,
         source_id: str,
-        graph_repo: GraphRepository | None = None,
         search_repo: SearchRepository | None = None,
-    ) -> bool:
+        *,
+        leave_out_of_site: bool = True,
+    ) -> SourceDeletion:
         """Public delete_source entry point with retry-on-db-lock.
 
         Delete a source atomically across SQL + graph, with best-effort
         search + file cleanup.
 
-        The SQL cascade (via storage adapter) and graph entity deletes
-        participate in a single transaction: if any step fails, both are
+        The graph release (the source's memberships, and the nodes and edges
+        no other source attests, #795) and the SQL cascade run in a single
+        transaction on the adapter's session: if any step fails, both are
         rolled back and the source is preserved for retry.
 
-        Search index cleanup and file deletion happen after the transaction
-        commits. Failures there are logged but do not affect the outcome —
+        Chunk index cleanup and file deletion happen after the transaction
+        commits. The graph's search rows and embeddings are the caller's:
+        it passes the returned deletion's ``released`` to
+        ``release.refresh_after_release`` with its embedding provider (a
+        guard in ``test_ci_config_guards.py`` holds every caller to it).
+        Failures there are logged but do not affect the outcome —
         search orphans are harmless for query correctness (dead IDs don't
         match anything) and file orphans can be swept by a future cleanup job.
 
@@ -249,74 +302,76 @@ class SourceService:
 
         Args:
             source_id: ID of the source to delete
-            graph_repo: Optional GraphRepository for knowledge graph cleanup
             search_repo: Optional SearchRepository for search index cleanup
+            leave_out_of_site: A page of a docs site joins the pages the site
+                leaves out, so a refresh does not import it again; False when
+                the site itself is being deleted with its pages.
 
         Returns:
-            True if source was deleted, False if not found
+            The deletion: truthy when the source was deleted, falsy when not
+            found, and what the graph release took and rebuilt.
 
         """
         return self._retry_policy.run_sync(
             self._delete_source_impl,
             source_id=source_id,
-            graph_repo=graph_repo,
             search_repo=search_repo,
+            leave_out_of_site=leave_out_of_site,
             operation_name="source_delete",
         )
 
     def _delete_source_impl(
         self,
         source_id: str,
-        graph_repo: GraphRepository | None = None,
         search_repo: SearchRepository | None = None,
-    ) -> bool:
+        *,
+        leave_out_of_site: bool = True,
+    ) -> SourceDeletion:
         """Inner delete body. Must be idempotent — may be retried on lock.
 
         Args:
             source_id: ID of the source to delete
-            graph_repo: Optional GraphRepository for knowledge graph cleanup
-            search_repo: Optional SearchRepository for search index cleanup
+            search_repo: Optional SearchRepository for chunk index cleanup
+            leave_out_of_site: See :meth:`delete_source`.
 
         Returns:
-            True if source was deleted, False if not found
+            The deletion (see :meth:`delete_source`).
 
         """
         # === PREP (reads only) ===
-        orphaned_uris = self.repository.get_orphaned_entity_uris(source_id)
-
-        chunk_ids: list[str] = []
-        if search_repo:
-            from chaoscypher_core.settings import BatchingSettings
-
-            batching = self._settings.batching if self._settings is not None else BatchingSettings()
-            chunks, _total = self.repository.get_chunks_by_source(
-                source_id, page=1, page_size=batching.chunk_fetch_limit
-            )
-            chunk_ids = [c["id"] for c in chunks]
-
         source_info = self.repository.get_source(source_id, self.database_name)
-        filepath = source_info.get("filepath") if source_info else None
+        if not source_info:
+            # before the release: never release another database's source
+            return SourceDeletion(deleted=False)
+        filepath = source_info.get("filepath")
 
-        logger.info(
-            "delete_source_started",
-            source_id=source_id,
-            orphaned_entities=len(orphaned_uris),
-            chunk_count=len(chunk_ids),
+        chunk_ids = (
+            source_chunk_ids(self.repository, source_id, self._settings) if search_repo else []
         )
 
-        # === ATOMIC PHASE (SQL + graph in one transaction) ===
-        # At all production call sites, self.repository IS the SqliteAdapter
-        # which implements both SourcesProtocol and TransactionalAdapterProtocol.
-        # mypy cannot infer that from the SourcesProtocol annotation, hence cast.
-        adapter = cast("TransactionalAdapterProtocol", self.repository)
+        logger.info("delete_source_started", source_id=source_id, chunk_count=len(chunk_ids))
+
+        # === ATOMIC PHASE (graph release + SQL cascade in one transaction) ===
+        # At all production call sites, self.repository IS the SqliteAdapter:
+        # the release must run on its session to join its transaction. mypy
+        # cannot infer that from the SourcesProtocol annotation, hence cast.
+        from chaoscypher_core.operations.sources.site_runs import leave_out_deleted_page
+        from chaoscypher_core.repo_factories import get_transaction_graph_repository
+        from chaoscypher_core.services.graph.management.release import release_source_graph
+
+        adapter = cast("SqliteAdapter", self.repository)
         try:
             with adapter.transaction():
-                # Graph cleanup first — executed on shared session
-                if graph_repo and orphaned_uris:
-                    node_ids = [uri.split("/")[-1] if "/" in uri else uri for uri in orphaned_uris]
-                    # Absent nodes are silently skipped; only a raised exception
-                    # (e.g. DB error) triggers transaction rollback.
-                    graph_repo.delete_nodes_batch(node_ids=node_ids)
+                # Release before the source row goes: graph_*.source_id is
+                # ON DELETE SET NULL, so the row delete takes no graph rows.
+                # The survivors are rebuilt from the sources they still have.
+                released = release_source_graph(
+                    get_transaction_graph_repository(adapter, self.database_name),
+                    source_id,
+                    sources=self.repository,
+                    database_name=self.database_name,
+                    settings=self._settings,
+                )
 
                 # SQL cascade (no file deletion)
                 deleted = self.repository.delete_source_db(
@@ -324,7 +379,10 @@ class SourceService:
                 )
                 if not deleted:
                     # Source not found — transaction exits cleanly, nothing to roll back
-                    return False
+                    return SourceDeletion(deleted=False)
+                # A deleted page of a site stays out of the site's refreshes.
+                if leave_out_of_site:
+                    leave_out_deleted_page(adapter, source_info, self.database_name)
             # Transaction committed atomically
         except Exception:
             logger.exception(
@@ -334,37 +392,11 @@ class SourceService:
             raise
 
         # === POST-TRANSACTION (best-effort) ===
+        # The graph's search rows and embeddings are the caller's to refresh
+        # (``release.refresh_after_release``, with its embedding provider):
+        # the returned deletion carries what the release took and rebuilt.
         if search_repo:
-            if orphaned_uris:
-                # One batched DELETE instead of a pooled connection + commit
-                # per orphan. Best-effort: a failure aborts the remaining
-                # orphans in the batch (index sweeps reconcile later) but
-                # never the delete itself.
-                node_ids = [uri.split("/")[-1] if "/" in uri else uri for uri in orphaned_uris]
-                try:
-                    search_repo.delete_nodes_batch(node_ids)
-                except Exception:
-                    logger.warning(
-                        "search_orphan_delete_failed",
-                        node_count=len(node_ids),
-                        source_id=source_id,
-                    )
-
-            if chunk_ids:
-                try:
-                    prefixed_ids = [f"chunk:{cid}" for cid in chunk_ids]
-                    removed = search_repo.remove_embeddings_batch(prefixed_ids, "chunk")
-                    logger.info(
-                        "chunk_embeddings_cleaned",
-                        source_id=source_id,
-                        chunks_removed=removed,
-                    )
-                except Exception:
-                    logger.warning(
-                        "chunk_embeddings_cleanup_failed",
-                        source_id=source_id,
-                        chunk_count=len(chunk_ids),
-                    )
+            remove_chunk_vectors(search_repo, source_id, chunk_ids)
 
         if filepath:
             try:
@@ -403,7 +435,7 @@ class SourceService:
             )
 
         logger.info("delete_source_completed", source_id=source_id)
-        return True
+        return SourceDeletion(deleted=True, released=released)
 
     # ================================
     # Tag Operations

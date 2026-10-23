@@ -11,6 +11,7 @@ so a weighted sum is defensible where a quality/speed composite was not.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from typing import Any, ClassVar
 
@@ -28,13 +29,88 @@ Check = Callable[[dict[str, Any], dict[str, Any]], tuple[bool, str]]
 # --------------------------------------------------------------------------
 
 
-def _fold(s: str) -> str:
-    """Lowercase and strip accents so Vasíli matches Vasili."""
+FOLD_DROPPED_CATEGORIES: frozenset[str] = frozenset({"Mn", "Cf"})
+"""Unicode categories :func:`fold` drops: combining marks (accents) and format characters.
+
+``Cf`` (audit wave 5): a soft hyphen or a word joiner inside a name
+('Bolkón\u00adski') split it, so the name never matched. A zero-width space
+between two letters is not dropped but read as a space (:func:`word_breaks_as_spaces`).
+"""
+
+_ZWSP_BETWEEN_LETTERS = re.compile(r"(?<=[^\W\d_])\u200b(?=[^\W\d_])")
+"""A zero-width space (U+200B) with a letter on each side: a word boundary (audit wave 6).
+
+Unicode word segmentation (UAX #29) breaks words at a zero-width space; the
+invisible break *inside* a word is the soft hyphen or the word joiner, which
+stay dropped. Dropping it joined two words ('forty\u200bthousand' missed
+'forty thousand'). Elsewhere (beside a space, a digit or punctuation) it is
+dropped like any format character.
+"""
+
+
+def word_breaks_as_spaces(s: str) -> str:
+    """``s`` with each zero-width space between two letters read as a space (:data:`_ZWSP_BETWEEN_LETTERS`)."""
+    return _ZWSP_BETWEEN_LETTERS.sub(" ", s) if "\u200b" in s else s
+
+
+_HYPHENS = {0x2010: "-", 0x2011: "-"}
+"""The Unicode hyphen and non-breaking hyphen: an ASCII hyphen, as written."""
+
+_EN_DASH_AS_HYPHEN = re.compile(r"(?<=\w)\u2013(?=\w)|(?<= )\u2013(?= )")
+"""An en dash (U+2013) read as a hyphen: between two word characters ('Bolkónski' en dash
+'Kurágin', wave 5), or spaced ('Borís', an en dash, 'An officer' is 'Borís - An officer', wave 6, q110)."""
+
+
+class _DropTable(dict[int, str]):
+    """``str.translate`` table dropping the characters of some Unicode categories, filled on first sight."""
+
+    def __init__(self, categories: frozenset[str], fixed: dict[int, str] | None = None) -> None:
+        """Drop ``categories``; ``fixed`` maps some code points to a replacement up front."""
+        super().__init__(fixed or {})
+        self.categories = categories
+
+    def __missing__(self, codepoint: int) -> str:
+        """Drop a character of :attr:`categories`, keep any other, and remember which."""
+        import unicodedata
+
+        char = chr(codepoint)
+        value = "" if unicodedata.category(char) in self.categories else char
+        self[codepoint] = value
+        return value
+
+
+_FOLD_TABLE = _DropTable(FOLD_DROPPED_CATEGORIES, _HYPHENS)
+_FORMAT_TABLE = _DropTable(frozenset({"Cf"}))
+
+
+def drop_format_characters(s: str) -> str:
+    """``s`` without its format characters (category ``Cf``: soft hyphen, word joiner), case kept.
+
+    What :func:`fold` drops besides the accents, for a reader of the unfolded
+    text (the names check finds names by their capitals; audit wave 5). A
+    zero-width space between two letters is a space (:func:`word_breaks_as_spaces`,
+    audit wave 6), not dropped.
+    """
+    return s if s.isascii() else word_breaks_as_spaces(s).translate(_FORMAT_TABLE)
+
+
+def fold(s: str) -> str:
+    """Lowercase and strip accents so Vasíli matches Vasili: the scorers' one fold.
+
+    NFD, then :data:`FOLD_DROPPED_CATEGORIES` dropped (a zero-width space
+    between two letters read as a space first, audit wave 6), the Unicode
+    hyphens made ASCII and an en dash inside a word or between two spaces a
+    hyphen (audit waves 5 and 6). Letters
+    of every script are kept (wave 4). ASCII text only lowercases. A
+    translate table, not a per-character category call: the support text of
+    every question is folded, which was 60% of a board rescore (wave 5).
+    """
+    if s.isascii():
+        return s.lower()
     import unicodedata
 
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s.lower()) if unicodedata.category(c) != "Mn"
-    )
+    folded = unicodedata.normalize("NFD", word_breaks_as_spaces(s.lower())).translate(_FOLD_TABLE)
+    return _EN_DASH_AS_HYPHEN.sub("-", folded)
 
 
 def _names(entity: dict[str, Any]) -> list[str]:
@@ -45,13 +121,13 @@ def _names(entity: dict[str, Any]) -> list[str]:
         out.extend(str(a) for a in aliases)
     elif isinstance(aliases, str):
         out.extend(a.strip() for a in aliases.split(";"))
-    return [_fold(n) for n in out if n]
+    return [fold(n) for n in out if n]
 
 
 def _matches(entity: dict[str, Any], needles: list[str]) -> bool:
     """True if any needle is a substring of any of the entity's names or aliases (accent-folded)."""
     hay = _names(entity)
-    return any(any(_fold(n) in h for h in hay) for n in needles)
+    return any(any(fold(n) in h for h in hay) for n in needles)
 
 
 def _properties(entity: dict[str, Any]) -> list[tuple[str, Any]]:
@@ -261,7 +337,7 @@ def _ref_sentences(item: dict[str, Any], rec: dict[str, Any]) -> list[str]:
 
     sentences = rec.get("sentences") or []
     idxs = parse_sent_ref(str(item.get("sent_ref") or "")) or []
-    return [_fold(str(sentences[i - 1])) for i in idxs if 1 <= i <= len(sentences)]
+    return [fold(str(sentences[i - 1])) for i in idxs if 1 <= i <= len(sentences)]
 
 
 def _entity_by_index(rec: dict[str, Any], idx: Any) -> dict[str, Any] | None:
@@ -278,7 +354,7 @@ def _name_in(text: str, entity: dict[str, Any]) -> bool:
     for n in _names(entity):
         if n and n in text:
             return True
-    words = [w for w in _fold(str(entity.get("name", ""))).split() if len(w) >= 4]
+    words = [w for w in fold(str(entity.get("name", ""))).split() if len(w) >= 4]
     return any(w in text for w in words)
 
 
@@ -476,6 +552,33 @@ _NUMBER_WORDS = {
     "hundred": "100",
 }
 _SUFFIXES = ("ians", "ian", "ing", "ed", "er", "es", "s", "ish", "ic", "al")
+# Degree words carry no fact of their own: 'very strong' for a passage that
+# says 'so strong' is paraphrase, not world knowledge (2026-10-01, B5 in chunks).
+_INTENSIFIERS = frozenset(
+    {
+        "very",
+        "quite",
+        "rather",
+        "extremely",
+        "highly",
+        "deeply",
+        "truly",
+        "really",
+        "most",
+        "somewhat",
+        "too",
+        "utterly",
+        "fairly",
+        "fervently",
+        "intensely",
+        "exceedingly",
+        "remarkably",
+        "particularly",
+        "especially",
+        "notably",
+        "strongly",
+    }
+)
 
 
 def _stem(word: str) -> str:
@@ -509,7 +612,7 @@ def _value_supported(value: str, stems: set[str], raw_text: str) -> bool:
     v = value.lower().strip()
     if not v or v in raw_text:
         return True
-    toks = [_stem(w) for w in _re.findall(r"[a-z0-9]+", v)]
+    toks = [_stem(w) for w in _re.findall(r"[a-z0-9]+", v) if w not in _INTENSIFIERS]
     sig = [w for w in toks if len(w) >= 3 and w not in {"the", "and", "of", "a", "an"}]
     if not sig:
         return True
@@ -533,7 +636,13 @@ def property_values_from_text(rec: dict[str, Any], _: dict[str, Any]) -> tuple[b
     danced' as talent=singing, 'commanded' as occupation=commander. Values
     are now compared on number-normalised stems with a 4-char prefix match,
     which still rejects genuine world-knowledge injection such as
-    title=emperor for a passage that never mentions it.
+    title=emperor for a passage that never mentions it. Calibration
+    2026-10-01: degree words ('very strong' for 'so strong') are ignored,
+    and the carrier variants of B5 scope the check to the probe's own
+    entities with ``names`` like every other carrier variant: on the
+    chunk's own cast the check caught 'hostess' and 'father', which are
+    inference, not knowledge, and all three Claude rows failed both B5
+    carrier probes on them in one run after passing in another.
     """
     raw_text = " ".join(str(s) for s in rec.get("sentences") or []).lower()
     stems = _text_stems(raw_text)
@@ -581,7 +690,7 @@ def no_invention(rec: dict[str, Any], args: dict[str, Any]) -> tuple[bool, str]:
     text. Calibration 2026-09-24: the first version compared against a
     name list derived from other checks and flagged the probe's own entities.
     """
-    text = _fold(" ".join(str(s) for s in rec.get("sentences") or []))
+    text = fold(" ".join(str(s) for s in rec.get("sentences") or []))
     extra = [e.get("name") for e in rec.get("entities") or [] if not _name_in(text, e)]
     return not extra, f"entities not named in the input={extra[:4]}"
 
@@ -726,4 +835,13 @@ def rescore(row: Any, probes: list[Any]) -> ScoreResult:
     return ProbeScorer().score(raw, probes)
 
 
-__all__ = ["PROBE_SCORER_VERSION", "TIER_WEIGHTS", "ProbeScorer", "rescore"]
+__all__ = [
+    "FOLD_DROPPED_CATEGORIES",
+    "PROBE_SCORER_VERSION",
+    "TIER_WEIGHTS",
+    "ProbeScorer",
+    "drop_format_characters",
+    "fold",
+    "rescore",
+    "word_breaks_as_spaces",
+]

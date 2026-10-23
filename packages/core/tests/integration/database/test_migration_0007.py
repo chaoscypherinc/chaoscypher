@@ -17,17 +17,7 @@ import chaoscypher_core.adapters.sqlite.models  # noqa: F401 — register metada
 from chaoscypher_core.adapters.sqlite.engine import evict_engine
 from chaoscypher_core.database.migrations.runner import downgrade_to, upgrade_to
 
-
-def _columns(db_path: Path, table: str) -> dict[str, tuple[str, int]]:
-    """Return ``{column: (type, notnull)}`` for ``table`` via PRAGMA table_info."""
-    # ``with sqlite3.connect(...)`` commits but does not close — close explicitly
-    # so no connection leaks into later tests' ResourceWarning detectors.
-    conn = sqlite3.connect(str(db_path))
-    try:
-        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-    finally:
-        conn.close()
-    return {row[1]: (row[2], row[3]) for row in rows}
+from ._schema import table_columns
 
 
 def test_0007_adds_nullable_media_timestamp_columns(tmp_path: Path) -> None:
@@ -35,12 +25,12 @@ def test_0007_adds_nullable_media_timestamp_columns(tmp_path: Path) -> None:
     sqlite3.connect(str(db)).close()
     try:
         upgrade_to(db, "0007")
-        columns = _columns(db, "document_chunks")
+        columns = table_columns(db, "document_chunks")
         for name in ("start_time", "end_time"):
             assert name in columns, f"{name} missing from document_chunks after upgrade to 0007"
-            column_type, notnull = columns[name]
+            column_type, notnull = columns[name].type, columns[name].notnull
             assert column_type.upper() in ("FLOAT", "REAL"), (name, column_type)
-            assert notnull == 0, f"{name} must be nullable (NULL for every non-media loader)"
+            assert not notnull, f"{name} must be nullable (NULL for every non-media loader)"
     finally:
         evict_engine(db)
 
@@ -51,7 +41,7 @@ def test_0007_downgrade_removes_columns(tmp_path: Path) -> None:
     try:
         upgrade_to(db, "0007")
         downgrade_to(db, "0006")
-        columns = _columns(db, "document_chunks")
+        columns = table_columns(db, "document_chunks")
         assert "start_time" not in columns
         assert "end_time" not in columns
     finally:

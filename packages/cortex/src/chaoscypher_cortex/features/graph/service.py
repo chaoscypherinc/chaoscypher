@@ -15,6 +15,11 @@ import structlog
 from chaoscypher_core.adapters.sqlite.repos import remove_corrupt_nodes
 from chaoscypher_core.exceptions import ValidationError
 from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    EDGE_FLAG_DETAIL_KEYS,
+    PIPELINE_EDGE_FLAG_KEYS,
+    PIPELINE_FLAG_KEYS,
+)
 
 
 if TYPE_CHECKING:
@@ -119,6 +124,17 @@ class GraphService:
             minimal=True,
         )
         templates = repo.list_templates()
+        # The pipeline's flags (orphan, reference), which the minimal projection does not
+        # load: the canvas groups the flagged nodes in its "Unresolved" region.
+        # Read for the listed ids only: a whole-database scan grows with the graph, not the canvas.
+        flags = repo.nodes_with_true_properties(PIPELINE_FLAG_KEYS, ids=[n.id for n in nodes])
+        # The edge flags and the detail beside each (the reason, or the label the model wrote):
+        # the canvas draws an unevidenced edge dashed, the others thin, and its detail shows why.
+        edge_flags = repo.edges_with_true_properties(
+            PIPELINE_EDGE_FLAG_KEYS,
+            carry=tuple(EDGE_FLAG_DETAIL_KEYS.values()),
+            ids=[e.id for e in edges],
+        )
 
         truncated = node_count >= max_nodes or edge_count >= max_edges
 
@@ -131,6 +147,7 @@ class GraphService:
                     "label": n.label,
                     "position": {"x": n.position.x, "y": n.position.y} if n.position else None,
                     "source_id": n.source_id,
+                    **({"properties": dict.fromkeys(flags[n.id], True)} if n.id in flags else {}),
                 }
                 for n in nodes
             ],
@@ -141,6 +158,7 @@ class GraphService:
                     "target_node_id": e.target_node_id,
                     "template_id": e.template_id,
                     "label": e.label,
+                    **({"properties": edge_flags[e.id]} if e.id in edge_flags else {}),
                 }
                 for e in edges
             ],

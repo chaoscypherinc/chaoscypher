@@ -150,10 +150,22 @@ class ValkeyApprovalBroker:
         # here makes that CAS miss, so the endpoint correctly answers 404.
         # Fail-closed, per this module's contract: no decision within the
         # timeout is a denial.
+        # If the claim misses, a decision landed between the last poll and
+        # the deadline: the endpoint's CAS won and already answered 204, so
+        # honour that decision instead of denying it.
         client = self._client_getter()
         if client is not None:
             with contextlib.suppress(Exception):
-                await client.eval(_RESOLVE_CAS_SCRIPT, 1, key, PENDING_SENTINEL, "timeout")
+                claimed = await client.eval(
+                    _RESOLVE_CAS_SCRIPT, 1, key, PENDING_SENTINEL, "timeout"
+                )
+                if not int(claimed or 0):
+                    value = await client.get(key)
+                    if isinstance(value, bytes):
+                        value = value.decode()
+                    if value in ("approve", "reject"):
+                        await client.delete(key)
+                        return str(value)
 
         logger.info(
             "tool_approval_timed_out",

@@ -19,9 +19,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from chaoscypher_core.adapters.sqlite.repos import GraphRepository
 from chaoscypher_core.adapters.sqlite.safe_session import SafeSession
 from chaoscypher_core.app_config import Settings, get_settings
+from chaoscypher_core.repo_factories import get_graph_repository
 from chaoscypher_cortex.features.graph.grounding_service import GroundingService
 from chaoscypher_cortex.features.graph.models import (
     GroundingEdgeListResponse,
@@ -60,7 +60,7 @@ def get_grounding_service(
     FastAPI dependency that instantiates GroundingService with proper
     repository injection. Ensures clean separation of concerns.
     """
-    graph_repository = GraphRepository(session, settings.current_database)
+    graph_repository = get_graph_repository(session, settings.current_database)
     return GroundingService(graph_repository, settings)
 
 

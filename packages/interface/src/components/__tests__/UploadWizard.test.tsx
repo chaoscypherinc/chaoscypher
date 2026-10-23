@@ -8,7 +8,7 @@
  *
  * Covers (spec §5 UI bullet):
  *   - the Analyzing step renders during phase 'analyzing';
- *   - the three review states: top-3 ranking, low-confidence, no_text;
+ *   - the three review states: proposed packs, low-confidence (floor alone), no_text;
  *   - confirm fires the hook's `confirm` and the Confirm button is disabled
  *     while the confirm mutation is in flight (`confirming`);
  *   - the analyzing → confirm transition (phase change re-renders the right UI).
@@ -24,8 +24,8 @@ import type { ExtractionDomain } from '../../services/api/sourceProcessing';
 import type { UnifiedSource } from '../../types';
 
 const DOMAINS: ExtractionDomain[] = [
-  { name: 'legal', description: 'Legal', builtin: true },
-  { name: 'generic', description: 'Generic', builtin: true },
+  { name: 'legal', description: 'Legal', builtin: true, role: 'pack' },
+  { name: 'generic', description: 'Generic', builtin: true, role: 'floor' },
 ];
 
 function makeReviewSource(overrides: Partial<UnifiedSource> = {}): UnifiedSource {
@@ -73,7 +73,7 @@ describe('UploadWizard', () => {
   it('renders nothing actionable when idle', () => {
     renderWizard(makeWizard({ phase: 'idle' }));
     expect(screen.queryByText(/Analyzing your document/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Confirm extraction domain/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Confirm extraction packs/i)).not.toBeInTheDocument();
   });
 
   // ── Analyzing step ─────────────────────────────────────────────────────
@@ -93,17 +93,17 @@ describe('UploadWizard', () => {
 
   // ── Review states ──────────────────────────────────────────────────────
 
-  it('review (top-3): renders the ranked quick-pick row', () => {
+  it('review: shows the proposed packs as selected chips', () => {
     renderWizard(makeWizard({ phase: 'review', source: makeReviewSource() }));
-    expect(screen.getByText(/Confirm extraction domain/i)).toBeInTheDocument();
-    expect(screen.getByText(/Recommended \(top 2\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Confirm extraction packs/i)).toBeInTheDocument();
+    expect(screen.getByTestId('proposed-packs')).toHaveTextContent(/Detection proposes Legal/);
     expect(screen.getByRole('button', { name: /legal/i })).toBeInTheDocument();
     // Not the low-confidence / no_text prompts.
-    expect(screen.queryByText(/wasn't confident/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no pack above the floor/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Not enough text/i)).not.toBeInTheDocument();
   });
 
-  it('review (low-confidence): shows the "pick a domain" prompt', () => {
+  it('review (low-confidence): shows the "floor alone" prompt', () => {
     renderWizard(
       makeWizard({
         phase: 'review',
@@ -114,8 +114,8 @@ describe('UploadWizard', () => {
         }),
       }),
     );
-    expect(screen.getByText(/wasn't confident/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Recommended \(top/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/no pack above the floor/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('proposed-packs')).not.toBeInTheDocument();
   });
 
   it('review (no_text): shows the "not enough text" prompt', () => {
@@ -131,7 +131,7 @@ describe('UploadWizard', () => {
     );
     expect(screen.getByText(/Not enough text to detect/i)).toBeInTheDocument();
     // no_text wins over the generic low-confidence copy.
-    expect(screen.queryByText(/wasn't confident/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no pack above the floor/i)).not.toBeInTheDocument();
   });
 
   // ── Confirm / in-flight ─────────────────────────────────────────────────
@@ -141,9 +141,9 @@ describe('UploadWizard', () => {
     renderWizard(wizard);
     fireEvent.click(screen.getByRole('button', { name: /^confirm$/i }));
     expect(wizard.confirm).toHaveBeenCalledTimes(1);
-    // The pre-selected top domain (legal) is submitted.
+    // The proposed pack (legal) is submitted.
     expect(wizard.confirm).toHaveBeenCalledWith(
-      expect.objectContaining({ domain: 'legal' }),
+      expect.objectContaining({ packs: ['legal'] }),
     );
   });
 

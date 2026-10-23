@@ -2,7 +2,7 @@
   {
     "name": "Main entry chunk (index.js)",
     "path": "dist/assets/index-*.js",
-    "limit": "146 KB",
+    "limit": "148 KB",
     "brotli": true
   },
   {

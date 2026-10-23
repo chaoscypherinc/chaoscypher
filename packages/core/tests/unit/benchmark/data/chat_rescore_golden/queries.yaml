@@ -1,0 +1,44 @@
+# A small invented fixture for the golden rescore test (test_chat_rescore_golden.py).
+# The corpus is made up (a mill ledger), from no text the benchmark uses.
+version: "golden-1"
+queries:
+  - id: g01
+    band: factual_single_hop
+    question: "Who kept the mill's accounts?"
+    gold_entities: ["Tíkhon"]
+    answer_terms: ["Tíkhon"]
+    must_not_contain: ["Yákov kept"]
+    gold_answer: "Tíkhon, the steward."
+  - id: g02
+    band: multi_hop
+    question: "What relation is Márfa to the old miller?"
+    gold_entities: ["Márfa Ivánovna"]
+    answer_terms: [["niece", "niece of the miller"]]
+    # the possessive changes the referent ("niece of Tíkhon's master"), so the wrong form is written whole
+    must_not_contain: ["niece of Tíkhon|", "daughter of the miller"]
+    gold_answer: "His niece."
+  - id: g03
+    band: fine_grained_discrimination
+    question: "Which of the two clerks copied the ledger?"
+    gold_entities: ["Yákov"]
+    wrong_entities: ["Tíkhon"]
+    answer_terms: ["Yákov"]
+    gold_answer: "Yákov."
+  - id: g04
+    band: out_of_scope
+    question: "Who bought the mill after the war?"
+    expect_refusal: true
+    decoy_entities: ["Sávin"]
+  - id: g05
+    band: factual_single_hop
+    question: "How much did Prince Sávin lend Márfa?"
+    gold_entities: ["Grigóri Sávin"]
+    answer_terms: ["three hundred"]
+    gold_answer: "Three hundred rubles."
+  - id: g06
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Where was the loan made, and who copied the record of it?"
+    gold_entities: ["Zavídovo", "Yákov"]
+    answer_terms: ["Zavídovo", "Yákov"]
+    gold_answer: "At Zavídovo; Yákov copied it."

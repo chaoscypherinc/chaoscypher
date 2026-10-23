@@ -323,10 +323,28 @@ describe('OllamaModelSelector — chat options come from the benchmark', () => {
   });
 
   it('demotes a model whose chat run hit the time limit, with no score', () => {
-    const glm = chatOptions().find((o) => o.id === 'glm-4.7-flash');
-    expect(glm?.usable).toBe(false);
-    expect(glm?.score).toBeUndefined();
-    expect(glm?.description).toMatch(/Did not finish/);
+    // Whether a real model timed out depends on the board (none did on the v2 runs),
+    // so a synthetic timed-out row is added for this render only.
+    const models = modelScores.models as unknown[];
+    models.push({
+      id: 'timed-out:1b',
+      label: 'Timed Out 1B',
+      vram_gb: 1,
+      tools: true,
+      chat: { passed: null, total: null, pct: null, timed_out: true },
+      chunks: null,
+      scores: { extraction: null, chat: null, overall: null },
+      notes: [],
+      harness: null,
+    });
+    try {
+      const row = chatOptions().find((o) => o.id === 'timed-out:1b');
+      expect(row?.usable).toBe(false);
+      expect(row?.score).toBeUndefined();
+      expect(row?.description).toMatch(/Did not finish/);
+    } finally {
+      models.pop();
+    }
   });
 
   it("puts the highest finished grounded-chat score first, showing the leaderboard's chat score", () => {

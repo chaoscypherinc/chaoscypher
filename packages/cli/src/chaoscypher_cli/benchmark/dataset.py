@@ -50,6 +50,10 @@ class BenchmarkDataset(Protocol):
     scorer: DatasetScorer
     fixture: Any
     source: DatasetSource
+    seed: int
+    temperature: float
+    """The decoding the runner records on every row; a dataset that samples must run with it
+    (``benchmark/determinism.py``), one that never samples records it all the same."""
 
     async def run(self, model: ModelConfig) -> RawOutput:
         """Execute the dataset against ``model`` and return its RawOutput."""

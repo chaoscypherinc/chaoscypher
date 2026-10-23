@@ -10,7 +10,10 @@ entities against existing graph nodes using label matching and vector similarity
 Components:
     - EntityProcessor: Main deduplication processor with exact and semantic matching
     - embedding_generator: Embedding text conversion and vector generation
-    - similarity_matcher: Name normalization, alias matching, and merge decisions
+    - similarity_matcher: Name normalization, alias bonuses and type compatibility
+      for the semantic (embedding) pass
+    - name_identity: When two names are one entity (the rule shared with the
+      post-commit identity resolver)
 
 The deduplication pipeline:
 1. Extract entities from document chunks
@@ -30,8 +33,8 @@ Example:
 from chaoscypher_core.services.sources.engine.deduplication.service import EntityProcessor
 from chaoscypher_core.services.sources.engine.deduplication.similarity_matcher import (
     are_types_compatible,
-    normalize_compatibility_map,
+    core_type_key,
 )
 
 
-__all__ = ["EntityProcessor", "are_types_compatible", "normalize_compatibility_map"]
+__all__ = ["EntityProcessor", "are_types_compatible", "core_type_key"]

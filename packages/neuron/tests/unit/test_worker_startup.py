@@ -9,6 +9,7 @@ initialization, and startup recovery invocation.
 
 import asyncio
 import contextlib
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -434,6 +435,8 @@ class TestOrphanTaskCleanupLoop:
         from chaoscypher_neuron.worker import _orphan_task_cleanup_loop
 
         calls = []
+        # The DELETE runs via asyncio.to_thread, hence a threading.Event.
+        two_calls = threading.Event()
 
         class FakeAdapter:
             @contextlib.asynccontextmanager
@@ -442,6 +445,8 @@ class TestOrphanTaskCleanupLoop:
 
             def cleanup_orphaned_chunk_tasks(self, *, older_than_seconds: int) -> int:
                 calls.append(older_than_seconds)
+                if len(calls) >= 2:
+                    two_calls.set()
                 return 0
 
         adapter = FakeAdapter()
@@ -453,14 +458,15 @@ class TestOrphanTaskCleanupLoop:
                 interval_seconds=0.05,
             )
         )
-        await asyncio.sleep(0.18)  # ~3 intervals
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-        assert len(calls) >= 2, (
-            f"Expected >=2 calls in ~0.18s with 0.05s interval, got {len(calls)}"
-        )
+        # Wait on the second call, not a fixed sleep: CI load varies.
+        try:
+            assert await asyncio.to_thread(two_calls.wait, 5.0), (
+                f"Expected >=2 calls with a 0.05s interval, got {len(calls)}"
+            )
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         assert all(c == 7 * 86400 for c in calls), f"Unexpected arg values: {calls}"
 
     @pytest.mark.asyncio

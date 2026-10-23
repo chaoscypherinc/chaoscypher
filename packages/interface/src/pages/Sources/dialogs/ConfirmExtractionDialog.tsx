@@ -3,16 +3,23 @@
 
 /**
  * @module ConfirmExtractionDialog
- * Confirm (or override) the auto-detected extraction domain + full extraction
- * options for a parked (awaiting_confirmation) source, before the expensive
- * chunk extraction commits. Mounts the same fully-controlled ExtractionOptions
- * used at upload, seeded from the detection proposal, plus a top-3 ranked
- * quick-pick row (best pre-selected). When detection wasn't confident the
- * selector defaults to the concrete fallback domain (generic) rather than the
- * ambiguous "Auto" sentinel, so the user sees what extraction will actually run.
+ * Confirm (or change) the packs detection proposed + the extraction options
+ * the confirm endpoint accepts (quick analysis, filtering mode, content
+ * filtering) for a parked (awaiting_confirmation) source, before the
+ * expensive chunk extraction commits. The pack chips (PackSelect) show the
+ * proposed packs pre-selected; no pack is the floor alone, which every
+ * source extracts with: when detection proposes nothing (low confidence, no
+ * text) that is what the dialog shows selected.
+ *
+ * An option is sent only when the user changed it here: the confirm request
+ * keeps the upload-time choice for every field it does not carry, and the
+ * detection proposal carries no options (`ranking`, `confidence`, `packs`,
+ * `detected_domain`, `reason`), so seeding from it sent
+ * `content_filtering: true` over an upload that had turned filtering off
+ * (section-audit 2026-10-12).
  */
 
-import { useMemo, useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -20,24 +27,17 @@ import {
   DialogActions,
   Button,
   Box,
-  Chip,
   Alert,
   Typography,
-  ToggleButton,
-  ToggleButtonGroup,
   CircularProgress,
 } from '@mui/material';
 import { ghostButtonSx, ghostCancelBtnSx, ghostDialogPaperSx } from '../../../theme/ghostStyles';
 import { ChaosCypherPalette } from '../../../theme/palette';
-import { DomainSelect } from '../../../components/upload/DomainSelect';
+import { PackSelect } from '../../../components/upload/PackSelect';
+import { packsLabel, proposedPacks } from '../../../utils/packs';
 import { ExtractionOptions } from '../../../components/upload/ExtractionOptions';
 import type { ExtractionDomain, ConfirmExtractionOptions } from '../../../services/api/sourceProcessing';
 import type { UnifiedSource } from '../../../types';
-
-// The catch-all extraction domain the backend falls back to when detection
-// finds nothing confident (registry's `generic` plugin). Shown explicitly in
-// the confirm dialog so the user sees the concrete domain, not a bare "Auto".
-const FALLBACK_DOMAIN = 'generic';
 
 interface ConfirmExtractionDialogProps {
   open: boolean;
@@ -53,6 +53,13 @@ interface ConfirmExtractionDialogProps {
   outputPerChunk?: number;
 }
 
+/** Why detection proposed what it did, in a few words (the proposal's `reason`). */
+const REASON_TEXT: Record<string, string> = {
+  one_pack_above_floor: 'one pack scored above the floor',
+  packs_above_floor: 'two packs scored above the floor',
+  packs_within_margin: 'two packs scored close together',
+};
+
 export function ConfirmExtractionDialog({
   open,
   source,
@@ -65,48 +72,37 @@ export function ConfirmExtractionDialog({
   inputPerChunk = 150,
   outputPerChunk = 2000,
 }: ConfirmExtractionDialogProps) {
-  const top3 = useMemo(() => (source?.detection_ranking ?? []).slice(0, 3), [source?.detection_ranking]);
-  const lowConfidence = source?.detection_low_confidence === true || top3.length === 0;
   const proposal = source?.proposed_extraction_options;
+  // The registered packs arrive from their own query; until they do,
+  // `proposedPacks` (which keeps only registered names) reads as nothing.
+  const domainsLoaded = availableDomains.length > 0;
+  const proposed = proposedPacks(source, availableDomains);
   // Image-only / <50-char docs short-circuit to a no_text proposal; show a
   // tailored prompt instead of the generic low-confidence one.
   const noText = proposal?.no_text === true;
+  const reason = proposal?.reason ? REASON_TEXT[proposal.reason] : undefined;
 
-  // Controlled extraction-option state, seeded from the proposal. The best
-  // ranked domain is pre-selected unless detection wasn't confident.
-  const [selectedDomain, setSelectedDomain] = useState<string>('__auto__');
-  const [analysisDepth, setAnalysisDepth] = useState<'quick' | 'full'>('full');
-  const [filteringMode, setFilteringMode] = useState<string>('');
-  const [contentFiltering, setContentFiltering] = useState(true);
-  const [extractEntities, setExtractEntities] = useState(true);
-  const [enableVision, setEnableVision] = useState(false);
-  const [enableNormalization, setEnableNormalization] = useState(false);
-  const [skipDuplicates, setSkipDuplicates] = useState(false);
-
-  // Reseed every time the dialog opens for a (different) source.
-  useEffect(() => {
-    if (!open || !source) return;
-    // When detection wasn't confident, show the *concrete* domain extraction
-    // would fall back to (generic) rather than the ambiguous "Auto" sentinel —
-    // the user already passed through an "Auto" choice once, so re-showing
-    // "Auto" here tells them nothing about what will run. Prefer the backend's
-    // own fallback (proposal.domain, set to generic on no/low-confidence
-    // detection); degrade to the known catch-all, then to Auto only if no
-    // generic domain is registered.
-    const concreteFallback =
-      (proposal?.domain && availableDomains.some((d) => d.name === proposal.domain) && proposal.domain) ||
-      (availableDomains.some((d) => d.name === FALLBACK_DOMAIN) ? FALLBACK_DOMAIN : '__auto__');
-    setSelectedDomain(lowConfidence ? concreteFallback : (top3[0]?.domain ?? concreteFallback));
-    setAnalysisDepth(proposal?.analysis_depth ?? 'full');
-    setFilteringMode(proposal?.filtering_mode ?? '');
-    setContentFiltering(proposal?.content_filtering ?? true);
-    // open + source.id keyed so reopening for the same row doesn't clobber edits.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, source?.id]);
+  // The proposed packs are pre-selected ([] = the floor alone). Reseeded
+  // when the dialog opens for a (different) source and when the registered
+  // packs arrive: React's adjust-state-during-render pattern, keyed on both,
+  // so reopening for the same row does not clobber edits.
+  const [selectedPacks, setSelectedPacks] = useState<string[]>(proposed);
+  const seedKey = open && source ? `${source.id}:${domainsLoaded}` : null;
+  const [prevSeedKey, setPrevSeedKey] = useState<string | null>(seedKey);
+  if (seedKey !== prevSeedKey) {
+    setPrevSeedKey(seedKey);
+    if (seedKey) setSelectedPacks(proposed);
+  }
+  // Options: undefined until the user changes one here (then it is sent).
+  const [analysisDepth, setAnalysisDepth] = useState<'quick' | 'full' | undefined>();
+  const [filteringMode, setFilteringMode] = useState<string | undefined>();
+  const [contentFiltering, setContentFiltering] = useState<boolean | undefined>();
 
   const handleConfirm = () => {
     onConfirm({
-      domain: selectedDomain === '__auto__' ? undefined : selectedDomain,
+      // Before the registered packs arrive the chips cannot be edited: send
+      // no packs and the API extracts under the proposal.
+      packs: domainsLoaded ? selectedPacks : undefined,
       analysis_depth: analysisDepth,
       filtering_mode: filteringMode || undefined,
       content_filtering: contentFiltering,
@@ -121,48 +117,36 @@ export function ConfirmExtractionDialog({
       fullWidth
       slotProps={{ paper: { sx: ghostDialogPaperSx } }}
     >
-      <DialogTitle sx={{ color: 'text.primary' }}>Confirm extraction domain</DialogTitle>
+      <DialogTitle sx={{ color: 'text.primary' }}>Confirm extraction packs</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
           {noText ? (
             <Alert severity="info" variant="outlined">
-              Not enough text to detect — defaulting to Generic. Pick a specific domain below if
-              you know it.
+              Not enough text to detect — the floor alone is selected. Add a pack below if you
+              know one.
             </Alert>
-          ) : lowConfidence ? (
+          ) : !domainsLoaded ? (
+            <Typography variant="body2" sx={{ color: 'text.secondary' }} data-testid="packs-loading">
+              Loading the packs…
+            </Typography>
+          ) : proposed.length === 0 ? (
             <Alert severity="info" variant="outlined">
-              Detection wasn&apos;t confident — defaulting to Generic. Pick a specific domain below
-              if you know it.
+              Detection found no pack above the floor — the floor alone (the core types) is
+              selected. Add a pack below if you know one.
             </Alert>
           ) : (
-            <Box>
-              <Typography variant="caption" sx={{ color: 'text.secondary', mb: 0.5, display: 'block' }}>
-                Recommended (top {top3.length})
-              </Typography>
-              <ToggleButtonGroup
-                exclusive
-                size="small"
-                value={selectedDomain}
-                onChange={(_e, value: string | null) => {
-                  if (value) setSelectedDomain(value);
-                }}
-                sx={{ flexWrap: 'wrap', gap: 0.5 }}
-              >
-                {top3.map((r) => (
-                  <ToggleButton key={r.domain} value={r.domain} sx={{ textTransform: 'none', gap: 0.75 }}>
-                    {r.domain}
-                    <Chip label={r.score.toFixed(1)} size="small" sx={{ height: 18, fontSize: '0.65rem' }} />
-                  </ToggleButton>
-                ))}
-              </ToggleButtonGroup>
-            </Box>
+            <Typography variant="body2" sx={{ color: 'text.secondary' }} data-testid="proposed-packs">
+              Detection proposes {packsLabel(proposed)}
+              {reason ? ` (${reason})` : ''}. Add or remove packs below.
+            </Typography>
           )}
 
-          {extractEntities && availableDomains.length > 0 && (
-            <DomainSelect
-              selectedDomain={selectedDomain}
+          {domainsLoaded && (
+            <PackSelect
+              value={selectedPacks}
               availableDomains={availableDomains}
-              onDomainChange={setSelectedDomain}
+              onChange={(next) => setSelectedPacks(next ?? [])}
+              proposed={proposed}
               contextWindow={contextWindow}
               groupSize={groupSize}
               inputPerChunk={inputPerChunk}
@@ -171,21 +155,13 @@ export function ConfirmExtractionDialog({
           )}
 
           <ExtractionOptions
-            extractEntities={extractEntities}
-            onExtractEntitiesChange={setExtractEntities}
-            enableVision={enableVision}
-            onEnableVisionChange={setEnableVision}
-            showNormalizationOption={false}
-            enableNormalization={enableNormalization}
-            onNormalizationChange={setEnableNormalization}
-            analysisDepth={analysisDepth}
+            scope="confirm"
+            analysisDepth={analysisDepth ?? 'full'}
             onAnalysisDepthChange={setAnalysisDepth}
-            contentFiltering={contentFiltering}
+            contentFiltering={contentFiltering ?? true}
             onContentFilteringChange={setContentFiltering}
-            filteringMode={filteringMode}
+            filteringMode={filteringMode ?? ''}
             onFilteringModeChange={setFilteringMode}
-            skipDuplicates={skipDuplicates}
-            onSkipDuplicatesChange={setSkipDuplicates}
           />
         </Box>
       </DialogContent>

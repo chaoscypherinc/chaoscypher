@@ -17,6 +17,7 @@ import { installApiClientMock } from '../../../../test/mocks/apiClient';
 import { makeWrapper } from '../../../../test/renderWithProviders';
 import { apiClient } from '../../../../services/api/client';
 import { useSourcesData, hasProcessingSources } from '../useSourcesData';
+import type { Site } from '../../../../types';
 
 vi.mock('../../../../services/api/client', () => installApiClientMock());
 
@@ -66,8 +67,32 @@ const QUALITY = {
   avg_relationship_quality: 70,
 };
 
+const SITES = {
+  data: [
+    {
+      id: 'site-1',
+      url: 'https://docs.example.com',
+      title: 'Example Docs',
+      discovery_method: 'llms_txt',
+      status: 'importing',
+      run_in_progress: true,
+      page_count: 71,
+      options: {},
+      error_message: null,
+      created_at: '2026-10-22T10:00:00Z',
+      last_checked_at: null,
+      progress: {
+        total: 71, done: 43, failed: 0, awaiting_confirmation: 0, in_progress: 28, gone: 0, by_status: {},
+      },
+      excluded_pages: [],
+    } satisfies Site,
+  ],
+  pagination: { total: 1, page: 1, page_size: 200, total_pages: 1, has_next: false, has_prev: false },
+};
+
 function routeGet(url: string) {
   if (url === '/sources') return Promise.resolve({ data: PAGINATED_SOURCES });
+  if (url === '/sources/sites') return Promise.resolve({ data: SITES });
   if (url === '/sources/domains') return Promise.resolve({ data: DOMAINS });
   if (url === '/llm/stats') return Promise.resolve({ data: QUEUE_STATS });
   if (url === '/settings') return Promise.resolve({ data: SETTINGS });
@@ -137,6 +162,38 @@ describe('useSourcesData', () => {
       const callsAfter = mockedApiClient.get.mock.calls.filter((c) => c[0] === '/sources').length;
       expect(callsAfter).toBeGreaterThan(callsBefore);
     });
+  });
+});
+
+describe('useSourcesData — imported sites', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedApiClient.get.mockImplementation(routeGet);
+  });
+
+  function sourceListParams(): Record<string, unknown> {
+    const call = mockedApiClient.get.mock.calls.find((c) => c[0] === '/sources');
+    return (call?.[1] as { params: Record<string, unknown> }).params;
+  }
+
+  it('lists the sites as rows of their own, and the sources outside them', async () => {
+    const { result } = renderHook(() => useSourcesData(FILTERS), { wrapper: makeWrapper() });
+
+    await waitFor(() => expect(result.current.sites.map((s) => s.id)).toEqual(['site-1']));
+    await waitFor(() => expect(result.current.sources.length).toBe(2));
+    // A site's pages are under its row, not loose in the list.
+    expect(sourceListParams().in_site).toBe(false);
+  });
+
+  it('searches every source, pages included, with the site rows set aside', async () => {
+    const { result } = renderHook(
+      () => useSourcesData({ ...FILTERS, search: 'install' }),
+      { wrapper: makeWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.sources.length).toBe(2));
+    expect(sourceListParams().in_site).toBeUndefined();
+    expect(result.current.sites).toEqual([]);
   });
 });
 

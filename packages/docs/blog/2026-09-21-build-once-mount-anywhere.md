@@ -93,7 +93,7 @@ The command is the same each time. Only the config file changes.
 claude mcp add research -- chaoscypher mount /home/me/research.ccx
 ```
 
-**A local Ollama agent.** Any MCP client works. The [MCP user guide](/docs/user-guide/mcp) has the Cursor and ChatGPT configurations; for a fully local agent, point your client's MCP server list at the same `chaoscypher mount` command and let it drive an Ollama model. The knowledge on the other end is identical.
+**A local Ollama agent.** Any MCP client works. The [MCP user guide](/docs/user-guide/mcp) has the Cursor configuration alongside Claude's; for a fully local agent, point your client's MCP server list at the same `chaoscypher mount` command and let it drive an Ollama model. The knowledge on the other end is identical.
 
 If the package came from the Hub, replace the path with the reference:
 
@@ -109,7 +109,7 @@ Pick a question that needs two hops, so the graph has something to do:
 
 > Which components depend on the queue client, and which ADR governs changing it?
 
-Each assistant calls `graphrag_search`. The tool embeds the question, seeds a Personalized PageRank walk from the closest entities, and fuses two evidence lists: the chunks the top entities were cited from, and the chunks a plain vector search would return. The response carries the graph context and the chunks with aliases the assistant uses for inline citations.
+Each assistant calls `graphrag_search`. The tool embeds the question, seeds a Personalized PageRank walk from the closest entities, and fuses two evidence lists: the chunks the top entities were cited from, and the chunks a hybrid keyword-and-vector search would return. The response carries the graph context and the chunks with aliases the assistant uses for inline citations.
 
 Because the citations traveled inside the package, the sentence each assistant points at is the same sentence on the machine that built the graph. Three assistants, three models, one set of receipts.
 

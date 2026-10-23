@@ -48,8 +48,9 @@ async def handle_import_ccx(
         graph_repository: GraphRepository for graph operations.
         source_repository: Optional source repository (for ``sources.jsonl``
             payloads). May be ``None`` for template/knowledge-only packages.
-        engine_settings: Accepted for call-site compatibility; ``CcxImporter``
-            derives caps/validation from ``ccx-format`` and does not need it.
+        engine_settings: The engine settings the importer ranks a shared
+            node's rebuild by (``CcxImporter(settings=)``); None reads the
+            configured ones. Caps and validation come from ``ccx-format``.
         metadata: Task metadata. ``database_name`` is read from here.
         task_id: Task ID for tracking.
 
@@ -78,6 +79,7 @@ async def handle_import_ccx(
         importer = CcxImporter(
             graph_repository=graph_repository,
             sources_repository=source_repository,
+            settings=engine_settings,
         )
         # ``merge`` is retained on the API contract; CCX 3.0 import is
         # idempotent upsert-by-IRI, so re-import never duplicates regardless.
@@ -96,11 +98,15 @@ async def handle_import_ccx(
             "chunks_imported": stats.chunks_imported,
             "conformance_classes": stats.conformance_classes,
             "checksum_verified": stats.checksum_verified,
+            # A bundle from before the core types: old type -> core type, count.
+            "core_types_mapped": stats.core_types_mapped,
             "errors": stats.errors,
             "warnings": stats.warnings,
             # Drives the post-import search-indexing enqueue in
             # ImportOperationsService._import_ccx_handler.
             "imported_source_ids": stats.imported_source_ids,
+            # Nodes outside those sources are indexed off this list.
+            "imported_node_ids": stats.imported_node_ids,
         }
     except Exception:
         logger.exception("import_ccx_operation_failed")

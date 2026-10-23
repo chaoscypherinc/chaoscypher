@@ -52,6 +52,7 @@ from chaoscypher_core.adapters.sqlite.mixins import (
     SourceIndexingMixin,
     SourceLifecycleMixin,
     SourceRecoveryEventsMixin,
+    SourceSitesMixin,
     SourcesMixin,
     SourceTagsMixin,
     StageProgressMixin,
@@ -106,6 +107,7 @@ class SqliteAdapter(
     SourceChunksMixin,
     SourceCitationsMixin,
     SourceRecoveryEventsMixin,
+    SourceSitesMixin,
     VisionPagesMixin,
     ChatsMixin,
     TriggersMixin,
@@ -319,7 +321,7 @@ class SqliteAdapter(
         Example:
             with adapter.transaction():
                 adapter.source_repository.start_commit(source_id)
-                adapter.graph_repository.delete_graph_data_by_source(source_id)
+                adapter.graph_repository.release_source(source_id)
                 # ... more writes ...
             # All committed atomically here
         """

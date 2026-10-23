@@ -36,6 +36,10 @@ queue tasks. Their durability story leans on other mechanisms instead:
 * **Chat ops** -- ``chat_completion`` / ``chat_background`` /
   ``tool_execution``. Transient; on crash the chat is marked ``error`` by
   ``queue.upgrade_recovery`` and the user clicks retry.
+* **Site ops** -- ``import_site``. State on ``SourceSiteRow`` (status, run
+  start, resume cursor); a site left running with no live task is marked
+  ``failed`` at worker startup and by ``queue.upgrade_recovery``, and the
+  user's "Check for updates" resumes it from its cursor.
 * **Drop-and-log ops** -- ``export_graph`` / ``bulk_*`` / ``reset_*`` /
   ``graph_cleanup`` / ``cleanup_orphans`` / ``build_graph_snapshot`` /
   ``rebuild_search_indexes`` / ``fetch_url`` / ``import_ccx`` /

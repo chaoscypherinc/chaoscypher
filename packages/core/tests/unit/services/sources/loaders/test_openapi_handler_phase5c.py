@@ -6,7 +6,8 @@
 Covers:
 - Task 1: Section emitters (securitySchemes, parameters, responses,
   requestBodies, tags + externalDocs, callbacks, webhooks, examples)
-- Task 2: Recursive schema expansion (_expand_schema with depth cap)
+- Task 2: Recursive schema expansion (_expand_schema with depth cap and a
+  per-spec character budget)
 - Task 3: Hard-require jsonref (OperationError on missing dep or bad refs)
 - Task 4: Per-section coverage tracking (openapi_sections_emitted) and
   multi-spec archive support (_find_spec_files returns all specs)
@@ -544,6 +545,101 @@ class TestRecursiveSchemaExpansion:
         content = schema_chunks[0]["content"]
         assert "array of integer" in content
         assert "one of:" in content  # enum expansion
+
+
+def _self_ref_spec(width: int) -> dict[str, Any]:
+    """A spec whose schema X has ``width`` properties that each $ref X."""
+    return {
+        "openapi": "3.0.0",
+        "info": {"title": "T", "version": "1"},
+        "paths": {
+            "/x": {
+                "post": {
+                    "requestBody": {
+                        "content": {
+                            "application/json": {"schema": {"$ref": "#/components/schemas/X"}}
+                        }
+                    },
+                    "responses": {"200": {"description": "OK"}},
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "X": {
+                    "type": "object",
+                    "properties": {
+                        f"p{i}": {"$ref": "#/components/schemas/X"} for i in range(width)
+                    },
+                }
+            }
+        },
+    }
+
+
+class TestSchemaExpansionBudget:
+    """The character budget bounds expansion breadth, which the depth cap does not."""
+
+    def test_budget_marker_replaces_unexpanded_siblings_once(self) -> None:
+        """An exhausted budget emits ONE marker for the remaining siblings."""
+        handler = OpenAPIHandler()
+        schema = {
+            "type": "object",
+            "properties": {f"p{i}": {"type": "string"} for i in range(10)},
+        }
+        # Parent visit 32 + per property: "pN: " (4) + visit 32 + "string" (6) = 42.
+        result = handler._expand_schema(schema, max_depth=4, budget=[32 + 3 * 42])
+        assert result == (
+            "object {p0: string, p1: string, p2: string, <schema (expansion budget reached)>}"
+        )
+
+    def test_budget_default_comes_from_loader_settings(self, tmp_path: Path) -> None:
+        assert OpenAPIHandler()._get_max_schema_chars() == (
+            LoaderSettings.model_fields["openapi_max_schema_chars"].default
+        )
+        settings = _make_settings(tmp_path, openapi_max_schema_chars=7)
+        assert OpenAPIHandler(settings=settings)._get_max_schema_chars() == 7
+
+    def test_self_referencing_spec_output_is_bounded_per_spec(self, tmp_path: Path) -> None:
+        """Width-30 self-ref spec: ~805M chars before the budget, now bounded.
+
+        The budget is per spec file, so the many top-level expansions the
+        chunker makes (request body, component properties) share it.
+        """
+        settings = _make_settings(tmp_path, openapi_max_schema_chars=20_000)
+        _write_spec(tmp_path / "openapi.json", _self_ref_spec(30))
+        docs = OpenAPIHandler(settings=settings).process(tmp_path, settings)
+        total = sum(len(d["content"]) for d in docs)
+        assert total < 100_000
+        assert any("<schema (expansion budget reached)>" in d["content"] for d in docs)
+
+    def test_long_enum_on_shared_node_is_charged_by_length(self, tmp_path: Path) -> None:
+        """A shared node re-emitting a long enum is bounded by characters, not visits."""
+        spec = _self_ref_spec(10)
+        spec["components"]["schemas"]["X"]["properties"]["e"] = {
+            "type": "string",
+            "enum": [f"value-{i:05d}" for i in range(2_000)],
+        }
+        settings = _make_settings(tmp_path, openapi_max_schema_chars=100_000)
+        _write_spec(tmp_path / "openapi.json", spec)
+        docs = OpenAPIHandler(settings=settings).process(tmp_path, settings)
+        # Overshoot is at most one node's own text (~36 KB for this enum).
+        assert sum(len(d["content"]) for d in docs) < 200_000
+
+    def test_small_spec_unaffected_by_default_budget(self, tmp_path: Path) -> None:
+        settings = _make_settings(tmp_path)
+        _write_spec(tmp_path / "openapi.json", _self_ref_spec(3))
+        docs = OpenAPIHandler(settings=settings).process(tmp_path, settings)
+        assert not any("expansion budget reached" in d["content"] for d in docs)
+        assert any("depth 4 reached" in d["content"] for d in docs)
+
+    def test_budget_is_released_after_process(self, tmp_path: Path) -> None:
+        """A spent spec budget does not leak into later direct expansions."""
+        settings = _make_settings(tmp_path, openapi_max_schema_chars=50)
+        _write_spec(tmp_path / "openapi.json", _self_ref_spec(30))
+        handler = OpenAPIHandler(settings=settings)
+        handler.process(tmp_path, settings)
+        assert handler._expand_schema({"type": "string"}, max_depth=4) == "string"
 
 
 # ---------------------------------------------------------------------------

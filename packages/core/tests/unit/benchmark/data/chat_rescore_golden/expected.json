@@ -1,0 +1,112 @@
+{
+ "Golden 0": {
+  "headline": 50.0,
+  "verdicts": [
+   ["g01", true, [], "correct"],
+   ["g02", false, ["answers_from_graph", "must_not_contain"], "uncited"],
+   ["g03", true, [], "uncited"],
+   ["g04", false, ["declines_when_unsupported"], null],
+   ["g05", false, ["answers_from_graph"], "uncited"],
+   ["g06", true, [], "correct"]
+  ]
+ },
+ "Golden 1": {
+  "headline": 41.6667,
+  "verdicts": [
+   ["g01", false, ["answers_from_graph", "must_not_contain"], "uncited"],
+   ["g02", true, [], "uncited"],
+   ["g03", true, [], "uncited"],
+   ["g04", false, ["declines_when_unsupported"], null],
+   ["g05", true, [], "correct"],
+   ["g06", false, ["answers_from_graph"], "uncited"]
+  ]
+ },
+ "Golden 2": {
+  "headline": 33.3333,
+  "verdicts": [
+   ["g01", false, ["no_unsupported_names"], "uncited"],
+   ["g02", false, ["must_not_contain"], "uncited"],
+   ["g03", false, ["leads_with_gold"], "uncited"],
+   ["g04", true, [], null],
+   ["g05", true, [], "uncited"],
+   ["g06", false, ["answers_from_graph", "no_unsupported_names"], "uncited"]
+  ]
+ },
+ "Golden 3": {
+  "headline": 83.3333,
+  "verdicts": [
+   ["g01", false, ["answers_from_graph"], "uncited"],
+   ["g02", true, [], "correct"],
+   ["g03", true, [], "wrong"],
+   ["g04", true, [], null],
+   ["g05", false, ["no_unsupported_numbers"], "uncited"],
+   ["g06", true, [], "uncited"]
+  ]
+ },
+ "Golden 4": {
+  "headline": 91.6667,
+  "verdicts": [
+   ["g01", true, [], "uncited"],
+   ["g02", true, [], "uncited"],
+   ["g03", true, [], "correct"],
+   ["g04", true, [], null],
+   ["g05", false, ["answers_from_graph", "no_unsupported_names"], "uncited"],
+   ["g06", true, [], "uncited"]
+  ]
+ },
+ "Golden 5": {
+  "headline": 75.0,
+  "verdicts": [
+   ["g01", true, [], "correct"],
+   ["g02", true, [], "uncited"],
+   ["g03", false, ["leads_with_gold"], "uncited"],
+   ["g04", true, [], null],
+   ["g05", false, ["answers_from_graph", "no_unsupported_names"], "uncited"],
+   ["g06", true, [], "correct"]
+  ]
+ },
+ "Golden 6": {
+  "headline": 41.6667,
+  "verdicts": [
+   ["g01", false, ["answers_from_graph", "must_not_contain"], "uncited"],
+   ["g02", false, ["must_not_contain"], "uncited"],
+   ["g03", true, [], "wrong"],
+   ["g04", true, [], null],
+   ["g05", false, ["answers_from_graph"], "uncited"],
+   ["g06", false, ["answers_from_graph"], "uncited"]
+  ]
+ },
+ "Golden 7": {
+  "headline": 33.3333,
+  "verdicts": [
+   ["g01", false, ["no_unsupported_names"], "uncited"],
+   ["g02", true, [], "correct"],
+   ["g03", true, [], "correct"],
+   ["g04", false, ["declines_when_unsupported"], null],
+   ["g05", false, ["finish_stop"], "correct"],
+   ["g06", false, ["answers_from_graph", "no_unsupported_names"], "uncited"]
+  ]
+ },
+ "Golden 8": {
+  "headline": 50.0,
+  "verdicts": [
+   ["g01", false, ["answers_from_graph"], "uncited"],
+   ["g02", true, [], "uncited"],
+   ["g03", false, ["no result"], null],
+   ["g04", false, ["declines_when_unsupported"], null],
+   ["g05", true, [], "uncited"],
+   ["g06", true, [], "uncited"]
+  ]
+ },
+ "Golden 9": {
+  "headline": 50.0,
+  "verdicts": [
+   ["g01", true, [], "uncited"],
+   ["g02", false, ["answers_from_graph", "must_not_contain"], "uncited"],
+   ["g03", true, [], "uncited"],
+   ["g04", true, [], null],
+   ["g05", false, ["no_unsupported_numbers"], "uncited"],
+   ["g06", false, ["no result"], null]
+  ]
+ }
+}

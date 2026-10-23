@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import structlog
 
+from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import committed_type
 from chaoscypher_core.settings import GraphSettings
 
 
@@ -105,7 +106,12 @@ class EntityTemplateMatcher:
             Template ID (defaults to 'system_template_item' if no match)
 
         """
-        entity_type = entity_data.get("type", "").lower()
+        # Per-source templates are one per core type (spec 2026-10-07 § 6): an
+        # entity matches its core type's template (an old ``Character`` reads
+        # as Person, ``committed_type``); a type no core type answers falls
+        # back to the system template.
+        typed = committed_type(entity_data)
+        entity_type = typed[0].lower() if typed else str(entity_data.get("type") or "").lower()
 
         if not entity_type:
             return _DEFAULT_NODE_TEMPLATE

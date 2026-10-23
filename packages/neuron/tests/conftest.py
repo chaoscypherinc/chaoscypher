@@ -8,6 +8,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from chaoscypher_core.testing import (
+    data_dir_in_tmp,  # noqa: F401 — autouse: the data directory is a tmp dir
+    llm_cache_in_tmp,  # noqa: F401 — autouse: the LLM caches live in a tmp dir
+    ollama_offline,  # noqa: F401 — autouse: no test reaches Ollama
+)
+
 
 sys.path.insert(0, str(Path(__file__).parent / "fixtures"))
 

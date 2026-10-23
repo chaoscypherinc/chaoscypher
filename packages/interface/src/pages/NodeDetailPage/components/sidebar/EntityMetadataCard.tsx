@@ -6,6 +6,8 @@ import type { Node, Template } from '../../../../types';
 import TemplateIcon from '../../../../components/TemplateIcon';
 import MetadataCard from '../../../../components/detail/MetadataCard';
 import MetadataRow from '../../../../components/detail/MetadataRow';
+import { NodeFlagChips } from '../../../../components/NodeFlagChips';
+import { hasNodeFlags } from '../../../../utils/nodeFlags';
 
 interface EntityMetadataCardProps {
   entity: Node;
@@ -56,6 +58,11 @@ export default function EntityMetadataCard({ entity, template }: EntityMetadataC
         >
           {docName}
         </Typography>
+      )}
+      {hasNodeFlags(entity.properties) && (
+        <Box sx={{ mt: 0.5 }}>
+          <NodeFlagChips properties={entity.properties} />
+        </Box>
       )}
     </Box>
   );

@@ -21,11 +21,14 @@ Helper logic is split into focused modules:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import structlog
+
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.exceptions import OperationError
 
 
 if TYPE_CHECKING:
@@ -33,11 +36,26 @@ if TYPE_CHECKING:
     from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
         ExclusionRule,
     )
+    from chaoscypher_core.services.sources.engine.extraction.utils.known_entities import (
+        KnownEntities,
+    )
     from chaoscypher_core.settings import EngineSettings
 
 from chaoscypher_core.services.quality.counters import (
     QualityCounter,
     increment_quality_counter,
+)
+from chaoscypher_core.services.sources.engine.deduplication.name_identity import (
+    DEFAULT_NAME_CONVENTIONS,
+    EXCLUDED_NAME_KEY,
+    LOW_PLAUSIBILITY_KEY,
+    UNPLACED_TYPE_KEY,
+    NameConventions,
+    pipeline_flag,
+)
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import packs_label
+from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+    PROMPT_KWARG_NAMES,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.entity_cleaner import (
     apply_properties_to_entities,
@@ -50,23 +68,30 @@ from chaoscypher_core.services.sources.engine.extraction.utils.line_parser impor
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.prompts import (
     ENTITY_HARVEST_TEMPLATE,
+    EXCLUSIONS_HEADER,
     EXTRACTION_RULES_TEMPLATE,
     RELATIONSHIP_HARVEST_TEMPLATE,
     SYSTEM_PROMPT,
+    render_entity_format_example,
+    render_relationship_format_example,
+    strict_type_instruction,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.quality_analyzer import (
     calculate_density_stats,
 )
-from chaoscypher_core.services.sources.engine.extraction.utils.template_formatter import (
-    format_domain_edge_templates,
-    format_domain_node_templates,
-    format_entity_examples,
-    format_relationship_examples,
+from chaoscypher_core.services.sources.engine.extraction.utils.relation_vocabulary import (
+    EMPTY_RELATION_VOCABULARY,
+    RelationVocabulary,
+)
+from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
+    merge_evidence,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.type_inferencer import (
     detect_domain,
 )
 from chaoscypher_core.services.sources.engine.extraction.utils.type_rescue import (
+    FLOOR_TYPE_VOCABULARY,
+    TypeVocabulary,
     rescue_invalid_entity_types,
 )
 from chaoscypher_core.utils.tokens import estimate_message_tokens, estimate_tokens
@@ -118,15 +143,22 @@ class _StreamLoopDetector:
     Args:
         extraction_cfg: Extraction settings with loop detection thresholds.
         max_entity_count_override: Domain-specific entity count override.
+        known_entity_count: Entities the stream can reference that it does
+            not write itself: pass 2 streams ``R|`` lines over pass 1's
+            entities, and every relationship check (count cap, bounds, same
+            pair, repeating source type, invalid rate) is gated on
+            ``entity_count > 0`` — a fresh detector with 0 skipped all of
+            them for the whole relationship pass (section-audit 2026-10-12).
     """
 
     def __init__(
         self,
         extraction_cfg: Any,
         max_entity_count_override: int | None = None,
+        known_entity_count: int = 0,
     ) -> None:
         """Initialise detector state and bind loop-detection thresholds."""
-        self.entity_count = 0
+        self.entity_count = known_entity_count
         self.relationship_count = 0
         self.aborted = False
 
@@ -350,7 +382,7 @@ async def _consume_extraction_stream(
     response: Any,
     detector: _StreamLoopDetector,
     *,
-    on_chunk: Callable[[], None] | None = None,
+    on_chunk: Callable[[], Awaitable[None] | None] | None = None,
 ) -> tuple[str, int, int, str, bool]:
     """Consume an LLM streaming response with loop detection.
 
@@ -374,6 +406,10 @@ async def _consume_extraction_stream(
             The 'done' chunk is metadata — the callback is NOT invoked
             for it. Errors raised by the callback are logged at WARNING
             and suppressed so a flaky heartbeat never aborts extraction.
+            The callback may be ``async`` (return an awaitable), in which
+            case it is awaited — callers that write to SQLite use this to
+            offload the write with ``asyncio.to_thread`` instead of
+            blocking the event loop.
 
     Returns:
         Tuple of ``(content, input_tokens, output_tokens, finish_reason,
@@ -403,7 +439,9 @@ async def _consume_extraction_stream(
 
             if on_chunk is not None:
                 try:
-                    on_chunk()
+                    beat = on_chunk()
+                    if beat is not None:
+                        await beat
                 except Exception as exc:
                     logger.warning(
                         "extraction_stream_on_chunk_failed",
@@ -425,22 +463,20 @@ async def _consume_extraction_stream(
                 break
 
         elif chunk_type == "error":
-            error_msg = chunk.get("error", "Unknown LLM error")
+            # The one stream classifier (``utils.stream_errors``): a 404 or a
+            # missing model is fatal, a 429/503/timeout/dropped connection retryable,
+            # the same way in the chat loop and here (until audit wave 5 this read
+            # "not found" in the text, which "LLM streaming failed" never contains).
+            from chaoscypher_core.utils.stream_errors import error_from_stream_chunk
+
+            error = error_from_stream_chunk(chunk)
             logger.error(
                 "llm_extraction_stream_error",
-                error=error_msg,
+                error=error.message,
+                error_code=error.code,
+                retryable=error.is_retryable,
             )
-            if "not found" in error_msg.lower():
-                from chaoscypher_core.exceptions import LLMModelError
-
-                raise LLMModelError(
-                    provider="unknown",
-                    model="unknown",
-                    reason=error_msg,
-                )
-            from chaoscypher_core.exceptions import LLMError
-
-            raise LLMError(error_msg)
+            raise error
 
         elif chunk_type == "done":
             usage = chunk.get("usage", {})
@@ -467,6 +503,7 @@ async def replay_harvest_output(
     text: str,
     extraction_cfg: Any,
     max_entity_count_override: int | None = None,
+    known_entity_count: int = 0,
 ) -> tuple[str, str, bool]:
     """Run a complete harvest answer through the stream loop detector.
 
@@ -476,6 +513,9 @@ async def replay_harvest_output(
     :meth:`AIEntityExtractor.call_llm` uses, so a runaway answer is cut where
     the streaming path would have cut it (at the end of the offending line)
     and reported the same way.
+
+    ``known_entity_count`` is pass 1's entity count when ``text`` is a pass-2
+    (relationship) answer, so its ``R|`` lines are checked.
 
     Returns:
         ``(content, finish_reason, aborted_by_loop)``: the content the
@@ -493,6 +533,7 @@ async def replay_harvest_output(
     detector = _StreamLoopDetector(
         extraction_cfg=extraction_cfg,
         max_entity_count_override=max_entity_count_override,
+        known_entity_count=known_entity_count,
     )
     content, _in, _out, finish_reason, aborted = await _consume_extraction_stream(
         _chunks(), detector
@@ -538,6 +579,23 @@ class HarvestPrompts:
 
 
 @dataclass(frozen=True)
+class PlanPrompts:
+    """Both prompts of one chunk, rendered from a plan (:meth:`AIEntityExtractor.render_chunk_prompts`).
+
+    Attributes:
+        system_prompt: System prompt both passes are sent under.
+        numbered_text: The chunk's sentences as the prompts number them.
+        entity_prompt: Pass-1 (entity harvest) user prompt.
+        relationship_prompt: Pass-2 (relationship harvest) user prompt.
+    """
+
+    system_prompt: str
+    numbered_text: str
+    entity_prompt: str
+    relationship_prompt: str
+
+
+@dataclass(frozen=True)
 class HarvestLimits:
     """Per-chunk filtering configuration resolved before pass 1.
 
@@ -545,11 +603,22 @@ class HarvestLimits:
         filtering_config: Resolved ``FilteringConfig``.
         max_entity_count: Entity-count cap for the stream loop detector.
         min_alias_length: Minimum alias length for the line parser.
+        relation_vocabulary: The domain's relation vocabulary the pass-2
+            evidence filter reads (the empty one for a domain without any).
+        name_conventions: The domain's naming conventions both evidence
+            filters name endpoints by (titles, surname forms; the universal
+            ones for no domain).
+        type_vocabulary: The plan's packs, subtypes and aliases the type
+            rescue reads (the core types and the mapping table alone for no
+            plan).
     """
 
     filtering_config: Any
     max_entity_count: int
     min_alias_length: int
+    relation_vocabulary: RelationVocabulary = EMPTY_RELATION_VOCABULARY
+    name_conventions: NameConventions = DEFAULT_NAME_CONVENTIONS
+    type_vocabulary: TypeVocabulary = FLOOR_TYPE_VOCABULARY
 
 
 @dataclass
@@ -580,6 +649,7 @@ class HarvestParse:
         relationships: Final relationships (empty when pass 2 did not run).
         invalid_relationship_count: Relationships dropped as structurally invalid.
         parser_lines_dropped: Output lines the parser could not read, both passes.
+        parser_lines_parsed: Output lines the parser read, both passes.
         evidence_stats: Evidence statistics across both passes.
         filtering_log: ``FilteringLog`` recording every removal.
         relationship_prompt: The pass-2 prompt built from ``entities``, or
@@ -593,6 +663,7 @@ class HarvestParse:
     evidence_stats: dict[str, Any]
     filtering_log: Any
     relationship_prompt: str | None
+    parser_lines_parsed: int = 0
 
 
 def _resolve_chunk_filtering_config(
@@ -630,7 +701,7 @@ def _resolve_chunk_filtering_config(
     )
 
     _filtering_mode = filtering_mode or getattr(
-        extraction_cfg, "extraction_filtering_mode", "balanced"
+        extraction_cfg, "extraction_filtering_mode", SOURCE_ROW_FILTERING_MODE
     )
     config = resolve_filtering_config(
         mode=str(_filtering_mode),
@@ -641,6 +712,32 @@ def _resolve_chunk_filtering_config(
     return config
 
 
+def _resolve_slider_field(
+    field: str,
+    *,
+    filtering_config: Any,
+    domain_limits: dict[str, Any],
+    extraction_cfg: Any,
+) -> int:
+    """Resolve an integer slider field a domain also tunes (the loop cap, the alias length).
+
+    Precedence (highest first): the domain ``extraction_limits`` value, then
+    ``filtering_config.<field>`` (the slider-driven value), then
+    ``extraction_cfg.<field>`` (call sites with no FilteringConfig in
+    scope). The plan's limits already hold the effective value: a domain's
+    tuning moved with a slider the user moved (``follow_slider_limits``,
+    applied once in ``build_extraction_plan``), so the resolved
+    FilteringConfig and this agree for every reader.
+    """
+    if field in domain_limits:
+        return int(domain_limits[field])
+    if filtering_config is not None:
+        value = getattr(filtering_config, field, None)
+        if value is not None:
+            return int(value)
+    return int(getattr(extraction_cfg, field))
+
+
 def _resolve_loop_max_entity_count(
     *,
     filtering_config: Any,
@@ -649,13 +746,11 @@ def _resolve_loop_max_entity_count(
 ) -> int:
     """Resolve the per-chunk entity-count cap for the streaming loop detector.
 
-    Precedence (highest first):
-    1. Domain extraction limit ``loop_max_entity_count`` — already shipped
-       in some domain configs and kept as the highest-priority override.
-    2. ``filtering_config.loop_max_entity_count`` — slider-driven cap; the
-       canonical knob users adjust via filtering mode.
-    3. ``extraction_cfg.loop_max_entity_count`` — final fallback for tests
-       and call sites that have no FilteringConfig in scope.
+    :func:`_resolve_slider_field` for ``loop_max_entity_count``. The plan
+    has already moved a domain's cap with the slider the user chose: as
+    tuned at the default mode, raised to at least a looser mode's cap,
+    lowered to at most a stricter one's (the technical pack's 30: maximum
+    25, strict 30, balanced 30, lenient 75, minimal 100, unfiltered 200).
 
     Args:
         filtering_config: Resolved FilteringConfig (may be None at deep
@@ -666,26 +761,12 @@ def _resolve_loop_max_entity_count(
     Returns:
         Integer max entity count for the per-chunk loop detector.
     """
-    if "loop_max_entity_count" in domain_limits:
-        domain_value = int(domain_limits["loop_max_entity_count"])
-        slider_value = (
-            getattr(filtering_config, "loop_max_entity_count", None)
-            if filtering_config is not None
-            else None
-        )
-        if slider_value is not None and int(slider_value) != domain_value:
-            logger.debug(
-                "filter_field_overridden_by_domain",
-                field="loop_max_entity_count",
-                slider_value=int(slider_value),
-                domain_value=domain_value,
-            )
-        return domain_value
-    if filtering_config is not None:
-        cap = getattr(filtering_config, "loop_max_entity_count", None)
-        if cap is not None:
-            return int(cap)
-    return int(extraction_cfg.loop_max_entity_count)
+    return _resolve_slider_field(
+        "loop_max_entity_count",
+        filtering_config=filtering_config,
+        domain_limits=domain_limits,
+        extraction_cfg=extraction_cfg,
+    )
 
 
 def _resolve_minimum_alias_length(
@@ -696,8 +777,8 @@ def _resolve_minimum_alias_length(
 ) -> int:
     """Resolve the minimum alias length for the line parser.
 
-    Precedence mirrors :func:`_resolve_loop_max_entity_count`: domain
-    limits beat FilteringConfig beats extraction settings.
+    :func:`_resolve_slider_field` for ``minimum_alias_length``, as
+    :func:`_resolve_loop_max_entity_count`.
 
     Args:
         filtering_config: Resolved FilteringConfig (may be None).
@@ -707,26 +788,12 @@ def _resolve_minimum_alias_length(
     Returns:
         Integer minimum alias length.
     """
-    if "minimum_alias_length" in domain_limits:
-        domain_value = int(domain_limits["minimum_alias_length"])
-        slider_value = (
-            getattr(filtering_config, "minimum_alias_length", None)
-            if filtering_config is not None
-            else None
-        )
-        if slider_value is not None and int(slider_value) != domain_value:
-            logger.debug(
-                "filter_field_overridden_by_domain",
-                field="minimum_alias_length",
-                slider_value=int(slider_value),
-                domain_value=domain_value,
-            )
-        return domain_value
-    if filtering_config is not None:
-        value = getattr(filtering_config, "minimum_alias_length", None)
-        if value is not None:
-            return int(value)
-    return int(extraction_cfg.minimum_alias_length)
+    return _resolve_slider_field(
+        "minimum_alias_length",
+        filtering_config=filtering_config,
+        domain_limits=domain_limits,
+        extraction_cfg=extraction_cfg,
+    )
 
 
 # Sentinel placeholders used when capturing the entity/relationship prompt
@@ -741,6 +808,12 @@ PROMPT_CHUNK_TEXT_PLACEHOLDER = (
 PROMPT_PASS1_ENTITIES_PLACEHOLDER = (
     "[[ PASS-1 ENTITIES - the entities found in pass 1 are inserted here ]]"
 )
+PROMPT_KNOWN_ENTITIES_PLACEHOLDER = (
+    "[[ KNOWN ENTITIES - the names earlier groups of the source gave are inserted here ]]"
+)
+"""The pass-1 template's mark for the group's KNOWN ENTITIES block: per group (group 1 and
+``known_entities_limit`` 0 get none), so the template shows its slot, as it renders, rather
+than one group's names. Never the block's header (``KNOWN_ENTITIES_HEADER``)."""
 
 
 def _build_entity_prompt(
@@ -752,6 +825,7 @@ def _build_entity_prompt(
     strict_entity_types: bool,
     entity_guidance: str | None,
     entity_examples: str | None,
+    known_entities: str = "",
 ) -> str:
     """Build the pass 1 entity extraction prompt.
 
@@ -768,29 +842,32 @@ def _build_entity_prompt(
         strict_entity_types: Whether to enforce strict type matching.
         entity_guidance: Additional entity guidance text.
         entity_examples: Entity extraction examples.
+        known_entities: The group's KNOWN ENTITIES block
+            (:meth:`KnownEntities.block`), rendered between the sentences and
+            the output format; "" renders nothing, leaving no blank slot.
 
     Returns:
         Formatted entity extraction prompt.
     """
     exclusion_lines = ""
     if entity_exclusions:
-        exclusion_lines = "- SKIP these — they are NOT entities:\n" + "\n".join(
-            f"  * {rule.as_prompt_text()}" for rule in entity_exclusions
+        exclusion_lines = (
+            EXCLUSIONS_HEADER
+            + "\n"
+            + "\n".join(f"  * {rule.as_prompt_text()}" for rule in entity_exclusions)
         )
 
     strict_instruction = ""
     if strict_entity_types:
-        strict_instruction = (
-            "\nIMPORTANT: ONLY use the entity types listed above. "
-            "Do NOT invent new types. If an entity does not fit any "
-            "listed type, skip it or use the closest match."
-        )
+        strict_instruction = strict_type_instruction(node_templates_formatted)
 
     prompt = template.format(
         numbered_sentences=numbered_text,
         node_templates=node_templates_formatted,
         entity_exclusions=exclusion_lines,
         strict_type_instruction=strict_instruction,
+        entity_format_example=render_entity_format_example(node_templates_formatted),
+        known_entities=f"{known_entities}\n\n" if known_entities else "",
     )
 
     if entity_guidance:
@@ -806,7 +883,7 @@ def _build_relationship_prompt(
     numbered_sentences: str,
     entity_list: str,
     max_entity_index: int | str,
-    edge_templates: str,
+    edge_templates_formatted: str,
     relationship_guidance: str | None,
     relationship_examples: str | None,
 ) -> str:
@@ -823,7 +900,7 @@ def _build_relationship_prompt(
         numbered_sentences: Numbered sentences text (or a placeholder marker).
         entity_list: Serialized pass-1 entity list (or a placeholder marker).
         max_entity_index: Highest valid entity index (or ``"N"`` for templates).
-        edge_templates: Formatted edge template descriptions.
+        edge_templates_formatted: Formatted edge template descriptions.
         relationship_guidance: Additional relationship guidance text.
         relationship_examples: Relationship extraction examples.
 
@@ -834,13 +911,174 @@ def _build_relationship_prompt(
         numbered_sentences=numbered_sentences,
         entity_list=entity_list,
         max_entity_index=max_entity_index,
-        edge_templates=edge_templates,
+        edge_templates=edge_templates_formatted,
+        relationship_format_example=render_relationship_format_example(edge_templates_formatted),
     )
     if relationship_guidance:
         prompt = f"{prompt}\n\nAdditional guidance:\n{relationship_guidance}"
     if relationship_examples:
         prompt = f"{prompt}\n\n{relationship_examples}"
     return prompt
+
+
+_ENTITY_PASS_INPUTS: tuple[str, ...] = (
+    "node_templates_formatted", "entity_exclusions", "strict_entity_types", "entity_guidance",
+    "entity_examples",
+)  # fmt: skip
+"""The prompt inputs pass 1 renders (:func:`_build_entity_prompt` takes them by these names)."""
+
+_RELATIONSHIP_PASS_INPUTS: tuple[str, ...] = (
+    "edge_templates_formatted", "relationship_guidance", "relationship_examples",
+)  # fmt: skip
+"""The prompt inputs pass 2 renders (:func:`_build_relationship_prompt` takes them by these names)."""
+
+
+def named_values(values: Mapping[str, Any], names: Iterable[str]) -> dict[str, Any]:
+    """``{name: values[name]}`` for ``names``: a method's prompt-input parameters, from ``locals()``.
+
+    The parameters carry the plan's key names, so a caller passes them on by
+    name rather than mapping each one by hand; a name that is not a
+    parameter raises ``KeyError``.
+    """
+    return {name: values[name] for name in names}
+
+
+def _pass_inputs(chunk_kwargs: Mapping[str, Any], names: tuple[str, ...]) -> dict[str, Any]:
+    """The prompt inputs one pass renders, checked against :data:`PROMPT_KWARG_NAMES`.
+
+    Raises:
+        OperationError: A prompt input the plan supplies is rendered by neither
+            pass, or one of this pass's inputs is missing from ``chunk_kwargs``.
+    """
+    unrendered = PROMPT_KWARG_NAMES - {*_ENTITY_PASS_INPUTS, *_RELATIONSHIP_PASS_INPUTS}
+    if unrendered:
+        msg = f"prompt inputs the plan supplies but the prompts do not render: {sorted(unrendered)}"
+        raise OperationError(msg, operation="render_extraction_pass")
+    missing = [name for name in names if name not in chunk_kwargs]
+    if missing:
+        msg = f"chunk kwargs lack the prompt inputs {missing}"
+        raise OperationError(msg, operation="render_extraction_pass")
+    return {name: chunk_kwargs[name] for name in names}
+
+
+def render_entity_pass(
+    chunk_kwargs: Mapping[str, Any],
+    *,
+    numbered_text: str,
+    template: str = ENTITY_HARVEST_TEMPLATE,
+    known_entities: str = "",
+) -> str:
+    """The pass-1 prompt a plan's prompt inputs render to over ``numbered_text``.
+
+    ``known_entities`` is the group's KNOWN ENTITIES block: per group, not a
+    plan prompt input, so it arrives beside ``numbered_text`` ("" for none).
+    """
+    return _build_entity_prompt(
+        template=template,
+        numbered_text=numbered_text,
+        known_entities=known_entities,
+        **_pass_inputs(chunk_kwargs, _ENTITY_PASS_INPUTS),
+    )
+
+
+def render_relationship_pass(
+    chunk_kwargs: Mapping[str, Any],
+    *,
+    numbered_text: str,
+    entity_list: str,
+    max_entity_index: int | str,
+    template: str = RELATIONSHIP_HARVEST_TEMPLATE,
+) -> str:
+    """The pass-2 prompt a plan's prompt inputs render to over ``numbered_text`` and ``entity_list``."""
+    return _build_relationship_prompt(
+        template=template,
+        numbered_sentences=numbered_text,
+        entity_list=entity_list,
+        max_entity_index=max_entity_index,
+        **_pass_inputs(chunk_kwargs, _RELATIONSHIP_PASS_INPUTS),
+    )
+
+
+def render_plan_prompts(
+    chunk_kwargs: Mapping[str, Any],
+    *,
+    numbered_text: str,
+    entity_list: str,
+    max_entity_index: int | str,
+    entity_template: str = ENTITY_HARVEST_TEMPLATE,
+    relationship_template: str = RELATIONSHIP_HARVEST_TEMPLATE,
+    known_entities: str = "",
+) -> tuple[str, str]:
+    """The pass-1 and pass-2 prompts a plan's chunk kwargs render to.
+
+    :func:`render_entity_pass` and :func:`render_relationship_pass` are the one
+    mapping of the plan's prompt inputs onto :func:`_build_entity_prompt` and
+    :func:`_build_relationship_prompt`; extraction itself
+    (:meth:`AIEntityExtractor.extract_single_chunk`) renders through them. Every
+    name in :data:`PROMPT_KWARG_NAMES` is rendered by one of the two passes; a
+    prompt input the plan gains that neither renders raises instead of silently
+    missing from every prompt (the ones sent, the MCP instructions, the recipe
+    digest, the prompt budget).
+
+    Args:
+        chunk_kwargs: An :class:`ExtractionPlan`'s chunk kwargs (or
+            ``prompt_inputs``' subset of them).
+        numbered_text: The chunk's numbered sentences (or a placeholder).
+        entity_list: The serialized pass-1 entity list (or a placeholder).
+        max_entity_index: Highest valid entity index (``"N"`` for templates).
+        entity_template: Pass-1 harvest template.
+        relationship_template: Pass-2 harvest template.
+        known_entities: Pass 1's KNOWN ENTITIES block ("" for none, or a
+            placeholder for templates); pass 2 gets no block.
+
+    Returns:
+        ``(entity_prompt, relationship_prompt)``.
+
+    Raises:
+        KeyError: A prompt input is missing from ``chunk_kwargs``.
+        RuntimeError: A prompt input is rendered by neither pass.
+    """
+    return (
+        render_entity_pass(
+            chunk_kwargs,
+            numbered_text=numbered_text,
+            template=entity_template,
+            known_entities=known_entities,
+        ),
+        render_relationship_pass(
+            chunk_kwargs,
+            numbered_text=numbered_text,
+            entity_list=entity_list,
+            max_entity_index=max_entity_index,
+            template=relationship_template,
+        ),
+    )
+
+
+def render_plan_templates(
+    chunk_kwargs: Mapping[str, Any],
+    *,
+    entity_template: str = ENTITY_HARVEST_TEMPLATE,
+    relationship_template: str = RELATIONSHIP_HARVEST_TEMPLATE,
+    known_entities: str = PROMPT_KNOWN_ENTITIES_PLACEHOLDER,
+) -> tuple[str, str]:
+    """Both prompts as reusable templates: the chunk text and the pass-1 entities as placeholders.
+
+    What extraction metrics record and what MCP serves as instructions
+    (:data:`PROMPT_CHUNK_TEXT_PLACEHOLDER`, :data:`PROMPT_PASS1_ENTITIES_PLACEHOLDER`,
+    ``max_entity_index`` ``"N"``). Pass 1's KNOWN ENTITIES slot holds
+    ``known_entities``: :data:`PROMPT_KNOWN_ENTITIES_PLACEHOLDER` for the
+    recorded template, "" where no block is served (MCP).
+    """
+    return render_plan_prompts(
+        chunk_kwargs,
+        numbered_text=PROMPT_CHUNK_TEXT_PLACEHOLDER,
+        entity_list=PROMPT_PASS1_ENTITIES_PLACEHOLDER,
+        max_entity_index="N",
+        entity_template=entity_template,
+        relationship_template=relationship_template,
+        known_entities=known_entities,
+    )
 
 
 async def _filter_entities(
@@ -850,7 +1088,6 @@ async def _filter_entities(
     chunk_content: str,
     filtering_config: Any,
     entity_exclusions: list[ExclusionRule] | None,
-    strict_entity_types: bool,
     valid_entity_type_names: set[str] | None,
     named_referent_types: set[str] | None,
     normalization_rules: dict[str, list[str]] | None,
@@ -859,12 +1096,30 @@ async def _filter_entities(
     adapter: Any | None = None,
     source_id: str | None = None,
     database_name: str | None = None,
+    name_conventions: NameConventions = DEFAULT_NAME_CONVENTIONS,
+    type_vocabulary: TypeVocabulary = FLOOR_TYPE_VOCABULARY,
+    known: KnownEntities | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Apply all entity filters between pass 1 and pass 2.
 
-    Runs evidence validation, exclusion filtering, type rescue, and
-    plausibility filtering in sequence. Each filter narrows the entity
-    list so pass 2 only sees clean, validated entities.
+    Runs evidence validation, the known-entities guards (``known``), exclusion
+    filtering, type rescue, and plausibility filtering in sequence. Each filter narrows the entity
+    list so pass 2 only sees clean, validated entities. The type rescue
+    always runs: every entity leaves typed as one of
+    ``valid_entity_type_names`` (the core types; a probe's own list); one no
+    core type answers to is kept as a ``Concept`` flagged ``unplaced_type``
+    and counted under ``unknown_type`` (``type_rescue``). Keep, flag, never
+    delete (2026-10-07): an entity the plausibility score puts below the bar
+    is kept flagged ``low_plausibility`` when it carries evidence; since
+    2026-10-08 so is an entity its cited sentence does not name
+    (``unevidenced``) and one whose name is an exclusion example
+    (``excluded_name``). Every flag is counted on the source row
+    (``unplaced_type_entities_flagged``, ``plausibility_entities_flagged``,
+    ``entities_unevidenced_kept`` by the evidence filter itself,
+    ``excluded_entities_kept``). The guards (:meth:`KnownEntities.guard`)
+    count what they did (``aliases_crossed_known_dropped``, and
+    ``referents_unevidenced_demoted``: the known names demoted or kept
+    flagged) and record it under ``evidence_stats["known_guard"]``.
 
     Args:
         entities: Raw entities from pass 1.
@@ -872,12 +1127,22 @@ async def _filter_entities(
         chunk_content: Original chunk text for visual content detection.
         filtering_config: Resolved filtering configuration.
         entity_exclusions: Domain-specific exclusion rules.
-        strict_entity_types: Whether strict type enforcement is enabled.
-        valid_entity_type_names: Allowed entity type names.
+        valid_entity_type_names: The types entities leave with (None: the
+            core types).
         named_referent_types: Entity types requiring proper names.
-        normalization_rules: Domain normalization rules for type rescue.
+        normalization_rules: The floor's normalization keywords (the
+            rescue's keyword tiers).
         property_type_mapping: Domain property-type mapping for type rescue.
         filtering_log: FilteringLog instance for tracking removals.
+        adapter: Storage adapter for the evidence filter's quality counters.
+        source_id: Source row identifier for those counters.
+        database_name: Database name for those counters.
+        name_conventions: The domain's naming conventions the evidence
+            filter names entities by.
+        type_vocabulary: The plan's packs, subtypes and aliases the type
+            rescue reads (``HarvestLimits.type_vocabulary``).
+        known: The source's known entities so far, whose guards run right
+            after the evidence filter; None: no guards.
 
     Returns:
         Tuple of (filtered_entities, evidence_stats_dict).
@@ -905,27 +1170,61 @@ async def _filter_entities(
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+            conventions=name_conventions,
         )
         evidence_stats.update(entity_stats)
+
+    # The known-entities guards (spec 2026-10-11 D3): before pass 2 sees a crossed alias.
+    if known is not None:
+        entities, guard_stats = known.guard(
+            entities,
+            sentences,
+            min_word_length=filtering_config.min_significant_word_length,
+        )
+        evidence_stats["known_guard"] = asdict(guard_stats)
+        await _count_flagged(
+            adapter, source_id, database_name,
+            QualityCounter.ALIASES_CROSSED_KNOWN_DROPPED, guard_stats.aliases_crossed,
+        )  # fmt: skip
+        await _count_flagged(
+            adapter, source_id, database_name,
+            QualityCounter.REFERENTS_UNEVIDENCED_DEMOTED,
+            guard_stats.names_demoted + guard_stats.names_flagged,
+        )  # fmt: skip
 
     # Code-level exclusion filter
     if filtering_config.enable_entity_exclusions and entity_exclusions:
         entities, _excl_mapping = filter_excluded_entities(
-            entities, entity_exclusions, filtering_log=filtering_log
+            entities, entity_exclusions, filtering_log=filtering_log, conventions=name_conventions
         )
+        await _count_flagged(
+            adapter, source_id, database_name,
+            QualityCounter.EXCLUDED_ENTITIES_KEPT,
+            sum(pipeline_flag(e.get("properties"), EXCLUDED_NAME_KEY) for e in entities),
+        )  # fmt: skip
 
-    # Type rescue (Phase 6: gated on enable_type_rescue; disabled for unfiltered/minimal)
-    _type_rescue_enabled = getattr(filtering_config, "enable_type_rescue", True)
-    if _type_rescue_enabled and strict_entity_types and valid_entity_type_names:
-        entities, _pass1_rels_unused, _type_mapping, rescue_stats = rescue_invalid_entity_types(
-            entities,
-            [],
-            valid_types=valid_entity_type_names,
-            normalization_rules=normalization_rules or {},
-            property_type_mapping=property_type_mapping or {},
-            filtering_log=filtering_log,
-        )
-        evidence_stats["type_rescue"] = rescue_stats
+    # Type rescue: always (every entity leaves core-typed or is dropped);
+    # ``enable_type_rescue`` (off for unfiltered/minimal) gates only its junk
+    # and absorption tiers.
+    entities, _pass1_rels_unused, _type_mapping, rescue_stats = rescue_invalid_entity_types(
+        entities,
+        [],
+        TypeVocabulary.from_config(
+            type_vocabulary, types=valid_entity_type_names, keywords=normalization_rules
+        ),
+        property_type_mapping=property_type_mapping or {},
+        filtering_log=filtering_log,
+        conventions=name_conventions,
+        salvage=bool(getattr(filtering_config, "enable_type_rescue", True)),
+    )
+    evidence_stats["type_rescue"] = rescue_stats
+    # The flagged entities themselves: no core type (``unknown_type``) or an
+    # unoffered ``Core/subtype`` (``unplaced_subtype``), as the neighbours count.
+    await _count_flagged(
+        adapter, source_id, database_name,
+        QualityCounter.UNPLACED_TYPE_ENTITIES_FLAGGED,
+        sum(pipeline_flag(e.get("properties"), UNPLACED_TYPE_KEY) for e in entities),
+    )  # fmt: skip
 
     # Plausibility filter
     if filtering_config.enable_plausibility_filter:
@@ -948,9 +1247,33 @@ async def _filter_entities(
             threshold=float(_plaus_threshold),
             threshold_non_named=float(_plaus_threshold_non_named),
             filtering_log=filtering_log,
+            conventions=name_conventions,
         )
+        await _count_flagged(
+            adapter, source_id, database_name,
+            QualityCounter.PLAUSIBILITY_ENTITIES_FLAGGED,
+            sum(pipeline_flag(e.get("properties"), LOW_PLAUSIBILITY_KEY) for e in entities),
+        )  # fmt: skip
 
     return entities, evidence_stats
+
+
+async def _count_flagged(
+    adapter: Any | None,
+    source_id: str | None,
+    database_name: str | None,
+    counter: QualityCounter,
+    n: int,
+) -> None:
+    """Add ``n`` flagged entities to the source row's ``counter`` (best effort; no row, no count)."""
+    if n and adapter is not None and source_id is not None:
+        await increment_quality_counter(
+            adapter=adapter,
+            source_id=source_id,
+            database_name=database_name or "default",
+            counter=counter,
+            n=n,
+        )
 
 
 def _record_extraction_metrics(
@@ -1030,6 +1353,7 @@ def _build_extraction_metrics(
     finish_reason: str = "unknown",
     aborted_by_loop: bool = False,
     parser_lines_dropped: int = 0,
+    parser_lines_parsed: int = 0,
 ) -> dict[str, Any]:
     """Build the extraction metrics dict returned to callers.
 
@@ -1102,6 +1426,10 @@ def _build_extraction_metrics(
         # passes. Surfaces as the ``parser_lines_dropped`` quality counter
         # on the source row once the chunk handler aggregates it.
         "parser_lines_dropped": parser_lines_dropped,
+        # The lines the parser read, both passes: an answer in another format
+        # (JSON, a table) parses none and drops none
+        # (``chunk_failures.degenerate_output_check``, audit wave 8).
+        "parser_lines_parsed": parser_lines_parsed,
         "_prompt_data": {
             "system_prompt": system_prompt,
             "extraction_rules_template": extraction_rules_template,
@@ -1116,30 +1444,6 @@ def _build_extraction_metrics(
             if entity_examples or relationship_examples
             else None,
         },
-    }
-
-
-def _safe_type_aliases(domain: Any) -> dict[str, str]:
-    """Return the domain's type_aliases mapping, defensively.
-
-    Skips when the domain doesn't implement the accessor, when the
-    accessor raises, or when the return value isn't a ``dict[str, str]``.
-    Defensive against MagicMock test fixtures that auto-respond to
-    ``hasattr`` with a child MagicMock rather than a real dict.
-    """
-    accessor = getattr(domain, "get_type_aliases", None)
-    if not callable(accessor):
-        return {}
-    try:
-        result = accessor()
-    except Exception:
-        return {}
-    if not isinstance(result, dict):
-        return {}
-    return {
-        str(k): str(v)
-        for k, v in result.items()
-        if isinstance(k, str) and isinstance(v, str) and k and v
     }
 
 
@@ -1223,7 +1527,8 @@ class AIEntityExtractor:
         temperature: float | None = None,
         max_tokens: int | None = None,
         max_entity_count_override: int | None = None,
-        on_stream_progress: Callable[[], None] | None = None,
+        on_stream_progress: Callable[[], Awaitable[None] | None] | None = None,
+        known_entity_count: int = 0,
     ) -> CallLLMResult:
         """Call LLM with streaming and real-time loop detection.
 
@@ -1243,6 +1548,9 @@ class AIEntityExtractor:
                 long-running but healthy LLM call does not look stalled to
                 ``SourceRecovery``. Errors raised by the callback are logged
                 and suppressed.
+            known_entity_count: For the relationship pass, pass 1's entity
+                count: the stream writes only ``R|`` lines, and the detector
+                checks them only against entities it knows of.
 
         Returns:
             :class:`CallLLMResult` with the streamed content, input/output
@@ -1285,6 +1593,7 @@ class AIEntityExtractor:
         detector = _StreamLoopDetector(
             extraction_cfg=self.settings.extraction,
             max_entity_count_override=max_entity_count_override,
+            known_entity_count=known_entity_count,
         )
         (
             content,
@@ -1352,14 +1661,27 @@ class AIEntityExtractor:
         entity_examples: str | None = None,
         entity_exclusions: list[ExclusionRule] | None = None,
         strict_entity_types: bool = False,
+        known_entities: str = "",
     ) -> HarvestPrompts:
         """Render the system prompt and pass-1 prompt exactly as extraction sends them.
 
-        Splits ``chunk_content`` into numbered sentences and formats the
-        entity harvest template with the node templates, exclusions and
-        strict-type instruction. :meth:`extract_single_chunk` sends these
+        Splits ``chunk_content`` into numbered sentences and renders pass 1
+        through :func:`render_entity_pass` (the parameters are the plan's
+        prompt inputs by name). :meth:`extract_single_chunk` sends these
         prompts; callers that obtain the model's answer some other way (the
-        MCP benchmark) render the same bytes with this method.
+        MCP benchmark) render the same bytes with this method. ``known_entities``
+        is the group's KNOWN ENTITIES block ("" for none).
+        """
+        return self._render_entity_harvest(
+            named_values(locals(), _ENTITY_PASS_INPUTS), chunk_content, known_entities
+        )
+
+    def _render_entity_harvest(
+        self, prompt_inputs: Mapping[str, Any], chunk_content: str, known_entities: str = ""
+    ) -> HarvestPrompts:
+        """The system prompt, the chunk's sentences and the pass-1 prompt for ``prompt_inputs``.
+
+        ``known_entities`` is the group's KNOWN ENTITIES block ("" for none).
         """
         from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
             format_numbered_sentences,
@@ -1368,20 +1690,74 @@ class AIEntityExtractor:
 
         sentences = split_into_sentences(chunk_content)
         numbered_text = format_numbered_sentences(sentences)
-        entity_prompt = _build_entity_prompt(
-            template=self.ENTITY_HARVEST_TEMPLATE,
-            numbered_text=numbered_text,
-            node_templates_formatted=node_templates_formatted,
-            entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
-            entity_guidance=entity_guidance,
-            entity_examples=entity_examples,
-        )
         return HarvestPrompts(
             system_prompt=getattr(self, "_system_prompt", self.SYSTEM_PROMPT),
-            entity_prompt=entity_prompt,
+            entity_prompt=render_entity_pass(
+                prompt_inputs,
+                numbered_text=numbered_text,
+                template=self.ENTITY_HARVEST_TEMPLATE,
+                known_entities=known_entities,
+            ),
             sentences=sentences,
             numbered_text=numbered_text,
+        )
+
+    def _render_relationship(
+        self,
+        prompt_inputs: Mapping[str, Any],
+        entities: list[dict[str, Any]],
+        numbered_text: str,
+    ) -> str:
+        """The pass-2 prompt for ``prompt_inputs`` over the filtered pass-1 ``entities``."""
+        return render_relationship_pass(
+            prompt_inputs,
+            numbered_text=numbered_text,
+            entity_list=self._serialize_entities_for_prompt(entities),
+            max_entity_index=len(entities) - 1,
+            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
+        )
+
+    def render_plan_templates(
+        self,
+        chunk_kwargs: Mapping[str, Any],
+        *,
+        known_entities: str = PROMPT_KNOWN_ENTITIES_PLACEHOLDER,
+    ) -> tuple[str, str]:
+        """Both prompts of a plan as placeholder templates (:func:`render_plan_templates`).
+
+        ``known_entities`` fills pass 1's KNOWN ENTITIES slot: the placeholder
+        by default, "" where no block is served.
+        """
+        return render_plan_templates(
+            chunk_kwargs,
+            entity_template=self.ENTITY_HARVEST_TEMPLATE,
+            relationship_template=self.RELATIONSHIP_HARVEST_TEMPLATE,
+            known_entities=known_entities,
+        )
+
+    def render_chunk_prompts(
+        self,
+        chunk_kwargs: Mapping[str, Any],
+        chunk_content: str,
+        entities: list[dict[str, Any]],
+        *,
+        known_entities: str = "",
+    ) -> PlanPrompts:
+        """Both prompts a plan sends for ``chunk_content``, pass 2 over ``entities``.
+
+        The chunk is numbered and the entity list serialized as extraction
+        does, through the same pass renderers :meth:`extract_single_chunk` uses.
+        ``known_entities`` is the group's KNOWN ENTITIES block ("" for none,
+        as group 1 is sent; :meth:`KnownEntities.block` for a later group).
+        """
+        harvest = self._render_entity_harvest(chunk_kwargs, chunk_content, known_entities)
+        return PlanPrompts(
+            system_prompt=harvest.system_prompt,
+            numbered_text=harvest.numbered_text,
+            entity_prompt=harvest.entity_prompt,
+            relationship_prompt=self._render_relationship(
+                chunk_kwargs, entities, harvest.numbered_text
+            ),
         )
 
     def resolve_harvest_limits(
@@ -1391,14 +1767,27 @@ class AIEntityExtractor:
         filtering_mode: str | None = None,
         evidence_validation_mode: str | None = None,
         filtering_config: Any | None = None,
+        relation_vocabulary: RelationVocabulary | dict[str, Any] | None = None,
+        name_conventions: NameConventions | dict[str, Any] | None = None,
+        type_vocabulary: TypeVocabulary | dict[str, Any] | None = None,
     ) -> HarvestLimits:
         """Resolve the filtering config, loop-detector cap and alias length for a chunk.
 
         Same precedence as :meth:`extract_single_chunk`: a pre-resolved
         ``filtering_config`` wins, otherwise the preset from
         ``filtering_mode`` (or settings) with ``domain_extraction_limits`` as
-        overrides; domain limits beat the config for the cap and alias length.
+        overrides (the plan's, a domain's cap and alias length already moved
+        with the slider: ``follow_slider_limits``).
+        ``relation_vocabulary`` (the plan's, a domain's JSON shape) is carried
+        to the pass-2 evidence filter, ``name_conventions`` (the plan's JSON,
+        ``NameConventions.as_dict``) to both evidence filters,
+        ``type_vocabulary`` (the plan's JSON, ``TypeVocabulary.as_config``) to
+        the type rescue.
         """
+        from chaoscypher_core.services.sources.engine.extraction.utils.evidence_validator import (
+            as_name_conventions,
+        )
+
         extraction_cfg = self.settings.extraction
         domain_limits = domain_extraction_limits or {}
         resolved = _resolve_chunk_filtering_config(
@@ -1420,6 +1809,9 @@ class AIEntityExtractor:
                 domain_limits=domain_limits,
                 extraction_cfg=extraction_cfg,
             ),
+            relation_vocabulary=RelationVocabulary.from_config(relation_vocabulary),
+            name_conventions=as_name_conventions(name_conventions),
+            type_vocabulary=TypeVocabulary.from_config(type_vocabulary),
         )
 
     async def parse_entity_harvest(
@@ -1430,7 +1822,6 @@ class AIEntityExtractor:
         chunk_content: str,
         limits: HarvestLimits,
         entity_exclusions: list[ExclusionRule] | None = None,
-        strict_entity_types: bool = False,
         valid_entity_type_names: set[str] | None = None,
         named_referent_types: set[str] | None = None,
         normalization_rules: dict[str, list[str]] | None = None,
@@ -1440,12 +1831,14 @@ class AIEntityExtractor:
         adapter: Any | None = None,
         source_id: str | None = None,
         database_name: str | None = None,
+        known: KnownEntities | None = None,
     ) -> EntityHarvest:
         """Parse pass-1 output and apply the between-pass entity filters.
 
         Parses ``E|``/``P|`` lines, applies properties to their entities, then
-        runs evidence validation, exclusion filtering, type rescue and the
-        plausibility filter. The surviving entities are what pass 2 lists.
+        runs evidence validation, the known-entities guards (``known``; None:
+        none), exclusion filtering, type rescue and the plausibility filter.
+        The surviving entities are what pass 2 lists.
         """
         from chaoscypher_core.services.sources.engine.extraction.utils.filtering_log import (
             FilteringLog,
@@ -1471,7 +1864,6 @@ class AIEntityExtractor:
             chunk_content=chunk_content,
             filtering_config=limits.filtering_config,
             entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
             valid_entity_type_names=valid_entity_type_names,
             named_referent_types=named_referent_types,
             normalization_rules=normalization_rules,
@@ -1480,6 +1872,9 @@ class AIEntityExtractor:
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+            name_conventions=limits.name_conventions,
+            type_vocabulary=limits.type_vocabulary,
+            known=known,
         )
         return EntityHarvest(
             entities=entities,
@@ -1499,14 +1894,8 @@ class AIEntityExtractor:
         relationship_examples: str | None = None,
     ) -> str:
         """Render the pass-2 prompt from the filtered pass-1 entity list."""
-        return _build_relationship_prompt(
-            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
-            numbered_sentences=numbered_text,
-            entity_list=self._serialize_entities_for_prompt(entities),
-            max_entity_index=len(entities) - 1,
-            edge_templates=edge_templates_formatted,
-            relationship_guidance=relationship_guidance,
-            relationship_examples=relationship_examples,
+        return self._render_relationship(
+            named_values(locals(), _RELATIONSHIP_PASS_INPUTS), entities, numbered_text
         )
 
     def render_relationship_prompt_template(
@@ -1523,14 +1912,12 @@ class AIEntityExtractor:
         :data:`PROMPT_PASS1_ENTITIES_PLACEHOLDER`; this is what extraction
         metrics record as ``relationship_instructions``.
         """
-        return _build_relationship_prompt(
-            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
-            numbered_sentences=PROMPT_CHUNK_TEXT_PLACEHOLDER,
+        return render_relationship_pass(
+            named_values(locals(), _RELATIONSHIP_PASS_INPUTS),
+            numbered_text=PROMPT_CHUNK_TEXT_PLACEHOLDER,
             entity_list=PROMPT_PASS1_ENTITIES_PLACEHOLDER,
             max_entity_index="N",
-            edge_templates=edge_templates_formatted,
-            relationship_guidance=relationship_guidance,
-            relationship_examples=relationship_examples,
+            template=self.RELATIONSHIP_HARVEST_TEMPLATE,
         )
 
     async def parse_relationship_harvest(
@@ -1547,13 +1934,19 @@ class AIEntityExtractor:
         adapter: Any | None = None,
         source_id: str | None = None,
         database_name: str | None = None,
+        known: KnownEntities | None = None,
     ) -> tuple[list[dict[str, Any]], int]:
         """Parse pass-2 output, validate structure and apply the evidence filter.
 
         Returns the relationships that survive bounds/self-loop validation and
         the per-chunk evidence filter, and the count of structurally invalid
         ones. ``evidence_stats`` is updated in place. ``extraction_cfg``
-        defaults to ``settings.extraction``.
+        defaults to ``settings.extraction``. ``known`` is the list pass 1's
+        name guard read (None: none): an endpoint whose record name is a known
+        entity is named only by the known-entities name rule (spec D8). The
+        guard ran on ``entities`` before pass 2, so the edge rule reads the
+        record names as the guard left them (a demoted record is a reference
+        and reads today's rungs).
         """
         from chaoscypher_core.services.sources.engine.extraction.utils.evidence_validator import (
             filter_relationships_by_evidence,
@@ -1595,6 +1988,9 @@ class AIEntityExtractor:
                 adapter=adapter,
                 source_id=source_id,
                 database_name=database_name,
+                vocabulary=limits.relation_vocabulary,
+                conventions=limits.name_conventions,
+                known=known,
             )
             evidence_stats.update(rel_stats)
         return relationships, invalid_count
@@ -1610,7 +2006,6 @@ class AIEntityExtractor:
         edge_templates_formatted: str,
         limits: HarvestLimits | None = None,
         entity_exclusions: list[ExclusionRule] | None = None,
-        strict_entity_types: bool = False,
         valid_entity_type_names: set[str] | None = None,
         named_referent_types: set[str] | None = None,
         normalization_rules: dict[str, list[str]] | None = None,
@@ -1636,7 +2031,6 @@ class AIEntityExtractor:
             chunk_content=chunk_content,
             limits=resolved,
             entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
             valid_entity_type_names=valid_entity_type_names,
             named_referent_types=named_referent_types,
             normalization_rules=normalization_rules,
@@ -1668,6 +2062,7 @@ class AIEntityExtractor:
             relationships=relationships,
             invalid_relationship_count=invalid_count,
             parser_lines_dropped=parser_stats["dropped_lines"],
+            parser_lines_parsed=parser_stats.get("parsed_lines", 0),
             evidence_stats=harvest.evidence_stats,
             filtering_log=harvest.filtering_log,
             relationship_prompt=relationship_prompt,
@@ -1692,13 +2087,18 @@ class AIEntityExtractor:
         named_referent_types: set[str] | None = None,
         normalization_rules: dict[str, list[str]] | None = None,
         property_type_mapping: dict[str, dict[str, str]] | None = None,
+        type_vocabulary: dict[str, Any] | None = None,
+        relation_vocabulary: dict[str, Any] | None = None,
+        name_conventions: dict[str, Any] | None = None,
         filtering_config: Any | None = None,
-        on_stream_progress: Callable[[], None] | None = None,
+        on_stream_progress: Callable[[], Awaitable[None] | None] | None = None,
         temperature_override: float | None = None,
         max_tokens_override: int | None = None,
         adapter: Any | None = None,
         source_id: str | None = None,
         database_name: str | None = None,
+        *,
+        known: KnownEntities | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, int, dict[str, Any]]:
         """Extract entities and relationships using 2-pass approach.
 
@@ -1727,10 +2127,11 @@ class AIEntityExtractor:
                 ``settings.extraction.extraction_filtering_mode``.
             entity_exclusions: Domain-specific exclusion rules injected into
                 the prompt. Each string describes a category to skip.
-            strict_entity_types: When True, adds prompt instruction to only
-                use listed entity types and filters non-matching entities.
-            valid_entity_type_names: Set of allowed entity type names for
-                strict filtering. Required when strict_entity_types is True.
+            strict_entity_types: When True, adds the prompt instruction to
+                use only the listed entity types.
+            valid_entity_type_names: The types every entity leaves the
+                per-chunk filters with (the plan's core types; None: the core
+                types). The type rescue always runs.
             evidence_validation_mode: Per-domain override for evidence validation
                 strictness. If None, falls back to ``ExtractionSettings``.
             named_referent_types: Entity types that require proper names.
@@ -1739,6 +2140,15 @@ class AIEntityExtractor:
                 Maps target_type → list of trigger keywords.
             property_type_mapping: Domain property-type mapping for type rescue.
                 Maps invalid_type → {"target_type": ..., "property": ...}.
+            type_vocabulary: The plan's packs, subtypes and aliases
+                (``TypeVocabulary.as_config``) the type rescue reads. None:
+                the core types and the mapping table alone.
+            relation_vocabulary: The domain's ``relation_vocabulary`` (relation
+                -> labels and words) the pass-2 evidence filter's
+                one-endpoint rule reads. None: the labels' own words only.
+            name_conventions: The domain's naming conventions
+                (``NameConventions.as_dict``, the plan's) both evidence
+                filters name entities by. None: the universal ones.
             filtering_config: Pre-resolved FilteringConfig. When None, resolved
                 from ``extraction_filtering_mode`` setting + domain overrides.
             on_stream_progress: Optional best-effort callback fired on every
@@ -1752,34 +2162,44 @@ class AIEntityExtractor:
                 validator for quality counter increments.
             database_name: Database name forwarded to the evidence validator
                 for quality counter increments.
+            known: The source's known entities so far, the one input of
+                all three: its block (:meth:`KnownEntities.block`) is rendered
+                into the pass-1 prompt between the sentences and the output
+                format, its guards run on the pass-1 records
+                (:meth:`KnownEntities.guard`), and the pass-2 evidence filter
+                names an endpoint whose (guarded) record name is a known
+                entity only by the name guard's rules 1 and 2
+                (:meth:`KnownEntities.identified`, spec D8), and one the
+                guard kept but flagged by none. None: none of them.
 
         Returns:
             Tuple of (entities, relationships, input_tokens, output_tokens, extraction_metrics)
 
         """
+        # The plan's prompt inputs, by the parameter names they arrive under: both
+        # passes and the recorded templates render from this one mapping
+        # (render_entity_pass / render_relationship_pass), never input by input.
+        prompt_inputs = named_values(locals(), PROMPT_KWARG_NAMES)
         logger.info("harvest_extraction_started", chunk_length=len(chunk_content))
 
-        prompts = self.render_harvest_prompts(
-            chunk_content,
-            node_templates_formatted,
-            entity_guidance=entity_guidance,
-            entity_examples=entity_examples,
-            entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
-        )
+        known_entities = known.block() if known is not None else ""
+        prompts = self._render_entity_harvest(prompt_inputs, chunk_content, known_entities)
         sentences = prompts.sentences
         numbered_text = prompts.numbered_text
 
         # Resolve filtering and domain limit overrides: the per-chunk
         # entity-count cap and alias length come from the FilteringConfig
-        # (slider-driven) with domain limits as the highest override and
-        # extraction-settings defaults as the final fallback.
+        # (slider-driven) with the plan's domain limits (already moved with
+        # the slider) on top, extraction-settings defaults last.
         extraction_cfg = self.settings.extraction
         limits = self.resolve_harvest_limits(
             domain_extraction_limits=domain_extraction_limits,
             filtering_mode=filtering_mode,
             evidence_validation_mode=evidence_validation_mode,
             filtering_config=filtering_config,
+            relation_vocabulary=relation_vocabulary,
+            name_conventions=name_conventions,
+            type_vocabulary=type_vocabulary,
         )
         filtering_config = limits.filtering_config
         _max_entity_count_override = limits.max_entity_count
@@ -1811,7 +2231,6 @@ class AIEntityExtractor:
             chunk_content=chunk_content,
             limits=limits,
             entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
             valid_entity_type_names=valid_entity_type_names,
             named_referent_types=named_referent_types,
             normalization_rules=normalization_rules,
@@ -1820,6 +2239,7 @@ class AIEntityExtractor:
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+            known=known,
         )
         entities = harvest.entities
         evidence_stats = harvest.evidence_stats
@@ -1841,9 +2261,7 @@ class AIEntityExtractor:
             entities=entities,
             numbered_text=numbered_text,
             sentences=sentences,
-            edge_templates_formatted=edge_templates_formatted,
-            relationship_guidance=relationship_guidance,
-            relationship_examples=relationship_examples,
+            prompt_inputs=prompt_inputs,
             extraction_cfg=extraction_cfg,
             filtering_config=filtering_config,
             evidence_stats=evidence_stats,
@@ -1851,6 +2269,8 @@ class AIEntityExtractor:
             chunk_content=chunk_content,
             _max_entity_count_override=_max_entity_count_override,
             _min_alias_len=_min_alias_len,
+            relation_vocabulary=limits.relation_vocabulary,
+            name_conventions=limits.name_conventions,
             parser_stats=parser_stats,
             on_stream_progress=on_stream_progress,
             temperature_override=temperature_override,
@@ -1858,6 +2278,7 @@ class AIEntityExtractor:
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+            known=known,
         )
         relationships = pass2_result["relationships"]
         pass2_content = pass2_result["content"]
@@ -1893,19 +2314,8 @@ class AIEntityExtractor:
         # Capture the reusable prompt *templates* (placeholders where the
         # per-chunk text / pass-1 entities get injected) for UI display,
         # rather than this chunk's filled-in prompts.
-        entity_prompt_template = _build_entity_prompt(
-            template=self.ENTITY_HARVEST_TEMPLATE,
-            numbered_text=PROMPT_CHUNK_TEXT_PLACEHOLDER,
-            node_templates_formatted=node_templates_formatted,
-            entity_exclusions=entity_exclusions,
-            strict_entity_types=strict_entity_types,
-            entity_guidance=entity_guidance,
-            entity_examples=entity_examples,
-        )
-        relationship_prompt_template = self.render_relationship_prompt_template(
-            edge_templates_formatted,
-            relationship_guidance=relationship_guidance,
-            relationship_examples=relationship_examples,
+        entity_prompt_template, relationship_prompt_template = self.render_plan_templates(
+            prompt_inputs
         )
 
         extraction_metrics = _build_extraction_metrics(
@@ -1932,6 +2342,7 @@ class AIEntityExtractor:
             finish_reason=combined_finish_reason,
             aborted_by_loop=combined_aborted_by_loop,
             parser_lines_dropped=parser_stats["dropped_lines"],
+            parser_lines_parsed=parser_stats.get("parsed_lines", 0),
         )
 
         return entities, relationships, input_tokens, output_tokens, extraction_metrics
@@ -1942,9 +2353,7 @@ class AIEntityExtractor:
         entities: list[dict[str, Any]],
         numbered_text: str,
         sentences: list[str],
-        edge_templates_formatted: str,
-        relationship_guidance: str | None,
-        relationship_examples: str | None,
+        prompt_inputs: Mapping[str, Any],
         extraction_cfg: Any,
         filtering_config: Any,
         evidence_stats: dict[str, Any],
@@ -1952,13 +2361,16 @@ class AIEntityExtractor:
         chunk_content: str,
         _max_entity_count_override: int | None,
         _min_alias_len: int,
+        relation_vocabulary: RelationVocabulary = EMPTY_RELATION_VOCABULARY,
+        name_conventions: NameConventions = DEFAULT_NAME_CONVENTIONS,
         parser_stats: dict[str, int] | None = None,
-        on_stream_progress: Callable[[], None] | None = None,
+        on_stream_progress: Callable[[], Awaitable[None] | None] | None = None,
         temperature_override: float | None = None,
         max_tokens_override: int | None = None,
         adapter: Any | None = None,
         source_id: str | None = None,
         database_name: str | None = None,
+        known: KnownEntities | None = None,
     ) -> dict[str, Any]:
         """Run pass 2: extract relationships using filtered entity list.
 
@@ -1973,9 +2385,7 @@ class AIEntityExtractor:
             entities: Filtered entity list from pass 1.
             numbered_text: Numbered sentences text.
             sentences: Original sentences list for evidence validation.
-            edge_templates_formatted: Formatted edge template descriptions.
-            relationship_guidance: Relationship-specific guidance.
-            relationship_examples: Relationship-specific examples.
+            prompt_inputs: The plan's prompt inputs (pass 2 renders its own).
             extraction_cfg: Extraction settings.
             filtering_config: Resolved filtering configuration.
             evidence_stats: Evidence statistics dict (mutated in place).
@@ -1983,10 +2393,16 @@ class AIEntityExtractor:
             chunk_content: Original chunk text for logging.
             _max_entity_count_override: Domain override for max entity count.
             _min_alias_len: Minimum alias length.
+            relation_vocabulary: The domain's relation vocabulary for the
+                evidence filter.
+            name_conventions: The domain's naming conventions for the
+                evidence filter.
             on_stream_progress: Optional best-effort callback fired on every
                 pass-2 LLM stream chunk. Forwarded to ``call_llm`` so
                 ``last_activity_at`` keeps moving while a long-streaming
                 relationship pass is still emitting tokens.
+            known: The source's known entities so far, the list pass 1's
+                name guard read, for the evidence filter's known endpoints.
 
         Returns:
             Dict with relationships, content, input_tokens, output_tokens,
@@ -2015,13 +2431,7 @@ class AIEntityExtractor:
                 "aborted_by_loop": pass2_aborted,
             }
 
-        relationship_prompt = self.render_relationship_prompt(
-            entities,
-            numbered_text,
-            edge_templates_formatted,
-            relationship_guidance=relationship_guidance,
-            relationship_examples=relationship_examples,
-        )
+        relationship_prompt = self._render_relationship(prompt_inputs, entities, numbered_text)
 
         pass2_result = await self.call_llm(
             relationship_prompt,
@@ -2029,6 +2439,7 @@ class AIEntityExtractor:
             max_tokens=max_tokens_override,
             max_entity_count_override=_max_entity_count_override,
             on_stream_progress=on_stream_progress,
+            known_entity_count=len(entities),
         )
         pass2_content = pass2_result.content
         pass2_input_tokens = pass2_result.input_tokens
@@ -2044,6 +2455,8 @@ class AIEntityExtractor:
                 filtering_config=filtering_config,
                 max_entity_count=_max_entity_count_override or 0,
                 min_alias_length=_min_alias_len,
+                relation_vocabulary=relation_vocabulary,
+                name_conventions=name_conventions,
             ),
             filtering_log=filtering_log,
             evidence_stats=evidence_stats,
@@ -2052,6 +2465,7 @@ class AIEntityExtractor:
             adapter=adapter,
             source_id=source_id,
             database_name=database_name,
+            known=known,
         )
 
         logger.info(
@@ -2079,6 +2493,7 @@ class AIEntityExtractor:
         adapter: Any | None = None,
         source_id: str | None = None,
         database_name: str | None = None,
+        seed: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, Any]:
         """Extract entities and relationships from text chunks.
 
@@ -2095,6 +2510,8 @@ class AIEntityExtractor:
             database_name: Database name for the quality counter update.
                 Defaults to ``"default"`` when *adapter* and *source_id* are
                 provided but this is omitted.
+            seed: Records the KNOWN ENTITIES list starts with (the memory
+                path's graph nodes and speaker); empty for the document path.
 
         Returns:
             Dictionary with entities, relationships, domain info
@@ -2103,71 +2520,35 @@ class AIEntityExtractor:
         if file_info is None:
             file_info = {}
 
-        # Detect domain
-        domain, domain_confidence = detect_domain(chunks, file_info, self.settings)
+        # Detect the packs (or take the forced ones); ``domain`` is the first's object
+        domain, domain_confidence, packs = detect_domain(chunks, file_info, self.settings)
 
         logger.info(
             "domain_detected",
-            domain=domain.name,
+            domain=getattr(domain, "name", "generic"),
+            packs=list(packs),
             confidence=domain_confidence,
             filename=file_info.get("filename", "unknown"),
         )
 
-        # Get domain guidance
-        entity_guidance = domain.get_entity_guidance()
-        relationship_guidance = domain.get_relationship_guidance()
-
-        # Get templates
-        domain_templates = domain.get_templates()
-        node_templates_formatted = format_domain_node_templates(domain_templates)
-        edge_templates_formatted = format_domain_edge_templates(domain_templates)
-
-        # Get examples
-        entity_examples_formatted = ""
-        relationship_examples_formatted = ""
-        if self.settings.llm.extraction_examples_enabled:
-            domain_examples = domain.get_examples()
-            if domain_examples:
-                entity_examples_formatted = format_entity_examples(
-                    domain_examples,
-                    max_chars=self.settings.llm.extraction_examples_max_chars,
-                )
-                relationship_examples_formatted = format_relationship_examples(
-                    domain_examples,
-                    max_chars=self.settings.llm.extraction_examples_max_chars,
-                )
-
-        # Get domain-specific extraction limits (override global settings)
-        domain_extraction_limits = domain.get_extraction_limits()
-        # Preset selector — sibling to the limits dict, never merged into it.
-        domain_filtering_mode: str | None = (
-            domain.get_filtering_mode() if hasattr(domain, "get_filtering_mode") else None
+        # The one extraction plan (shared with the queue planner and the CLI),
+        # from the floor plus the detected packs: templates, guidance, examples,
+        # limits, preset selector and the type-rescue / plausibility inputs. No
+        # source row here, so the preset cascade is the stack's mode, then settings.
+        from chaoscypher_core.services.sources.engine.extraction.domains import (
+            get_domain_registry,
+        )
+        from chaoscypher_core.services.sources.engine.extraction.domains.stack import DomainStack
+        from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+            build_extraction_plan,
         )
 
-        # Get domain-specific entity exclusion rules
-        domain_entity_exclusions = domain.get_entity_exclusions()
-
-        # Get per-domain evidence validation mode (if configured)
-        domain_evidence_mode = (
-            domain.get_evidence_validation_mode()
-            if hasattr(domain, "get_evidence_validation_mode")
-            else None
+        registry = get_domain_registry(
+            self.settings, database_name=file_info.get("database_name", "default")
         )
-
-        # Get domain property_type_mapping and normalization_rules for type rescue
-        domain_normalization_rules = domain.get_normalization_rules()
-        domain_property_type_mapping: dict[str, dict[str, str]] = (
-            domain.get_property_type_mapping()
-            if hasattr(domain, "get_property_type_mapping")
-            else {}
-        )
-
-        # Get domain edge type constraints for semantic validation
-        domain_edge_type_constraints: dict[str, dict[str, list[str]]] = (
-            domain.get_edge_type_constraints()
-            if hasattr(domain, "get_edge_type_constraints")
-            else {}
-        )
+        stack = DomainStack.from_stored(registry, packs)
+        plan = build_extraction_plan(stack, self.settings)
+        chunk_kwargs = plan.chunk_kwargs
 
         # Phase 6 (2026-05-08): get per-domain system-prompt override.
         # When set, temporarily replaces self._system_prompt for all chunk calls
@@ -2183,31 +2564,20 @@ class AIEntityExtractor:
             self._system_prompt = domain_system_prompt_override
             logger.info(
                 "domain_system_prompt_override_applied",
-                domain=domain.name,
+                domain=getattr(domain, "name", "generic"),
                 system_prompt_length=len(domain_system_prompt_override),
             )
 
-        # Get strict entity type enforcement setting
-        domain_strict_types = (
-            domain.get_strict_entity_types()
-            if hasattr(domain, "get_strict_entity_types")
-            else False
-        )
-        domain_valid_type_names: set[str] | None = None
-        if domain_strict_types:
-            domain_valid_type_names = {
-                t["name"] for t in domain_templates.get("node_templates", []) if t.get("name")
-            }
-
-        # Build set of entity types requiring proper names for plausibility filter
-        domain_named_referent_types: set[str] | None = None
-        node_tmpls = domain_templates.get("node_templates", [])
-        named_types = {t["name"] for t in node_tmpls if t.get("requires_named_referent")}
-        if named_types:
-            domain_named_referent_types = named_types
-
         all_entities: list[dict[str, Any]] = []
         all_relationships: list[dict[str, Any]] = []
+
+        # The running list (spec 2026-10-11): each group is shown what the
+        # earlier ones named, and guarded against crossing those names.
+        from chaoscypher_core.services.sources.engine.extraction.utils.known_entities import (
+            KnownEntities,
+        )
+
+        known = KnownEntities.for_plan(chunk_kwargs, self.settings, seed=seed)
 
         for chunk_idx, chunk in enumerate(chunks):
             try:
@@ -2226,22 +2596,17 @@ class AIEntityExtractor:
                     _chunk_metrics,
                 ) = await self.extract_single_chunk(
                     chunk_content=chunk,
-                    node_templates_formatted=node_templates_formatted,
-                    edge_templates_formatted=edge_templates_formatted,
-                    entity_guidance=entity_guidance,
-                    relationship_guidance=relationship_guidance,
-                    entity_examples=entity_examples_formatted or None,
-                    relationship_examples=relationship_examples_formatted or None,
-                    domain_extraction_limits=domain_extraction_limits or None,
-                    filtering_mode=domain_filtering_mode,
-                    entity_exclusions=domain_entity_exclusions or None,
-                    strict_entity_types=domain_strict_types,
-                    valid_entity_type_names=domain_valid_type_names,
-                    evidence_validation_mode=domain_evidence_mode,
-                    named_referent_types=domain_named_referent_types,
-                    normalization_rules=domain_normalization_rules or None,
-                    property_type_mapping=domain_property_type_mapping or None,
+                    **chunk_kwargs,
+                    adapter=adapter,
+                    source_id=source_id,
+                    database_name=database_name,
+                    known=known,
                 )
+                # Folded in here, with the chunk-local edge indices: the offset loop
+                # below rewrites them in place. That loop cannot raise on indices
+                # ``validate_relationships`` checked, so a group added here is one
+                # whose records also reach ``all_entities``.
+                known.add_group(chunk_entities, chunk_relationships)
 
                 chunk_entity_start_idx = len(all_entities)
 
@@ -2296,31 +2661,35 @@ class AIEntityExtractor:
             )
 
         density_stats = calculate_density_stats(chunks, all_entities)
+        logger.info("known_entities_list", **known.stats())
 
         result: dict[str, Any] = {
             "entities": all_entities,
             "relationships": all_relationships,
-            "domain": domain.name,
+            # The packs' label: what a finalize threads as its one-name string
+            # (one pack's label is its name, the floor alone's ``generic``).
+            "domain": packs_label(packs),
             "domain_confidence": domain_confidence,
-            "normalization_rules": domain.get_normalization_rules(),
-            "extraction_limits": domain.get_extraction_limits(),
+            "normalization_rules": chunk_kwargs["normalization_rules"] or {},
+            "extraction_limits": chunk_kwargs["domain_extraction_limits"],
             # Sibling to extraction_limits; the cross-chunk caller passes
             # this directly as the preset selector instead of fishing it
             # out of the overrides dict.
-            "filtering_mode": domain_filtering_mode,
+            "filtering_mode": plan.filtering_mode,
+            # The plan's FilteringConfig: the cross-chunk stages and the
+            # dedup threshold read this one, as on the queue and CLI paths.
+            "filtering_config": plan.filtering_config,
             "density_stats": density_stats,
             # Bubbled up so the cross-chunk filter pass in
             # ``extract_entities_from_groups`` can validate edge types
             # against canonical entities post-dedup.
-            "edge_type_constraints": domain_edge_type_constraints or {},
-            # Phase 5 (2026-05-18): domain-level entity-type aliasing.
-            # Collapsed near-duplicate node templates (e.g. literary's
-            # ``Historical Figure`` → ``Character``) before dedup so name
-            # variants merge correctly and edge-type validation sees the
-            # canonical type. Empty {} when the domain declares no aliases
-            # or when the accessor returns a non-dict (defensive against
-            # mocked test fixtures that haven't stubbed it).
-            "type_aliases": _safe_type_aliases(domain),
+            "edge_type_constraints": plan.edge_type_constraints or {},
+            # The plan's type vocabulary (packs, subtypes, aliases): the
+            # standalone caller rewrites old type names with the same one the
+            # per-chunk rescue read (``type_normalizer.canonicalize_entity_types``).
+            "type_vocabulary": chunk_kwargs["type_vocabulary"],
+            # The running list's size: the groups folded in and the entities named.
+            "known_entities": known.stats(),
         }
 
         return result
@@ -2382,6 +2751,13 @@ def _merge_within_task_relationships(
                     seen_refs.append(cleaned)
         if seen_refs:
             base["sent_ref"] = ", ".join(seen_refs)
+
+        # Keep every cited sentence the merged duplicates carried.
+        if any(r.get("evidence") for r in group):
+            evidence: list[dict[str, Any]] = []
+            for r in group:
+                evidence = merge_evidence(evidence, r.get("evidence"))
+            base["evidence"] = evidence
 
         merged.append(base)
 

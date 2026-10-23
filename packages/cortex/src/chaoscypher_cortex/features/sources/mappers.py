@@ -64,17 +64,26 @@ def enrich_domain_icons(
     sources: list[dict[str, Any]],
     domain_icons: dict[str, str | None],
 ) -> None:
-    """Add extraction_domain_icon to each source dict in-place.
+    """Add extraction_domain_icon and extraction_pack_icons to each source dict in-place.
 
     Args:
         sources: List of source dicts to enrich (modified in-place).
         domain_icons: Mapping of domain name → icon name.
 
     """
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import stored_packs
+
     for source in sources:
         domain = source.get("extraction_domain")
+        packs = stored_packs(source, list_key="extraction_packs", name_key="extraction_domain")
+        if packs:
+            # One icon per pack, in the order the source stores them; the
+            # single-domain field keeps the first pack's (a label has none).
+            source["extraction_pack_icons"] = {p: domain_icons.get(p) for p in packs}
         if domain:
-            source["extraction_domain_icon"] = domain_icons.get(domain)
+            source["extraction_domain_icon"] = domain_icons.get(domain) or (
+                domain_icons.get(packs[0]) if packs else None
+            )
 
 
 def build_domain_fingerprint_map(database_name: str) -> dict[str, str]:
@@ -105,12 +114,21 @@ def enrich_domain_changed(
 ) -> None:
     """Set ``domain_changed_since_extraction`` on each source dict in-place.
 
-    Stale = a stored hash exists AND the domain's live hash exists AND they
-    differ. Missing stored hash or missing live plugin → not stale.
+    Stale = a stored hash exists AND the live hash of the packs the source was
+    extracted with (``extraction_packs``, else its ``extraction_domain`` label;
+    ``stack_content_hash``: one pack's own hash, one over several) exists AND
+    they differ. Missing stored hash or missing live plugin → not stale.
     """
+    from chaoscypher_core.services.sources.engine.extraction.domains.fingerprint import (
+        stack_content_hash,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.packs import stored_packs
+
     for source in sources:
         stored = source.get("domain_content_hash")
-        live = fingerprint_map.get(source.get("extraction_domain") or "")
+        # The packs it was extracted with (``extraction_packs``, else the label).
+        packs = stored_packs(source, list_key="extraction_packs", name_key="extraction_domain")
+        live = stack_content_hash(fingerprint_map, packs) if packs is not None else None
         source["domain_changed_since_extraction"] = bool(stored and live and stored != live)
 
 
@@ -137,35 +155,21 @@ def add_duration_fields(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_quality_config_for_domain(domain: str | None, database_name: str) -> dict[str, Any]:
-    """Load quality_scoring config for a domain.
+    """Load the quality_scoring config of the source's stack (``quality_config_of``).
 
     Args:
-        domain: Domain name to load config for.
+        domain: The source's ``extraction_domain`` (a pack's name or the packs' label).
         database_name: Current database name.
 
     Returns:
         Quality scoring configuration dict, or empty dict if not found.
 
     """
-    if not domain:
-        return {}
+    from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+        quality_config_of,
+    )
 
-    try:
-        from chaoscypher_core.services.sources.engine.extraction.domains import (
-            get_domain_registry,
-        )
-
-        registry = get_domain_registry(database_name=database_name)
-        analyzer = registry.get_domain(domain)
-        if analyzer and hasattr(analyzer, "get_quality_scoring"):
-            return analyzer.get_quality_scoring()  # type: ignore[no-any-return]
-    except Exception as e:
-        logger.warning(
-            "failed_to_load_domain_quality_config",
-            domain=domain,
-            error=str(e),
-        )
-    return {}
+    return quality_config_of(domain, database_name=database_name)
 
 
 def attach_quality_scores(

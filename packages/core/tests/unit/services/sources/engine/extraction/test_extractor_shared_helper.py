@@ -37,7 +37,6 @@ def _fake_settings() -> SimpleNamespace:
             entity_max_description_length=4000,
             entity_deduplication_mode="exact",
             dedup_require_type_compatibility=False,
-            dedup_type_compatibility_map={},
         ),
         extraction=SimpleNamespace(
             semantic_dedup_threshold=0.95,
@@ -170,7 +169,7 @@ async def test_shared_helper_invoked_after_dedup() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_normalization_rules_still_applied_post_dedup() -> None:
-    """Generic 'Item' entities are re-typed via the extraction's rules.
+    """Generic 'Thing' entities are re-typed via the extraction's rules.
 
     Semantics-preservation pin: routing through the shared helper must
     keep the standalone path's normalization outcome identical to the
@@ -181,14 +180,14 @@ async def test_normalization_rules_still_applied_post_dedup() -> None:
         "entities": [
             {
                 "name": "Mailbox",
-                "type": "Item",
-                "description": "A class in the inbox module that handles message routing.",
+                "type": "Thing",
+                "description": "A report on the inbox module that handles message routing.",
             }
         ],
         "relationships": [],
         "domain": "technical",
         "domain_confidence": 0.9,
-        "normalization_rules": {"Class": ["a class", "class that"]},
+        "normalization_rules": {"Work": ["a report", "report that"]},
     }
 
     async def _passthrough_dedup(
@@ -213,5 +212,5 @@ async def test_normalization_rules_still_applied_post_dedup() -> None:
         )
 
     mailbox = next(e for e in result["entities"] if e["name"] == "Mailbox")
-    assert mailbox["type"] == "Class"
-    assert mailbox.get("type_normalized_from") == "Item"
+    assert mailbox["type"] == "Work"
+    assert mailbox.get("type_normalized_from") == "Thing"

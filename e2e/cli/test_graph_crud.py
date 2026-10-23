@@ -17,7 +17,7 @@ def _extract_id(output: str, prefix: str = "ID:") -> str:
 
 
 class TestGraphNodeCrud:
-    """Test chaoscypher graph node create/list/get/delete commands."""
+    """Test chaoscypher graph node create/list commands."""
 
     def _create_template(self, run_cli: Callable, cli_env: dict[str, str], name: str) -> str:
         """Create a template and return its ID."""

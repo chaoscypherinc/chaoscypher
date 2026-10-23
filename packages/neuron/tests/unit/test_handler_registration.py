@@ -223,3 +223,31 @@ async def test_setup_operations_handlers_idempotent(worker_harness: WorkerHarnes
         f"operations-queue op set changed between two setup_operations_handlers calls. "
         f"First: {sorted(after_first)}; second: {sorted(after_second)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_the_chat_handler_is_registered_with_the_contexts_settings(
+    worker_harness: WorkerHarness,
+) -> None:
+    """``setup_llm_handlers`` hands the chat handler ``ctx["settings"]``: what a reload refreshed.
+
+    So a ``graphrag`` change (published by Cortex, ``worker_notify``) reaches the
+    next chat once the reload re-runs this setup.
+    """
+    from unittest.mock import MagicMock, patch
+
+    from chaoscypher_neuron.setup import setup_llm_handlers
+
+    marker = worker_harness.ctx["settings"]
+    with (
+        patch(
+            "chaoscypher_neuron.handlers.chat_completion.register_chat_completion_handler"
+        ) as register,
+        patch(
+            "chaoscypher_core.adapters.embedding.create_embedding_provider",
+            return_value=MagicMock(name="embedding_provider"),
+        ),
+    ):
+        await setup_llm_handlers(worker_harness.ctx)
+
+    assert register.call_args.kwargs["settings"] is marker

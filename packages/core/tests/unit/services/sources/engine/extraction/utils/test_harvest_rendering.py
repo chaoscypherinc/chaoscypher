@@ -17,12 +17,12 @@ import pytest
 
 from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
     AIEntityExtractor,
-    CallLLMResult,
     combine_finish_reasons,
     format_raw_harvest_response,
     replay_harvest_output,
 )
 from chaoscypher_core.settings import EngineSettings, ExtractionSettings
+from chaoscypher_core.testing.extraction_llm import ScriptedExtractionLLM
 
 
 CHUNK = (
@@ -53,21 +53,11 @@ KW: dict[str, Any] = {
 async def _run_llm_path() -> tuple[AIEntityExtractor, list[str], tuple[Any, ...]]:
     """Run extract_single_chunk with canned answers; return prompts it sent."""
     extractor = AIEntityExtractor(settings=EngineSettings())
-    prompts: list[str] = []
-    answers = iter([PASS1, PASS2])
-
-    async def _fake_call_llm(prompt: str, **_: Any) -> CallLLMResult:
-        """Record the prompt and return the next canned answer."""
-        prompts.append(prompt)
-        return CallLLMResult(
-            content=next(answers),
-            input_tokens=10,
-            output_tokens=5,
-            finish_reason="stop",
-            aborted_by_loop=False,
-        )
-
-    extractor.call_llm = _fake_call_llm  # type: ignore[method-assign]
+    llm = ScriptedExtractionLLM(
+        pass1_answers=[PASS1], pass2_answers=[PASS2], input_tokens=10, output_tokens=5
+    )
+    prompts = llm.prompts
+    extractor.call_llm = llm  # type: ignore[method-assign]
     out = await extractor.extract_single_chunk(chunk_content=CHUNK, **KW)
     return extractor, prompts, out
 
@@ -91,7 +81,8 @@ async def test_rendered_prompts_are_the_prompts_extraction_sends() -> None:
         relationship_examples=KW["relationship_examples"],
     )
     assert sent[1] == rel_prompt
-    assert "0: Kutuzov (Character) [aliases: Mikhail Kutuzov]" in rel_prompt
+    # Pass 2 lists each entity by the core type the rescue gave it (Character is a Person).
+    assert "0: Kutuzov (Person) [aliases: Mikhail Kutuzov]" in rel_prompt
     template = extractor.render_relationship_prompt_template(
         KW["edge_templates_formatted"], relationship_examples=KW["relationship_examples"]
     )

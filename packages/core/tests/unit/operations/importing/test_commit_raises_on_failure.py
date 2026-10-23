@@ -19,6 +19,7 @@ async def test_run_commit_raises_on_commit_service_error() -> None:
     service.graph_repository = MagicMock()
     service.source_repository = MagicMock()
     service.search_repository = MagicMock()
+    service.indexing_service = MagicMock()
     service.trigger_service = None
     service.engine_settings = None
 
@@ -64,6 +65,7 @@ async def test_run_commit_still_raises_when_fail_commit_itself_fails() -> None:
     service.source_repository = MagicMock()
     service.source_repository.fail_commit.side_effect = RuntimeError("session is broken")
     service.search_repository = MagicMock()
+    service.indexing_service = MagicMock()
     service.trigger_service = None
     service.engine_settings = None
 

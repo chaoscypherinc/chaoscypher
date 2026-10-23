@@ -7,6 +7,7 @@ Handles chunk extraction job CRUD operations (create, get, update, status transi
 Part of the unified SourceStorageProtocol implementation.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -24,6 +25,7 @@ from chaoscypher_core.adapters.sqlite.models import (
     ChunkExtractionTask,
     SourceRow,
 )
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import pack_columns
 
 
 logger = structlog.get_logger(__name__)
@@ -52,6 +54,8 @@ class SourceExtractionJobsMixin(ExtractionJobQueryBase, SqliteMixinBase):
         detected_domain: str | None = None,
         domain_guidance: str | None = None,
         extraction_config: str | None = None,
+        forced_packs: Sequence[str] | None = None,
+        detected_packs: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new chunk extraction job.
 
@@ -62,16 +66,29 @@ class SourceExtractionJobsMixin(ExtractionJobQueryBase, SqliteMixinBase):
             extraction_depth: Extraction depth ('quick', 'full')
             generate_embeddings: Whether to generate entity embeddings
             parent_task_id: Queue task ID that created this job
-            forced_domain: User-selected domain (e.g., 'technical')
-            detected_domain: Auto-detected domain name
+            forced_domain: The old one-name form of ``forced_packs`` (read when it is None).
+            detected_domain: The old one-name form of ``detected_packs`` (likewise).
             domain_guidance: Domain-specific LLM guidance text
             extraction_config: JSON-encoded per-job extraction config (templates, guidance,
                 examples) stored once instead of duplicated per-chunk
+            forced_packs: The forced packs (``[]`` the floor alone; None when detected).
+            detected_packs: The packs detection proposed (or the forced ones).
 
         Returns:
             Created job as dictionary
         """
         self._ensure_connected()
+
+        choice: dict[str, Any] = {}
+        if forced_packs is not None:
+            choice["forced_packs"] = list(forced_packs)
+        else:
+            choice["forced_domain"] = forced_domain
+        if detected_packs is not None:
+            choice["detected_packs"] = list(detected_packs)
+        else:
+            choice["detected_domain"] = detected_domain
+        domains = pack_columns(choice)
 
         job = ChunkExtractionJob(
             id=job_id,
@@ -80,8 +97,10 @@ class SourceExtractionJobsMixin(ExtractionJobQueryBase, SqliteMixinBase):
             extraction_depth=extraction_depth,
             generate_embeddings=generate_embeddings,
             parent_task_id=parent_task_id,
-            forced_domain=forced_domain,
-            detected_domain=detected_domain,
+            forced_domain=domains["forced_domain"],
+            detected_domain=domains["detected_domain"],
+            forced_packs=domains["forced_packs"],
+            detected_packs=domains["detected_packs"],
             domain_guidance=domain_guidance,
             extraction_config=extraction_config,
             status="pending",

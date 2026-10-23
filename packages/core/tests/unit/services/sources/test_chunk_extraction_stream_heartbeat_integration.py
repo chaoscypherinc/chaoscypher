@@ -20,6 +20,54 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from chaoscypher_core.settings import EngineSettings
+
+
+async def _run_handler(adapter: Any, extractor_cls: type, *, heartbeat_interval: float) -> None:
+    """Run ``_extract_chunk_handler`` for chunk task ``ct-1`` with ``extractor_cls`` as the extractor.
+
+    The engine settings are the real defaults, so every setting the handler
+    reads (known-entities limits included) has a valid value; only the
+    app-settings fields the handler's heartbeat and cost paths read are set.
+    """
+    from chaoscypher_core.operations.extraction import chunk_extraction_service as ces
+
+    settings = MagicMock()
+    settings.source_recovery.stream_heartbeat_min_interval_seconds = heartbeat_interval
+    settings.llm.ai_context_window = 8000
+    settings.llm.token_cost_input_per_million = 0.0
+    settings.llm.token_cost_output_per_million = 0.0
+    settings.llm.chat_provider = "ollama"
+    settings.llm.ollama_extraction_model = "llama3"
+    settings.llm.ollama_chat_model = "llama3"
+    settings.llm.max_tokens_per_source = None
+    settings.llm.max_tokens_per_day = None
+
+    # AIEntityExtractor is imported INSIDE _extract_chunk_handler, so it is
+    # patched at its source module rather than at chunk_extraction_service.
+    with (
+        patch(
+            "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.AIEntityExtractor",
+            extractor_cls,
+        ),
+        patch("chaoscypher_core.app_config.get_settings", return_value=settings),
+        patch(
+            "chaoscypher_core.app_config.engine_factory.build_engine_settings",
+            return_value=EngineSettings(),
+        ),
+    ):
+        service = ces.ChunkExtractionOperationsService(source_repository=adapter)
+        await service._extract_chunk_handler(
+            data={
+                "chunk_task_id": "ct-1",
+                "job_id": "job-1",
+                "database_name": "default",
+                "chunk_content": "",
+                "chunk_index": 0,
+                "small_chunk_ids": ["sc-1"],
+            },
+        )
+
 
 @pytest.mark.asyncio
 async def test_handler_threads_rate_limited_heartbeat_into_extractor(
@@ -33,8 +81,6 @@ async def test_handler_threads_rate_limited_heartbeat_into_extractor(
     rate-limit floor, exactly 3 ``update_source_last_activity`` writes
     should land (t=0, t=0.5, t=1.0 when read against monotonic time).
     """
-    from chaoscypher_core.operations.extraction import chunk_extraction_service as ces
-
     heartbeats: list[datetime] = []
     adapter = MagicMock()
     adapter.update_source_last_activity.side_effect = lambda **kw: heartbeats.append(kw["at_time"])
@@ -75,7 +121,9 @@ async def test_handler_threads_rate_limited_heartbeat_into_extractor(
             # callback 6 times across ~1.2s of wall time.
             for _ in range(6):
                 if on_stream_progress is not None:
-                    on_stream_progress()
+                    beat = on_stream_progress()
+                    if beat is not None:
+                        await beat
                 # Use monotonic-aware sleep that honors the rate-limit floor.
                 await _async_sleep(0.2)
             return ([], [], 5, 3, {"raw_llm_response": ""})
@@ -87,41 +135,7 @@ async def test_handler_threads_rate_limited_heartbeat_into_extractor(
 
         await _asyncio.sleep(seconds)
 
-    # AIEntityExtractor is imported INSIDE _extract_chunk_handler, so we
-    # patch at its source module rather than at chunk_extraction_service.
-    settings = MagicMock()
-    settings.source_recovery.stream_heartbeat_min_interval_seconds = 0.5
-    settings.llm.ai_context_window = 8000
-    settings.llm.token_cost_input_per_million = 0.0
-    settings.llm.token_cost_output_per_million = 0.0
-    settings.llm.chat_provider = "ollama"
-    settings.llm.ollama_extraction_model = "llama3"
-    settings.llm.ollama_chat_model = "llama3"
-    settings.llm.max_tokens_per_source = None
-    settings.llm.max_tokens_per_day = None
-
-    with (
-        patch(
-            "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.AIEntityExtractor",
-            _FakeExtractor,
-        ),
-        patch("chaoscypher_core.app_config.get_settings", return_value=settings),
-        patch(
-            "chaoscypher_core.app_config.engine_factory.build_engine_settings",
-            return_value=MagicMock(),
-        ),
-    ):
-        service = ces.ChunkExtractionOperationsService(source_repository=adapter)
-        await service._extract_chunk_handler(
-            data={
-                "chunk_task_id": "ct-1",
-                "job_id": "job-1",
-                "database_name": "default",
-                "chunk_content": "",
-                "chunk_index": 0,
-                "small_chunk_ids": ["sc-1"],
-            },
-        )
+    await _run_handler(adapter, _FakeExtractor, heartbeat_interval=0.5)
 
     # Expectation: with a 0.5s rate-limit floor and 6 stream events
     # spaced 200ms apart over 1.2s of wall time, the rate-limited
@@ -164,8 +178,6 @@ async def test_handler_does_not_pass_heartbeat_when_source_id_missing(
     pins that guard so a None source_id (test harness path) doesn't
     crash the handler with a confusing TypeError on the heartbeat.
     """
-    from chaoscypher_core.operations.extraction import chunk_extraction_service as ces
-
     adapter = MagicMock()
     adapter.update_source_last_activity = MagicMock()
     adapter.get_extraction_job = MagicMock(
@@ -202,43 +214,13 @@ async def test_handler_does_not_pass_heartbeat_when_source_id_missing(
         ) -> tuple[list, list, int, int, dict]:
             # Even invoking the callback must not crash with source_id=None.
             if on_stream_progress is not None:
-                on_stream_progress()
+                beat = on_stream_progress()
+                if beat is not None:
+                    await beat
             return ([], [], 1, 1, {"raw_llm_response": ""})
 
-    settings = MagicMock()
-    settings.source_recovery.stream_heartbeat_min_interval_seconds = 0.0
-    settings.llm.ai_context_window = 8000
-    settings.llm.token_cost_input_per_million = 0.0
-    settings.llm.token_cost_output_per_million = 0.0
-    settings.llm.chat_provider = "ollama"
-    settings.llm.ollama_extraction_model = "llama3"
-    settings.llm.ollama_chat_model = "llama3"
-    settings.llm.max_tokens_per_source = None
-    settings.llm.max_tokens_per_day = None
-
-    with (
-        patch(
-            "chaoscypher_core.services.sources.engine.extraction.utils.ai_entities.AIEntityExtractor",
-            _FakeExtractor,
-        ),
-        patch("chaoscypher_core.app_config.get_settings", return_value=settings),
-        patch(
-            "chaoscypher_core.app_config.engine_factory.build_engine_settings",
-            return_value=MagicMock(),
-        ),
-    ):
-        service = ces.ChunkExtractionOperationsService(source_repository=adapter)
-        # Should not raise.
-        await service._extract_chunk_handler(
-            data={
-                "chunk_task_id": "ct-1",
-                "job_id": "job-1",
-                "database_name": "default",
-                "chunk_content": "",
-                "chunk_index": 0,
-                "small_chunk_ids": ["sc-1"],
-            },
-        )
+    # Should not raise.
+    await _run_handler(adapter, _FakeExtractor, heartbeat_interval=0.0)
     # Adapter never called update_source_last_activity: the stream heartbeat
     # is gated on `isinstance(source_id, str)` and the post-completion
     # checkpoint is gated on source_id being truthy, so with source_id
@@ -246,3 +228,69 @@ async def test_handler_does_not_pass_heartbeat_when_source_id_missing(
     # made deleting the isinstance gate invisible — one heartbeat fires,
     # one call lands, still green.)
     assert adapter.update_source_last_activity.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_stream_heartbeat_write_runs_off_the_event_loop_thread() -> None:
+    """The stream heartbeat's UPDATE + COMMIT must not run on the loop thread.
+
+    ``update_source_last_activity`` is a blocking SQLite write whose busy
+    handler / retry ladder can park the calling thread for seconds. The
+    neuron worker shares one event loop between the LLM and operations
+    pollers, so the heartbeat must be offloaded with ``asyncio.to_thread``
+    exactly like the post-commit checkpoint in the same handler.
+    """
+    import threading
+
+    loop_thread = threading.get_ident()
+    stream_beat_threads: list[int] = []
+    in_stream = False
+
+    def _record(**_kw: Any) -> None:
+        if in_stream:
+            stream_beat_threads.append(threading.get_ident())
+
+    adapter = MagicMock()
+    adapter.update_source_last_activity.side_effect = _record
+    adapter.get_extraction_job = MagicMock(
+        return_value={
+            "id": "job-1",
+            "status": "running",
+            "source_id": "src-1",
+            "extraction_config": None,
+            "completed_chunks": 0,
+            "failed_chunks": 0,
+            "total_chunks": 1,
+        }
+    )
+    adapter.get_chunk_task = MagicMock(
+        return_value={"id": "ct-1", "job_id": "job-1", "status": "pending", "chunk_index": 0}
+    )
+    adapter.get_chunks_by_ids = MagicMock(return_value=[{"content": "alice meets bob"}])
+    adapter.get_source = MagicMock(return_value={"id": "src-1", "is_paused": False})
+    adapter.get_system_state = MagicMock(return_value=None)
+
+    class _FakeExtractor:
+        def __init__(self, *_a: Any, **_kw: Any) -> None:
+            pass
+
+        async def extract_single_chunk(
+            self, *_a: Any, on_stream_progress=None, **_kw: Any
+        ) -> tuple[list, list, int, int, dict]:
+            nonlocal in_stream
+            in_stream = True
+            try:
+                beat = on_stream_progress()
+                if beat is not None:
+                    await beat
+            finally:
+                in_stream = False
+            return ([], [], 1, 1, {"raw_llm_response": ""})
+
+    await _run_handler(adapter, _FakeExtractor, heartbeat_interval=0.0)
+
+    assert len(stream_beat_threads) == 1
+    assert stream_beat_threads[0] != loop_thread, (
+        "stream heartbeat UPDATE ran on the event-loop thread; it must be "
+        "offloaded with asyncio.to_thread"
+    )

@@ -121,6 +121,10 @@ class CanvasNode(BaseModel):
     label: str | None = None
     position: CanvasNodePosition | None = None
     source_id: str | None = None
+    properties: dict[str, bool] | None = None
+    """The pipeline flags the node carries (``name_identity.PIPELINE_FLAG_KEYS``: each ``True``),
+    for the canvas's "Unresolved" region; absent for a node with none. The minimal
+    projection loads no other property."""
 
 
 class CanvasEdge(BaseModel):
@@ -131,6 +135,11 @@ class CanvasEdge(BaseModel):
     target_node_id: str
     template_id: str | None = None
     label: str | None = None
+    properties: dict[str, bool | str] | None = None
+    """The pipeline flags the edge carries (``name_identity.PIPELINE_EDGE_FLAG_KEYS``: each
+    ``True``) and, beside ``unevidenced``, its ``evidence_reason``; absent for an edge with
+    none. The canvas draws a capped edge thin and an unevidenced one dashed; the minimal
+    projection loads no other property."""
 
 
 class CanvasTemplate(BaseModel):

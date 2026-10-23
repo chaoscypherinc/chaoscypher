@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import structlog
 from click.testing import CliRunner
 
 from chaoscypher_cli.commands.source.delete import delete
@@ -33,6 +34,7 @@ from chaoscypher_cli.commands.source.search import (
     _hydrate_results,
     search,
 )
+from chaoscypher_core.models import ReleasedRows, SourceDeletion
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +806,7 @@ class TestDeleteCommand:
             patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
             patch(_SOURCE_SERVICE) as service_cls,
         ):
-            service_cls.return_value.delete_source.return_value = True
+            service_cls.return_value.delete_source.return_value = SourceDeletion(deleted=True)
             result = runner.invoke(delete, ["if_del0000000001", "--force"])
 
         assert result.exit_code == 0, result.output
@@ -827,7 +829,7 @@ class TestDeleteCommand:
             patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
             patch(_SOURCE_SERVICE) as service_cls,
         ):
-            service_cls.return_value.delete_source.return_value = True
+            service_cls.return_value.delete_source.return_value = SourceDeletion(deleted=True)
             result = runner.invoke(delete, ["if_del0000000001", "--force"])
 
         assert result.exit_code == 0, result.output
@@ -837,11 +839,64 @@ class TestDeleteCommand:
             settings=ctx.settings,
         )
         service_cls.return_value.delete_source.assert_called_once_with(
-            "if_del0000000001",
-            graph_repo=ctx.graph_repository,
-            search_repo=ctx.search_repository,
+            "if_del0000000001", search_repo=ctx.search_repository, leave_out_of_site=True
         )
         ctx.storage_adapter.delete_source.assert_not_called()
+
+    def test_delete_refreshes_what_the_release_rebuilt(self) -> None:
+        """The rebuilt survivors are re-embedded with the CLI's provider (#795)."""
+        runner = CliRunner()
+        ctx = _make_ctx()
+        ctx.storage_adapter.get_source.return_value = self._make_source_record()
+        released = ReleasedRows(stale_node_ids=frozenset({"kept"}))
+
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+            patch(
+                "chaoscypher_core.services.graph.management.release.refresh_after_release_sync"
+            ) as refresh,
+        ):
+            service_cls.return_value.delete_source.return_value = SourceDeletion(
+                deleted=True, released=released
+            )
+            result = runner.invoke(delete, ["if_del0000000001", "--force"])
+
+        assert result.exit_code == 0, result.output
+        ((adapter, database, given), kwargs) = refresh.call_args
+        assert (adapter, database, given) == (ctx.storage_adapter, ctx.database_name, released)
+        assert kwargs["search"] is ctx.search_repository
+        assert kwargs["embedder"].owned is False  # lent: the context keeps its provider
+        assert kwargs["embedder"].build() is ctx.embedding_service
+
+    def test_a_provider_that_cannot_be_built_does_not_fail_a_committed_delete(self) -> None:
+        """A cloud provider with no API key: the delete stands and the command exits 0."""
+        from unittest.mock import PropertyMock
+
+        runner = CliRunner()
+        ctx = _make_ctx()
+        ctx.storage_adapter.get_source.return_value = self._make_source_record()
+        type(ctx).embedding_service = PropertyMock(
+            side_effect=ValueError("OPENAI_API_KEY is not set")
+        )
+        released = ReleasedRows(stale_node_ids=frozenset({"kept"}))
+
+        with (
+            patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
+            patch(_SOURCE_SERVICE) as service_cls,
+            structlog.testing.capture_logs() as captured,
+        ):
+            service_cls.return_value.delete_source.return_value = SourceDeletion(
+                deleted=True, released=released
+            )
+            result = runner.invoke(delete, ["if_del0000000001", "--force"])
+
+        assert result.exit_code == 0, result.output
+        assert "File deleted successfully" in result.output
+        # Read the event from structlog, not the CLI output: where log lines are
+        # rendered depends on the logging setup earlier tests in the worker left.
+        events = [e["event"] for e in captured]
+        assert "released_graph_embedder_unavailable_non_fatal" in events
 
     def test_delete_returning_false_exits_1(self) -> None:
         runner = CliRunner()
@@ -852,7 +907,7 @@ class TestDeleteCommand:
             patch("chaoscypher_cli.commands.source.delete.get_context", return_value=ctx),
             patch(_SOURCE_SERVICE) as service_cls,
         ):
-            service_cls.return_value.delete_source.return_value = False
+            service_cls.return_value.delete_source.return_value = SourceDeletion(deleted=False)
             result = runner.invoke(delete, ["if_del0000000001", "--force"])
 
         assert result.exit_code == 1
@@ -869,7 +924,7 @@ class TestDeleteCommand:
             # Patch Confirm.ask to return True (user said yes)
             patch("chaoscypher_cli.commands.source.delete.Confirm.ask", return_value=True),
         ):
-            service_cls.return_value.delete_source.return_value = True
+            service_cls.return_value.delete_source.return_value = SourceDeletion(deleted=True)
             result = runner.invoke(delete, ["if_del0000000001"])
 
         assert result.exit_code == 0, result.output

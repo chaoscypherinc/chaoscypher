@@ -4,12 +4,21 @@
 """Pydantic DTOs for Sources API."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
-from chaoscypher_core.models import SourceStatus
+from chaoscypher_core.models import AnalysisDepth, SiteStatus, SourceStatus
+from chaoscypher_core.operations.sources.url_import_options import url_upload_options
 from chaoscypher_core.ports.types import FilteringMode
+from chaoscypher_core.services.sources.web import DiscoveryMethod, SiteProgress
+from chaoscypher_cortex.features.sources.packs import PacksFields
 from chaoscypher_cortex.features.sources.progress import SourceProgress, map_status_to_progress
 from chaoscypher_cortex.shared.api.models import PaginationMetadata
 
@@ -78,20 +87,38 @@ class ReExtractRequest(BaseModel):
     filtering_mode: FilteringMode | None = None
 
 
-class UrlImportRequest(BaseModel):
-    """Request model for importing a source from a URL.
+# A per-source degree cap is a positive int at every request edge (URL
+# import, multipart upload, trigger, confirm): the worker silently ignores
+# a non-positive one while ``upload_options`` kept showing it (section-audit
+# 2026-10-12; until then only the confirm request refused it).
+EntityDegreeOverride = Annotated[int, Field(gt=0)]
+
+
+def _http_url(value: str) -> str:
+    """Refuse anything but an http(s) address (the strict SSRF check runs later)."""
+    if not value.startswith(("http://", "https://")):
+        msg = "URL must start with http:// or https://"
+        raise ValueError(msg)
+    return value
+
+
+#: A web address a request names: ``http://`` or ``https://``.
+WebAddress = Annotated[str, AfterValidator(_http_url)]
+
+
+class UrlImportOptions(PacksFields):
+    """The upload options of a URL import: one page (``POST /sources/url``) or a site's every page.
 
     ``enable_vision`` gives URL imports parity with the file-upload
     routes; every upload-time choice is persisted on the source row
-    and surfaced via ``SourceResponse.upload_options``.
+    and surfaced via ``SourceResponse.upload_options``. ``packs`` /
+    ``domain`` come from :class:`PacksFields`.
     """
 
-    url: str
     extract_entities: bool = True
-    analysis_depth: str = "full"
+    analysis_depth: AnalysisDepth = "full"
     enable_normalization: bool | None = None
     enable_vision: bool = True
-    domain: str | None = None
     content_filtering: bool = True
     skip_duplicates: bool = False
     auto_confirm: bool = False
@@ -100,16 +127,35 @@ class UrlImportRequest(BaseModel):
     protect_orphans: bool | None = None
     # Phase 6 (2026-05-08): per-source inverse-relationships toggle and degree cap.
     enable_inverse_relationships: bool | None = None
-    max_entity_degree_override: int | None = None
+    max_entity_degree_override: EntityDegreeOverride | None = None
 
-    @field_validator("url")
-    @classmethod
-    def validate_url(cls, v: str) -> str:
-        """Validate that URL starts with http:// or https://."""
-        if not v.startswith(("http://", "https://")):
-            msg = "URL must start with http:// or https://"
-            raise ValueError(msg)
-        return v
+    def upload_options(self) -> dict[str, Any]:
+        """The ``upload_file`` options the URL import path applies to each page it imports.
+
+        Built by Core's ``url_upload_options``, the mapping the CLI's and the
+        MCP server's site imports share.
+        """
+        return url_upload_options(
+            extract_entities=self.extract_entities,
+            analysis_depth=self.analysis_depth,
+            enable_normalization=self.enable_normalization,
+            enable_vision=self.enable_vision,
+            forced_packs=self.forced_packs(),
+            skip_duplicates=self.skip_duplicates,
+            content_filtering=self.content_filtering,
+            filtering_mode=self.filtering_mode,
+            enable_direction_correction=self.enable_direction_correction,
+            protect_orphans=self.protect_orphans,
+            enable_inverse_relationships=self.enable_inverse_relationships,
+            max_entity_degree_override=self.max_entity_degree_override,
+            auto_confirm=self.auto_confirm,
+        )
+
+
+class UrlImportRequest(UrlImportOptions):
+    """Request model for importing a source from a URL: the address and its upload options."""
+
+    url: WebAddress
 
 
 class UrlImportResponse(BaseModel):
@@ -124,6 +170,105 @@ class UrlImportResponse(BaseModel):
     task_id: str
     url: str
     status: str = "queued"
+
+
+# ================================
+# Site import DTOs (spec 2026-10-22-site-import-design)
+# ================================
+
+
+class SitePreviewRequest(BaseModel):
+    """``POST /sources/sites/previews``: the address to discover."""
+
+    url: WebAddress
+
+
+class SitePageInfo(BaseModel):
+    """One discovered page: its address and, when the method knows it, its title."""
+
+    url: str
+    title: str = ""
+
+
+class SitePreviewResponse(BaseModel):
+    """What a discovery found at an address; nothing is imported.
+
+    ``method`` is how the pages were found (``llms_txt``, ``sitemap``,
+    ``crawl``; ``none`` with no pages when nothing was found). ``capped``
+    says the site has more pages than ``web.site_max_pages``.
+    """
+
+    url: str
+    title: str
+    method: DiscoveryMethod
+    page_count: int
+    pages: list[SitePageInfo]
+    capped: bool
+
+
+class SiteImportRequest(BaseModel):
+    """``POST /sources/sites``: import a site's pages.
+
+    ``exclude`` names discovered pages to leave out (the ones unticked in the
+    dialog's page list); every other page the import's own discovery finds is
+    imported, so a capped preview never drops the rest of the site. The site
+    remembers them (``SiteResponse.excluded_pages``): a refresh keeps them out.
+    ``options`` are the single-URL import's upload options
+    (:class:`UrlImportOptions`), applied to every page under the site rules
+    (no page waits for domain confirmation; ``skip_duplicates`` does not
+    apply to a site's pages).
+    """
+
+    url: WebAddress
+    exclude: list[WebAddress] | None = None
+    options: UrlImportOptions = Field(default_factory=UrlImportOptions)
+
+
+class SiteRefreshRequest(BaseModel):
+    """``POST /sources/sites/{id}/refreshes``: optionally, a new list of pages to leave out.
+
+    ``exclude`` omitted (or no body) keeps the pages the site leaves out; a
+    list replaces them from now on, and an empty list brings every page back.
+    """
+
+    exclude: list[WebAddress] | None = None
+
+
+class SiteResponse(BaseModel):
+    """One imported site with its progress, computed from its pages.
+
+    ``status`` is the import job's state (``queued``, ``importing``,
+    ``refreshing``, ``imported``, ``failed``; ``error_message`` says why a run
+    failed). ``run_in_progress`` says a run is really queued or under way: a
+    run whose worker was killed stays ``importing`` until the worker restarts,
+    but goes stale after the operations timeout, and a refresh or a delete is
+    then allowed. ``page_count`` is how many pages the current discovery
+    listed. ``progress`` counts the pages themselves by status.
+    ``excluded_pages`` are the pages the site leaves out (unticked at import,
+    the list a refresh passed last, and pages deleted from the site), as page
+    addresses with any ``.md`` twin folded; every refresh keeps them out.
+    """
+
+    id: str
+    url: str
+    title: str
+    discovery_method: DiscoveryMethod | None
+    status: SiteStatus
+    run_in_progress: bool
+    page_count: int
+    options: dict[str, Any]
+    error_message: str | None
+    created_at: datetime
+    last_checked_at: datetime | None
+    progress: SiteProgress
+    excluded_pages: list[str]
+
+
+class PaginatedSitesResponse(BaseModel):
+    """``GET /sources/sites``: one page of sites, newest first."""
+
+    data: list[SiteResponse]
+    pagination: PaginationMetadata
 
 
 class SourceUpdate(BaseModel):
@@ -152,7 +297,8 @@ class UploadOptions(BaseModel):
 
     auto_analyze: bool = True
     extraction_depth: str = "full"
-    forced_domain: str | None = None
+    forced_domain: str | None = None  # The first forced pack or 'generic' (one release)
+    forced_packs: list[str] | None = None  # The forced packs; None = detect, [] = the floor alone
     enable_normalization: bool | None = None
     enable_vision: bool = True
     content_filtering: bool = True
@@ -221,6 +367,8 @@ class QualityMetrics(BaseModel):
     # --- AI extraction stage ---
     llm_chunks_truncated: int = 0
     llm_chunks_aborted_by_loop: int = 0
+    llm_chunks_zero_yield: int = 0
+    llm_chunks_rescued_by_fallback: int = 0
     llm_chunks_timed_out: int = 0
     llm_chunks_failed_permanent: int = 0
     parser_lines_dropped: int = 0
@@ -230,15 +378,26 @@ class QualityMetrics(BaseModel):
     # --- Post-extraction stage ---
     dedup_entities_merged: int = 0
     structural_entities_filtered: int = 0
-    orphan_entities_filtered: int = 0
+    orphan_entities_filtered: int = 0  # since 2026-10-07: orphans kept, flagged
+    evidence_less_entities_dropped: int = 0
+    plausibility_entities_flagged: int = 0  # 2026-10-07: kept flagged, not dropped
+    unplaced_type_entities_flagged: int = 0  # 2026-10-07: kept as Concept, flagged
     relationships_dropped_invalid: int = 0
-    relationships_dropped_capped: int = 0
+    relationships_dropped_capped: int = 0  # since 2026-10-07: past a cap, kept flagged
+    # since 2026-10-08: kept flagged (unmatched label + type mismatch), not dropped
     relationships_dropped_type_unmatched: int = 0
+    relationships_unmatched_label_kept: int = 0
+    relationships_type_mismatch_kept: int = 0
     relationships_direction_corrected: int = 0
     relationships_type_fuzzy_matched: int = 0
     relationships_type_fell_through: int = 0
-    evidence_entities_dropped: int = 0
-    evidence_relationships_dropped: int = 0
+    evidence_entities_dropped: int = 0  # since 2026-10-08: no description only
+    entities_unevidenced_kept: int = 0
+    excluded_entities_kept: int = 0
+    aliases_crossed_known_dropped: int = 0  # 2026-10-11: the known-entities alias guard
+    referents_unevidenced_demoted: int = 0  # the known-entities name guard: demoted or flagged
+    evidence_relationships_dropped: int = 0  # since 2026-10-07: invalid endpoints only
+    relationships_unevidenced_kept: int = 0
     aggregator_relationships_dropped: int = 0
 
     # --- Commit stage ---
@@ -312,9 +471,14 @@ class SourceResponse(BaseModel):
     extraction_depth: str | None = None
     extraction_entities_count: int = 0
     extraction_relationships_count: int = 0
-    extraction_domain: str | None = None  # Domain used (e.g., 'technical', 'generic')
+    extraction_domain: str | None = None  # The packs' label ('literary', 'historical+literary')
+    extraction_packs: list[str] | None = None  # The packs extracted with ([] = the floor alone)
     extraction_domain_auto: bool = True  # True if auto-detected, False if user-selected
     extraction_domain_icon: str | None = None  # MUI icon name for the domain
+    extraction_pack_icons: dict[str, str | None] = Field(
+        default_factory=dict,
+        description="Each extraction pack's MUI icon name, by pack (the label shows one per pack).",
+    )
     domain_version: str | None = None  # Plugin version this source extracted under
     domain_changed_since_extraction: bool = False  # Live plugin hash differs from stored
     extraction_started_at: datetime | None = None
@@ -445,7 +609,12 @@ class SourceResponse(BaseModel):
     forced_domain: str | None = Field(
         default=None,
         exclude=True,
-        description="Domain forced at upload time (None means auto-detect).",
+        description="First pack forced at upload time, or 'generic' (None means auto-detect).",
+    )
+    forced_packs: list[str] | None = Field(
+        default=None,
+        exclude=True,
+        description="Packs forced at upload time ([] the floor alone; None means auto-detect).",
     )
     auto_analyze: bool = Field(
         default=True,
@@ -552,6 +721,8 @@ class SourceResponse(BaseModel):
     user_regex_timeout_hits: int = Field(default=0, exclude=True)
     llm_chunks_truncated: int = Field(default=0, exclude=True)
     llm_chunks_aborted_by_loop: int = Field(default=0, exclude=True)
+    llm_chunks_zero_yield: int = Field(default=0, exclude=True)
+    llm_chunks_rescued_by_fallback: int = Field(default=0, exclude=True)
     llm_chunks_timed_out: int = Field(default=0, exclude=True)
     llm_chunks_failed_permanent: int = Field(default=0, exclude=True)
     parser_lines_dropped: int = Field(default=0, exclude=True)
@@ -560,14 +731,24 @@ class SourceResponse(BaseModel):
     dedup_entities_merged: int = Field(default=0, exclude=True)
     structural_entities_filtered: int = Field(default=0, exclude=True)
     orphan_entities_filtered: int = Field(default=0, exclude=True)
+    evidence_less_entities_dropped: int = Field(default=0, exclude=True)
+    plausibility_entities_flagged: int = Field(default=0, exclude=True)
+    unplaced_type_entities_flagged: int = Field(default=0, exclude=True)
     relationships_dropped_invalid: int = Field(default=0, exclude=True)
     relationships_dropped_capped: int = Field(default=0, exclude=True)
     relationships_dropped_type_unmatched: int = Field(default=0, exclude=True)
+    relationships_unmatched_label_kept: int = Field(default=0, exclude=True)
+    relationships_type_mismatch_kept: int = Field(default=0, exclude=True)
     relationships_direction_corrected: int = Field(default=0, exclude=True)
     relationships_type_fuzzy_matched: int = Field(default=0, exclude=True)
     relationships_type_fell_through: int = Field(default=0, exclude=True)
     evidence_entities_dropped: int = Field(default=0, exclude=True)
+    entities_unevidenced_kept: int = Field(default=0, exclude=True)
+    excluded_entities_kept: int = Field(default=0, exclude=True)
+    aliases_crossed_known_dropped: int = Field(default=0, exclude=True)
+    referents_unevidenced_demoted: int = Field(default=0, exclude=True)
     evidence_relationships_dropped: int = Field(default=0, exclude=True)
+    relationships_unevidenced_kept: int = Field(default=0, exclude=True)
     aggregator_relationships_dropped: int = Field(default=0, exclude=True)
     citations_skipped_no_chunk_index: int = Field(default=0, exclude=True)
     citations_skipped_index_not_mapped: int = Field(default=0, exclude=True)
@@ -607,6 +788,7 @@ class SourceResponse(BaseModel):
                 auto_analyze=self.auto_analyze,
                 extraction_depth=self.extraction_depth or "full",
                 forced_domain=self.forced_domain,
+                forced_packs=self.forced_packs,
                 enable_normalization=self.enable_normalization,
                 enable_vision=self.enable_vision,
                 content_filtering=self.content_filtering,
@@ -624,56 +806,11 @@ class SourceResponse(BaseModel):
             # fields. Field order mirrors the pipeline: loader → cleanup
             # → chunking → AI extraction → post-extraction → commit →
             # embedding → search.
+            # Every field from the row column of the same name: one list (the
+            # model's fields), so a new counter needs no third copy here
+            # (test_quality_counter_surface_contract pins the columns to it).
             self.quality_metrics = QualityMetrics(
-                loader_encoding_used=self.loader_encoding_used,
-                loader_warnings_count=self.loader_warnings_count,
-                loader_files_skipped=self.loader_files_skipped,
-                loader_replacement_chars_count=self.loader_replacement_chars_count,
-                loader_pdf_pages_failed=self.loader_pdf_pages_failed,
-                loader_docx_paragraphs_skipped=self.loader_docx_paragraphs_skipped,
-                loader_xlsx_rows_skipped=self.loader_xlsx_rows_skipped,
-                loader_csv_rows_truncated=self.loader_csv_rows_truncated,
-                loader_epub_chapters_skipped=self.loader_epub_chapters_skipped,
-                loader_html_dropped_tags=self.loader_html_dropped_tags,
-                loader_pptx_shapes_skipped=self.loader_pptx_shapes_skipped,
-                cleaner_lines_removed=self.cleaner_lines_removed,
-                cleaner_paragraphs_deduplicated=self.cleaner_paragraphs_deduplicated,
-                cleaner_chars_removed=self.cleaner_chars_removed,
-                cleaner_plugin_load_failures=self.cleaner_plugin_load_failures,
-                ocr_cleaner_skipped_by_predicate=self.ocr_cleaner_skipped_by_predicate,
-                chunks_coalesced_count=self.chunks_coalesced_count,
-                chunker_normalize_drops=self.chunker_normalize_drops,
-                chunker_prestrip_lines_removed=self.chunker_prestrip_lines_removed,
-                chunks_skipped_by_depth=self.chunks_skipped_by_depth,
-                standalone_chunk_failures=self.standalone_chunk_failures,
-                user_regex_timeout_hits=self.user_regex_timeout_hits,
-                llm_chunks_truncated=self.llm_chunks_truncated,
-                llm_chunks_aborted_by_loop=self.llm_chunks_aborted_by_loop,
-                llm_chunks_timed_out=self.llm_chunks_timed_out,
-                llm_chunks_failed_permanent=self.llm_chunks_failed_permanent,
-                parser_lines_dropped=self.parser_lines_dropped,
-                semantic_dedup_fallbacks=self.semantic_dedup_fallbacks,
-                chunks_rerun_total=self.chunks_rerun_total,
-                dedup_entities_merged=self.dedup_entities_merged,
-                structural_entities_filtered=self.structural_entities_filtered,
-                orphan_entities_filtered=self.orphan_entities_filtered,
-                relationships_dropped_invalid=self.relationships_dropped_invalid,
-                relationships_dropped_capped=self.relationships_dropped_capped,
-                relationships_dropped_type_unmatched=self.relationships_dropped_type_unmatched,
-                relationships_direction_corrected=self.relationships_direction_corrected,
-                relationships_type_fuzzy_matched=self.relationships_type_fuzzy_matched,
-                relationships_type_fell_through=self.relationships_type_fell_through,
-                evidence_entities_dropped=self.evidence_entities_dropped,
-                evidence_relationships_dropped=self.evidence_relationships_dropped,
-                aggregator_relationships_dropped=self.aggregator_relationships_dropped,
-                citations_skipped_no_chunk_index=self.citations_skipped_no_chunk_index,
-                citations_skipped_index_not_mapped=self.citations_skipped_index_not_mapped,
-                embedding_chunk_failures=self.embedding_chunk_failures,
-                embedding_dimension_mismatches=self.embedding_dimension_mismatches,
-                vision_pages_truncated=self.vision_pages_truncated,
-                vision_pages_sampled_quick_mode=self.vision_pages_sampled_quick_mode,
-                vector_indexed_at=self.vector_indexed_at,
-                vector_indexing_status=self.vector_indexing_status,
+                **{name: getattr(self, name) for name in QualityMetrics.model_fields}
             )
         # Domain-confirmation gate (Phase 4, 2026-05-28): unpack the persisted
         # proposal blob onto the public detection_* fields. Sole source is the
@@ -721,6 +858,15 @@ class SourceSummaryResponse(BaseModel):
     # Source metadata
     title: str | None = None
     source_type: str | None = None
+    origin_url: str | None = None
+
+    # Site import: the site this page belongs to, and when a refresh first
+    # found it no longer listed (kept until the user removes it);
+    # ``site_left_out`` (the site's pages list only): the site leaves the page
+    # out, so a check for updates does not check it
+    site_id: str | None = None
+    site_gone_at: datetime | None = None
+    site_left_out: bool = False
 
     # Lifecycle status
     status: SourceStatus
@@ -745,9 +891,14 @@ class SourceSummaryResponse(BaseModel):
     extraction_depth: str | None = None
     extraction_entities_count: int = 0
     extraction_relationships_count: int = 0
-    extraction_domain: str | None = None
+    extraction_domain: str | None = None  # The packs' label
+    extraction_packs: list[str] | None = None  # The packs extracted with ([] = the floor alone)
     extraction_domain_auto: bool = True
     extraction_domain_icon: str | None = None
+    extraction_pack_icons: dict[str, str | None] = Field(
+        default_factory=dict,
+        description="Each extraction pack's MUI icon name, by pack (the label shows one per pack).",
+    )
     domain_version: str | None = None  # Plugin version this source extracted under
     domain_changed_since_extraction: bool = False  # Live plugin hash differs from stored
 
@@ -1211,6 +1362,16 @@ class TagResponse(BaseModel):
 # ================================
 
 
+class DomainSubtypeInfo(BaseModel):
+    """One subtype a pack adds to a core type, as the UI shows it."""
+
+    key: str = Field(description="The stored entity_subtype value (e.g. 'military_unit').")
+    name: str = Field(description="The pack's name for it (e.g. 'Military Unit').")
+    of: str = Field(description="The core type it is a kind of (e.g. 'Organization').")
+    icon: str | None = Field(default=None, description="The subtype's own MUI icon name, if any.")
+    color: str | None = Field(default=None, description="The subtype's own hex colour, if any.")
+
+
 class DomainInfo(BaseModel):
     """A single extraction domain's UI-facing info.
 
@@ -1234,6 +1395,17 @@ class DomainInfo(BaseModel):
             "more entities expected per chunk, which scales token budgets. "
             "Defaults to 1.0 and may be overridden per domain."
         )
+    )
+    role: Literal["floor", "pack"] = Field(
+        default="pack",
+        description=(
+            "'floor' for the floor every source extracts with (generic), 'pack' "
+            "for a pack a source may add. Requests name packs only; the floor is implied."
+        ),
+    )
+    subtypes: list[DomainSubtypeInfo] = Field(
+        default_factory=list,
+        description="A pack's subtypes (none for the floor): what a node's entity_subtype shows.",
     )
 
 
@@ -1836,6 +2008,13 @@ class ChunkAttemptSummary(BaseModel):
     llm_response_length: int | None = None
     error_message: str | None = None
     error_type: str | None = None
+    decode_fallback: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "The decoding this try asked with instead of the pinned one "
+            "({seed, temperature, step}); null for a pinned try."
+        ),
+    )
 
 
 class ChunkAttemptDetail(ChunkAttemptSummary):
@@ -1847,6 +2026,7 @@ class ChunkAttemptDetail(ChunkAttemptSummary):
     raw_relationships: list[dict[str, Any]] | None = None
     filtering_log: dict[str, Any] | None = None
     chunk_sentences: list[str] | None = None
+    context_window_available: int | None = None
 
 
 class ChunkAttemptsListResponse(BaseModel):

@@ -261,6 +261,7 @@ class TestSourceScopedTools:
         "get_node_edges",
         "traverse_path",
         "resolve_node",
+        "list_nodes",
         "create_node",
         "update_node",
         "create_edge",
@@ -279,7 +280,7 @@ class TestSourceScopedTools:
 
     def test_count(self):
         """_SOURCE_SCOPED_TOOLS should have exactly 18 entries."""
-        assert len(ToolExecutorService._SOURCE_SCOPED_TOOLS) == 18
+        assert len(ToolExecutorService._SOURCE_SCOPED_TOOLS) == 19
 
     def test_is_a_set(self):
         """_SOURCE_SCOPED_TOOLS should be a set for O(1) lookup."""
@@ -298,6 +299,7 @@ class TestToolHandlerWiring:
         "get_node",
         "get_node_context",
         "resolve_node",
+        "list_nodes",
         "create_node",
         "update_node",
         "delete_node",
@@ -339,7 +341,7 @@ class TestToolHandlerWiring:
 
     def test_handler_count(self, executor):
         """Should have exactly 26 registered tool handlers."""
-        assert len(executor._tool_handlers) == 26
+        assert len(executor._tool_handlers) == 27
 
     def test_all_handlers_are_callable(self, executor):
         """Every registered handler should be callable."""

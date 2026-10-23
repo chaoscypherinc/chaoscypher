@@ -122,7 +122,9 @@ class TemplateToolHandlers:
 
         Uses embedding search to find templates matching the query concept,
         enhanced with keyword matching to catch related templates that may
-        have lower embedding similarity (e.g., "Character" when searching "people").
+        have lower embedding similarity (e.g., "Person" when searching "people";
+        templates are one per core type, a node's pack subtype rides in its
+        ``entity_subtype`` property).
 
         Args:
             query: Concept or description to search for
@@ -179,7 +181,7 @@ class TemplateToolHandlers:
                 break
 
         # Also do keyword search to catch templates with matching names
-        # This helps find "Character" when searching for "character" or related terms
+        # This helps find "Person" when searching for "person" or related terms
         keyword_result = await self._keyword_search_templates(query, template_type, limit=limit)
         if keyword_result.get("success"):
             for kt in keyword_result.get("templates", []):
@@ -212,7 +214,10 @@ class TemplateToolHandlers:
             "hint": "Use template IDs with entity_count > 0 for best results. Templates with 0 entities have no data.",
         }
 
-    # Common synonym groups for template search
+    # Common synonym groups for template search. Templates are one per core type
+    # (Person, Location, ...; spec 2026-10-07 § 6), so a query naming a kind of
+    # person (a character, an author) expands to the Person template; a graph
+    # committed before the restructure still has a "Character" template.
     TEMPLATE_SYNONYMS: ClassVar[dict[str, list[str]]] = {
         "people": ["person", "character", "individual", "human", "figure"],
         "person": ["people", "character", "individual", "human", "figure"],

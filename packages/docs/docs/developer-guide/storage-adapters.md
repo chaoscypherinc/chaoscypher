@@ -181,7 +181,7 @@ with SqliteAdapter("data/databases/default") as adapter:
 | `SourceIndexingMixin` | Embedding storage, extraction gating |
 | `SourceExtractionJobsMixin` | Extraction job management |
 | `SourceChunkTasksMixin` | Chunk task analytics |
-| `SourceDeletionMixin` | Source deletion cascade |
+| `SourceDeletionMixin` | Source deletion: its chunks, citations and other rows, then the source row (the graph is released first) |
 | `SourcesMixin` | Core source CRUD |
 | `StageProgressMixin` | Per-stage pipeline progress tracking |
 | `SourceTagsMixin` | Tag management |

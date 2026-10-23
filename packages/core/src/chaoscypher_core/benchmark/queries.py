@@ -10,6 +10,7 @@ methodology.
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
@@ -26,9 +27,39 @@ Band = Literal[
     "paraphrase",
     "fine_grained_discrimination",
     "out_of_scope",
+    "graph_advantage",
 ]
 
 BAND_VALUES: frozenset[str] = frozenset(get_args(Band))
+
+BOARD_BANDS: tuple[str, ...] = (
+    "factual_single_hop",
+    "multi_hop",
+    "paraphrase",
+    "fine_grained_discrimination",
+    "out_of_scope",
+)
+"""The five bands the chat column and the embedding retrieval board score.
+
+``graph_advantage`` is the leaderboard's retrieval comparison's alone: it is
+asked in every chat run but counted only by that section, so adding it to a
+fixture moves no published chat score.
+"""
+
+KINDS: tuple[str, ...] = (
+    "cross_chapter_join",
+    "relationship_path",
+    "cast_aggregate",
+    "disambiguation",
+)
+"""What a ``graph_advantage`` question needs a graph for.
+
+- ``cross_chapter_join``: the answer joins facts stated in different chapters.
+- ``relationship_path``: how two people are connected, through one or two others.
+- ``cast_aggregate``: which people share a property or scene.
+- ``disambiguation``: two people or places the text keeps apart by a shared
+  name or title.
+"""
 
 
 @dataclass(frozen=True)
@@ -51,6 +82,37 @@ class LabeledQuery:
             famous wrong year, the tempting wrong join); the chat probes fail
             an answer that contains any of them as a whole phrase.
         expect_refusal: True only for out_of_scope queries.
+        answerable: False when the fixture audit found the retrieved context
+            cannot answer the question (chat scorer v4); the chat probes then
+            leave it out of verdicts and totals, since no chat model could do
+            better than guess. Only an in-scope query may be flagged, and
+            never a ``graph_advantage`` one (a rung's miss is the measurement).
+        kind: On the ``graph_advantage`` band, one of :data:`KINDS`; None
+            elsewhere.
+        caveats: Details the question takes for granted that the text does not
+            state (the host's name, a first name, 'widowed'). A model that
+            gives the answer and honestly notes one of these is missing has
+            not declined; the chat probes do not read a sentence naming a
+            caveat as a decline (2026-10-03 audit of the real answers).
+        evidence: Phrases that carry the asked fact in the text ("next heir").
+            When set, an answer counts only if its own retrieved context holds
+            one of them: a model that names the right people from memory when
+            the passage was never retrieved has not answered from the context
+            (2026-10-03 full pass, q032).
+        alias_evidence: Per alias of an answer term, phrases its context must hold
+            for that alias to count as grounded ("Andrew" only where the context
+            says "the wife of Prince Andrew" or "appointed Prince Andrew as his
+            aide-de-camp"): a name the context never ties to the asked person is
+            from memory (q029, 2026-10-03 full pass).
+        roles: Person-to-role bindings for "which one is which" questions: a
+            list of ``{"person": [aliases], "roles": [terms]}``. Each role term
+            in the answer must follow, nearest, a person who holds it (a term
+            may be listed for several people), and every person must get one
+            of their roles; swapped or missing capacities fail.
+        candidate: True while a ``graph_advantage`` question awaits the keep
+            rule (``internal/benchmarks/tools/retrieval_mode_check.py
+            --candidates``: kept when any rung retrieves its answer terms,
+            dropped only when none does). Scoring ignores it.
     """
 
     id: str
@@ -68,6 +130,18 @@ class LabeledQuery:
     answer_terms: list[str | tuple[str, ...]] = field(default_factory=list)
     # Chat probes: wrong facts the answer must not state.
     must_not_contain: list[str] = field(default_factory=list)
+    # Chat probes (scorer v4): the fixture audit's verdict on the retrieved context.
+    answerable: bool = True
+    # The retrieval comparison's band: what the question needs a graph for,
+    # and whether it still awaits the keep rule.
+    kind: str | None = None
+    candidate: bool = False
+    # Chat probes: question premises the text does not state (see the docstring).
+    caveats: list[str] = field(default_factory=list)
+    # Chat probes (2026-10-03 full pass): where the fact lives, and who holds which role.
+    evidence: list[str] = field(default_factory=list)
+    alias_evidence: dict[str, list[str]] = field(default_factory=dict)
+    roles: list[dict[str, list[str]]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -77,10 +151,16 @@ class LabeledQuerySet:
     Attributes:
         version: Surfaces on every result row alongside dataset_version.
         queries: Ordered list of labeled queries.
+        sha256: The sha256 of the file's bytes as :func:`load_queries` parsed
+            them, so the content a row records is the content that asked and
+            scored it (audit wave 4: the hash was taken from the path when the
+            run started, a second read that a mid-sweep edit could slip
+            between). None for a set built in code.
     """
 
     version: str
     queries: list[LabeledQuery]
+    sha256: str | None = None
 
 
 def _parse_answer_terms(raw: list[Any], path: Path, i: int) -> list[str | tuple[str, ...]]:
@@ -113,14 +193,43 @@ def _parse_answer_terms(raw: list[Any], path: Path, i: int) -> list[str | tuple[
     return terms
 
 
-def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912 - YAML parser walks fields by hand for clear errors
+def _parse_kind(
+    entry: dict[str, Any], band: str, *, answerable: bool, path: Path, i: int
+) -> str | None:
+    """The ``graph_advantage`` band's ``kind``; None on every other band.
+
+    Raises:
+        ValueError: When the band has no kind or an unknown one, when another
+            band carries a kind, or when a band question is flagged
+            ``answerable: false`` (a rung's miss is what the band measures).
+    """
+    kind = entry.get("kind")
+    if band != "graph_advantage":
+        if kind is not None:
+            msg = f"{path}: queries[{i}] kind is only for the graph_advantage band"
+            raise ValueError(msg)
+        return None
+    if kind not in KINDS:
+        msg = (
+            f"{path}: queries[{i}] graph_advantage needs kind, one of {', '.join(KINDS)}"
+            f" (got {kind!r})"
+        )
+        raise ValueError(msg)
+    if not answerable:
+        msg = f"{path}: queries[{i}] answerable: false is not allowed on graph_advantage"
+        raise ValueError(msg)
+    return str(kind)
+
+
+def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912, PLR0915 - YAML parser walks fields by hand for clear errors
     """Parse a queries.yaml file.
 
     Raises:
         ValueError: On any structural or semantic violation.
         TypeError: When the top level is not a YAML mapping.
     """
-    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = path.read_bytes()
+    raw = yaml.safe_load(data.decode("utf-8"))
     if not isinstance(raw, dict):
         msg = f"{path}: queries.yaml must be a YAML mapping"
         raise TypeError(msg)
@@ -153,8 +262,23 @@ def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912 - YAML p
         decoy_entities = [str(x) for x in entry.get("decoy_entities") or []]
         answer_terms = _parse_answer_terms(entry.get("answer_terms") or [], path, i)
         must_not = [str(x) for x in entry.get("must_not_contain") or []]
+        answerable = bool(entry.get("answerable", True))
+        kind = _parse_kind(entry, band, answerable=answerable, path=path, i=i)
+        candidate = bool(entry.get("candidate", False))
+        caveats = [str(x) for x in entry.get("caveats") or []]
+        evidence = [str(x) for x in entry.get("evidence") or []]
+        alias_evidence = {
+            str(k): [str(v) for v in vs] for k, vs in (entry.get("alias_evidence") or {}).items()
+        }
+        roles = [
+            {k: [str(v) for v in (r.get(k) or [])] for k in ("person", "roles")}
+            for r in entry.get("roles") or []
+        ]
 
         if band == "out_of_scope":
+            if not answerable:
+                msg = f"{path}: queries[{i}] answerable: false is only for in-scope queries"
+                raise ValueError(msg)
             if gold_entities:
                 msg = f"{path}: queries[{i}] out_of_scope must not set gold_entities"
                 raise ValueError(msg)
@@ -187,10 +311,27 @@ def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912 - YAML p
                 decoy_entities=decoy_entities,
                 answer_terms=answer_terms,
                 must_not_contain=must_not,
+                answerable=answerable,
+                kind=kind,
+                candidate=candidate,
+                caveats=caveats,
+                evidence=evidence,
+                alias_evidence=alias_evidence,
+                roles=roles,
             )
         )
 
-    return LabeledQuerySet(version=str(raw["version"]), queries=parsed)
+    return LabeledQuerySet(
+        version=str(raw["version"]), queries=parsed, sha256=hashlib.sha256(data).hexdigest()
+    )
 
 
-__all__ = ["BAND_VALUES", "Band", "LabeledQuery", "LabeledQuerySet", "load_queries"]
+__all__ = [
+    "BAND_VALUES",
+    "BOARD_BANDS",
+    "KINDS",
+    "Band",
+    "LabeledQuery",
+    "LabeledQuerySet",
+    "load_queries",
+]

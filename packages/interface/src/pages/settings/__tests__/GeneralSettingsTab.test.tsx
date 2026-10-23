@@ -32,6 +32,7 @@ vi.mock('../../../services/api/tls', () => ({
 
 vi.mock('../ImportExportSection', () => ({ default: () => <div data-testid="import-export" /> }));
 vi.mock('../NetworkAccessAccordion', () => ({ default: () => <div data-testid="network-access" /> }));
+vi.mock('../CacheAccordion', () => ({ default: () => <div data-testid="cache-accordion" /> }));
 // Stub the account/API-keys accordions: they have their own heavy wiring
 // (auth context, API-keys query). These stubs capture the autoFocus prop so we
 // can assert the focusSection → autoFocus deep-link plumbing.
@@ -172,6 +173,13 @@ describe('GeneralSettingsTab — Account / API keys sections', () => {
     expect(precedes(account, apiKeys)).toBe(true);
     expect(precedes(apiKeys, importExport)).toBe(true);
     expect(precedes(importExport, network)).toBe(true);
+  });
+
+  it('renders the Cache section right after Network access', () => {
+    renderTab();
+    expect(
+      precedes(screen.getByTestId('network-access'), screen.getByTestId('cache-accordion')),
+    ).toBe(true);
   });
 
   it('does not auto-focus either section when no focusSection is given', () => {

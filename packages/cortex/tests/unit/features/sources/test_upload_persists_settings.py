@@ -62,7 +62,7 @@ async def test_upload_single_forwards_all_upload_settings() -> None:
         extract_entities=False,
         analysis_depth="full",
         enable_normalization=False,
-        forced_domain=None,
+        forced_packs=None,
         skip_duplicates=False,
         enable_vision=False,
         content_filtering=False,

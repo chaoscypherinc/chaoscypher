@@ -88,6 +88,7 @@ from chaoscypher_cortex.features.settings.models import (
 from chaoscypher_cortex.features.settings.service import SettingsService
 from chaoscypher_cortex.shared.api.errors import (
     raise_if_not_found,
+    read_capped_upload,
     resource_not_found_error,
     validation_error,
 )
@@ -193,8 +194,9 @@ async def update_settings(
     - Only affects system workflows (not user-created workflows)
 
     **Hot-Reload:**
-    - When LLM settings change, workers are notified via Valkey pub/sub
-    - Workers reload their LLM providers without requiring restart
+    - When a section the workers read changes (``llm``, ``search``,
+      ``embedding``, ``cache``, ``graphrag``), workers are notified via Valkey
+      pub/sub and reload their providers and handlers without a restart
 
     **Warnings:**
     - When vector_dimensions changes, returns a warning about orphaned embeddings
@@ -222,9 +224,10 @@ async def update_settings(
     # Detect warnings (e.g., dimension changes with existing data)
     warnings = settings_service.get_update_warnings(old_settings, updated)
 
-    # Notify workers if LLM, search, or embedding settings changed
-    if "llm" in update_dict or "search" in update_dict or "embedding" in update_dict:
-        await settings_service.notify_workers_llm_settings_changed()
+    # Notify the workers when a section they read changed (llm, search,
+    # embedding, cache, graphrag: worker_notify.WORKER_SETTINGS_SECTIONS), so a
+    # running chat sees e.g. graphrag.include_unevidenced_edges on its next request.
+    await settings_service.notify_workers_of_sections(update_dict.keys())
 
     # Invalidate Cortex singletons if embedding/search settings changed
     if "embedding" in update_dict or "search" in update_dict:
@@ -941,11 +944,14 @@ async def cleanup_orphaned_graph_items(
 
     **Removes:**
     - Edges pointing to non-existent nodes
-    - Nodes with source_id pointing to non-existent sources
-    - Templates with source_id pointing to non-existent sources
+    - Nodes with source_id pointing to non-existent sources that no
+      source attests (no source membership)
+    - Unused templates with source_id pointing to non-existent sources
 
     **Preserves:**
     - Nodes/edges with source_id=NULL (intentionally unlinked)
+    - Nodes another source still attests (merged across sources)
+    - Templates a node or edge still uses
     - System templates
 
     **Returns:**
@@ -1186,24 +1192,8 @@ async def enable_custom_tls(
 ) -> TLSEnableResponse:
     """Upload custom cert and key. Admin only."""
     max_size = settings.batching.tls_cert_max_size
-    cert_pem = await cert_file.read(max_size + 1)
-    if len(cert_pem) > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=ErrorDetail(
-                code="PAYLOAD_TOO_LARGE",
-                message=f"Certificate file exceeds {max_size // 1024 // 1024}MB limit",
-            ).model_dump(),
-        )
-    key_pem = await key_file.read(max_size + 1)
-    if len(key_pem) > max_size:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=ErrorDetail(
-                code="PAYLOAD_TOO_LARGE",
-                message=f"Key file exceeds {max_size // 1024 // 1024}MB limit",
-            ).model_dump(),
-        )
+    cert_pem = await read_capped_upload(cert_file, max_size, "Certificate file")
+    key_pem = await read_capped_upload(key_file, max_size, "Key file")
 
     await service.enable_custom(cert_pem, key_pem)
     return TLSEnableResponse(status="enabled", mode="custom")

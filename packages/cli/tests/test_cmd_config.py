@@ -270,6 +270,30 @@ def test_reset_force_recreates_defaults(isolated_settings) -> None:
     assert get_result.output.strip().endswith("30")
 
 
+@pytest.mark.parametrize("answer", ["n\n", "\n"])
+def test_reset_declined_keeps_settings(isolated_settings, answer: str) -> None:
+    """Without --force, settings.yaml survives anything but an explicit yes."""
+    from chaoscypher_core.app_config import get_config_manager
+
+    get_config_manager().update_settings({"lexicon": {"timeout": 99}})
+
+    result = CliRunner().invoke(config, ["reset"], input=answer)
+    assert result.exit_code == 0, result.output
+    assert "Cancelled" in result.output
+    assert get_config_manager().load_settings().lexicon.timeout == 99
+
+
+def test_reset_confirmed_restores_defaults(isolated_settings) -> None:
+    """The prompt's yes path performs the reset."""
+    from chaoscypher_core.app_config import get_config_manager
+
+    get_config_manager().update_settings({"lexicon": {"timeout": 99}})
+
+    result = CliRunner().invoke(config, ["reset"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert get_config_manager().load_settings().lexicon.timeout == 30
+
+
 # ---------------------------------------------------------------------------
 # edit
 # ---------------------------------------------------------------------------

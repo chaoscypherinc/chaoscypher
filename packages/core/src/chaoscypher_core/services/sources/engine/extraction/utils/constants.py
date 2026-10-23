@@ -24,3 +24,7 @@ LOOP_MAX_OUT_OF_BOUNDS: int = _DEFAULTS.loop_max_out_of_bounds
 # Must be high enough to avoid false positives on dense entities
 # (e.g., a major character with 8+ relationships of the same type).
 LOOP_MAX_SOURCE_TYPE_REPEAT: int = _DEFAULTS.loop_max_source_type_repeat
+
+# The type the line parser gives an entity line whose type column is empty: a placeholder,
+# never a type a merge keeps over a stated one (``EntityProcessor.merge_entities``).
+UNKNOWN_ENTITY_TYPE: str = "UNKNOWN"

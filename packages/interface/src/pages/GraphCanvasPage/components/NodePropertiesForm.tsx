@@ -40,6 +40,7 @@ import { SYSTEM_PROPERTY_KEYS } from '../../../utils/propertyKeys';
 import PropertyFieldRenderer from './PropertyFieldRenderer';
 import ProvenanceSection from './ProvenanceSection';
 import ConnectedNodesList from './ConnectedNodesList';
+import { entitySubtype, typeLabel } from '../../../utils/entityTypes';
 
 interface NodePropertiesFormProps {
   /** The selected node ID. */
@@ -257,7 +258,7 @@ const NodePropertiesForm: React.FC<NodePropertiesFormProps> = ({
         </IconButton>
       </Box>
       <Typography variant="caption" sx={{ display: 'block' }}>
-        Template: {template?.name || selectedNodeData.templateId?.split('/').pop() || 'None'}
+        Template: {typeLabel(template?.name || selectedNodeData.templateId?.split('/').pop() || 'None', entitySubtype(selectedNodeData.content))}
       </Typography>
       {selectedNodeData.createdAt && (
         <Typography variant="caption" sx={{ display: 'block' }}>

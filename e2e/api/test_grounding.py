@@ -11,7 +11,7 @@ class TestGrounding:
 
     def test_list_nodes(self, client: httpx.Client) -> None:
         """Grounding list nodes returns the canonical paginated envelope."""
-        resp = client.get("/api/v1/graph/grounding/nodes", params={"limit": 10})
+        resp = client.get("/api/v1/graph/grounding/nodes", params={"page_size": 10})
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data["data"], list)
@@ -21,23 +21,27 @@ class TestGrounding:
         """Grounding list nodes supports text search (returns envelope)."""
         resp = client.get(
             "/api/v1/graph/grounding/nodes",
-            params={"q": "alice", "limit": 10},
+            params={"q": "alice", "page_size": 10},
         )
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data["data"], list)
 
     def test_list_nodes_with_pagination(self, client: httpx.Client) -> None:
-        """Grounding list nodes supports skip/limit pagination."""
+        """Grounding list nodes honours page/page_size (the canonical envelope)."""
         resp = client.get(
             "/api/v1/graph/grounding/nodes",
-            params={"limit": 5, "skip": 0},
+            params={"page": 1, "page_size": 5},
         )
         assert resp.status_code == 200
+        data = resp.json()
+        assert data["pagination"]["page"] == 1
+        assert data["pagination"]["page_size"] == 5
+        assert len(data["data"]) <= 5
 
     def test_list_edges(self, client: httpx.Client) -> None:
         """Grounding list edges returns edges response."""
-        resp = client.get("/api/v1/graph/grounding/edges", params={"limit": 10})
+        resp = client.get("/api/v1/graph/grounding/edges", params={"page_size": 10})
         assert resp.status_code == 200
         # GroundingEdgeListResponse is {data: [...], pagination: {...}}
         data = resp.json()

@@ -894,22 +894,13 @@ class TestGetQualityConfig:
         assert result == {}
 
     def test_domain_found_returns_config(self) -> None:
+        """The source's stack: the floor's core-type scores, the pack's subtype scores."""
         from chaoscypher_cli.commands.quality.utils import get_quality_config
 
-        mock_analyzer = MagicMock()
-        mock_analyzer.get_quality_scoring.return_value = {"threshold": 0.5}
+        result = get_quality_config("literary", "default")
 
-        mock_registry = MagicMock()
-        mock_registry.get_domain.return_value = mock_analyzer
-
-        with patch(
-            "chaoscypher_core.services.sources.engine.extraction.domains.get_domain_registry",
-            return_value=mock_registry,
-        ):
-            result = get_quality_config("technical", "testdb")
-
-        assert result == {"threshold": 0.5}
-        mock_registry.get_domain.assert_called_once_with("technical")
+        assert result["entity_scores"]["Person"] == 25
+        assert "character" in result["subtype_scores"]
 
     def test_domain_not_found_returns_empty_dict(self) -> None:
         from chaoscypher_cli.commands.quality.utils import get_quality_config

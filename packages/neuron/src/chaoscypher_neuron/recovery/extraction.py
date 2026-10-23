@@ -239,7 +239,7 @@ async def requeue_extraction_task(
             "queue_task_id": None,
             "started_at": None,
             "error_message": None,
-            "error_type": None,
+            "error_type": "interrupted",  # not a failed try: the decoding ladder stays on its rung
             "retry_count": task.get("retry_count", 0) + 1,
             "hierarchical_group_id": group["id"],
         },

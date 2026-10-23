@@ -161,6 +161,8 @@ curl -X POST http://localhost:8080/api/v1/sources/url \
 
 The system fetches the page, extracts clean text content, and processes it like any other source. URLs must be HTTP/HTTPS and the extracted content must be at least 50 characters.
 
+To import every page of a documentation site at once, see [Import a Docs Site](site-import.md).
+
 ### Supported File Types
 
 | Category | Formats |
@@ -191,7 +193,7 @@ Archives are automatically extracted and the system detects the documentation fo
 
 When `enable_vision` is enabled during upload, images embedded in PDFs and standalone image files are processed with the configured vision model. The vision model generates textual descriptions of visual content — diagrams, charts, photographs, and other images — which are included in the document chunks. This improves search and RAG quality by making visual content discoverable through text queries.
 
-Vision processing is optional and requires a vision model to be configured in **Settings** > **Models**. For sources processed with vision enabled, an image gallery is available on the source detail overview page, showing all extracted images alongside their generated descriptions.
+Vision processing is optional and requires a vision model to be configured in **Settings** > **Models**. For sources processed with vision enabled, the page images are shown on the source detail **Chunks** tab (a per-chunk thumbnail strip and a page-images section), each alongside its generated description.
 
 The choice you make at upload time is persisted on the source row, so re-extract and recovery honor it without you having to re-pass the flag.
 
@@ -251,15 +253,15 @@ Runs automatically after upload. The document is chunked into segments and each 
 
 After indexing, the source is searchable via RAG — you can chat about it and search it immediately, without waiting for extraction.
 
-### Confirm the Extraction Domain
+### Confirm the Extraction Packs
 
-By default, extraction doesn't start until you confirm the auto-detected [extraction domain](domains.md). After indexing, an auto-domain source parks at `awaiting_confirmation` (phase `awaiting_input`) — it's already searchable via RAG while it waits.
+By default, extraction doesn't start until you confirm the packs detection proposed (see [extraction domains](domains.md)): every source extracts with the floor — the core entity types and relationships — plus the packs you keep. After indexing, an auto-detected source parks at `awaiting_confirmation` (phase `awaiting_input`) — it's already searchable via RAG while it waits.
 
-- **Web UI** — a confirmation dialog shows the detected domain and its ranking; confirm it (or pick a different domain) to start extraction.
+- **Web UI** — a confirmation dialog shows the proposed packs as chips, pre-selected; add or remove packs (no chip is the floor alone) and confirm to start extraction. Later, **Change packs…** in the source page's actions menu re-extracts the source under other packs.
 - **CLI** — `chaoscypher source add` prompts interactively ("Confirm extraction domain") when run in a terminal. Non-interactive or quiet runs park the source instead; confirm it later with `chaoscypher source confirm <SOURCE_ID>`, or pass `--no-confirm` to accept the auto-detected domain and skip the gate.
 - **API** — confirm a parked source with `POST /api/v1/sources/{source_id}/confirmation`, or bypass the gate at upload time with the `auto_confirm=true` form field (default `false`).
 
-Forcing a domain at upload (the `domain` field / `--domain` flag) skips the gate entirely — there is nothing to confirm.
+Choosing the packs at upload (the dialog's chips with *Detect packs automatically* off, the `packs` field, or the `--pack` flag) skips the gate entirely — there is nothing to confirm.
 
 ### Stage 2: Entity Extraction (Optional)
 
@@ -350,9 +352,7 @@ Tags help organize sources into categories. Each tag has a name, optional color,
 <TabItem value="web-ui" label="Web UI">
 
 
-- Create, edit, and delete tags from the Sources page
-- Assign tags to sources by clicking the tag icon
-- Filter the source list by tag to find related documents
+- Create, assign and remove tags from a committed source's detail page header (the tag editor next to the title)
 - Tags support inline editing directly in the UI
 
 ![Sources list with status and entity counts](/img/screenshots/sources-list.png)
@@ -496,6 +496,8 @@ curl -X PATCH http://localhost:8080/api/v1/sources/{source_id} \
 
 Disabling a source doesn't delete it — the data is preserved and can be re-enabled at any time.
 
+An entity that two sources both mention can be merged into one node in the knowledge graph. A merged entity stays visible while any of its sources is enabled; disabling one of them hides only what that source alone contributed.
+
 ### Deletion
 
 Deleting a source permanently removes:
@@ -504,6 +506,9 @@ Deleting a source permanently removes:
 - All document chunks and embeddings
 - Associated citations
 - Extraction job data
+- The entities and relationships only this source mentions
+
+Content another source also mentions is kept. An entity or relationship merged from several sources stays in the graph and is rebuilt from the sources that remain: its name, aliases and description become what those sources say, with nothing left from the deleted one. Re-committing or re-extracting a source works the same way: its previous contribution is taken out, other sources' content stays, and the new commit merges back in.
 
 <Tabs>
 <TabItem value="web-ui" label="Web UI">

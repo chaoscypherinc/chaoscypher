@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import structlog
 
+from chaoscypher_core.cache.call_site import call_site
 from chaoscypher_core.exceptions import OperationError, ValidationError
 from chaoscypher_core.services.quality.counters import QualityCounter, increment_quality_counter
 
@@ -25,6 +26,16 @@ if TYPE_CHECKING:
     from chaoscypher_core.settings import EngineSettings
 
 logger = structlog.get_logger(__name__)
+
+
+def chunk_embedding_text(chunk: dict[str, Any]) -> str:
+    """The text a chunk's vector is embedded from: its stored content.
+
+    One definition for every path that embeds a chunk (indexing a source,
+    re-indexing, the benchmark's re-index), so they cannot embed different
+    text; the benchmark's index recipe hashes its output.
+    """
+    return str(chunk["content"])
 
 
 class IndexingService:
@@ -248,7 +259,7 @@ class IndexingService:
             count=len(chunks),
         )
 
-        chunk_texts = [chunk["content"] for chunk in chunks]
+        chunk_texts = [chunk_embedding_text(chunk) for chunk in chunks]
         embeddings = await self._generate_chunk_embeddings(
             chunk_texts,
             batch_size=self.settings.batching.embedding_batch_size,
@@ -570,12 +581,13 @@ class IndexingService:
             wave = batches[wave_start : wave_start + concurrency]
 
             # Run wave concurrently — gather preserves order
-            results = await asyncio.gather(
-                *(
-                    self.embedding_service.batch_embed(batch, batch_size=len(batch))
-                    for batch in wave
+            with call_site("embeddings.index"):
+                results = await asyncio.gather(
+                    *(
+                        self.embedding_service.batch_embed(batch, batch_size=len(batch))
+                        for batch in wave
+                    )
                 )
-            )
 
             # Collect results in order
             for result in results:

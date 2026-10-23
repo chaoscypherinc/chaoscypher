@@ -119,6 +119,18 @@ If the database really is from before the squash, back up the database file, the
 
 **In plain English:** the database doesn't match this version of ChaosCypher. If you just downgraded, put the newer version back. If not, the database is older than the first public release and is too old to upgrade — ChaosCypher tells you so at startup rather than silently mangling it, so save a copy, start a new database, and bring your data across.
 
+### Databases from before the core entity types
+
+Since the core entity types (the floor's eight types, with pack subtypes, see [Extraction Domains](../user-guide/domains.md)), a database's graph is **not migrated in place**. A database whose graph was extracted before them still opens and works: its nodes keep their old type names (`Character`, `Military Unit`) and their old per-type templates, and nothing is rewritten. The dashboard shows a one-line notice, `GET /api/v1/databases/current` returns it as `notice`, and the log carries one `database_predates_core_types` warning per database.
+
+To bring such a database onto the core types:
+
+1. **Export it with the previous version** — before updating, **Settings → General → Import & Export → Export** (or `chaoscypher graph package export`), with sources included.
+2. **Update** Chaos Cypher.
+3. **Import the export** into a new database — **Settings → General → Import & Export → Import** (see [Import & Export](../user-guide/import-export.md#importing)).
+
+The import maps the old types: each node is stored under its core type with the old name as its `entity_subtype`, a name the mapping table does not hold is kept as a `Concept` flagged `unplaced_type`, the old per-type templates give way to one per core type, and relationships come across unchanged. The import's result lists the mapping (`core_types_mapped`: old type, core type, count).
+
 ## Operator-grade upgrade: chaoscypher upgrade
 
 `chaoscypher upgrade` runs `alembic upgrade head` against the configured database. Use it when you need to apply pending migrations without restarting the full stack — for example, after pulling a new package version in a dev environment or after restoring a backup.

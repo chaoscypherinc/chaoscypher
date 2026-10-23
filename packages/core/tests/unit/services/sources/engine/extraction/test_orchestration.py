@@ -15,9 +15,14 @@ import pytest
 from chaoscypher_core.services.sources.engine.extraction.content_categories import (
     CategoryMatcher,
 )
+from chaoscypher_core.services.sources.engine.extraction.domains.registry import (
+    PackProposal,
+    RankedDomain,
+)
 from chaoscypher_core.services.sources.engine.extraction.orchestration import (
     aggregate_chunk_results,
     build_extraction_groups,
+    build_group_text,
     detect_extraction_domain,
     filter_and_strip_chunks,
     resolve_content_exclusions,
@@ -451,23 +456,18 @@ class TestAggregateChunkResults:
         ]
         result = aggregate_chunk_results(completed_chunks)
         assert len(result["entities"]) == 5
-        assert result["relationships"][0] == {
-            "source": 0,
-            "target": 1,
-            "type": "REL",
-        }
+
+        def _edge(rel: dict[str, Any]) -> tuple[Any, Any, Any]:
+            return rel["source"], rel["target"], rel["type"]
+
+        assert _edge(result["relationships"][0]) == (0, 1, "REL")
         # Indices for the last chunk must be offset by 3 (2 + 1 prior entities).
-        assert result["relationships"][1] == {
-            "source": 3,
-            "target": 4,
-            "type": "LATER",
-        }
+        assert _edge(result["relationships"][1]) == (3, 4, "LATER")
         assert result["chunk_texts"] == ["chunk zero", "chunk one", "chunk two"]
-        assert result["chunk_sentences"] == [
-            ["chunk zero"],
-            ["chunk one"],
-            ["chunk two"],
-        ]
+        # The positional per-task sentence list is gone: evidence is resolved
+        # per group at aggregation instead (no sent_ref here, so none).
+        assert "chunk_sentences" not in result
+        assert all(r["evidence"] == [] for r in result["relationships"])
 
     def test_out_of_bounds_relationship_index_dropped_and_logged(
         self,
@@ -643,7 +643,6 @@ class TestAggregateChunkResults:
         assert result["entities"] == []
         assert result["relationships"] == []
         assert result["chunk_texts"] == []
-        assert result["chunk_sentences"] == []
 
     def test_dropped_relationships_count_zero_when_all_valid(self) -> None:
         """dropped_relationships_invalid_index is 0 when all relationships are valid."""
@@ -709,17 +708,19 @@ def _make_domain(name: str) -> Any:
 
 
 class _FakeRegistry:
-    """Minimal registry exposing the three methods detect_extraction_domain uses."""
+    """Minimal registry exposing the methods detect_extraction_domain uses."""
 
     def __init__(
         self,
         *,
         ranking: list[tuple[Any, float]],
-        best: tuple[Any, float],
+        packs: tuple[str, ...] = (),
+        confidence: float = 0.1,
         by_name: dict[str, Any] | None = None,
     ) -> None:
         self._ranking = ranking
-        self._best = best
+        self._packs = packs
+        self._confidence = confidence
         self._by_name = by_name or {}
 
     def rank_domains(
@@ -727,76 +728,75 @@ class _FakeRegistry:
     ) -> list[tuple[Any, float]]:
         return self._ranking
 
-    def get_best_domain(
-        self, text: str, filename: str, metadata: dict[str, Any]
-    ) -> tuple[Any, float]:
-        return self._best
+    def propose_packs(self, text: str, filename: str, metadata: dict[str, Any]) -> PackProposal:
+        return PackProposal(
+            packs=self._packs,
+            ranking=[RankedDomain(d, s) for d, s in self._ranking],
+            low_confidence=not self._packs,
+            reason="one_pack_above_floor" if self._packs else "no_pack_above_floor",
+        )
+
+    def proposal_confidence(self, proposal: PackProposal) -> float:
+        return self._confidence
 
     def get_domain(self, name: str) -> Any:
         return self._by_name.get(name)
 
 
 class TestDetectExtractionDomainRanking:
-    """detect_extraction_domain threads ranking + low_confidence onto both paths."""
+    """detect_extraction_domain threads packs, ranking and low_confidence onto both paths."""
 
     def test_auto_path_includes_ordered_ranking(self) -> None:
-        """Auto detection exposes the full ordered ranking with winner first."""
+        """Auto detection exposes the proposed packs and the full ordered ranking."""
         bio = _make_domain("biographical")
         hist = _make_domain("historical")
         registry = _FakeRegistry(
             ranking=[(bio, 1.20), (hist, 1.05)],
-            best=(bio, 1.20),
+            packs=("biographical", "historical"),
+            confidence=1.0,
+            by_name={"biographical": bio},
         )
         result = detect_extraction_domain(registry, None, "sample", "x.txt", {})
+        assert result["packs"] == ("biographical", "historical")
         assert result["detected_domain"] == "biographical"
-        assert result["confidence"] == pytest.approx(1.20)
+        assert result["domain"] is bio
+        assert result["confidence"] == pytest.approx(1.0)
         assert result["ranking"] == [
             {"domain": "biographical", "score": pytest.approx(1.20)},
             {"domain": "historical", "score": pytest.approx(1.05)},
         ]
-        # A confident winner that matches ranking[0] is not low confidence.
         assert result["low_confidence"] is False
         assert result["ranking"][0]["domain"] == result["detected_domain"]
 
-    def test_auto_path_generic_fallback_is_low_confidence(self) -> None:
-        """A generic fallback (winner != ranking[0]) flags low_confidence and still
-        guarantees ranking[0] is defined by synthesizing from the resolved domain.
-        """
-        news = _make_domain("news")  # below-floor candidate
-        generic = _make_domain("generic")  # the fallback get_best_domain resolved to
-        registry = _FakeRegistry(
-            ranking=[(news, 0.74)],  # raw candidate, below the 1.0 floor
-            best=(generic, 0.10),  # get_best_domain fell back to generic@0.1
-        )
+    def test_auto_path_floor_only_is_low_confidence(self) -> None:
+        """No pack over the floor: the floor alone, low_confidence, the raw ranking still exposed."""
+        news = _make_domain("news")  # a candidate under the evidence floor
+        registry = _FakeRegistry(ranking=[(news, 0.74)], packs=(), confidence=0.10)
         result = detect_extraction_domain(registry, None, "sample", "x.txt", {})
+        assert result["packs"] == ()
         assert result["detected_domain"] == "generic"
         assert result["confidence"] == pytest.approx(0.10)
         assert result["low_confidence"] is True
-        # ranking is the raw candidate list (news), but the winner is generic —
-        # the mismatch is exactly why it's low_confidence.
+        assert result["reason"] == "no_pack_above_floor"
         assert result["ranking"][0]["domain"] == "news"
 
     def test_auto_path_empty_candidates_synthesizes_ranking_zero(self) -> None:
-        """When no candidate can_handle, ranking[0] is synthesized from the winner."""
-        generic = _make_domain("generic")
-        registry = _FakeRegistry(ranking=[], best=(generic, 0.10))
+        """When no candidate can_handle, ranking[0] is synthesized from the floor."""
+        registry = _FakeRegistry(ranking=[], packs=(), confidence=0.10)
         result = detect_extraction_domain(registry, None, "sample", "x.txt", {})
         assert result["low_confidence"] is True
         assert result["ranking"] == [
             {"domain": "generic", "score": pytest.approx(0.10)},
         ]
 
-    def test_auto_path_minimal_fallback_no_domains(self) -> None:
-        """No domains registered: get_best_domain returns _MinimalFallbackDomain@0.0;
-        ranking[0] is still defined and low_confidence is True.
-        """
-        fallback = _make_domain("fallback")
-        registry = _FakeRegistry(ranking=[], best=(fallback, 0.0))
+    def test_auto_path_no_domains_registered(self) -> None:
+        """No domains at all: no domain object, the floor's name, low confidence, ranking[0] defined."""
+        registry = _FakeRegistry(ranking=[], packs=(), confidence=0.10)
         result = detect_extraction_domain(registry, None, "sample", "x.txt", {})
-        assert result["detected_domain"] == "fallback"
-        assert result["confidence"] == 0.0
+        assert result["domain"] is None
+        assert result["detected_domain"] == "generic"
         assert result["low_confidence"] is True
-        assert result["ranking"] == [{"domain": "fallback", "score": 0.0}]
+        assert result["ranking"] == [{"domain": "generic", "score": pytest.approx(0.10)}]
 
     def test_forced_path_includes_ranking_and_not_low_confidence(self) -> None:
         """Forced domain is confidence 1.0, never low_confidence, but still carries
@@ -807,13 +807,15 @@ class TestDetectExtractionDomainRanking:
         bio = _make_domain("biographical")
         registry = _FakeRegistry(
             ranking=[(bio, 1.30)],
-            best=(bio, 1.30),
+            packs=("biographical",),
             by_name={"technical": forced},
         )
         result = detect_extraction_domain(registry, "technical", "sample", "x.txt", {})
+        assert result["packs"] == ("technical",)
         assert result["detected_domain"] == "technical"
         assert result["confidence"] == 1.0
         assert result["low_confidence"] is False
+        assert result["reason"] == "forced"
         assert result["entity_guidance"] == "technical-entities"
         assert result["relationship_guidance"] == "technical-rels"
         # The auto recommendation is computed unconditionally and surfaced.
@@ -825,10 +827,152 @@ class TestDetectExtractionDomainRanking:
         """A forced name the registry doesn't know returns domain=None but the keys
         are still present (no KeyError downstream).
         """
-        registry = _FakeRegistry(ranking=[], best=(_make_domain("generic"), 0.10))
+        registry = _FakeRegistry(ranking=[])
         result = detect_extraction_domain(registry, "nonexistent", "sample", "x.txt", {})
         assert result["domain"] is None
+        assert result["packs"] == ("nonexistent",)
         assert result["detected_domain"] == "nonexistent"
         assert result["confidence"] == 1.0
         assert result["low_confidence"] is False
         assert "ranking" in result
+
+    def test_forced_packs_win_over_the_forced_domain_and_keep_their_order(self) -> None:
+        """``forced_packs`` is the list form; it keeps its order (the first is the domain object) and the old name is ignored."""
+        lit = _make_domain("literary")
+        registry = _FakeRegistry(ranking=[], by_name={"literary": lit})
+        result = detect_extraction_domain(
+            registry, "technical", "s", "x.txt", {}, forced_packs=["literary", "historical"]
+        )
+        assert result["packs"] == ("literary", "historical")
+        assert result["detected_domain"] == "literary"
+        assert result["domain"] is lit
+        assert result["reason"] == "forced"
+
+    @pytest.mark.parametrize(("forced_domain", "forced_packs"), [("generic", None), (None, [])])
+    def test_forcing_the_floor_alone_is_no_pack(
+        self, forced_domain: str | None, forced_packs: list[str] | None
+    ) -> None:
+        """``generic`` (old form) and ``[]`` both force the floor alone: no pack, never detected."""
+        registry = _FakeRegistry(ranking=[], packs=("literary",))
+        result = detect_extraction_domain(
+            registry, forced_domain, "s", "x.txt", {}, forced_packs=forced_packs
+        )
+        assert result["packs"] == ()
+        assert result["detected_domain"] == "generic"
+        assert result["confidence"] == 1.0
+        assert result["reason"] == "forced"
+
+    def test_the_auto_sentinel_detects(self) -> None:
+        """``__auto__`` as the forced domain is no forcing."""
+        registry = _FakeRegistry(ranking=[], packs=("literary",), confidence=0.9)
+        result = detect_extraction_domain(registry, "__auto__", "s", "x.txt", {})
+        assert result["packs"] == ("literary",)
+        assert result["reason"] == "one_pack_above_floor"
+
+
+# ---------------------------------------------------------------------------
+# Citation evidence: one group-text builder, evidence stamped at aggregation
+# ---------------------------------------------------------------------------
+
+
+class TestBuildGroupText:
+    """``build_group_text`` is the text both extraction paths number."""
+
+    def test_raw_rows_with_matchers_equal_planner_combined_content(self) -> None:
+        """The queue handler (raw rows + matchers) numbers the planner's text."""
+        matcher = _make_matcher(name="hdr", mode="line_ratio", pattern=r"^Page \d+$", threshold=0.4)
+        raw = [
+            _make_chunk("c0", 0, "Page 1\n" + "Anna walked through the hall. " * 5),
+            _make_chunk("c1", 1, "Boris stayed behind in the library. " * 5),
+        ]
+        planned, _stats = filter_and_strip_chunks(raw, [matcher])
+        (group,) = build_extraction_groups(planned, target_tokens=5000, overlap=0)
+        assert build_group_text(raw, [matcher]) == group["combined_content"]
+        assert "Page 1" not in group["combined_content"]
+
+    def test_drops_empty_pieces_and_joins_with_blank_line(self) -> None:
+        chunks = [_make_chunk("a", 0, "One."), _make_chunk("b", 1, ""), _make_chunk("c", 2, "Two.")]
+        assert build_group_text(chunks) == "One.\n\nTwo."
+
+
+class TestAggregateChunkResultsEvidence:
+    """Aggregation stamps ``evidence`` and ``cited_chunk_id`` per group."""
+
+    def test_group_sent_ref_resolves_to_small_chunk_and_sentence(self) -> None:
+        chunks_by_id = {
+            "c0": {"id": "c0", "content": "Anna met Pierre."},
+            "c1": {"id": "c1", "content": "Pierre left. Anna stayed."},
+        }
+        task = {
+            "raw_entities": [
+                {"name": "Anna", "sent_ref": "S3", "chunk_index": 0},
+                {"name": "Pierre", "sent_ref": "S99", "chunk_index": 0},
+            ],
+            "raw_relationships": [{"source": 0, "target": 1, "type": "knows", "sent_ref": "S1"}],
+            "input_text": "Anna met Pierre.\n\nPierre left. Anna stayed.",
+            "small_chunk_ids": ["c0", "c1"],
+            # No stored sentences: re-split from the numbered input text.
+            "chunk_sentences": None,
+        }
+        result = aggregate_chunk_results([task], chunks_by_id=chunks_by_id)
+        anna, pierre = result["entities"]
+        assert anna["evidence"] == [{"text": "Anna stayed.", "chunk_id": "c1", "local_index": 1}]
+        assert anna["cited_chunk_id"] == "c1"
+        # Out-of-range ref: no evidence, the group's first small chunk is cited.
+        assert pierre["evidence"] == []
+        assert pierre["cited_chunk_id"] == "c0"
+        (rel,) = result["relationships"]
+        assert rel["cited_chunk_id"] == "c0"
+        assert rel["evidence"][0]["text"] == "Anna met Pierre."
+
+    def test_failed_task_does_not_shift_later_groups(self) -> None:
+        """Evidence is per task, never positional over completed tasks."""
+        chunks_by_id = {"c5": {"id": "c5", "content": "Late sentence here."}}
+        task = {
+            "chunk_index": 5,
+            "raw_entities": [{"name": "X", "sent_ref": "S1"}],
+            "raw_relationships": [],
+            "input_text": "Late sentence here.",
+            "chunk_sentences": ["Late sentence here."],
+            "small_chunk_ids": ["c5"],
+        }
+        result = aggregate_chunk_results([task], chunks_by_id=chunks_by_id)
+        assert result["entities"][0]["cited_chunk_id"] == "c5"
+
+    def test_unresolved_evidence_is_cited_on_the_first_chunk_no_earlier_group_holds(self) -> None:
+        """Group 2 opens with group 1's last chunk (the overlap); its uncited items go to c2.
+
+        Defaulting to ``small_chunk_ids[0]`` piled every unresolved citation of
+        a later group onto the previous group's text (audit W2-13). Groups are
+        ordered by ``chunk_index`` even when the list is not.
+        """
+
+        def _task(index: int, ids: list[str]) -> dict:
+            return {
+                "chunk_index": index,
+                "raw_entities": [{"name": f"E{index}", "sent_ref": "S99"}],
+                "raw_relationships": [],
+                "input_text": "One sentence.",
+                "chunk_sentences": ["One sentence."],
+                "small_chunk_ids": ids,
+            }
+
+        later, first = _task(1, ["c1", "c2", "c3"]), _task(0, ["c0", "c1"])
+        result = aggregate_chunk_results([later, first])
+        cited = {e["name"]: e["cited_chunk_id"] for e in result["entities"]}
+        assert cited == {"E1": "c2", "E0": "c0"}
+
+
+def test_group_fallback_chunk_ids_handles_list_order_and_all_shared_groups() -> None:
+    """Without positions the list order decides; a group of shared chunks keeps its first."""
+    from chaoscypher_core.services.sources.engine.extraction.orchestration import (
+        group_fallback_chunk_ids,
+    )
+
+    groups = [
+        {"small_chunk_ids": ["a", "b"]},
+        {"small_chunk_ids": ["b", "c"]},
+        {"small_chunk_ids": ["b"]},
+        {"small_chunk_ids": []},
+    ]
+    assert group_fallback_chunk_ids(groups) == ["a", "c", "b", None]

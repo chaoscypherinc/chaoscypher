@@ -47,23 +47,37 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import structlog
 
-from chaoscypher_core.exceptions import DataIntegrityError
+from chaoscypher_core.exceptions import DataIntegrityError, ValidationError
 from chaoscypher_core.models import EdgeCreate, NodeCreate, PropertyDefinition, TemplateCreate
-from chaoscypher_core.services.export import ccx_identity
+from chaoscypher_core.services.export import ccx_identity, ccx_mapping
+from chaoscypher_core.services.graph.resolution.apply import (
+    edge_create_snapshot,
+    node_create_snapshot,
+)
 from chaoscypher_core.services.package.importer import ccx_import_mapping
+from chaoscypher_core.services.package.importer.core_types import (
+    DEFAULT_NODE_TEMPLATE_NAME,
+    CoreTypeMapping,
+    bundle_packs,
+)
 from chaoscypher_core.services.package.importer.models import ImportOptions, ImportStats
+from chaoscypher_core.services.workflows.tools.engine.memory_render import MEMORY_SOURCE_TYPE
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from chaoscypher_core.ports.graph import GraphRepositoryProtocol
+    from chaoscypher_core.settings import EngineSettings
 
 
 logger = structlog.get_logger(__name__)
@@ -82,7 +96,89 @@ _RELATIONSHIP_TYPE = "ccx:Relationship"
 # ``@type`` matches no imported template). A neutral CCX package may carry
 # entities with no Chaos-Cypher template; they still need *a* node template
 # because ``graph_nodes.template_id`` is NOT NULL + a RESTRICT FK.
-_DEFAULT_NODE_TEMPLATE_NAME = "Imported Entity"
+_DEFAULT_NODE_TEMPLATE_NAME = DEFAULT_NODE_TEMPLATE_NAME
+
+# ``sources.source_type`` of a source an imported package wrote; a memory keeps its own.
+_IMPORTED_SOURCE_TYPE = "imported"
+
+
+KEY_SIGNATURE_FORMATS = frozenset({"ed25519"})
+"""The signature kinds the importer refuses on failure: a key signature over the manifest bytes."""
+
+
+def refuse_failed_signatures(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Raise on a failed key signature; return the results the library could not verify (skipped).
+
+    ``ccx.Package.verify_signatures`` reports every declared signature as
+    ``{path, format, verified, error}``. A failed ed25519 signature means the
+    manifest bytes changed since signing: refused. A format this install cannot
+    verify (a sigstore bundle without its extra) is not evidence of tampering:
+    logged and skipped, so such packages still import as they did before.
+    """
+    skipped: list[dict[str, Any]] = []
+    for result in results:
+        if result.get("verified"):
+            continue
+        if result.get("format") in KEY_SIGNATURE_FORMATS:
+            raise ValidationError("package signature failed", details=result)
+        logger.warning("package_signature_unverifiable", **{k: str(v) for k, v in result.items()})
+        skipped.append(result)
+    return skipped
+
+
+@dataclass(frozen=True)
+class _ImportedEdge:
+    """One edge this import wrote: what its relationship citations need to name it."""
+
+    id: str
+    label: str
+    template_id: str
+    source_label: str
+    target_label: str
+
+
+@dataclass
+class _ImportedEdges:
+    """The edges this import wrote, by the relation they state, and what the package wrote for each.
+
+    A relationship citation or a closure names its relation by its ends and predicate
+    (``ccx_mapping.edge_reference``); ``by_key`` resolves that to the local edge.
+    ``readings`` is each edge's membership snapshot (``edge_create_snapshot``).
+    """
+
+    by_key: dict[tuple[str, str, str], _ImportedEdge] = field(default_factory=dict)
+    readings: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def _core_template_create(core_type: str) -> TemplateCreate:
+    """The node template of ``core_type`` as the commit creates it: the floor's suggestion, built once.
+
+    ``TemplateExtractor.generate_suggestions_from_entities`` gives the floor
+    template's description, icon and colour; ``template_from_suggestion`` is
+    the commit's one builder of it.
+    """
+    from chaoscypher_core.services.sources.engine.commit.template import (
+        template_from_suggestion,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.core_types import (
+        FLOOR_NAME,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.domains.factory import (
+        get_domain_registry,
+    )
+    from chaoscypher_core.services.sources.engine.extraction.utils.template_extractor import (
+        TemplateExtractor,
+    )
+
+    floor = get_domain_registry().get_domain(FLOOR_NAME)
+    floor_templates = floor.get_templates().get("node_templates") if floor is not None else None
+    suggestions = TemplateExtractor.generate_suggestions_from_entities(
+        [{"type": core_type}], domain_templates=floor_templates
+    )
+    template = template_from_suggestion(suggestions[0]) if suggestions else None
+    if template is None:  # pragma: no cover - a core type always has a suggestion
+        return TemplateCreate(name=core_type, template_type="node")
+    return template
 
 
 class CcxImporter:
@@ -93,6 +189,7 @@ class CcxImporter:
         graph_repository: GraphRepositoryProtocol,
         sources_repository: Any | None = None,
         workflow_db: Any | None = None,
+        settings: EngineSettings | None = None,
     ) -> None:
         """Initialize the importer with the storage ports it writes through.
 
@@ -104,9 +201,12 @@ class CcxImporter:
                 (e.g. the CLI, which has no sources repo).
             workflow_db: Optional workflow database for trigger/workflow
                 import. ``None`` skips the ``chaoscypher.workflows`` graph.
+            settings: Engine settings the rebuild of a shared node ranks
+                survivors by; None reads the configured ones.
         """
         self.graph = graph_repository
         self.sources = sources_repository
+        self.settings = settings
         self.workflow_db = workflow_db
 
     # ------------------------------------------------------------------
@@ -156,6 +256,14 @@ class CcxImporter:
             conformance_classes=stats.conformance_classes,
             warnings=len(stats.warnings),
         )
+        if stats.core_types_mapped:
+            logger.info(
+                "ccx_import_core_types_mapped",
+                database=options.database_name,
+                nodes=sum(row["count"] for row in stats.core_types_mapped.values()),
+                mapped=stats.core_types_mapped,
+                templates_repointed=stats.templates_repointed,
+            )
         return stats
 
     async def import_from_path(
@@ -192,6 +300,11 @@ class CcxImporter:
 
         pkg = ccx.open_package(data)
 
+        # 0. Signatures: a key signature the manifest declares must verify over the
+        #    manifest bytes the package holds (tampering); a package with none verifies
+        #    nothing; a kind the library cannot check here is logged, not refused.
+        refuse_failed_signatures(pkg.verify_signatures())
+
         # 1. Fail-closed validation. Core integrity is mandatory: a package
         #    that does not validate is rejected outright.
         report = pkg.validate()
@@ -206,14 +319,25 @@ class CcxImporter:
         stats.package_version = getattr(manifest, "package_version", None)
         stats.checksum_verified = True  # ccx-format validates integrity by construction
 
+        # ``graph_documents()`` decompresses and json-parses EVERY graph on each
+        # call (no cache in ccx-format), so parse once here and hand the list to
+        # each pass instead of re-parsing the knowledge graph per app-graph lookup.
+        graph_docs = pkg.graph_documents()
+
         database_name = options.database_name
+
+        # The bundle onto the core types (a database from before them is
+        # exported, the product updated, the export imported): read with the
+        # packs its sources were extracted with.
+        source_records: list[dict[str, Any]] = list(pkg.sources())
+        mapping = CoreTypeMapping(packs=bundle_packs(source_records))
 
         # 2. Templates first (FK: nodes/edges reference template_id).
         template_name_to_id: dict[str, str] = {}
         template_iri_to_id: dict[str, str] = {}
         if options.import_templates:
             self._import_templates(
-                pkg, database_name, stats, template_name_to_id, template_iri_to_id
+                graph_docs, database_name, stats, template_name_to_id, template_iri_to_id, mapping
             )
 
         # 3. Default knowledge graph → nodes (+ buffered edges).
@@ -223,12 +347,15 @@ class CcxImporter:
         # read the cited node's type from here instead of issuing a full-row
         # ``get_node_by_ccx_iri`` SELECT per citation.
         node_iri_to_type: dict[str, str | None] = {}
+        # local node id -> what this package wrote for it (its membership snapshot)
+        node_readings: dict[str, dict[str, Any]] = {}
         chunk_iri_to_id: dict[str, str] = {}
         relationship_edges: list[dict[str, Any]] = []
         plain_triple_edges: list[dict[str, Any]] = []
+        imported_edges = _ImportedEdges()
         if options.import_knowledge:
             self._import_nodes(
-                pkg,
+                graph_docs,
                 database_name,
                 stats,
                 template_name_to_id,
@@ -238,6 +365,8 @@ class CcxImporter:
                 relationship_edges,
                 plain_triple_edges,
                 template_iri_to_id=template_iri_to_id,
+                mapping=mapping,
+                node_readings=node_readings,
             )
             # 4. Edges (after every node IRI is resolvable).
             self._import_edges(
@@ -248,7 +377,12 @@ class CcxImporter:
                 node_iri_to_id,
                 relationship_edges,
                 plain_triple_edges,
+                imported_edges=imported_edges,
+                node_iri_to_label=node_iri_to_label,
             )
+
+        stats.core_types_mapped = mapping.as_dict()
+        stats.templates_repointed = dict(sorted(mapping.templates.items()))
 
         # Record the KNOWLEDGE nodes (captured before lens app-graph nodes are
         # added to the IRI map below). These are what the search-indexing step
@@ -261,7 +395,7 @@ class CcxImporter:
         #     graph nodes, so re-import is idempotent. Independent of
         #     import_knowledge so a lens-only package still lands its lenses.
         self._import_lenses(
-            pkg,
+            graph_docs,
             database_name,
             stats,
             template_name_to_id,
@@ -277,11 +411,12 @@ class CcxImporter:
         #     ignore the graph: it logs a clear warning with a count and
         #     records it on the stats. See internal/TODO.md (P2).
         if options.import_workflows:
-            self._import_workflows(pkg, database_name, stats)
+            self._import_workflows(graph_docs, database_name, stats)
 
         # 5. Sources / chunks / citations.
+        rebuilt: frozenset[str] = frozenset()
         if options.import_sources and self.sources is not None:
-            self._import_sources(
+            rebuilt = self._import_sources(
                 pkg,
                 database_name,
                 stats,
@@ -289,6 +424,9 @@ class CcxImporter:
                 node_iri_to_label,
                 node_iri_to_type,
                 chunk_iri_to_id,
+                records=source_records,
+                node_readings=node_readings,
+                imported_edges=imported_edges,
             )
             # 6. Own this import's templates by its source so they cascade-delete
             #    with it (mirrors extraction's source-scoped templates).
@@ -302,17 +440,25 @@ class CcxImporter:
         #    becomes searchable). A model mismatch leaves them to be re-embedded.
         self._restore_embeddings(pkg, database_name, node_iri_to_id, chunk_iri_to_id, stats)
 
+        # 8. A shared node the finalize rebuilt reads differently from the vector it
+        #    carries (its previous one, or the package's just restored): cleared, so
+        #    the import's indexing, which embeds only vectorless nodes, re-embeds it.
+        if rebuilt:
+            self.graph.clear_node_embeddings(sorted(rebuilt))
+            logger.info("ccx_import_shared_nodes_vectors_cleared", nodes=len(rebuilt))
+
     # ------------------------------------------------------------------
     # Templates
     # ------------------------------------------------------------------
 
     def _import_templates(
         self,
-        pkg: Any,
+        graph_docs: list[Any],
         database_name: str,
         stats: ImportStats,
         template_name_to_id: dict[str, str],
         template_iri_to_id: dict[str, str],
+        mapping: CoreTypeMapping | None = None,
     ) -> None:
         """Rebuild templates from the ``chaoscypher.templates`` named graph.
 
@@ -326,9 +472,11 @@ class CcxImporter:
         A MISSING templates graph is NOT an error (à-la-carte packages).
         Builds ``template_name -> id`` and ``template_iri -> id`` maps so the
         node/edge importer can resolve type terms and relationship-template
-        refs.
+        refs. A node template named by an old type (``Character``) is not
+        created when ``mapping`` is given: its nodes take their core type's
+        template (``CoreTypeMapping.skip_template``).
         """
-        templates_doc = self._find_app_graph(pkg, _TEMPLATES_GRAPH)
+        templates_doc = self._find_app_graph(graph_docs, _TEMPLATES_GRAPH)
         if templates_doc is None:
             return
 
@@ -342,6 +490,8 @@ class CcxImporter:
             template_type = member.get("template_type") or "node"
             if not iri or not name:
                 stats.warnings.append(f"Skipping template with missing @id/name: {member!r}")
+                continue
+            if mapping is not None and mapping.skip_template(member):
                 continue
 
             local_id = ccx_identity.local_id_from_iri(iri)
@@ -409,7 +559,7 @@ class CcxImporter:
 
     def _import_nodes(
         self,
-        pkg: Any,
+        graph_docs: list[Any],
         database_name: str,
         stats: ImportStats,
         template_name_to_id: dict[str, str],
@@ -419,15 +569,17 @@ class CcxImporter:
         relationship_edges: list[dict[str, Any]],
         plain_triple_edges: list[dict[str, Any]],
         template_iri_to_id: dict[str, str] | None = None,
+        mapping: CoreTypeMapping | None = None,
+        node_readings: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         """Upsert nodes from the default knowledge graph; buffer edges.
 
         Each ``@graph`` member is classified: a ``ccx:Relationship`` resource
         is buffered for edge import; everything else is a node, which is
-        upserted by IRI and whose plain-triple object-references are buffered
-        as deterministic edges.
+        upserted by IRI (on its core type, through ``mapping``) and whose
+        plain-triple object-references are buffered as deterministic edges.
         """
-        knowledge_doc = self._find_knowledge_graph(pkg)
+        knowledge_doc = self._find_knowledge_graph(graph_docs)
         if knowledge_doc is None:
             return
 
@@ -444,6 +596,8 @@ class CcxImporter:
                 node_iri_to_label,
                 node_iri_to_type,
                 template_iri_to_id=template_iri_to_id,
+                mapping=mapping,
+                node_readings=node_readings,
             )
             stats.nodes_imported += 1
 
@@ -458,21 +612,35 @@ class CcxImporter:
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
         template_iri_to_id: dict[str, str] | None = None,
+        mapping: CoreTypeMapping | None = None,
+        node_readings: dict[str, dict[str, Any]] | None = None,
     ) -> str:
         """Upsert one JSON-LD node member by IRI; record id + label + type maps.
 
         Shared by the default-knowledge-graph and ``chaoscypher.lenses``
         importers so a lens node is reconstructed exactly like a knowledge
         node (upsert-by-IRI → idempotent re-import). Returns the local id.
+        With ``mapping`` (knowledge nodes) the node is stored on its core
+        type, and a node of a re-pointed template takes its core type's.
+        ``node_readings`` gets the entity as this package wrote it
+        (``node_create_snapshot``): the snapshot the source that cites it is
+        recorded with, whatever the row reads once other sources share it.
         """
         ccx_iri, node_kwargs = ccx_import_mapping.jsonld_entity_to_node(member)
-        template_id = self._resolve_node_template(
-            node_kwargs.get("type_term"),
-            template_name_to_id,
-            database_name,
-            template_iri=node_kwargs.get("template_iri"),
-            template_iri_to_id=template_iri_to_id,
-        )
+        core_template = None
+        if mapping is not None:
+            node_kwargs = mapping.place(node_kwargs)
+            core_template = mapping.core_template_type(node_kwargs, template_iri_to_id or {})
+        if core_template is not None:
+            template_id = self._core_template_id(core_template, template_name_to_id)
+        else:
+            template_id = self._resolve_node_template(
+                node_kwargs.get("type_term"),
+                template_name_to_id,
+                database_name,
+                template_iri=node_kwargs.get("template_iri"),
+                template_iri_to_id=template_iri_to_id,
+            )
         label = node_kwargs.get("label") or ccx_iri
         node_create = NodeCreate(
             template_id=template_id,
@@ -482,6 +650,8 @@ class CcxImporter:
         )
         row = self.graph.upsert_node_by_ccx_iri(ccx_iri, node_create, database_name)
         local_id: str = row["id"]
+        if node_readings is not None:
+            node_readings[local_id] = node_create_snapshot(local_id, node_create)
         node_iri_to_id[ccx_iri] = local_id
         node_iri_to_label[ccx_iri] = label
         # Recorded from the persisted row (not the payload) so it is exactly
@@ -522,25 +692,50 @@ class CcxImporter:
         database_name: str,
     ) -> str:
         """Return (creating once) the shared default node-template id."""
-        cached = template_name_to_id.get(_DEFAULT_NODE_TEMPLATE_NAME)
-        if cached is not None:
-            return cached
-
-        # Reuse an existing default template if one already exists (idempotent
-        # re-import / a prior package).
-        for tmpl in self.graph.list_templates(include_disabled_sources=True):
-            if tmpl.name == _DEFAULT_NODE_TEMPLATE_NAME and tmpl.template_type == "node":
-                template_name_to_id[_DEFAULT_NODE_TEMPLATE_NAME] = tmpl.id
-                return tmpl.id
-
-        created = self.graph.create_template(
-            TemplateCreate(
+        return self._named_node_template_id(
+            _DEFAULT_NODE_TEMPLATE_NAME,
+            template_name_to_id,
+            lambda: TemplateCreate(
                 name=_DEFAULT_NODE_TEMPLATE_NAME,
                 template_type="node",
                 description="Default template for imported entities without a CCX template.",
-            )
+            ),
         )
-        template_name_to_id[_DEFAULT_NODE_TEMPLATE_NAME] = created.id
+
+    def _core_template_id(self, core_type: str, template_name_to_id: dict[str, str]) -> str:
+        """Return (creating once) the node template of ``core_type``: the one a re-pointed node takes.
+
+        The bundle's own template of that core type when it carries one, else
+        the database's, else one created as the commit creates it
+        (``template_from_suggestion`` over the floor's suggestion for the core
+        type: its description, icon and colour).
+        """
+        return self._named_node_template_id(
+            core_type, template_name_to_id, lambda: _core_template_create(core_type)
+        )
+
+    def _named_node_template_id(
+        self,
+        name: str,
+        template_name_to_id: dict[str, str],
+        build: Callable[[], TemplateCreate],
+    ) -> str:
+        """The id of the node template named ``name``: this import's, else the database's, else ``build()`` created.
+
+        Cached in ``template_name_to_id`` (idempotent across a re-import and
+        across packages: an existing template of the name is reused).
+        """
+        cached = template_name_to_id.get(name)
+        if cached is not None:
+            return cached
+
+        for tmpl in self.graph.list_templates(include_disabled_sources=True):
+            if tmpl.name == name and tmpl.template_type == "node":
+                template_name_to_id[name] = tmpl.id
+                return tmpl.id
+
+        created = self.graph.create_template(build())
+        template_name_to_id[name] = created.id
         return created.id
 
     # ------------------------------------------------------------------
@@ -549,7 +744,7 @@ class CcxImporter:
 
     def _import_lenses(
         self,
-        pkg: Any,
+        graph_docs: list[Any],
         database_name: str,
         stats: ImportStats,
         template_name_to_id: dict[str, str],
@@ -568,7 +763,7 @@ class CcxImporter:
         ids feed ``node_iri_to_id`` so a citation pointing at a lens still
         resolves.
         """
-        lenses_doc = self._find_app_graph(pkg, _LENSES_GRAPH)
+        lenses_doc = self._find_app_graph(graph_docs, _LENSES_GRAPH)
         if lenses_doc is None:
             return
 
@@ -591,7 +786,9 @@ class CcxImporter:
     # Workflows (chaoscypher.workflows app graph)
     # ------------------------------------------------------------------
 
-    def _import_workflows(self, pkg: Any, database_name: str, stats: ImportStats) -> None:
+    def _import_workflows(
+        self, graph_docs: list[Any], database_name: str, stats: ImportStats
+    ) -> None:
         """Surface (but do not silently drop) the ``chaoscypher.workflows`` graph.
 
         The current export shape is insufficient to faithfully rebuild a
@@ -603,7 +800,7 @@ class CcxImporter:
         it on the stats so the gap is visible. See ``internal/TODO.md`` (P2)
         for the bounded work needed to make workflows round-trip.
         """
-        workflows_doc = self._find_app_graph(pkg, _WORKFLOWS_GRAPH)
+        workflows_doc = self._find_app_graph(graph_docs, _WORKFLOWS_GRAPH)
         if workflows_doc is None:
             return
         members = workflows_doc.get("@graph", [])
@@ -633,9 +830,18 @@ class CcxImporter:
         node_iri_to_id: dict[str, str],
         relationship_edges: list[dict[str, Any]],
         plain_triple_edges: list[dict[str, Any]],
+        *,
+        imported_edges: _ImportedEdges | None = None,
+        node_iri_to_label: dict[str, str] | None = None,
     ) -> None:
-        """Upsert reified-relationship and plain-triple edges by IRI."""
+        """Upsert reified-relationship and plain-triple edges by IRI.
+
+        Each written edge is recorded in ``imported_edges`` under the relation it
+        states, for the relationship citations and closures the sources carry.
+        """
         edge_template_by_predicate: dict[str, str] = {}
+        written = imported_edges if imported_edges is not None else _ImportedEdges()
+        labels = node_iri_to_label or {}
 
         for edge in relationship_edges:
             self._upsert_edge(
@@ -655,6 +861,8 @@ class CcxImporter:
                 database_name=database_name,
                 node_iri_to_id=node_iri_to_id,
                 stats=stats,
+                imported_edges=written,
+                node_iri_to_label=labels,
             )
 
         for edge in plain_triple_edges:
@@ -674,6 +882,8 @@ class CcxImporter:
                 database_name=database_name,
                 node_iri_to_id=node_iri_to_id,
                 stats=stats,
+                imported_edges=written,
+                node_iri_to_label=labels,
             )
 
     def _upsert_edge(
@@ -688,12 +898,15 @@ class CcxImporter:
         database_name: str,
         node_iri_to_id: dict[str, str],
         stats: ImportStats,
+        imported_edges: _ImportedEdges,
+        node_iri_to_label: dict[str, str],
     ) -> None:
         """Resolve endpoints to local node ids and upsert one edge by IRI.
 
         A dangling edge (an endpoint IRI that resolves to no imported node)
         is skipped with a warning rather than aborting the import — the
-        endpoint node is absent from this à-la-carte package.
+        endpoint node is absent from this à-la-carte package. A written edge
+        is recorded in ``imported_edges`` with the snapshot it was written from.
         """
         source_node_id = node_iri_to_id.get(subject_iri) if subject_iri else None
         target_node_id = node_iri_to_id.get(object_iri) if object_iri else None
@@ -711,8 +924,19 @@ class CcxImporter:
             label=predicate or "related_to",
             properties=properties,
         )
-        self.graph.upsert_edge_by_ccx_iri(ccx_iri, edge_create, database_name)
+        row = self.graph.upsert_edge_by_ccx_iri(ccx_iri, edge_create, database_name)
         stats.edges_imported += 1
+        edge_id = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(edge_id, str) or subject_iri is None or object_iri is None:
+            return
+        imported_edges.by_key[(subject_iri, edge_create.label, object_iri)] = _ImportedEdge(
+            id=edge_id,
+            label=edge_create.label,
+            template_id=template_id,
+            source_label=node_iri_to_label.get(subject_iri) or subject_iri,
+            target_label=node_iri_to_label.get(object_iri) or object_iri,
+        )
+        imported_edges.readings[edge_id] = edge_create_snapshot(edge_id, edge_create)
 
     def _resolve_relationship_template(
         self,
@@ -798,33 +1022,49 @@ class CcxImporter:
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
         chunk_iri_to_id: dict[str, str],
-    ) -> None:
+        records: list[dict[str, Any]] | None = None,
+        node_readings: dict[str, dict[str, Any]] | None = None,
+        imported_edges: _ImportedEdges | None = None,
+    ) -> frozenset[str]:
         """Upsert sources, then their chunks and citations.
 
         ``pkg.sources()`` returns a flat list of ``ccx:Source`` and
-        ``ccx:Chunk`` records. Sources are upserted first (with ``full_text``
-        recovered from the ``text`` asset when present), then each chunk is
-        created and its citations attached.
+        ``ccx:Chunk`` records (``records`` when the caller read them already).
+        Sources are upserted first (with ``full_text`` recovered from the
+        ``text`` asset when present), then each chunk is created and its
+        citations attached, then the relationship citations (a sentence may
+        name a later chunk) and the edges' memberships and closures
+        (:meth:`_link_imported_edges`). Returns the shared nodes the finalize
+        rebuilt with a changed text (:meth:`_finalize_imported_sources`).
         """
         # The caller (`_import_sync`) only invokes this when a source repo is
         # wired; assert so the type checker narrows the storage calls below.
         assert self.sources is not None
 
-        records = pkg.sources()
+        if records is None:
+            records = pkg.sources()
         source_records = [r for r in records if r.get("@type") == "ccx:Source"]
         chunk_records = [r for r in records if r.get("@type") == "ccx:Chunk"]
 
         # source_iri -> (local source id, full_text)
         source_ctx: dict[str, tuple[str, str | None]] = {}
+        closures: list[tuple[str, dict[str, Any]]] = []
         for src_rec in source_records:
             local_id, full_text = self._upsert_source(pkg, src_rec, database_name)
             source_ctx[src_rec["@id"]] = (local_id, full_text)
             stats.sources_imported += 1
             stats.imported_source_ids.append(local_id)
+            closures.extend(
+                (local_id, closed)
+                for closed in src_rec.get(ccx_mapping.CLOSES_KEY) or []
+                if isinstance(closed, dict)
+            )
 
-        # local node id -> local source id, accumulated from citations so the
-        # importer can back-fill ``graph_nodes.source_id`` once everything is in.
-        node_source_links: dict[str, str] = {}
+        # local node id -> the local source ids citing it (first citer first),
+        # accumulated from citations so the importer can back-fill
+        # ``graph_nodes.source_id`` and the memberships once everything is in.
+        node_source_links: dict[str, list[str]] = {}
+        cited_relations: list[tuple[dict[str, Any], str]] = []
         for chunk_rec in chunk_records:
             source_iri = (chunk_rec.get("source") or {}).get("@id")
             ctx = source_ctx.get(source_iri) if isinstance(source_iri, str) else None
@@ -846,12 +1086,167 @@ class CcxImporter:
                 node_source_links,
                 chunk_iri_to_id,
             )
+            if chunk_rec.get(ccx_mapping.RELATIONSHIP_CITATION_KEY):
+                cited_relations.append((chunk_rec, local_source_id))
+
+        edges = imported_edges if imported_edges is not None else _ImportedEdges()
+        edge_source_links = self._import_relationship_citations(
+            cited_relations, chunk_iri_to_id, edges, database_name, stats
+        )
 
         # Finalize: link nodes back to their source and set the denormalized
         # counters the source-detail UI reads, so a complete import no longer
         # presents as an empty/"pending" source.
-        self._finalize_imported_sources(
-            database_name, source_ctx, chunk_records, node_source_links, stats.imported_node_ids
+        rebuilt = self._finalize_imported_sources(
+            database_name,
+            source_ctx,
+            chunk_records,
+            node_source_links,
+            stats.imported_node_ids,
+            node_readings or {},
+        )
+        self._link_imported_edges(
+            database_name,
+            [local_id for local_id, _text in source_ctx.values()],
+            edge_source_links,
+            edges,
+            closures,
+            stats,
+        )
+        return rebuilt
+
+    def _import_relationship_citations(
+        self,
+        cited: list[tuple[dict[str, Any], str]],
+        chunk_iri_to_id: dict[str, str],
+        edges: _ImportedEdges,
+        database_name: str,
+        stats: ImportStats,
+    ) -> dict[str, list[str]]:
+        """Write each chunk's relationship citations; return each cited edge's citing sources.
+
+        ``cited`` pairs a chunk record carrying ``ccx_mapping.RELATIONSHIP_CITATION_KEY``
+        with its local source id. Each citation names its relation by its ends and
+        predicate; one this import wrote no edge for is skipped with a warning. A
+        cited sentence keeps its text and chunk-local index, and its chunk is the
+        one it names, else the citation's own. The ids are stable per chunk, edge
+        and position, so a re-import writes the same rows.
+        """
+        assert self.sources is not None
+        rows: list[dict[str, Any]] = []
+        links: dict[str, list[str]] = {}
+        for chunk_rec, local_source_id in cited:
+            chunk_id = chunk_iri_to_id.get(str(chunk_rec.get("@id")))
+            if chunk_id is None:
+                continue
+            for ordinal, citation in enumerate(
+                chunk_rec.get(ccx_mapping.RELATIONSHIP_CITATION_KEY) or []
+            ):
+                key = ccx_import_mapping.edge_reference_key(citation)
+                edge = edges.by_key.get(key) if key is not None else None
+                if edge is None:
+                    stats.warnings.append(
+                        f"Skipping relationship citation on chunk {chunk_id}: unresolved relation {key}"
+                    )
+                    continue
+                citers = links.setdefault(edge.id, [])
+                if local_source_id not in citers:
+                    citers.append(local_source_id)
+                sentences = ccx_import_mapping.cited_sentences(citation, chunk_iri_to_id, chunk_id)
+                rows.append(
+                    {
+                        "id": self._relationship_citation_id(chunk_id, edge.id, ordinal),
+                        "database_name": database_name,
+                        "edge_id": edge.id,
+                        "edge_label": edge.label,
+                        "edge_type": edge.template_id,
+                        "source_entity_label": edge.source_label,
+                        "target_entity_label": edge.target_label,
+                        "source_id": local_source_id,
+                        "chunk_id": chunk_id,
+                        "extraction_method": "imported",
+                        "justification": citation.get("cc:justification"),
+                        "citation_metadata": {"sentences": sentences} if sentences else None,
+                    }
+                )
+        if rows:
+            self.sources.create_relationship_citations_batch(rows)
+        return links
+
+    @staticmethod
+    def _relationship_citation_id(chunk_id: str, edge_id: str, ordinal: int) -> str:
+        """A stable relationship citation id: the chunk, the edge, the entry's position."""
+        digest = hashlib.sha256(f"{chunk_id}|{edge_id}|{ordinal}".encode()).hexdigest()[:24]
+        return f"relcitation_{digest}"
+
+    def _link_imported_edges(
+        self,
+        database_name: str,
+        source_ids: list[str],
+        edge_source_links: dict[str, list[str]],
+        edges: _ImportedEdges,
+        closures: list[tuple[str, dict[str, Any]]],
+        stats: ImportStats,
+    ) -> None:
+        """Give the imported edges their member sources, rebuild them, and restore the closures.
+
+        A single-source import attests every edge it wrote, as it does every
+        node; a bundle attests an edge from each source citing it. Each member's
+        snapshot is the package's reading of the edge. The member rebuild
+        (``release.rebuild_from_members``, the one a commit and a release run)
+        then writes each edge's ``valid_from`` from its members (a memory's) and
+        re-homes it. Last, each closure a memory carries (``ccx_mapping.CLOSES_KEY``)
+        closes its edge at its date, closed by that memory. One unit of work.
+        """
+        from chaoscypher_core.services.graph.management.release import (
+            graph_conventions,
+            rebuild_from_members,
+        )
+
+        assert self.sources is not None
+        if len(source_ids) == 1:
+            members = {edge_id: [source_ids[0]] for edge_id in edges.readings}
+        else:
+            members = {e: s for e, s in edge_source_links.items() if e in edges.readings}
+        if not members and not closures:
+            return
+        rows = [
+            (edge_id, source_id, edges.readings[edge_id])
+            for edge_id, sids in members.items()
+            for source_id in sids
+        ]
+        with self.graph.write_locked():
+            if rows:
+                self.graph.record_edge_sources(rows)
+                conventions = graph_conventions(
+                    self.graph, self.sources, database_name, self._engine_settings()
+                )
+                rebuild_from_members(self.graph, [], sorted(members), conventions)
+            for closer_id, closed in closures:
+                self._restore_closure(closer_id, closed, edges, stats)
+
+    def _restore_closure(
+        self,
+        closer_id: str,
+        closed: dict[str, Any],
+        edges: _ImportedEdges,
+        stats: ImportStats,
+    ) -> None:
+        """Close the edge ``closed`` names at its ``cc:validTo``, closed by ``closer_id``."""
+        key = ccx_import_mapping.edge_reference_key(closed)
+        edge = edges.by_key.get(key) if key is not None else None
+        valid_to = ccx_import_mapping.iso_date(closed.get(ccx_mapping.VALID_TO_KEY))
+        current = self.graph.get_edge(edge.id) if edge is not None else None
+        if current is None or valid_to is None:
+            stats.warnings.append(
+                f"Skipping closure by source {closer_id}: unresolved relation {key}"
+            )
+            return
+        self.graph.set_edge_validity(
+            current.id,
+            valid_from=current.valid_from,
+            valid_to=valid_to,
+            closed_by_source_id=closer_id,
         )
 
     def _finalize_imported_sources(
@@ -859,22 +1254,41 @@ class CcxImporter:
         database_name: str,
         source_ctx: dict[str, tuple[str, str | None]],
         chunk_records: list[dict[str, Any]],
-        node_source_links: dict[str, str],
+        node_source_links: dict[str, list[str]],
         all_node_ids: list[str],
-    ) -> None:
+        node_readings: dict[str, dict[str, Any]],
+    ) -> frozenset[str]:
         """Back-fill node->source links and the denormalized source counters.
 
         Mirrors the finalize step a normal extraction->commit runs after its
         write transaction. The importer otherwise leaves ``chunk_count`` and
         ``commit_nodes_created`` at their defaults and every imported node's
         ``source_id`` NULL — which makes a complete import read as an empty,
-        unattributed source and orphans its nodes from ``ON DELETE CASCADE``.
+        unattributed source whose delete would release none of its nodes.
 
         ``all_node_ids`` are this import's knowledge nodes. A SINGLE-source
         import owns all of them, so they are all linked (an entity never cited
         in a chunk would otherwise keep ``source_id`` NULL → invisible to search
-        and orphaned on delete). A multi-source bundle can only attribute a node
-        via its citation lineage.
+        and kept on delete). A multi-source bundle can only attribute a node
+        via its citation lineage: its first citer is its home, every citer a member.
+
+        Each member's snapshot is the package's own entity (``node_readings``),
+        not the node's row: on a node another source already shares, the row
+        holds every member's names, and a later release would rebuild the node
+        from them (#795 follow-up M5). A node the package has no entity for
+        falls back to its own pre-merge reading (``assign_source_to_nodes``).
+        Every linked node a source from outside this import attests too is
+        then rebuilt from its members (:func:`_rebuild_shared_nodes`): the
+        upsert wrote this package's content over it, and its row is the fold
+        of every reading. A node only this import's sources attest is left as
+        written: they all hold the package's one reading of it.
+
+        An upserted node this import does not link whose sole member is one
+        of its sources (a re-import of the package that wrote it, or an
+        entity no chunk of the bundle cites) has that source's reading
+        re-recorded from the package: the upsert names no writer and touches
+        no membership, since the same IRI may be another package's. Returns
+        the shared nodes the rebuild changed.
         """
         assert self.sources is not None
 
@@ -885,11 +1299,14 @@ class CcxImporter:
             if isinstance(source_iri, str):
                 chunks_by_source_iri[source_iri] = chunks_by_source_iri.get(source_iri, 0) + 1
 
-        # Node ids grouped by their (local) source id → source_id back-fill +
-        # commit_nodes_created.
+        # Node ids grouped by their first citing (local) source → source_id
+        # back-fill + commit_nodes_created; every later citer is a member too.
         node_ids_by_source: dict[str, list[str]] = {}
-        for node_id, src_id in node_source_links.items():
-            node_ids_by_source.setdefault(src_id, []).append(node_id)
+        also_cited_by: dict[str, list[str]] = {}
+        for node_id, src_ids in node_source_links.items():
+            node_ids_by_source.setdefault(src_ids[0], []).append(node_id)
+            for other in src_ids[1:]:
+                also_cited_by.setdefault(other, []).append(node_id)
 
         single_source = len(source_ctx) == 1
         for source_iri, (local_source_id, _full_text) in source_ctx.items():
@@ -901,7 +1318,9 @@ class CcxImporter:
             # already belongs to another source is not this source's creation, so
             # the denormalized counter must not over-report it.
             linked = (
-                self.graph.assign_source_to_nodes(node_ids, local_source_id, database_name)
+                self.graph.assign_source_to_nodes(
+                    node_ids, local_source_id, database_name, readings=node_readings
+                )
                 if node_ids
                 else 0
             )
@@ -916,6 +1335,89 @@ class CcxImporter:
                     "auto_analyze": False,
                 },
             )
+        # A node the bundle cites from several sources is attested by each: the
+        # home stays with the first, the others become members (#795), so
+        # deleting the home source keeps the node the others still cite.
+        for src_id, node_ids in also_cited_by.items():
+            self.graph.assign_source_to_nodes(
+                node_ids, src_id, database_name, readings=node_readings
+            )
+        imported = {local_id for local_id, _text in source_ctx.values()}
+        linked_ids = set(node_source_links) | (set(all_node_ids) if single_source else set())
+        members = self.graph.node_member_sources([*node_readings, *linked_ids])
+        self._refresh_own_readings(database_name, node_readings, members, linked_ids, imported)
+        return self._rebuild_shared_nodes(
+            database_name, {n: members.get(n, set()) for n in linked_ids}, imported
+        )
+
+    def _refresh_own_readings(
+        self,
+        database_name: str,
+        node_readings: dict[str, dict[str, Any]],
+        members: dict[str, set[str]],
+        linked: set[str],
+        imported: set[str],
+    ) -> None:
+        """Re-record the package reading of each unlinked node only one of ``imported`` attests."""
+        by_source: dict[str, list[str]] = {}
+        for node_id in node_readings:
+            sids = members.get(node_id, set())
+            if node_id not in linked and len(sids) == 1 and sids <= imported:
+                by_source.setdefault(next(iter(sids)), []).append(node_id)
+        for source_id, node_ids in by_source.items():
+            self.graph.assign_source_to_nodes(
+                node_ids, source_id, database_name, readings=node_readings
+            )
+
+    def _rebuild_shared_nodes(
+        self, database_name: str, members: dict[str, set[str]], imported: set[str]
+    ) -> frozenset[str]:
+        """Rebuild each linked node a source outside this import attests too, from its members.
+
+        ``upsert_node_by_ccx_iri`` writes the package's content over an
+        existing row; when a source outside ``imported`` (this import's
+        sources) attests the node too (a merge folded it in), the row must read
+        as the fold of every member's reading, as after a commit or a release
+        (``release.rebuild_from_members``, under the graph's conventions and
+        the engine settings, as a release ranks). A node only ``imported``
+        attests holds one reading, the package's, and is left as written: a
+        fresh multi-source bundle keeps its first citer as home.
+
+        ``members`` maps each linked node to its member sources (one batched
+        read by the caller). Returns the nodes whose text the rebuild changed:
+        the import clears their vectors once the bundle's are restored, so its
+        indexing, which embeds only vectorless nodes, re-embeds them from the
+        new text. Their full-text rows follow at indexing too.
+        """
+        from chaoscypher_core.services.graph.management.release import (
+            graph_conventions,
+            rebuild_from_members,
+        )
+
+        shared = sorted(nid for nid, sids in members.items() if sids - imported)
+        if not shared:
+            return frozenset()
+        assert self.sources is not None  # called from the source finalize, which has them
+        conventions = graph_conventions(
+            self.graph, self.sources, database_name, self._engine_settings()
+        )
+        rebuilt = rebuild_from_members(self.graph, shared, [], conventions)
+        logger.info(
+            "ccx_import_shared_nodes_rebuilt",
+            nodes=len(shared),
+            changed=len(rebuilt.changed_node_ids),
+            sample=sorted(rebuilt.changed_node_ids)[:10],
+        )
+        return rebuilt.changed_node_ids
+
+    def _engine_settings(self) -> EngineSettings:
+        """The engine settings this importer ranks by: the caller's, else the configured ones."""
+        if self.settings is not None:
+            return self.settings
+        from chaoscypher_core.app_config import get_settings
+        from chaoscypher_core.app_config.engine_factory import build_engine_settings
+
+        return build_engine_settings(get_settings())
 
     def _link_templates_to_source(
         self,
@@ -924,10 +1426,10 @@ class CcxImporter:
         template_iri_to_id: dict[str, str],
         imported_source_ids: list[str],
     ) -> None:
-        """Own this import's templates by its source so they cascade-delete.
+        """Own this import's templates by its source so its release takes them.
 
-        Templates are source-scoped: a source's templates cascade-delete with it
-        via the ``graph_templates.source_id`` FK. The importer creates templates
+        Templates are source-scoped: releasing a source deletes its templates
+        nothing else uses (``release_source``, D6). The importer creates templates
         before the source (FK order), leaving ``source_id`` NULL, so an imported
         source's templates would survive its delete — unlike extracted ones.
         Link them once the source lands.
@@ -957,13 +1459,15 @@ class CcxImporter:
         path) via ``pkg.asset_bytes`` when the record carries one; absent
         when the package used inline chunk content.
         """
-        from chaoscypher_core.utils.id import generate_id
+        from chaoscypher_core.utils.id import generate_hex_id, generate_id
 
         assert self.sources is not None
         ccx_iri = src_rec["@id"]
         full_text = self._read_source_text(pkg, src_rec)
         local_id = ccx_identity.local_id_from_iri(ccx_iri)
         display_name = src_rec.get("title") or local_id or ccx_iri
+        provenance = ccx_import_mapping.source_provenance(src_rec)
+        is_memory = provenance.get("source_type") == MEMORY_SOURCE_TYPE
 
         # ``id`` is minted fresh (not the recovered local id): ``sources.id``
         # is a GLOBAL primary key, so reusing the original id collides when
@@ -975,22 +1479,33 @@ class CcxImporter:
         # ``delete_source_files`` resolve ``Path(name).parent`` to the process
         # CWD and rmtree it (the source-delete frontend-wipe bug). Both columns
         # are NOT NULL; "" satisfies that without naming a file that isn't there.
+        # A memory comes back as a memory (spec 2026-10-20 § 8b): its type, its
+        # ``by``, scope and ``valid_from``, and an id minted as ``remember``
+        # mints one, so its handle reads like any memory's. Any other source is
+        # an imported one, as before.
         source_dict: dict[str, Any] = {
-            "id": generate_id("source"),
+            "id": generate_hex_id() if is_memory else generate_id("source"),
             "title": src_rec.get("title"),
             "filename": display_name,
             "filepath": "",
-            "source_type": "imported",
+            "source_type": MEMORY_SOURCE_TYPE if is_memory else _IMPORTED_SOURCE_TYPE,
             "status": "committed",
             "full_text": full_text,
         }
-        if src_rec.get("extractedBy"):
-            source_dict["extraction_mode"] = src_rec["extractedBy"]
+        if is_memory:
+            source_dict.update({k: v for k, v in provenance.items() if k != "source_type"})
+        extracted_by = ccx_import_mapping.extracted_by_text(src_rec.get("extractedBy"))
+        if extracted_by:
+            source_dict["extraction_mode"] = extracted_by
         # Restore the extraction domain so the graph view renders this imported
         # source's group icon exactly as an extracted source's (the domain →
         # icon mapping lives in the cortex graph API + the registry).
         if src_rec.get("extractionDomain"):
             source_dict["extraction_domain"] = src_rec["extractionDomain"]
+        # The packs in their stack order (the label above is sorted); a bundle
+        # from before the packs has none, and the label is read for them.
+        if isinstance(src_rec.get("extractionPacks"), list):
+            source_dict["extraction_packs"] = list(src_rec["extractionPacks"])
 
         row = self.sources.upsert_source_by_ccx_iri(ccx_iri, source_dict, database_name)
         self._restore_source_tags(row["id"], src_rec.get("keywords"), database_name)
@@ -1044,7 +1559,7 @@ class CcxImporter:
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
-        node_source_links: dict[str, str],
+        node_source_links: dict[str, list[str]],
         chunk_iri_to_id: dict[str, str],
     ) -> None:
         """Create one chunk (and its citations) from a ``ccx:Chunk`` record."""
@@ -1249,7 +1764,7 @@ class CcxImporter:
         node_iri_to_id: dict[str, str],
         node_iri_to_label: dict[str, str],
         node_iri_to_type: dict[str, str | None],
-        node_source_links: dict[str, str],
+        node_source_links: dict[str, list[str]],
     ) -> None:
         """Create entity citations attached to a chunk.
 
@@ -1286,9 +1801,12 @@ class CcxImporter:
                 continue
 
             # Record the cited node's source so the importer can back-fill
-            # ``graph_nodes.source_id`` after every source/chunk lands (the
-            # node was created before its source was known). First source wins.
-            node_source_links.setdefault(local_node_id, local_source_id)
+            # ``graph_nodes.source_id`` and the node's memberships after every
+            # source/chunk lands (the node was created before its source was
+            # known). The first citer becomes the home; every citer a member.
+            citers = node_source_links.setdefault(local_node_id, [])
+            if local_source_id not in citers:
+                citers.append(local_source_id)
 
             # Carry the cited node's ``entity_type`` onto the citation. The
             # source's Entity Distribution panel groups citations by
@@ -1321,18 +1839,18 @@ class CcxImporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _find_knowledge_graph(pkg: Any) -> dict[str, Any] | None:
+    def _find_knowledge_graph(graph_docs: list[Any]) -> dict[str, Any] | None:
         """Return the default (``role == "default"``) graph document dict."""
-        for doc in pkg.graph_documents():
+        for doc in graph_docs:
             if doc.role == _KNOWLEDGE_ROLE:
                 graph: dict[str, Any] = doc.doc
                 return graph
         return None
 
     @staticmethod
-    def _find_app_graph(pkg: Any, name: str) -> dict[str, Any] | None:
+    def _find_app_graph(graph_docs: list[Any], name: str) -> dict[str, Any] | None:
         """Return a ``chaoscypher.<name>`` named-graph document dict, or None."""
-        for doc in pkg.graph_documents():
+        for doc in graph_docs:
             if doc.namespace == _APP_NAMESPACE and doc.name == name:
                 graph: dict[str, Any] = doc.doc
                 return graph

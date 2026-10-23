@@ -12,10 +12,15 @@ import type { NodeAttributes, EdgeAttributes } from '../types';
 import { SOURCE_GROUP_PREFIX, SOURCE_PROVENANCE_PREFIX } from '../types';
 import { getColorForTemplate } from '../../../utils/colorUtils';
 import { getIconDataUri, DEFAULT_NODE_ICON } from '../../../utils/iconSprites';
+import { entitySubtype } from '../../../utils/entityTypes';
 
 const DEFAULT_NODE_SIZE = 8;
 
-/** Lookup template icon/color from a template map. */
+/**
+ * Lookup template icon/color from a template map. A node's template is its
+ * core type's (the commit creates one per core type), so the colour is the
+ * core type's; the pack subtype rides on the node (`subtype`) for its label.
+ */
 function resolveNodeVisuals(
   templateId: string,
   templateMap?: Map<string, Template>,
@@ -56,6 +61,7 @@ export function populateGraphFromApi(
       content,
       templateId,
       type: visuals.nodeType || node.type,
+      subtype: entitySubtype(content),
       tags: node.tags || [],
       createdAt: node.created_at,
       updatedAt: node.updated_at,
@@ -132,6 +138,7 @@ export function addApiNodeToGraph(
     content,
     templateId,
     type: visuals.nodeType || apiNode.type,
+    subtype: entitySubtype(content),
     tags: apiNode.tags || [],
     createdAt: apiNode.created_at,
     updatedAt: apiNode.updated_at,
@@ -338,4 +345,3 @@ export function addProvenanceEdges(
     }
   }
 }
-

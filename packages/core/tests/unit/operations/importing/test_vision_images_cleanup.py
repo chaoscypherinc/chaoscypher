@@ -279,3 +279,70 @@ async def test_resume_after_vision_failure_keeps_completed_vision_pages(
         "resume-pass failure deleted PNGs from an already-completed vision phase"
     )
     adapter.fail_indexing.assert_called_once_with("src_resume", "resume boom")
+
+
+@pytest.mark.parametrize(
+    ("database_name", "source_id"),
+    [
+        ("default", ".."),
+        ("default", "../../.."),
+        ("default", "a/b"),
+        ("default", "/data/databases/default"),
+        ("..", "src"),
+        ("default", ""),
+    ],
+)
+def test_vision_images_dir_rejects_non_segment_ids(
+    tmp_path: Path, database_name: str, source_id: str
+) -> None:
+    """``file_id`` comes from the queue payload; it must not escape the images dir."""
+    from chaoscypher_core.operations.importing import indexing_handler
+    from chaoscypher_core.utils.safe_paths import PathOutsideSandboxError
+
+    with pytest.raises(PathOutsideSandboxError):
+        indexing_handler.vision_images_dir(tmp_path / "data", database_name, source_id)
+
+
+@pytest.mark.asyncio
+async def test_failure_with_absolute_file_id_does_not_rmtree_outside_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A crafted absolute ``file_id`` must not aim the failure-path rmtree at a live dir.
+
+    ``Path(base) / "/abs"`` discards the base, so before the guard a payload
+    whose loader failed ``rmtree``'d whatever directory ``file_id`` named.
+    """
+    from chaoscypher_core.operations.importing import indexing_handler
+    from chaoscypher_core.settings import EngineSettings
+
+    victim = tmp_path / "data" / "databases" / "default"
+    victim.mkdir(parents=True)
+    (victim / "app.db").write_bytes(b"live")
+
+    fake_registry = MagicMock()
+    fake_registry.load_document.side_effect = FileNotFoundError("/nope.txt")
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.loaders.get_loader_registry",
+        lambda *a, **kw: fake_registry,
+    )
+    monkeypatch.setattr(indexing_handler, "event_bus", MagicMock())
+
+    engine_settings = EngineSettings(current_database="default")
+    engine_settings.paths.data_dir = str(tmp_path / "data")
+
+    with pytest.raises(FileNotFoundError):
+        await indexing_handler._run_indexing(
+            file_id=str(victim),
+            file_info={"filename": "nope.txt"},
+            filepath="/nope.txt",
+            analysis_depth="full",
+            enable_normalization=False,
+            enable_vision=False,
+            adapter=MagicMock(),
+            chunking_service=MagicMock(),
+            engine_settings=engine_settings,
+            settings=MagicMock(),
+            database_name="default",
+        )
+
+    assert (victim / "app.db").exists()

@@ -193,6 +193,34 @@ describe('useLayoutManager', () => {
 
   // ── Return shape ──────────────────────────────────────────────────────────
 
+  // ── Unresolved region ─────────────────────────────────────────────────────
+
+  it.each(['force', 'grid', 'mindmap', 'hierarchical', 'radial'])(
+    '%s: lays pipeline-flagged nodes out together, clear of the rest of the graph',
+    async (layout) => {
+      const graph = buildGraph();
+      graph.addNode('O1', nodeAttrs({ nodeId: 'O1', content: { orphan: true } }));
+      graph.addNode('O2', nodeAttrs({ nodeId: 'O2', content: { descriptor_reference: true } }));
+      graph.addNode('O3', nodeAttrs({ nodeId: 'O3', content: { orphan: 'true' } })); // not a flag
+      graph.addEdgeWithKey('O2A', 'O2', 'A', edgeAttrs({ edgeId: 'O2A' }));
+      const order = graph.order;
+      const size = graph.size;
+
+      const { applyLayout } = renderLayoutManager(graph);
+      await runLayout(applyLayout, layout);
+
+      const mainMaxX = Math.max(
+        ...['A', 'B', 'C', 'D', 'O3'].map((id) => graph.getNodeAttribute(id, 'x')),
+      );
+      for (const id of ['O1', 'O2']) {
+        expect(graph.getNodeAttribute(id, 'x')).toBeGreaterThan(mainMaxX);
+      }
+      // Layout only: no node or edge added or removed.
+      expect(graph.order).toBe(order);
+      expect(graph.size).toBe(size);
+    },
+  );
+
   it('returns an applyLayout function', () => {
     const graph = buildGraph();
     const { applyLayout } = renderLayoutManager(graph);

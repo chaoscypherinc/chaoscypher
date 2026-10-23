@@ -8,8 +8,12 @@ and consistency with split_into_sentences.
 """
 
 from chaoscypher_core.services.sources.engine.extraction.utils.sentence_splitter import (
-    get_referenced_sentences,
+    GROUP_TEXT_SEPARATOR,
+    evidence_snippet,
+    merge_evidence,
     parse_sent_ref,
+    resolve_evidence,
+    sentences_at,
     split_into_sentences,
     split_into_sentences_with_offsets,
 )
@@ -91,6 +95,66 @@ class TestSplitIntoSentencesWithOffsets:
             assert text[offset["start"] : offset["end"]] == sentence
 
 
+_QUOTE_CASES = [
+    # (text, expected sentences)
+    (
+        "\u201cYes.\u201d\n\n\u201cNo,\u201d said he.",
+        ["\u201cYes.\u201d", "\u201cNo,\u201d said he."],
+    ),
+    ('"Go!"\n\nHe went.', ['"Go!"', "He went."]),
+    ("\u201cYes.\u201d \u201cNo.\u201d", ["\u201cYes.\u201d", "\u201cNo.\u201d"]),
+    (
+        "\u201cShe said, \u2018Come.\u2019\u201d\n\nHe laughed.",
+        ["\u201cShe said, \u2018Come.\u2019\u201d", "He laughed."],
+    ),
+    ("He said \u2018Fine.\u2019\nShe nodded.", ["He said \u2018Fine.\u2019", "She nodded."]),
+    # A quote closing without sentence punctuation never ends the sentence.
+    ("\u201cNo,\u201d said he. Then he left.", ["\u201cNo,\u201d said he.", "Then he left."]),
+    # An attribution on the same line stays with its speech.
+    ("\u201cIs it?\u201d Pierre asked.", ["\u201cIs it?\u201d Pierre asked."]),
+    # Abbreviations still hold, after a quote too.
+    (
+        "\u201cWell?\u201d\n\nDr. Lorrain and Mlle. Sch\u00e9rer came in.",
+        ["\u201cWell?\u201d", "Dr. Lorrain and Mlle. Sch\u00e9rer came in."],
+    ),
+]
+
+
+class TestClosingQuoteBoundary:
+    """A sentence ends after ``.!?`` and a closing quote (audit C2).
+
+    Before the fix the boundary needed the punctuation right before the
+    whitespace, so a quoted turn ran into the next paragraph: 136 of the
+    Book One pack's 779 sentences crossed a paragraph break.
+    """
+
+    def test_the_audit_case_is_two_sentences(self) -> None:
+        """``\u201cYes.\u201d`` then a new paragraph is a sentence of its own."""
+        assert len(split_into_sentences("\u201cYes.\u201d\n\n\u201cNo,\u201d said he.")) == 2
+
+    def test_each_quote_case(self) -> None:
+        """Splits after a closing quote; keeps mid-sentence quotes and attributions joined."""
+        for text, expected in _QUOTE_CASES:
+            assert split_into_sentences(text) == expected, text
+
+    def test_offsets_slice_to_the_same_sentences(self) -> None:
+        """``sentence_offsets`` and ``split_into_sentences`` agree on every quote case."""
+        for text, expected in _QUOTE_CASES:
+            offsets = split_into_sentences_with_offsets(text)
+            assert [text[o["start"] : o["end"]] for o in offsets] == expected, text
+
+    def test_no_turn_runs_into_the_next_paragraph(self) -> None:
+        """Two speakers' paragraphs never share a sentence."""
+        text = (
+            "\u201cAnd what about the Emperor?\u201d\n\n"
+            "\u201cHe is well, thank God.\u201d\n\n"
+            "\u201cI am glad!\u201d said Anna P\u00e1vlovna."
+        )
+        sentences = split_into_sentences(text)
+        assert len(sentences) == 3
+        assert all("\n\n" not in s for s in sentences)
+
+
 class TestParseSentRef:
     """Tests for parse_sent_ref.
 
@@ -167,25 +231,26 @@ class TestParseSentRef:
         assert parse_sent_ref("S1-S3;S7") == [1, 2, 3, 7]
 
 
-class TestGetReferencedSentences:
-    """Tests for get_referenced_sentences.
+class TestSentencesAt:
+    """Tests for sentences_at over parse_sent_ref's indices (the citation reading).
 
-    Returns the union of sentences cited by ``sent_ref`` — exactly those
-    sentences, no implicit fill-in. Returns ``None`` if any cited index
-    is out of bounds or the ref is unparseable.
+    Exactly the cited sentences, no implicit fill-in; ``None`` when any cited
+    index is out of bounds or there is no index.
     """
 
     @staticmethod
     def _sample(n: int = 6) -> list[str]:
         return [f"sentence_{i}" for i in range(1, n + 1)]
 
+    @staticmethod
+    def _cited(sent_ref: str, sentences: list[str]) -> list[str] | None:
+        return sentences_at(parse_sent_ref(sent_ref) or [], sentences)
+
     def test_single_reference(self) -> None:
-        sentences = self._sample()
-        assert get_referenced_sentences("S2", sentences) == ["sentence_2"]
+        assert self._cited("S2", self._sample()) == ["sentence_2"]
 
     def test_range(self) -> None:
-        sentences = self._sample()
-        assert get_referenced_sentences("S2-S4", sentences) == [
+        assert self._cited("S2-S4", self._sample()) == [
             "sentence_2",
             "sentence_3",
             "sentence_4",
@@ -193,30 +258,115 @@ class TestGetReferencedSentences:
 
     def test_pure_comma_list_does_not_fill_gaps(self) -> None:
         """Regression: ``S3,S5`` previously returned [s3, s4, s5]."""
-        sentences = self._sample()
-        assert get_referenced_sentences("S3,S5", sentences) == [
-            "sentence_3",
-            "sentence_5",
-        ]
+        assert self._cited("S3,S5", self._sample()) == ["sentence_3", "sentence_5"]
 
     def test_mixed_range_and_singletons(self) -> None:
         """``S1-S2, S5`` → [s1, s2, s5] (no s3, no s4)."""
-        sentences = self._sample()
-        assert get_referenced_sentences("S1-S2, S5", sentences) == [
+        assert self._cited("S1-S2, S5", self._sample()) == [
             "sentence_1",
             "sentence_2",
             "sentence_5",
         ]
 
     def test_out_of_bounds_returns_none(self) -> None:
-        sentences = self._sample(3)
-        assert get_referenced_sentences("S5", sentences) is None
+        assert self._cited("S5", self._sample(3)) is None
 
     def test_partially_out_of_bounds_returns_none(self) -> None:
         """If any cited sentence is missing the whole ref is invalid."""
-        sentences = self._sample(3)
-        assert get_referenced_sentences("S1, S5", sentences) is None
+        assert self._cited("S1, S5", self._sample(3)) is None
 
-    def test_unparseable_returns_none(self) -> None:
-        sentences = self._sample()
-        assert get_referenced_sentences("garbage", sentences) is None
+    def test_no_index_returns_none(self) -> None:
+        assert parse_sent_ref("garbage") is None
+        assert sentences_at([], self._sample()) is None
+
+
+def _group(*contents: str) -> tuple[list[dict[str, str]], list[str]]:
+    """Return small chunks ``c0..cN`` and the sentences of their joined group text."""
+    chunks = [{"id": f"c{i}", "content": text} for i, text in enumerate(contents)]
+    return chunks, split_into_sentences(GROUP_TEXT_SEPARATOR.join(contents))
+
+
+class TestResolveEvidence:
+    """``resolve_evidence`` maps a group ``sent_ref`` to sentences and stored chunks."""
+
+    def test_places_each_sentence_in_its_chunk_with_local_index(self) -> None:
+        """S2 is the first sentence of chunk 1; S3 its second (group numbering)."""
+        chunks, sentences = _group("Anna met Pierre.", "Pierre left. Anna stayed.")
+        evidence = resolve_evidence("S1, S3", sentences, chunks)
+        assert evidence == [
+            {"text": "Anna met Pierre.", "chunk_id": "c0", "local_index": 0},
+            {"text": "Anna stayed.", "chunk_id": "c1", "local_index": 1},
+        ]
+
+    def test_repeated_sentence_resolves_to_the_cited_instance(self) -> None:
+        """Overlap duplicates: the offset of the cited S-number picks the chunk."""
+        chunks, sentences = _group("He waited. She came.", "She came. They spoke.")
+        assert sentences[1] == sentences[2] == "She came."
+        assert resolve_evidence("S2", sentences, chunks)[0]["chunk_id"] == "c0"
+        assert resolve_evidence("S3", sentences, chunks)[0]["chunk_id"] == "c1"
+
+    def test_stripped_text_falls_back_to_first_containing_chunk(self) -> None:
+        """Numbered text differing from the stored chunks falls back to text search.
+
+        The first chunk containing the sentence wins (overlap duplicates).
+        """
+        chunks = [
+            {"id": "c0", "content": "Page 4\nShe came. They spoke."},
+            {"id": "c1", "content": "They spoke. Night fell."},
+        ]
+        # The model saw the chunks with the page header stripped.
+        sentences = split_into_sentences("She came. They spoke.\n\nThey spoke. Night fell.")
+        evidence = resolve_evidence("S2, S4", sentences, chunks)
+        assert [(e["text"], e["chunk_id"]) for e in evidence] == [
+            ("They spoke.", "c0"),
+            ("Night fell.", "c1"),
+        ]
+        assert evidence[1]["local_index"] == 1
+
+    def test_out_of_range_refs_are_skipped(self) -> None:
+        """A ref past the group's last sentence is dropped, the rest kept."""
+        chunks, sentences = _group("One here. Two here.")
+        evidence = resolve_evidence("S2, S9", sentences, chunks)
+        assert [e["text"] for e in evidence] == ["Two here."]
+        assert resolve_evidence("S9", sentences, chunks) == []
+        assert resolve_evidence("garbage", sentences, chunks) == []
+        assert resolve_evidence(None, sentences, chunks) == []
+
+    def test_missing_chunk_falls_back_to_text_only(self) -> None:
+        """A sentence whose chunk is not supplied keeps its text, no chunk."""
+        _chunks, sentences = _group("Anna met Pierre.", "Pierre left.")
+        evidence = resolve_evidence("S2", sentences, [{"id": "c0", "content": "Anna met Pierre."}])
+        assert evidence == [{"text": "Pierre left.", "chunk_id": None, "local_index": None}]
+        assert resolve_evidence("S1", sentences, [])[0]["chunk_id"] is None
+
+    def test_stored_sentence_offsets_drive_the_local_index(self) -> None:
+        """``chunk_metadata.sentence_offsets`` is used when present."""
+        content = "Anna met Pierre. Pierre left."
+        chunk = {
+            "id": "c0",
+            "content": content,
+            "chunk_metadata": {"sentence_offsets": split_into_sentences_with_offsets(content)},
+        }
+        evidence = resolve_evidence("S2", split_into_sentences(content), [chunk])
+        assert evidence[0]["local_index"] == 1
+
+
+class TestEvidenceHelpers:
+    """``evidence_snippet`` and ``merge_evidence``."""
+
+    def test_snippet_keeps_the_citation_chunk_sentences(self) -> None:
+        evidence = [
+            {"text": "A.", "chunk_id": "c0", "local_index": 0},
+            {"text": "B.", "chunk_id": "c1", "local_index": 0},
+            {"text": "C.", "chunk_id": "c0", "local_index": 1},
+        ]
+        assert evidence_snippet(evidence) == "A. B. C."
+        assert evidence_snippet(evidence, "c0") == "A. C."
+        assert evidence_snippet([{"text": "D.", "chunk_id": None}], "c9") == "D."
+        assert evidence_snippet([], "c0") is None
+
+    def test_merge_is_an_ordered_union(self) -> None:
+        a = [{"text": "A.", "chunk_id": "c0", "local_index": 0}]
+        b = [{"text": "A.", "chunk_id": "c0", "local_index": 0}, {"text": "B.", "chunk_id": "c1"}]
+        assert [e["text"] for e in merge_evidence(a, b)] == ["A.", "B."]
+        assert merge_evidence(None, None) == []

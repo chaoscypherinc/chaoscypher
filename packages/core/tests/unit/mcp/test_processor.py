@@ -80,6 +80,25 @@ class TestDocumentProcessorQueue:
         status = processor.get_status()
         assert len(status["completed"]) <= 20
 
+    def test_completed_history_is_evicted_on_append(self):
+        """The limit bounds memory, not only the status slice."""
+        from chaoscypher_core.mcp.processor import CompletedFile
+
+        proc = DocumentProcessor(pipeline_callback=AsyncMock(), completed_history_limit=2)
+        for i in range(3):
+            proc._remember(CompletedFile(file_id=str(i), filename=f"{i}.pdf", status="committed"))
+        assert [c.file_id for c in proc._completed] == ["1", "2"]
+
+    @pytest.mark.asyncio
+    async def test_wait_without_a_record_is_unknown_not_completed(self, processor):
+        """A worker cancelled mid-file sets the event with no record."""
+        event = asyncio.Event()
+        processor._completion_events["ghost"] = event
+        event.set()
+        result = await processor.wait_for_completion("ghost", timeout=1)
+        assert result["status"] == "unknown"
+        assert "error" in result
+
     @pytest.mark.asyncio
     async def test_processing_completes_and_moves_to_completed(self, processor):
         result = await processor.add_document(processor._test_file)

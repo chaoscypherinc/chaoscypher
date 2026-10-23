@@ -5,7 +5,9 @@
 
 Runs embedding models locally on CPU, independent of any LLM provider.
 Implements EmbeddingProviderProtocol for use with the embedding abstraction layer.
-Supports lazy model loading, MRL truncation, and async thread offload.
+Supports lazy model loading, MRL truncation (re-normalised to unit length by
+:func:`~chaoscypher_core.adapters.embedding.vectors.fit_dimensions`), and async
+thread offload.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 
 import structlog
 
+from chaoscypher_core.adapters.embedding.vectors import fit_provider_vector
 from chaoscypher_core.models import BatchEmbedResult, EmbedResult
 from chaoscypher_core.ports.embedding import EmbeddingHealthStatus
 
@@ -91,6 +94,9 @@ class LocalEmbeddingProvider:
         print(len(result.embedding))  # 1024
 
     """
+
+    query_prefix: str = ""
+    """Text put before a query when it is embedded: none (the text is encoded as given)."""
 
     def __init__(self, model_name: str, vector_dimensions: int, cache_dir: Path) -> None:
         """Initialize local embedding provider configuration.
@@ -180,7 +186,9 @@ class LocalEmbeddingProvider:
             """Run the blocking sentence-transformers encode in a worker thread."""
             model = self._ensure_model()
             vector = model.encode(text, show_progress_bar=False)
-            return [float(v) for v in vector[: self.vector_dimensions]]
+            return fit_provider_vector(
+                vector, self.vector_dimensions, provider="local", model=self.model_name
+            )
 
         embedding = await asyncio.to_thread(_encode)
 
@@ -214,7 +222,12 @@ class LocalEmbeddingProvider:
             """Run the blocking sentence-transformers batch encode in a worker thread."""
             model = self._ensure_model()
             vectors = model.encode(texts, batch_size=batch_size, show_progress_bar=False)
-            return [[float(v) for v in vec[: self.vector_dimensions]] for vec in vectors]
+            return [
+                fit_provider_vector(
+                    vec, self.vector_dimensions, provider="local", model=self.model_name
+                )
+                for vec in vectors
+            ]
 
         embeddings = await asyncio.to_thread(_encode_batch)
 

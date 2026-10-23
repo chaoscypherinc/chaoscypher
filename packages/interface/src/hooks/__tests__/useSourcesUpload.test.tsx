@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Source } from '../../types';
+import type { Site, Source, UrlImportOptions, UrlImportResponse } from '../../types';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -20,7 +20,7 @@ type UploadFn = (
   extractEntities?: boolean,
   analysisDepth?: 'quick' | 'full',
   enableNormalization?: boolean,
-  domain?: string,
+  packs?: string[] | null,
   onUploadProgress?: (progress: number) => void,
   enableVision?: boolean | null,
   filteringMode?: string,
@@ -42,7 +42,7 @@ type UploadBatchFn = (
   extractEntities?: boolean,
   analysisDepth?: 'quick' | 'full',
   enableNormalization?: boolean,
-  domain?: string,
+  packs?: string[] | null,
   enableVision?: boolean | null,
   filteringMode?: string,
   contentFiltering?: boolean,
@@ -54,11 +54,22 @@ type ImportUrlFn = (
   extractEntities?: boolean,
   analysisDepth?: 'quick' | 'full',
   enableNormalization?: boolean,
-  domain?: string,
+  packs?: string[] | null,
   filteringMode?: string,
   contentFiltering?: boolean,
   skipDuplicates?: boolean,
-) => Promise<Source>;
+) => Promise<UrlImportResponse>;
+
+type CreateSiteFn = (
+  url: string,
+  exclude: string[],
+  options: UrlImportOptions,
+) => Promise<Site>;
+
+vi.mock('../../services/api/sites', () => ({
+  SITES_QUERY_KEY: ['sources', 'sites'],
+  sitesApi: { create: vi.fn<CreateSiteFn>() },
+}));
 
 vi.mock('../../services/api/sources', () => ({
   sourcesApi: {
@@ -93,12 +104,14 @@ vi.mock('../../contexts/useAppConfig', () => ({
 // ---------------------------------------------------------------------------
 
 import { sourcesApi, getRecommendedNormalization } from '../../services/api/sources';
+import { sitesApi } from '../../services/api/sites';
 import { logger } from '../../utils/logger';
 import { useSourcesUpload } from '../useSourcesUpload';
 
 const mockUpload = sourcesApi.upload as ReturnType<typeof vi.fn>;
 const mockUploadBatch = sourcesApi.uploadBatch as ReturnType<typeof vi.fn>;
 const mockImportUrl = sourcesApi.importUrl as ReturnType<typeof vi.fn>;
+const mockCreateSite = sitesApi.create as ReturnType<typeof vi.fn>;
 const mockGet = sourcesApi.get as ReturnType<typeof vi.fn>;
 const mockConfirmExtraction = sourcesApi.confirmExtraction as ReturnType<typeof vi.fn>;
 const mockGetRecommendedNormalization = getRecommendedNormalization as ReturnType<typeof vi.fn>;
@@ -116,6 +129,13 @@ function makeSource(overrides: Partial<Source> = {}): Source {
     ...overrides,
   } as Source;
 }
+
+/** What `POST /sources/url` answers: the queued fetch (the worker creates the source). */
+const QUEUED_URL: UrlImportResponse = {
+  task_id: 'task-1',
+  url: 'https://example.com/doc',
+  status: 'queued',
+};
 
 /** Build a File of a given byte size and name/type. */
 function makeFile(name = 'doc.pdf', sizeBytes = 1024, type = 'application/pdf'): File {
@@ -155,7 +175,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockGetRecommendedNormalization.mockReturnValue(true);
   mockUpload.mockResolvedValue(makeSource());
-  mockImportUrl.mockResolvedValue(makeSource());
+  mockImportUrl.mockResolvedValue(QUEUED_URL);
+  mockCreateSite.mockResolvedValue({ id: 'site-1' } as Site);
   mockUploadBatch.mockResolvedValue({ uploaded: 0, failed: 0, files: [], errors: [] });
   // The embedded wizard polls `get` for an auto-domain single-file upload;
   // resolve to a proposal-ready source so it settles into review (the
@@ -191,7 +212,7 @@ describe('useSourcesUpload', () => {
       expect(result.current.analysisDepth).toBe('full');
       expect(result.current.enableNormalization).toBe(true);
       expect(result.current.enableVision).toBe(true);
-      expect(result.current.selectedDomain).toBe('__auto__');
+      expect(result.current.selectedPacks).toBeNull();
       expect(result.current.filteringMode).toBe('');
       expect(result.current.contentFiltering).toBe(true);
       expect(result.current.skipDuplicates).toBe(false);
@@ -223,7 +244,7 @@ describe('useSourcesUpload', () => {
       act(() => result.current.setAnalysisDepth('quick'));
       act(() => result.current.setEnableNormalization(false));
       act(() => result.current.setEnableVision(false));
-      act(() => result.current.setSelectedDomain('legal'));
+      act(() => result.current.setSelectedPacks(['legal']));
       act(() => result.current.setFilteringMode('strict'));
       act(() => result.current.setContentFiltering(false));
       act(() => result.current.setSkipDuplicates(true));
@@ -232,7 +253,7 @@ describe('useSourcesUpload', () => {
       expect(result.current.analysisDepth).toBe('quick');
       expect(result.current.enableNormalization).toBe(false);
       expect(result.current.enableVision).toBe(false);
-      expect(result.current.selectedDomain).toBe('legal');
+      expect(result.current.selectedPacks).toEqual(['legal']);
       expect(result.current.filteringMode).toBe('strict');
       expect(result.current.contentFiltering).toBe(false);
       expect(result.current.skipDuplicates).toBe(true);
@@ -337,14 +358,14 @@ describe('useSourcesUpload', () => {
       const { result } = renderUploadHook(cb);
 
       act(() => result.current.handleFilesSelected([makeFile('a.pdf')]));
-      act(() => result.current.setSelectedDomain('legal'));
+      act(() => result.current.setSelectedPacks(['legal']));
       act(() => result.current.setEnableNormalization(false));
 
       act(() => result.current.clearSelection());
 
       expect(result.current.selectedFiles).toEqual([]);
       expect(result.current.enableNormalization).toBe(true);
-      expect(result.current.selectedDomain).toBe('__auto__');
+      expect(result.current.selectedPacks).toBeNull();
     });
   });
 
@@ -370,7 +391,7 @@ describe('useSourcesUpload', () => {
       const { result } = renderUploadHook(cb);
 
       act(() => result.current.handleFilesSelected([makeFile('doc.pdf')]));
-      act(() => result.current.setSelectedDomain('legal'));
+      act(() => result.current.setSelectedPacks(['legal']));
       act(() => result.current.setFilteringMode('strict'));
 
       await act(async () => {
@@ -383,13 +404,13 @@ describe('useSourcesUpload', () => {
       expect((args[0] as File).name).toBe('doc.pdf');
       expect(args[1]).toBe(true);          // extractEntities
       expect(args[2]).toBe('full');        // analysisDepth
-      expect(args[4]).toBe('legal');       // domain (not __auto__)
+      expect(args[4]).toEqual(['legal']);  // packs (not auto)
       expect(args[7]).toBe('strict');      // filteringMode
       // Override fast-path: a specific domain sends auto_confirm=true.
       expect(args[11]).toBe(true);
     });
 
-    it('passes undefined domain + auto_confirm=false when __auto__ is selected', async () => {
+    it('passes null packs + auto_confirm=false when detection chooses', async () => {
       const cb = makeCallbacks();
       const { result } = renderUploadHook(cb);
 
@@ -399,7 +420,7 @@ describe('useSourcesUpload', () => {
         await result.current.handleUploadConfirm();
       });
 
-      expect(mockUpload.mock.calls[0][4]).toBeUndefined(); // domain
+      expect(mockUpload.mock.calls[0][4]).toBeNull(); // packs: detection proposes
       expect(mockUpload.mock.calls[0][11]).toBe(false);    // auto_confirm
     });
 
@@ -464,11 +485,11 @@ describe('useSourcesUpload', () => {
       expect(result.current.wizard.source?.id).toBe('src-1');
     });
 
-    it('override fast-path: a specific domain skips the wizard (phase stays idle)', async () => {
+    it('override fast-path: chosen packs skip the wizard (phase stays idle)', async () => {
       const cb = makeCallbacks();
       const { result } = renderUploadHook(cb);
       act(() => result.current.handleFilesSelected([makeFile('doc.pdf')]));
-      act(() => result.current.setSelectedDomain('legal'));
+      act(() => result.current.setSelectedPacks(['legal']));
 
       await act(async () => {
         await result.current.handleUploadConfirm();
@@ -716,7 +737,7 @@ describe('useSourcesUpload', () => {
     it('calls importUrl with current settings and refreshes on success', async () => {
       const cb = makeCallbacks();
       const { result } = renderUploadHook(cb);
-      act(() => result.current.setSelectedDomain('legal'));
+      act(() => result.current.setSelectedPacks(['legal']));
 
       await act(async () => {
         await result.current.handleUrlImport('https://example.com/doc');
@@ -725,14 +746,14 @@ describe('useSourcesUpload', () => {
       expect(mockImportUrl).toHaveBeenCalledTimes(1);
       const args = mockImportUrl.mock.calls[0];
       expect(args[0]).toBe('https://example.com/doc');
-      expect(args[4]).toBe('legal'); // domain
+      expect(args[4]).toEqual(['legal']); // packs
       expect(cb.onUploadComplete).toHaveBeenCalledTimes(1);
     });
 
     it('toggles importingUrl during the import', async () => {
       const cb = makeCallbacks();
-      let resolveImport!: (s: Source) => void;
-      mockImportUrl.mockReturnValue(new Promise<Source>(res => { resolveImport = res; }));
+      let resolveImport!: (r: UrlImportResponse) => void;
+      mockImportUrl.mockReturnValue(new Promise<UrlImportResponse>(res => { resolveImport = res; }));
 
       const { result } = renderUploadHook(cb);
 
@@ -743,47 +764,10 @@ describe('useSourcesUpload', () => {
       await waitFor(() => expect(result.current.importingUrl).toBe(true));
 
       await act(async () => {
-        resolveImport(makeSource());
+        resolveImport(QUEUED_URL);
       });
 
       await waitFor(() => expect(result.current.importingUrl).toBe(false));
-    });
-
-    it('fires onInfo for a non-error duplicate url', async () => {
-      const cb = makeCallbacks();
-      mockImportUrl.mockResolvedValue(
-        makeSource({ skipped_duplicate: true, existing_status: 'committed', id: 'url-dup' }),
-      );
-
-      const { result } = renderUploadHook(cb);
-
-      await act(async () => {
-        await result.current.handleUrlImport('https://example.com/doc');
-      });
-
-      expect(cb.onInfo).toHaveBeenCalledWith(
-        expect.stringContaining('matches an existing source'),
-        { sourceId: 'url-dup' },
-      );
-      expect(cb.onUploadComplete).toHaveBeenCalledTimes(1);
-    });
-
-    it('fires onError with retry action for an errored duplicate url', async () => {
-      const cb = makeCallbacks();
-      mockImportUrl.mockResolvedValue(
-        makeSource({ skipped_duplicate: true, existing_status: 'error', id: 'url-err' }),
-      );
-
-      const { result } = renderUploadHook(cb);
-
-      await act(async () => {
-        await result.current.handleUrlImport('https://example.com/doc');
-      });
-
-      expect(cb.onError).toHaveBeenCalledWith(
-        expect.stringContaining('previously imported but errored'),
-        { sourceId: 'url-err', action: 'retry' },
-      );
     });
 
     it('logs and reports import failures', async () => {
@@ -798,6 +782,69 @@ describe('useSourcesUpload', () => {
 
       expect(mockLoggerError).toHaveBeenCalledWith('URL import failed:', expect.any(Error));
       expect(cb.onError).toHaveBeenCalledWith('URL import failed: bad url');
+      expect(result.current.importingUrl).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // handleSiteImport
+  // -------------------------------------------------------------------------
+
+  describe('handleSiteImport', () => {
+    it('imports the site with the dialog options and refreshes', async () => {
+      const cb = makeCallbacks();
+      const { result } = renderUploadHook(cb);
+      act(() => {
+        result.current.setSelectedPacks(['legal']);
+        result.current.setAnalysisDepth('quick');
+      });
+
+      await act(async () => {
+        await result.current.handleSiteImport('https://docs.example.com', []);
+      });
+
+      expect(mockCreateSite).toHaveBeenCalledWith('https://docs.example.com', [], {
+        extract_entities: true,
+        analysis_depth: 'quick',
+        enable_normalization: true,
+        enable_vision: true,
+        packs: ['legal'],
+        filtering_mode: null,
+        content_filtering: true,
+        skip_duplicates: false,
+        // A site's pages are never parked one by one for domain confirmation.
+        auto_confirm: true,
+      });
+      expect(mockImportUrl).not.toHaveBeenCalled();
+      expect(cb.onInfo).toHaveBeenCalledWith(
+        expect.stringContaining('Importing the site at https://docs.example.com'),
+      );
+      expect(cb.onUploadComplete).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends the unticked pages as exclusions', async () => {
+      const cb = makeCallbacks();
+      const { result } = renderUploadHook(cb);
+      const exclude = ['https://docs.example.com/a', 'https://docs.example.com/b'];
+
+      await act(async () => {
+        await result.current.handleSiteImport('https://docs.example.com', exclude);
+      });
+
+      expect(mockCreateSite.mock.calls[0][1]).toEqual(exclude);
+    });
+
+    it('reports a failed site import', async () => {
+      const cb = makeCallbacks();
+      mockCreateSite.mockRejectedValue(new Error('blocked'));
+      const { result } = renderUploadHook(cb);
+
+      await act(async () => {
+        await result.current.handleSiteImport('https://docs.example.com', []);
+      });
+
+      expect(cb.onError).toHaveBeenCalledWith('Site import failed: blocked');
+      expect(cb.onUploadComplete).not.toHaveBeenCalled();
       expect(result.current.importingUrl).toBe(false);
     });
   });

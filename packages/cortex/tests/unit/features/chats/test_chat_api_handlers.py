@@ -1104,6 +1104,33 @@ class TestRegenerateChatTurnHandler:
         service.add_message.assert_not_called()
         mock_enqueue.assert_awaited_once()
         assert result.task_id == "task-r"
+        # the dropped answer recorded no decoding: this is the first re-ask (audit wave 5)
+        assert mock_enqueue.await_args.kwargs["data"]["decoding_attempt"] == 1
+
+    @pytest.mark.asyncio
+    async def test_each_regenerate_asks_with_the_next_seed(self) -> None:
+        """Under pinned decoding the same history gave the same answer (audit wave 5).
+
+        The answer being dropped recorded its attempt; the turn is enqueued one
+        past it, and the shared loop asks with ``resample_decoding``'s seed for it.
+        """
+        from chaoscypher_cortex.features.chats.api import regenerate_chat_turn
+
+        chat = self._chat()
+        chat["messages"][-1]["extra_metadata"] = {"decoding": {"seed": 44, "attempt": 2}}
+        service = MagicMock()
+        service.get_chat.return_value = chat
+        with (
+            patch("chaoscypher_core.services.llm.require_extraction_ready", new=AsyncMock()),
+            patch(
+                "chaoscypher_cortex.features.chats.api.queue_client.enqueue_task",
+                new=AsyncMock(return_value="task-r"),
+            ) as mock_enqueue,
+        ):
+            await regenerate_chat_turn(
+                chat_id="chat-1", chat_service=service, settings=_settings(), _="test-user"
+            )
+        assert mock_enqueue.await_args.kwargs["data"]["decoding_attempt"] == 3
 
     @pytest.mark.asyncio
     async def test_409_when_processing_or_no_user_message(self) -> None:

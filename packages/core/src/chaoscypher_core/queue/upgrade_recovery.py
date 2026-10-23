@@ -25,7 +25,8 @@ The contract for adding a new ``OP_*``:
    CC044-style discipline for queue ops; see lint rule CC044).
 2. ``source_bound`` ops MUST carry ``source_id`` in ``data`` or ``metadata``.
 3. ``chat_bound`` ops MUST carry ``chat_id`` in ``data`` or ``metadata``.
-4. Both MUST carry ``data["database_name"]`` (or fall back to the
+4. ``site_bound`` ops MUST carry ``site_id`` in ``data`` or ``metadata``.
+5. All MUST carry ``data["database_name"]`` (or fall back to the
    ``metadata`` dict; both conventions are honored).
 
 Recovery is best-effort: any failure (resource not found, DB error,
@@ -53,6 +54,7 @@ from chaoscypher_core.constants import (
     OP_IMPORT_CCX,
     OP_IMPORT_COMMIT,
     OP_IMPORT_INDEXING,
+    OP_IMPORT_SITE,
     OP_INDEX_DOCUMENT,
     OP_INDEX_IMPORTED_NODES,
     OP_INDEX_IMPORTED_SOURCE,
@@ -67,7 +69,7 @@ from chaoscypher_core.constants import (
 logger = structlog.get_logger(__name__)
 
 
-OperationCategory = Literal["source_bound", "chat_bound", "drop_and_log"]
+OperationCategory = Literal["source_bound", "chat_bound", "site_bound", "drop_and_log"]
 
 
 # Every queue operation MUST appear here. Unknown ops fall through to
@@ -93,6 +95,11 @@ OPERATION_RECOVERY_CATEGORY: dict[str, OperationCategory] = {
     OP_CHAT_BACKGROUND: "chat_bound",
     "chat_completion": "chat_bound",
     "tool_execution": "chat_bound",
+    # ---------- site_bound: site_id required in data or metadata ----------
+    # OP_IMPORT_SITE: each page it imported is its own source row (recovered as
+    # any source is); the site row is marked failed so its refresh, which
+    # resumes from the run's cursor, is not refused as "a run in progress".
+    OP_IMPORT_SITE: "site_bound",
     # ---------- drop_and_log: no owning resource, or idempotent ----------
     # OP_FETCH_URL creates the source row in its handler; an interrupted
     # fetch has no source row to mark, so the user just retries the URL.
@@ -266,6 +273,49 @@ def _recover_chat_bound(
         adapter.disconnect()
 
 
+def _recover_site_bound(
+    data: dict[str, Any], metadata: dict[str, Any], operation: str, task_id: str
+) -> None:
+    """Mark the owning site ``failed``: its run will not resume by itself."""
+    site_id = data.get("site_id") or metadata.get("site_id")
+    database_name = _resolve_database_name(data, metadata)
+    if not isinstance(site_id, str) or not site_id or not database_name:
+        logger.warning(
+            "upgrade_recovery_missing_site_id",
+            operation=operation,
+            task_id=task_id,
+            site_id=site_id,
+        )
+        return
+
+    from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+    from chaoscypher_core.operations.sources.site_runs import fail_interrupted_runs
+
+    adapter = get_sqlite_adapter(database_name)
+    try:
+        failed = fail_interrupted_runs(
+            adapter, database_name, has_live_task=lambda site: site["id"] != site_id
+        )
+        logger.info(
+            "upgrade_recovery_site_marked_failed",
+            operation=operation,
+            task_id=task_id,
+            site_id=site_id,
+            marked=site_id in failed,
+        )
+    except Exception as exc:
+        logger.warning(
+            "upgrade_recovery_site_update_failed",
+            operation=operation,
+            task_id=task_id,
+            site_id=site_id,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+    finally:
+        adapter.disconnect()
+
+
 def apply_upgrade_recovery(
     *,
     operation: str,
@@ -293,6 +343,8 @@ def apply_upgrade_recovery(
         _recover_source_bound(data, metadata, operation, task_id)
     elif category == "chat_bound":
         _recover_chat_bound(data, metadata, operation, task_id)
+    elif category == "site_bound":
+        _recover_site_bound(data, metadata, operation, task_id)
     # drop_and_log: the dispatch log line above is sufficient.
 
 

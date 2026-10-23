@@ -372,3 +372,86 @@ async def test_run_indexing_skips_counter_increments_when_no_removals(
     assert row["cleaner_lines_removed"] == 0
     assert row["cleaner_paragraphs_deduplicated"] == 0
     assert row["cleaner_chars_removed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_indexing_normalizes_off_the_event_loop_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sqlite_adapter: SqliteAdapter,
+    prepared_source_id: str,
+) -> None:
+    """``_extract_text`` (multi-second normalizer CPU) runs in a worker thread.
+
+    OP_INDEX_DOCUMENT shares the operations event loop with up to
+    ``operations_max_concurrent`` other handlers, so the normalize pass is
+    offloaded with ``asyncio.to_thread`` like ``load_document``.
+    """
+    import threading
+
+    loop_thread = threading.get_ident()
+    extract_threads: list[int] = []
+    real_extract_text = indexing_handler._extract_text
+
+    def _recording_extract_text(*args, **kwargs):  # type: ignore[no-untyped-def]
+        extract_threads.append(threading.get_ident())
+        return real_extract_text(*args, **kwargs)
+
+    monkeypatch.setattr(indexing_handler, "_extract_text", _recording_extract_text)
+
+    fake_registry = MagicMock()
+    fake_registry.load_document.return_value = [
+        {
+            "content": "A nice clean paragraph that needs no cleaning. " * 10,
+            "metadata": {"extraction_method": "read_text"},
+        }
+    ]
+    monkeypatch.setattr(
+        "chaoscypher_core.services.sources.loaders.get_loader_registry",
+        lambda *a, **kw: fake_registry,
+    )
+    monkeypatch.setattr(
+        indexing_handler,
+        "_apply_vision_processing",
+        AsyncMock(side_effect=lambda **kw: (kw["documents"], None)),
+    )
+
+    chunking_service = MagicMock()
+    chunking_service.create_chunks = AsyncMock(
+        return_value=MagicMock(
+            total_small_chunks=1,
+            total_groups=1,
+            chunks_filtered=0,
+            normalize_drops=0,
+            prestrip_lines_removed=0,
+            chunks_skipped_by_depth=0,
+        )
+    )
+    chunking_service.store_chunks = MagicMock()
+    monkeypatch.setattr(indexing_handler, "queue_embed_chunks", AsyncMock(return_value="tsk_e4"))
+    monkeypatch.setattr(indexing_handler, "event_bus", MagicMock())
+
+    settings = MagicMock()
+    settings.priorities.background = 50
+    settings.data_dir = str(tmp_path)
+    engine_settings = MagicMock()
+    engine_settings.paths.data_dir = str(tmp_path)
+
+    await indexing_handler._run_indexing(
+        file_id=prepared_source_id,
+        file_info={"filename": "clean.txt", "filepath": str(tmp_path / "clean.txt")},
+        filepath=str(tmp_path / "clean.txt"),
+        analysis_depth="full",
+        enable_normalization=False,
+        enable_vision=False,
+        adapter=sqlite_adapter,
+        chunking_service=chunking_service,
+        engine_settings=engine_settings,
+        settings=settings,
+        database_name="default",
+    )
+
+    assert len(extract_threads) == 1
+    assert extract_threads[0] != loop_thread, (
+        "_extract_text ran on the event-loop thread; it must be offloaded with asyncio.to_thread"
+    )

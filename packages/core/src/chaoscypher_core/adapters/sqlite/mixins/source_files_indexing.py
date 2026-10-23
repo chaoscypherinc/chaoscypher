@@ -9,6 +9,7 @@ Part of the unified SourceStorageProtocol implementation.
 """
 
 import base64
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -30,6 +31,11 @@ from chaoscypher_core.adapters.sqlite.models import (
 from chaoscypher_core.models import SourceErrorStage, SourceStatus
 from chaoscypher_core.ports.storage_embeddings import EntityEmbeddingStorageProtocol
 from chaoscypher_core.ports.storage_extraction_queue import ExtractionQueueStorageProtocol
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    forced_packs_of,
+    pack_columns,
+    stored_packs,
+)
 from chaoscypher_core.utils.id import generate_id
 
 
@@ -163,6 +169,8 @@ class SourceIndexingMixin(
         relationships: list[dict[str, Any]],
         detected_domain: str | None = None,
         forced_domain: str | None = None,
+        forced_packs: Sequence[str] | None = None,
+        detected_packs: Sequence[str] | None = None,
         domain_version: str | None = None,
         domain_content_hash: str | None = None,
         cross_chunk_filtering_log: dict[str, Any] | None = None,
@@ -188,8 +196,11 @@ class SourceIndexingMixin(
             relationships: Relationship dicts. ``source`` / ``target``
                 must be integer indices into ``entities``; out-of-range
                 indices are dropped with a warning log.
-            detected_domain: Domain inferred by the extraction pipeline.
-            forced_domain: Operator-specified domain override.
+            detected_domain: The old one-name form of ``detected_packs``.
+            forced_domain: The old one-name form of ``forced_packs``.
+            forced_packs: The packs the user forced (``[]`` the floor alone;
+                None when detection decided).
+            detected_packs: The packs detection proposed.
             domain_version: Plugin version this source extracted under.
             domain_content_hash: sha256 of the plugin content at extraction time.
             cross_chunk_filtering_log: Cross-chunk filtering diagnostics
@@ -239,9 +250,23 @@ class SourceIndexingMixin(
         source.extraction_relationships_count = len(relationships)
         source.cross_chunk_filtering_log = cross_chunk_filtering_log
 
-        # Set domain info: use forced_domain if set, otherwise detected_domain
-        source.extraction_domain = forced_domain or detected_domain
-        source.extraction_domain_auto = forced_domain is None
+        # The packs extracted with: the forced ones if any, else the detected
+        # ones. ``extraction_domain`` records their label (packs_label), so the
+        # benchmark identity, snapshot_domain and the comparability rule keep
+        # reading one string; ``forced`` None (not ``[]``) is "detected".
+        forced = forced_packs_of({"forced_packs": forced_packs, "forced_domain": forced_domain})
+        detected = stored_packs(
+            {"detected_packs": detected_packs, "detected_domain": detected_domain},
+            list_key="detected_packs",
+            name_key="detected_domain",
+        )
+        extracted = forced if forced is not None else detected
+        columns = pack_columns(
+            {"extraction_packs": list(extracted) if extracted is not None else None}
+        )
+        source.extraction_packs = columns["extraction_packs"]
+        source.extraction_domain = columns["extraction_domain"]
+        source.extraction_domain_auto = forced is None
         source.domain_version = domain_version
         source.domain_content_hash = domain_content_hash
 
@@ -1364,14 +1389,14 @@ class SourceIndexingMixin(
         extraction slot.
 
         Does NOT touch chunks, embeddings, or the source file itself —
-        those remain valid (indexing is unchanged). The graph artifacts
-        (nodes, edges, templates created by the prior commit) are deleted
-        by the caller via ``graph_repository.delete_source_artifacts``
+        those remain valid (indexing is unchanged). The source is released
+        from the graph (its memberships, and the nodes, edges and templates
+        only it attested) by the caller via ``graph_repository.release_source``
         BEFORE this method is called.
 
         Atomicity: callers MUST wrap this method together with
-        graph_repository.delete_source_artifacts in a single
-        adapter.transaction() block. The
+        graph_repository.release_source in a single
+        adapter.transaction() block, on this adapter's session. The
         services.sources.management.re_extraction.force_re_extract
         helper does this correctly — prefer it over invoking the two
         methods directly.
@@ -1383,8 +1408,8 @@ class SourceIndexingMixin(
         source's entity/relationship/stage-progress rows and forces
         status back to INDEXED. Its only direct caller,
         ``services.sources.management.re_extraction.force_re_extract``,
-        does not gate on status either — it unconditionally deletes graph
-        artifacts and calls this method. The COMMITTED-status precondition
+        does not gate on status either — it unconditionally releases the
+        source's graph rows and calls this method. The COMMITTED-status precondition
         is enforced one level further up, by whoever calls
         ``force_re_extract``: Cortex's ``SourcesService.trigger_extraction``
         (the ``allowed_statuses`` check in features/sources/service.py),

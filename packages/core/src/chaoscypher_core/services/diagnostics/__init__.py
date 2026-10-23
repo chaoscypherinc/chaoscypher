@@ -7,12 +7,13 @@ Gathers system diagnostics for bug reports and troubleshooting.
 
 Exports:
     DiagnosticCollector: Main collector class.
+    bundle_settings: The masked settings dict a bundle carries.
     DiagnosticReport: Complete diagnostic report model.
     SystemInfo: System version and platform info.
     DiagnosticDatabaseStats: Database statistics model.
 """
 
-from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector
+from chaoscypher_core.services.diagnostics.collector import DiagnosticCollector, bundle_settings
 from chaoscypher_core.services.diagnostics.models import (
     DiagnosticDatabaseStats,
     DiagnosticReport,
@@ -25,4 +26,5 @@ __all__ = [
     "DiagnosticDatabaseStats",
     "DiagnosticReport",
     "SystemInfo",
+    "bundle_settings",
 ]

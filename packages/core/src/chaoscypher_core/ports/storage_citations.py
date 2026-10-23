@@ -4,8 +4,8 @@
 """CitationStorageProtocol for ChaosCypher storage.
 
 Split from the original SourceStorageProtocol god-protocol.
-Covers SourceCitation and RelationshipCitation table operations, orphan
-detection, and per-source citation statistics.
+Covers SourceCitation and RelationshipCitation table operations and
+per-source citation statistics.
 Binds to SourceCitationsMixin in the SQLite adapter.
 """
 
@@ -18,9 +18,10 @@ from typing import Any, Protocol, runtime_checkable
 class CitationStorageProtocol(Protocol):
     """Storage protocol for citation operations.
 
-    Handles SourceCitation and RelationshipCitation records, orphan entity
-    detection (citations that would become unreferenced after source deletion),
-    and per-source citation/chunk statistics.
+    Handles SourceCitation and RelationshipCitation records and per-source
+    citation/chunk statistics. What a source delete removes from the graph is
+    decided by graph membership (``GraphRepositoryProtocol.release_source``),
+    not by citations.
 
     ``get_source_stats(source_id)`` lives here because the implementation
     aggregates citation and chunk counts for a single source.  The
@@ -126,6 +127,31 @@ class CitationStorageProtocol(Protocol):
         """
         ...
 
+    def get_relationship_citations_batch(
+        self,
+        database_name: str,
+        edge_ids: list[str],
+        source_ids: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """The stored evidence of edges, by edge id: one dict per citation row.
+
+        Each dict carries ``edge_id``, ``chunk_id``, ``source_id``,
+        ``justification`` and ``sentences`` (the cited sentences as
+        ``{"text", "chunk_id", "local_index"}``, or ``[]``), ordered by edge
+        id, chunk id, then row id, so a caller taking the first sentence of
+        an edge gets the same one every time. An empty ``edge_ids`` returns ``[]``.
+
+        Args:
+            database_name: Database to query.
+            edge_ids: Edge ids to look up citations for.
+            source_ids: Optional source scope filter.
+
+        Returns:
+            List of citation dicts, in the order above.
+
+        """
+        ...
+
     def get_citations_by_entity(
         self, entity_uri: str, offset: int = 0, limit: int = 50
     ) -> tuple[list[dict[str, Any]], int]:
@@ -175,21 +201,6 @@ class CitationStorageProtocol(Protocol):
 
         Returns:
             Dict with entity_citations_deleted and relationship_citations_deleted counts.
-
-        """
-        ...
-
-    def get_orphaned_entity_uris(self, source_id: str) -> list[str]:
-        """Get entity URIs that will be orphaned when source is deleted.
-
-        Returns URIs where this source is the ONLY remaining citation.
-        Entities with citations from other sources are excluded.
-
-        Args:
-            source_id: Source UUID to check
-
-        Returns:
-            List of entity URIs that would become orphans
 
         """
         ...

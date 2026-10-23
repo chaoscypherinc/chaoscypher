@@ -23,9 +23,10 @@ Two handlers cover the two import shapes, sharing one node-indexing helper:
 
 Order matters for the source path: nodes are indexed FIRST (so node search works
 even if chunk re-embedding later fails), then chunks are embedded, then chunk
-vectors are pushed. Vector pushes are best-effort (the durable data is the
-persisted embeddings; the ANN index can always be rebuilt); only the chunk
-embedding step drives degraded-status + retry.
+vectors are pushed. Vector pushes never fail the handler (the durable data is
+the persisted embeddings); a failed push queues a ``pending_search_index`` row
+for the search sweep and finalizes the source ``degraded``, while a chunk
+embedding failure degrades and re-raises for a queue retry.
 """
 
 from __future__ import annotations
@@ -38,23 +39,17 @@ import structlog
 
 from chaoscypher_core.app_config import get_settings
 from chaoscypher_core.exceptions import ValidationError
+from chaoscypher_core.ports.search import attesting_sources
 from chaoscypher_core.services.quality.counters import (
     mark_search_indexing_degraded,
     mark_search_indexing_indexed,
 )
 from chaoscypher_core.services.sources.engine.deduplication.embedding_generator import (
-    entity_to_embedding_text,
+    node_embedding_text,
 )
 
 
 logger = structlog.get_logger(__name__)
-
-# Property keys that are ingestion metadata (ids, timestamps), not semantic
-# content — excluded from a node's embedding text so imported node vectors land
-# in the same space as freshly extracted ones (which never saw these).
-_NODE_EMBED_META_KEYS = frozenset(
-    {"source_document_id", "source_document_name", "ingested_at", "source_type", "type"}
-)
 
 
 async def handle_index_imported_source(
@@ -169,8 +164,15 @@ async def handle_index_imported_source(
     #    Best-effort: the embeddings are durably persisted (step 2 stamped
     #    embedded_at), so a vector-push failure must NOT fail the handler — else
     #    the retry re-runs step 2 (a no-op now) and re-hits the same push error,
-    #    leaving the source permanently un-finalized. Log and let finalize run;
-    #    the ANN index can be rebuilt by the search sweep.
+    #    leaving the source permanently un-finalized. Log, queue a
+    #    pending_search_index row for the search sweep (it only drains rows
+    #    that were enqueued) and let finalize run as ``degraded``.
+    #    ``_index_nodes`` reports a failed node push as 0 of len(nodes).
+    retry_rows = (
+        [{"item_id": n.id, "kind": "node", "source_id": source_id} for n in nodes]
+        if nodes and nodes_indexed == 0
+        else []
+    )
     try:
         chunks_indexed = _index_chunk_vectors(adapter, search_repository, source_id)
     except Exception:
@@ -178,6 +180,14 @@ async def handle_index_imported_source(
             "index_imported_source_chunk_vectors_failed", source_id=source_id, exc_info=True
         )
         chunks_indexed = 0
+        # Chunk rows are keyed by source: the sweep re-indexes every chunk of it.
+        retry_rows.append({"item_id": source_id, "kind": "chunk", "source_id": source_id})
+    if retry_rows:
+        try:
+            with adapter.transaction():
+                adapter.enqueue_pending_search_index(rows=retry_rows)
+        except Exception:
+            logger.exception("index_imported_source_retry_enqueue_failed", source_id=source_id)
 
     # 4. Finalize: indexing complete + search-indexed, keeping the source
     #    ``committed`` (do NOT call complete_indexing, which force-sets INDEXED).
@@ -190,7 +200,14 @@ async def handle_index_imported_source(
             "embedding_dimensions": settings.search.vector_dimensions,
         },
     )
-    mark_search_indexing_indexed(adapter=adapter, source_id=source_id, database_name=database_name)
+    if retry_rows:
+        mark_search_indexing_degraded(
+            adapter=adapter, source_id=source_id, database_name=database_name
+        )
+    else:
+        mark_search_indexing_indexed(
+            adapter=adapter, source_id=source_id, database_name=database_name
+        )
 
     logger.info(
         "index_imported_source_completed",
@@ -310,11 +327,7 @@ async def index_imported_package(
             metadata=metadata,
         )
 
-    remaining = [
-        node.id
-        for node in _fetch_nodes_by_ids(graph_repository, imported_node_ids)
-        if getattr(node, "source_id", None) not in imported_sources
-    ]
+    remaining = node_ids_outside_sources(graph_repository, imported_node_ids, imported_source_ids)
     nodes_indexed = 0
     if remaining:
         result = await handle_index_imported_nodes(
@@ -382,6 +395,24 @@ def _fetch_source_nodes(graph_repository: Any, source_id: str) -> list[Any]:
     return nodes
 
 
+def node_ids_outside_sources(
+    graph_repository: Any, node_ids: list[str], source_ids: list[str]
+) -> list[str]:
+    """Return the ids among ``node_ids`` whose node none of ``source_ids`` attests.
+
+    ``OP_INDEX_IMPORTED_SOURCE`` indexes the nodes a source attests
+    (``list_nodes(source_ids=...)``, its membership, #795);
+    the nodes left over (a knowledge-only package, or uncited nodes of a
+    multi-source one) need ``OP_INDEX_IMPORTED_NODES`` instead.
+    """
+    sources = set(source_ids)
+    return [
+        node.id
+        for node in _fetch_nodes_by_ids(graph_repository, node_ids)
+        if not sources.intersection(attesting_sources(node))
+    ]
+
+
 def _fetch_nodes_by_ids(graph_repository: Any, node_ids: list[str]) -> list[Any]:
     """Fetch nodes (with embeddings) by id, paged to bound the SQL ``IN`` size."""
     page_size = get_settings().batching.chunk_fetch_limit
@@ -389,25 +420,6 @@ def _fetch_nodes_by_ids(graph_repository: Any, node_ids: list[str]) -> list[Any]
     for start in range(0, len(node_ids), page_size):
         nodes.extend(graph_repository.get_nodes_batch(node_ids[start : start + page_size]))
     return nodes
-
-
-def _node_embed_text(node: Any) -> str:
-    """Build a node's embedding text (label + aliases + descriptive properties).
-
-    Mirrors extraction's ``entity_to_embedding_text`` so an imported node's
-    vector lands in the same space as a freshly-extracted one — minus the
-    ingestion-metadata properties, which extraction never saw.
-    """
-    props = node.properties or {}
-    clean_props = {k: v for k, v in props.items() if k not in _NODE_EMBED_META_KEYS}
-    return entity_to_embedding_text(
-        {
-            "label": node.label,
-            "aliases": props.get("aliases") or [],
-            "description": props.get("description") or props.get("definition") or "",
-            "properties": clean_props,
-        }
-    )
 
 
 async def _reembed_nodes(
@@ -431,7 +443,7 @@ async def _reembed_nodes(
     pending = [n for n in nodes if not (n.embedding and len(n.embedding) == expected_dim)]
     if not pending:
         return 0
-    texts = [_node_embed_text(n) for n in pending]
+    texts = [node_embedding_text(n) for n in pending]
     try:
         result = await embedding_provider.batch_embed(texts)
     except Exception:

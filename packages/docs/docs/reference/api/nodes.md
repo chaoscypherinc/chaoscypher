@@ -65,7 +65,7 @@ curl 'http://localhost/api/v1/nodes?source_ids=src-001&source_ids=src-002'
       "citation_count": 3
     }
   ],
-  "pagination": { "page": 1, "page_size": 20, "total": 87 }
+  "pagination": { "page": 1, "page_size": 20, "total": 87, "total_pages": 5, "has_next": true, "has_prev": false }
 }
 ```
 
@@ -101,6 +101,7 @@ POST /api/v1/nodes
 | `position` | object | No | Canvas position with `x` and `y` coordinates |
 | `embedding` | list[float] | No | Embedding vector for semantic search |
 | `source_id` | string | No | Source document ID (links node to a source) |
+| `entity_type` | string | No | Entity type the node was extracted as (a subtype or core type) |
 
 ### Example Request
 
@@ -513,7 +514,10 @@ curl 'http://localhost/api/v1/nodes/node-a1b2c3d4/connections?sort_by=edge_count
   "pagination": {
     "page": 1,
     "page_size": 10,
-    "total": 12
+    "total": 12,
+    "total_pages": 2,
+    "has_next": true,
+    "has_prev": false
   }
 }
 ```
@@ -622,7 +626,10 @@ curl 'http://localhost/api/v1/nodes/node-a1b2c3d4/citations?page=1&page_size=10'
   "pagination": {
     "page": 1,
     "page_size": 10,
-    "total": 3
+    "total": 3,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
   }
 }
 ```

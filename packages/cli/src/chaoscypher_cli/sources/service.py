@@ -29,20 +29,54 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import structlog
 
-from chaoscypher_core.models import SourceErrorStage, SourceStatus
+from chaoscypher_cli.context import cli_release_embedder
+from chaoscypher_cli.utils.event_loops import cancel_pending_tasks
+from chaoscypher_core.models import ReleasedRows, SourceErrorStage, SourceStatus
+from chaoscypher_core.services.graph.management.release import refresh_after_release
+from chaoscypher_core.services.sources.engine.extraction.domains.packs import (
+    detected_packs_of,
+    forced_packs_of,
+    labels_of,
+    packs_label,
+    packs_of_name,
+)
 from chaoscypher_core.services.sources.management.re_extraction import force_re_extract
+from chaoscypher_core.services.sources.web import MIN_PAGE_CONTENT_CHARS, fetch_page, page_names
 from chaoscypher_core.utils.id import generate_id
 
 
 if TYPE_CHECKING:
     from chaoscypher_cli.context import CLIContext
     from chaoscypher_core.ports.types import FilteringMode
-    from chaoscypher_core.services.sources.engine.extraction.domains.config_schema import (
-        ExclusionRule,
+    from chaoscypher_core.services.sources.engine.extraction.utils.known_entities import (
+        KnownEntities,
     )
 
 
 logger = structlog.get_logger(__name__)
+
+
+class IncompleteExtractionError(RuntimeError):
+    """One or more extraction groups failed after their retries.
+
+    Raised by the CLI's extraction loop so ``extract_entities`` fails the
+    source (status ``failed``, this message on the row) instead of
+    finalizing a graph with groups missing.
+    """
+
+    def __init__(self, failed_groups: list[tuple[int, str]], total_groups: int) -> None:
+        """Summarise the failures: how many of how many, and the first distinct errors."""
+        self.failed_groups = failed_groups
+        self.total_groups = total_groups
+        distinct: list[str] = []
+        for _idx, error in failed_groups:
+            if error not in distinct:
+                distinct.append(error)
+        indices = ", ".join(str(idx) for idx, _ in failed_groups[:10])
+        super().__init__(
+            f"Extraction incomplete: {len(failed_groups)} of {total_groups} groups failed "
+            f"after retries (groups {indices}). Top errors: {'; '.join(distinct[:3])}"
+        )
 
 
 class CLISourceProcessingService:
@@ -128,18 +162,26 @@ class CLISourceProcessingService:
             self._cancel_pending_tasks()
             raise
 
+    def run_async(self, coro: Any) -> Any:
+        """Run a coroutine on this service's persistent loop (Core's async operations).
+
+        The loop is shared with the pipeline stages, so the web fetcher's and
+        the providers' cached async clients stay usable across them.
+        """
+        return self._run_async(coro)
+
     def _cancel_pending_tasks(self) -> None:
-        """Cancel all pending asyncio tasks on the persistent loop."""
+        """Cancel all pending asyncio tasks on the persistent loop, from any thread.
+
+        The benchmark closes the service on its own running loop after the
+        pipeline ran in a worker thread, so the wait runs on the persistent
+        loop (``cancel_pending_tasks``), never on the caller's: a failed
+        finalization surfaces as itself, not as a cross-loop ``ValueError``.
+        """
         if not self._loop or self._loop.is_closed():
             return
-        try:
-            pending = asyncio.all_tasks(self._loop)
-            for task in pending:
-                task.cancel()
-            if pending:
-                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        except RuntimeError:
-            pass  # Loop may already be stopping
+        with contextlib.suppress(RuntimeError):  # the loop may already be stopping
+            cancel_pending_tasks(self._loop)
 
     def close(self) -> None:
         """Close the persistent event loop and release async resources.
@@ -268,7 +310,9 @@ class CLISourceProcessingService:
         # Create file record (domain='auto' or None means auto-detect).
         # W1 (2026-05-07): forward every upload setting so it lands on the
         # source row at upload time (parity with /api/v1/sources).
-        forced_domain = None if domain in (None, "auto") else domain
+        # ``domain`` is one pack, the packs' label, ``generic`` (the floor alone)
+        # or ``auto``/None (detect): the one reading every surface shares.
+        forced_packs = packs_of_name(domain)
         self.ctx.storage_adapter.upload_source(
             source_id=file_id,
             database_name=self.ctx.database_name,
@@ -276,7 +320,7 @@ class CLISourceProcessingService:
             file_content=file_content,
             staging_dir=str(staging_dir),
             extraction_depth=extraction_depth,
-            forced_domain=forced_domain,
+            forced_packs=forced_packs,
             content_hash=content_hash,
             auto_analyze=auto_analyze,
             enable_normalization=enable_normalization,
@@ -310,9 +354,10 @@ class CLISourceProcessingService:
     ) -> tuple[str, str] | tuple[dict[str, Any], str]:
         """Fetch URL content and stage as a markdown source file.
 
-        Uses WebScraper.extract_full_content() to fetch and extract clean
-        markdown content, then stages it through the normal upload pipeline
-        with URL metadata.
+        Fetches through Core's shared ``fetch_page`` (the one page fetch every
+        URL import uses: WebScraper extraction under the upload allowlist and
+        byte cap, and the shared content-hash rule), then stages the Markdown
+        through the normal upload pipeline with URL metadata.
 
         Args:
             url: URL to fetch and import
@@ -340,27 +385,11 @@ class CLISourceProcessingService:
         Raises:
             ValueError: If URL is invalid, fetch fails, or content is empty
         """
-        import re
-
-        from chaoscypher_core.adapters.web.search import WebScraper
-
-        # Fetch and extract content. The CLI passes the upload allowlist
-        # so URL imports follow the same contract as file uploads:
+        # Fetch and extract content. ``fetch_page`` applies the upload
+        # allowlist so URL imports follow the same contract as file uploads:
         # mismatched Content-Type raises ValidationError instead of
         # silently producing an empty source.
-        cli_batching = getattr(self.ctx.settings, "batching", None)
-        cli_allowlist = list(getattr(cli_batching, "upload_content_type_allowlist", []) or [])
-        cli_max_bytes_raw = getattr(cli_batching, "max_upload_bytes", None)
-        cli_max_bytes: int | None = (
-            int(cli_max_bytes_raw) if isinstance(cli_max_bytes_raw, int) else None
-        )
-
-        scraper = WebScraper(
-            allowlist=cli_allowlist,
-            max_bytes=cli_max_bytes,
-            web_settings=getattr(self.ctx.settings, "web", None),
-        )
-        result = self._run_async(scraper.extract_full_content(url, max_bytes=cli_max_bytes))
+        result = self._run_async(fetch_page(url, self.ctx.settings))
 
         if result.error:
             msg = f"Failed to fetch URL: {result.error}"
@@ -378,27 +407,19 @@ class CLISourceProcessingService:
             raise ValueError(msg)
 
         content = result.content
-        if not content or len(content) < 50:
+        if not content or len(content) < MIN_PAGE_CONTENT_CHARS:
             msg = "Extracted content is too short or empty. The page may require JavaScript."
             raise ValueError(msg)
 
-        # Generate safe filename from page title
-        page_title = result.title or "Untitled Page"
-        safe_title = re.sub(r"[^\w\s-]", "", page_title).strip()
-        safe_title = re.sub(r"[\s]+", "_", safe_title)
-        safe_title = safe_title[:100]
-        if not safe_title:
-            safe_title = "web_import"
-        safe_filename = f"{safe_title}.md"
+        # The stored title and filename: the rule every URL import shares.
+        names = page_names(result.title, self.ctx.settings)
+        page_title = names.title
+        safe_filename = f"{names.stem}.md"
 
-        # Generate ID and stage content
-        import hashlib
-
-        file_content = content.encode("utf-8")
-
-        # Always compute SHA-256 so upload_source can persist it regardless of
-        # whether skip_duplicates is enabled.  Cost is ~ms even for 100 MB files.
-        content_hash = hashlib.sha256(file_content).hexdigest()
+        # Stage content. The hash is always computed so upload_source can
+        # persist it regardless of whether skip_duplicates is enabled.
+        file_content = result.payload
+        content_hash = result.content_hash
 
         # Duplicate detection: check by SHA-256 hash before staging
         if skip_duplicates:
@@ -424,7 +445,9 @@ class CLISourceProcessingService:
         # bytes for CLI file and URL imports live under one convention.
         staging_dir = self.ctx.database_dir / "sources"
 
-        forced_domain = None if domain in (None, "auto") else domain
+        # ``domain`` is one pack, the packs' label, ``generic`` (the floor alone)
+        # or ``auto``/None (detect): the one reading every surface shares.
+        forced_packs = packs_of_name(domain)
         self.ctx.storage_adapter.upload_source(
             source_id=file_id,
             database_name=self.ctx.database_name,
@@ -432,7 +455,7 @@ class CLISourceProcessingService:
             file_content=file_content,
             staging_dir=str(staging_dir),
             extraction_depth=extraction_depth,
-            forced_domain=forced_domain,
+            forced_packs=forced_packs,
             origin_url=url,
             source_type_override="webpage",
             title_override=page_title,
@@ -795,9 +818,19 @@ class CLISourceProcessingService:
                 try:
                     import pypdfium2 as pdfium  # type: ignore[import-untyped]
 
+                    from chaoscypher_core.vision import clamp_render_scale
+
                     pdf_doc = pdfium.PdfDocument(filepath)
                     page = pdf_doc[page_num - 1]
-                    bitmap = page.render(scale=150 / 72)
+                    width_pt, height_pt = page.get_size()
+                    bitmap = page.render(
+                        scale=clamp_render_scale(
+                            width_pt,
+                            height_pt,
+                            dpi=150,
+                            max_pixels=self.ctx.settings.llm.vision_max_render_pixels,
+                        )
+                    )
                     pil_image = bitmap.to_pil()
                     img_filename = f"page_{page_num}.png"
                     img_path = images_dir / img_filename
@@ -1006,9 +1039,13 @@ class CLISourceProcessingService:
             file_id: Source file ID (expected INDEXED).
 
         Returns:
-            ``{detected_domain, confidence, ranking, low_confidence}`` or
+            The proposal blob (``proposal_from_detection``: ``{ranking,
+            confidence, packs, detected_domain, low_confidence, reason}``) or
             ``None`` when the source has no extractable chunks.
         """
+        from chaoscypher_core.operations.importing.confirmation_gate import (
+            proposal_from_detection,
+        )
         from chaoscypher_core.services.sources.engine.extraction.domains import (
             create_domain_sample_text,
             get_domain_registry,
@@ -1036,17 +1073,13 @@ class CLISourceProcessingService:
         sample_text = create_domain_sample_text(all_chunks, content_key="content")
         domain_result = detect_extraction_domain(
             registry=registry,
-            forced_domain=file_record.get("forced_domain"),
+            forced_domain=None,
             sample_text=sample_text,
             filename=file_record.get("filename", ""),
             metadata=file_record.get("metadata", {}),
+            forced_packs=forced_packs_of(file_record),
         )
-        return {
-            "detected_domain": domain_result["detected_domain"],
-            "confidence": domain_result["confidence"],
-            "ranking": domain_result.get("ranking", []),
-            "low_confidence": domain_result.get("low_confidence", False),
-        }
+        return proposal_from_detection(domain_result)
 
     def extract_entities(
         self,
@@ -1130,8 +1163,6 @@ class CLISourceProcessingService:
                 build_extraction_groups,
                 detect_extraction_domain,
                 filter_and_strip_chunks,
-                format_extraction_templates,
-                resolve_content_exclusions,
             )
 
             registry = get_domain_registry(
@@ -1157,23 +1188,39 @@ class CLISourceProcessingService:
                 )
                 return ({}, {})
 
-            # Detect domain using sample text from chunks
-            forced_domain = file_record.get("forced_domain")
+            # Detect the packs (or take the row's forced ones) from sample text
+            forced_packs = forced_packs_of(file_record)
             sample_text = create_domain_sample_text(all_chunks, content_key="content")
             domain_result = detect_extraction_domain(
                 registry=registry,
-                forced_domain=forced_domain,
+                forced_domain=None,
                 sample_text=sample_text,
                 filename=file_record.get("filename", ""),
                 metadata=file_record.get("metadata", {}),
+                forced_packs=forced_packs,
             )
-            detected_domain_name = domain_result["detected_domain"]
+            packs = detected_packs_of(domain_result)
+            # The one-name strings the finalize threads are the packs' labels
+            # (one pack's label is its name).
+            forced_domain = labels_of(forced_packs)
+            detected_domain_name = packs_label(packs)
 
             if domain_callback and detected_domain_name:
                 domain_callback(detected_domain_name)
 
-            # Apply content exclusion filtering
-            content_matchers = resolve_content_exclusions(domain_result.get("domain"))
+            # Stored chunks by id, captured before content stripping: the
+            # evidence resolver places each cited sentence in its stored chunk.
+            stored_chunks_by_id = {c["id"]: c for c in all_chunks if c.get("id")}
+
+            # Apply content exclusion filtering: the queue planner's decision
+            # (the row's ``content_filtering`` toggle, then the domain's rules).
+            from chaoscypher_core.operations.importing.import_service import (
+                resolve_source_content_matchers,
+            )
+
+            content_matchers = resolve_source_content_matchers(
+                domain=domain_result.get("domain"), file_info=None, source_row=file_record
+            )
             if content_matchers:
                 all_chunks, filter_stats = filter_and_strip_chunks(all_chunks, content_matchers)
                 logger.info(
@@ -1182,18 +1229,37 @@ class CLISourceProcessingService:
                     categories=filter_stats.categories_matched,
                 )
 
-            # Build extraction groups with dynamic token-budget sizing
+            # Build extraction groups with dynamic token-budget sizing — the
+            # same ``EngineSettings.chunking`` sizes the queue and MCP paths read.
             groups = build_extraction_groups(
                 all_chunks,
-                target_tokens=900,
-                overlap=1,
+                target_tokens=self.ctx.settings.chunking.target_group_tokens,
+                overlap=self.ctx.settings.chunking.group_overlap,
             )
 
-            # Step 2: Format templates (shared Core logic)
-            template_result = format_extraction_templates(
-                domain_result["domain"],
-                examples_enabled=self.ctx.settings.llm.extraction_examples_enabled,
-                examples_max_chars=self.ctx.settings.llm.extraction_examples_max_chars,
+            # Step 2: The one extraction plan (shared Core logic with the queue
+            # planner and the standalone extractor): templates, guidance,
+            # examples, the FilteringConfig overrides and the preset selector.
+            # Cascade: this run's ``filtering_mode`` argument > the source row >
+            # the domain's default > settings -- the queue path's cascade.
+            from chaoscypher_core.services.sources.engine.extraction.domains.stack import (
+                DomainStack,
+            )
+            from chaoscypher_core.services.sources.engine.extraction.extraction_plan import (
+                build_extraction_plan,
+            )
+
+            plan = build_extraction_plan(
+                DomainStack.from_stored(registry, packs),
+                self.ctx.settings,
+                filtering_mode_override=filtering_mode,
+                source_row=file_record,
+            )
+            # The row records the preset this extraction really ran with.
+            self.ctx.storage_adapter.update_source_columns(
+                source_id=file_id,
+                database_name=self.ctx.database_name,
+                updates={"filtering_mode": plan.filtering_mode},
             )
 
             # Step 3: Apply depth strategy (shared Core logic)
@@ -1211,46 +1277,7 @@ class CLISourceProcessingService:
                 total_groups=len(groups),
                 groups_to_process=len(groups_to_process),
                 domain=detected_domain_name,
-            )
-
-            # Resolve cross-chunk filtering inputs once so the post-dedup
-            # filter pass inside ``finalize_distributed_extraction`` matches
-            # what the per-chunk extractor saw. ``edge_type_constraints``
-            # comes from the resolved domain; ``filtering_config`` mirrors
-            # the resolution chain ``extract_entities_from_groups`` performs
-            # for the standalone path.
-            from chaoscypher_core.services.sources.engine.extraction.utils.filtering_config import (
-                resolve_filtering_config,
-            )
-
-            domain_obj = domain_result["domain"]
-            cli_edge_type_constraints: dict[str, dict[str, list[str]]] | None = (
-                domain_obj.get_edge_type_constraints()
-                if hasattr(domain_obj, "get_edge_type_constraints")
-                else None
-            ) or None
-            domain_extraction_limits_resolved = domain_obj.get_extraction_limits()
-            # Effective preset cascade: per-source override > domain jsonld
-            # > engine default. Kept as its own variable — never inlined into
-            # the limits dict (that conflation was the
-            # ``domain_config_unknown_keys_dropped`` warning source).
-            _domain_default_mode: str | None = (
-                domain_obj.get_filtering_mode()
-                if hasattr(domain_obj, "get_filtering_mode")
-                else None
-            )
-            cli_filtering_mode = str(
-                filtering_mode
-                or _domain_default_mode
-                or self.ctx.settings.extraction.extraction_filtering_mode
-            )
-            cli_filtering_config = resolve_filtering_config(
-                mode=cli_filtering_mode,
-                domain_overrides=(
-                    dict(domain_extraction_limits_resolved)
-                    if domain_extraction_limits_resolved
-                    else None
-                ),
+                filtering_mode=plan.filtering_mode,
             )
 
             # Step 4+5: Extract all groups + finalize in a single event loop.
@@ -1258,26 +1285,7 @@ class CLISourceProcessingService:
                 self._extract_and_finalize(
                     groups_to_process=groups_to_process,
                     file_id=file_id,
-                    node_templates=template_result["node_templates"],
-                    edge_templates=template_result["edge_templates"],
-                    entity_guidance=domain_result["entity_guidance"],
-                    relationship_guidance=domain_result["relationship_guidance"],
-                    entity_examples=template_result["entity_examples"] or None,
-                    relationship_examples=template_result["relationship_examples"] or None,
-                    entity_exclusions=domain_obj.get_entity_exclusions() or None,
-                    domain_extraction_limits=domain_extraction_limits_resolved,
-                    filtering_mode=cli_filtering_mode,
-                    strict_entity_types=(
-                        domain_obj.get_strict_entity_types()
-                        if hasattr(domain_obj, "get_strict_entity_types")
-                        else False
-                    ),
-                    valid_entity_type_names={
-                        t["name"]
-                        for t in (domain_obj.get_templates() or {}).get("node_templates", [])
-                        if t.get("name")
-                    }
-                    or None,
+                    plan=plan,
                     metrics_collector=metrics_collector,
                     file_record=file_record,
                     detected_domain_name=detected_domain_name,
@@ -1285,8 +1293,7 @@ class CLISourceProcessingService:
                     total_groups=len(groups),
                     depth=depth,
                     progress_callback=progress_callback,
-                    edge_type_constraints=cli_edge_type_constraints,
-                    filtering_config=cli_filtering_config,
+                    stored_chunks_by_id=stored_chunks_by_id,
                 )
             )
 
@@ -1342,6 +1349,8 @@ class CLISourceProcessingService:
                 entities=extraction_results.get("entities", []),
                 relationships=extraction_results.get("relationships", []),
                 cross_chunk_filtering_log=_filtering_log,
+                forced_packs=forced_packs,
+                detected_packs=packs,
             )
 
             entity_count = len(extraction_results.get("entities", []))
@@ -1404,98 +1413,67 @@ class CLISourceProcessingService:
         """
         if not chunk_metrics:
             return
-        from chaoscypher_core.services.quality.counters import (
-            QualityCounter,
-            increment_quality_counter,
-        )
+        from chaoscypher_core.services.quality.counters import QualityCounter
 
-        wanted: list[QualityCounter] = []
         if chunk_metrics.get("finish_reason") == "length":
-            wanted.append(QualityCounter.LLM_CHUNKS_TRUNCATED)
+            await self._increment_counter(file_id, QualityCounter.LLM_CHUNKS_TRUNCATED)
         if chunk_metrics.get("aborted_by_loop"):
-            wanted.append(QualityCounter.LLM_CHUNKS_ABORTED_BY_LOOP)
-
-        for counter in wanted:
-            try:
-                await increment_quality_counter(
-                    adapter=self.ctx.storage_adapter,
-                    source_id=file_id,
-                    database_name=self.ctx.database_name,
-                    counter=counter,
-                    n=1,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "quality_counter_increment_failed",
-                    source_id=file_id,
-                    counter=str(counter),
-                    error=str(exc),
-                )
+            await self._increment_counter(file_id, QualityCounter.LLM_CHUNKS_ABORTED_BY_LOOP)
 
     async def _extract_and_finalize(
         self,
         groups_to_process: list[dict[str, Any]],
         file_id: str,
-        node_templates: str,
-        edge_templates: str,
-        entity_guidance: str | None,
-        relationship_guidance: str | None,
-        entity_examples: str | None,
-        relationship_examples: str | None,
-        entity_exclusions: list[ExclusionRule] | None,
-        domain_extraction_limits: dict[str, Any] | None,
-        filtering_mode: str | None,
+        plan: Any,
         metrics_collector: Any,
         file_record: dict[str, Any],
         detected_domain_name: str | None,
         forced_domain: str | None,
         total_groups: int,
         depth: str,
-        strict_entity_types: bool = False,
-        valid_entity_type_names: set[str] | None = None,
         progress_callback: Any | None = None,
         *,
-        edge_type_constraints: dict[str, dict[str, list[str]]] | None = None,
-        filtering_config: Any | None = None,
+        stored_chunks_by_id: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Extract entities from all groups and finalize in a single async context.
 
         Runs all LLM calls within one event loop to prevent httpx connection
         pool errors when the Ollama provider reuses connections across calls.
 
+        Each group is extracted with the plan's chunk kwargs and the queue's
+        failure policy (:mod:`chaoscypher_core.services.sources.engine.extraction.chunk_failures`):
+        an empty answer for a non-trivial group is a transient failure, a
+        retryable failure is tried again up to ``retries.extraction_chunk_max``
+        times, and a group that still fails counts
+        ``LLM_CHUNKS_FAILED_PERMANENT`` on the source. Any failed group fails
+        the extraction (:class:`IncompleteExtractionError`) after the counters
+        and metrics are written, so a partial graph is never reported as a
+        clean one.
+
         Args:
             groups_to_process: Hierarchical groups to extract from
             file_id: Source file ID
-            node_templates: Formatted node templates string
-            edge_templates: Formatted edge templates string
-            entity_guidance: Domain-specific guidance text
-            relationship_guidance: Domain-specific relationship guidance
-            entity_examples: Domain-specific entity examples
-            relationship_examples: Domain-specific relationship examples
-            entity_exclusions: Domain-specific exclusion rules for prompts
-            domain_extraction_limits: Domain ``FilteringConfig`` field overrides
-            filtering_mode: Effective preset selector (per-source override >
-                domain default > engine default). Distinct from
-                ``domain_extraction_limits`` — the two are passed separately so
-                the selector never leaks into the overrides dict.
+            plan: The source's ``ExtractionPlan`` (chunk kwargs, FilteringConfig,
+                edge-type constraints), shared with the queue path.
             metrics_collector: LLM metrics collector
             file_record: File record dict
             detected_domain_name: Auto-detected domain name
             forced_domain: User-forced domain name
             total_groups: Total number of groups
             depth: Extraction depth setting
-            strict_entity_types: Whether to enforce strict type matching
-            valid_entity_type_names: Set of allowed entity type names
             progress_callback: Optional callable(current, total) for progress updates
-            edge_type_constraints: Domain edge-type constraint map applied during
-                the post-dedup filter pass inside ``finalize_distributed_extraction``.
-            filtering_config: Resolved filtering configuration (mode + domain
-                overrides) used to ensure the post-dedup filter pass mirrors the
-                per-chunk extractor's behaviour.
+            stored_chunks_by_id: The source's stored small chunks by id, used by
+                aggregation to resolve each citation's sentences and chunk.
 
         Returns:
             Finalized extraction results dict with stats
+
+        Raises:
+            IncompleteExtractionError: When any group failed after its retries.
         """
+        from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+            max_chunk_retries,
+        )
         from chaoscypher_core.services.sources.engine.extraction.orchestration import (
             aggregate_chunk_results,
         )
@@ -1505,12 +1483,20 @@ class CLISourceProcessingService:
         from chaoscypher_core.services.sources.engine.extraction.utils.ai_entities import (
             AIEntityExtractor,
         )
+        from chaoscypher_core.services.sources.engine.extraction.utils.known_entities import (
+            KnownEntities,
+        )
 
         # --- Phase 1: Extract entities from each group ---
         extractor = AIEntityExtractor(settings=self.ctx.settings)
+        # The running list (spec 2026-10-11): each group is shown what the earlier
+        # ones named; a group joins it once, after its final successful attempt.
+        known = KnownEntities.for_plan(plan.chunk_kwargs, self.ctx.settings)
 
         # Build chunk results in the same format as Cortex completed_tasks
         chunk_results: list[dict[str, Any]] = []
+        failed_groups: list[tuple[int, str]] = []
+        retries = max_chunk_retries(self.ctx.settings)
 
         # Spend-cap enforcement on the CLI standalone path (no queue involved).
         # The daily counter is persisted per-database in app.db, so a cap set in
@@ -1522,49 +1508,24 @@ class CLISourceProcessingService:
         for group_idx, group in enumerate(groups_to_process):
             group_text = group.get("combined_content", "")
 
-            # Refuse before the LLM call when the per-source or per-day cap is
-            # reached. Raised OUTSIDE the per-group try below so it is not
-            # swallowed as a per-group failure — it propagates to
-            # extract_entities' handler, which fails the source (no further
-            # billing). Both caps are opt-in (settings default None).
-            spend_tracker.check_and_raise(
-                file_id,
-                self.ctx.settings,
-                adapter=self.ctx.storage_adapter,
-                database_name=self.ctx.database_name,
+            outcome = await self._extract_group_with_retries(
+                extractor=extractor,
+                plan=plan,
+                group_text=group_text,
+                group_idx=group_idx,
+                file_id=file_id,
+                metrics_collector=metrics_collector,
+                spend_tracker=spend_tracker,
+                retries=retries,
+                known=known,
             )
-
-            try:
-                (
-                    entities,
-                    relationships,
-                    in_tokens,
-                    out_tokens,
-                    chunk_metrics,
-                ) = await extractor.extract_single_chunk(
-                    chunk_content=group_text,
-                    node_templates_formatted=node_templates,
-                    edge_templates_formatted=edge_templates,
-                    entity_guidance=entity_guidance,
-                    relationship_guidance=relationship_guidance,
-                    entity_examples=entity_examples,
-                    relationship_examples=relationship_examples,
-                    metrics_collector=metrics_collector,
-                    domain_extraction_limits=domain_extraction_limits,
-                    filtering_mode=filtering_mode,
-                    entity_exclusions=entity_exclusions,
-                    strict_entity_types=strict_entity_types,
-                    valid_entity_type_names=valid_entity_type_names,
-                )
-
-                # Record extraction-integrity counters. The queue path does
-                # this in chunk_extraction_service; the CLI path discarded the
-                # metrics dict entirely, so a chunk cut off at the token budget
-                # left no trace on the source row and `chaoscypher source get`
-                # reported a clean ingest.
-                await self._record_integrity_counters(file_id, chunk_metrics)
-
-                # Tag entities with chunk_index for citations
+            if isinstance(outcome, str):
+                failed_groups.append((group_idx, outcome))
+            else:
+                entities, relationships, chunk_metrics = outcome
+                known.add_group(entities, relationships)
+                # Tag entities with their extraction-group position (citations
+                # read the evidence resolved at aggregation, not this index)
                 for entity in entities:
                     entity["chunk_index"] = group_idx
 
@@ -1577,17 +1538,9 @@ class CLISourceProcessingService:
                         "raw_entities": entities,
                         "raw_relationships": relationships,
                         "input_text": group_text,
+                        "small_chunk_ids": group.get("small_chunk_ids") or [],
+                        "chunk_sentences": (chunk_metrics or {}).get("sentences"),
                     }
-                )
-
-                # Record this group's spend so the per-source / per-day caps
-                # observe it (persisted to app.db). Recorded after the call
-                # succeeds, mirroring the worker path.
-                spend_tracker.record(
-                    file_id,
-                    (in_tokens or 0) + (out_tokens or 0),
-                    adapter=self.ctx.storage_adapter,
-                    database_name=self.ctx.database_name,
                 )
 
                 # Update last attempt with chunk info
@@ -1597,13 +1550,6 @@ class CLISourceProcessingService:
                     last_attempt["chunk_size_chars"] = len(group_text)
                     last_attempt["entities_extracted"] = len(entities)
                     last_attempt["relationships_extracted"] = len(relationships)
-
-            except Exception as e:
-                logger.warning(
-                    "group_extraction_failed",
-                    group_idx=group_idx,
-                    error=str(e),
-                )
 
             # Update progress
             self.ctx.storage_adapter.update_step_progress(
@@ -1616,8 +1562,11 @@ class CLISourceProcessingService:
             if progress_callback:
                 progress_callback(group_idx + 1, len(groups_to_process))
 
+        if failed_groups:
+            raise IncompleteExtractionError(failed_groups, len(groups_to_process))
+
         # --- Phase 2: Aggregate chunk results (shared Core logic) ---
-        aggregated = aggregate_chunk_results(chunk_results)
+        aggregated = aggregate_chunk_results(chunk_results, chunks_by_id=stored_chunks_by_id)
 
         # --- Phase 3: Finalize extraction ---
         # embedding_service must be passed for semantic deduplication to run;
@@ -1640,8 +1589,8 @@ class CLISourceProcessingService:
             file_info=file_record,
             detected_domain=detected_domain_name,
             forced_domain=forced_domain,
-            edge_type_constraints=edge_type_constraints,
-            filtering_config=filtering_config,
+            edge_type_constraints=plan.edge_type_constraints,
+            filtering_config=plan.filtering_config,
         )
 
         # Merge finalized data with stats for pipeline compatibility
@@ -1653,9 +1602,178 @@ class CLISourceProcessingService:
             "extraction_depth": depth,
             "detected_domain": detected_domain_name,
             "forced_domain": forced_domain,
+            "filtering_mode": plan.filtering_mode,
+            # The running list's size: the groups folded in and the entities named.
+            "known_entities": known.stats(),
         }
 
         return finalized
+
+    async def _extract_group_with_retries(
+        self,
+        *,
+        extractor: Any,
+        plan: Any,
+        group_text: str,
+        group_idx: int,
+        file_id: str,
+        metrics_collector: Any,
+        spend_tracker: Any,
+        retries: int,
+        known: KnownEntities | None = None,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]] | str:
+        """Extract one group under the queue's failure policy.
+
+        Returns ``(entities, relationships, chunk_metrics)``, or the last
+        error message when the group failed after ``retries`` further
+        attempts (``LLM_CHUNKS_FAILED_PERMANENT`` is then counted on the
+        source). The spend cap is checked before every attempt and raises
+        out of the loop: it fails the source, it is not a group failure.
+        ``known`` (the source's ``KnownEntities``) is handed to every attempt;
+        the caller adds the group to it once, from the returned outcome.
+        """
+        from chaoscypher_core.services.quality.counters import QualityCounter
+        from chaoscypher_core.services.sources.engine.extraction.chunk_failures import (
+            completion_counters,
+            decode_fallback,
+            decoding_applied,
+            degenerate_kind,
+            degenerate_output_check,
+            is_retryable_chunk_failure,
+            next_ladder_step,
+            provider_seed_honoured,
+            record_decode_fallback,
+        )
+
+        last_error = ""
+        rung = 0  # climbs on degenerate output only; a transport error retries at the same rung
+        for attempt in range(retries + 1):
+            # A retry after degenerate output asks with another decoding than
+            # the pinned one (the next seed, then a small temperature), recorded
+            # on the attempt rows and the chunk result: the queue's chunk
+            # handler runs the same ladder (audit wave 6).
+            fallback = decode_fallback(
+                rung,
+                seed=getattr(self.ctx.settings.llm, "seed", None),
+                temperature=getattr(self.ctx.settings.llm, "extraction_temperature", None),
+                seed_honoured=provider_seed_honoured(self.ctx.settings.llm),
+            )
+            # Refuse before the LLM call when the per-source or per-day cap is
+            # reached. Raised OUTSIDE the try below so it is not swallowed as a
+            # group failure -- it propagates to extract_entities' handler,
+            # which fails the source (no further billing).
+            spend_tracker.check_and_raise(
+                file_id,
+                self.ctx.settings,
+                adapter=self.ctx.storage_adapter,
+                database_name=self.ctx.database_name,
+            )
+            first_attempt = len(getattr(metrics_collector, "attempts", None) or [])
+            try:
+                with decoding_applied(fallback):
+                    (
+                        entities,
+                        relationships,
+                        in_tokens,
+                        out_tokens,
+                        chunk_metrics,
+                    ) = await extractor.extract_single_chunk(
+                        chunk_content=group_text,
+                        **plan.chunk_kwargs,
+                        metrics_collector=metrics_collector,
+                        temperature_override=fallback.temperature if fallback else None,
+                        adapter=self.ctx.storage_adapter,
+                        source_id=file_id,
+                        database_name=self.ctx.database_name,
+                        known=known,
+                    )
+                record_decode_fallback(
+                    fallback, metrics_collector, chunk_metrics, first_attempt=first_attempt
+                )
+                # Record this attempt's spend so the per-source / per-day caps
+                # observe it (persisted to app.db), mirroring the worker path.
+                spend_tracker.record(
+                    file_id,
+                    (in_tokens or 0) + (out_tokens or 0),
+                    adapter=self.ctx.storage_adapter,
+                    database_name=self.ctx.database_name,
+                )
+                llm_settings = self.ctx.settings.llm
+                provider = str(llm_settings.chat_provider)
+                # Empty, loop-aborted or unparseable output climbs the ladder:
+                # the one check the queue's chunk handler runs too. The last
+                # attempt keeps a loop abort's partial output.
+                degenerate = degenerate_output_check(
+                    output_tokens=out_tokens,
+                    entities=entities,
+                    relationships=relationships,
+                    chunk_metrics=chunk_metrics,
+                    chunk_content=group_text,
+                    engine_settings=self.ctx.settings,
+                    provider=provider,
+                    model=getattr(llm_settings, f"{provider}_extraction_model", None)
+                    or getattr(llm_settings, f"{provider}_chat_model", None),
+                    last_attempt=attempt >= retries,
+                )
+                if degenerate is not None:
+                    raise degenerate
+                # Record extraction-integrity counters (truncation, loop aborts)
+                # as the queue's chunk handler does.
+                await self._record_integrity_counters(file_id, chunk_metrics)
+                # Zero yield and a rescue on the ladder, as the queue's chunk
+                # handler counts them.
+                for counter in completion_counters(
+                    output_tokens=out_tokens,
+                    entities=entities,
+                    relationships=relationships,
+                    chunk_metrics=chunk_metrics,
+                    degenerate=degenerate_kind(
+                        output_tokens=out_tokens,
+                        entities=entities,
+                        relationships=relationships,
+                        chunk_metrics=chunk_metrics,
+                        chunk_content=group_text,
+                        engine_settings=self.ctx.settings,
+                    ),
+                ):
+                    await self._increment_counter(file_id, counter)
+                return entities, relationships, chunk_metrics or {}
+            except Exception as e:
+                last_error = f"{type(e).__name__}: {e}"
+                rung = next_ladder_step(rung, e)
+                retry = is_retryable_chunk_failure(e) and attempt < retries
+                logger.warning(
+                    "group_extraction_failed",
+                    group_idx=group_idx,
+                    attempt=attempt + 1,
+                    will_retry=retry,
+                    error=str(e),
+                )
+                if not retry:
+                    break
+
+        await self._increment_counter(file_id, QualityCounter.LLM_CHUNKS_FAILED_PERMANENT)
+        return last_error
+
+    async def _increment_counter(self, file_id: str, counter: Any, n: int = 1) -> None:
+        """Bump one quality counter on the source; bookkeeping never raises."""
+        from chaoscypher_core.services.quality.counters import increment_quality_counter
+
+        try:
+            await increment_quality_counter(
+                adapter=self.ctx.storage_adapter,
+                source_id=file_id,
+                database_name=self.ctx.database_name,
+                counter=counter,
+                n=n,
+            )
+        except Exception as exc:
+            logger.warning(
+                "quality_counter_increment_failed",
+                source_id=file_id,
+                counter=str(counter),
+                error=str(exc),
+            )
 
     # ========================================================================
     # Stage 4: Commit to Graph — Core SourceCommitService
@@ -1697,7 +1815,10 @@ class CLISourceProcessingService:
         # so we do NOT call it here to avoid double-calling.
 
         try:
-            from chaoscypher_core.adapters.sqlite.repos import GraphRepository
+            from chaoscypher_core.repo_factories import get_transaction_graph_repository
+            from chaoscypher_core.services.sources.engine.commit.payload import (
+                build_commit_payload,
+            )
             from chaoscypher_core.services.sources.engine.commit.service import (
                 SourceCommitService,
             )
@@ -1717,9 +1838,8 @@ class CLISourceProcessingService:
             # Cortex's queue worker doesn't hit this because each task
             # builds a fresh Engine per dispatch; the CLI keeps the Engine
             # alive across stages, so the dual-session race is CLI-specific.
-            cli_graph_repository = GraphRepository(
-                self.ctx.storage_adapter.session,  # type: ignore[arg-type]
-                self.ctx.database_name,
+            cli_graph_repository = get_transaction_graph_repository(
+                self.ctx.storage_adapter, self.ctx.database_name
             )
 
             commit_service = SourceCommitService(
@@ -1742,19 +1862,21 @@ class CLISourceProcessingService:
                 file_id, self.ctx.database_name
             )
             if stored_payload:
-                extraction_results = stored_payload
+                extraction_results = build_commit_payload(
+                    entities=stored_payload.get("entities", []),
+                    relationships=stored_payload.get("relationships", []),
+                    extraction_results=stored_payload,
+                    auto_enable=True,
+                )
             else:
-                extraction_results = {
-                    "entities": self.ctx.storage_adapter.list_source_entities(
+                extraction_results = build_commit_payload(
+                    entities=self.ctx.storage_adapter.list_source_entities(
                         file_id, self.ctx.database_name
                     ),
-                    "relationships": self.ctx.storage_adapter.list_source_relationships(
+                    relationships=self.ctx.storage_adapter.list_source_relationships(
                         file_id, self.ctx.database_name
                     ),
-                    "suggested_templates": [],
-                    "suggested_edge_templates": [],
-                    "inverse_relationships": {},
-                }
+                )
 
             # Release the storage_adapter session's auto-begun read txn from
             # the lookups above before handing control to the commit service.
@@ -1818,12 +1940,14 @@ class CLISourceProcessingService:
         """
         return self.ctx.storage_adapter.get_file(file_id, self.ctx.database_name)
 
-    def reset_for_re_extraction(self, source_id: str) -> dict[str, int]:
+    def reset_for_re_extraction(self, source_id: str) -> ReleasedRows:
         """Reset a committed source so it can be re-extracted from scratch.
 
         Mirrors the Cortex trigger_extraction(force=True) flow:
-        1. Delete graph artifacts (nodes, edges, templates) from the prior commit.
+        1. Release the source from the graph: its memberships, and the nodes
+           and edges no other source attests.
         2. Reset the source record back to INDEXED so extract_entities can run.
+        3. Refresh the search rows and embeddings of what the release rebuilt.
 
         Both writes run inside adapter.transaction() via force_re_extract so the
         adapter-side reset rolls back on any exception raised during the sequence.
@@ -1832,8 +1956,7 @@ class CLISourceProcessingService:
             source_id: Source file ID (must be in COMMITTED status).
 
         Returns:
-            Dict with counts of removed graph artifacts
-            (nodes_deleted, edges_deleted, templates_deleted).
+            What the release took from the graph.
 
         Raises:
             ValueError: If the source does not exist.
@@ -1843,9 +1966,22 @@ class CLISourceProcessingService:
             msg = f"Source not found: {source_id}"
             raise ValueError(msg)
 
-        return force_re_extract(
+        released = force_re_extract(
             source_id=source_id,
             database_name=self.ctx.database_name,
             storage_adapter=self.ctx.storage_adapter,
-            graph_repository=self.ctx.graph_repository,
+            settings=self.ctx.settings,
         )
+        # Now: the reset commit counters make the next commit skip its cleanup.
+        # On this service's own loop: the provider's cached async client is
+        # reused by the extraction that follows, and a closed loop breaks it.
+        self._run_async(
+            refresh_after_release(
+                self.ctx.storage_adapter,
+                self.ctx.database_name,
+                released,
+                embedder=cli_release_embedder(self.ctx),
+                search=self.ctx.search_repository,
+            )
+        )
+        return released

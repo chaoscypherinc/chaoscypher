@@ -40,6 +40,7 @@ def _delete_source_data(database_name: str, stats: dict[str, object]) -> None:
 
     """
     from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
+    from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
     adapter = get_sqlite_adapter(database_name=database_name)
     try:
@@ -64,6 +65,9 @@ def _delete_source_data(database_name: str, stats: dict[str, object]) -> None:
                 adapter.clear_all_embeddings()
                 adapter.clear_all_extraction_tasks()
                 adapter.clear_all_extraction_jobs()
+                # graph_*.source_id is ON DELETE SET NULL (#795): release the
+                # sources from the graph before their rows go.
+                get_transaction_graph_repository(adapter, database_name).release_all_sources()
                 adapter.delete_all_sources(database_name=database_name)
 
                 stats["sources_deleted"] = sources_count
@@ -91,14 +95,12 @@ def _reset_knowledge_graph(database_name: str, stats: dict[str, object]) -> None
     try:
         from chaoscypher_core.database.adapter_factory import get_sqlite_adapter
         from chaoscypher_core.database.seed import seed_default_templates
-        from chaoscypher_core.repo_factories import get_graph_repository
+        from chaoscypher_core.repo_factories import get_transaction_graph_repository
 
         adapter = get_sqlite_adapter(database_name=database_name)
         try:
             with adapter.transaction():
-                graph_session = adapter.session
-                assert graph_session is not None
-                graph_repo = get_graph_repository(graph_session, database_name)
+                graph_repo = get_transaction_graph_repository(adapter, database_name)
                 graph_result = graph_repo.clear_all()
                 stats["nodes_deleted"] = graph_result.get("nodes_removed", 0)
                 stats["edges_deleted"] = graph_result.get("edges_removed", 0)

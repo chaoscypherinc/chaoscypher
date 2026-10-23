@@ -6,13 +6,10 @@
 import pytest
 
 from chaoscypher_core.services.sources.engine.deduplication.similarity_matcher import (
-    _is_word_boundary_match,
     are_types_compatible,
     calculate_entity_similarity,
-    extract_significant_words,
-    normalize_compatibility_map,
+    core_type_key,
     normalize_name_key,
-    should_merge_names,
 )
 
 
@@ -22,7 +19,7 @@ from chaoscypher_core.services.sources.engine.deduplication.similarity_matcher i
 
 
 class TestAreTypesCompatible:
-    """Tests for type compatibility checking."""
+    """Two types are compatible when their core types are one (spec 2026-10-07 § 6)."""
 
     def test_identical_types(self) -> None:
         assert are_types_compatible("Person", "Person") is True
@@ -30,26 +27,47 @@ class TestAreTypesCompatible:
     def test_case_insensitive(self) -> None:
         assert are_types_compatible("person", "PERSON") is True
 
-    def test_generic_type_always_compatible(self) -> None:
-        assert are_types_compatible("unknown", "Person") is True
-        assert are_types_compatible("Person", "entity") is True
-        assert are_types_compatible("thing", "Organization") is True
-        assert are_types_compatible("", "Person") is True
+    def test_two_old_names_of_one_core_type_are_compatible(self) -> None:
+        """An old snapshot's ``Character`` still dedups with a ``Person`` (the mapping table)."""
+        assert are_types_compatible("Person", "Character") is True
+        assert are_types_compatible("Character", "Author") is True
+        assert are_types_compatible("military_unit", "Organization") is True
+
+    def test_a_core_type_is_no_generic_placeholder(self) -> None:
+        """``Concept`` and ``Object`` are core types: until 2026-10-07 they matched every type."""
+        assert are_types_compatible("Concept", "Person") is False
+        assert are_types_compatible("Object", "Location") is False
+
+    def test_an_unknown_or_missing_type_is_only_itself(self) -> None:
+        assert are_types_compatible("unknown", "Person") is False
+        assert are_types_compatible("", "Person") is False
+        assert are_types_compatible("thing", "Thing") is True
+        assert are_types_compatible("", "") is True
 
     def test_incompatible_types(self) -> None:
         assert are_types_compatible("Person", "Organization") is False
+        assert are_types_compatible("Character", "Location") is False
 
-    def test_compatible_via_map(self) -> None:
-        compat = {"People": ["Person", "Character", "Individual"]}
-        assert are_types_compatible("Person", "Character", compat) is True
 
-    def test_not_in_same_group(self) -> None:
-        compat = {"People": ["Person", "Character"]}
-        assert are_types_compatible("Person", "Organization", compat) is False
+class TestCoreTypeKey:
+    """The one reading of a written type wherever two are compared."""
 
-    def test_normalized_map_takes_precedence(self) -> None:
-        normalized = normalize_compatibility_map({"People": ["Person", "Character"]})
-        assert are_types_compatible("person", "character", _normalized_map=normalized) is True
+    @pytest.mark.parametrize(
+        ("written", "key"),
+        [
+            ("Person", "Person"),
+            ("  person ", "Person"),
+            ("Character", "Person"),
+            ("Literary Work", "Work"),
+            ("item", "Object"),
+            ("Quux", "quux"),
+            ("UNKNOWN", "unknown"),
+            ("", ""),
+            (None, ""),
+        ],
+    )
+    def test_core_type_key(self, written: str | None, key: str) -> None:
+        assert core_type_key(written) == key
 
 
 # ============================================================================
@@ -100,11 +118,23 @@ class TestCalculateEntitySimilarity:
         result = calculate_entity_similarity(a, b, 0.5)
         assert result == pytest.approx(0.65)  # 0.5 + 0.15
 
-    def test_alias_overlap_bonus(self) -> None:
-        a = {"name": "A", "aliases": ["X"]}
-        b = {"name": "B", "aliases": ["X"]}
-        result = calculate_entity_similarity(a, b, 0.5)
-        assert result == pytest.approx(0.6)  # 0.5 + 0.10
+    def test_a_shared_alias_is_no_bonus(self) -> None:
+        """Alias-to-alias is not evidence (the exact dedup's rule): ``Kurágin`` on father and son."""
+        a = {"name": "Anatole", "aliases": ["Kurágin"]}
+        b = {"name": "Vasíli", "aliases": ["Kurágin"]}
+        assert calculate_entity_similarity(a, b, 0.5) == pytest.approx(0.5)
+
+    def test_a_name_in_the_others_aliases_earns_its_bonus_only_as_alias_evidence(self) -> None:
+        """A bare role given as an alias names no one (``the prince``): no bonus; the caller's verdict wins."""
+        a = {"name": "Prince Hippolyte", "aliases": ["the prince"]}
+        b = {"name": "the prince", "aliases": []}
+        assert calculate_entity_similarity(a, b, 0.5) == pytest.approx(0.5)
+        assert calculate_entity_similarity(a, b, 0.5, alias_evidence=(False, True)) == (
+            pytest.approx(0.65)
+        )
+        assert calculate_entity_similarity(a, b, 0.5, alias_evidence=(True, False)) == (
+            pytest.approx(0.5)
+        )
 
     def test_capped_at_one(self) -> None:
         a = {"name": "Alice", "aliases": ["Bob"]}
@@ -117,132 +147,3 @@ class TestCalculateEntitySimilarity:
         b = {"name": "Francois"}
         result = calculate_entity_similarity(a, b, 0.5)
         assert result == pytest.approx(0.7)  # Name match after normalization
-
-
-# ============================================================================
-# extract_significant_words
-# ============================================================================
-
-
-class TestExtractSignificantWords:
-    """Tests for significant word extraction."""
-
-    def test_extracts_words(self) -> None:
-        result = extract_significant_words("Albert Einstein", frozenset())
-        assert result == {"albert", "einstein"}
-
-    def test_filters_title_words(self) -> None:
-        titles = frozenset({"dr", "mr", "mrs"})
-        result = extract_significant_words("Dr. Albert Einstein", titles)
-        assert "dr" not in result
-        assert "albert" in result
-
-    def test_filters_single_char_words(self) -> None:
-        result = extract_significant_words("A B Charlie", frozenset())
-        assert "charlie" in result
-        assert "a" not in result
-        assert "b" not in result
-
-    def test_handles_separators(self) -> None:
-        result = extract_significant_words("Smith-Jones/Ltd", frozenset())
-        assert "smith" in result
-        assert "jones" in result
-        assert "ltd" in result
-
-
-# ============================================================================
-# _is_word_boundary_match
-# ============================================================================
-
-
-class TestIsWordBoundaryMatch:
-    """Tests for word boundary detection."""
-
-    def test_match_at_start(self) -> None:
-        assert _is_word_boundary_match("prince", "prince andrei") is True
-
-    def test_match_at_end(self) -> None:
-        assert _is_word_boundary_match("andrei", "prince andrei") is True
-
-    def test_no_match_inside_word(self) -> None:
-        assert _is_word_boundary_match("prince", "princess anna") is False
-
-    def test_no_match_partial(self) -> None:
-        assert _is_word_boundary_match("mary", "marya") is False
-
-    def test_exact_full_match(self) -> None:
-        assert _is_word_boundary_match("alice", "alice") is True
-
-
-# ============================================================================
-# should_merge_names
-# ============================================================================
-
-
-class TestShouldMergeNames:
-    """Tests for merge decision logic."""
-
-    def test_containment_merge(self) -> None:
-        merged, canonical = should_merge_names(
-            0,
-            "Prince Andrei",
-            {"prince", "andrei"},
-            1,
-            "Andrei",
-            {"andrei"},
-        )
-        assert merged is True
-        assert canonical == 0  # Longer name is canonical
-
-    def test_no_merge_for_false_containment(self) -> None:
-        merged, _ = should_merge_names(
-            0,
-            "Mary",
-            {"mary"},
-            1,
-            "Marya",
-            {"marya"},
-        )
-        assert merged is False
-
-    def test_word_set_merge(self) -> None:
-        merged, canonical = should_merge_names(
-            0,
-            "Albert Einstein",
-            {"albert", "einstein"},
-            1,
-            "Einstein",
-            {"einstein"},
-        )
-        assert merged is True
-        assert canonical == 0  # More words = canonical
-
-    def test_no_merge_low_word_overlap(self) -> None:
-        # Words don't overlap enough AND no substring containment
-        merged, _ = should_merge_names(
-            0,
-            "Alpha Beta Gamma Delta",
-            {"alpha", "beta", "gamma", "delta"},
-            1,
-            "Zeta Alpha",
-            {"zeta", "alpha"},
-        )
-        # "alpha" subset of A's words but 1/4 = 25% < 40% threshold for B→A
-        # "zeta alpha" not a subset, "alpha beta gamma delta" not a subset
-        # No containment either
-        assert merged is False
-
-    def test_no_merge_empty_words(self) -> None:
-        merged, _ = should_merge_names(0, "A", set(), 1, "B", set())
-        assert merged is False
-
-    def test_no_merge_different_names(self) -> None:
-        merged, _ = should_merge_names(
-            0,
-            "Alice",
-            {"alice"},
-            1,
-            "Bob",
-            {"bob"},
-        )
-        assert merged is False

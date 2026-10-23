@@ -22,6 +22,7 @@ appear in both this file and ``chaoscypher_core.app_config``. This is by design:
 """
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -36,6 +37,9 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+from chaoscypher_core.constants import SOURCE_ROW_FILTERING_MODE
+from chaoscypher_core.question_shapes import PRE_SHAPE_FIELDS, SHAPE_NAMES
 
 
 # LexiconSettings.url default — env-driven so operators can override
@@ -546,6 +550,19 @@ class LLMSettings(BaseModel):
             "150 = balanced default; 300 = print DPI (sharpest, ~4x disk)."
         ),
     )
+    vision_max_render_pixels: int = Field(
+        default=25_000_000,
+        ge=1_000_000,
+        description=(
+            "Upper bound on the pixel count of one rendered PDF page. The "
+            "bitmap size is MediaBox x (dpi/72)^2, and the MediaBox comes "
+            "from the uploaded file — a few-hundred-byte PDF declaring a "
+            "10000x10000 pt page would otherwise allocate gigabytes. Pages "
+            "whose render at ``vision_image_dpi`` would exceed this are "
+            "rendered at the largest scale that fits instead. 25 MP covers "
+            "A3 at 300 DPI and A0 at 125 DPI."
+        ),
+    )
 
     # LLM behavior
     ai_max_tokens: int = Field(default=65536, description="Maximum tokens per response")
@@ -561,24 +578,36 @@ class LLMSettings(BaseModel):
             "limits. Minimum 8192 (16GB VRAM)."
         ),
     )
+    # Decoding is pinned by default (2026-10-06): the same document gives the same
+    # graph and the same question the same grounded answer, which is what makes
+    # extraction reproducible and auditable, and what the response and embedding
+    # caches key on. Raise ai_temperature for variety in chat; extraction has no
+    # reason to sample. Before 2026-10-06 the defaults were 0.3 / 0.1 / no seed.
     ai_temperature: float = Field(
-        default=0.3,
+        default=0.0,
         ge=0.0,
         le=2.0,
-        description="LLM temperature for chat interactions",
+        description=(
+            "LLM temperature for chat interactions. 0 (the default) gives the same "
+            "grounded answer to the same question; raise it for variety."
+        ),
     )
     extraction_temperature: float = Field(
-        default=0.1,
+        default=0.0,
         ge=0.0,
         le=2.0,
-        description="LLM temperature for extraction and structured output (lower = more deterministic)",
+        description=(
+            "LLM temperature for extraction and structured output. 0 (the default): the "
+            "same document always extracts to the same graph."
+        ),
     )
     seed: int | None = Field(
-        default=None,
+        default=42,
         description=(
-            "Sampling seed for LLM calls. None means the provider picks one per "
-            "request, so output varies between identical runs. Only Ollama honours "
-            "this today; hosted providers ignore it."
+            "Sampling seed for LLM calls, sent with every request so identical runs "
+            "repeat (42 by default). None lets the provider pick one per request, so "
+            "output varies between identical runs. Only Ollama honours a seed today; "
+            "hosted providers ignore it."
         ),
     )
 
@@ -1071,6 +1100,27 @@ class BatchingSettings(BaseModel):
 # ============================================================================
 
 
+def _drop_removed_keys(data: Any, removed: Mapping[str, str], event: str) -> Any:
+    """``data`` without the ``removed`` keys, each one found named in an ``event`` warning.
+
+    The one way a settings section keeps parsing an old ``settings.yaml``
+    under ``extra="forbid"`` after a field is removed: ``removed`` maps each
+    key to what replaces it, which the warning names.
+    """
+    if not isinstance(data, dict) or not removed.keys() & data.keys():
+        return data
+    for key in sorted(removed.keys() & data.keys()):
+        structlog.get_logger(__name__).warning(event, key=key, replacement=removed[key])
+    return {k: v for k, v in data.items() if k not in removed}
+
+
+_REMOVED_DETECTION_SAMPLE_KEYS: Mapping[str, str] = dict.fromkeys(
+    ("domain_detection_sample_count", "domain_detection_sample_chars"),
+    "none: domain detection samples through source_domain_sample",
+)
+"""``extraction`` keys removed 2026-10-06 (audit wave 3); accepted and dropped with a warning."""
+
+
 class ExtractionSettings(BaseModel):
     """Configuration for LLM-based structured extraction.
 
@@ -1083,6 +1133,18 @@ class ExtractionSettings(BaseModel):
         ge=0.0,
         le=1.0,
         description="Ratio of entities with quality issues that triggers a retry (0.0-1.0)",
+    )
+    known_entities_limit: int = Field(
+        default=80,
+        ge=0,
+        le=400,
+        description=(
+            "How many of the source's named entities so far pass 1 is shown (the KNOWN ENTITIES "
+            "block: name, type, aliases, ties), ranked by the groups that cite them; 0 shows none "
+            "and turns the crossed-name guards off. The list resolves references (the count, Mamma, "
+            "the regiment) to the entity the earlier groups named."
+        ),
+        json_schema_extra={"tier": "advanced"},
     )
     llm_backoff_max_seconds: int = Field(
         default=30, ge=1, description="Maximum backoff delay between retries"
@@ -1186,7 +1248,7 @@ class ExtractionSettings(BaseModel):
 
     # Filtering mode preset
     extraction_filtering_mode: str = Field(
-        default="balanced",
+        default=SOURCE_ROW_FILTERING_MODE,
         description="Filtering mode preset controlling extraction quality filters (scale 0-5). "
         "Options: maximum (5, all filters + drop mismatches), strict (4, strict evidence), "
         "balanced (3, default with fall-throughs), lenient (2, forgiving for prose), "
@@ -1246,7 +1308,13 @@ class ExtractionSettings(BaseModel):
         default=0.95,
         ge=0.5,
         le=1.0,
-        description="Cosine similarity threshold for semantic entity deduplication (higher = stricter)",
+        description=(
+            "Fallback cosine similarity threshold for semantic entity deduplication "
+            "(higher = stricter), used only by a caller that resolves no filtering "
+            "preset. Every extraction path resolves one: the effective threshold is "
+            "the preset's semantic_dedup_threshold (balanced 0.90), which a domain's "
+            "extraction_limits.semantic_dedup_threshold overrides."
+        ),
     )
 
     # Alias parsing
@@ -1370,20 +1438,12 @@ class ExtractionSettings(BaseModel):
         ),
     )
 
-    # Domain detection + entity-description tuning (previously app-only, now
-    # unioned into the single core class — see Tier 2 schema unification).
-    # These previously lived as magic literals in adapters/llm/schema/extractor.py
-    # and mcp/extraction.py before being lifted into ExtractionSettings.
-    domain_detection_sample_count: int = Field(
-        default=5,
-        ge=1,
-        description="Number of chunk samples used for domain auto-detection.",
-    )
-    domain_detection_sample_chars: int = Field(
-        default=2000,
-        ge=100,
-        description="Chars per sample for domain auto-detection.",
-    )
+    # Entity-description tuning (previously app-only, now unioned into the
+    # single core class — see Tier 2 schema unification). The domain-detection
+    # sample knobs that sat here (``domain_detection_sample_count`` /
+    # ``_chars``) were removed 2026-10-06 (audit wave 3): every detecting
+    # path samples through ``domains.source_domain_sample`` now, so no caller
+    # read them (``_drop_removed_detection_sample_keys`` keeps old files parsing).
     entity_desc_min_length: int = Field(
         default=10,
         ge=1,
@@ -1404,6 +1464,22 @@ class ExtractionSettings(BaseModel):
     )
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_detection_sample_keys(cls, data: Any) -> Any:
+        """Accept and ignore the removed ``domain_detection_sample_count`` / ``_chars``.
+
+        Every path that auto-detects a source's domain samples it through
+        ``domains.source_domain_sample`` (the import worker's sampler) since
+        2026-10-06 (audit wave 3): the raw first-N-characters slice these knobs
+        sized read only a document's opening, where a novel's front matter can
+        look like any domain. Existing ``settings.yaml`` files that still carry
+        the keys keep parsing under ``extra="forbid"``; a warning names each.
+        """
+        return _drop_removed_keys(
+            data, _REMOVED_DETECTION_SAMPLE_KEYS, "extraction_setting_removed"
+        )
 
 
 # ============================================================================
@@ -1438,6 +1514,22 @@ class ChatSettings(BaseModel):
             "chat_context.tools_token_estimate)"
         ),
     )
+    loop_max_consecutive_lines: int = Field(
+        default=8,
+        ge=2,
+        description=(
+            "A chat stream is stopped when one line (list markers and whitespace "
+            "aside) repeats this many times in a row; a loop in the thinking phase "
+            "is retried once with thinking off, a loop in the answer keeps the text "
+            "before it (streaming.chat.repetition, 2026-10-05: a 9B wrote 100k "
+            "characters of 'Okay.' per looping answer until the token budget)"
+        ),
+    )
+    loop_max_line_occurrences: int = Field(
+        default=25,
+        ge=2,
+        description="A chat stream is stopped when any one line has appeared this many times",
+    )
     tool_approval: Literal["always-ask", "ask-on-write", "never-ask"] = Field(
         default="never-ask",
         description=(
@@ -1451,6 +1543,19 @@ class ChatSettings(BaseModel):
             "the system prompt instructs the model to treat retrieved chunks "
             "as untrusted data regardless of mode, so prompt-injection alone "
             "cannot trigger a write without also bypassing the system prompt."
+        ),
+    )
+    regenerate_temperature: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "The temperature floor a regenerated chat answer decodes at: "
+            "max(llm.ai_temperature, this), with a new seed per regeneration. "
+            "A user pressing regenerate asks for a different answer, which a "
+            "pinned temperature of 0 never gives (greedy decoding ignores the "
+            "seed). The first answer and every ordinary turn keep the pinned "
+            "decoding; the temperature and seed are recorded on the message."
         ),
     )
     tool_approval_timeout_seconds: int = Field(
@@ -1510,12 +1615,47 @@ class ChatSettings(BaseModel):
 # ============================================================================
 
 
+class MemorySettings(BaseModel):
+    """The memory tools (``remember``, ``recall``, ``forget``, ``list_memories``, ``digest``)."""
+
+    result_chars: int = Field(
+        default=1600,
+        ge=200,
+        description="The most characters a memory tool answers with; recall cuts on a whole line.",
+    )
+    wait_seconds: int = Field(
+        default=120,
+        ge=1,
+        description="How long remember waits for the facts to be linked before answering "
+        "'Saved, still linking.' (the linking goes on).",
+    )
+    default_by: str = Field(
+        default="user",
+        min_length=1,
+        description="Who a memory is by when the call does not say.",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class MCPSettings(BaseModel):
     """MCP server configuration."""
 
     mode: Literal["read", "write"] = Field(
         default="read",
         description="Tool access mode: 'read' for read-only, 'write' for full access",
+    )
+    profile: str = Field(
+        default="full",
+        description="The served tool profile: 'full' is every tool, 'memory' the five memory "
+        "tools (remember, recall, forget, list_memories, digest).",
+    )
+    tools: list[str] = Field(
+        default_factory=list,
+        description="An allowlist of tool names narrowing the profile; empty serves the whole profile.",
+    )
+    memory: MemorySettings = Field(
+        default_factory=MemorySettings, description="The memory tools' settings"
     )
     auto_extract: bool = Field(
         default=False,
@@ -1548,6 +1688,29 @@ class MCPSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @model_validator(mode="after")
+    def _profile_and_tools_are_registered(self) -> MCPSettings:
+        """An unknown profile or tool name is a configuration error, named here, not at call time."""
+        # Lazy: the tool registry imports the handlers, which import these settings.
+        from chaoscypher_core.mcp.tools import TOOL_DEFINITIONS, TOOL_PROFILES
+
+        if self.profile not in TOOL_PROFILES:
+            msg = f"mcp.profile '{self.profile}' is not a tool profile (one of: {', '.join(TOOL_PROFILES)})"
+            raise ValueError(msg)
+        registered = {t.name for t in TOOL_DEFINITIONS}
+        unknown = [name for name in self.tools if name not in registered]
+        if unknown:
+            msg = f"mcp.tools names tools that are not registered: {', '.join(unknown)}"
+            raise ValueError(msg)
+        served = TOOL_PROFILES[self.profile]
+        outside = [name for name in self.tools if served is not None and name not in served]
+        if outside:
+            msg = (
+                f"mcp.tools names tools outside the '{self.profile}' profile: {', '.join(outside)}"
+            )
+            raise ValueError(msg)
+        return self
+
 
 # ============================================================================
 # Source processing Settings (Extracted from main app)
@@ -1571,6 +1734,19 @@ def _reset_max_file_size_gb_deprecation_warning() -> None:
     """
     global _max_file_size_gb_deprecation_warned
     _max_file_size_gb_deprecation_warned = False
+
+
+_REMOVED_SOURCE_PROCESSING_KEYS: Mapping[str, str] = {
+    "entity_deduplication_similarity_threshold": (
+        "extraction filtering preset (semantic_dedup_threshold)"
+    ),
+    "dedup_type_compatibility_map": "none: entities of one core type are compatible",
+}
+"""``source_processing`` keys removed, and what replaces each; tolerated in old settings files.
+
+``entity_deduplication_similarity_threshold`` was never read.
+``dedup_type_compatibility_map`` grouped type names the deduplication could
+merge; since 2026-10-07 the core type is the group (spec 2026-10-07 § 6)."""
 
 
 class SourceProcessingSettings(BaseModel):
@@ -1608,12 +1784,6 @@ class SourceProcessingSettings(BaseModel):
     entity_deduplication_mode: str = Field(
         default="semantic", description="Deduplication mode: exact | semantic"
     )
-    entity_deduplication_similarity_threshold: float = Field(
-        default=0.90,
-        ge=0.0,
-        le=1.0,
-        description="Similarity threshold for semantic deduplication (0.0-1.0)",
-    )
     entity_max_description_length: int = Field(
         default=8000,
         ge=500,
@@ -1643,17 +1813,30 @@ class SourceProcessingSettings(BaseModel):
         description="Minimum confidence for extracted relationships",
     )
 
-    # Type-aware deduplication
+    # Type-aware deduplication: the core type is the group (``are_types_compatible``)
     dedup_require_type_compatibility: bool = Field(
         default=True,
-        description="Only merge same-name entities when types are compatible",
-    )
-    dedup_type_compatibility_map: dict[str, list[str]] = Field(
-        default={},
-        description="Custom type compatibility groups, e.g. {'Person': ['Character', 'Individual']}",
+        description="Only merge same-name entities of one core type",
     )
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_source_processing_keys(cls, data: Any) -> Any:
+        """Accept and ignore the removed ``source_processing`` keys (:data:`_REMOVED_SOURCE_PROCESSING_KEYS`).
+
+        The semantic deduplication threshold is the resolved filtering
+        preset's ``semantic_dedup_threshold`` (a domain's ``extraction_limits``
+        may override it), and ``extraction.semantic_dedup_threshold`` applies
+        only when no preset is resolved; the type compatibility map is the
+        core type. Existing ``settings.yaml`` files that still carry a key
+        keep parsing under ``extra="forbid"``; a warning names the
+        replacement.
+        """
+        return _drop_removed_keys(
+            data, _REMOVED_SOURCE_PROCESSING_KEYS, "source_processing_setting_removed"
+        )
 
     @model_validator(mode="after")
     def _warn_if_deprecated_max_file_size_gb(self) -> SourceProcessingSettings:
@@ -2058,12 +2241,133 @@ class GraphSettings(BaseModel):
         default=100000, ge=1000, description="Maximum nodes/edges to export in a single operation"
     )
 
+    resolve_identities: bool = Field(
+        default=True,
+        description=(
+            "Run the identity resolver over the graph after every commit: nodes that are one "
+            "entity under two names are merged, aliases that name another node are moved, and "
+            "family edges whose justification names someone else are flagged for review "
+            "(services.graph.resolution). On by default since 2026-10-06 (the resolved Book One "
+            "graph was level on the panel and the holdout with every real split fixed). Part of "
+            "the graph recipe: the benchmark keys its graph cache on it."
+        ),
+    )
+
     model_config = ConfigDict(extra="forbid")
+
+
+# ============================================================================
+# Cache Settings (LLM responses and embeddings)
+# ============================================================================
+
+
+_CACHE_DEFAULT_MAX_BYTES = 2 * 1024**3
+"""Default size cap of each cache (2 GB, decided 2026-10-06)."""
+
+_CACHE_MIN_MAX_BYTES = 16 * 1024**2
+"""Smallest cap a cache accepts (16 MB): below it eviction would thrash."""
+
+
+class CacheStoreSettings(BaseModel):
+    """One cache (completions or embeddings): whether it serves and stores, and how big it may grow."""
+
+    enabled: bool = Field(
+        default=True,
+        description=(
+            "Serve hits and store misses. Off stops both reads and writes for providers built "
+            "afterwards; the store and its stats are kept."
+        ),
+    )
+    max_bytes: int = Field(
+        default=_CACHE_DEFAULT_MAX_BYTES,
+        ge=_CACHE_MIN_MAX_BYTES,
+        description="Size cap in bytes; least-recently-hit entries are evicted past it.",
+    )
+    require_hit: bool = Field(
+        default=False,
+        description=(
+            "Replay mode: a miss is refused instead of calling the model (the benchmark's "
+            "--replay sets it so a pack's graph rebuilds from its store alone)."
+        ),
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CacheSettings(BaseModel):
+    """The LLM response and embedding caches (the public Cache page under getting-started documents them).
+
+    Pinned decoding is the product default, so a completion is a function of
+    (model build, input, decoding) and can be served again; embeddings are
+    deterministic. The stores live under the data directory (never the
+    platformdirs cache dir) so the same Docker mount carries them.
+    """
+
+    dir: str | None = Field(
+        default=None,
+        description="Directory of the cache files; <data_dir>/cache/llm when unset.",
+    )
+    completions: CacheStoreSettings = Field(
+        default_factory=CacheStoreSettings,
+        description="The completion cache: pinned chat and extraction answers.",
+    )
+    embeddings: CacheStoreSettings = Field(
+        default_factory=CacheStoreSettings,
+        description="The embedding cache: vectors per (model build, text).",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    def resolved_dir(self, data_dir: str | Path) -> Path:
+        """Where the cache files live: ``dir`` when set, else ``<data_dir>/cache/llm``."""
+        return Path(self.dir) if self.dir else Path(data_dir) / "cache" / "llm"
 
 
 # ============================================================================
 # GraphRAG Settings
 # ============================================================================
+
+
+class GraphRAGProfileRule(BaseModel):
+    """When a named profile applies: an exact chat model, a parameter-size band, a corpus domain.
+
+    Every given condition must hold; the first rule that matches wins
+    (``GraphRAGSettings.profile_rules`` is read in order, so the most specific
+    rule goes first). A rule with no condition matches everything.
+    """
+
+    profile: str = Field(description="A key of GraphRAGSettings.profiles")
+    model: str | None = Field(
+        default=None,
+        description="The chat model this rule is for, as the provider names it (e.g. 'gemma4:31b')",
+    )
+    min_params_b: float | None = Field(
+        default=None, ge=0, description="Lowest parameter count, in billions, inclusive"
+    )
+    max_params_b: float | None = Field(
+        default=None, ge=0, description="Highest parameter count, in billions, exclusive"
+    )
+    domain: str | None = Field(
+        default=None,
+        description=(
+            "The corpus domain: the packs' label extraction records (e.g. 'literary', "
+            "'historical+literary'; 'generic' is the floor alone). Matches the label exactly "
+            "or any one of its packs, so 'literary' also holds for 'historical+literary'"
+        ),
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
+RESOLUTION_FIELDS: frozenset[str] = frozenset(
+    {"profiles", "profile_rules", "shape_levers", "router"}
+)
+"""The GraphRAG fields that decide which levers run, which no lever bundle may set.
+
+A model profile (``profiles``) and a shape bundle (``shape_levers``) both
+refuse them: ``graphrag_profiles`` reads this set, and so does the
+``shape_levers`` validator.
+"""
 
 
 class GraphRAGSettings(BaseModel):
@@ -2091,7 +2395,7 @@ class GraphRAGSettings(BaseModel):
         description="PPR damping factor (higher = more exploration away from seeds)",
     )
     max_triples: int = Field(
-        default=200,
+        default=40,
         ge=10,
         description="Maximum triples to include in graph context summary",
     )
@@ -2106,8 +2410,353 @@ class GraphRAGSettings(BaseModel):
         ge=1000,
         description="Maximum graph nodes to load for PPR (skip PPR if graph exceeds this)",
     )
+    chunk_limit: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Document chunks a graphrag_search (and the hybrid arm alone) returns into "
+            "the chat context: the tool schema's default limit, the benchmark's chat "
+            "budget and the pins' fingerprint all read this one field (2026-10-05; it "
+            "was the literal 10 in each of them)."
+        ),
+    )
+    vector_reserve: int = Field(
+        default=10,
+        ge=0,
+        description=(
+            "The hybrid (semantic + keyword) arm's top-N chunks are kept in the "
+            "graphrag_search budget: each one rank fusion dropped replaces the "
+            "lowest-ranked kept chunk outside the reserve, a provenance-only chunk "
+            "first. 0 keeps whatever fusion ranks. At N equal to chunk_limit (the "
+            "default, 10 of 10) every slot is the hybrid arm's while it has that many "
+            "hits: graphrag_search returns exactly hybrid search's chunks, and a "
+            "chunk only the graph found enters only when the hybrid arm comes up "
+            "short (the graph then adds its entity and relationship lines, not "
+            "chunks). Below chunk_limit, chunk_limit - N slots go to rank fusion, "
+            "where provenance chunks compete. 8 of 10 was set by the Book One "
+            "retrieval sweep (internal/benchmarks/tools/retrieval_mode_check.py, "
+            "2026-10-02); 10 of 10 by the Phase 2 panel of 2026-10-04/05: up on all "
+            "five models against 8, median +4, held without the noisy questions and "
+            "on a blind holdout set, with the gain in multi-hop questions. That panel "
+            "ran before the reserve was honoured whole (audit R5, 2026-10-06); the "
+            "re-run at a true temperature 0 measures 8 against 10 again."
+        ),
+    )
+    # How the graph is handed to the chat model (2026-10-02). The Book One
+    # review found eleven of twelve graph-question misses had the facts in the
+    # context: every edge of the top PageRank nodes, up to 200 lines of bare
+    # names and triples before the documents, and the model did not use them.
+    # The defaults are the variant the review settled on (Gemma 4 31B, seven
+    # cumulative variants, each run twice where it mattered): connected triples
+    # capped at 40, descriptions, seed paths, the explanation line, keyword
+    # seeds, seed-ranked chunks, the question gate, citations asked, documents
+    # first. Three more graph questions right of forty, flat elsewhere, a
+    # fifth less context; paths_to_top added runtime and nothing else.
+    triple_selection: Literal["all_edges", "connected"] = Field(
+        default="connected",
+        description=(
+            "Which edges of the top PageRank nodes become relationship lines: "
+            "all_edges (every edge, in node order) or connected (edges between the "
+            "top nodes, or touching a seed entity, ranked by the higher endpoint's "
+            "PageRank), capped by max_triples either way."
+        ),
+    )
+    entity_descriptions: bool = Field(
+        default=True,
+        description=(
+            "Put each entity's extracted description on its line (name: description), "
+            "kept to entity_description_chars."
+        ),
+    )
+    entity_description_chars: int = Field(
+        default=400,
+        ge=20,
+        description=(
+            "Characters kept of an entity description (400 and sentence-bounded since "
+            "2026-10-09: the one lever that moved the panel, decision 18)."
+        ),
+    )
+    seed_paths: bool = Field(
+        default=True,
+        description=(
+            "List the relation chains (up to two hops over the fetched edges) between "
+            "the seed entities the query matched, before the relationship lines."
+        ),
+    )
+    max_paths: int = Field(default=10, ge=1, description="Paths listed when seed_paths is on.")
+    explain_lines: bool = Field(
+        default=True,
+        description=(
+            "Open the rendered context with one sentence saying what the graph lines are "
+            "(entities, paths, relationships) and that the documents follow."
+        ),
+    )
+    graph_block_last: bool = Field(
+        default=True,
+        description="Render the documents first and the graph lines after them.",
+    )
+    question_gate: bool = Field(
+        default=True,
+        description=(
+            "Keep only the entities and relationships that share a significant word with the "
+            "query (seed entities and their edges always stay)."
+        ),
+    )
+    ask_for_citations: bool = Field(
+        default=True,
+        description=(
+            "The benchmark's grounded-chat prompt asks for the app's citation markers "
+            "([[cite:Cn:Sm|filename]]) after each claim, as the app's system prompt does."
+        ),
+    )
+    answer_policy: bool = Field(
+        default=True,
+        description=(
+            "Add the grounded answer policy (services.chat.engine.constants."
+            "GROUNDED_ANSWER_POLICY) to the app's system prompt and the benchmark's "
+            "grounded-chat prompt: every line of the context is evidence, never decline "
+            "after naming a candidate, name variants are one person, join facts across "
+            "passages, answer every part. Prompt-only: it changes no retrieval and no "
+            "pin. On since 2026-10-05: 59% of the panel's misses were declines with the "
+            "fact in the context; the policy was up on all five panel models (median "
+            "+3.5 of ~105 with repeats) and on all five on the frozen holdout (+2 of 22)."
+        ),
+    )
+    paths_to_top: bool = Field(
+        default=False,
+        description=(
+            "With seed_paths: also list one-hop chains from each seed entity to the other "
+            "top PageRank entities (a question that names one person reaches its neighbours)."
+        ),
+    )
+    keyword_seeds: bool = Field(
+        default=True,
+        description=(
+            "Entities whose name or alias matches the query by keyword search seed PageRank "
+            "too, ahead of the vector matches (an exact surname always seeds). A match is a "
+            "whole naming word, possessives folded and titles left out (the name rule's "
+            "words): 'Andrew's' seeds Prince Andrew, 'prince' alone seeds nobody."
+        ),
+    )
+    dedupe_graph_lines: bool = Field(
+        default=False,
+        description=(
+            "Drop a relationship line a path line already states, and keep one line of a "
+            "generic symmetric relation stated in both directions (A interacts_with B, B "
+            "interacts_with A), before the max_triples cap, so the cap fills with distinct "
+            "facts."
+        ),
+    )
+    generic_relations_last: bool = Field(
+        default=False,
+        description=(
+            "Rank relationship lines whose relation says little (interacts_with, "
+            "related_to, references, associated_with, mentions: the catch-alls the "
+            "extraction prompt calls generic) after the specific ones before the "
+            "max_triples cap, so the cap keeps spouse_of over interacts_with."
+        ),
+    )
+    include_unevidenced_edges: bool = Field(
+        default=False,
+        description=(
+            "Let relationships no cited sentence states (flagged unevidenced by the "
+            "extraction's evidence filter, which keeps them rather than deleting them) into "
+            "the graph context: PageRank, the paths and the relationship lines, ranked after "
+            "every evidenced line before the max_triples cap. Off by default: the chat reads "
+            "only relationships a sentence of the source states."
+        ),
+    )
+    entity_aliases: bool = Field(
+        default=False,
+        description=(
+            "Show an entity's stored aliases on its line (Lise Meinen (also: Lise, the "
+            "little princess): ...), so a question that names someone by another name "
+            "finds them."
+        ),
+    )
+    clean_descriptions: bool = Field(
+        default=True,
+        description=(
+            "Entity descriptions drop a sentence whose content words are all in a kept "
+            "one (merged entities carry one per mention; counted as "
+            "descriptions_dropped) and end at a sentence boundary within "
+            "entity_description_chars instead of mid-word (400 and sentence-bounded "
+            "since 2026-10-09: the one lever that moved the panel, decision 18)."
+        ),
+    )
+    relationship_evidence: bool = Field(
+        default=False,
+        description=(
+            "Mark a relationship or path step with [C3:S2] when a sentence of the "
+            "retrieved documents names both of its entities, so the model can check "
+            "the fact in the text and cite it."
+        ),
+    )
+    question_entities_first: bool = Field(
+        default=False,
+        description=(
+            "Entities the question names (a naming word of the query, titles left out, is "
+            "a naming word of the label or an alias: the keyword seeds' rule), and the "
+            "lines touching them, rank before the rest before the "
+            "max_triples cap, and seed paths join only named seeds when two or more are "
+            "named: a city that became a seed through its description no longer leads the "
+            "graph block."
+        ),
+    )
+    rank_chunks_by_seeds: bool = Field(
+        default=True,
+        description=(
+            "Order the returned chunks by how many seed entities each mentions (stable: the "
+            "fusion order breaks ties), so the chunk naming both people the question asks "
+            "about comes first."
+        ),
+    )
 
-    model_config = ConfigDict(extra="forbid")
+    # Question shapes (2026-10-09, the graph-native retrieval spec): the router names a
+    # question's shape and ``apply_shape_levers`` runs that shape's bundle on top of the
+    # model's profile; the walk, aggregate and evidence levers are what the bundles set.
+    router: Literal["off", "rules", "llm", "rules_then_llm"] = Field(
+        default="rules",
+        description=(
+            "How graphrag_search decides a question's shape (lookup, aggregate, path, "
+            "global): off is today's assembly for every question; rules (the default since "
+            "2026-10-19: the shape the chat panel measured ahead on four graph builds, with "
+            "no extra model call) decides the clear cases from the question's named entities "
+            "and cue words and leaves the rest as lookup; llm asks the chat model once (a "
+            "short JSON answer, temperature 0); rules_then_llm asks the model only when the "
+            "rules abstain. The shape sets the budget and the rendering (shape_levers), never "
+            "whether the graph is used."
+        ),
+    )
+    shape_levers: dict[str, dict[str, Any]] = Field(
+        default_factory=lambda: {
+            "aggregate": {"vector_reserve": 4, "evidence_chunks": 6},
+            "path": {"vector_reserve": 4, "evidence_chunks": 6},
+            "global": {"vector_reserve": 4, "evidence_chunks": 2},
+        },
+        description=(
+            "Lever values applied on top of the model's profile for one question shape "
+            "(aggregate, path, global; lookup runs the profile as is): a bundle may set "
+            "any field but router, shape_levers, profiles, profile_rules and the fields "
+            "read before the shape is known (PRE_SHAPE_FIELDS: the seeds' and PageRank's). "
+            "The shipped bundles free chunk slots for the chunks the graph block cites."
+        ),
+    )
+
+    @field_validator("shape_levers")
+    @classmethod
+    def _known_shapes_and_levers_only(
+        cls, v: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Refuse a bundle the retrieval could not run: an unknown shape, or a field no shape may set.
+
+        A key that is no question shape (``paht``) would never run; a lever
+        that is no field, a resolution field (:data:`RESOLUTION_FIELDS`) or a
+        field read before the shape is known (:data:`PRE_SHAPE_FIELDS`) would
+        fail or split the call. Refused here, when configured, never
+        mid-retrieval. A value the field rejects is caught when the bundle is
+        applied (``apply_shape_levers``; the pipeline then records the fault
+        ``shape_levers`` and runs on the base settings).
+        """
+        unknown = sorted(set(v) - set(SHAPE_NAMES))
+        if unknown:
+            msg = (
+                f"GraphRAG shape_levers keys {', '.join(map(repr, unknown))} are not question "
+                f"shapes; expected one of {', '.join(SHAPE_NAMES)}"
+            )
+            raise ValueError(msg)
+        allowed = set(cls.model_fields) - RESOLUTION_FIELDS - set(PRE_SHAPE_FIELDS)
+        for shape, bundle in v.items():
+            bad = sorted(set(bundle) - allowed)
+            if bad:
+                msg = (
+                    f"GraphRAG shape_levers[{shape!r}] may not set {', '.join(map(repr, bad))}: "
+                    "a bundle sets the levers read after the shape is known, never a resolution "
+                    "field, a field read before the shape (PRE_SHAPE_FIELDS) or an unknown name"
+                )
+                raise ValueError(msg)
+        return v
+
+    evidence_chunks: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Chunks the rendered graph block cites (an aggregate row's or a walk hop's "
+            "evidence sentence) that enter the chunk budget by right, ahead of the "
+            "provenance and hybrid arms, so every [Cn:Sm] marker on a graph line resolves. "
+            "0 keeps today's chunk sets; the shipped shape_levers raise it for aggregate and path."
+        ),
+    )
+    max_hops: int = Field(
+        default=3,
+        ge=1,
+        le=4,
+        description="Longest relation chain a walk between two named entities may have.",
+    )
+    max_walks: int = Field(
+        default=6,
+        ge=1,
+        description=(
+            "Walks a path question lists in all, across its pairs of named entities: each "
+            "pair's shortest walk first, then the rest shortest first. A walk is a shortest "
+            "chain or one a relation longer, never more."
+        ),
+    )
+    aggregate_per_label: int = Field(
+        default=12,
+        ge=1,
+        description=(
+            "Rows an aggregate block lists per relation label of one entity before it says "
+            "how many more there are."
+        ),
+    )
+    question_aware_descriptions: bool = Field(
+        default=True,
+        description=(
+            "Within entity_description_chars, put the description's sentences that share a "
+            "word with the question first (stable), then the rest in stored order, so a cast "
+            "question sees the sentence naming the children before the one about temperament. "
+            "On by default since 2026-10-19 (measured with router=rules on the chat panel)."
+        ),
+    )
+    question_parts: bool = Field(
+        default=False,
+        description=(
+            "Search the chunk index for each part of a two-part question as well as the whole "
+            "(split where 'and' opens a new question: ', and what did he say?'), interleaving "
+            "the hits so each part keeps its share of the hybrid arm. A one-part question is "
+            "searched once, as before."
+        ),
+    )
+
+    # Lever profiles (2026-10-05): the shapes a chat model answers best with differ by
+    # size (the Phase 2 panel: aliases and evidence lines helped the models under
+    # 27B and cost the largest), so a named bundle of lever values can be bound to a
+    # model, a size band or a corpus domain. ``resolve_graphrag_profile`` applies it.
+    profiles: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description=(
+            "Named bundles of GraphRAGSettings field values (levers: vector_reserve, "
+            "chunk_limit, entity_aliases, clean_descriptions, relationship_evidence, "
+            "question_entities_first, dedupe_graph_lines, generic_relations_last, "
+            "answer_policy, ...). A profile may set any field but profiles, "
+            "profile_rules, shape_levers and router."
+        ),
+    )
+    profile_rules: list[GraphRAGProfileRule] = Field(
+        default_factory=list,
+        description=(
+            "Which profile applies to which chat model, in order: exact model, then "
+            "parameter-size band, then domain (put the most specific first). No match: "
+            "the plain settings."
+        ),
+    )
+
+    # validate_assignment: a lever set after construction (a sweep override, a
+    # profile, a test) is checked like one passed in, so
+    # ``triple_selection = "conected"`` raises instead of running all_edges
+    # under its own pin fingerprint (audit R9).
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
 # ============================================================================
@@ -2127,7 +2776,13 @@ class SearchSettings(BaseModel):
     vector_dimensions: int = Field(
         default=1024,
         ge=1,
-        description="Embedding vector dimensions (configurable per model)",
+        description=(
+            "Dimensions the vector index stores. A model whose native size is larger is "
+            "cut to this many (Matryoshka truncation) and re-normalised to unit length, "
+            "and the provider logs the cut (embedding_mrl_truncation); a model whose "
+            "vectors are shorter is refused. Benchmark reference packs index at the "
+            "embedder's native size instead (benchmark.reference.embedder_dimensions)."
+        ),
     )
     max_elements: int = Field(
         default=100000, ge=1000, description="Maximum number of vectors in vector search index"
@@ -2504,6 +3159,31 @@ class LoaderSettings(BaseModel):
             "without runaway recursion."
         ),
     )
+    openapi_max_schema_chars: int = Field(
+        default=10_000_000,
+        ge=1,
+        description=(
+            "Maximum characters of schema text the OpenAPI schema walker "
+            "expands across one spec file. The depth cap alone does not "
+            "bound output: a self-referencing object with W properties "
+            "expands to W^depth nodes, so a 1.6 KB spec rendered ~800M "
+            "characters. Schemas reached after the budget is spent are "
+            "summarised as '<schema (expansion budget reached)>'."
+        ),
+    )
+
+    # XLSX loader settings (2026-10-11)
+    xlsx_max_content_chars: int | None = Field(
+        default=50_000_000,
+        ge=1,
+        description=(
+            "Maximum characters an XLSX workbook may flatten to. Shared "
+            "strings let a few-KB workbook point every cell at one 32,000-"
+            "character string, so on-disk size does not bound loader output. "
+            "Workbooks over this cap are rejected with a ValidationError. "
+            "Set to None to disable."
+        ),
+    )
 
     # Phase 6 (2026-05-08): skip-list configurability for archive handlers.
     markdown_skip_files: list[str] = Field(
@@ -2829,8 +3509,12 @@ class EmbeddingSettings(BaseModel):
         description="Maximum text length (chars) before truncation",
     )
     default_ollama_model: str = Field(
-        default="qwen3-embedding:0.6b",
-        description="Default Ollama embedding model when none is explicitly configured.",
+        default="qwen3-embedding:4b",
+        description=(
+            "Default Ollama embedding model when none is explicitly configured. "
+            "qwen3-embedding:4b since 2026-10-02: on the Book One chat fixture it retrieves "
+            "the answer for 95 of 99 questions against 88 for 0.6b and 96 for 8b, at 2.5 GB."
+        ),
     )
     allow_model_download: bool = Field(
         default=False,
@@ -3031,6 +3715,17 @@ class AnalysisSettings(BaseModel):
 # ============================================================================
 
 
+def _default_user_agent() -> str:
+    """The User-Agent the web fetcher sends: product, version and a contact URL.
+
+    Read lazily (``default_factory``) because ``chaoscypher_core.__version__``
+    is set by the package ``__init__``, which imports this module.
+    """
+    from chaoscypher_core import __version__
+
+    return f"ChaosCypher/{__version__} (+https://chaoscypher.com)"
+
+
 class WebSettings(BaseModel):
     """HTTP / web-fetch behavior (used by adapters/web/search.py and HTTP plugins)."""
 
@@ -3060,6 +3755,165 @@ class WebSettings(BaseModel):
         description=(
             "Bytes/chars at the head of a fetched/uploaded payload used for "
             "content-type sniffing (consumed by source normalizer + web_cleaner)."
+        ),
+    )
+    user_agent: str = Field(
+        default_factory=_default_user_agent,
+        min_length=1,
+        description=(
+            "User-Agent header the web fetcher sends on every request "
+            "(adapters/web/search.py), and the name robots.txt rules are matched "
+            "against during a site import. Default: "
+            "'ChaosCypher/<version> (+https://chaoscypher.com)'."
+        ),
+    )
+    crawl_delay_seconds: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=60.0,
+        description=(
+            "Minimum pause between the starts of two requests to one site during a "
+            "site import or its discovery. A site's robots.txt Crawl-delay wins "
+            "when it is larger."
+        ),
+    )
+    crawl_concurrency: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Maximum requests in flight to one site during a site import.",
+    )
+    respect_robots_txt: bool = Field(
+        default=True,
+        description=(
+            "Honour the site's robots.txt during a site import: disallowed pages "
+            "are skipped and a larger Crawl-delay is used."
+        ),
+    )
+    site_max_pages: int = Field(
+        default=500,
+        ge=1,
+        le=100_000,
+        description=(
+            "Maximum pages one site import discovers and imports; the crawl "
+            "fallback also stops after this many page fetches."
+        ),
+    )
+    site_crawl_max_depth: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "How many links deep the site-import link crawl goes from the given "
+            "address (0 = the address alone). Used only when the site publishes "
+            "neither llms.txt nor a sitemap."
+        ),
+    )
+    site_max_sitemaps: int = Field(
+        default=50,
+        ge=1,
+        le=1000,
+        description=(
+            "Maximum sitemap documents (sitemap.xml files and sitemap indexes) one "
+            "site discovery fetches. Bounds a sitemap index that lists sitemaps "
+            "without end."
+        ),
+    )
+    site_preview_max_pages: int = Field(
+        default=25,
+        ge=1,
+        le=100_000,
+        description=(
+            "Page fetches a site preview's link crawl may make before it answers "
+            "with what it found (marked capped). Only the crawl fallback is "
+            "bounded this way: llms.txt and sitemaps are a few fetches. The "
+            "import itself crawls up to site_max_pages."
+        ),
+    )
+    site_preview_seconds: float = Field(
+        default=10.0,
+        gt=0.0,
+        le=600.0,
+        description=(
+            "Seconds a whole site preview may take (robots.txt, llms.txt, sitemaps "
+            "and the link crawl together) before it answers with what it found "
+            "(marked capped), so the Add Source dialog's check answers quickly."
+        ),
+    )
+    site_preview_max_sitemaps: int = Field(
+        default=3,
+        ge=1,
+        le=1000,
+        description=(
+            "Sitemap documents a site preview fetches at most (the import itself "
+            "fetches up to site_max_sitemaps); past it the preview answers capped."
+        ),
+    )
+    site_preview_document_max_bytes: int = Field(
+        default=5 * 1024 * 1024,
+        ge=1024,
+        le=1024 * 1024 * 1024,
+        description=(
+            "Largest document a site preview downloads or inflates (default 5 MiB; "
+            "the import itself reads up to site_document_max_bytes)."
+        ),
+    )
+    site_run_max_seconds: float = Field(
+        default=1800.0,
+        gt=0.0,
+        le=86_400.0,
+        description=(
+            "Seconds one site-import run works through pages before it saves its "
+            "place and queues the rest as a new run, so a large or slow site never "
+            "meets the operations worker's timeout. Keep it below that timeout."
+        ),
+    )
+    site_title_max_chars: int = Field(
+        default=120,
+        ge=8,
+        le=1000,
+        description=(
+            "Longest site title kept from a site's llms.txt heading or page <title> "
+            "(one line, markup and control characters removed); the title reaches "
+            "the sources list and MCP clients' agents."
+        ),
+    )
+    site_pages_named_max: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "How many page addresses a site's messages name before 'and N more': "
+            "the pages it leaves out, and the ones a check brings back (the web "
+            "UI, the CLI and MCP answers)."
+        ),
+    )
+    crawl_delay_max_seconds: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=600.0,
+        description=(
+            "Largest robots.txt Crawl-delay a site import honours; a larger one is "
+            "cut to this. A site preview ignores Crawl-delay for its few fetches."
+        ),
+    )
+    site_preview_debounce_ms: int = Field(
+        default=800,
+        ge=0,
+        le=10_000,
+        description=(
+            "How long the Add Source dialog waits after the last keystroke in its "
+            "URL field before it checks the address for a site to import (ms)."
+        ),
+    )
+    site_document_max_bytes: int = Field(
+        default=50 * 1024 * 1024,
+        ge=1024,
+        le=1024 * 1024 * 1024,
+        description=(
+            "Largest document a site discovery downloads or inflates (robots.txt, "
+            "llms.txt, a sitemap, a crawled HTML page). Default 50 MiB, the "
+            "sitemap protocol's uncompressed limit; larger documents are skipped."
         ),
     )
 
@@ -3270,6 +4124,9 @@ class EngineSettings(BaseModel):
     graph: GraphSettings = Field(
         default_factory=GraphSettings, description="Graph commit and template configuration"
     )
+    cache: CacheSettings = Field(
+        default_factory=CacheSettings, description="LLM response and embedding caches"
+    )
     archive: ArchiveSettings = Field(
         default_factory=ArchiveSettings, description="Archive loader configuration"
     )
@@ -3307,11 +4164,14 @@ class EngineSettings(BaseModel):
 # ============================================================================
 
 __all__ = [
+    "RESOLUTION_FIELDS",
     "AnalysisSettings",
     "ArchiveSettings",
     "BackoffSettings",
     "BatchingSettings",
     "CLISettings",
+    "CacheSettings",
+    "CacheStoreSettings",
     "ChatSettings",
     "ChunkingSettings",
     "ComposeSettings",

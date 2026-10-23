@@ -70,7 +70,7 @@ Chaos Cypher ships with **19 built-in domains**, each tuned for a different cate
 | **Cybersecurity** | Threat Actor, Vulnerability, Malware, Attack Technique | Threat intel, incident reports, CVE research |
 | **Generic** | Person, Organization, Event, Concept, Location | General-purpose fallback for any content |
 
-The rest cover historical, literary, theological, investigative, political, design, intelligence, news, educational, philosophical, biographical, and reference material — the [full list with every entity type is in the docs](/docs/user-guide/domains#built-in-domains).
+The rest cover historical, literary, theological, investigative, political, design, intelligence, news, educational, philosophical, biographical, and reference material — the [full list is in the docs](/docs/user-guide/domains#packs).
 
 Every domain uses strict entity type enforcement by default. The medical domain defines 20 entity types. The technical domain has 18. These aren't suggestions -- they're the only types the LLM is allowed to produce. That constraint is what separates a clean, queryable graph from a noisy soup of ad-hoc labels.
 
@@ -143,7 +143,7 @@ Upload a TechCrunch article and watch the detection engine propose it at the con
 
 ![Source extraction view showing domain-specific entity types](/img/screenshots/source-extraction-entities.png)
 
-The full walkthrough -- weighted keyword groups, named-referent flags, entity properties, inverse relationships, and a complete worked example -- lives in the docs: start with [Custom Domains](/docs/user-guide/domains#custom-domains), then [Building Extraction Domains](/docs/developer-guide/building-domains) for the whole schema, including normalization keywords, compatibility groups, property absorption, and extraction-density tuning. The built-in medical domain is the most comprehensive reference -- study it when you want the full picture.
+The full walkthrough -- weighted keyword groups, named-referent flags, entity properties, inverse relationships, and a complete worked example -- lives in the docs: start with [Custom Packs](/docs/user-guide/domains#custom-packs), then [Building Extraction Domains](/docs/developer-guide/building-domains) for the whole schema, including normalization keywords, compatibility groups, property absorption, and extraction-density tuning. The built-in medical domain is the most comprehensive reference -- study it when you want the full picture.
 
 ## What's Next
 

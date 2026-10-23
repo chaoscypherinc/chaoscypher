@@ -135,17 +135,20 @@ def test_format_retrieved_empty_placeholder() -> None:
     assert _format_retrieved({"entities": []}) == "(empty)"
 
 
-def test_format_retrieved_with_and_without_description() -> None:
-    text = _format_retrieved(
-        {
-            "entities": [
-                {"name": "Alpha", "description": "first"},
-                {"name": "Beta"},
-            ]
-        }
-    )
-    assert "- Alpha: first" in text
-    assert "- Beta" in text
+def test_the_judge_reads_the_context_the_chat_model_read() -> None:
+    """The judge listed retrieved["entities"], which no rung fills: every prompt said (empty) (R10)."""
+    from chaoscypher_core.benchmark.chat_prompt import format_retrieved_context
+
+    retrieved = {
+        "graph_context": {
+            "seed_entities": [{"id": "n1", "label": "Alpha", "description": "first"}],
+            "related_entities": [{"id": "n2", "name": "Beta"}],
+        },
+        "chunks": [{"content": "Alpha met Beta."}],
+    }
+    text = _format_retrieved(retrieved)
+    assert text == format_retrieved_context(retrieved)
+    assert "- Alpha: first" in text and "- Beta" in text and "Alpha met Beta." in text
 
 
 @pytest.mark.asyncio
@@ -179,3 +182,40 @@ async def test_thinking_honoured_resets_between_models(monkeypatch: pytest.Monke
     assert ds.thinking_honoured is False
     await ds.run(ModelConfig(provider="openai", model="gpt-x", label="G"))
     assert ds.thinking_honoured is None
+
+
+@pytest.mark.asyncio
+async def test_thinking_probe_uses_the_configured_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The probe goes to the configured Ollama, not localhost: with chat on a second host, the
+    default loaded the chat model on the local card beside the embedder.
+    """
+    from chaoscypher_cli.benchmark import thinking_probe
+
+    probe = AsyncMock(return_value={})
+    monkeypatch.setattr(thinking_probe, "probe_thinking", probe)
+    monkeypatch.setattr(thinking_probe, "thinking_honoured", lambda _probe, *, requested: False)
+    fake_settings = MagicMock()
+    fake_settings.llm.primary_ollama_url = "http://ollama-box:11434"
+    monkeypatch.setattr("chaoscypher_core.app_config.get_settings", lambda: fake_settings)
+
+    @asynccontextmanager
+    async def fake_indexed_graph(*, embedder=None):
+        """Yield a stand-in indexed graph."""
+        yield MagicMock()
+
+    provider = MagicMock()
+    provider.indexed_graph = fake_indexed_graph
+    ds = GraphRAGChatDataset(
+        id="demo",
+        version="1.0",
+        corpus_id="demo",
+        queries=_oos_qs(),
+        graph_provider=provider,
+        graphrag_search=AsyncMock(return_value={"entities": []}),
+        chat=AsyncMock(return_value="answer"),
+        judge=None,
+        judge_call=AsyncMock(),
+    )
+
+    await ds.run(_chat_model())
+    probe.assert_awaited_once_with(_chat_model().model, base_url="http://ollama-box:11434")

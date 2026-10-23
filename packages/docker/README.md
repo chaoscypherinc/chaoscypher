@@ -86,7 +86,10 @@ make docker-rebuild
 
 For contributors who need hot-reload and per-service logs. Runs Cortex, Neuron, Interface, and Valkey as separate containers.
 
+The dev stack requires a Valkey queue password — `docker compose` aborts with `QUEUE_PASSWORD must be set for dev environment` if it is missing (the all-in-one container generates one; the multi-container stacks do not):
+
 ```bash
+export QUEUE_PASSWORD="$(openssl rand -base64 32)"
 make docker-dev
 ```
 
@@ -109,7 +112,7 @@ docker compose -f docker-compose.dev.yml up
 make docker-prod
 ```
 
-Multi-container production auto-generates the edge-auth token in the `edge-auth-data` Docker volume. Operators still need to provide a Valkey queue password:
+Multi-container production auto-generates the edge-auth token in the `edge-auth-data` Docker volume. As with the dev stack, operators must provide a Valkey queue password:
 
 ```bash
 export QUEUE_PASSWORD="$(openssl rand -base64 32)"

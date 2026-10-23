@@ -88,3 +88,17 @@ class TestPersonalizedPageRank:
         result = calculate_pagerank([], [], personalization={"a": 1.0})
         assert result["pagerank_scores"] == {}
         assert result["top_nodes"] == []
+
+    def test_a_personalization_with_no_seed_in_the_graph_says_it_ran_uniform(self) -> None:
+        """Seeds none of which is a node: the uniform run is logged and reported, never passed off."""
+        from structlog.testing import capture_logs
+
+        nodes = [_make_node("a"), _make_node("b")]
+        edges = [_make_edge("a", "b")]
+        with capture_logs() as logs:
+            result = calculate_pagerank(nodes, edges, personalization={"template:x": 1.0})
+        assert result["personalized"] is False
+        assert any(e["event"] == "pagerank_personalization_empty" for e in logs)
+        assert result["pagerank_scores"] == calculate_pagerank(nodes, edges)["pagerank_scores"]
+        assert calculate_pagerank(nodes, edges, personalization={"a": 1.0})["personalized"] is True
+        assert calculate_pagerank(nodes, edges)["personalized"] is False

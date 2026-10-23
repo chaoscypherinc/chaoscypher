@@ -106,6 +106,22 @@ describe('BackupTab', () => {
       expect(screen.getByText(/2 backups/i)).toBeInTheDocument();
     });
 
+    it('renders the UTC filename stamp in the viewer local time zone', async () => {
+      // The backend stamps created_at in UTC; a non-UTC viewer must see it
+      // converted, not the raw UTC wall clock re-read as local time.
+      vi.stubEnv('TZ', 'America/Los_Angeles');
+      try {
+        list.mockResolvedValue([makeBackup({ created_at: '20260101_120000' })]);
+        renderTab();
+        const expected = new Date(Date.UTC(2026, 0, 1, 12, 0, 0)).toLocaleString();
+        await waitFor(() => {
+          expect(screen.getByText(expected)).toBeInTheDocument();
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
     it('shows an error when the initial list fails', async () => {
       list.mockRejectedValue(new Error('boom'));
       renderTab();

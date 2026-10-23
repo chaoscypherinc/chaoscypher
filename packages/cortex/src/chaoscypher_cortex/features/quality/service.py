@@ -70,33 +70,19 @@ class QualityService:
         self.database_name = database_name
 
     def _get_quality_config_for_domain(self, domain: str | None) -> dict[str, Any]:
-        """Load quality_scoring config for a domain.
+        """Load the quality_scoring config of the source's stack (``quality_config_of``).
 
         Args:
-            domain: Domain name to load config for.
+            domain: The source's ``extraction_domain`` (a pack's name or the packs' label).
 
         Returns:
             Quality scoring configuration dict, or empty dict if not found.
         """
-        if not domain:
-            return {}
+        from chaoscypher_core.services.sources.engine.extraction.domain_resolver import (
+            quality_config_of,
+        )
 
-        try:
-            from chaoscypher_core.services.sources.engine.extraction.domains import (
-                get_domain_registry,
-            )
-
-            registry = get_domain_registry(database_name=self.database_name)
-            analyzer = registry.get_domain(domain)
-            if analyzer and hasattr(analyzer, "get_quality_scoring"):
-                return analyzer.get_quality_scoring()  # type: ignore[no-any-return]
-        except Exception as e:
-            logger.warning(
-                "failed_to_load_domain_quality_config",
-                domain=domain,
-                error=str(e),
-            )
-        return {}
+        return quality_config_of(domain, database_name=self.database_name)
 
     def _has_valid_cached_scores(self, source: dict[str, Any]) -> bool:
         """Check if source has valid cached scores.

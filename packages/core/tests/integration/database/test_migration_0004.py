@@ -18,11 +18,7 @@ import chaoscypher_core.adapters.sqlite.models  # noqa: F401 — register metada
 from chaoscypher_core.adapters.sqlite.engine import evict_engine
 from chaoscypher_core.database.migrations.runner import downgrade_to, upgrade_to
 
-
-def _columns(db_path: Path, table: str) -> set[str]:
-    """Return the column names of ``table`` via PRAGMA table_info."""
-    with sqlite3.connect(str(db_path)) as conn:
-        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+from ._schema import table_columns
 
 
 def test_0004_adds_full_text(tmp_path: Path) -> None:
@@ -31,7 +27,7 @@ def test_0004_adds_full_text(tmp_path: Path) -> None:
     sqlite3.connect(str(db)).close()
     try:
         upgrade_to(db, "0004")
-        assert "full_text" in _columns(db, "sources"), (
+        assert "full_text" in table_columns(db, "sources"), (
             "full_text missing from sources after upgrade to 0004"
         )
     finally:
@@ -45,7 +41,7 @@ def test_0004_downgrade_removes_full_text(tmp_path: Path) -> None:
     try:
         upgrade_to(db, "0004")
         downgrade_to(db, "0003")
-        assert "full_text" not in _columns(db, "sources"), (
+        assert "full_text" not in table_columns(db, "sources"), (
             "full_text still present in sources after downgrade to 0003"
         )
     finally:

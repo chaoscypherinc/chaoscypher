@@ -58,7 +58,39 @@ def test_detect_returns_recommendation_payload() -> None:
             {"domain": "scientific", "score": 1.1},
         ],
         "low_confidence": False,
+        "packs": ["technical"],
+        "reason": None,
     }
+
+
+def test_detect_proposes_every_pack_and_reads_the_rows_forced_packs() -> None:
+    """The proposal carries the packs; detection gets the row's forced packs (not one name)."""
+    ctx = _ctx()
+    ctx.storage_adapter.get_file.return_value = {
+        **ctx.storage_adapter.get_file.return_value,
+        "forced_packs": ["literary", "historical"],
+        "forced_domain": "literary",
+    }
+    service = CLISourceProcessingService(ctx)
+    fake_domain_result = {
+        "domain": object(),
+        "packs": ("literary", "historical"),
+        "detected_domain": "literary",
+        "confidence": 1.0,
+        "ranking": [],
+        "low_confidence": False,
+        "reason": "forced",
+    }
+    with patch(
+        "chaoscypher_core.services.sources.engine.extraction.orchestration.detect_extraction_domain",
+        return_value=fake_domain_result,
+    ) as detect:
+        rec = service.detect_domain_for_source("if_testsrc12345")
+
+    assert detect.call_args.kwargs["forced_packs"] == ("literary", "historical")  # stored order
+    assert rec is not None
+    assert rec["packs"] == ["literary", "historical"]
+    assert rec["detected_domain"] == "literary"
 
 
 def test_detect_does_not_move_status() -> None:

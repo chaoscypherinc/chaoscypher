@@ -34,7 +34,7 @@ Creates a backup of the current database.
   "database": "default",
   "filename": "app_20260413_142530.db",
   "size": 5242880,
-  "created_at": "2026-04-13T14:25:30.000000"
+  "created_at": "20260413_142530"
 }
 ```
 
@@ -64,7 +64,7 @@ Lists all available backups for the current database.
     {
       "filename": "app_20260413_142530.db",
       "size": 5242880,
-      "created_at": "2026-04-13T14:25:30.000000"
+      "created_at": "20260413_142530"
     }
   ]
 }
@@ -177,7 +177,7 @@ curl -s -X DELETE http://localhost/api/v1/backup/app_20260413_142530.db
 | `database` | string | Database name |
 | `filename` | string | Backup filename |
 | `size` | integer | File size in bytes |
-| `created_at` | string | Creation timestamp |
+| `created_at` | string | Creation timestamp in UTC, formatted `YYYYMMDD_HHMMSS` (the backup filename stamp; no offset marker) |
 
 ### BackupListResponse
 

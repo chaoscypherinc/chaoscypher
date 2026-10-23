@@ -37,11 +37,21 @@ logger = structlog.get_logger(__name__)
     help="Tool access mode (default: from settings, usually 'read')",
 )
 @click.option(
+    "--profile",
+    "-p",
+    type=click.Choice(["full", "memory"]),
+    default=None,
+    help="Tool profile to serve (default: from settings, usually 'full'); "
+    "'memory' serves the five memory tools only",
+)
+@click.option(
     "--server-extraction",
     is_flag=True,
     help="Use server-side LLM for extraction instead of client-driven",
 )
-def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None:
+def mcp(
+    database: str | None, mode: str | None, profile: str | None, server_extraction: bool
+) -> None:
     """Start an MCP server over stdio.
 
     Exposes Chaos Cypher knowledge graph tools to MCP-compatible hosts
@@ -51,11 +61,23 @@ def mcp(database: str | None, mode: str | None, server_extraction: bool) -> None
     performs entity extraction itself after indexing. Use --server-extraction
     to have the server's LLM handle extraction instead.
 
+    A database blocked on a pending or failed migration is served by the
+    maintenance server (upgrade_status / apply_upgrade) only with --mode
+    write; in read mode (the default) the command exits with an error.
+
     \x08
     Configure in Claude Desktop:
         {"mcpServers": {"chaoscypher": {"command": "chaoscypher", "args": ["mcp"]}}}
     """
-    serve_stdio(database=database, mode=mode, server_extraction=server_extraction)
+    # A database named on the command line is served as given, the literal "default" included
+    # (2026-10-20: the flag chain read `-d default` as "no choice"; `mount` already passed this).
+    serve_stdio(
+        database=database,
+        mode=mode,
+        profile=profile,
+        server_extraction=server_extraction,
+        explicit_database=database is not None,
+    )
 
 
 def serve_stdio(
@@ -63,6 +85,7 @@ def serve_stdio(
     mode: str | None = None,
     server_extraction: bool = False,
     *,
+    profile: str | None = None,
     explicit_database: bool = False,
 ) -> None:
     """Serve the knowledge graph over MCP stdio until the client disconnects.
@@ -76,6 +99,8 @@ def serve_stdio(
         database: Database name (``None`` resolves from settings / env).
         mode: ``"read"`` / ``"write"`` tool-access override, or ``None`` to
             use the configured ``mcp.mode``.
+        profile: ``"full"`` / ``"memory"`` tool-profile override, or ``None``
+            to use the configured ``mcp.profile``.
         server_extraction: Use the server's own LLM for extraction instead
             of the default client-driven flow.
         explicit_database: Treat ``database`` as the exact database to serve,
@@ -129,20 +154,27 @@ def serve_stdio(
         if mode:
             # click.Choice(["read", "write"]) above guarantees the value
             ctx.settings.mcp.mode = cast("Literal['read', 'write']", mode)
+        if profile:
+            # click.Choice(["full", "memory"]) above guarantees the value
+            ctx.settings.mcp.profile = profile
         if server_extraction:
             ctx.settings.mcp.auto_extract = True
 
+        from chaoscypher_cli.benchmark.naive_retrieval import naive_retriever_factory
         from chaoscypher_core.mcp.server import create_mcp_server
 
         engine = ctx._engine  # noqa: SLF001
         if engine is None:
             msg = "Engine not initialized — context.connect() must be called first"
             raise RuntimeError(msg)
-        server = create_mcp_server(engine)
+        # The benchmark's naive retrieval rung (llama-index) is the CLI's
+        # optional extra; Core takes it as a factory and never imports it.
+        server = create_mcp_server(engine, naive_retriever=naive_retriever_factory)
         logger.info(
             "mcp_server_starting",
             database=ctx.database_name,
             mode=ctx.settings.mcp.mode,
+            profile=ctx.settings.mcp.profile,
             auto_extract=ctx.settings.mcp.auto_extract,
         )
     else:
