@@ -11,6 +11,10 @@
  * A board in another layout (`BOARD_FORMAT`), or one that breaks the
  * exporter's layout rules (`_corpora_problems`: exactly one board corpus, the
  * chat suite's, and no corpus twice), reads as no corpora: it makes no claim.
+ *
+ * Where a full hand review of a corpus's comparison answers exists, the
+ * exporter computes that corpus's comparison on the reviewers' verdicts
+ * (2026-10-23): `handGraded` says so, and the page and the hero say it too.
  */
 import { BOARD_FORMAT, boardFormat, isRecord } from "./boardShape";
 
@@ -20,6 +24,12 @@ export type CorpusSection<Suite = Record<string, unknown>> = {
   label: string;
   /** The board corpus: the one the table's chat column and Overall rest on. */
   board: boolean;
+  /**
+   * Every comparison answer of this corpus was also graded by hand (its entry's
+   * `review` is full), so its comparison and headlines are the hand-graded
+   * numbers (2026-10-23; the scorer's are kept in `comparison.scorer`).
+   */
+  handGraded: boolean;
   suite: Suite | null;
 };
 
@@ -48,6 +58,7 @@ export function boardCorpora<Suite = Record<string, unknown>>(
       id: e.id as string,
       label: e.label as string,
       board: isBoard,
+      handGraded: isRecord(e.review) && e.review.full === true,
       suite: suite as Suite | null,
     };
   });

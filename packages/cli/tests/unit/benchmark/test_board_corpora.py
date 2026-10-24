@@ -46,8 +46,13 @@ def _v1(board: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _docs_entry(board: dict[str, Any], holds: dict[str, bool], models: int) -> dict[str, Any]:
-    """A second corpus made from the board's own suite, with its own holds and model count."""
+def _docs_entry(
+    board: dict[str, Any],
+    holds: dict[str, bool],
+    models: int,
+    review: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A second corpus made from the board's own suite, with its own holds, model count and review."""
     suite = copy.deepcopy(board["suites"]["chat"])
     suite["fixture"] = DOCS
     value = suite["comparison"]["value"]
@@ -63,6 +68,7 @@ def _docs_entry(board: dict[str, Any], holds: dict[str, bool], models: int) -> d
         "chat": suite,
         "models": {},
         "fixture_sha256": "0" * 64,
+        "review": review,
     }
 
 
@@ -76,7 +82,7 @@ def _v2(board: dict[str, Any], *others: dict[str, Any]) -> dict[str, Any]:
 
 CORPORA = (
     "boardCorpora(board).map((c) => ({ id: c.id, label: c.label, board: c.board,"
-    " fixture: c.suite ? c.suite.fixture : null,"
+    " fixture: c.suite ? c.suite.fixture : null, handGraded: c.handGraded,"
     " headlines: c.suite && c.suite.comparison ? c.suite.comparison.value.headlines.length : 0 }))"
 )
 
@@ -96,6 +102,11 @@ def test_every_board_format_reads_as_its_corpora(tmp_path: Path) -> None:
     twice = _v2(board, {**docs, "id": BOOK})
     no_board = _v2(board, docs)
     no_board["corpora"] = [docs]
+    full = {"answers": 54, "matched": 54, "full": True, "file": "r.json", "file_sha256": "0" * 64}
+    reviewed = _v2(board, _docs_entry(board, {"failures_ordinary": True}, 5, full))
+    partial = _v2(
+        board, _docs_entry(board, {"failures_ordinary": True}, 5, {**full, "full": False})
+    )
     out = judge_boards(
         tmp_path,
         {"boardCorpora": ["boardCorpora"], "leaderboardProvenance": ["readProvenance"]},
@@ -111,9 +122,18 @@ def test_every_board_format_reads_as_its_corpora(tmp_path: Path) -> None:
             "wrong_board": wrong_board,
             "twice": twice,
             "no_board": no_board,
+            "reviewed": reviewed,
+            "partial": partial,
         },
     )
-    book = {"id": BOOK, "label": BOOK_LABEL, "board": True, "fixture": BOOK, "headlines": 4}
+    book = {
+        "id": BOOK,
+        "label": BOOK_LABEL,
+        "board": True,
+        "fixture": BOOK,
+        "handGraded": False,
+        "headlines": 4,
+    }
     assert out["v2"]["corpora"] == [book]
     assert out["v2"]["provisional"] is False
     # an old or unknown layout is no corpora and a provisional board: no claim, no ranking
@@ -123,10 +143,18 @@ def test_every_board_format_reads_as_its_corpora(tmp_path: Path) -> None:
     for name in ("two_boards", "wrong_board", "twice", "no_board"):
         assert out[name]["corpora"] == [], name
     out = {name: v["corpora"] for name, v in out.items()}
-    assert out["two"] == [
-        book,
-        {"id": DOCS, "label": DOCS_LABEL, "board": False, "fixture": DOCS, "headlines": 4},
-    ]
+    docs_out = {
+        "id": DOCS,
+        "label": DOCS_LABEL,
+        "board": False,
+        "fixture": DOCS,
+        "handGraded": False,
+        "headlines": 4,
+    }
+    assert out["two"] == [book, docs_out]
+    # a full hand review makes the corpus's numbers the hand-graded ones; anything less does not
+    assert out["reviewed"] == [book, {**docs_out, "handGraded": True}]
+    assert out["partial"] == [book, docs_out]
     assert out["no_chat"] == []
     # a layout this page does not know makes no claim
     assert out["newer"] == []
@@ -176,6 +204,15 @@ def test_the_hero_names_each_corpus_and_shows_only_what_holds_on_it(tmp_path: Pa
             "v1": _v1(board),
             "one": _v2(board),
             "unmeasured": unmeasured,
+            "reviewed": _v2(
+                board,
+                _docs_entry(
+                    board,
+                    {"failures_ordinary": True},
+                    5,
+                    {"answers": 1, "matched": 1, "full": True, "file": "r", "file_sha256": "0"},
+                ),
+            ),
         },
     )
     book, other = out["two"]
@@ -194,6 +231,10 @@ def test_the_hero_names_each_corpus_and_shows_only_what_holds_on_it(tmp_path: Pa
     assert "5 local models" in other["stats"][0]["detail"]
     assert other["method"]["models"] == 5
     assert book["method"]["models"] == board["suites"]["chat"]["comparison"]["value"]["models"]
+    # a corpus is marked hand-graded only under a full review of its answers
+    assert (book["handGraded"], other["handGraded"]) == (False, False)
+    (_, graded) = out["reviewed"]
+    assert graded["handGraded"] is True
     # a corpus where nothing holds is not shown at all
     assert [s["corpus"] for s in out["docs_hold_nothing"]] == [BOOK]
     # a format-1 board is not read: no figures
@@ -223,6 +264,10 @@ def test_every_surface_names_the_corpus_its_numbers_are_about() -> None:
     assert line.group(0).count("On ${label}") == 2
     assert "questions on {section.label}" in hero
     assert "section.heading" in hero
+    # a hand-graded corpus says so where each surface says how its numbers were scored
+    graded = "Every answer on this corpus was also graded by hand"
+    assert lead.group(0).count(graded) == 1 and "handGraded" in lead.group(0)
+    assert "section.handGraded" in hero and "graded by hand" in hero
     # no corpus is hard-coded where the board names it
     assert "War and Peace" not in page + teaser + hero
     # the copy rules
@@ -259,3 +304,4 @@ def test_the_methods_page_states_the_per_corpus_rule() -> None:
     para = " ".join(para.split())
     assert "Each corpus is reported on its own" in para
     assert "nothing is pooled across corpora" in para
+    assert "hand-graded numbers" in para

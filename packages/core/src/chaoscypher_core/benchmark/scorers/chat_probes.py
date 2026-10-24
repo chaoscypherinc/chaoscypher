@@ -24,6 +24,10 @@ Checks (``ChatProbeScorer.CHECKS_BY_BAND`` says which band runs which):
   question, so a right name with a wrong year still fails.
 - ``must_not_contain`` - none of the query's declared wrong facts (the famous
   wrong year, the tempting wrong join) is stated.
+- ``binds_roles`` - which-one-is-which questions: each role follows a person
+  who holds it.
+- ``no_wrong_members`` - a list answer's set holds none of the members its
+  gold leaves out (scorer v8).
 - ``leads_with_gold`` - fine-grained band: the gold entity comes first.
 - ``declines_when_unsupported`` - out-of-scope band: declines, asserts no decoy.
 
@@ -148,6 +152,39 @@ q028 F->P: 'the text does not explicitly state that Anatole was sent back')
 and one more answer's check reason (Qwen3.5 9B, 2026-10-05-p2-u-order-b-5090,
 q023: 'waiting for Borís' negated, the apposition 'eldest son (Borís' still
 stated; the verdict fails either way). Recipe samples s44-s51.
+
+Scorer v8 (2026-10-23, after the Ollama docs answer review: fourteen reviewers
+graded by hand all 9,372 answers of the 2.2 campaign on the second corpus,
+internal/benchmarks/runs/2026-10-23-ollama-review-verdicts.json). A number
+and its unit sign are one quantity however spaced ('8\u202fK' is '8K',
+'64\u202f000' is '64000'). The numbers check reads a version after its 'v'
+as the number ('v0.40.5' supports '0.40.5') and a size in k as m times 1024
+or m times 1000 ('64k' supports 65536 and 64000). 'No.' ends a sentence
+unless a number or '#' follows it ('No. The hosted API ...' is no name). The
+names check takes for no name a short closed list of computing acronyms and
+keyboard keys ('URL', 'API', 'CLI', 'JSON', 'Ctrl', 'Esc'), an identifier
+made only of placeholder words ('VARIABLE_NAME', 'MY_VAR'), and an English
+word that opens a sentence: from a closed list of determiners, prepositions
+and sentence adverbs ('Your', 'Within', 'Next'), with a -tion or -sion
+ending, an imperative (before an article, a pronoun or 'to': 'Locate the
+file', 'Navigate to'), before a comma ('Alternatively,'), after an opening
+bracket or quote, in a table cell or after a short bold label. A hyphenated
+compound is read by its capitalised parts ('OpenAI-compatible' is supported
+by 'OpenAI'). And a new check, :func:`no_wrong_members`, fails a list
+answer whose set holds a member the gold leaves out (the fixture's
+``wrong_members``; ``holders`` keep one holder's own list out of it):
+term matching passed 'Both connect to WhatsApp, Telegram, Slack, Discord
+and Signal'. On the review, with its fixture's first round of entries in
+both, v8 takes the disagreements from 410 to 154: 263 answers move to the
+reviewers' verdict and 7 away, each failed by the reviewers for a fault no
+check tests (the known scorer misses, listed in
+internal/benchmarks/runs/2026-10-23-ollama-review-known-misses.json). Over
+the 74,795 archived chat answers 293 verdicts move, 270 of them on the
+Ollama runs; the other 23 (Book One's board, older runs and holdouts) each
+failed only for a word the names check read as a name ('Conversely',
+'Every', 'No. The', 'Kurágin-related') and pass. Book One's reviewed set is
+unchanged (its two standing disagreements, q026 and q028, predate v8).
+Recipe samples s52-s61.
 """
 
 from __future__ import annotations
@@ -168,8 +205,16 @@ if TYPE_CHECKING:
     from chaoscypher_core.benchmark.queries import LabeledQuery, LabeledQuerySet
     from chaoscypher_core.benchmark.types import RawOutput
 
-CHAT_PROBE_SCORER_VERSION = 7
+CHAT_PROBE_SCORER_VERSION = 8
 """Bumped whenever a verdict can change; the module docstring names what moved in each.
+
+v8 (2026-10-23): the Ollama docs answer review's rules: a number and its unit
+however spaced, a version without its 'v', a size in k in binary or decimal
+thousands, 'No.' ending a sentence, computing acronyms, keys and placeholder
+identifiers no names, English openers (a closed word list, -tion/-sion, an
+imperative, a comma or 'to' after the word, a bracket, a table cell or a
+label before it), a hyphenated compound read by its capitalised parts, and
+the ``no_wrong_members`` check (``wrong_members``, ``holders``).
 
 v7 (2026-10-08): a ``must_not_contain`` phrase inside a negated clause states
 nothing (:func:`is_negated_hit`), unless it carries its own polarity
@@ -454,7 +499,48 @@ _NOT_A_NAME = {
     "fifth",
     "sixth",
     "together",
+    # determiners, prepositions and sentence adverbs that open a sentence (the Ollama docs
+    # review, 2026-10-23)
+    "your",
+    "my",
+    "any",
+    "all",
+    "every",
+    "some",
+    "more",
+    "many",
+    "such",
+    "within",
+    "unlike",
+    "next",
+    "otherwise",
+    "besides",
+    "likewise",
+    # generic computing acronyms and keyboard keys: common nouns, not names (the Ollama
+    # docs review, 2026-10-23); a short closed list, not every acronym. 'api' joined last:
+    # until a hyphenated compound was read by its capitalised parts, a word that is no
+    # name left 'OpenAI-compatible API' with no supported word
+    "url",
+    "api",
+    "cli",
+    "gui",
+    "json",
+    "http",
+    "https",
+    "ctrl",
+    "shift",
+    "esc",
+    "alt",
+    "tab",
+    "enter",
+    "cmd",
 }
+
+# An identifier made only of placeholder words ('VARIABLE_NAME', 'MY_VAR', 'YOUR_VARIABLE',
+# 'VAR' in 'VAR=value'): the form of a variable, not one (the Ollama docs review,
+# 2026-10-23). A real variable has a word of its own ('OLLAMA_HOST', 'MY_HOST').
+_PLACEHOLDER_WORD = r"(?:VARIABLE|VAR|NAME|VALUE|KEY|MY|YOUR|SOME|ENV|FOO|BAR|EXAMPLE)"
+_PLACEHOLDER = re.compile(_PLACEHOLDER_WORD + r"(?:_" + _PLACEHOLDER_WORD + r")*")
 
 # Titles say what someone is, not who: "Countess Rastoptchin" is not supported by "Countess".
 _TITLES = {
@@ -775,6 +861,10 @@ _SENTENCE_END = re.compile(
 _ABBREVIATION = re.compile(
     r"(?i)(?<![\w.'\u2019])(?:dr|mr|mrs|st|mlle|mme|messrs|no|vol|ch|i\.e|e\.g|[a-z])\.$"
 )
+# 'No.' abbreviates 'number' only before one ('No. 5', 'No. #3'); before a word it is the
+# answer 'No.' and ends its sentence ('No. The hosted API ...'; the Ollama docs review,
+# 2026-10-23, where 16 answers read 'No. The', 'No. If', 'No. According' as one name).
+_NUMBER_SIGN = re.compile(r"(?i)(?<![\w.'\u2019])no\.$")
 
 
 def _sentences(text: str) -> list[str]:
@@ -785,18 +875,32 @@ def _sentences(text: str) -> list[str]:
     does. Until 2026-10-04 there were two: the names check split only before
     a capital and never at a line break, the decline rules split folded text
     with the abbreviations' periods removed, and neither split after a
-    closing quote ('...cousin to Nicholas." Additional descriptions').
+    closing quote ('...cousin to Nicholas." Additional descriptions'). Until
+    2026-10-23 'No.' never ended one (:func:`_ends_abbreviation`).
     """
     out: list[str] = []
     start = 0
     for m in _SENTENCE_END.finditer(text):
         end = m.start() + 1
-        if text[m.start()] == "." and _ABBREVIATION.search(text, max(0, end - 8), end):
+        if text[m.start()] == "." and _ends_abbreviation(text, end, m.end()):
             continue
         out.append(text[start : m.start() + len(m.group(0).rstrip())])
         start = m.end()
     out.append(text[start:])
     return [s.strip(" *-\u2022\t") for s in out if s.strip(" *-\u2022\t")]
+
+
+def _ends_abbreviation(text: str, end: int, after: int) -> bool:
+    """The period just before ``end`` ends an abbreviation or an initial, not a sentence.
+
+    ``after`` is where the next sentence would start: 'No.' is an abbreviation
+    only when a number or a number sign starts there (``_NUMBER_SIGN``).
+    """
+    if not _ABBREVIATION.search(text, max(0, end - 8), end):
+        return False
+    if _NUMBER_SIGN.search(text, max(0, end - 8), end):
+        return re.match(r"[\d#]", text[after : after + 1]) is not None
+    return True
 
 
 def _candidate_names(answer: str, *, join: bool = True) -> list[str]:
@@ -808,7 +912,8 @@ def _candidate_names(answer: str, *, join: bool = True) -> list[str]:
     answer is split into sentences first, so '...at ARPA. The text' yields
     'ARPA', never 'ARPA. The'.
     """
-    sentences = _sentences(answer)
+    # a table cell is a sentence of its own: '| Used with | ...' opens with 'Used'
+    sentences = [c for s in _sentences(answer) for c in re.split(r"\s*\|\s*", s) if c]
     mid_sentence = {m.group(1) for s in sentences for m in _MID_SENTENCE_CAPITAL.finditer(s)}
     lower_words = set(re.findall(r"(?<![\w'\u2019-])[a-z][a-z'\u2019-]*", answer))
     out: list[str] = []
@@ -826,7 +931,7 @@ _MID_SENTENCE_CAPITAL = re.compile(r"(?<=[\w,;:)\]\"'\u2019\u201d] )([A-Z][\w'\u
 # A capitalised word with an English inflection or derivation: a participle, an
 # adverb, an adjective or an abstract noun, which names rarely end in.
 _ENGLISH_ENDING = re.compile(
-    r"[A-Z][a-z]+(?:ed|ing|ly|al|ive|ous|ful|less|ness|ment|ity|able|ible|wards?|ever)"
+    r"[A-Z][a-z]+(?:ed|ing|ly|al|ive|ous|ful|less|ness|ment|ity|able|ible|tion|sion|wards?|ever)"
 )
 # Common English words that open a sentence of an answer (most of them leaked
 # reasoning: 'State that it is not in the sources', 'Even if he were', 'Claims
@@ -850,24 +955,43 @@ _COMMON_OPENERS = frozenset(
 )  # fmt: skip
 
 
+# A verb in the imperative: the opening word, then an article, a pronoun or 'to' ('Locate
+# the file', 'Send a request', 'Place this in', 'Navigate to', 'Points to'), which a name
+# does not take. 'to' also passes an adjective ('Similar to') and, the rule's cost, a name
+# that opens a sentence before 'to' (the Ollama docs review, 2026-10-23).
+_IMPERATIVE = re.compile(r"[A-Z][a-z]+ (?:the|a|an|this|that|these|those|your|its|it|them|to)\b")
+
+
 def _is_sentence_opener(
     cand: str, sentence: str, mid_sentence: set[str], lower_words: AbstractSet[str]
 ) -> bool:
     """A capitalised word that opens the sentence only because it opens it.
 
-    The word starts the sentence, a lower-case word follows it, the answer
+    The word starts the sentence, a lower-case word or a comma follows it
+    ('Alternatively, you can'; the comma since the Ollama docs review), the answer
     never capitalises it mid-sentence, and it is an English word: built with
     an English ending ('Lying on the sofa', 'Additional descriptions',
     'Described as'), on :data:`_COMMON_OPENERS`, or written in lower case
-    elsewhere in the same answer. 'Karagin came' is still a name, and so
-    are accented, bold and all-capitals words. The endings replaced adding
-    each such opener to ``_NOT_A_NAME`` (2026-10-04); the word list and the
-    lower-case rule followed (2026-10-06).
+    elsewhere in the same answer, or an imperative (:data:`_IMPERATIVE`:
+    'Locate the file', 'Send a request'). 'Karagin came' is still a name,
+    and so are accented, bold and all-capitals words. The endings replaced
+    adding each such opener to ``_NOT_A_NAME`` (2026-10-04); the word list
+    and the lower-case rule followed (2026-10-06), the -tion and -sion
+    endings and the imperative after them (the Ollama docs review, 2026-10-23).
     """
-    if cand in mid_sentence or not re.match(r"[A-Z][a-z]+ [a-z]", sentence):
+    if cand in mid_sentence or not re.match(r"[A-Z][a-z]+(?:, | [a-z])", sentence):
         return False
     word = cand.lower()
-    return bool(_ENGLISH_ENDING.fullmatch(cand)) or word in _COMMON_OPENERS or word in lower_words
+    return (
+        bool(_ENGLISH_ENDING.fullmatch(cand))
+        or word in _COMMON_OPENERS
+        or word in lower_words
+        or (" " not in cand and _IMPERATIVE.match(sentence) is not None)
+    )
+
+
+_OPENING_MARKS = "[(\"'\u201c\u2018"
+"""Brackets and quotes before a sentence's first word, which still opens it."""
 
 
 def _sentence_candidates(
@@ -889,6 +1013,8 @@ def _sentence_candidates(
     # run on its own, or "Leo Beranek at MIT" would hide behind Beranek.
     connectors = r"(?:of|and|de|the|for|at|in|on|&)?" if join else ""
     runs: list[tuple[int, int, str]] = []
+    # '[Supporting context: ...', '(Optional cloud connection)': the word still opens it
+    opens = len(sentence) - len(sentence.lstrip(_OPENING_MARKS))
     # Accented capitals start names too (scorer v5): 'Karágin', 'Élisabeth'.
     for m in re.finditer(
         r"\b([A-Z\u00c0-\u00d6\u00d8-\u00de][\w.'\u2019-]*"
@@ -896,10 +1022,12 @@ def _sentence_candidates(
         sentence,
     ):
         cand = m.group(1).strip().rstrip(".,;:!?'\"")
-        if not cand or cand.lower() in _NOT_A_NAME:
+        if not cand or cand.lower() in _NOT_A_NAME or _PLACEHOLDER.fullmatch(cand):
             continue
         # An English word capitalised only because it opens the sentence.
-        if m.start(1) == 0 and _is_sentence_opener(cand, sentence, mid_sentence, lower_words):
+        if m.start(1) == opens and _is_sentence_opener(
+            cand, sentence[opens:], mid_sentence, lower_words
+        ):
             continue
         # single ALL-CAPS acronyms count; single short capitalised words often don't
         if len(cand) < 3 and not cand.isupper():
@@ -924,14 +1052,31 @@ _LIST_MARKER = re.compile(r"^\s*(?:[-*+\u2022]|\d+[.)])\s+")
 _LABEL_PREFIX = re.compile(r"^(\*\*[^*\n]{1,60}\*\*\s*:|\*\*[^*\n]{1,60}:\*\*|[^:\n]{1,60}:)\s")
 
 
+def _is_label(prefix: str, *, listed: bool) -> bool:
+    """A line's text up to its colon is a label, not a clause (:func:`_strip_labels`).
+
+    A bold lead of up to six words, as long as a label line may be ('**Ensure
+    Apple Intelligence is Set Up**:'); the lead of a list item of up to five; or,
+    on any line, a label word that is no name ('Answer:', 'Note:'; the Ollama docs
+    review, 2026-10-23).
+    """
+    words = len(prefix.split())
+    if prefix.startswith("**"):
+        return words <= 6
+    if listed:
+        return words <= 5
+    return fold(prefix.rstrip(":").strip()) in _NOT_A_NAME
+
+
 def _strip_labels(answer: str) -> str:
     """Drop headings and label lines, and the label prefix of a list item.
 
     A model's formatting ('## Answer', '**Step-by-Step Explanation:**', a
     'Mentions:' line, '- **Company Identification:** ...') is capitalised
     for layout, not because it names anything. A label prefix is only
-    stripped from a list item or a bold lead, and only when it is at most
-    five words, so a sentence with a colon in it keeps its names.
+    stripped from a list item or a bold lead, and only when it is short
+    (:func:`_is_label`), or when it is a label word ('Answer:'), so a
+    sentence with a colon in it keeps its names.
     """
     kept: list[str] = []
     for line in answer.splitlines():
@@ -943,7 +1088,7 @@ def _strip_labels(answer: str) -> str:
         if core.endswith(":") and len(core.split()) <= 6:
             continue
         label = _LABEL_PREFIX.match(core)
-        if label and (marker or core.startswith("**")) and len(label.group(1).split()) <= 5:
+        if label and _is_label(label.group(1), listed=marker is not None):
             core = core[label.end() :]
         kept.append(core)
     return "\n".join(kept)
@@ -1013,6 +1158,15 @@ def _word_bounded(term: str, text: str) -> bool:
 
 _ODD_SPACES = re.compile(r"[\u00a0\u2007\u2009\u200a\u202f\u205f\u3000]")
 """Non-breaking, figure, thin, hair, narrow and ideographic spaces: a space, as written."""
+_SPACED_UNIT = re.compile(
+    r"(?<=\d)[ \t\u00a0\u2007\u2009\u202f]+(?=(?:[kKMG%]|\+(?!\s*\d))(?![^\W\d_]))"
+)
+"""The space between a number and a unit sign ('8\u202fK', '75 %', '70 +'): one quantity, as
+the docs write it (GPT-OSS and Granite space them; the Ollama docs review, 2026-10-23). A
+sum ('2 + 2') and a word after the number ('8 Kbps', '8 Mistral') keep theirs."""
+_SPACED_THOUSANDS = re.compile(r"(?<=\d)[\u00a0\u2007\u2009\u202f](?=\d{3}(?!\d))")
+"""A narrow or non-breaking space between digit groups ('64\u202f000'); a plain space between
+two numbers ('11434 434') is a list, not a separator."""
 _EMPHASIS = re.compile(r"[*`]+|(?<![^\W_])_+|_+(?![^\W_])")
 """Markdown emphasis and code marks: ``*``, ``**``, backticks, and ``_`` at a word's edge
 (an underscore inside a word, ``snake_case``, stays)."""
@@ -1041,6 +1195,10 @@ class NormalisedAnswer:
             characters at the same positions, so a phrase matches alike in
             both, while :func:`negated_span` can still read a line break
             as the end of a clause (scorer v7).
+        marked: ``text`` before its markdown emphasis and code marks are
+            dropped: the layout a check reads the answer's lists and bold
+            headings from (``*`` bullets, ``**Label:**``; :func:`no_wrong_members`,
+            scorer v8), each piece then normalised as the others are.
     """
 
     text: str
@@ -1048,6 +1206,7 @@ class NormalisedAnswer:
     flat: str
     transliterated: str
     lines: str
+    marked: str = ""
 
 
 @functools.lru_cache(maxsize=8192)
@@ -1057,7 +1216,8 @@ def normalise_answer(answer: str, *, strip_labels: bool = False) -> NormalisedAn
     In order: format characters (a soft hyphen or zero-width space inside a
     name, :func:`~chaoscypher_core.benchmark.scorers.probes.drop_format_characters`;
     audit wave 5), citation markup (:func:`_strip_citations`), curly apostrophes
-    and typographic hyphens (:func:`_straight_apostrophes`), odd spaces,
+    and typographic hyphens (:func:`_straight_apostrophes`), the space inside a
+    quantity (``_SPACED_UNIT``, ``_SPACED_THOUSANDS``), odd spaces,
     then (``strip_labels``, the names check) headings and label lines
     (:func:`_strip_labels`, which reads the ``**`` of a bold label, so it
     runs before) and last the markdown emphasis and code marks. Until wave
@@ -1069,9 +1229,11 @@ def normalise_answer(answer: str, *, strip_labels: bool = False) -> NormalisedAn
     citations are what it checks.
     """
     text = _straight_apostrophes(_strip_citations(drop_format_characters(answer)))
+    text = _SPACED_UNIT.sub("", _SPACED_THOUSANDS.sub("", text))
     text = re.sub(r"[ \t]+", " ", _ODD_SPACES.sub(" ", text))
     if strip_labels:
         text = _strip_labels(text)
+    marked = text
     text = _EMPHASIS.sub("", text)
     folded = fold(text)
     unquoted = _DOUBLE_QUOTES.sub("", folded)
@@ -1083,6 +1245,7 @@ def normalise_answer(answer: str, *, strip_labels: bool = False) -> NormalisedAn
         flat=flat,
         transliterated=_transliteration_fold(flat),
         lines=lines,
+        marked=marked,
     )
 
 
@@ -1642,6 +1805,20 @@ def _spelling_variant_named(text: str, term: str | tuple[str, ...], support: str
     return False
 
 
+def _name_parts(word: str) -> str:
+    """A hyphenated word less its lower-case parts: the parts that may name something.
+
+    'OpenAI-compatible' is 'OpenAI', 'Windows-specific' 'Windows', 'GPU-discovery'
+    'GPU': a lower-case part is an English word, so the compound is supported when
+    its capitalised parts are (the Ollama docs review, 2026-10-23; until then the
+    whole compound had to be in the context). A compound of capitalised parts
+    ('Honeywell-Raytheon') is tested whole, as before.
+    """
+    parts = word.split("-")
+    kept = [p for p in parts if not re.fullmatch(r"[a-z]+", p)]
+    return "-".join(kept) if len(parts) > 1 and kept else word
+
+
 def no_unsupported_names(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
     """Every proper name in the answer appears in the retrieved context or the question.
 
@@ -1660,8 +1837,11 @@ def no_unsupported_names(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, st
     answer = normalised.text
 
     def significant(cand: str) -> list[str]:
-        """The candidate's folded words worth testing (three letters or more)."""
-        words = re.split(r"[\s,]+", fold(cand))
+        """The candidate's folded words worth testing (three letters or more).
+
+        A hyphenated word is tested less its lower-case parts (:func:`_name_parts`).
+        """
+        words = [fold(_name_parts(w)) for w in re.split(r"[\s,]+", cand)]
         return [w for w in words if len(w) >= 3 and w not in _NOT_A_NAME]
 
     expanded: set[str] = set()  # words of a phrase whose acronym the context uses
@@ -1761,15 +1941,42 @@ def _number_in_words(n: int) -> str | None:
     return " ".join(words)
 
 
+_SIZE_IN_K = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)k(?![a-z0-9])")
+"""A size the docs write in thousands ('64k', '4K', '1.5k'), folded; '8kb' is another unit."""
+
+
+def _size_in_k_supported(token: str, support: str) -> bool:
+    """An integer that a size in k of the support writes out: m times 1024, or m times 1000.
+
+    The docs say '64k' and the answer sets ``OLLAMA_CONTEXT_LENGTH=65536``
+    or ``64000``: the conversion, not an invented number (twenty-one answers
+    in the Ollama docs review, 2026-10-23, most on q081, read it in binary
+    thousands, seven in decimal ones).
+    """
+    if not token.isdigit():
+        return False
+    n = int(token)
+    return any(
+        n in (round(float(m.group(1)) * 1000), round(float(m.group(1)) * 1024))
+        for m in _SIZE_IN_K.finditer(support)
+    )
+
+
 def _number_supported(token: str, support: str) -> bool:
     """The number occurs in the support text as a number, or in words (0 to 999,999).
 
     Digit-bounded, so '114' is found in 'rfc 114' and '516' in 'ddp-516', but
     '1' is not found in '[s1]' or '1969'. Words are matched with the hyphen
     or a space ('twenty-five', 'twenty five') and 'one hundred' also as 'a
-    hundred' (scorer v5; before it only 0-20 had words).
+    hundred' (scorer v5; before it only 0-20 had words). A version prefix
+    'v' is no part of the number ('v0.40.5' holds 0.40.5, 'v14' holds 14,
+    but 'llama3v14' does not), and a size in k holds the number it stands
+    for (:func:`_size_in_k_supported`; both from the Ollama docs review,
+    2026-10-23).
     """
-    if re.search(r"(?<![a-z0-9])" + re.escape(token) + r"(?![0-9]|[.,][0-9])", support):
+    if re.search(r"(?<![a-z0-9])v?" + re.escape(token) + r"(?![0-9]|[.,][0-9])", support):
+        return True
+    if _size_in_k_supported(token, support):
         return True
     if token.isdigit():
         words = _number_in_words(int(token))
@@ -1837,6 +2044,170 @@ def binds_roles(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
                 wrong.append(f"{term} -> {q.roles[who]['person'][0]}")
     missing = [r["person"][0] for i, r in enumerate(q.roles) if i not in bound]
     return not wrong and not missing, f"roles misbound={wrong[:4]}, without a role={missing}"
+
+
+# Where a list answer's set may stand (``no_wrong_members``): a clause ends at a semicolon,
+# a spaced dash, 'while', 'whereas' and 'but' ('OpenClaw supports ..., while Hermes
+# Agent supports ...'), or a comma before a conclusion ('..., so both connect to ...',
+# ', and therefore'); a heading is a '#' line, a bold line, a line ending in a colon with
+# no sentence end, or a line of at most six words without one ('OpenClaw', 'Hermes
+# Agent / Hermes'); a list item's label is up to five words before its colon.
+_MEMBER_CLAUSE_BREAK = re.compile(
+    r";\s|\s[\u2013\u2014-]+\s|,?\s+(?:while|whereas|but)\s"
+    r"|,\s+(?:and\s+)?(?:so|therefore|thus|hence)\s"
+)
+_MEMBER_HEADING = re.compile(r"^\s*(?:#+\s.*|\*\*[^*]+\*\*:?|\*\*[^*]+:\*\*|[^.!?]{1,80}:)\s*$")
+_ITEM_LABEL = re.compile(r"([^:]{1,60}):\s")
+# Words that make a clause about all the holders at once: 'both connect to', 'the overlap'.
+_AGGREGATE_WORD = re.compile(
+    r"(?<![a-z])(?:both|each|common|shared|overlap\w*|intersection)(?![a-z])"
+)
+# A clause that goes on about the holder of the one before: 'It also bridges ...'.
+_CONTINUES = re.compile(r"(?:it|its)\s")
+
+
+def _member_spans(text: str, member: str) -> list[tuple[int, int]]:
+    """Where a fixture member occurs in a folded unit: word-bounded, a plural 's' allowed."""
+    folded = fold(_straight_apostrophes(member))
+    pattern = r"(?<![a-z0-9])" + re.escape(folded) + r"s?(?![a-z0-9])"
+    return [m.span() for m in re.finditer(pattern, text)]
+
+
+class _SetReader:
+    """Reads an answer's lines into the units that can state its set (:func:`_set_units`)."""
+
+    def __init__(self, holders: Sequence[tuple[str, ...]]) -> None:
+        """Start with no units, no list, no heading."""
+        self.holders = holders
+        self.units: list[str] = []
+        self.section = False  # under a heading that names one holder
+        self.lead: str | None = None  # the line before the current list
+        self.block: list[str] | None = None
+        self.block_skipped = False
+        self.after_one = False  # the last clause was about one holder
+
+    @staticmethod
+    def norm(line: str) -> str:
+        """One line as the other checks read it, its long quotations dropped."""
+        return normalise_answer(_QUOTED.sub(" ", line)).flat
+
+    def names_a_holder(self, text: str) -> bool:
+        """Whether the folded text names any holder."""
+        return any(_member_spans(text, a) for h in self.holders for a in h)
+
+    def about_one(self, text: str) -> bool:
+        """The text names exactly one holder and no word for all of them."""
+        named = [h for h in self.holders if any(_member_spans(text, a) for a in h)]
+        return len(named) == 1 and _AGGREGATE_WORD.search(text) is None
+
+    def item(self, raw: str, marker: re.Match[str]) -> None:
+        """A list item: its label and its text join the current list unless about one holder."""
+        if self.block is None:
+            self.block = []
+            self.block_skipped = self.section or (
+                self.lead is not None and self.about_one(self.lead)
+            )
+        item = self.norm(raw[marker.end() :])
+        label = _ITEM_LABEL.match(item)
+        if label and len(label.group(1).split()) <= 5:
+            if self.about_one(label.group(1)):
+                return
+            self.block.append(label.group(1))
+            item = item[label.end() :]
+        if not self.about_one(item):
+            self.block.append(item)
+
+    def flush(self) -> None:
+        """End the current list: it is one unit, unless its lead or heading is about one holder."""
+        if self.block and not self.block_skipped:
+            self.units.append("\n".join(self.block))
+        self.block = None
+
+    def prose(self, raw: str) -> None:
+        """A line that is no list item: a heading sets the section, a sentence gives its clauses."""
+        self.flush()
+        text = self.lead = self.norm(raw)
+        words = len(text.split())
+        if _MEMBER_HEADING.match(raw) or (words <= 6 and not re.search(r"[.!?]\s*$", text)):
+            self.section = self.about_one(text)
+            if words <= 6 or not text.rstrip().endswith(":"):
+                return
+        if self.section:
+            return
+        for sentence in _sentences(text):
+            for clause in _MEMBER_CLAUSE_BREAK.split(sentence):
+                if clause.strip():
+                    self.clause(clause)
+
+    def clause(self, clause: str) -> None:
+        """A clause is a unit unless it is about one holder or goes on about the last one."""
+        one = self.about_one(clause) or (
+            self.after_one
+            and _CONTINUES.match(clause.strip()) is not None
+            and not self.names_a_holder(clause)
+        )
+        self.after_one = one
+        if not one:
+            self.units.append(clause)
+
+
+def _set_units(answer: str, holders: Sequence[tuple[str, ...]]) -> list[str]:
+    """The pieces of an answer that can state its set, less those about one holder only.
+
+    Read from the answer's marked lines (:attr:`NormalisedAnswer.marked`; the
+    other forms have lost their ``*`` bullets): each
+    clause of a prose line is a unit, and so is each list (its items joined,
+    each item's label with them). A unit, item, heading or list lead that names
+    exactly one holder, and no word for all of them (:data:`_AGGREGATE_WORD`),
+    is that holder's own list and is left out; so is a clause opening 'It' or
+    'Its' after one, and every line under a one-holder heading until the next
+    heading. A list item's label stays in its list even when the item's text is
+    about one holder ('5. **Signal**: Hermes Agent connects to it' still lists
+    Signal under 'Both connect to:'). Long quotations are dropped first: they
+    say what the source says, not what the answer's set is.
+    """
+    reader = _SetReader(holders)
+    for raw in answer.splitlines():
+        if not raw.strip():
+            continue
+        marker = _LIST_MARKER.match(raw)
+        if marker:
+            reader.item(raw, marker)
+        else:
+            reader.prose(raw)
+    reader.flush()
+    return reader.units
+
+
+def no_wrong_members(rec: dict[str, Any], q: LabeledQuery) -> tuple[bool, str]:
+    """A list answer's set holds no member the gold leaves out (scorer v8).
+
+    For a list question the fixture names the members a model adds that the
+    gold excludes (``wrong_members``: the guide that confirms an 'API Host',
+    not a 'Host URL'; the platform only one of the two tools has). One fails
+    the answer when it stands in the answer's set: in a clause or a list
+    (:func:`_set_units`) that also names a gold member (any member of an
+    answer-term group), outside a negated clause (:func:`is_negated_hit`).
+    A wrong member named apart from the gold members ('Other tools, such as
+    Goose, say API Host'), or in a clause or list about one of the question's
+    ``holders`` ('OpenClaw also has iMessage'), states nothing about the set.
+    Term matching passes 'Both connect to WhatsApp, Telegram, Slack, Discord
+    and Signal': it names every gold term (the Ollama docs review,
+    2026-10-23: 34 answers on q103 and q110).
+    """
+    if not q.wrong_members:
+        return True, "no wrong members declared"
+    golds = [m for t in q.answer_terms for m in ([t] if isinstance(t, str) else t)]
+    stated: list[str] = []
+    for unit in _set_units(_answer_of(rec).marked, q.holders):
+        if not any(_member_spans(unit, g) for g in golds):
+            continue
+        for member in q.wrong_members:
+            if member not in stated and any(
+                not is_negated_hit(unit, *span) for span in _member_spans(unit, member)
+            ):
+                stated.append(member)
+    return not stated, f"wrong members listed={stated}"
 
 
 NO_POSSESSIVE_MARKER = "|"
@@ -2395,6 +2766,7 @@ class ChatProbeScorer:
         "no_unsupported_numbers",
         "must_not_contain",
         "binds_roles",
+        "no_wrong_members",
     )
     CHECKS_BY_BAND: ClassVar[dict[str, tuple[str, ...]]] = {
         "factual_single_hop": _IN_SCOPE,
@@ -2411,6 +2783,7 @@ class ChatProbeScorer:
         "no_unsupported_numbers": no_unsupported_numbers,
         "must_not_contain": must_not_contain,
         "binds_roles": binds_roles,
+        "no_wrong_members": no_wrong_members,
         "leads_with_gold": leads_with_gold,
         "declines_when_unsupported": declines_when_unsupported,
     }

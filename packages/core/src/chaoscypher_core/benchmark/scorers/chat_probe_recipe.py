@@ -41,7 +41,12 @@ words and a spaced en dash; (scorer v7) one per part of the negation rule:
 a wrong fact inside a negated clause, after a line break that ends the
 negated one, after 'not only' (additive), inside 'not only' when the phrase
 begins with 'only', after 'but', a phrase with its own exceptive, one
-marked stated-when-negated, and an apposition.
+marked stated-when-negated, and an apposition; (scorer v8) one per rule of
+the Ollama docs answer review: a unit spaced from its number, a version
+without its 'v', a size in k in binary and in decimal thousands, 'No.' ending
+a sentence, computing acronyms, keys and a placeholder, English openers (a
+comma, a determiner, an imperative, 'to'), a hyphenated compound, and a list
+answer's set with a member the gold excludes and with one holder's own list.
 """
 
 from __future__ import annotations
@@ -118,6 +123,31 @@ _KEPT_BY_THE_CLERK = {
     "must_not_contain": ["kept by Yákov", "Grigóri kept"],
 }
 """A wrong fact the normalised-answer samples state in each markup form (audit wave 4)."""
+
+_SPEC = (
+    "[CHUNK C0 | spec.txt]\n"
+    "[S1] The IMP buffer held 8K words and needed 64k of core. "
+    "[S2] Release v2.1 of its code shipped with the BBN notes.\n"
+)
+_BUFFER = {
+    "band": "factual_single_hop",
+    "question": "What did the IMP's spec say?",
+    "gold_entities": ["IMP"],
+    "gold_answer": "The buffer held 8K words.",
+    "answer_terms": ["buffer"],
+}
+"""A manual's page: the units, versions and sizes the v8 samples write (scorer v8)."""
+
+_BOTH_KNEW = {
+    "band": "factual_single_hop",
+    "question": "Which places did both Kahn and Cerf know?",
+    "gold_entities": ["Robert Kahn", "Vinton Cerf"],
+    "gold_answer": "UCLA and Stanford.",
+    "answer_terms": ["UCLA", "Stanford"],
+    "wrong_members": ["BBN"],
+    "holders": [("Kahn", "Robert Kahn"), ("Cerf", "Vinton Cerf")],
+}
+"""A "which do both have" question with a member only one holder has (scorer v8)."""
 
 RECIPE_SAMPLES: tuple[RecipeSample, ...] = (
     RecipeSample(
@@ -482,6 +512,58 @@ RECIPE_SAMPLES: tuple[RecipeSample, ...] = (
         {**_KEPT_BY_THE_CLERK, "must_not_contain": ["cousin, Yákov"]},
         "Tíkhon kept them, not her cousin, Yákov.",
         _LEDGER,
+    ),
+    # scorer v8: one sample per rule of the Ollama docs answer review (2026-10-23)
+    RecipeSample(
+        "s52_a_unit_spaced_from_its_number",
+        {**_BUFFER, "answer_terms": ["buffer", ("8K", "8192")]},
+        "The buffer held 8\u202fK words.",
+        _SPEC,
+    ),
+    RecipeSample(
+        "s53_a_version_without_its_v", _BUFFER, "The buffer notes shipped with release 2.1.", _SPEC
+    ),
+    RecipeSample(
+        "s54_a_size_in_k_in_binary_thousands",
+        _BUFFER,
+        "The buffer needed 65,536 words of core.",
+        _SPEC,
+    ),
+    RecipeSample(
+        "s55_a_size_in_k_in_decimal_thousands",
+        _BUFFER,
+        "The buffer needed 64000 words of core.",
+        _SPEC,
+    ),
+    RecipeSample("s56_no_ends_a_sentence", _BUFFER, "No. The buffer held 8K words.", _SPEC),
+    RecipeSample(
+        "s57_acronyms_keys_and_placeholders",
+        _BUFFER,
+        "The buffer held 8K words; set VARIABLE_NAME in the CLI, read its URL over an API, "
+        "press Ctrl + Esc.",
+        _SPEC,
+    ),
+    RecipeSample(
+        "s58_english_openers",
+        _BUFFER,
+        "Alternatively, the buffer held 8K words. Your IMP had it. Locate the buffer. "
+        "Navigate to its notes.",
+        _SPEC,
+    ),
+    RecipeSample(
+        "s59_a_hyphenated_compound", _BUFFER, "The BBN-built buffer held 8K words.", _SPEC
+    ),
+    RecipeSample(
+        "s60_a_wrong_member_beside_the_gold",
+        _BOTH_KNEW,
+        "Kahn and Cerf both knew UCLA, Stanford and BBN.",
+        _NET,
+    ),
+    RecipeSample(
+        "s61_a_holder_s_own_list",
+        _BOTH_KNEW,
+        "Both knew UCLA and Stanford; Kahn also knew BBN.",
+        _NET,
     ),
 )
 """The fixed samples :func:`scorer_recipe` scores; the golden test pins each verdict."""

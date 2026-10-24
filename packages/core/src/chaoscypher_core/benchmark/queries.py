@@ -109,6 +109,16 @@ class LabeledQuery:
             in the answer must follow, nearest, a person who holds it (a term
             may be listed for several people), and every person must get one
             of their roles; swapped or missing capacities fail.
+        wrong_members: For a list question ("which guides have you confirm a
+            Host URL"), members the gold leaves out as an answer would name
+            them (the neighbouring guide, the platform only one of two tools
+            has): one standing beside a gold member in the answer's set fails
+            it (``no_wrong_members``, chat scorer v8; the Ollama docs review of
+            2026-10-23).
+        holders: For a "which do both A and B have" question, the entities the
+            members belong to, each a name or an alias group: a clause, list
+            item, heading or list that names one holder only is that holder's
+            list, not the answer's set. Only with ``wrong_members``.
         candidate: True while a ``graph_advantage`` question awaits the keep
             rule (``internal/benchmarks/tools/retrieval_mode_check.py
             --candidates``: kept when any rung retrieves its answer terms,
@@ -142,6 +152,9 @@ class LabeledQuery:
     evidence: list[str] = field(default_factory=list)
     alias_evidence: dict[str, list[str]] = field(default_factory=dict)
     roles: list[dict[str, list[str]]] = field(default_factory=list)
+    # Chat probes (scorer v8, 2026-10-23): over-inclusion in a list answer.
+    wrong_members: list[str] = field(default_factory=list)
+    holders: list[tuple[str, ...]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -274,6 +287,14 @@ def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912, PLR0915
             {k: [str(v) for v in (r.get(k) or [])] for k in ("person", "roles")}
             for r in entry.get("roles") or []
         ]
+        wrong_members = [str(x) for x in entry.get("wrong_members") or []]
+        holders = [
+            (str(h),) if isinstance(h, str) else tuple(str(a) for a in h)
+            for h in entry.get("holders") or []
+        ]
+        if holders and not wrong_members:
+            msg = f"{path}: queries[{i}] holders need wrong_members (alone they check nothing)"
+            raise ValueError(msg)
 
         if band == "out_of_scope":
             if not answerable:
@@ -318,6 +339,8 @@ def load_queries(path: Path) -> LabeledQuerySet:  # noqa: C901, PLR0912, PLR0915
                 evidence=evidence,
                 alias_evidence=alias_evidence,
                 roles=roles,
+                wrong_members=wrong_members,
+                holders=holders,
             )
         )
 

@@ -2059,7 +2059,9 @@ def test_two_corpora_are_reported_each_on_its_own(
         "id": FIXTURE,
         "label": "War and Peace, Book One",
         "board": True,
+        "review": None,  # no hand review of this corpus's board answers was given
     }
+    assert docs["review"] is None
     assert (docs["id"], docs["label"], docs["board"]) == (DOCS, DOCS_LABEL, False)
     # the board corpus: the table's chat column and its comparison, Book One's questions only
     chat = page["suites"]["chat"]
@@ -2180,7 +2182,7 @@ def test_a_board_of_one_corpus_other_than_book_one_is_the_board_corpus(
     )
     page, _ = _export(script, monkeypatch, tmp_path, "--chat", str(chat))
     assert [{k: v for k, v in c.items() if k != "last_run"} for c in page["corpora"]] == [
-        {"id": DOCS, "label": DOCS_LABEL, "board": True}
+        {"id": DOCS, "label": DOCS_LABEL, "board": True, "review": None}
     ]
     assert page["suites"]["chat"]["fixture"] == DOCS
 
@@ -2307,3 +2309,290 @@ def test_drops_and_overflow_warnings_name_their_corpus(
     capsys.readouterr()
     script._warn_context_overflows(DOCS, runs[DOCS])
     assert capsys.readouterr().out.startswith(f"WARNING {DOCS} graphrag: ")
+
+
+# ---------------------------------------------------------------------------
+# Under a full hand review the board shows the hand-graded numbers (2026-10-23)
+# ---------------------------------------------------------------------------
+
+_DECLINE = "That is not in the sources."
+_BAND = {"q082", "q095", "q109", "q124"}
+
+
+def _value_rows() -> list[dict[str, Any]]:
+    """The value-block board: on the scorer every headline but only_with_graph holds."""
+    return [
+        *_three_modes("ollama/gemma4:12b", graphrag=ALL, hybrid={"q001"}, naive={"q001"}),
+        *_three_modes(
+            "ollama/gemma4:31b", graphrag=ALL, hybrid={"q001", "q082"}, naive={"q001", "q082"}
+        ),
+        *_three_modes("ollama/m:1b", graphrag=ALL - {"q124"}, hybrid=set(), naive={"q001"}),
+    ]
+
+
+def _declining_rows() -> list[dict[str, Any]]:
+    """The value-block board with the two Gemma rows declining the band with the graph.
+
+    On the scorer errors_removed fails (only the 1B model removes any band failure).
+    """
+    return [
+        *_three_modes("ollama/gemma4:12b", graphrag=ALL - _BAND, hybrid={"q001"}, naive={"q001"}),
+        *_three_modes(
+            "ollama/gemma4:31b",
+            graphrag=ALL - _BAND,
+            hybrid={"q001", "q082"},
+            naive={"q001", "q082"},
+        ),
+        *_three_modes("ollama/m:1b", graphrag=ALL - {"q124"}, hybrid=set(), naive={"q001"}),
+    ]
+
+
+def _review_of(
+    rows: list[dict[str, Any]],
+    fail: set[tuple[str, str, str]] = frozenset(),
+    drop: int = 0,
+    passes: set[tuple[str, str, str]] = frozenset(),
+) -> dict[str, Any]:
+    """A hand review of every answer of ``rows``: the scorer's verdict, except ``fail`` keys FAIL.
+
+    ``fail`` and ``passes`` hold ``(model id, rung, question)`` the reviewers fail or pass
+    against the scorer; ``drop`` leaves that many answers unreviewed.
+    """
+    verdicts = []
+    for row in rows:
+        mode = row["extras"]["retrieval"]
+        for record in row["extras"]["per_query"]:
+            qid, answer = record["query_id"], record["answer"]
+            key = (row["model_id"], mode, qid)
+            ok = key in passes or (not answer.startswith(_DECLINE) and key not in fail)
+            verdicts.append(
+                {
+                    "key": f"{qid}|{row['model_label']}|{mode}",
+                    "answer_start": answer[:90],
+                    "should_be": "PASS" if ok else "FAIL",
+                    "reason": "",
+                }
+            )
+    return {"verdicts": verdicts[drop:]}
+
+
+_REVIEWERS_FAIL_THE_BAND = {
+    (mid, "graphrag", qid) for mid in ("ollama/gemma4:12b", "ollama/gemma4:31b") for qid in _BAND
+}
+"""The reviewers fail every graph-shaped answer two of the three models give with the graph."""
+
+
+def _reviewed_export(
+    script: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    review: dict[str, Any],
+    name: str = "2026-10-23-book-review-verdicts.json",
+    rows: list[dict[str, Any]] | None = None,
+) -> tuple[dict[str, Any], Path]:
+    reviews_dir = tmp_path / "runs"
+    reviews_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(script, "REVIEWS_DIR", reviews_dir)
+    path = reviews_dir / name
+    path.write_text(json.dumps(review), encoding="utf-8")
+    chat = _write(tmp_path / "c.json", _value_rows() if rows is None else rows)
+    page, _ = _export(
+        script, monkeypatch, tmp_path, "--chat", str(chat), "--reviews", f"{FIXTURE}={path}"
+    )
+    return page, path
+
+
+def _comparison_of(page: dict[str, Any]) -> dict[str, Any]:
+    return page["suites"]["chat"]["comparison"]
+
+
+def _headline_map(page: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {h["key"]: h for h in _comparison_of(page)["value"]["headlines"]}
+
+
+def _model_rows(cmp: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {m["id"]: m for m in cmp["models"]}
+
+
+def test_under_a_full_review_the_board_shows_the_hand_graded_numbers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the scorer errors_removed holds (3 of 3 models); hand-graded 1 of 3, which the board shows."""
+    import hashlib
+
+    script = _load_script()
+    chat = _write(tmp_path / "c.json", _value_rows())
+    plain, _ = _export(script, monkeypatch, tmp_path, "--chat", str(chat))
+    # no review: the corpus says so, and nothing carries a second reading
+    assert plain["corpora"][0]["review"] is None
+    assert "scorer" not in _comparison_of(plain)
+    assert not any("scorer" in h["values"] for h in _headline_map(plain).values())
+
+    page, path = _reviewed_export(
+        script, monkeypatch, tmp_path, _review_of(_value_rows(), _REVIEWERS_FAIL_THE_BAND)
+    )
+
+    # 3 models x 3 rungs x 6 questions, every one matched
+    assert page["corpora"][0]["review"] == {
+        "answers": 54,
+        "matched": 54,
+        "full": True,
+        "file": path.name,
+        "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+    heads, scorer = _headline_map(page), _headline_map(plain)
+    removed = heads["errors_removed"]
+    # the text and the values are the hand-graded reading; the scorer's moves to values.scorer
+    assert (
+        removed["values"]["models_above_bar_naive"],
+        removed["values"]["models_above_bar_hybrid"],
+    ) == (1, 1)
+    assert "1 of 3 remove at least" in removed["text"]
+    assert removed["text"] != scorer["errors_removed"]["text"]
+    assert removed["values"]["scorer"] == {"holds": True, **scorer["errors_removed"]["values"]}
+    # holds follows the hand-graded reading alone; held_back says why the scorer's would not show
+    assert removed["holds"] is False
+    assert "1 of 3" in removed["held_back"] and "hand-graded" in removed["held_back"]
+    assert "wrong answers" not in removed["held_back"]
+    # the ordinary questions and the size pair hold on both readings
+    for key in ("failures_ordinary", "size_substitution"):
+        assert heads[key]["holds"] is True, key
+        assert heads[key]["values"]["scorer"]["holds"] is True, key
+        assert "held_back" not in heads[key]
+    assert heads["only_with_graph"]["holds"] is False
+    assert "held_back" not in heads["only_with_graph"]  # it fails on the scorer already
+    # no headline carries the earlier rule's second reading
+    assert not any("review" in h["values"] for h in heads.values())
+
+    # the whole comparison block follows the review: the value block, the per-model rows,
+    # their lifts and the worked examples, so no figure disagrees with the table under it
+    cmp, before = _comparison_of(page), _comparison_of(plain)
+    value = cmp["value"]
+    assert value["errors_removed"]["graph_advantage"]["hybrid"]["models_above_bar"] == 1
+    assert "scorer" not in value["size_substitution"]["best"]
+    assert not any("scorer" in pair for pair in value["size_substitution"]["pairs"])
+    rows, rows_before = _model_rows(cmp), _model_rows(before)
+    for mid in ("ollama/gemma4:12b", "ollama/gemma4:31b"):
+        band = rows[mid]["modes"]["graphrag"]["graph_advantage"]
+        assert band["passed"] == 0, mid
+        assert rows_before[mid]["modes"]["graphrag"]["graph_advantage"]["passed"] == 4, mid
+        lift = rows[mid]["lift"]["graph_advantage"]["naive"]["value"]
+        assert lift < rows_before[mid]["lift"]["graph_advantage"]["naive"]["value"], mid
+        # citations are the scorer's check either way: the reviewers grade the verdict only
+        assert (
+            rows[mid]["modes"]["graphrag"]["citation_accuracy"]
+            == rows_before[mid]["modes"]["graphrag"]["citation_accuracy"]
+        )
+    assert rows["ollama/m:1b"] == rows_before["ollama/m:1b"]
+    assert cmp["examples"]
+    for example in cmp["examples"]:
+        for model in example["models"]:
+            rung = model["rungs"]["graphrag"]
+            if (model["id"], "graphrag", example["id"]) in _REVIEWERS_FAIL_THE_BAND:
+                assert rung["passed"] is False, (model["id"], example["id"])
+    # the scorer's comparison block is kept for provenance, as a plain export writes it
+    assert cmp["scorer"] == {"models": before["models"], "value": before["value"]}
+
+
+def test_under_a_full_review_a_headline_the_scorer_misses_holds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review is the more accurate reading: a headline holds on it alone."""
+    script = _load_script()
+    rows = _declining_rows()
+    passes = {
+        (mid, "graphrag", qid)
+        for mid in ("ollama/gemma4:12b", "ollama/gemma4:31b")
+        for qid in _BAND
+    }
+    page, _ = _reviewed_export(
+        script, monkeypatch, tmp_path, _review_of(rows, passes=passes), rows=rows
+    )
+    removed = _headline_map(page)["errors_removed"]
+    assert removed["values"]["scorer"]["holds"] is False
+    assert removed["holds"] is True
+    assert "held_back" not in removed
+    assert removed["values"]["models_above_bar_hybrid"] == 3
+    assert script.check_board(page) == []
+
+
+def test_a_review_short_of_every_answer_stops_the_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A review must match every comparison answer; short of that nothing is written."""
+    script = _load_script()
+    with pytest.raises(SystemExit) as exc:
+        _reviewed_export(
+            script,
+            monkeypatch,
+            tmp_path,
+            _review_of(_value_rows(), _REVIEWERS_FAIL_THE_BAND, drop=1),
+        )
+    message = str(exc.value.code)
+    assert FIXTURE in message and "53 of 54" in message
+    assert "every" in message
+    # it names an answer the review does not cover
+    assert "q001|" in message
+    assert not (tmp_path / "page.json").exists()
+
+
+def test_a_review_names_a_measured_corpus_and_an_archived_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = _load_script()
+    reviews_dir = tmp_path / "runs"
+    reviews_dir.mkdir()
+    monkeypatch.setattr(script, "REVIEWS_DIR", reviews_dir)
+    chat = _write(tmp_path / "c.json", _value_rows())
+    archived = reviews_dir / "r-verdicts.json"
+    archived.write_text(json.dumps(_review_of(_value_rows())), encoding="utf-8")
+    stray = tmp_path / "r-verdicts.json"
+    stray.write_text(archived.read_text(encoding="utf-8"), encoding="utf-8")
+    for spec, named in (
+        (f"no_such_corpus={archived}", "no_such_corpus"),
+        (f"{FIXTURE}={stray}", str(reviews_dir)),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _export(script, monkeypatch, tmp_path, "--chat", str(chat), "--reviews", spec)
+        assert named in str(exc.value.code), spec
+
+
+def test_check_verifies_the_review_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """--check: the review file's content, its coverage, and the two readings of every headline."""
+    script = _load_script()
+    page, path = _reviewed_export(
+        script, monkeypatch, tmp_path, _review_of(_value_rows(), _REVIEWERS_FAIL_THE_BAND)
+    )
+    assert script.check_board(page) == []
+
+    def headline(board: dict[str, Any], key: str) -> dict[str, Any]:
+        return _headline_map(board)[key]
+
+    def earlier_rule(board: dict[str, Any]) -> None:
+        # the board as the first review rule wrote it: the scorer's text, values.review beside it
+        h = headline(board, "failures_ordinary")
+        h["values"]["review"] = h["values"].pop("scorer")
+
+    for mutate, named in [
+        (lambda b: b["corpora"][0]["review"].update(matched=53), "53 of 54"),
+        (lambda b: b["corpora"][0]["review"].update(file_sha256="f" * 64), "f" * 64),
+        (lambda b: b["corpora"][0]["review"].update(file="gone-verdicts.json"), "gone-verdicts"),
+        (lambda b: headline(b, "errors_removed").pop("held_back"), "errors_removed"),
+        (lambda b: headline(b, "size_substitution").update(held_back="x"), "size_substitution"),
+        (lambda b: headline(b, "failures_ordinary")["values"].pop("scorer"), "failures_ordinary"),
+        (
+            lambda b: headline(b, "failures_ordinary")["values"]["scorer"].update(median_pct=1.0),
+            "failures_ordinary",
+        ),
+        (earlier_rule, "failures_ordinary"),
+        (lambda b: _comparison_of(b).pop("scorer"), "scorer"),
+        (lambda b: b["corpora"][0].update(review=None), "review"),
+        (lambda b: b["corpora"][0].pop("review"), "review"),
+    ]:
+        bad = json.loads(json.dumps(page))
+        mutate(bad)
+        problems = script.check_board(bad)
+        assert any(named in p for p in problems), (named, problems)
+    # the file itself changed since the export
+    path.write_text(json.dumps(_review_of(_value_rows())), encoding="utf-8")
+    assert any(path.name in p and "sha256" in p for p in script.check_board(page))

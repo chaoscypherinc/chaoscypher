@@ -81,7 +81,8 @@ def test_the_golden_rows_cover_every_outcome() -> None:
     assert {v[1] for v in verdicts} == {True, False}
     fails = {name for v in verdicts for name in v[2]}
     every_check = {c for checks in ChatProbeScorer.CHECKS_BY_BAND.values() for c in checks}
-    assert every_check - {"binds_roles"} <= fails, every_check - fails
+    # binds_roles and no_wrong_members need fixture fields Book One's golden rows never set
+    assert every_check - {"binds_roles", "no_wrong_members"} <= fails, every_check - fails
     assert {"correct", "wrong", "uncited", None} <= {v[3] for v in verdicts}
 
 

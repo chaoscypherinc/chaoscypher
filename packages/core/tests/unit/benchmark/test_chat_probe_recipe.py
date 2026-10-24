@@ -36,6 +36,10 @@ RECIPE_BY_VERSION: dict[int, str] = {
     # v7 (2026-10-08): a must_not_contain phrase inside a negated clause states nothing,
     # unless it carries its own polarity; samples s44-s51
     7: "0ede66d6097f",
+    # v8 (2026-10-23): the Ollama docs answer review's rules (units, versions, sizes in k,
+    # 'No.', acronyms and keys, English openers, hyphen compounds) and no_wrong_members;
+    # samples s52-s61
+    8: "17fd2b9d6f27",
 }
 """The verdict recipe each scorer version produced; a new version adds its line, old ones stay."""
 
@@ -91,6 +95,16 @@ GOLDEN: dict[str, tuple[bool, list[str], str | None]] = {
     "s49_a_phrase_with_its_own_exceptive": (False, ["must_not_contain"], "uncited"),
     "s50_a_phrase_marked_stated_when_negated": (False, ["must_not_contain"], "uncited"),
     "s51_an_apposition_is_not_negated": (False, ["must_not_contain"], "uncited"),
+    "s52_a_unit_spaced_from_its_number": (True, [], "uncited"),
+    "s53_a_version_without_its_v": (True, [], "uncited"),
+    "s54_a_size_in_k_in_binary_thousands": (True, [], "uncited"),
+    "s55_a_size_in_k_in_decimal_thousands": (True, [], "uncited"),
+    "s56_no_ends_a_sentence": (True, [], "uncited"),
+    "s57_acronyms_keys_and_placeholders": (True, [], "uncited"),
+    "s58_english_openers": (True, [], "uncited"),
+    "s59_a_hyphenated_compound": (True, [], "uncited"),
+    "s60_a_wrong_member_beside_the_gold": (False, ["no_wrong_members"], "uncited"),
+    "s61_a_holder_s_own_list": (True, [], "uncited"),
 }
 
 

@@ -1,0 +1,1703 @@
+# Grounded-chat probes over Ollama's documentation, release v0.40.8 (71 pages,
+# ~242k characters), taken whole so the questions cover every page.
+#
+# The benchmark's second corpus. Same bands, counts and schema as Book One's
+# fixture (war_and_peace_book1/queries.yaml; read its header for the scoring
+# conventions, which apply here unchanged), so per-band numbers compare
+# across the two corpora. Written 2026-10-22 from the corpus text alone,
+# before any model answered any question: no question, term, alias or wrong
+# fact here was chosen, kept or dropped by looking at a model's answer or at
+# which retrieval rung wins it.
+#
+# Conventions specific to a manual:
+# - pages: the page paths (the corpus's "Page: <path>" lines, which
+#   internal/benchmarks/tools/build_docs_corpus.py --pages prints) each
+#   question rests on. Every one of the 71 pages is the source of at least
+#   one question across this file and the holdout
+#   (internal/benchmarks/holdout/ollama_docs-holdout.yaml); a test pins it.
+#   The loader ignores the key, so it moves no score and no recipe.
+# - answer_terms: as in Book One, the most specific words a correct concise
+#   answer names, never the question's own subject. Every member of every
+#   alias group is a phrase of the corpus (case and accents folded, curly
+#   apostrophes and typographic hyphens straightened, as the scorer reads
+#   it); at least one member of each group is on one line of the raw text,
+#   so the retrieval tools' reading (context_holds_terms) finds it. A
+#   setting, endpoint or flag that the loose single-word rule would split
+#   ('/api/generate' is met by 'generate', '--level' by 'level') is written
+#   as an alias group, which matches only as a whole phrase.
+# - must_not_contain: the tempting wrong statement (the neighbouring
+#   variable, the swapped default, the other page's number), written as a
+#   model would state it; a decline or a contrast that negates it states
+#   nothing (scorer v7).
+# - fine_grained_discrimination: gold_entities and wrong_entities are two
+#   settings, flags or endpoints the text keeps apart, with no shared word.
+# - out_of_scope: plausible questions about Ollama that these pages do not
+#   answer, several of them false-premise traps (a feature, a variable or a
+#   number the docs never give, often one a model remembers from elsewhere).
+#   decoy_entities never occur in the corpus (a test guards it); where the
+#   trap is a fact the corpus does state for something else, the wrong
+#   statement is a must_not_contain phrase instead.
+# - Numbers in gold answers are written as the text writes them.
+# - Verification pass (2026-10-22, after writing, before any model run):
+#   every entry re-read adversarially against the corpus (is the gold what
+#   the text says, can a right answer fail the terms, can a wrong one pass
+#   them, can a right answer state a must_not_contain phrase), with 438
+#   hand-written right and wrong answers scored by the real checks against
+#   the whole corpus, and the shared fixture guards. It changed 20 entries:
+#   q004 q006 q011 q025 q032 q034 q040 q043 q045 q064 q082 q085 q086 q091
+#   q097 q099 q100 q113 q114 q117 (notes on each; q034 and q085 gained the
+#   'v0.x' form the text writes, q082's second term became a phrase on one
+#   raw line, q086's wrong fact lost its 'x-' prefix with q043's term). No real model answer
+#   exists yet: the first campaign's answers are to be judged exhaustively,
+#   as Book One's were, before any conclusion rests on this file.
+# - paraphrases: the answer-term members a right answer writes that the text
+#   does not (a contraction, "doesn't overwrite" for "does not overwrite"; a
+#   thousands separator, "4,096"; a unit without its space, "8gb"; a synonym,
+#   "last chunk" for "final chunk"). The scorer matches a member whole, so
+#   such a spelling must be a member; each listed one sits in a group with a
+#   member the text writes (the group stays grounded), and the fixture test
+#   checks both. The loader ignores the key, as it ignores pages.
+# - Review 2026-10-22 (an independent adversarial pass, before any model
+#   run): every entry re-read against the corpus, 297 hand-written right and
+#   wrong answers over 73 entries scored by the real checks against the whole
+#   corpus (internal/benchmarks/tools/tests/ollama_docs_answer_probes.json,
+#   pinned by test_ollama_docs_answer_probes.py). It changed 40 entries here
+#   (each carries a "Review 2026-10-22" note): right answers that failed the
+#   terms (contractions, digit grouping, units, the text's other way to do a
+#   thing), wrong answers that passed (swapped pairs in other words, a "yes"
+#   beside the right recommendation), wrong facts a right answer states
+#   (q012, q050, q058), two questions with a second defensible answer (q036,
+#   q086), four graph questions one page answered (q093, q094, q095, q098)
+#   and two that quoted the text (q051, q060). Scorer limits it found are in
+#   internal/TODO.md and the probe test's KNOWN_LIMITS. A second pass the
+#   same day ("Review 2026-10-22 (second pass)") gave the last five
+#   relationship_path questions that one page answered (q092, q096, q097,
+#   q099, q100) a second page each; the probes now number 318 over 77
+#   entries.
+# - wrong_members and holders (Review 2026-10-23, answers, round 3; chat
+#   scorer v8): for a list question, the members its gold leaves out as an
+#   answer names them (the guide that confirms an "API Host", the platform
+#   only one tool has); no_wrong_members fails an answer that lists one beside
+#   a gold member. For a "which do both have" question, holders are the two
+#   entities, so a clause or list about one of them ("OpenClaw also has
+#   iMessage") is that one's own list. Each is a phrase of the corpus and no
+#   answer-term member (the fixture test checks both); the answer probes
+#   gained q103 and three q110 answers for it.
+version: "1.0"
+queries:
+
+# ── FACTUAL SINGLE HOP ──────────────────────────────────────────────────────
+
+  - id: q001
+    band: factual_single_hop
+    question: "By default, on which address and port does the Ollama server listen?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_HOST", "127.0.0.1", "11434"]
+    answer_terms: [["127.0.0.1", "localhost"], "11434"]
+    must_not_contain: ["binds 0.0.0.0 by default", "binds to 0.0.0.0 by default", "listens on 0.0.0.0 by default", "port 8080"]
+    gold_answer: |
+      It binds 127.0.0.1 port 11434 by default; OLLAMA_HOST changes the bind
+      address.
+
+  - id: q002
+    band: factual_single_hop
+    question: "What is the oldest version of macOS that Ollama supports?"
+    pages: [macos]
+    gold_entities: ["macOS Sonoma"]
+    # Review 2026-10-22: a right answer may name the version alone ("macOS 14 or newer"); a paraphrase, listed.
+    answer_terms: [["Sonoma", "v14", "macOS 14"]]
+    paraphrases: ["macOS 14"]
+    must_not_contain: ["Ventura or newer", "Monterey or newer", "Big Sur or newer"]
+    gold_answer: |
+      macOS Sonoma (v14) or newer.
+
+  - id: q003
+    band: factual_single_hop
+    question: "What is the default value of the temperature parameter?"
+    pages: [modelfile]
+    gold_entities: ["temperature"]
+    answer_terms: ["0.8"]
+    # the Modelfile example sets 1 and the table's usage column shows 0.7
+    must_not_contain: ["default is 0.7", "default of 0.7", "defaults to 0.7", "default temperature is 1", "defaults to 1.0"]
+    gold_answer: |
+      0.8.
+
+  - id: q004
+    band: factual_single_hop
+    question: "How many results does Ollama's web search API return by default, and what is the most you can ask for?"
+    pages: [capabilities/web-search]
+    gold_entities: ["max_results"]
+    # Verification 2026-10-22 (adversarial answer probes): the numbers in words are the same tokens to the scorer.
+    answer_terms: [["5", "five"], ["10", "ten"]]
+    # the swapped pair would meet both terms
+    # Review 2026-10-23 (answers): "maximum of 5" caught the right "returns a maximum of 5 results by default, up to 10";
+    # the swapped pair is caught on its default side instead ("10 by default", "default 10" added).
+    must_not_contain: ["default of 10", "defaults to 10", "default is 10", "default of ten", "default 10", "10 by default", "10 results by default", "ten by default", "ten results by default", "default value of 10", "default value is 10"]
+    gold_answer: |
+      5 by default; max_results can be raised to at most 10.
+
+  - id: q005
+    band: factual_single_hop
+    question: "According to the embeddings guide, what vector lengths do embedding models typically produce?"
+    pages: [capabilities/embeddings]
+    gold_entities: ["embeddings"]
+    # Review 2026-10-22: "1,024 dimensions" (thousands separator) failed the term the text writes "1024".
+    answer_terms: ["384", ["1024", "1,024"]]
+    paraphrases: ["1,024"]
+    must_not_contain: ["up to 4096 dimensions", "always 768 dimensions"]
+    gold_answer: |
+      Typically 384 to 1024 dimensions; the length depends on the model.
+
+  - id: q006
+    band: factual_single_hop
+    question: "Which tag of the Ollama Docker image does the Docker guide use for AMD GPUs with ROCm?"
+    pages: [docker]
+    gold_entities: ["ollama/ollama:rocm"]
+    answer_terms: [["ollama/ollama:rocm", "rocm tag"]]
+    # Verification 2026-10-22 (adversarial answer probes): 'rocm tag' was met by "there is no special ROCm tag".
+    must_not_contain: ["ollama/ollama:amd", "ollama/ollama:latest for AMD", "no special ROCm tag", "no ROCm tag", "no separate ROCm tag"]
+    gold_answer: |
+      The rocm tag: ollama/ollama:rocm, run with --device /dev/kfd and
+      --device /dev/dri.
+
+  - id: q007
+    band: factual_single_hop
+    question: "Who builds Hermes Agent?"
+    pages: [integrations/hermes]
+    gold_entities: ["Nous Research"]
+    answer_terms: [["Nous Research", "Nous"]]
+    must_not_contain: ["built by Anthropic", "built by OpenAI", "built by Ollama"]
+    gold_answer: |
+      Nous Research.
+
+  - id: q008
+    band: factual_single_hop
+    question: "Which core tools does the Pi coding agent ship with before any extensions are added?"
+    pages: [integrations/pi]
+    gold_entities: ["Pi"]
+    answer_terms: ["read", "write", "edit", "bash"]
+    gold_answer: |
+      Four: read, write, edit and bash; everything else comes through
+      extensions.
+
+  - id: q009
+    band: factual_single_hop
+    question: "Where does the documentation's home page invite users to join the community conversation?"
+    pages: [index]
+    gold_entities: ["Discord", "Reddit"]
+    answer_terms: ["Discord", "Reddit"]
+    # Review 2026-10-23 (answers): the index page's Community section ends one chunk before the "# Quickstart" heading; an answer
+    # that names Discord and Reddit but denies the home page carries the invitation states the asked fact wrong.
+    must_not_contain: ["on Slack", "GitHub Discussions", "home page does not", "index page does not", "page does not list", "not part of the home page", "not on the home page"]
+    gold_answer: |
+      On Discord or Reddit.
+
+  - id: q010
+    band: factual_single_hop
+    question: "Which request field gives you structured outputs through the OpenAI-compatible API?"
+    pages: [capabilities/structured-outputs, api/openai-compatibility]
+    gold_entities: ["response_format"]
+    answer_terms: ["response_format"]
+    gold_answer: |
+      response_format (the native API uses the format field instead).
+
+  - id: q011
+    band: factual_single_hop
+    question: "In the quickstart's local example, about how large is the Gemma 4 E2B download, and how much VRAM is recommended?"
+    pages: [quickstart]
+    gold_entities: ["gemma4:e2b"]
+    # Review 2026-10-22: "7.2GB" and "8GB" (no space) failed both terms.
+    answer_terms: [["7.2 GB", "7.2gb"], ["8 GB", "8gb"]]
+    paraphrases: ["7.2gb", "8gb"]
+    # 9.6 GB is gemma4:latest's size in the context-length page's ollama ps example
+    # Verification 2026-10-22 (adversarial answer probes): the swapped pair met both terms.
+    must_not_contain: ["download is about 9.6 GB", "9.6 GB download", "8 GB download", "7.2 GB VRAM", "7.2 GB of VRAM", "7.2 GB of available VRAM"]
+    gold_answer: |
+      About 7.2 GB; 8 GB of available VRAM (or unified memory on a Mac) is
+      recommended.
+
+  - id: q012
+    band: factual_single_hop
+    question: "What is the minimum RAM for running NemoClaw?"
+    pages: [integrations/nemoclaw]
+    gold_entities: ["NemoClaw"]
+    # Review 2026-10-22: "8GB" failed the term; "at least 16 GB" is what a right answer says of the recommendation
+    # ("8 GB minimum, at least 16 GB recommended"), and a wrong answer without 8 GB already fails the term.
+    answer_terms: [["8 GB", "8gb"]]
+    paraphrases: ["8gb"]
+    # Review 2026-10-23 (answers): the 8 GB minimum is NemoClaw's own requirement; an answer that infers it
+    # "based on Ollama's requirements" (the 8 GB VRAM recommendation) attaches it to the wrong thing.
+    must_not_contain: ["minimum of 16 GB", "16 GB minimum", "requires 16 GB", "based on Ollama's requirements", "based on the requirements for Ollama"]
+    gold_answer: |
+      8 GB minimum (16 GB recommended).
+
+  - id: q013
+    band: factual_single_hop
+    question: "Which anthropic-version header value should requests to Ollama's hosted Anthropic-compatible endpoint send?"
+    pages: [api/anthropic-compatibility]
+    gold_entities: ["anthropic-version"]
+    # a group: the loose rule would accept any '2023'
+    answer_terms: [["2023-06-01"]]
+    must_not_contain: ["2023-01-01", "2024-06-01"]
+    gold_answer: |
+      2023-06-01; the hosted endpoint rejects older values.
+
+  - id: q014
+    band: factual_single_hop
+    question: "Under what name was OpenClaw previously known?"
+    pages: [integrations/openclaw]
+    gold_entities: ["Clawdbot"]
+    answer_terms: ["Clawdbot"]
+    must_not_contain: ["Moltbot"]
+    gold_answer: |
+      Clawdbot; ollama launch clawdbot still works as an alias.
+
+  - id: q015
+    band: factual_single_hop
+    question: "When you call the REST API directly with images, in what form must the image data be?"
+    pages: [capabilities/vision]
+    gold_entities: ["images"]
+    answer_terms: ["base64"]
+    must_not_contain: ["REST API accepts file paths", "REST API accepts URLs", "REST API accepts image URLs"]
+    gold_answer: |
+      Base64-encoded image data in the images array; the SDKs also accept
+      file paths, URLs or raw bytes.
+
+# ── PARAPHRASE ──────────────────────────────────────────────────────────────
+
+  - id: q016
+    band: paraphrase
+    question: "I want Ollama to stay strictly on my machine, with no hosted models and no web search. What do I set?"
+    pages: [faq]
+    gold_entities: ["disable_ollama_cloud", "OLLAMA_NO_CLOUD"]
+    answer_terms: [["disable_ollama_cloud", "OLLAMA_NO_CLOUD"]]
+    must_not_contain: ["OLLAMA_OFFLINE"]
+    gold_answer: |
+      Turn off the cloud features: set disable_ollama_cloud to true in
+      ~/.ollama/server.json, or OLLAMA_NO_CLOUD=1, and restart Ollama.
+
+  - id: q017
+    band: paraphrase
+    question: "How do I point Xcode's coding assistant at the Ollama running on my Mac?"
+    pages: [integrations/xcode]
+    gold_entities: ["Xcode"]
+    answer_terms: [["Locally Hosted"], "11434"]
+    # Review 2026-10-23 (answers): 'Use custom base URL' is the neighbouring integration page's setting
+    # (Roo Code's ollama.com steps), never an Xcode step; an answer that adds it gives the wrong procedure.
+    must_not_contain: ["select Internet Hosted and enter port 11434", "Use custom base URL"]
+    gold_answer: |
+      In Xcode's Settings select Locally Hosted, enter port 11434 and click
+      Add, then choose the model under My Account.
+
+  - id: q018
+    band: paraphrase
+    question: "I'd like to hook Poolside's terminal agent up to my local Ollama by hand rather than through the launcher. What do I export?"
+    pages: [integrations/pool]
+    gold_entities: ["Pool"]
+    # Review 2026-10-23 (answers): the base URL's value is asked too ("what do I export"); the two names alone,
+    # or the URL without /v1, passed. The value is a third term, matched whole (127.0.0.1 for localhost).
+    answer_terms: ["POOLSIDE_STANDALONE_BASE_URL", "POOLSIDE_API_KEY", ["localhost:11434/v1", "127.0.0.1:11434/v1"]]
+    gold_answer: |
+      POOLSIDE_STANDALONE_BASE_URL set to http://localhost:11434/v1 and
+      POOLSIDE_API_KEY set to ollama, then run pool -m with the model.
+
+  - id: q019
+    band: paraphrase
+    question: "After my function has run, how do I hand its output back to the model in the conversation?"
+    pages: [capabilities/tool-calling]
+    gold_entities: ["tool calling"]
+    # Review 2026-10-22: a right answer that sends a message with role "tool" and the result, without naming
+    # tool_name, failed; the role is the text's other marker of a tool result (role: tool).
+    # Review 2026-10-23 (answers): the role as answers write it (the code's role: 'tool', "a role of 'tool'", "role set to
+    # 'tool'", a "tool message"/"tool role" message) failed the group; and passing the output back in tool_calls is wrong.
+    answer_terms: [["tool_name", "role: tool", "role: 'tool'", "role 'tool'", "role tool", "role of 'tool'", "role of tool", "role set to 'tool'", "role set to tool", "tool message", "tool role"]]
+    paraphrases: ["role 'tool'", "role tool", "role of 'tool'", "role of tool", "role set to 'tool'", "role set to tool", "tool message", "tool role"]
+    must_not_contain: ["use the tool_calls field", "via the tool_calls field", "through the tool_calls field"]
+    gold_answer: |
+      Append a message with role tool, the tool_name and the result as its
+      content, then send the updated messages to chat again.
+
+  - id: q020
+    band: paraphrase
+    question: "With the Python library my chat call returns everything at once, yet my curl request streamed. How do I make the library stream?"
+    pages: [capabilities/streaming]
+    gold_entities: ["stream"]
+    # Review 2026-10-22: "set stream to True" failed every alias.
+    answer_terms: [["stream=True", "stream: true", "stream parameter to True", "stream to true"]]
+    paraphrases: ["stream to true"]
+    gold_answer: |
+      Set stream=True: streaming is enabled by default in the REST API but
+      disabled by default in the SDKs.
+
+  - id: q021
+    band: paraphrase
+    question: "How can my app learn which reasoning levels a model accepts, and which one it uses if I don't ask for one?"
+    pages: [capabilities/thinking, api/post-api-show]
+    gold_entities: ["/api/show"]
+    answer_terms: [["/api/show", "api/show"], "default"]
+    gold_answer: |
+      Call /api/show: its thinking object lists the supported values and
+      the default used when think is not set.
+
+  - id: q022
+    band: paraphrase
+    question: "If I start OpenCode through ollama launch, what happens to the settings in my own opencode.json?"
+    pages: [integrations/opencode]
+    gold_entities: ["OpenCode"]
+    # Review 2026-10-22: "it doesn't overwrite your opencode.json" (a contraction) failed every alias.
+    # Review 2026-10-23 (answers): the passive "settings are not overwritten" (four right answers) failed
+    # every alias; a paraphrase, listed.
+    answer_terms: [["does not overwrite", "doesn't overwrite", "won't overwrite", "not overwritten", "inline config", "still apply"]]
+    paraphrases: ["doesn't overwrite", "won't overwrite", "not overwritten"]
+    must_not_contain: ["overwrites your opencode.json", "replaces your opencode.json", "overwrites ~/.config/opencode/opencode.json"]
+    gold_answer: |
+      Nothing changes: ollama launch opencode starts OpenCode with an inline
+      config for the chosen model and does not overwrite
+      ~/.config/opencode/opencode.json, so existing settings still apply.
+
+  - id: q023
+    band: paraphrase
+    question: "I have a full-precision GGUF file. Will Ollama shrink it to a smaller quantization when I import it?"
+    pages: [import]
+    gold_entities: ["GGUF"]
+    # Review 2026-10-22: "No, Ollama doesn't quantize GGUF on import" failed both aliases.
+    answer_terms: [["does not quantize", "doesn't quantize", "won't quantize", "llama-quantize"]]
+    paraphrases: ["doesn't quantize", "won't quantize"]
+    # Review 2026-10-23 (answers): "won't shrink it unless explicitly instructed to" is a conditional yes the text
+    # denies for GGUF (a wrong fact); "the docs do not say it will shrink it" notes the premise and is no decline.
+    must_not_contain: ["quantizes it during import", "Ollama quantizes GGUF", "!unless explicitly instructed", "!unless instructed to"]
+    caveats: ["automatically shrink"]
+    gold_answer: |
+      No. Ollama does not quantize GGUF models during import; quantize it
+      first with a GGUF tool such as llama.cpp's llama-quantize.
+
+  - id: q024
+    band: paraphrase
+    question: "Can I create or delete models by calling the hosted API on ollama.com directly?"
+    pages: [api/introduction]
+    gold_entities: ["local Ollama server"]
+    # Review 2026-10-22: "No, that needs your local Ollama" failed every alias.
+    answer_terms: [["requires a local Ollama server", "local Ollama server", "local server", "local Ollama"]]
+    # Review 2026-10-23 (answers): "Yes, you can create or delete models ..." quotes the local-server line and still
+    # answers yes; it met the term and no trap. The yes is the wrong statement.
+    must_not_contain: ["can create models on ollama.com", "ollama.com supports creating models", "yes, you can create"]
+    gold_answer: |
+      No: creating or deleting models requires a local Ollama server.
+
+  - id: q025
+    band: paraphrase
+    question: "If something goes wrong halfway through a streamed reply, will the HTTP status code show it?"
+    pages: [api/errors]
+    gold_entities: ["error"]
+    # Verification 2026-10-22 (adversarial answer probes): "it stays 200, the error comes in the stream" failed; the
+    # status the stream started with is the text's 200 Success, and the changed status is the wrong fact.
+    # Review 2026-10-22: "No, the status code doesn't change" failed every alias; "Yes, it returns HTTP 500 with an
+    # error property" passed, so the plain 500 claims are wrong facts too.
+    # Review 2026-10-23 (answers): "the status code is not changed / stays the same / remains unchanged / is not
+    # updated" failed every alias (paraphrases added); "Yes, ... will not be changed" answered the yes/no wrongly and passed.
+    answer_terms: [["not be changed", "does not change", "doesn't change", "won't change", "already started", "error property", "200", "not changed", "unchanged", "stays the same", "remains the same", "not updated", "not altered"]]
+    paraphrases: ["doesn't change", "won't change", "not changed", "unchanged", "stays the same", "remains the same", "not updated", "not altered"]
+    must_not_contain: ["status changes to 500", "changes to 500", "changes from 200", "becomes 500", "returns a 500 status code mid-stream", "returns HTTP 500", "returns a 500", "status code changes", "Yes, if", "Yes, the", "Yes, it", "Yes it will", "Yes, when"]
+    gold_answer: |
+      It will not: the response has already started, so the status code is
+      not changed; the error arrives in the application/x-ndjson stream as an
+      object with an error property.
+
+# ── MULTI HOP ───────────────────────────────────────────────────────────────
+
+  - id: q026
+    band: multi_hop
+    question: "Under heavy load some requests come back with a 503. What does that mean, which variable controls it, and what is its default?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_MAX_QUEUE"]
+    answer_terms: ["OLLAMA_MAX_QUEUE", "512"]
+    must_not_contain: ["OLLAMA_NUM_PARALLEL controls the queue", "default is 1024"]
+    # Review 2026-10-23 (answers): "the server is overloaded and unable to process the request" explains the 503;
+    # its "unable to" was read as a bare decline. A sentence naming that phrase is the answer, not a decline.
+    caveats: ["unable to process"]
+    gold_answer: |
+      The server is overloaded and its queue is full; OLLAMA_MAX_QUEUE sets
+      how many requests may be queued, and the default is 512.
+
+  - id: q027
+    band: multi_hop
+    question: "If a model with a 2K context serves 4 parallel requests, what context does Ollama allocate, and which variable sets the number of parallel requests?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_NUM_PARALLEL"]
+    # Review 2026-10-22: "8,192" failed the term.
+    answer_terms: [["8K", "8192", "8,192"], "OLLAMA_NUM_PARALLEL"]
+    paraphrases: ["8,192"]
+    must_not_contain: ["allocates 16K", "a 16K context"]
+    gold_answer: |
+      An 8K context, with the extra memory that takes; OLLAMA_NUM_PARALLEL
+      sets the parallel requests per model (default 1).
+
+  - id: q028
+    band: multi_hop
+    question: "On Linux with the systemd service, how do you give Ollama an environment variable, and where does it keep models by default?"
+    pages: [faq, linux]
+    gold_entities: ["systemctl", "/usr/share/ollama/.ollama/models"]
+    # Review 2026-10-22: the Linux page also offers an override file at
+    # /etc/systemd/system/ollama.service.d/override.conf; that right answer failed the first term.
+    # Review 2026-10-23 (answers): the Linux page's Customizing section says "edit the systemd service file";
+    # "edit the systemd service file and add an Environment line under [Service]" failed the first term.
+    answer_terms: [["systemctl edit", "override.conf", "systemd service file"], ["/usr/share/ollama/.ollama/models"]]
+    must_not_contain: ["models are stored in ~/.ollama/models on Linux"]
+    gold_answer: |
+      Run systemctl edit ollama.service, add an Environment line under
+      [Service], then daemon-reload and restart; models are kept in
+      /usr/share/ollama/.ollama/models.
+
+  - id: q029
+    band: multi_hop
+    question: "Which variable limits Ollama to some of your NVIDIA GPUs, and how do you make it ignore them and run on the CPU?"
+    pages: [gpu]
+    gold_entities: ["CUDA_VISIBLE_DEVICES"]
+    answer_terms: ["CUDA_VISIBLE_DEVICES", ["-1", "invalid GPU ID"]]
+    must_not_contain: ["ROCR_VISIBLE_DEVICES for NVIDIA"]
+    gold_answer: |
+      CUDA_VISIBLE_DEVICES, a comma separated list (UUIDs are more reliable
+      than numeric IDs); an invalid GPU ID such as -1 forces CPU use.
+
+  - id: q030
+    band: multi_hop
+    question: "Which GET endpoints report the server's Ollama version and list the models it has?"
+    pages: [api/get-api-version, api/get-api-tags]
+    gold_entities: ["/api/version", "/api/tags"]
+    answer_terms: [["/api/version", "api/version"], ["/api/tags", "api/tags"]]
+    # Review 2026-10-23 (answers): offering /api/ps (running models only) beside or instead of /api/tags as the
+    # endpoint that lists the models, with no running-models qualifier, is the wrong endpoint.
+    must_not_contain: ["api/ps lists the models it has", "api/ps lists all", "models are /api/ps", "models are get /api/ps", "models it has are /api/ps", "models it has are get /api/ps", "models are /api/tags and /api/ps", "models are get /api/tags and get /api/ps", "api/ps (or /api/tags", "api/ps or /api/tags"]
+    gold_answer: |
+      GET /api/version returns the version; GET /api/tags lists the models
+      and their details.
+
+  - id: q031
+    band: multi_hop
+    question: "On Windows, which variable moves where models are stored, and what does uninstalling do to the models once you have moved them?"
+    pages: [windows]
+    gold_entities: ["OLLAMA_MODELS"]
+    # Review 2026-10-22: "the installer won't remove them" failed the second term.
+    # Review 2026-10-23 (answers): "does not delete the models" / "will not delete" are the same fact in a synonym
+    # (paraphrases); "will remove the models" (the macOS uninstall list misapplied) is the wrong fact.
+    answer_terms: ["OLLAMA_MODELS", ["will not remove", "not remove", "won't remove", "doesn't remove", "not delete", "doesn't delete", "won't delete"]]
+    paraphrases: ["won't remove", "doesn't remove", "not delete", "doesn't delete", "won't delete"]
+    must_not_contain: ["uninstaller deletes them", "removes your downloaded models", "deletes your downloaded models", "will remove the models"]
+    gold_answer: |
+      OLLAMA_MODELS, set for your user account; if you changed it, the
+      installer will not remove your downloaded models.
+
+  - id: q032
+    band: multi_hop
+    question: "How do you get usage broken down per model from the cloud usage endpoint, and how many model groups does it show at most?"
+    pages: [api/cloud-usage]
+    gold_entities: ["group_by"]
+    answer_terms: ["group_by=model", ["10", "ten"]]
+    # Review 2026-10-23 (answers): the text states the cap ("up to 10 groups appear"); an answer that says the
+    # maximum shown is not stated and then only reports the 10 as a mention has declined that part.
+    must_not_contain: ["up to 5 groups", "up to 25 groups", "shown is not explicitly stated", "maximum is not explicitly stated", "does not specify a maximum"]
+    gold_answer: |
+      Add group_by=model; up to 10 groups appear, ranked by usage_usd, and
+      the rest are combined under remainder.
+
+  - id: q033
+    band: multi_hop
+    question: "What does the purchased balance count, and on what schedule does the included balance reset?"
+    pages: [api/balance]
+    gold_entities: ["balance"]
+    answer_terms: [["unexpired"], ["monthly"]]
+    # Review 2026-10-23 (answers): the usage page's 24h range ("start of the current UTC hour") given as the
+    # included balance's reset period is the neighbouring page's fact.
+    must_not_contain: ["resets annually", "resets every year", "includes expired credits", "start of the current UTC hour"]
+    gold_answer: |
+      Only unexpired purchased credits; the included period follows the
+      plan's monthly reset schedule, even for annual subscriptions.
+
+  - id: q034
+    band: multi_hop
+    question: "To ask Clef in Ollama's cloud through your local server, what minimum Ollama version do you need, and how do you name the model?"
+    pages: [capabilities/decision, api/post-v1-systemone]
+    gold_entities: ["Clef", "clef:cloud"]
+    answer_terms: [["v0.40.5", "0.40.5"], ["clef:cloud", ":cloud"]]
+    # v0.35.0 is the local requirement, v0.35.1 the Clef image requirement
+    must_not_contain: ["v0.35.0 or later for cloud", "0.35.1 or later for cloud"]
+    gold_answer: |
+      v0.40.5 or later, signed in to ollama.com, with :cloud added to the
+      name: clef:cloud.
+
+  - id: q035
+    band: multi_hop
+    question: "When you create a model from a split GGUF through /api/create, how must the shards be listed in files, and what is each name mapped to?"
+    pages: [api/post-api-create]
+    gold_entities: ["/api/create"]
+    # Review 2026-10-22: "mapped to its SHA256 digest" failed the second term.
+    # Review 2026-10-23 (answers): "each file's original name" / "original filename" are the gold in other words (paraphrases);
+    # the Modelfile wildcard stated as how the files object lists the shards is the tempting wrong fact.
+    answer_terms: [["original split filename", "original filename", "original name"], ["SHA-256", "sha256"]]
+    paraphrases: ["original filename", "original name"]
+    must_not_contain: ["listed using a wildcard", "listed with a wildcard", "filenames and a wildcard", "filenames using a wildcard"]
+    gold_answer: |
+      Each shard under its original split filename, mapped to its SHA-256
+      digest.
+
+  - id: q036
+    band: multi_hop
+    # Review 2026-10-22: the FAQ's OLLAMA_CONTEXT_LENGTH also raises the context for every request, so "set it on
+    # the server" was a defensible answer the terms failed; the question now names the page it asks about.
+    question: "The OpenAI API has no field for context size. What does Ollama's OpenAI compatibility page tell you to do to use a model with a larger context through that endpoint?"
+    pages: [api/openai-compatibility]
+    gold_entities: ["Modelfile", "num_ctx"]
+    answer_terms: ["num_ctx", ["ollama create"]]
+    # Review 2026-10-23 (answers): "The OpenAI compatibility page does not provide instructions ..., however ..." opens
+    # by declining (and denies what the page says); the denial is the wrong statement, matched though negated (its
+    # own 'not' carries that, so it takes no '!' marker).
+    must_not_contain: ["page does not provide instructions", "page does not provide any instructions"]
+    gold_answer: |
+      Write a Modelfile with FROM and PARAMETER num_ctx set to the size, run
+      ollama create mymodel, and call the endpoint with that model name.
+
+  - id: q037
+    band: multi_hop
+    question: "To run Claude Code through ollama launch in a CI job without any prompts, which flag do you add, and what must go with it?"
+    pages: [integrations/claude-code]
+    gold_entities: ["--yes", "--model"]
+    answer_terms: [["--yes"], ["--model"]]
+    gold_answer: |
+      --yes, which skips selectors and pulls the model when needed; it
+      requires --model. Arguments after -- go to Claude Code.
+
+  - id: q038
+    band: multi_hop
+    question: "How do you turn off web search for one Codex session that uses the Ollama profile, and what do you need to use web search there at all?"
+    pages: [integrations/codex]
+    gold_entities: ["Codex", "web_search"]
+    # Review 2026-10-22: "you need to be signed in to Ollama" failed the second term.
+    answer_terms: [["web_search=\"disabled\"", "web_search=disabled"], ["ollama signin", "sign in", "signed in"]]
+    # Review 2026-10-23 (answers): the Codex page needs only ollama signin; an API key (the web search API's and
+    # the MCP server's requirement), ChatGPT Desktop's "v0.34.0 or newer" and OMP's plugin are other pages' requirements.
+    must_not_contain: ["OLLAMA_API_KEY", "API key", "v0.34.0 or newer installed", "web search plugin enabled"]
+    gold_answer: |
+      Run codex --profile ollama-launch -c 'web_search="disabled"'; web
+      search itself needs you signed in with ollama signin.
+
+  - id: q039
+    band: multi_hop
+    question: "How many Ollama models can you pick for ChatGPT Desktop, and how many web-search calls does it allow per response?"
+    pages: [integrations/chatgpt]
+    gold_entities: ["ChatGPT Desktop"]
+    answer_terms: [["five", "5"], ["three", "3"]]
+    # Review 2026-10-22: the swapped pair in digits ("up to 3 models ... 5 calls per response") passed.
+    must_not_contain: ["up to three models", "five calls per response", "up to 10 models", "up to 3 models", "5 calls per response"]
+    gold_answer: |
+      Up to five models; web search is limited to three calls per response.
+
+  - id: q040
+    band: multi_hop
+    question: "On Linux an AMD GPU is not detected, and the server log shows GPU discovery timing out after 30s. What is the usual cause, and how do you fix it?"
+    pages: [troubleshooting]
+    gold_entities: ["ROCm"]
+    # Verification 2026-10-22 (adversarial answer probes): "older than ROCm 7, upgrade to ROCm 7" failed a right answer.
+    # Review 2026-10-23 (answers): "the AMD driver is older than the ROCm v7 driver Ollama bundles" (the cause) failed
+    # the first group; "older than", a corpus phrase, and "outdated", a paraphrase, added.
+    answer_terms: [["too old", "ROCm 6", "older driver", "older than", "outdated"], ["amdgpu-install", "ROCm v7", "ROCm 7"]]
+    paraphrases: ["outdated"]
+    must_not_contain: ["downgrade to ROCm 6", "install ROCm 5"]
+    gold_answer: |
+      The AMD driver is too old (ROCm 6.x or earlier) for the bundled ROCm 7
+      libraries, so discovery hangs and Ollama falls back to CPU; upgrade to
+      the ROCm v7 driver with amdgpu-install, reboot and restart Ollama.
+
+  - id: q041
+    band: multi_hop
+    question: "When one System One request asks several questions, does one answer feed into the next, and how are input tokens counted when the questions are scored separately?"
+    pages: [api/post-v1-systemone]
+    gold_entities: ["/v1/systemone"]
+    # Review 2026-10-22: "answers aren't passed to later questions" failed the first term.
+    # Review 2026-10-23 (answers): "the answers do not feed into the next" / "are not fed into the next" (the
+    # question's own verb, negated) failed the first term; those spellings added as paraphrases. The verb is the
+    # question's, so the context must hold the text's sentence (evidence), or a rung without it is grounded by the question.
+    answer_terms: [["not passed", "aren't passed", "isn't passed", "do not feed", "does not feed", "don't feed", "doesn't feed", "not fed"], ["counted again"]]
+    paraphrases: ["aren't passed", "isn't passed", "do not feed", "does not feed", "don't feed", "doesn't feed", "not fed"]
+    evidence: ["not passed to later questions"]
+    gold_answer: |
+      Answers are not passed to later questions; the shared context is
+      counted again when the model scores questions separately.
+
+  - id: q042
+    band: multi_hop
+    question: "Through the API, which method and path delete a model, and which two fields does copying a model take?"
+    pages: [api/delete-api-delete, api/post-api-copy]
+    gold_entities: ["/api/delete", "/api/copy"]
+    answer_terms: [["/api/delete", "api/delete"], "source", "destination"]
+    gold_answer: |
+      DELETE /api/delete with the model name; POST /api/copy takes source
+      and destination.
+
+  - id: q043
+    band: multi_hop
+    question: "A streamed /api/generate response arrives in which content type, and in which chunk are the usage metrics?"
+    pages: [api/streaming, api/usage]
+    gold_entities: ["ndjson"]
+    # the grounded-answer policy's "X and Y" makes a bare 'x' read as a leaked name to its guard
+    # (test_answer_policy_examples), so the content type is matched by its 'ndjson' part
+    # Review 2026-10-22: "in the last chunk" and "the chunk with done: true" failed the second term.
+    answer_terms: [["ndjson", "newline-delimited JSON"], ["final chunk", "done is true", "done: true", "last chunk"]]
+    paraphrases: ["last chunk"]
+    # Review 2026-10-23 (answers): the wrong placement also comes as "usage metrics are included in each
+    # (streaming) chunk", stated beside the final chunk; two phrases added.
+    must_not_contain: ["in the first chunk", "every chunk includes the usage", "metrics are included in each chunk", "metrics are included in each streaming chunk"]
+    gold_answer: |
+      Newline-delimited JSON (application/x-ndjson); the usage fields come in
+      the final chunk, where done is true.
+
+  - id: q044
+    band: multi_hop
+    question: "VS Code shows a big context length for my local model, but long prompts still fail. What does the guide tell me to change, and what do I do afterwards?"
+    pages: [integrations/vscode]
+    gold_entities: ["VS Code", "context length"]
+    # Review 2026-10-22: "64,000" and the context-length page's "64000" failed the first term.
+    # Review 2026-10-23 (answers): "restart VS Code" is the reload step in other words (a paraphrase, beside the
+    # text's "reload the VS Code window"); "reload the model" in place of the window is the wrong step.
+    answer_terms: [["64k", "64000", "64,000"], ["reload", "reload the VS Code window", "restart VS Code"]]
+    paraphrases: ["64,000", "restart VS Code"]
+    must_not_contain: ["reload the model"]
+    gold_answer: |
+      Set the context length in Ollama Settings to at least 64k, then reload
+      the VS Code window and resend the prompt.
+
+  - id: q045
+    band: multi_hop
+    question: "ROCm does not support the Radeon RX 5400's target. Which override does the guide suggest to make it run, and with what value?"
+    pages: [gpu]
+    gold_entities: ["HSA_OVERRIDE_GFX_VERSION"]
+    answer_terms: ["HSA_OVERRIDE_GFX_VERSION", "10.3.0"]
+    # the RX 5400's own target is 10.3.4
+    # Verification 2026-10-22 (re-read against the corpus): "the RX 5400's own value of 10.3.4" is a right answer's aside; that phrase is gone.
+    must_not_contain: ["HSA_OVERRIDE_GFX_VERSION=10.3.4", "set it to 10.3.4"]
+    gold_answer: |
+      Set HSA_OVERRIDE_GFX_VERSION="10.3.0" for the server: the RX 5400 is
+      gfx1034, and the closest supported target is gfx1030.
+
+# ── FINE-GRAINED DISCRIMINATION ─────────────────────────────────────────────
+
+  - id: q046
+    band: fine_grained_discrimination
+    question: "Which environment variable lets additional web origins, such as browser extensions, make cross-origin requests to Ollama?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_ORIGINS"]
+    wrong_entities: ["OLLAMA_HOST"]
+    answer_terms: ["OLLAMA_ORIGINS"]
+    must_not_contain: ["set OLLAMA_HOST to allow", "OLLAMA_HOST controls which origins"]
+    gold_answer: |
+      OLLAMA_ORIGINS (for example chrome-extension://*); by default only
+      127.0.0.1 and 0.0.0.0 are allowed.
+
+  - id: q047
+    band: fine_grained_discrimination
+    question: "Which environment variable changes the address Ollama binds to, so that other machines can reach it?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_HOST"]
+    wrong_entities: ["OLLAMA_ORIGINS"]
+    answer_terms: ["OLLAMA_HOST"]
+    must_not_contain: ["OLLAMA_ORIGINS changes the bind", "set OLLAMA_ORIGINS to 0.0.0.0"]
+    gold_answer: |
+      OLLAMA_HOST, for example 0.0.0.0:11434.
+
+  - id: q048
+    band: fine_grained_discrimination
+    question: "To limit Ollama to a subset of your AMD GPUs under ROCm, which variable do you set?"
+    pages: [gpu]
+    gold_entities: ["ROCR_VISIBLE_DEVICES"]
+    wrong_entities: ["CUDA_VISIBLE_DEVICES", "GGML_VK_VISIBLE_DEVICES"]
+    answer_terms: ["ROCR_VISIBLE_DEVICES"]
+    must_not_contain: ["use CUDA_VISIBLE_DEVICES for AMD", "CUDA_VISIBLE_DEVICES for the AMD"]
+    gold_answer: |
+      ROCR_VISIBLE_DEVICES, a comma separated list; rocminfo lists the
+      devices, and the Uuid identifies one uniquely.
+
+  - id: q049
+    band: fine_grained_discrimination
+    question: "Which variable selects specific Vulkan GPUs on the Ollama server?"
+    pages: [gpu]
+    gold_entities: ["GGML_VK_VISIBLE_DEVICES"]
+    wrong_entities: ["ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVICES"]
+    answer_terms: ["GGML_VK_VISIBLE_DEVICES"]
+    must_not_contain: ["ROCR_VISIBLE_DEVICES selects Vulkan"]
+    gold_answer: |
+      GGML_VK_VISIBLE_DEVICES, set to one or more numeric IDs; OLLAMA_VULKAN=0
+      disables Vulkan.
+
+  - id: q050
+    band: fine_grained_discrimination
+    question: "Which parameter caps how many tokens the model generates in a reply, as opposed to how big its context window is?"
+    pages: [modelfile]
+    gold_entities: ["num_predict"]
+    wrong_entities: ["num_ctx"]
+    answer_terms: ["num_predict"]
+    # Review 2026-10-22: "num_ctx caps the context window instead" is a right answer's contrast; the wrong fact is
+    # num_ctx capping the generated tokens.
+    must_not_contain: ["num_ctx caps how many tokens", "num_ctx caps the reply", "num_ctx caps the number of tokens generated", "num_ctx limits the number of tokens generated"]
+    gold_answer: |
+      num_predict (default -1, infinite generation); num_ctx sets the
+      context window.
+
+  - id: q051
+    band: fine_grained_discrimination
+    # Review 2026-10-22: the question quoted the table's description; reworded as a user would ask.
+    question: "When a draft model is used for speculative decoding, which Modelfile parameter caps how many tokens it drafts at each step?"
+    pages: [modelfile]
+    gold_entities: ["draft_num_predict"]
+    wrong_entities: ["num_predict"]
+    answer_terms: ["draft_num_predict"]
+    # Review 2026-10-23 (answers): the right parameter given the neighbouring rows' numbers as its default
+    # (num_predict's example 42, top_k's default 40) states a wrong fact about it; the text gives 4.
+    must_not_contain: ["default value is 42", "default value is 40", "default is 42", "default is 40", "defaults to 42", "defaults to 40", "parameter is 42", "parameter is 40"]
+    gold_answer: |
+      draft_num_predict: separate draft models default to 4, and 0 disables
+      speculative drafting.
+
+  - id: q052
+    band: fine_grained_discrimination
+    question: "Which Modelfile parameter sets how far back the model looks to prevent repetition, as opposed to how strongly repeats are penalised?"
+    pages: [modelfile]
+    gold_entities: ["repeat_last_n"]
+    wrong_entities: ["repeat_penalty"]
+    answer_terms: ["repeat_last_n"]
+    must_not_contain: ["repeat_penalty sets how far back"]
+    gold_answer: |
+      repeat_last_n (default 64; 0 disables it and -1 means num_ctx).
+
+  - id: q053
+    band: fine_grained_discrimination
+    question: "Which sampling parameter drops tokens whose probability falls below a fraction of the most likely token's probability?"
+    pages: [modelfile]
+    gold_entities: ["min_p"]
+    wrong_entities: ["top_p", "top_k"]
+    answer_terms: ["min_p"]
+    gold_answer: |
+      min_p (default 0.0): with 0.05 and a most likely token at 0.9, logits
+      below 0.045 are filtered out.
+
+  - id: q054
+    band: fine_grained_discrimination
+    question: "On Ollama's native /api/chat endpoint, which request field turns a model's thinking output on or off?"
+    pages: [api/post-api-chat, capabilities/thinking]
+    gold_entities: ["think"]
+    wrong_entities: ["reasoning_effort"]
+    answer_terms: ["think"]
+    # Review 2026-10-23 (answers): equating the native endpoint with the Anthropic-compatible /v1/messages (whose
+    # field is thinking) gets the asked endpoint wrong.
+    must_not_contain: ["use reasoning_effort on /api/chat", "reasoning_effort field on /api/chat", "referred to as /v1/messages", "known as /v1/messages", "called /v1/messages", "api/chat (/v1/messages"]
+    gold_answer: |
+      think: true requests thinking, false requests none, null uses the
+      model default, and a string picks a model-defined level.
+
+  - id: q055
+    band: fine_grained_discrimination
+    question: "Which environment variable sets the quantization type of the K/V cache?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_KV_CACHE_TYPE"]
+    wrong_entities: ["OLLAMA_FLASH_ATTENTION"]
+    answer_terms: ["OLLAMA_KV_CACHE_TYPE"]
+    must_not_contain: ["OLLAMA_FLASH_ATTENTION sets the quantization"]
+    gold_answer: |
+      OLLAMA_KV_CACHE_TYPE (default f16); quantizing the cache needs Flash
+      Attention enabled.
+
+  - id: q056
+    band: fine_grained_discrimination
+    question: "Which K/V cache type uses about half the memory of f16?"
+    pages: [faq]
+    gold_entities: ["q8_0"]
+    wrong_entities: ["q4_0"]
+    answer_terms: ["q8_0"]
+    must_not_contain: ["q4_0 uses approximately 1/2", "q4_0 uses about half", "q4_0 halves"]
+    gold_answer: |
+      q8_0, 8-bit quantization; q4_0 uses about 1/4 of the memory.
+
+  - id: q057
+    band: fine_grained_discrimination
+    question: "Which setting caps how many different models can be loaded at the same time?"
+    pages: [faq]
+    gold_entities: ["OLLAMA_MAX_LOADED_MODELS"]
+    wrong_entities: ["OLLAMA_NUM_PARALLEL"]
+    answer_terms: ["OLLAMA_MAX_LOADED_MODELS"]
+    must_not_contain: ["OLLAMA_NUM_PARALLEL caps how many models"]
+    gold_answer: |
+      OLLAMA_MAX_LOADED_MODELS: by default 3 times the number of GPUs, or 3
+      for CPU inference.
+
+  - id: q058
+    band: fine_grained_discrimination
+    question: "Which proxy variable should Ollama be given so that it can pull models through a proxy?"
+    pages: [faq]
+    gold_entities: ["HTTPS_PROXY"]
+    wrong_entities: ["HTTP_PROXY"]
+    answer_terms: ["HTTPS_PROXY"]
+    # Review 2026-10-22: "HTTPS_PROXY; if you set HTTP_PROXY it may interrupt client connections" is a right answer
+    # that stated "set HTTP_PROXY"; a wrong answer that leads with HTTP_PROXY fails leads_with_gold, so the
+    # wrong facts left are the ones that add it beside the gold.
+    # Review 2026-10-23 (answers): "and HTTP_PROXY" caught the right "HTTPS_PROXY should be used and HTTP_PROXY should be
+    # avoided"; narrowed to the wrong fact itself, both variables named together as the ones to set.
+    must_not_contain: ["use HTTP_PROXY", "or HTTP_PROXY", "HTTPS_PROXY and HTTP_PROXY", "HTTP_PROXY and HTTPS_PROXY"]
+    gold_answer: |
+      HTTPS_PROXY: Ollama pulls models only over HTTPS, and setting
+      HTTP_PROXY may interrupt client connections to the server.
+
+  - id: q059
+    band: fine_grained_discrimination
+    question: "With a decision model in ollama run, which flag scores a question on an ordered scale instead of choosing a label?"
+    pages: [capabilities/decision, cli]
+    gold_entities: ["--level"]
+    wrong_entities: ["--choice"]
+    answer_terms: [["--level"]]
+    must_not_contain: ["use --choice to score"]
+    gold_answer: |
+      --level, repeated from the lowest level to the highest.
+
+  - id: q060
+    band: fine_grained_discrimination
+    # Review 2026-10-22: the question quoted the question-type table; reworded.
+    question: "For a yes/no style decision question, which System One question type gives back a single probability between 0 and 1?"
+    pages: [capabilities/decision]
+    gold_entities: ["noul"]
+    wrong_entities: ["score", "choice"]
+    answer_terms: ["noul"]
+    gold_answer: |
+      noul: its criteria describe false and true, and the result is the
+      probability of true.
+
+  - id: q061
+    band: fine_grained_discrimination
+    question: "Which API endpoint lists the models that are currently loaded into memory?"
+    pages: [api/get-api-ps]
+    gold_entities: ["/api/ps"]
+    wrong_entities: ["/api/tags"]
+    answer_terms: [["/api/ps", "api/ps"]]
+    must_not_contain: ["api/tags lists the models currently loaded", "api/tags lists running"]
+    gold_answer: |
+      GET /api/ps.
+
+  - id: q062
+    band: fine_grained_discrimination
+    question: "Which ollama launch codex flag removes the Ollama launch profile and the generated model catalog?"
+    pages: [integrations/codex]
+    gold_entities: ["--restore"]
+    wrong_entities: ["--config"]
+    answer_terms: [["--restore"]]
+    must_not_contain: ["use --config to remove"]
+    gold_answer: |
+      --restore.
+
+  - id: q063
+    band: fine_grained_discrimination
+    question: "When you connect Claude Code straight to ollama.com, which variable carries your Ollama API key for bearer authentication?"
+    pages: [integrations/claude-code]
+    gold_entities: ["ANTHROPIC_AUTH_TOKEN"]
+    wrong_entities: ["ANTHROPIC_API_KEY"]
+    answer_terms: ["ANTHROPIC_AUTH_TOKEN"]
+    # Review 2026-10-23 (answers): "the variable is OLLAMA_API_KEY" answers with the shell variable the key is first
+    # set in, not the one Claude Code sends as the bearer token (ANTHROPIC_AUTH_TOKEN=$OLLAMA_API_KEY).
+    must_not_contain: ["set ANTHROPIC_API_KEY to your Ollama API key", "ANTHROPIC_API_KEY=$OLLAMA_API_KEY", "variable is OLLAMA_API_KEY", "ollama.com is OLLAMA_API_KEY"]
+    gold_answer: |
+      ANTHROPIC_AUTH_TOKEN, set to $OLLAMA_API_KEY, with ANTHROPIC_BASE_URL
+      pointing at https://ollama.com and ANTHROPIC_API_KEY left empty.
+
+  - id: q064
+    band: fine_grained_discrimination
+    question: "What minimum context window does the guide for the Cline IDE extension recommend for coding?"
+    pages: [integrations/cline]
+    gold_entities: ["32K"]
+    wrong_entities: ["64k"]
+    answer_terms: [["32K", "32000"]]
+    must_not_contain: ["Cline needs 64k", "Cline requires 64k", "Cline recommends 64k"]
+    gold_answer: |
+      At least 32K tokens, set under Context Window.
+
+  - id: q065
+    band: fine_grained_discrimination
+    question: "On macOS, which log file holds the most recent server logs, as opposed to the GUI application's?"
+    pages: [macos]
+    gold_entities: ["server.log"]
+    wrong_entities: ["app.log"]
+    answer_terms: ["server.log"]
+    must_not_contain: ["app.log contains the most recent server logs", "app.log holds the server"]
+    gold_answer: |
+      server.log, in ~/.ollama/logs; app.log holds the GUI application's.
+
+# ── OUT OF SCOPE ────────────────────────────────────────────────────────────
+# Every decoy is absent from the corpus; the test suite checks it.
+
+  - id: q066
+    band: out_of_scope
+    question: "Who founded Ollama?"
+    pages: [index]
+    decoy_entities: ["Jeffrey Morgan", "Jeff Morgan", "Michael Chiang"]
+    expect_refusal: true
+
+  - id: q067
+    band: out_of_scope
+    question: "How do you apply a LoRA adapter on top of a base model in a Modelfile?"
+    pages: [modelfile]
+    # false premise for this release: the instruction table has no adapter instruction
+    decoy_entities: ["ADAPTER ./", "ADAPTER /", "ADAPTER <"]
+    must_not_contain: ["use the ADAPTER instruction", "add an ADAPTER instruction"]
+    expect_refusal: true
+
+  - id: q068
+    band: out_of_scope
+    question: "What does Ollama's Pro cloud plan cost per month?"
+    pages: [cloud]
+    decoy_entities: ["$20", "20 dollars", "$100/month", "$100 a month"]
+    must_not_contain: ["Pro plan costs"]
+    expect_refusal: true
+
+  - id: q069
+    band: out_of_scope
+    question: "Which setting controls how many CPU threads Ollama uses for inference?"
+    pages: [modelfile, faq]
+    decoy_entities: ["num_thread", "OLLAMA_NUM_THREAD", "OLLAMA_NUM_THREADS"]
+    expect_refusal: true
+
+  - id: q070
+    band: out_of_scope
+    question: "How do you enable TLS on the Ollama server itself, with a certificate and key file?"
+    pages: [faq]
+    # the FAQ only puts a proxy such as Nginx in front of the plain HTTP server
+    decoy_entities: ["OLLAMA_TLS_CERT", "OLLAMA_TLS_KEY", "--tls-cert", "OLLAMA_CERT_FILE"]
+    # Review 2026-10-23 (answers): a decline that first walks through pointing the server at the certificate and
+    # key (a config file, a restart) accepts the false premise and answers from memory.
+    must_not_contain: ["Ollama supports TLS natively", "serves HTTPS directly", "server to use the certificate", "server to use these files", "server configuration file"]
+    expect_refusal: true
+
+  - id: q071
+    band: out_of_scope
+    question: "What rate limit, in requests per minute, applies to chat requests against ollama.com's hosted /api/chat?"
+    pages: [api/cloud-usage, api/errors]
+    # 10 per minute is the usage and balance endpoints' limit, not chat's
+    decoy_entities: ["60 requests per minute", "20 requests per minute", "100 requests per minute"]
+    must_not_contain: ["api/chat allows 10 requests per minute", "chat requests are limited to 10", "chat is limited to 10 requests"]
+    expect_refusal: true
+
+  - id: q072
+    band: out_of_scope
+    question: "Which compute capability does Ollama's NVIDIA table list for the B200 data-center GPU?"
+    pages: [gpu]
+    decoy_entities: ["10.0", "capability 10"]
+    # Review 2026-10-23 (answers): "B200 is not named, but as a Blackwell card it sits in the same compute capability
+    # tier (12.0)" declines and then answers from memory; the inference is the wrong statement.
+    must_not_contain: ["B200 is listed under", "placing the B200", "same compute capability tier"]
+    expect_refusal: true
+
+  - id: q073
+    band: out_of_scope
+    question: "Which Intel Arc graphics cards are on Ollama's list of supported GPUs?"
+    pages: [gpu]
+    decoy_entities: ["A770", "A750", "A380", "B580"]
+    expect_refusal: true
+
+  - id: q074
+    band: out_of_scope
+    question: "Which Helm chart does Ollama publish for deploying it on Kubernetes?"
+    pages: [docker]
+    decoy_entities: ["otwld", "ollama-helm", "helm install"]
+    expect_refusal: true
+
+  - id: q075
+    band: out_of_scope
+    question: "What is the default value of OLLAMA_LOAD_TIMEOUT?"
+    pages: [faq]
+    # 5 minutes is the keep-alive default, which the corpus does state
+    decoy_entities: ["5m0s"]
+    must_not_contain: ["OLLAMA_LOAD_TIMEOUT defaults to 5 minutes", "default load timeout is 5 minutes", "OLLAMA_LOAD_TIMEOUT is 5m"]
+    expect_refusal: true
+
+  - id: q076
+    band: out_of_scope
+    question: "Which ollama pull option limits the download bandwidth?"
+    pages: [cli, api/post-api-pull]
+    decoy_entities: ["--max-bandwidth", "--limit-rate", "--rate-limit", "OLLAMA_MAX_DOWNLOAD"]
+    expect_refusal: true
+
+  - id: q077
+    band: out_of_scope
+    question: "Which Ollama command fine-tunes a model on my own dataset?"
+    pages: [cli]
+    decoy_entities: ["ollama train", "ollama finetune", "ollama fine-tune", "ollama tune"]
+    # Review 2026-10-23 (answers): a decline that then offers ollama create / POST /api/create as the way
+    # to fine-tune ("could involve fine-tuning") guesses an answer; the hedged forms, as models state them
+    # (modal-led, so a plain "none of them involve fine-tuning" is not caught).
+    must_not_contain: ["could involve fine-tuning", "might involve fine-tuning", "may involve fine-tuning", "could involve aspects of fine-tuning", "might involve aspects of fine-tuning", "would be used when fine-tuning"]
+    expect_refusal: true
+
+  - id: q078
+    band: out_of_scope
+    question: "In what year was Ollama first released?"
+    pages: [index]
+    # '2023-06-01' in the corpus is an anthropic-version header value
+    decoy_entities: ["in 2023", "July 2023", "June 2023"]
+    expect_refusal: true
+
+  - id: q079
+    band: out_of_scope
+    question: "Which environment variable turns on Ollama's Prometheus metrics endpoint?"
+    pages: [faq]
+    decoy_entities: ["/metrics", "OLLAMA_METRICS", "OLLAMA_PROMETHEUS"]
+    expect_refusal: true
+
+  - id: q080
+    band: out_of_scope
+    question: "Which Windows Server editions does Ollama officially support?"
+    pages: [windows]
+    # the requirements name Windows 10 22H2 or newer, Home or Pro
+    # Review 2026-10-23 (answers): a right decline names "Server 2019, Server 2022" as what the sources lack, and a
+    # decoy is matched even when negated; the short forms move to must_not_contain, which reads the negation.
+    decoy_entities: ["Windows Server 2019", "Windows Server 2022", "Server 2025"]
+    must_not_contain: ["Server 2019", "Server 2022"]
+    expect_refusal: true
+
+# ── GRAPH ADVANTAGE ─────────────────────────────────────────────────────────
+# The leaderboard's "Where the graph matters" comparison, as in Book One:
+# questions written in advance to need what a graph provides, answered under
+# the three retrieval rungs and reported by kind; never counted in the chat
+# column.
+#
+# kind: cross_chapter_join - the answer joins facts stated on different
+#   pages; relationship_path - how two things connect through a third (a
+#   tool through an API, a setting through another); cast_aggregate - which
+#   settings, endpoints or integrations share a property; disambiguation -
+#   one name or setting with different meanings or places (context length as
+#   an environment variable, a Modelfile parameter and an API option; two
+#   defaults; two names for one model).
+#
+# Keep rule (fixed before any candidate is run, as for Book One): a
+# candidate is dropped only when no rung retrieves its answer terms, never
+# because a baseline wins it. Apply it with
+#   uv run python internal/benchmarks/tools/retrieval_mode_check.py
+#       ollama_docs --candidates
+# once the pack exists, then remove `candidate: true` from the kept ones and
+# record the counts here. Applied 2026-10-22 on ollama_docs-v1-technical (build
+# 482490c62): 40 candidates, keep 37, drop 3 (q092, q105, q107: no rung
+# retrieves their answer terms); kept per kind: cross_chapter_join 10,
+# relationship_path 9, cast_aggregate 8, disambiguation 10. Written 2026-10-22: 40 candidates, 10 per kind,
+# none run yet.
+
+  # cross_chapter_join
+
+  - id: q081
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "OpenClaw needs a bigger context window with local models. What size does its page recommend, and how would you make that the server-wide default when starting Ollama from the command line?"
+    pages: [integrations/openclaw, context-length]
+    gold_entities: ["OpenClaw", "OLLAMA_CONTEXT_LENGTH"]
+    # Review 2026-10-22: "64,000 tokens" failed the first term.
+    answer_terms: [["64k", "64000", "64,000"], "OLLAMA_CONTEXT_LENGTH"]
+    paraphrases: ["64,000"]
+    # Review 2026-10-23 (answers): the size is asked of OpenClaw's page; a context without that page's
+    # sentence (naive) reaches 64000 only through the context-length page's general guidance for agents.
+    evidence: ["at least 64k tokens if using local models"]
+    # Review 2026-10-23 (answers): the context-length page's 8K example (OLLAMA_CONTEXT_LENGTH=8192 ollama
+    # serve) offered as the way to make 64k the default, unlabelled or called 64k, is the wrong command.
+    must_not_contain: ["OpenClaw needs 32k", "at least 32k for OpenClaw", "variable to 8192", "set it to 8192", "for example: OLLAMA_CONTEXT_LENGTH=8192", "by running OLLAMA_CONTEXT_LENGTH=8192", "window size, use: OLLAMA_CONTEXT_LENGTH=8192", "window size, use the command OLLAMA_CONTEXT_LENGTH=8192", "or higher, for example, OLLAMA_CONTEXT_LENGTH=8192"]
+    gold_answer: |
+      At least 64k tokens; start the server with
+      OLLAMA_CONTEXT_LENGTH=64000 ollama serve.
+
+  - id: q082
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "On a Linux service install, where is the Ollama Public Key file, and which command in the Linux guide creates the account whose home directory holds it?"
+    pages: [faq, linux]
+    gold_entities: ["id_ed25519.pub", "useradd"]
+    answer_terms: [["/usr/share/ollama/.ollama/id_ed25519.pub"], ["useradd"]]
+    must_not_contain: ["key is at ~/.ollama/id_ed25519.pub on Linux", "key is in ~/.ollama on Linux"]
+    gold_answer: |
+      /usr/share/ollama/.ollama/id_ed25519.pub; the home directory
+      /usr/share/ollama belongs to the ollama user, created with sudo useradd
+      -r -s /bin/false -U -m -d /usr/share/ollama ollama.
+
+  - id: q083
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Which Modelfile instruction declares that GGUF weights are a decision model, and which endpoint do you then send typed questions to?"
+    pages: [modelfile, api/post-v1-systemone]
+    gold_entities: ["CAPABILITY", "/v1/systemone"]
+    # Review 2026-10-23 (answers): the instruction asked for is CAPABILITY ("decision" is the question's own word);
+    # "the CAPABILITY instruction ... the decision capability" failed the literal line. CAPABILITY alone is the member;
+    # it is case-folded ("the decision capability"), so the neighbouring instructions named as the one are wrong facts.
+    answer_terms: [["CAPABILITY decision", "CAPABILITY"], ["/v1/systemone", "v1/systemone"]]
+    must_not_contain: ["REQUIRES decision", "PARAMETER decision", "REQUIRES instruction", "PARAMETER instruction", "instruction is REQUIRES", "instruction is PARAMETER"]
+    gold_answer: |
+      CAPABILITY decision, only for weights trained for System One's decision
+      prompts; then POST /v1/systemone.
+
+  - id: q084
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Claude Code reaches Ollama through one of its compatibility APIs. Which one, and which token-counting endpoint of the original API does that compatibility layer not support?"
+    pages: [integrations/claude-code, api/anthropic-compatibility]
+    gold_entities: ["Anthropic compatibility", "/v1/messages/count_tokens"]
+    answer_terms: ["Anthropic", ["count_tokens", "/v1/messages/count_tokens"]]
+    must_not_contain: ["through its OpenAI-compatible API"]
+    gold_answer: |
+      The Anthropic-compatible API (the Messages API); /v1/messages/count_tokens
+      is not supported.
+
+  - id: q085
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Copilot CLI's manual setup sets its wire API to responses. In which Ollama version was that API added, and does Ollama support stateful requests on it?"
+    pages: [integrations/copilot-cli, api/openai-compatibility]
+    gold_entities: ["Responses API", "COPILOT_PROVIDER_WIRE_API"]
+    # Review 2026-10-22: "stateful requests aren't supported" failed the second term.
+    # Review 2026-10-23 (answers): "Ollama does not support stateful requests on it" failed the second term;
+    # "does not support stateful" is a phrase of the text, "doesn't support stateful" its contraction.
+    answer_terms: [["v0.13.3", "0.13.3"], ["non-stateful", "stateless", "not supported", "aren't supported", "isn't supported", "does not support stateful", "doesn't support stateful"]]
+    paraphrases: ["isn't supported", "doesn't support stateful"]
+    must_not_contain: ["previous_response_id is supported", "supports previous_response_id", "supports stateful requests"]
+    gold_answer: |
+      The Responses API was added in Ollama v0.13.3; only the non-stateful
+      flavor is supported, with no previous_response_id or conversation.
+
+  - id: q086
+    band: graph_advantage
+    kind: cross_chapter_join
+    # Review 2026-10-22: "put OLLAMA_API_KEY in the api_key field of ~/.factory/config.json" is the Droid page's own
+    # answer to "how must the key be sent" and failed; the question now asks for the HTTP header.
+    # "API keys don't expire" failed the second term.
+    question: "Droid's ollama.com configuration sends requests straight to https://ollama.com/v1/. In which HTTP header does ollama.com expect the API key, and does the key expire?"
+    pages: [integrations/droid, api/authentication]
+    gold_entities: ["Droid", "API key"]
+    # Review 2026-10-23 (answers): "the key does not expire" (singular, or bold-split "does **not expire**") failed the
+    # plural-only term; "the x-api-key header alone is not supported" (the text's own contrast) met "api-key header",
+    # now the wrong fact as stated: the key sent in that header (alone, or as the other endpoint's header).
+    answer_terms: [["Bearer"], ["do not expire", "don't expire", "never expire", "does not expire", "doesn't expire", "not expire"]]
+    paraphrases: ["don't expire", "never expire", "does not expire", "doesn't expire"]
+    must_not_contain: ["in the x-api-key header", "in an x-api-key header", "or the x-api-key header", "the header is x-api-key", "keys expire after"]
+    gold_answer: |
+      In the Authorization: Bearer header; API keys do not expire, and you
+      revoke them in API keys settings.
+
+  - id: q087
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "NemoClaw needs Ollama to be reachable from its sandbox. Which variable does its page say to set, and how does the FAQ say to set such a variable for the macOS app?"
+    pages: [integrations/nemoclaw, faq]
+    gold_entities: ["OLLAMA_HOST", "launchctl"]
+    answer_terms: ["OLLAMA_HOST", "launchctl"]
+    # Review 2026-10-23 (answers): "the FAQ does not say; you would typically set it in your shell configuration file
+    # (like .zshrc or .bashrc) or use launchctl" passed; a shell rc file is the remembered wrong way for the macOS app.
+    must_not_contain: ["export OLLAMA_HOST in ~/.zshrc", "zshrc", "bashrc", "bash_profile", "shell configuration file", "shell's configuration file"]
+    gold_answer: |
+      OLLAMA_HOST=0.0.0.0; for the macOS application, run launchctl setenv
+      OLLAMA_HOST "0.0.0.0:11434" and restart the app.
+
+  - id: q088
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Is the Radeon RX 6800 on Ollama's list of AMD cards supported by ROCm on Windows, and what does the Windows page recommend for such RDNA2 cards?"
+    pages: [gpu, windows]
+    gold_entities: ["Radeon RX 6800", "Vulkan"]
+    # Review 2026-10-23 (answers): part one (the "no") had no term, so "the RX 6800 is in the AMD Radeon RX table;
+    # Vulkan is the fallback" passed without answering it; a term for the absence (or the Windows list's 7900 XTX) added.
+    answer_terms: [["7900 XTX", "not on", "isn't on", "not listed", "isn't listed", "not explicitly listed", "not included", "isn't included", "not in the Windows", "not part of", "absent", "does not appear", "doesn't appear", "does not list", "doesn't list", "not supported by ROCm on Windows", "not supported via ROCm on Windows", "not explicitly supported"], "Vulkan"]
+    paraphrases: ["not on", "isn't on", "not listed", "isn't listed", "not explicitly listed", "not included", "not in the Windows", "not part of", "absent", "does not appear", "doesn't appear", "does not list", "doesn't list", "not supported by ROCm on Windows", "not supported via ROCm on Windows", "not explicitly supported"]
+    # Review 2026-10-23 (answers): "not (explicitly) listed / included in the context's Windows table" is the answer
+    # (absence from a list the context holds), not a decline: the list words are caveats.
+    caveats: ["listed", "included in", "does not list", "rocm on windows"]
+    # the RX 6800 is on the Linux ROCm list, not the Windows one
+    # Review 2026-10-22: "Yes, it is. The Windows page recommends Vulkan for RDNA2 cards" passed: the one term is
+    # the recommendation, so the yes has to be a wrong fact in its other spellings too.
+    # Review 2026-10-23 (answers): "on the Windows ROCm list" caught the restated question heading ("Is the RX 6800
+    # on the Windows ROCm list?") before a right "No"; narrowed to "is on". The yes in its other spellings added.
+    must_not_contain: ["6800 is on the Windows", "6800 is supported by ROCm on Windows", "6800 is supported on Windows", "Yes, the RX 6800", "Yes, the Radeon", "Yes. The Radeon", "Yes, it is", "Yes it is", "is on the Windows ROCm list", "is on the Windows list", "6800 is on Ollama's list", "it is supported by ROCm on Windows", "6800 is listed among", "listed as supported by ROCm on Windows", "appears in Ollama's Windows"]
+    gold_answer: |
+      No: the Windows ROCm list covers the RX 7600 to 7900 XTX and the Radeon
+      PRO W7500 to W7900. RDNA2 / RX 6000 systems may not expose ROCm v7 on
+      current Windows drivers, so Vulkan, enabled by default, is the
+      recommended fallback.
+
+  - id: q089
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "If you leave keep_alive out of a /v1/systemone request, how long does the model stay loaded, and which server variable changes that default?"
+    pages: [api/post-v1-systemone, faq]
+    gold_entities: ["keep_alive", "OLLAMA_KEEP_ALIVE"]
+    # Review 2026-10-22: "five minutes" failed the first term.
+    answer_terms: [["5m", "5 minutes", "five minutes"], "OLLAMA_KEEP_ALIVE"]
+    paraphrases: ["five minutes"]
+    must_not_contain: ["unloads immediately by default"]
+    gold_answer: |
+      The server's keep-alive setting, 5m unless configured otherwise;
+      OLLAMA_KEEP_ALIVE changes it for all models when the server starts.
+
+  - id: q090
+    band: graph_advantage
+    kind: cross_chapter_join
+    question: "Which /api/embed request field asks for a shorter vector, and how are the vectors that endpoint returns normalised?"
+    pages: [api/post-api-embed, capabilities/embeddings]
+    gold_entities: ["dimensions", "/api/embed"]
+    # Review 2026-10-22: "L2 normalised to unit length" (no hyphens, British spelling) failed the second term.
+    answer_terms: ["dimensions", ["L2-normalized", "unit-length", "L2"]]
+    # Review 2026-10-23 (answers): the text gives dimensions as "Number of dimensions to generate embeddings for",
+    # never saying it controls the length: a caveat; "there is no field, the length is fixed by the model" is the wrong fact.
+    caveats: ["controls the length"]
+    must_not_contain: ["vectors are not normalized", "no specific field", "length is fixed by the model", "no field that"]
+    gold_answer: |
+      dimensions; /api/embed returns L2-normalized (unit-length) vectors.
+
+  # relationship_path
+
+  - id: q091
+    band: graph_advantage
+    kind: relationship_path
+    question: "When you start Claude Code with ollama launch and pick a cloud model, how does the request get from Claude Code to Ollama's cloud?"
+    pages: [integrations/claude-code, api/anthropic-compatibility, api/authentication]
+    gold_entities: ["Claude Code", "Anthropic compatibility", "ollama signin"]
+    # Verification 2026-10-22 (adversarial answer probes): "with the server signed in" failed a right answer.
+    # Review 2026-10-22: "through Ollama's Anthropic Messages API" failed the first term.
+    # Review 2026-10-23 (answers): the text's own "Ollama handles sign-in" (hyphenated) failed the second term,
+    # and so did "Ollama handles/manages the authentication" for it (paraphrases, listed). The direct-API
+    # path (sign in or create an account and create an API key) is the wrong route for it.
+    answer_terms: [["Anthropic-compatible", "Anthropic compatibility", "Anthropic Messages API", "Anthropic API"], ["sign in", "signin", "signed-in", "signed in", "sign-in", "handles the authentication", "manages authentication", "connection and authentication"]]
+    paraphrases: ["handles the authentication", "manages authentication", "connection and authentication"]
+    must_not_contain: ["through the OpenAI-compatible API", "sign in or create an account", "and create an API key"]
+    gold_answer: |
+      Claude Code talks to the local Ollama server's Anthropic-compatible
+      API; a server signed in to Ollama (ollama signin) authenticates the
+      cloud model's requests for it.
+
+
+  - id: q093
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22: one sentence of the NemoClaw page answered the whole question, so it needed no second
+    # place; it now also asks what OpenClaw itself is (the OpenClaw page). "a security layer around
+    # OpenClaw" failed the second term.
+    # Review 2026-10-23 (answers): the question does not ask for the runtime, so "NVIDIA's security stack for
+    # OpenClaw" without OpenShell is a whole answer (ten right answers failed); OpenShell is now one way to
+    # state the relation, and "security component" (a paraphrase) another. A bare "NemoClaw wraps
+    # OpenClaw" says nothing of what it adds, so "wraps" no longer meets the term alone.
+    question: "How is NemoClaw related to OpenClaw, and what is OpenClaw itself for?"
+    pages: [integrations/nemoclaw, integrations/openclaw]
+    gold_entities: ["NemoClaw", "OpenClaw", "OpenShell"]
+    answer_terms: [["security stack", "security layer", "security component", "OpenShell"], ["personal AI assistant", "personal assistant", "messaging"]]
+    paraphrases: ["security layer", "security component"]
+    must_not_contain: ["NemoClaw is the new name of OpenClaw", "OpenClaw was previously called NemoClaw"]
+    gold_answer: |
+      NemoClaw is NVIDIA's open source security stack for OpenClaw: it wraps
+      OpenClaw with the NVIDIA OpenShell runtime for kernel-level sandboxing,
+      network policy controls and audit trails. OpenClaw is a personal AI
+      assistant that bridges messaging services such as WhatsApp, Telegram,
+      Slack and Discord to AI coding agents.
+
+  - id: q094
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22: the Hermes Desktop page alone answered both parts; the second part now asks the Hermes
+    # Agent page's fact. "a desktop front end for Hermes Agent" failed the first term.
+    question: "What is Hermes Desktop's relationship to Hermes Agent, and how many skills does the agent ship with by default?"
+    pages: [integrations/hermes-desktop, integrations/hermes]
+    gold_entities: ["Hermes Desktop", "Hermes Agent"]
+    answer_terms: [["chat interface", "interface for Hermes Agent", "front end", "desktop app for Hermes Agent"], ["70+", "more than 70", "over 70"]]
+    paraphrases: ["front end", "desktop app for Hermes Agent", "more than 70", "over 70"]
+    must_not_contain: ["Hermes Desktop replaces Hermes Agent"]
+    gold_answer: |
+      Hermes Desktop is Nous Research's native desktop chat interface for
+      Hermes Agent (its installer installs both, and it shares the CLI's
+      sessions, skills and memory); Hermes Agent ships with 70+ skills by
+      default.
+
+  - id: q095
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22: the ChatGPT page alone answered both parts, and "ChatGPT Desktop includes Codex; Ollama's
+    # models appear in Codex's model picker" failed the "Codex mode" term; the question now also asks
+    # the terminal counterpart's launch command (the Codex CLI page).
+    question: "How is ChatGPT Desktop connected to Codex in Ollama's docs, where do Ollama's models appear in it, and how do you start the terminal version of Codex with Ollama?"
+    pages: [integrations/chatgpt, integrations/codex]
+    gold_entities: ["ChatGPT Desktop", "Codex"]
+    answer_terms: [["includes Codex", "Codex mode", "desktop coding agent"], ["model picker"], ["ollama launch codex"]]
+    must_not_contain: ["Ollama models are available in regular Chat", "Ollama models work in voice"]
+    gold_answer: |
+      ChatGPT Desktop includes Codex, OpenAI's desktop coding agent; Ollama
+      adds its models to Codex's model picker, for Codex mode only. The
+      terminal counterpart, Codex CLI, starts with ollama launch codex.
+
+  - id: q096
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22 (second pass): both facts were in one FAQ section; the question now starts from the context-length
+    # page's VRAM default and follows it to the FAQ's cache settings (VRAM -> default context -> K/V cache
+    # -> Flash Attention).
+    question: "On a GPU with 16 GiB of VRAM, what context length does Ollama pick by default, and which server settings let a longer context fit by shrinking the K/V cache?"
+    pages: [context-length, faq]
+    gold_entities: ["context length", "OLLAMA_KV_CACHE_TYPE", "Flash Attention"]
+    answer_terms: [["4k", "4096"], "OLLAMA_KV_CACHE_TYPE", ["Flash Attention", "OLLAMA_FLASH_ATTENTION"]]
+    # Review 2026-10-23 (answers): f16 is the default cache type, so offering it as the smaller type that shrinks the
+    # cache ("a lower precision, such as f16", "types like f16 to reduce memory") is a wrong value of the asked setting.
+    must_not_contain: ["16 GiB gets 32k", "32k context on 16 GiB", "16 GiB of VRAM defaults to 32k", "OLLAMA_FLASH_ATTENTION=0 forces", "such as f16", "like f16"]
+    gold_answer: |
+      A 4k context: under 24 GiB of VRAM Ollama defaults to 4k. Set
+      OLLAMA_KV_CACHE_TYPE to q8_0 (about half the memory of f16) or q4_0; the
+      cache is quantized only when Flash Attention is enabled, and
+      OLLAMA_FLASH_ATTENTION=1 forces it on.
+
+  - id: q097
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22 (second pass): the answer sat in one FAQ paragraph; the question now follows the other setting to
+    # the context-length page, which is the only page with the app's slider.
+    question: "Raising OLLAMA_NUM_PARALLEL multiplies memory use through which other setting, and besides that environment variable, where does the context-length page let you change the context length?"
+    pages: [faq, context-length]
+    gold_entities: ["OLLAMA_NUM_PARALLEL", "OLLAMA_CONTEXT_LENGTH"]
+    # (The first pass's memory-wording group is gone: the setting's name answers the first part, so a
+    # right answer's wording of the scaling cannot fail it.)
+    # Review 2026-10-23 (answers): "in the Ollama app under settings" (the page's own words) and "the Ollama app's settings"
+    # name the page's place without the word slider; the text's phrase and that paraphrase joined the group.
+    answer_terms: ["OLLAMA_CONTEXT_LENGTH", ["slider", "app under settings", "app's settings"]]
+    paraphrases: ["app's settings"]
+    must_not_contain: ["does not affect memory", "OLLAMA_MAX_LOADED_MODELS multiplies"]
+    gold_answer: |
+      Required RAM scales by OLLAMA_NUM_PARALLEL * OLLAMA_CONTEXT_LENGTH:
+      parallel processing increases the context size by the number of
+      parallel requests. Besides the variable, the context-length page has
+      you change the slider in the Ollama app's settings.
+
+  - id: q098
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22: the web search page alone answered it; the question now also asks how Cline itself is
+    # pointed at Ollama (the Cline page), a second place.
+    question: "How is the Cline editor extension pointed at Ollama, and how can it then use Ollama's web search?"
+    pages: [capabilities/web-search, integrations/cline]
+    gold_entities: ["Cline", "MCP server", "web search"]
+    answer_terms: [["API Provider"], ["MCP server", "MCP"], "OLLAMA_API_KEY"]
+    gold_answer: |
+      In Cline settings > API Configuration, set API Provider to Ollama. For web
+      search, add the Python MCP server: Manage MCP Servers > Configure MCP
+      Servers, a stdio server that runs web-search-mcp.py with uv, with
+      OLLAMA_API_KEY in its env.
+
+  - id: q099
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22 (second pass): the answer sat in one Codex paragraph; the question now also asks what calling the web
+    # search API directly needs instead, which the web search page states (an API key, a free account).
+    question: "With a local model in Codex through the Ollama profile, what actually performs the web searches and what does that require, and what would you need instead to call Ollama's web search API yourself?"
+    pages: [integrations/codex, capabilities/web-search]
+    gold_entities: ["Codex", "web-search service"]
+    # Verification 2026-10-22 (adversarial answer probes): "Ollama's web search" (no hyphenated "service") failed a right answer.
+    # Review 2026-10-22: "the searches are executed by Ollama itself" failed the first term.
+    # Review 2026-10-23 (answers): the Codex page's own "requires Ollama sign-in" failed the second term ("sign-in" added);
+    # "api key" is written in lower case so an answer's "API key" is grounded by the context's OLLAMA_API_KEY (the
+    # whole group), not by the two-word phrase alone.
+    answer_terms: [["web-search service", "Ollama's web search", "executed by Ollama", "by Ollama"], ["ollama signin", "sign in", "sign-in"], ["api key", "OLLAMA_API_KEY"]]
+    must_not_contain: ["the local model searches the web itself", "OpenAI performs the searches", "the web search API needs no key", "no API key is needed"]
+    gold_answer: |
+      Ollama executes Codex's web-search requests, for local and cloud models
+      alike, through its web-search service; you need to sign in with ollama
+      signin. Calling the web search API yourself needs an API key (a free
+      Ollama account), sent in the Authorization header or set as
+      OLLAMA_API_KEY.
+
+  - id: q100
+    band: graph_advantage
+    kind: relationship_path
+    # Review 2026-10-22 (second pass): the marimo page alone answered it; the question now also asks which of Ollama's APIs
+    # its base URL is, which the API introduction's base-URL table states (http://localhost:11434/v1 is
+    # OpenAI compatibility).
+    question: "marimo's page points it at http://localhost:11434/v1 for local use. Which of Ollama's APIs is that, and how does marimo then get to use a model hosted on ollama.com?"
+    pages: [integrations/marimo, api/introduction]
+    gold_entities: ["marimo", "ollama signin", "OpenAI compatibility"]
+    # Verification 2026-10-22 (adversarial answer probes): "add the hosted model in marimo's AI settings" failed a right answer.
+    # Review 2026-10-23 (answers): "sign in to Ollama's cloud" (the step's own words, without the command) and "add the
+    # cloud model to the settings" are the gold steps; pointing marimo at https://ollama.com/v1 is the wrong mechanism.
+    answer_terms: [["OpenAI compatibility", "OpenAI-compatible", "OpenAI compatible"], ["ollama signin", "sign in to Ollama's cloud", "signing in to Ollama's cloud"], ["model settings", "add a model", "gpt-oss:120b", "model to the settings"]]
+    paraphrases: ["signing in to Ollama's cloud", "model to the settings"]
+    must_not_contain: ["Anthropic-compatible API", "the native Ollama API at /v1", "pointing to the cloud base URL", "point at the cloud base URL", "point to the cloud base URL", "connects to https://ollama.com/v1"]
+    gold_answer: |
+      It is the OpenAI compatibility API. Sign in to Ollama's cloud with
+      ollama signin, then add a model that Ollama hosts, such as
+      gpt-oss:120b, in the Ollama model settings, and refer to it in marimo.
+
+  # cast_aggregate
+
+  - id: q101
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which integration guides recommend a context window of at least 32K tokens rather than 64k?"
+    pages: [integrations/cline, integrations/roo-code]
+    gold_entities: ["Cline", "Roo Code"]
+    answer_terms: ["Cline", ["Roo Code"]]
+    # Review 2026-10-23 (answers): the JetBrains page follows Cline's 32K lines in the retrieved chunks and gives no size;
+    # naming it beside either guide ("Roo Code, Cline, and JetBrains all recommend") is the tempting wrong guide.
+    must_not_contain: ["Claude Code recommends 32K", "OpenCode recommends 32K", "Codex recommends 32K", "JetBrains recommends 32K", "Cline and JetBrains", "Cline, and JetBrains", "Roo Code and JetBrains", "Roo Code, and JetBrains"]
+    gold_answer: |
+      Cline (the IDE extension) and Roo Code; the others that state a size ask
+      for 64k.
+
+  - id: q102
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which integrations launched through ollama launch can be undone with a --restore flag?"
+    pages: [integrations/claude-desktop, integrations/codex]
+    gold_entities: ["Claude Desktop", "Codex"]
+    answer_terms: [["Claude Desktop", "claude-desktop"], ["Codex"]]
+    # Review 2026-10-23 (answers): OMP, launched through ollama launch beside them, has no --restore in the text;
+    # an answer that adds it to the list ("Claude Desktop, Codex, and OMP") names a third, wrong member.
+    must_not_contain: ["openclaw --restore", "opencode --restore", "launch claude --restore", "omp --restore", "and OMP", "applies to OMP"]
+    gold_answer: |
+      Claude Desktop (ollama launch claude-desktop --restore) and Codex
+      (ollama launch codex --restore).
+
+  - id: q103
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which IDE guides have you confirm a Host URL of http://localhost:11434 when you add Ollama?"
+    pages: [integrations/jetbrains, integrations/zed]
+    gold_entities: ["JetBrains", "Zed"]
+    answer_terms: [["JetBrains", "IntelliJ"], "Zed"]
+    # Review 2026-10-23 (answers, round 3): sixteen answers list beside JetBrains and Zed the guides that give
+    # localhost:11434 under another name (Goose's API Host, a Base URL, Xcode's port) or none; wrong_members fails them.
+    wrong_members: ["Goose", "n8n", "marimo", "Xcode", "Roo Code", "VS Code", "Cline"]
+    gold_answer: |
+      JetBrains (IntelliJ) and Zed.
+
+  - id: q104
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which integrations document a --yes flag on ollama launch for running headless in scripts, Docker or CI?"
+    pages: [integrations/openclaw, integrations/claude-code, integrations/copilot-cli]
+    gold_entities: ["OpenClaw", "Claude Code", "Copilot CLI"]
+    # Review 2026-10-23 (answers): the guide's own command names the integration "claude" (ollama launch claude --yes);
+    # answers that list it as "Claude" beside "Copilot" (its launch name too) name the right guide.
+    answer_terms: ["OpenClaw", ["Claude Code", "Claude"], ["Copilot"]]
+    must_not_contain: ["launch opencode --yes", "launch codex --yes"]
+    gold_answer: |
+      OpenClaw, Claude Code and Copilot CLI; each requires --model with it.
+
+
+  - id: q106
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which environment variables does the troubleshooting guide suggest for getting extra diagnostic output?"
+    pages: [troubleshooting]
+    gold_entities: ["OLLAMA_DEBUG", "CUDA_ERROR_LEVEL", "AMD_LOG_LEVEL"]
+    answer_terms: ["OLLAMA_DEBUG", "CUDA_ERROR_LEVEL", "AMD_LOG_LEVEL"]
+    gold_answer: |
+      OLLAMA_DEBUG=1, CUDA_ERROR_LEVEL=50 for NVIDIA, and AMD_LOG_LEVEL=3 for
+      the AMD HIP/ROCm libraries.
+
+
+  - id: q108
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which API endpoints accept an insecure flag?"
+    pages: [api/post-api-pull, api/post-api-push]
+    gold_entities: ["/api/pull", "/api/push"]
+    answer_terms: [["/api/pull", "api/pull"], ["/api/push", "api/push"]]
+    must_not_contain: ["api/create accepts insecure", "api/copy accepts insecure"]
+    gold_answer: |
+      /api/pull, to download over insecure connections, and /api/push, to
+      publish over them.
+
+  - id: q109
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which integration guides tell you to use host.docker.internal when the tool runs in Docker?"
+    pages: [integrations/onyx, integrations/n8n]
+    gold_entities: ["Onyx", "n8n"]
+    answer_terms: ["Onyx", "n8n"]
+    # Review 2026-10-23 (answers): the n8n guide's setup is for running n8n with Ollama, so a model can list
+    # "Ollama" as the second guide and name n8n only in passing; that list is wrong.
+    must_not_contain: ["are for Ollama and Onyx", "are Ollama and Onyx", "are for Onyx and Ollama", "are Onyx and Ollama"]
+    gold_answer: |
+      Onyx (instead of http://127.0.0.1) and n8n
+      (http://host.docker.internal:11434, adding
+      --add-host=host.docker.internal:host-gateway where Docker Desktop is
+      not used).
+
+  - id: q110
+    band: graph_advantage
+    kind: cast_aggregate
+    question: "Which messaging platforms can both OpenClaw and Hermes Agent connect to?"
+    pages: [integrations/openclaw, integrations/hermes]
+    gold_entities: ["OpenClaw", "Hermes Agent"]
+    answer_terms: ["WhatsApp", "Telegram", "Slack", "Discord"]
+    must_not_contain: ["both support iMessage", "both support Signal", "both support Email", "both connect to iMessage", "both connect to Signal"]
+    # Review 2026-10-23 (answers, round 3): eighteen answers put a one-tool platform in the shared list ('Both connect
+    # to ... and Signal'); wrong_members fails them, and holders keep each tool's own list ('OpenClaw also has iMessage').
+    wrong_members: ["iMessage", "Signal", "Email"]
+    holders: ["OpenClaw", ["Hermes Agent", "Hermes"]]
+    gold_answer: |
+      WhatsApp, Telegram, Slack and Discord; OpenClaw also has iMessage, and
+      Hermes also has Signal and Email.
+
+  # disambiguation
+
+  - id: q111
+    band: graph_advantage
+    kind: disambiguation
+    question: "Context length can be set as a server environment variable, as a Modelfile instruction and as a per-request API option. What is each called?"
+    pages: [faq, modelfile, context-length, api/post-api-generate]
+    gold_entities: ["OLLAMA_CONTEXT_LENGTH", "num_ctx"]
+    # Review 2026-10-23 (answers): the Modelfile setting and the API option are both named num_ctx; "Modelfile: num_ctx"
+    # (without the PARAMETER keyword) and "API option: num_ctx" (without the word options) are right and failed.
+    answer_terms: ["OLLAMA_CONTEXT_LENGTH", ["num_ctx"]]
+    must_not_contain: ["OLLAMA_NUM_CTX", "PARAMETER context_length"]
+    gold_answer: |
+      OLLAMA_CONTEXT_LENGTH when starting the server; PARAMETER num_ctx in a
+      Modelfile; num_ctx inside options on an API request (and /set parameter
+      num_ctx inside ollama run).
+
+  - id: q112
+    band: graph_advantage
+    kind: disambiguation
+    question: "The Modelfile parameter table and the FAQ give different default context windows. What does each say?"
+    pages: [modelfile, faq]
+    gold_entities: ["num_ctx", "context window"]
+    # Review 2026-10-22: "2,048" and "4,096" failed the terms; the swapped pair in other words ("the Modelfile table
+    # gives 4096, the FAQ 2048") passed.
+    answer_terms: [["2048", "2,048"], ["4096", "4,096"]]
+    paraphrases: ["2,048", "4,096"]
+    must_not_contain: ["Modelfile default is 4096", "Modelfile table says 4096", "FAQ says 2048", "Modelfile table gives 4096", "Modelfile says 4096", "Modelfile gives 4096", "FAQ gives 2048", "FAQ 2048", "FAQ says the default is 2048"]
+    gold_answer: |
+      The Modelfile table gives num_ctx a default of 2048; the FAQ says
+      Ollama uses a context window of 4096 tokens by default.
+
+  - id: q113
+    band: graph_advantage
+    kind: disambiguation
+    question: "What default context length does Ollama pick on a machine with 32 GiB of VRAM?"
+    pages: [context-length]
+    gold_entities: ["context length", "VRAM"]
+    answer_terms: ["32k"]
+    # the FAQ's 4096 and the Modelfile table's 2048 are the other two defaults
+    # Verification 2026-10-22 (re-read against the corpus): a right answer may say "the FAQ says it defaults to 4096, but ..."; a wrong
+    # answer without 32k already fails the term, so only the claim about 32 GiB is a wrong fact.
+    must_not_contain: ["4k context on 32 GiB", "32 GiB gets 4096", "32 GiB of VRAM gets 4k", "32 GiB of VRAM defaults to 4096"]
+    # Review 2026-10-23 (answers): the text gives VRAM ranges (24-48 GiB: 32k), never 32 GiB itself; an
+    # answer that notes 32 GiB is not named and then places it in the range has not declined.
+    caveats: ["32 GiB"]
+    gold_answer: |
+      32k: machines with 24-48 GiB of VRAM default to a 32k context.
+
+  - id: q114
+    band: graph_advantage
+    kind: disambiguation
+    question: "keep_alive on a request and OLLAMA_KEEP_ALIVE on the server both set how long a model stays loaded. What does each apply to, and which one overrides the other?"
+    pages: [faq]
+    gold_entities: ["keep_alive", "OLLAMA_KEEP_ALIVE"]
+    # Verification 2026-10-22 (adversarial answer probes): "keep_alive takes precedence" failed the term (the text says only "will override"); the
+    # question now asks which overrides, and the swapped claim is the wrong fact.
+    # Review 2026-10-23 (answers): "what does each apply to" had no term, so "keep_alive overrides OLLAMA_KEEP_ALIVE on
+    # /api/generate and /api/chat" passed without saying what the server variable covers; its scope is a second term.
+    answer_terms: [["will override", "override"], ["all models", "starting the Ollama server", "when starting", "default", "all requests", "server-wide", "server-level", "global", "as a whole"]]
+    paraphrases: ["all requests", "server-wide", "server-level", "as a whole"]
+    # Review 2026-10-22: "the environment variable overrides the request's keep_alive" and "OLLAMA_KEEP_ALIVE will
+    # override it" passed.
+    must_not_contain: ["OLLAMA_KEEP_ALIVE overrides", "OLLAMA_KEEP_ALIVE takes precedence", "OLLAMA_KEEP_ALIVE wins", "environment variable wins", "server setting wins", "OLLAMA_KEEP_ALIVE will override", "environment variable overrides", "server setting overrides", "server variable overrides"]
+    gold_answer: |
+      keep_alive applies per request on /api/generate and /api/chat;
+      OLLAMA_KEEP_ALIVE sets the time for all models when the server starts.
+      The keep_alive parameter will override the OLLAMA_KEEP_ALIVE setting.
+
+  - id: q115
+    band: graph_advantage
+    kind: disambiguation
+    question: "The same Gemma 4 cloud model has one name in the Ollama app and CLI and another for direct requests to ollama.com. What are the two names?"
+    pages: [cloud, api/openai-compatibility, api/anthropic-compatibility]
+    gold_entities: ["gemma4:cloud", "gemma4:31b"]
+    answer_terms: ["gemma4:cloud", "gemma4:31b"]
+    must_not_contain: ["gemma4:31b-cloud", "use gemma4:cloud with ollama.com"]
+    gold_answer: |
+      gemma4:cloud in the app or CLI (and through a signed-in local server);
+      gemma4:31b, the name https://ollama.com/api/tags returns, for direct
+      API requests.
+
+  - id: q116
+    band: graph_advantage
+    kind: disambiguation
+    question: "Ollama has both an API key and an Ollama Public Key. What is each one for?"
+    pages: [api/authentication, faq]
+    gold_entities: ["API key", "Ollama Public Key"]
+    # Review 2026-10-23 (answers): the API key's purpose in the text's other words ("direct cloud access/inference",
+    # "call ollama.com directly", the ollama.com/api endpoint, "direct calls") and the public key's ("your local Ollama
+    # instance" that it lets "communicate with ollama.com") failed the terms; the sign-in uses (publish, download private
+    # models), the local API's sign-in authentication and local requests, attached to the API key, are the wrong facts.
+    answer_terms: [["Bearer", "direct API access", "direct cloud access", "direct cloud inference", "ollama.com directly", "ollama.com/api", "direct calls", "cloud API"], ["key pair", "id_ed25519.pub", "talk to ollama.com", "local Ollama instance", "communicate with ollama.com"]]
+    paraphrases: ["direct calls", "communicate with ollama.com"]
+    must_not_contain: ["the public key goes in the Authorization header", "the API key is id_ed25519.pub", "publishing models", "required to use cloud models, publish models", "and use cloud models, publish models", "access cloud models, publish models", "private model downloads", "cloud requests when using the local API", "pushing a model to the cloud, or pulling a private model", "pushing or pulling models, accessing private models", "and local server requests", "and local requests"]
+    gold_answer: |
+      The API key is for direct API access to ollama.com, sent in the
+      Authorization: Bearer header. The Ollama Public Key (id_ed25519.pub) is
+      the public part of the key pair that lets your local Ollama talk to
+      ollama.com, to push models, pull private ones and run cloud models.
+
+  - id: q117
+    band: graph_advantage
+    kind: disambiguation
+    question: "Is streaming enabled or disabled by default in the REST API, and in the Python and JavaScript libraries?"
+    pages: [capabilities/streaming, api/streaming]
+    gold_entities: ["stream"]
+    # Verification 2026-10-22 (adversarial answer probes): "the SDKs need stream=True" names the SDK default by its remedy.
+    # Review 2026-10-22: the known narrow case ("the REST API streams by default") is now a listed paraphrase.
+    answer_terms: [["enabled by default", "stream responses by default", "streams by default"], ["disabled by default", "stream=True"]]
+    paraphrases: ["streams by default"]
+    must_not_contain: ["REST API has streaming disabled", "REST API does not stream by default", "enabled by default in the SDKs", "enabled by default in the libraries", "enabled by default in the Python"]
+    gold_answer: |
+      The REST API streams by default (streaming is enabled by default there;
+      send stream false to turn it off); the SDKs have it disabled by
+      default, so set stream=True.
+
+  - id: q118
+    band: graph_advantage
+    kind: disambiguation
+    question: "OLLAMA_HOST appears in the FAQ and in the Goose CLI guide. What does it mean in each?"
+    pages: [faq, integrations/goose]
+    gold_entities: ["OLLAMA_HOST", "Goose"]
+    # Review 2026-10-22: "in the FAQ it is the address the server listens on" failed the first term.
+    # Review 2026-10-23 (answers): "the host address (and port) for the Ollama server" (the FAQ meaning without the word
+    # bind) and "specifies the Ollama host address" in Goose (without the URL) failed right answers; both paraphrases added.
+    answer_terms: [["bind address", "binds", "bind", "listen", "host address for the Ollama server", "host address and port for the Ollama server"], ["https://ollama.com", "specify the Ollama host address"]]
+    paraphrases: ["host address for the Ollama server", "host address and port for the Ollama server", "specify the Ollama host address"]
+    # Review 2026-10-23 (answers): the FAQ does mention OLLAMA_HOST (its server-configuration section); "the FAQ does not
+    # mention OLLAMA_HOST" declines the FAQ part, "in both cases" gives the two pages one meaning, and neither page sets
+    # OLLAMA_HOST to localhost:11434 (the FAQ's example is 0.0.0.0:11434; that value is Goose Desktop's API Host).
+    must_not_contain: ["Goose uses OLLAMA_HOST as the bind address", "not mention OLLAMA_HOST", "not contain OLLAMA_HOST", "not contain a mention of OLLAMA_HOST", "in both cases", "can be set to http://localhost:11434", "OLLAMA_HOST is set to http://localhost:11434"]
+    gold_answer: |
+      In the FAQ it is the server's bind address (0.0.0.0:11434 exposes
+      Ollama on the network); in the Goose CLI guide it is the host Goose
+      connects to, updated to https://ollama.com to use Ollama's cloud.
+
+  - id: q119
+    band: graph_advantage
+    kind: disambiguation
+    question: "What do ollama launch dsh and ollama launch omp start?"
+    pages: [integrations/deepseek-harness, integrations/oh-my-pi]
+    gold_entities: ["DeepSeek Harness", "Oh My Pi"]
+    # Review 2026-10-23 (answers): the page says "starts OMP" and defines OMP as "a terminal coding agent with
+    # IDE-style tools"; "starts OMP, a terminal coding agent" failed the term. "the context does not state what the
+    # command starts" (of dsh, whose page is DeepSeek Harness's) is a wrong decline of that part.
+    answer_terms: [["DeepSeek Harness"], ["Oh My Pi", "terminal coding agent", "IDE-style tools"]]
+    must_not_contain: ["omp starts Pi", "omp launches Pi", "!state what the command starts", "!say what the command starts"]
+    gold_answer: |
+      dsh starts DeepSeek Harness, an open-source coding agent; omp starts Oh
+      My Pi (OMP), a terminal coding agent with IDE-style tools, which is not
+      Pi (that is ollama launch pi).
+
+  - id: q120
+    band: graph_advantage
+    kind: disambiguation
+    question: "There are two Cline integrations. How does each one get connected to Ollama?"
+    pages: [integrations/cline, integrations/cline-cli]
+    gold_entities: ["Cline", "Cline CLI"]
+    answer_terms: [["API Provider"], ["ollama launch cline", "cline auth"]]
+    # Review 2026-10-23 (answers): wrong integrations as models state them: Zed's "click Connect" for the IDE, the
+    # IDE recast as a "cloud-based integration", the Ollama app as the second one ("through the Ollama app or CLI").
+    must_not_contain: ["click Connect", "cloud-based integration", "through the Ollama app"]
+    gold_answer: |
+      The Cline IDE extension: in Cline settings > API Configuration, set API
+      Provider to Ollama and pick a model. The Cline CLI: run ollama launch
+      cline, or cline auth and select Ollama as the provider.

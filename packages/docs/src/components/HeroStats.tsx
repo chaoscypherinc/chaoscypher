@@ -39,6 +39,8 @@ export default function HeroStats(): JSX.Element | null {
                   {section.method.questions} questions on {section.label}, each
                   answered three ways: graph + vector, plain vector RAG
                   (LlamaIndex&rsquo;s standard pipeline) and hybrid search.
+                  {section.handGraded &&
+                    " Every answer was also graded by hand; these are the hand-graded numbers."}
                 </>
               )}
               {i === SECTIONS.length - 1 && (

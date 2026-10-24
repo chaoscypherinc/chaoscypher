@@ -1,0 +1,10 @@
+id: ollama_docs
+kind: extraction
+version: "1.0"
+label: "Ollama docs (v0.40.8)"
+domain: technical
+corpus_path: ollama_docs.txt
+queries_path: queries.yaml
+source: "Ollama documentation, release v0.40.8 (github.com/ollama/ollama, docs/ at commit f580b5484a58c8370c35d669555bf887783a3f68), MIT License (LICENSE-ollama-docs.txt): the 58 written pages in the site's navigation order plus the 13 API endpoints rendered from docs/openapi.yaml, one section per page headed by its title and its page path."
+description: "Technical documentation, ~242k characters, 71 pages taken whole: one setting lives in several places under different names (an environment variable, a Modelfile parameter, an API option), so answers join pages; the benchmark's second corpus."
+word_count_approx: 30000

@@ -17,6 +17,10 @@
  * Each corpus is reported on its own (2026-10-22, `boardCorpora`): a section
  * holds one corpus's holding headlines and names that corpus, and a corpus
  * where none holds is not shown. Nothing is pooled across corpora.
+ *
+ * Where every answer on a corpus was also graded by hand, its headlines are
+ * the hand-graded numbers (the exporter computes them on the reviewers'
+ * verdicts, 2026-10-23), and the section says so (`handGraded`).
  */
 import { boardCorpora } from "./boardCorpora";
 import { headlineHolds, readProvenance } from "./leaderboardProvenance";
@@ -47,6 +51,8 @@ export type HeroSection = {
   heading: string | null;
   stats: HeroStat[];
   method: HeroMethod | null;
+  /** Every answer on this corpus was also graded by hand: the figures are the hand-graded numbers. */
+  handGraded: boolean;
 };
 
 type Headline = {
@@ -160,7 +166,13 @@ export function heroSections(board: unknown): HeroSection[] {
     if (!cmp || typeof cmp !== "object") continue;
     const stats = statsOf(cmp, provenance);
     if (stats.length === 0) continue;
-    out.push({ corpus: corpus.id, label: corpus.label, stats, method: methodOf(cmp) });
+    out.push({
+      corpus: corpus.id,
+      label: corpus.label,
+      stats,
+      method: methodOf(cmp),
+      handGraded: corpus.handGraded,
+    });
   }
   // several corpora: each is headed; one: its method line names it, else a heading does
   return out.map((s) => ({

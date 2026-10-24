@@ -73,7 +73,7 @@ def test_the_worst_status_wins(
     assert _run_main(monkeypatch, gitleaks=gitleaks, detect_secrets=detect_secrets)[0] == want
 
 
-def _hook_flags(tmp_path: Path, line: str) -> bool:
+def _hook_flags(tmp_path: Path, line: str, rel: str = "board.json") -> bool:
     """Whether the real detect-secrets hook, on the committed baseline's filters, flags ``line``."""
     import shutil
     import subprocess
@@ -82,7 +82,8 @@ def _hook_flags(tmp_path: Path, line: str) -> bool:
     repo = Path(__file__).resolve().parents[5]
     baseline = tmp_path / "baseline.json"
     shutil.copy(repo / ".secrets.baseline", baseline)  # the hook may rewrite its baseline
-    target = tmp_path / "board.json"
+    target = tmp_path / rel
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{\n" + line + "\n}\n", encoding="utf-8")
     # the hook diffs through git, so it only scans inside a repository
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)  # noqa: S607 - fixed argv
@@ -93,7 +94,7 @@ def _hook_flags(tmp_path: Path, line: str) -> bool:
             "detect_secrets.pre_commit_hook",
             "--baseline",
             str(baseline),
-            target.name,
+            rel,
         ],
         cwd=tmp_path,
         capture_output=True,
@@ -117,3 +118,54 @@ def test_a_sha256_digest_field_is_not_a_secret(tmp_path: Path) -> None:
 def test_the_same_hex_under_another_key_is_still_flagged(tmp_path: Path) -> None:
     """The digest rule is keyed on the field name, so a hex token elsewhere still trips the scan."""
     assert _hook_flags(tmp_path, f'  "api_token": "{DIGEST}"')
+
+
+RECIPE = "14edff24a295"  # pragma: allowlist secret
+
+
+def test_a_scorer_recipe_field_is_not_a_secret(tmp_path: Path) -> None:
+    """The leaderboard's ``scorer_recipe`` (12 hex characters, a hash of the scorer) passes the scan."""
+    assert not _hook_flags(tmp_path, f'  "scorer_recipe": "{RECIPE}"')
+
+
+def test_a_short_hex_under_another_key_is_still_flagged(tmp_path: Path) -> None:
+    """The recipe rule is keyed on the field name, like the digest rule."""
+    assert _hook_flags(tmp_path, f'  "api_secret": "{RECIPE}"')
+
+
+PASSAGE = (
+    '           "context": "base_url=\'http://localhost:11434\',\\n'
+    "    api_key='ollama',  # required but ignored\\n)\","  # pragma: allowlist secret
+)
+
+
+def test_a_retrieved_passage_on_the_board_is_not_scanned(tmp_path: Path) -> None:
+    """A board row's ``context`` is corpus text retrieved as is, like the corpus file itself."""
+    assert not _hook_flags(tmp_path, PASSAGE)
+
+
+def test_the_same_example_outside_a_passage_is_still_flagged(tmp_path: Path) -> None:
+    """The passage rule is keyed on the ``context`` field: the line under another key trips the scan."""
+    assert _hook_flags(tmp_path, PASSAGE.replace('"context"', '"settings"'))
+
+
+CORPUS = "packages/cli/src/chaoscypher_cli/benchmark/data/datasets/ollama_docs/ollama_docs.txt"
+
+
+def test_a_benchmark_corpus_is_not_scanned_for_placeholder_keys(tmp_path: Path) -> None:
+    """A corpus is third-party text measured as is: its docs' ``"your_api_key"`` examples pass."""
+    line = 'export OLLAMA_API_KEY="your_api_key"'  # pragma: allowlist secret
+    assert not _hook_flags(tmp_path, line, rel=CORPUS)
+    assert _hook_flags(tmp_path, line, rel="packages/cli/src/chaoscypher_cli/settings_example.txt")
+
+
+def test_the_scan_and_the_baseline_exclude_the_same_files() -> None:
+    """``_FALLBACK_EXCLUDE`` (files the scan never hands the hook) is the baseline's own list."""
+    import json
+
+    repo = Path(__file__).resolve().parents[5]
+    filters = json.loads((repo / ".secrets.baseline").read_text(encoding="utf-8"))["filters_used"]
+    baseline = next(
+        f["pattern"] for f in filters if f["path"].endswith("regex.should_exclude_file")
+    )
+    assert list(_load_scan()._FALLBACK_EXCLUDE) == baseline

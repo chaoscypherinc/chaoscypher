@@ -81,10 +81,31 @@ corpus (:data:`BOARD_CORPUS` when measured) keeps ``suites.chat``, which the
 table's chat column and Overall rest on, and every other corpus's chat suite,
 comparison, per-model chat objects and fixture hash are in its own entry
 (:data:`BOARD_FORMAT` 2).
+
+Where a full hand review of a corpus's board answers exists, the board shows
+the hand-graded numbers (2026-10-23; the first rule of that day only checked
+each headline on the review). ``--reviews CORPUS=PATH`` (repeatable; the file
+archived in :data:`REVIEWS_DIR`) overlays a review's verdicts on the corpus's
+rescored comparison answers, matched by key and answer start
+(:mod:`chaoscypher_core.benchmark.reviews`, the rule ``review_check`` applies).
+The review must match every comparison answer (every complete model's answer
+under every rung to every question), or the export stops naming the answers
+it misses. The corpus's whole comparison block (the per-model rows, their
+lifts, the value block, the headlines and the worked examples) is then
+computed on the reviewers' verdicts by the same code a plain export runs, so
+no headline disagrees with the table under it; only citation accuracy stays
+the scorer's (the reviewers grade the verdict, not the citation). The
+scorer's block is kept beside it as ``comparison.scorer`` (``models`` and
+``value``), and each headline records the scorer's reading in
+``values.scorer`` (its ``holds`` and its values). ``holds`` is the hand-graded
+reading's alone; one that holds on the scorer and not hand-graded carries
+``held_back`` naming the hand-graded numbers. Every corpus entry carries
+``review``: null, or the review's coverage, file name and ``file_sha256``.
 """
 
 import argparse
 import functools
+import hashlib
 import json
 import sys
 from datetime import UTC, datetime
@@ -111,6 +132,7 @@ from chaoscypher_core.benchmark.results import (
     row_timed_out,
 )
 from chaoscypher_core.benchmark.retrieval import DEFAULT_RETRIEVAL_MODE, RETRIEVAL_MODES
+from chaoscypher_core.benchmark.reviews import Review, expected, load_reviews, review_key
 from chaoscypher_core.benchmark.scorers.chat_probes import ChatProbeScorer, holds_an_answer_term
 from chaoscypher_core.benchmark.types import RawOutput
 
@@ -432,6 +454,51 @@ JSON said nothing)."""
 
 REBUILD_COMMAND = "internal/benchmarks/tools/rebuild_board.sh"
 """What rebuilds the committed board; every refusal of a stale board names it."""
+
+REVIEWS_DIR = Path(__file__).resolve().parents[2] / "internal" / "benchmarks" / "runs"
+"""Where a hand review the board reads is archived; the board names it by file name alone."""
+
+
+UNMATCHED_SHOWN = 5
+"""How many answers a review does not cover the refusal names (:func:`_require_full_review`)."""
+
+
+class ReviewOverlay:
+    """One corpus's hand review, laid over its comparison answers: the reviewers' verdict for each.
+
+    Counts every answer it is asked about (``answers``) and those a review
+    covers (``matched``), keeping the keys of the first answers it does not
+    (``unmatched``); a review short of any answer stops the export
+    (:func:`_require_full_review`).
+    """
+
+    def __init__(self, path: Path, corpus: str = "") -> None:
+        """Load the review at ``path`` of ``corpus``'s board answers, nothing counted yet."""
+        self.path = path
+        self.corpus = corpus
+        self.reviews: dict[str, list[Review]]
+        self.reviews, self.overrides = load_reviews([path])
+        self.answers = 0
+        self.matched = 0
+        self.unmatched: list[str] = []
+
+    def passed(self, row: Any, verdict: dict[str, Any], record: dict[str, Any]) -> bool:
+        """The reviewers' verdict on one scored answer, or the scorer's when no review covers it."""
+        self.answers += 1
+        key = review_key(verdict["id"], row)
+        want = expected(key, str(record.get("answer") or ""), self.reviews, self.overrides)
+        if want is None:
+            if len(self.unmatched) < UNMATCHED_SHOWN:
+                self.unmatched.append(key)
+            return bool(verdict["passed"])
+        self.matched += 1
+        return want[0] == "PASS"
+
+    @property
+    def full(self) -> bool:
+        """Every comparison answer matched (and there were some): only then is the review applied."""
+        return self.answers > 0 and self.matched == self.answers
+
 
 STORED_SCORER_FIELDS: frozenset[str] = frozenset(
     {"scorer_version", "scorer_recipe", "rescored_queries_sha256"}
@@ -930,7 +997,11 @@ def _fixture_queries(fixture: str) -> Any:
 
 
 def _rescore(
-    items: list[ChatRun], fixture: Any, *, include_errored: bool = False
+    items: list[ChatRun],
+    fixture: Any,
+    *,
+    include_errored: bool = False,
+    review: ReviewOverlay | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Every question's pooled verdict under one rung, scored with the ``answerable`` flags off.
 
@@ -939,6 +1010,8 @@ def _rescore(
     (answer and context, for the examples). Only questions a run asked are
     scored for it (a run over a subset says nothing about the rest); a
     question one repeat asked and another did not counts as a fail there.
+    With ``review``, each answer's pass is the reviewers' verdict
+    (:meth:`ReviewOverlay.passed`) instead of the scorer's.
     """
     if items:  # no rows is no statistic (a panel label with nothing on file scores nothing)
         one_corpus((row for row, _, _ in items), "a rung's rescore")
@@ -953,7 +1026,9 @@ def _rescore(
         per_query = (row.extras or {}).get("per_query") or []
         records = {r.get("query_id"): r for r in per_query}
         for v in _score_row(row, fixture, ignore_answerable=True):
-            samples.setdefault(v["id"], []).append(bool(v["passed"]))
+            record = records.get(v["id"]) or {}
+            passed = review.passed(row, v, record) if review else bool(v["passed"])
+            samples.setdefault(v["id"], []).append(passed)
             if v["id"] not in latest or row.timestamp > latest[v["id"]][0].timestamp:
                 latest[v["id"]] = (row, v, records.get(v["id"]) or {})
     n_runs = max((len(s) for s in samples.values()), default=1)
@@ -1035,6 +1110,7 @@ def _comparison(
     models: list[dict[str, Any]],
     *,
     include_errored: bool = False,
+    review: ReviewOverlay | None = None,
 ) -> dict[str, Any] | None:
     """``suites.chat.comparison``: the three-rung comparison, or None when no model has all three.
 
@@ -1043,6 +1119,9 @@ def _comparison(
     from rescoring the runs' own answers with the ``answerable`` flags off.
     One corpus's comparison: every row must be ``fixture``'s (:func:`one_corpus`),
     and ``models`` carry that corpus's scores (the examples' best model).
+    With ``review`` the block is computed on the reviewers' verdicts, the
+    scorer's kept as ``scorer`` (``models`` and ``value``) and its reading of
+    each headline recorded on it (:func:`_apply_review`).
 
     Raises:
         SystemExit: When the runs hold rows of another corpus than ``fixture``.
@@ -1078,6 +1157,46 @@ def _comparison(
         for mode in RETRIEVAL_MODES
     }
     info = {m["id"]: m for m in models}
+    shown = scored
+    if review is not None:
+        shown = {
+            key: _rescore(runs[key], queries, include_errored=include_errored, review=review)
+            for key in scored
+        }
+        _require_full_review(review)
+    block = _comparison_block(complete, shown, groups, info, by_id)
+    if review is not None:
+        theirs = _comparison_block(complete, scored, groups, info, by_id, examples=False)
+        _apply_review(block["value"], theirs["value"])
+        block["scorer"] = {"models": theirs["models"], "value": theirs["value"]}
+    return {
+        "kinds": list(KINDS),
+        "groups": list(groups),
+        "models": block["models"],
+        "value": block["value"],
+        "examples": block["examples"],
+        "questions": [
+            {"id": qid, "kind": by_id[qid].kind, "question": by_id[qid].question}
+            for qid in groups["graph_advantage"]
+        ],
+    } | ({"scorer": block["scorer"]} if "scorer" in block else {})
+
+
+def _comparison_block(
+    complete: list[str],
+    scored: dict[tuple[str, str], dict[str, dict[str, Any]]],
+    groups: dict[str, list[str]],
+    info: dict[str, dict[str, Any]],
+    by_id: dict[str, Any],
+    *,
+    examples: bool = True,
+) -> dict[str, Any]:
+    """What one set of verdicts (``scored``) says: the per-model rows, the value block, the examples.
+
+    The one computation a comparison runs, on the scorer's verdicts or on a
+    review's (:func:`_comparison`). Per model: each rung's passes per group and
+    its citation accuracy, and the lift of graphrag over each baseline.
+    """
     entries: list[dict[str, Any]] = []
     question_lift: dict[str, float] = {}
     for mid in complete:
@@ -1121,15 +1240,9 @@ def _comparison(
             }
         )
     return {
-        "kinds": list(KINDS),
-        "groups": list(groups),
         "models": entries,
         "value": _value(complete, scored, groups, info),
-        "examples": _examples(question_lift, by_id, scored, entries, info),
-        "questions": [
-            {"id": qid, "kind": by_id[qid].kind, "question": by_id[qid].question}
-            for qid in groups["graph_advantage"]
-        ],
+        "examples": _examples(question_lift, by_id, scored, entries, info) if examples else [],
     }
 
 
@@ -1446,6 +1559,57 @@ def _value(
     }
 
 
+def _apply_review(value: dict[str, Any], scorer: dict[str, Any]) -> None:
+    """Record the scorer's reading (``scorer``, its value block) on each hand-graded headline of ``value``.
+
+    Every headline of ``value`` (computed on the reviewers' verdicts: its text,
+    values and ``holds`` are the board's) gains ``values.scorer``, the
+    scorer's ``holds`` and values. One the scorer's reading would show and the
+    hand-graded one does not carries ``held_back`` naming the hand-graded
+    numbers. ``holds`` follows the hand-graded reading alone.
+    """
+    theirs = {h["key"]: h for h in scorer["headlines"]}
+    for headline in value["headlines"]:
+        other = theirs[headline["key"]]
+        # a copy: a headline's values can be the value block's own (the size pair is ``best``)
+        reading = {"holds": bool(other["holds"]), **other["values"]}
+        headline["values"] = {**headline["values"], "scorer": reading}
+        if other["holds"] and not headline["holds"]:
+            headline["held_back"] = _held_back(headline["key"], headline["values"], value["models"])
+
+
+def _held_back(key: str, values: dict[str, Any], models: int) -> str:
+    """Why a headline the scorer would show is held back: its bar on the hand-graded numbers."""
+    bar = f"{HEADLINE_ERRORS_REMOVED_PCT:.0f}%"
+    needed = majority(models)
+    where = "on the hand-graded answers, the numbers this board shows,"
+    if key == "errors_removed":
+        return (
+            f"{where} the median is {values.get('median_pct')}% and "
+            f"{values.get('models_above_bar_naive')} of {models} models remove at least {bar} "
+            f"against plain RAG, {values.get('models_above_bar_hybrid')} of {models} against "
+            f"hybrid search ({needed} needed)"
+        )
+    if key == "failures_ordinary":
+        return (
+            f"{where} the median is {values.get('median_pct')}% and "
+            f"{values.get('models_above_bar')} of {models} models remove at least {bar} against "
+            f"plain RAG on ordinary questions ({needed} needed)"
+        )
+    if key == "only_with_graph":
+        return (
+            f"{where} {values.get('count')} of {values.get('of')} graph-shaped questions no model "
+            f"answered without the graph ({HEADLINE_ONLY_WITH_GRAPH} needed)"
+        )
+    if not values:
+        return f"{where} no smaller model the graph lifts to the best plain-RAG score"
+    return (
+        f"{where} the size ratio is {values.get('ratio')}x ({HEADLINE_SIZE_RATIO}x needed) and "
+        f"{values.get('models_matching')} of {models} models match the best plain-RAG score "
+        f"({needed} needed)"
+    )
+
+
 def _reference_models(entries: list[dict[str, Any]], info: dict[str, dict[str, Any]]) -> list[str]:
     """The best local row and the best harness row by Overall (chat score when there is none)."""
 
@@ -1597,10 +1761,58 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Accept chat rows served oracle pins (a ceiling run; a warning each)",
     )
+    ap.add_argument(
+        "--reviews",
+        type=_review_spec,
+        action="append",
+        default=[],
+        metavar="CORPUS=PATH",
+        help=(
+            "A full hand review of CORPUS's board answers (archived in internal/benchmarks/runs); "
+            "the corpus's comparison is then computed on the reviewers' verdicts, and the export "
+            "stops unless the review matches every comparison answer. Repeatable"
+        ),
+    )
     args = ap.parse_args()
     if args.check is None and args.out is None:
         ap.error("--out is required (or --check BOARD_JSON)")
     return args
+
+
+def _review_spec(spec: str) -> tuple[str, Path]:
+    """``CORPUS=PATH`` as ``(corpus, path)``.
+
+    Raises:
+        argparse.ArgumentTypeError: When it is not of that shape.
+    """
+    corpus, sep, path = spec.partition("=")
+    if not sep or not corpus or not path:
+        msg = f"--reviews takes CORPUS=PATH, not {spec!r}"
+        raise argparse.ArgumentTypeError(msg)
+    return corpus, Path(path)
+
+
+def _review_overlays(specs: list[tuple[str, Path]], corpora: Any) -> dict[str, ReviewOverlay]:
+    """One :class:`ReviewOverlay` per ``--reviews`` corpus.
+
+    Raises:
+        SystemExit: When a review names a corpus the board did not measure, names one corpus
+            twice, or is not archived in :data:`REVIEWS_DIR` (the board names it by file name).
+    """
+    overlays: dict[str, ReviewOverlay] = {}
+    measured = set(corpora)
+    for corpus, path in specs:
+        if corpus not in measured:
+            msg = f"--reviews {corpus}: no chat rows of {corpus} (measured: {', '.join(sorted(measured))})"
+            raise SystemExit(msg)
+        if corpus in overlays:
+            msg = f"--reviews {corpus}: given twice; a corpus has one review of its board answers"
+            raise SystemExit(msg)
+        if path.resolve().parent != REVIEWS_DIR.resolve() or not path.is_file():
+            msg = f"--reviews {corpus}: {path} is not a file archived in {REVIEWS_DIR}"
+            raise SystemExit(msg)
+        overlays[corpus] = ReviewOverlay(path, corpus)
+    return overlays
 
 
 def main() -> None:
@@ -1639,6 +1851,7 @@ def main() -> None:
     ]
     for warning in lifted:
         print(f"WARNING {warning}")
+    reviews = _review_overlays(args.reviews, by_corpus)
     by_corpus = _board_order({corpus: score_board(runs) for corpus, runs in by_corpus.items()})
     for corpus, runs in by_corpus.items():
         _warn_context_overflows(corpus, runs)
@@ -1667,9 +1880,9 @@ def main() -> None:
             "last_run": _last_run(row.timestamp for items in runs.values() for row, _, _ in items),
         }
         | (
-            _board_corpus_entry(chat_suite, runs, models, args)
+            _board_corpus_entry(chat_suite, runs, models, args, reviews.get(corpus))
             if corpus == board_corpus
-            else _corpus_entry(corpus_chat[corpus], runs, board)
+            else _corpus_entry(corpus_chat[corpus], runs, board, reviews.get(corpus))
         )
         for corpus, runs in by_corpus.items()
     ]
@@ -1858,12 +2071,65 @@ def _add_comparison(
     runs: dict[tuple[str, str], list[ChatRun]],
     models: list[dict[str, Any]],
     args: argparse.Namespace,
+    review: ReviewOverlay | None = None,
 ) -> None:
-    """Put one corpus's three-rung comparison on its chat suite, headlines withheld under an override."""
-    comparison = _comparison(runs, suite["fixture"], models, include_errored=args.include_errored)
+    """Put one corpus's three-rung comparison on its chat suite, headlines withheld under an override.
+
+    With ``review`` the comparison is the hand-graded one, the scorer's kept beside it
+    (:func:`_comparison`).
+    """
+    comparison = _comparison(
+        runs, suite["fixture"], models, include_errored=args.include_errored, review=review
+    )
     if comparison:
         _withhold_headlines(comparison, _overrides_passed(args))
         suite["comparison"] = comparison
+
+
+def _require_full_review(review: ReviewOverlay) -> None:
+    """Stop unless ``review`` matched every comparison answer it was asked about (and some were).
+
+    Raises:
+        SystemExit: Naming the coverage and the first answers the review does not cover.
+    """
+    if review.full:
+        return
+    if not review.answers:
+        msg = (
+            f"--reviews {review.corpus}: {review.path.name} has no comparison answers to grade "
+            "(no model of that corpus has rows under all three rungs). Nothing exported."
+        )
+        raise SystemExit(msg)
+    msg = (
+        f"--reviews {review.corpus}: {review.path.name} matches {review.matched:,} of "
+        f"{review.answers:,} comparison answers; a corpus's review must match every one (each "
+        f"complete model's answer under every rung to every question). Not covered: "
+        f"{', '.join(review.unmatched)}"
+        f"{', ...' if review.answers - review.matched > len(review.unmatched) else ''}. "
+        "Nothing exported."
+    )
+    raise SystemExit(msg)
+
+
+def _review_summary(review: ReviewOverlay | None) -> dict[str, Any] | None:
+    """A corpus entry's ``review``: null without one, else its coverage, file name and content hash.
+
+    ``full`` is every comparison answer matched; the export stops on any other
+    review (:func:`_require_full_review`), so a written board's is always full.
+
+    Raises:
+        SystemExit: When the review graded no comparison answer, or not every one.
+    """
+    if review is None:
+        return None
+    _require_full_review(review)
+    return {
+        "answers": review.answers,
+        "matched": review.matched,
+        "full": review.full,
+        "file": review.path.name,
+        "file_sha256": hashlib.sha256(review.path.read_bytes()).hexdigest(),
+    }
 
 
 def _board_corpus_entry(
@@ -1871,17 +2137,19 @@ def _board_corpus_entry(
     runs: dict[tuple[str, str], list[ChatRun]],
     models: list[dict[str, Any]],
     args: argparse.Namespace,
+    review: ReviewOverlay | None = None,
 ) -> dict[str, Any]:
-    """The board corpus: its comparison goes on its suite (``suites.chat``); its entry adds nothing."""
+    """The board corpus: its comparison goes on its suite (``suites.chat``); its entry adds its review."""
     if suite:
-        _add_comparison(suite, runs, models, args)
-    return {}
+        _add_comparison(suite, runs, models, args, review)
+    return {"review": _review_summary(review)}
 
 
 def _corpus_entry(
     rows: dict[str, dict[str, Any]],
     runs: dict[tuple[str, str], list[ChatRun]],
     board: _Board,
+    review: ReviewOverlay | None = None,
 ) -> dict[str, Any]:
     """A corpus other than the board corpus: its chat suite, per-model chat objects and fixture hash.
 
@@ -1893,12 +2161,13 @@ def _corpus_entry(
     suite = _chat_suite(rows) if rows else None
     public = {mid: _public_chat(pooled, suite) for mid, pooled in rows.items()}
     if suite:
-        _add_comparison(suite, runs, board.models(rows, suite), board.args)
+        _add_comparison(suite, runs, board.models(rows, suite), board.args, review)
     queries = _fixture_queries(suite["fixture"]) if suite else None
     return {
         "chat": suite,
         "models": public,
         "fixture_sha256": getattr(queries, "sha256", None),
+        "review": _review_summary(review),
     }
 
 
@@ -1945,13 +2214,15 @@ def _withhold_headlines(comparison: dict[str, Any], overrides: list[str]) -> Non
     A headline's bar is met over rows the exporter would have refused, so it
     is not a claim the board can make: ``holds`` turns False and
     ``withheld_by`` names the flags (the page and the teaser read ``holds``).
+    The scorer's block beside a hand-graded one (``scorer``) is withheld too.
     """
     if not overrides:
         return
-    for headline in (comparison.get("value") or {}).get("headlines") or []:
-        if headline.get("holds"):
-            headline["holds"] = False
-            headline["withheld_by"] = list(overrides)
+    for block in (comparison, comparison.get("scorer") or {}):
+        for headline in (block.get("value") or {}).get("headlines") or []:
+            if headline.get("holds"):
+                headline["holds"] = False
+                headline["withheld_by"] = list(overrides)
 
 
 PROVENANCE_KEYS = (
@@ -2046,7 +2317,8 @@ def check_board(board: dict[str, Any]) -> list[str]:
     :func:`provenance_problems`, then the recorded scorer recipe and version
     against today's (:func:`~chaoscypher_core.benchmark.scorers.chat_probe_recipe.scorer_recipe`)
     and the recorded fixture hash against the content of the chat fixture
-    the board names. The ``--check`` mode; ``rebuild_board.sh`` documents it.
+    the board names, and every corpus's review fields (:func:`_review_problems`).
+    The ``--check`` mode; ``rebuild_board.sh`` documents it.
     """
     from chaoscypher_core.benchmark.scorers.chat_probe_recipe import scorer_recipe
     from chaoscypher_core.benchmark.scorers.chat_probes import CHAT_PROBE_SCORER_VERSION
@@ -2054,6 +2326,7 @@ def check_board(board: dict[str, Any]) -> list[str]:
     problems = provenance_problems(board) or _corpora_problems(board)
     if problems:
         return problems
+    problems.extend(_review_problems(board))
     block = board["provenance"]
     # every corpus other than the board corpus records what scored it in its own entry
     for entry in board.get("corpora") or []:
@@ -2086,6 +2359,121 @@ def check_board(board: dict[str, Any]) -> list[str]:
             f"scored on fixture {chat.get('fixture')} with sha256 {block['fixture_sha256']}; "
             f"its content here hashes to {current}"
         )
+    return problems
+
+
+REVIEW_KEYS = ("answers", "matched", "full", "file", "file_sha256")
+"""The keys of a corpus entry's ``review`` record (:func:`_review_summary`)."""
+
+
+def _review_problems(board: dict[str, Any]) -> list[str]:
+    """Why a board's review fields are missing, stale or inconsistent with its headlines; empty when sound.
+
+    Every corpus entry carries ``review`` (a board from before the review rule
+    of 2026-10-23 does not). Null: the corpus's comparison is the scorer's, and
+    nothing in it carries a second reading. A record: its file is archived in
+    :data:`REVIEWS_DIR` with the content hash recorded, it matched every
+    answer, and the comparison is the hand-graded one: the scorer's block
+    beside it (``scorer``) and the scorer's reading on every headline
+    (:func:`_one_review_problems`).
+    """
+    problems: list[str] = []
+    chat = (board.get("suites") or {}).get("chat") or {}
+    for entry in board.get("corpora") or []:
+        corpus = entry.get("id")
+        suite = chat if entry.get("board") else entry.get("chat") or {}
+        comparison = suite.get("comparison") or {}
+        headlines = (comparison.get("value") or {}).get("headlines") or []
+        if "review" not in entry:
+            problems.append(
+                f"{corpus}: no review field (exported before the board showed the hand-graded "
+                "numbers wherever a full review exists)"
+            )
+            continue
+        review = entry["review"]
+        if review is None:
+            read = [
+                str(h.get("key"))
+                for h in headlines
+                if {"scorer", "review"} & set(h.get("values") or {}) or "held_back" in h
+            ]
+            if read:
+                problems.append(
+                    f"{corpus}: no review, yet {', '.join(read)} carry a second reading"
+                )
+            if "scorer" in comparison:
+                problems.append(f"{corpus}: no review, yet the comparison keeps a scorer block")
+            continue
+        problems.extend(
+            f"{corpus}: {problem}" for problem in _one_review_problems(review, comparison)
+        )
+    return problems
+
+
+def _one_review_problems(review: Any, comparison: dict[str, Any]) -> list[str]:
+    """:func:`_review_problems` on one corpus's review record and its (hand-graded) comparison."""
+    if not isinstance(review, dict) or any(k not in review for k in REVIEW_KEYS):
+        return [f"a review record without {', '.join(REVIEW_KEYS)}: {review!r}"]
+    problems: list[str] = []
+    answers, matched, full = review["answers"], review["matched"], review["full"]
+    if not (full is True and isinstance(answers, int) and answers > 0 and matched == answers):
+        problems.append(
+            f"the review matched {matched} of {answers} answers (marked "
+            f"{'full' if full else 'partial'}); the export stops on a review short of every one"
+        )
+    path = REVIEWS_DIR / str(review["file"])
+    if not path.is_file():
+        problems.append(f"review {review['file']} is not archived in {REVIEWS_DIR}")
+    else:
+        current = hashlib.sha256(path.read_bytes()).hexdigest()
+        if review["file_sha256"] != current:
+            problems.append(
+                f"read review {review['file']} with sha256 {review['file_sha256']}; its content "
+                f"here hashes to {current}"
+            )
+    if not comparison:
+        return problems
+    scorer = comparison.get("scorer")
+    if not isinstance(scorer, dict) or not {"models", "value"} <= set(scorer):
+        problems.append("no scorer block (models, value) beside the hand-graded comparison")
+        theirs: dict[str, Any] = {}
+    else:
+        theirs = {h.get("key"): h for h in (scorer["value"] or {}).get("headlines") or []}
+    for headline in (comparison.get("value") or {}).get("headlines") or []:
+        problems.extend(_headline_review_problems(headline, theirs))
+    return problems
+
+
+def _headline_review_problems(headline: dict[str, Any], theirs: dict[str, Any]) -> list[str]:
+    """One hand-graded headline against the scorer's reading of it and the scorer block's headline."""
+    key = headline.get("key")
+    values = headline.get("values") or {}
+    if "review" in values:
+        return [
+            f"{key}: a values.review reading (exported under the first rule of 2026-10-23, which "
+            "kept the scorer's numbers)"
+        ]
+    reading = values.get("scorer")
+    if not isinstance(reading, dict) or not isinstance(reading.get("holds"), bool):
+        return [f"{key}: no scorer's reading beside the hand-graded numbers"]
+    problems: list[str] = []
+    other = theirs.get(key)
+    if other is not None and {k: v for k, v in reading.items() if k != "holds"} != other.get(
+        "values"
+    ):
+        problems.append(f"{key}: its scorer's reading differs from the scorer block's headline")
+    held = "held_back" in headline
+    if held and (headline.get("holds") or not reading["holds"]):
+        problems.append(
+            f"{key}: held back though it holds hand-graded or fails on the scorer already"
+        )
+    if (
+        reading["holds"]
+        and not headline.get("holds")
+        and not held
+        and "withheld_by" not in headline
+    ):
+        problems.append(f"{key}: holds on the scorer, not hand-graded, with no held_back line")
     return problems
 
 

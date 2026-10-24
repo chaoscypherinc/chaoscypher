@@ -261,10 +261,17 @@ const CHAT_SECTION_LABEL: Record<string, string> = {
 };
 // The comparison section, one per corpus, each on its own: absent from a data file
 // exported before any model had all three rungs on that corpus.
-type CorpusComparison = { id: string; label: string; cmp: Comparison };
+// A corpus whose every comparison answer was also graded by hand shows the hand-graded
+// numbers (the exporter computes its whole comparison on the reviewers' verdicts).
+type CorpusComparison = {
+  id: string;
+  label: string;
+  cmp: Comparison;
+  handGraded: boolean;
+};
 const comparisons: CorpusComparison[] = boardCorpora<ChatSuite>(data).flatMap((c) =>
   c.suite?.comparison && c.suite.comparison.models.length > 0
-    ? [{ id: c.id, label: c.label, cmp: c.suite.comparison }]
+    ? [{ id: c.id, label: c.label, cmp: c.suite.comparison, handGraded: c.handGraded }]
     : [],
 );
 const GROUP_LABEL: Record<string, string> = {
@@ -1062,7 +1069,7 @@ function GraphAdvantage({
   corpora: CorpusComparison[];
   onSelect: (id: string) => void;
 }) {
-  const { cmp, label } = shown;
+  const { cmp, label, handGraded } = shown;
   const n = cmp.questions.length;
   const original = originalCount(cmp);
   return (
@@ -1087,6 +1094,8 @@ function GraphAdvantage({
           : `The original ${original} are`}{" "}
         shown too, scored with every question in, so the lift on ordinary
         questions is visible beside it.
+        {handGraded &&
+          " Every answer on this corpus was also graded by hand; these are the hand-graded numbers (citation accuracy stays the scorer's check)."}
       </p>
       {cmp.value && <ValueBlock value={cmp.value} />}
       <div className={styles.tableWrap}>

@@ -328,7 +328,10 @@ every rung, so the headlines say "failed", not "wrong" or "hallucinated".
 Each corpus is reported on its own: every headline, bar, interval and count
 is computed over one corpus's questions and names the corpus it is about,
 nothing is pooled across corpora, and a headline that holds on one corpus and
-not on another is shown for that corpus only.
+not on another is shown for that corpus only. Where every answer on a corpus
+was also graded by hand, that corpus's comparison and headlines are the
+hand-graded numbers, and the page says so; the scorer's numbers are kept in
+the data file beside them.
 
 **Citation accuracy.** The context labels every chunk (`[CHUNK C3 | ...]`)
 and models cite those labels. A reported check, `cites_the_answer`, parses

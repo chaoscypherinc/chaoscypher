@@ -78,6 +78,9 @@ _FALLBACK_EXCLUDE = (
     r"uv\.lock$",
     r"package-lock\.json$",
     r"^\.secrets\.baseline$",
+    # benchmark corpora: third-party text measured as is (Ollama's docs carry "your_api_key"
+    # examples); gitleaks still scans them, and test_secrets_scan pins this list to the baseline's
+    r"^packages/cli/src/chaoscypher_cli/benchmark/data/datasets/[^/]+/[^/]+\.txt$",
 )
 
 _CHUNK = 400

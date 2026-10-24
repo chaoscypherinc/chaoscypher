@@ -181,6 +181,132 @@ def test_a_common_english_word_opening_a_sentence_is_not_a_name() -> None:
         assert not ok and name in why, (answer, why)
 
 
+def test_an_english_word_opening_a_sentence_cell_or_label_value_is_not_a_name() -> None:
+    """'Your app', 'Send a request', 'Authentication is' open sentences (the Ollama docs review, 2026-10-23).
+
+    The opener rule now reads a determiner, a preposition or a sentence adverb from a
+    closed list, the -tion and -sion endings, an imperative (a word followed by an
+    article or a pronoun, which a name does not take), a word after an opening bracket
+    or quote, the first word of a table cell, and the text after a label: a bold one of
+    up to six words, as a label line is, or a label word such as 'Answer:'.
+    """
+    for answer in (
+        "Your firm was BBN. Within the firm, Kahn led. Any other firm came later. Next, it shipped.",
+        "BBN built it.\n2. Locate the IMP.\n3. Send a message.\n4. Place this at UCLA.",
+        "1. **Ensure the IMP is set up**: Make sure BBN built it.",
+        "Answer: Adjust the IMP at BBN.",
+        "BBN built it.\n[Supporting context: the IMP]\n(Optional step) BBN again.",
+        "| Firm | Engineer |\n|---|---|\n| BBN | Typical builder of the IMP |",
+        "BBN built it. Authentication is handled by Kahn.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    # still names: a name before a verb or a preposition, a name the answer capitalises
+    # mid-sentence, a name inside a bracket, a name alone in a cell, a long bold lead
+    for answer, name in (
+        ("BBN built it. Raytheon bought the firm.", "Raytheon"),
+        ("BBN built it. Raytheon in Waltham bought the firm.", "Raytheon"),
+        ("BBN built it. Locate the IMP. It was Locate that paid.", "Locate"),
+        ("BBN built it (Raytheon bought it).", "Raytheon"),
+        ("| Firm | Engineer |\n|---|---|\n| Raytheon | Kahn |", "Raytheon"),
+        ("1. **Kahn led the firm that built the IMP**: Raytheon came later.", "Raytheon"),
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert not ok and name in why, (answer, why)
+
+
+def test_an_english_opener_may_take_a_comma() -> None:
+    """'Alternatively, you can', 'Concretely, BBN' open sentences (the Ollama docs review, 2026-10-23).
+
+    The opener rule wanted a lower-case word straight after the opening word; a comma
+    between them is as common ('Alternatively,', 'Concretely,', 'Globally,'). The word
+    must still be English by the opener rule's tests, so a name before a comma stays one.
+    """
+    for answer in (
+        "Alternatively, BBN built it.",
+        "BBN built it. Concretely, the firm shipped the IMP. Globally, Kahn led.",
+        "BBN built it. Ergo, the firm shipped the IMP; it was ergo the builder.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    for answer, name in (
+        ("BBN built it. Raytheon, the buyer, paid.", "Raytheon"),
+        ("BBN built it. Ergo, the firm shipped the IMP.", "Ergo"),
+        ("BBN built it. Alternatively, Raytheon did.", "Raytheon"),
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert not ok and name in why, (answer, why)
+
+
+def test_an_imperative_may_take_to() -> None:
+    """'Navigate to the tab', 'Points to your server' open sentences (the Ollama docs review, 2026-10-23).
+
+    A verb in the imperative takes 'to' as often as an article ('Navigate to', 'Switch
+    to', 'Points to', 'Applies to'), and so does an adjective that opens a comparison
+    ('Similar to'). A name that opens a sentence before 'to' is read the same way, the
+    rule's cost; a name before any other word stays a name.
+    """
+    for answer in (
+        "BBN built it.\n2. Navigate to the IMP.",
+        "- **Base**: Points to your IMP at BBN.",
+        "- **Scope**: Applies to individual IMPs at BBN.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    for answer, name in (
+        ("BBN built it. Navigate bought the firm.", "Navigate"),
+        ("BBN built it. Raytheon of Waltham paid.", "Raytheon"),
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert not ok and name in why, (answer, why)
+
+
+def test_an_aggregate_answer_lists_no_member_the_gold_excludes() -> None:
+    """'Both connect to WhatsApp, Telegram and Signal' over-includes (the Ollama docs review, 2026-10-23).
+
+    ``wrong_members`` are what a list question's gold leaves out (the neighbouring guides,
+    the platforms only one of two tools has); ``holders`` are the entities a "which do
+    both have" question asks about. A wrong member fails the answer when it stands in the
+    answer's set: in a clause, or a list (its lead and items), that also names a gold
+    member. It does not when that clause, item, heading or list names one holder only
+    ('Kahn also worked at BBN', 'Its sites include ...' after it), when it is negated or
+    quoted, or when no gold member stands beside it.
+    """
+    q = _q(
+        question="Which sites did both Kahn and Cerf visit?",
+        gold_entities=["Kahn", "Cerf"],
+        answer_terms=["UCLA", "Stanford"],
+        wrong_members=["BBN", "ARPA"],
+        holders=[("Kahn", "Robert Kahn"), ("Cerf",)],
+    )
+    for answer in (
+        "Both visited UCLA and Stanford. Kahn also worked at BBN and ARPA, while Cerf did not.",
+        "Both visited:\n- UCLA\n- Stanford\n\n**Kahn:**\n- BBN\n- ARPA",
+        "UCLA and Stanford, not BBN.",
+        "Kahn knew UCLA, Stanford and BBN. It also lists ARPA beside UCLA. Both: UCLA, Stanford.",
+        "Both visited UCLA and Stanford; \u201cvisits ran to UCLA, Stanford, BBN and ARPA in those"
+        " years\u201d, the log says.",
+        "- **Kahn**: UCLA, Stanford, BBN\n- **Cerf**: UCLA, Stanford\n\nBoth: UCLA and Stanford.",
+        "Both visited UCLA and Stanford. BBN was elsewhere.",
+        # a conclusion opens a clause of its own after one holder's list
+        "Kahn knew UCLA, Stanford and BBN, so both knew UCLA and Stanford.",
+        "Kahn knew UCLA, Stanford and BBN; Cerf knew UCLA and Stanford, and therefore both share two.",
+    ):
+        ok, why = cp.no_wrong_members(_rec(answer), q)
+        assert ok, (answer, why)
+    for answer, member in (
+        ("Both visited UCLA, Stanford and BBN.", "BBN"),
+        ("Kahn and Cerf both visited:\n- UCLA\n- Stanford\n- ARPA", "ARPA"),
+        ("Both visited:\n1. **UCLA**: both did.\n2. **BBN**: Kahn did.", "BBN"),
+        ("The sites they share are UCLA, Stanford and BBN.", "BBN"),
+        ("Kahn and Cerf knew a lot, so both visited UCLA, Stanford and BBN.", "BBN"),
+    ):
+        ok, why = cp.no_wrong_members(_rec(answer), q)
+        assert not ok and member in why, (answer, why)
+    ok, why = cp.no_wrong_members(_rec("UCLA, Stanford and BBN."), _q())
+    assert ok and why == "no wrong members declared", why
+
+
 def test_a_decoy_is_matched_word_bounded() -> None:
     """Wave 2: decoy 'Anna' is not asserted by 'Annette'; its possessive still is."""
     q = _q(band="out_of_scope", gold_entities=[], decoy_entities=["Anna"], expect_refusal=True)
@@ -209,6 +335,29 @@ def test_one_sentence_splitter_for_names_and_declines() -> None:
         "Dr. Lorrain came.",
     ]
     assert cp._sentences("Answer\n* bullet one. Two!") == ["Answer", "bullet one.", "Two!"]
+
+
+def test_no_ends_a_sentence_unless_a_number_follows() -> None:
+    """'No. The hosted API ...' answers no (the Ollama docs review, 2026-10-23).
+
+    Until then 'No.' was always the abbreviation of 'number', so 'No. The', 'No. If' and
+    'No. According' were one capitalised run and an unsupported name. Before a digit or a
+    '#' it still abbreviates ('No. 5'), and a name after the answer 'No.' is still a name.
+    """
+    assert cp._sentences("No. The firm built it. It was No. 5, not No. #6.") == [
+        "No.",
+        "The firm built it.",
+        "It was No. 5, not No. #6.",
+    ]
+    for answer in (
+        "No. The IMP was built by BBN.",
+        "No. According to the context, BBN built it.",
+        "No. If anything, BBN built it.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    ok, why = cp.no_unsupported_names(_rec("No. Raytheon built it."), _q())
+    assert not ok and "Raytheon" in why
 
 
 def test_scorer_gates_on_completion_and_weights_tiers() -> None:
@@ -1293,6 +1442,119 @@ def test_the_normaliser_reads_through_every_markup_form() -> None:
     assert "\n" in a.folded  # the sentence splitter still sees the line break
     assert a.flat == ("the officer is nicholas , prince vasily x snake_case quoted nicholas's")
     assert a.transliterated == a.flat.replace("vasily", "vasili")
+
+
+def test_a_number_and_its_unit_are_one_quantity_however_spaced() -> None:
+    """GPT-OSS and Granite write '8\u202fK' and '64\u202f000' (the Ollama docs review, 2026-10-23).
+
+    A narrow or plain space between a number and a unit sign ('K', 'k', 'M', 'G', '%', '+')
+    and a narrow space between digit groups are typography, so '8 K' meets the term '8K'.
+    """
+    flat = cp.normalise_answer(
+        "Set it to 8\u202fK tokens, or 64\u202fk; 64\u202f000 is 64 K, 75 % remains, 70 + tools."
+    ).flat
+    assert flat == "set it to 8k tokens, or 64k; 64000 is 64k, 75% remains, 70+ tools."
+    # a word after the number, a sum, and a plain-spaced list of numbers stay apart
+    kept = cp.normalise_answer("8 Kbps, 2 + 2, ports 11434 434 and 8 Mistral models").flat
+    assert kept == "8 kbps, 2 + 2, ports 11434 434 and 8 mistral models"
+    q = _q(answer_terms=[("8K", "8192")])
+    assert cp.answers_from_graph(
+        _rec("The default is 8\u202fK tokens [C0].", context_text="The default is 8K tokens."), q
+    )[0]
+
+
+def test_a_size_in_k_supports_the_number_it_writes() -> None:
+    """'64k' in the docs is the 65536 an answer sets (the Ollama docs review, 2026-10-23).
+
+    Models wrote 'OLLAMA_CONTEXT_LENGTH=65536' or '64000' where the context writes
+    only '64k'; a size in k supports its binary and its decimal thousands.
+    """
+    q = _q(question="How do you set the context length?")
+    context = "Set the context length to at least 64k tokens; small GPUs get 4K and 32k."
+    for answer in (
+        "Run OLLAMA_CONTEXT_LENGTH=65536 ollama serve.",
+        "Set it to 65,536 tokens, or 4096 and 32768 on smaller cards.",
+        "Run OLLAMA_CONTEXT_LENGTH=64000 ollama serve; 4000 and 32,000 on smaller cards.",
+    ):
+        ok, why = cp.no_unsupported_numbers(_rec(answer, context_text=context), q)
+        assert ok, (answer, why)
+    # another multiple, another size, and another unit stay unsupported
+    for answer, number, ctx in (
+        ("Set it to 64001.", "64001", context),
+        ("Set it to 65537.", "65537", context),
+        ("Set it to 131072.", "131072", context),
+        ("It sends 8192 bits.", "8192", "8kb/s"),
+    ):
+        ok, why = cp.no_unsupported_numbers(_rec(answer, context_text=ctx), q)
+        assert not ok and number in why, (answer, why)
+
+
+def test_a_version_after_v_supports_the_number_without_it() -> None:
+    """'v0.40.5' in the docs is the 'version 0.40.5' an answer writes (the Ollama docs review, 2026-10-23)."""
+    q = _q(question="Which version is needed?")
+    context = "Requires Ollama v0.40.5 or later; added in v0.13.3. Xcode v26.0, macOS Sonoma (v14)."
+    for answer in (
+        "You need version 0.40.5 or later.",
+        "It was added in Ollama 0.13.3.",
+        "Use Xcode 26.0 on macOS Sonoma (version 14).",
+    ):
+        ok, why = cp.no_unsupported_numbers(_rec(answer, context_text=context), q)
+        assert ok, (answer, why)
+    # a 'v' inside a word is no version prefix, and part of a version is not the version
+    for answer, number, ctx in (
+        ("It is model 14.", "14", "the llama3v14 build"),
+        ("Use 0.40.", "0.40", context),
+    ):
+        ok, why = cp.no_unsupported_numbers(_rec(answer, context_text=ctx), q)
+        assert not ok and number in why, (answer, why)
+
+
+def test_generic_acronyms_keys_and_placeholders_are_not_names() -> None:
+    """'URL', 'Ctrl + Shift + Esc' and 'VARIABLE_NAME' name nothing (the Ollama docs review, 2026-10-23).
+
+    A short closed list of computing acronyms and keyboard keys, and an identifier made only
+    of placeholder words; a real variable, another acronym and a mixed identifier stay names.
+    'API' joined the list once a hyphenated compound was read by its capitalised parts:
+    'OpenAI-compatible API' keeps 'OpenAI' as its supported word, and an unsupported head
+    still fails it.
+    """
+    for answer in (
+        "BBN built it; open its URL with the CLI or GUI, as JSON over HTTP or HTTPS.",
+        "BBN built it behind an API, an IMP-compatible API.",
+        "BBN built it; press Ctrl + Shift + Esc, then Alt + Tab, Enter or Cmd.",
+        "BBN built it with VARIABLE_NAME=value, MY_VAR, YOUR_VARIABLE, KEY and VAR=value.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    for answer, name in (
+        ("BBN built it; set OLLAMA_HOST.", "OLLAMA_HOST"),
+        ("BBN built it over TCP.", "TCP"),
+        ("BBN built it behind a Raytheon-compatible API.", "Raytheon-compatible"),
+        ("BBN built it; set MY_HOST.", "MY_HOST"),
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert not ok and name in why, (answer, why)
+
+
+def test_a_hyphenated_compound_is_supported_by_its_capitalised_parts() -> None:
+    """'OpenAI-compatible' is supported by 'OpenAI' (the Ollama docs review, 2026-10-23).
+
+    A lower-case part of a hyphenated word is an English word ('-compatible', '-specific',
+    '-based'), so only the capitalised parts are names to find; an unsupported head, and
+    a compound of capitalised parts the context does not write, stay names.
+    """
+    for answer in (
+        "BBN built an IMP-compatible, Honeywell-based machine.",
+        "The UCLA-specific link ran on a DDP-516; it was ARPA-funded.",
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert ok, (answer, why)
+    for answer, name in (
+        ("BBN built a Raytheon-compatible machine.", "Raytheon-compatible"),
+        ("BBN closed a Honeywell-Raytheon deal.", "Honeywell-Raytheon"),
+    ):
+        ok, why = cp.no_unsupported_names(_rec(answer), _q())
+        assert not ok and name in why, (answer, why)
 
 
 def test_must_not_contain_reads_single_emphasis_backticks_and_underscores() -> None:

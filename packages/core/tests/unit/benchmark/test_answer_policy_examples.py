@@ -62,11 +62,14 @@ def _fixture_phrases(path: Path) -> set[str]:
 
 
 def _policy_proper_nouns(policy: str) -> set[str]:
-    """Capitalised words of the policy that do not merely open a line or a sentence."""
+    """Capitalised words of the policy that do not merely open a line or a sentence.
+
+    A single letter ("X and Y") is a placeholder, not a name.
+    """
     nouns: set[str] = set()
     for m in re.finditer(r"[A-ZÀ-Þ][\w'’-]*", policy):  # noqa: RUF001 - either apostrophe
         before = policy[: m.start()].rstrip(" ")
-        if not before or before.endswith(("\n", "-", ".", ":", "!", "?")):
+        if not before or before.endswith(("\n", "-", ".", ":", "!", "?")) or len(m.group(0)) == 1:
             continue
         nouns.add(_fold(m.group(0)))
     return nouns
@@ -141,3 +144,9 @@ def test_the_guard_catches_the_old_examples(example: str, leak: str) -> None:
     """The examples the policy carried until 2026-10-06 fail the guard."""
     leaks = _leaks(f"Names vary: a role refers to one person {example}.")
     assert any(leak in line for line in leaks), leaks
+
+
+def test_a_one_letter_placeholder_is_no_name() -> None:
+    """The policy's "X and Y" are placeholders: a fixture's 'x-api-key' header is no leak of them."""
+    nouns = _policy_proper_nouns("Answer in parts: when asked about X and Y, name Pierre.")
+    assert nouns == {_fold("Pierre")}
